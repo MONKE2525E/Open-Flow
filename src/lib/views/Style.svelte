@@ -1,0 +1,334 @@
+<script lang="ts">
+  let tab = $state('cleanup');
+  let intensity = $state('medium');
+  let tone = $state('casual');
+
+  const tabs = [
+    { id: 'cleanup',  label: 'Auto-cleanup', pill: '' },
+    { id: 'personal', label: 'Personal Tone',pill: '' },
+    { id: 'apps',     label: 'App Mappings', pill: 'New' },
+  ];
+
+  const cleanupCards = [
+    { id: 'none',   name: 'Verbatim', desc: 'Transcribes exactly what you said.',     sample: "so um yeah we should probably leave a bit earlier i think because there might be traffic" },
+    { id: 'light',  name: 'Light',    desc: 'Removes filler words.',                  sample: "Yeah, we should probably leave a bit earlier. There might be traffic." },
+    { id: 'medium', name: 'Medium',   desc: 'Edits for clarity and concision.',       sample: "We should leave earlier — there's likely traffic. Thoughts?" },
+    { id: 'high',   name: 'Direct',   desc: 'Rewrites for brevity.',                  sample: "Let's leave early to beat traffic." },
+  ];
+
+  const personalCards = [
+    { id: 'formal', name: 'Formal', desc: 'Proper capitalization. Full punctuation.', sample: "Hey, are you free for lunch tomorrow? Let's do 12 if that works." },
+    { id: 'casual', name: 'Casual', desc: 'Caps and light punctuation.',              sample: "Hey, are you free for lunch tomorrow? Let's do 12 if that works" },
+    { id: 'plain',  name: 'Plain',  desc: 'No caps, minimal punctuation.',            sample: "hey are you free for lunch tomorrow let's do 12 if that works" },
+    { id: 'code',   name: 'Code',   desc: 'No conversational filler. Raw syntax.',    sample: "def hello_world():\n    print('hello')" },
+  ];
+
+  let mappings = $state([
+    { exe: 'code.exe', profile: 'code' },
+    { exe: 'cursor.exe', profile: 'code' },
+    { exe: 'winword.exe', profile: 'formal' },
+    { exe: 'discord.exe', profile: 'casual' }
+  ]);
+  let newExe = $state('');
+  let newProfile = $state('casual');
+
+  function addMapping() {
+    if (newExe.trim()) {
+      mappings = [...mappings, { exe: newExe.trim().toLowerCase(), profile: newProfile }];
+      newExe = '';
+    }
+  }
+
+  function removeMapping(index: number) {
+    mappings = mappings.filter((_, i) => i !== index);
+  }
+</script>
+
+<div class="content-inner">
+  <h1 class="page-h">Style</h1>
+  <p class="page-sub">How Open Flow shapes your dictation.</p>
+
+  <div class="tabs">
+    {#each tabs as t}
+      <button class="tab" class:active={tab === t.id} onclick={() => (tab = t.id)}>
+        {t.label}
+        {#if t.pill}
+          <span class="pill">{t.pill}</span>
+        {/if}
+      </button>
+    {/each}
+  </div>
+
+  {#if tab === 'cleanup'}
+    <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Open Flow does.</span></p>
+    <div class="style-grid four">
+      {#each cleanupCards as c}
+        <div class="style-card" class:active={intensity === c.id} role="button" tabindex="0"
+          onclick={() => (intensity = c.id)}
+          onkeydown={(e) => e.key === 'Enter' && (intensity = c.id)}>
+          <h4>{c.name}</h4>
+          <p class="desc">{c.desc}</p>
+          <div class="style-sample">"{c.sample}"</div>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if tab === 'personal'}
+    <p class="style-intro">Default tone. <span>Applies to any app not explicitly mapped.</span></p>
+    <div class="style-grid">
+      {#each personalCards as c}
+        <div class="style-card" class:active={tone === c.id} role="button" tabindex="0"
+          onclick={() => (tone = c.id)}
+          onkeydown={(e) => e.key === 'Enter' && (tone = c.id)}>
+          <h4>{c.name}</h4>
+          <p class="desc">{c.desc}</p>
+          <div class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</div>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if tab === 'apps'}
+    <p class="style-intro">App Mappings. <span>Automatically switch tone based on the active window.</span></p>
+    
+    <div class="mapping-list">
+      {#each mappings as m, i}
+        <div class="mapping-item">
+          <div class="mapping-info">
+            <span class="exe">{m.exe}</span>
+            <span class="arr">→</span>
+            <span class="prof">{m.profile}</span>
+          </div>
+          <button class="icon-btn del-btn" aria-label="Remove mapping" onclick={() => removeMapping(i)}>✕</button>
+        </div>
+      {/each}
+    </div>
+
+    <div class="add-mapping">
+      <input type="text" placeholder="e.g. slack.exe" bind:value={newExe} onkeydown={(e) => e.key === 'Enter' && addMapping()} />
+      <select bind:value={newProfile}>
+        <option value="casual">Casual</option>
+        <option value="formal">Formal</option>
+        <option value="plain">Plain</option>
+        <option value="code">Code</option>
+      </select>
+      <button class="btn-primary" onclick={addMapping}>Add Mapping</button>
+    </div>
+  {/if}
+</div>
+
+<style>
+  .content-inner {
+    padding: 18px 28px 36px;
+    max-width: 920px;
+    position: relative;
+  }
+
+  .page-h {
+    font-family: var(--serif);
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    margin: 0 0 4px;
+    line-height: 1.1;
+    color: var(--ink);
+  }
+
+  .page-sub { color: var(--ink-mute); font-size: 12.5px; margin: 0 0 22px; }
+
+  .tabs {
+    display: flex;
+    gap: 22px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 22px;
+  }
+
+  .tab {
+    padding: 0 0 11px;
+    font-size: 13px;
+    color: var(--ink-mute);
+    border: 0;
+    background: transparent;
+    border-bottom: 1px solid transparent;
+    margin-bottom: -1px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+
+  .tab:hover { color: var(--ink-soft); }
+  .tab.active { color: var(--ink); border-bottom-color: var(--ink); font-weight: 500; }
+
+  .tab .pill {
+    font-family: var(--mono);
+    font-size: 9px;
+    background: transparent;
+    color: var(--ink-mute);
+    padding: 1px 6px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    border: 1px solid var(--line);
+  }
+
+  .style-intro {
+    font-size: 13px;
+    color: var(--ink-soft);
+    max-width: 540px;
+    margin-bottom: 20px;
+  }
+
+  .style-intro span { color: var(--ink-mute); }
+
+  .style-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+
+  .style-grid.four { grid-template-columns: repeat(4, 1fr); }
+
+  .style-card {
+    padding: 14px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    display: flex;
+    flex-direction: column;
+    min-height: 160px;
+    cursor: pointer;
+  }
+
+  .style-card:hover { background: var(--amber-50); }
+
+  .style-card.active {
+    background: var(--accent-soft);
+    border-color: var(--jap-200);
+  }
+
+  .style-card h4 {
+    font-family: var(--serif);
+    font-size: 16px;
+    font-weight: 500;
+    margin: 0 0 2px;
+    letter-spacing: -0.015em;
+    color: var(--ink);
+  }
+
+  .style-card .desc {
+    font-size: 12px;
+    color: var(--ink-mute);
+    margin-bottom: 14px;
+    line-height: 1.45;
+  }
+
+  .style-sample {
+    margin-top: auto;
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+
+  .style-card.active .style-sample { color: var(--accent-ink); }
+
+  .mapping-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+    max-width: 480px;
+  }
+
+  .mapping-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+  }
+
+  .mapping-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .exe {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--ink);
+  }
+
+  .arr { color: var(--ink-mute); font-size: 12px; }
+
+  .prof {
+    font-size: 13px;
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: capitalize;
+  }
+
+  .add-mapping {
+    display: flex;
+    gap: 10px;
+    max-width: 480px;
+  }
+
+  .add-mapping input {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--line);
+    padding: 0 12px;
+    height: 34px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+  }
+  .add-mapping input:focus { border-color: var(--ink-mute); }
+
+  .add-mapping select {
+    background: transparent;
+    border: 1px solid var(--line);
+    padding: 0 12px;
+    height: 34px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+  }
+
+  .btn-primary {
+    background: var(--ink);
+    color: var(--paper);
+    border: none;
+    padding: 0 14px;
+    height: 34px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .btn-primary:hover { background: var(--ink-soft); }
+
+  .del-btn {
+    background: transparent;
+    border: none;
+    color: var(--ink-mute);
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+  }
+  .del-btn:hover { background: var(--amber-100); color: var(--ink); }
+</style>

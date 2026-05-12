@@ -1,0 +1,56 @@
+[package]
+name = "open-flow"
+version = "0.1.0"
+description = "Open Flow — local-first AI dictation"
+authors = []
+edition = "2021"
+
+[[bin]]
+name = "open-flow"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-ico"] }
+tauri-plugin-store       = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-shell       = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+tokio       = { version = "1", features = ["full"] }
+reqwest     = { version = "0.12", features = ["json", "multipart", "stream"] }
+cpal        = "0.15"
+hound       = "3.5"
+base64      = "0.22"
+anyhow      = "1"
+log         = "0.4"
+chrono      = { version = "0.4", features = ["serde"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_Foundation",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_SystemInformation",
+] }
+
+[profile.release]
+opt-level  = "s"
+lto        = true
+strip      = true
+panic      = "abort"
+codegen-units = 1
+
+
+[[test]]
+name = "transcription_smoke"
+harness = false

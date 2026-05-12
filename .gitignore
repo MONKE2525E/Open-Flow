@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+.env
+.env.local
+src-tauri/target/
+
+*.log
+
+# Test files — audio clip provided separately, not committed
+tests/smoke/*.wav
