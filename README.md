@@ -8,12 +8,6 @@
   A free, self-hosted alternative to Wispr Flow. You bring your own API keys; there is no subscription.
 </p>
 
----
-
-> Screenshots coming soon
-
----
-
 ## How it works
 
 ```
