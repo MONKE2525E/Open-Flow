@@ -41,9 +41,9 @@
   <text
     x="335"
     y="116"
-    font-family="'Courier New', monospace"
-    font-size="13"
+    font-family="'Segoe UI', Arial, sans-serif"
+    font-size="16"
     fill="#7e7266"
-    letter-spacing="0.06em"
+    letter-spacing="0.01em"
   >open-source AI dictation for Windows</text>
 </svg>
