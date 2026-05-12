@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-# Note from user run npm dev commands yourself please
+# Note from user
+Run npm dev commands yourself please
+Github Repo: https://github.com/MONKE2525E/Open-Flow
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
