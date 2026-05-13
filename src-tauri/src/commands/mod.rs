@@ -105,6 +105,7 @@ pub async fn stop_recording(
     };
     if let Some(s) = session {
         let _ = s.stop();
+        std::thread::spawn(|| crate::system::volume::unmute());
     }
     pipeline::hide_pill(&app);
     Ok(())

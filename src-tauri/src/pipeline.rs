@@ -46,8 +46,11 @@ pub fn show_pill(app: &AppHandle, state: &str) {
         // Handsfree needs real cursor events for its cancel/confirm buttons.
         pill.set_ignore_cursor_events(state != "handsfree").ok();
 
-        pill.emit("pill-state", state).ok();
-        // SW_SHOWNOACTIVATE: pill appears without stealing keyboard focus from
+        // Show the window before emitting state so WebView2 is active when it
+        // receives the event. WebView2 suspends event processing while hidden;
+        // emitting into a suspended view causes the first state to be dropped or
+        // overtaken by the next emit (e.g. "recording" lost, only "processing" seen).
+        // SW_SHOWNOACTIVATE: appears without stealing keyboard focus from
         // whatever window the user is dictating into.
         #[cfg(target_os = "windows")]
         {
@@ -66,13 +69,19 @@ pub fn show_pill(app: &AppHandle, state: &str) {
             let y = ((sz.height as f64 / sf - 44.0 - 64.0) * sf) as i32;
             pill.set_position(tauri::PhysicalPosition::new(x, y)).ok();
         }
+
+        pill.emit("pill-state", state).ok();
     }
 }
 
 pub fn hide_pill(app: &AppHandle) {
     if let Some(pill) = app.get_webview_window("pill") {
         pill.emit("pill-state", "idle").ok();
-        pill.hide().ok();
+        // Do not call pill.hide() — hiding the window suspends the WebView2
+        // renderer. The next show_pill("recording") emit would then be lost
+        // before WebView2 wakes up, causing only "processing" to appear.
+        // The pill window is transparent + click-through in idle state, so
+        // leaving it visible has no user-visible effect.
     }
 }
 
@@ -89,6 +98,14 @@ pub fn start_recording_session(app: &AppHandle, state: &SharedState, pill_state:
         .and_then(|s| s.get(store::NOISE_REDUCTION))
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let mute_audio = settings.as_deref()
+        .and_then(|s| s.get(store::MUTE_AUDIO))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if mute_audio {
+        std::thread::spawn(|| crate::system::volume::mute());
+    }
 
     match audio::RecordingSession::start(device, noise_reduction) {
         Ok(session) => {
@@ -120,7 +137,7 @@ pub fn spawn_level_emitter(
             if let Some(pill) = app.get_webview_window("pill") {
                 pill.emit("audio-level", level_val).ok();
             }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(16)).await;
         }
     });
 }
@@ -171,6 +188,9 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         st.session.take()
     };
     let Some(session) = session else { return };
+    
+    // Attempt to unmute immediately since the dictation phase has formally ended
+    std::thread::spawn(|| crate::system::volume::unmute());
 
     show_pill(&app, "processing");
 

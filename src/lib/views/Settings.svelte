@@ -39,7 +39,7 @@
   let cleanupModel = 'groq/llama-3.3-70b-versatile';
 
   // Toggle states
-  let toggleState = { cleanup: true, noiseReduction: true };
+  let toggleState = { cleanup: true, noiseReduction: true, muteAudio: false };
 
   // Transcription history retention dropdown
   let historyRetention = '30 days';
@@ -148,9 +148,11 @@
 
       const cleanupEnabled = await invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' });
       const noiseReduction = await invoke<boolean | null>('get_setting', { key: 'noise_reduction' });
+      const muteAudio = await invoke<boolean | null>('get_setting', { key: 'mute_audio' });
       toggleState = {
         cleanup: cleanupEnabled ?? true,
         noiseReduction: noiseReduction ?? true,
+        muteAudio: muteAudio ?? false,
       };
 
       const retention = await invoke<string | null>('get_setting', { key: 'history_retention' });
@@ -204,6 +206,13 @@
     toggleState = { ...toggleState, noiseReduction: !toggleState.noiseReduction };
     try {
       await invoke('save_setting', { key: 'noise_reduction', value: toggleState.noiseReduction });
+    } catch {}
+  }
+
+  async function toggleMuteAudio() {
+    toggleState = { ...toggleState, muteAudio: !toggleState.muteAudio };
+    try {
+      await invoke('save_setting', { key: 'mute_audio', value: toggleState.muteAudio });
     } catch {}
   }
 
@@ -393,6 +402,13 @@
               <div class="toggle" class:on={toggleState.noiseReduction} role="switch" aria-checked={toggleState.noiseReduction} tabindex="0"
                 onclick={toggleNoiseReduction}
                 onkeydown={(e) => e.key === 'Enter' && toggleNoiseReduction()}
+              ></div>
+            </div>
+            <div class="setting-row">
+              <div><div class="label">Mute PC Audio</div><div class="desc">Mutes Windows volume while dictating to prevent audio interference</div></div>
+              <div class="toggle" class:on={toggleState.muteAudio} role="switch" aria-checked={toggleState.muteAudio} tabindex="0"
+                onclick={toggleMuteAudio}
+                onkeydown={(e) => e.key === 'Enter' && toggleMuteAudio()}
               ></div>
             </div>
 

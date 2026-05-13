@@ -38,6 +38,7 @@ fn main() {
         .setup(move |app| {
             setup_tray(app)?;
             setup_hotkey(app, shared.clone());
+            crate::pipeline::show_pill(app.handle(), "idle");
             Ok(())
         })
         .on_window_event(|window, event| {

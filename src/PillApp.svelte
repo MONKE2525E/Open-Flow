@@ -22,29 +22,50 @@
   });
 
   let barHeights: number[] = Array(BARS).fill(2);
+  let targetLevel = 0;
   let smoothed = 0;
   let lastLevelTime = 0;
-  let noiseArr: number[] = Array.from({ length: BARS }, () => Math.random());
+  let targetNoiseArr: number[] = Array.from({ length: BARS }, () => Math.random());
+  let currentNoiseArr: number[] = [...targetNoiseArr];
   let lastNoiseT = 0;
   let rafId: number;
   const PEAK_FLOOR = 0.07;
   let adaptivePeak = PEAK_FLOOR;
 
+  let lastAnimTime = 0;
+
   function animateBars(time: number) {
-    // Passive decay kicks in after 150ms of silence (between words is ~80–120ms,
-    // so this only fires on deliberate pauses).
-    if (time - lastLevelTime > 150) {
-      smoothed = Math.max(0, smoothed * 0.979);
+    if (!lastAnimTime) lastAnimTime = time;
+    const dt = Math.min(time - lastAnimTime, 50);
+    lastAnimTime = time;
+
+    // Extremely smooth, premium rise and fall (high inertia)
+    // Rise: ~12% per 16ms frame (takes ~100-150ms to swell up smoothly)
+    const riseRate = 1 - Math.pow(0.88, dt / 16.66);
+    // Fall: ~3% per 16ms frame (takes almost a full second to melt down, very lingering)
+    const fallRate = 1 - Math.pow(0.97, dt / 16.66);
+    
+    if (targetLevel > smoothed) {
+      smoothed += (targetLevel - smoothed) * riseRate;
+    } else {
+      smoothed += (targetLevel - smoothed) * fallRate;
     }
 
-    // Peak decays ~1.8%/s toward floor — stable during a 30s recording,
-    // resets to floor after ~2-3 min of silence so quiet-mic calibration restarts.
-    adaptivePeak = Math.max(PEAK_FLOOR, adaptivePeak * 0.9997);
+    if (smoothed > adaptivePeak) adaptivePeak = smoothed;
 
-    // Shift per-bar noise every ~140ms for organic independent movement
-    if (time - lastNoiseT > 140) {
-      noiseArr = noiseArr.map(v => v * 0.65 + Math.random() * 0.35);
+    // Peak decays very slowly to maintain a steady visual baseline
+    adaptivePeak = Math.max(PEAK_FLOOR, adaptivePeak * Math.pow(0.9997, dt / 16.66));
+
+    // Slow down the organic "lava lamp" noise shift (was 140ms, now 400ms)
+    if (time - lastNoiseT > 400) {
+      targetNoiseArr = targetNoiseArr.map(v => v * 0.7 + Math.random() * 0.3);
       lastNoiseT = time;
+    }
+
+    // Interpolate noise very slowly for a gentle breathing ripple
+    const noiseLerpRate = 1 - Math.pow(0.95, dt / 16.66);
+    for (let i = 0; i < BARS; i++) {
+      currentNoiseArr[i] += (targetNoiseArr[i] - currentNoiseArr[i]) * noiseLerpRate;
     }
 
     // Gate on raw smoothed to suppress background noise; normalize against the
@@ -53,8 +74,12 @@
       barHeights = Array(BARS).fill(3);
     } else {
       const normalized = Math.min(smoothed / adaptivePeak, 1.0);
+      // Ease the volume mapping (pow 1.5) so small noises are gentle
+      const eased = Math.pow(normalized, 1.5);
+      
       barHeights = barGains.map((gain, i) => {
-        const energy = normalized * gain * (0.45 + noiseArr[i] * 0.55);
+        // Reduced noise influence (from 0.55 to 0.4) so it's less chaotic, more structured
+        const energy = eased * gain * (0.6 + currentNoiseArr[i] * 0.4);
         return 3 + energy * 13;
       });
     }
@@ -86,13 +111,7 @@
       }));
 
       unlisteners.push(await listen<number>('audio-level', (ev) => {
-        const level = ev.payload ?? 0;
-        if (level > smoothed) {
-          smoothed = smoothed * 0.1 + level * 0.9;  // near-instant rise
-        } else {
-          smoothed = smoothed * 0.90 + level * 0.10; // fall (~1.1s to 10%)
-        }
-        if (smoothed > adaptivePeak) adaptivePeak = smoothed;
+        targetLevel = ev.payload ?? 0;
         lastLevelTime = performance.now();
       }));
     })();
