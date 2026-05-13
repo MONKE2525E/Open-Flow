@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
 
   let tab = $state('cleanup');
   let intensity = $state('medium');
@@ -40,15 +40,55 @@
     { id: 'code',   label: 'Code' },
   ];
 
+  interface InstalledApp { name: string; exe: string; }
+
   let mappings = $state(DEFAULT_MAPPINGS);
   let newExe = $state('');
   let newProfile = $state('casual');
   let profileDropdownOpen = $state(false);
 
+  let installedApps = $state<InstalledApp[]>([]);
+  let areAppsLoaded = $state(false);
+  let appSearch = $state('');
+  let appPickerOpen = $state(false);
+
+  let filteredApps = $derived(appSearch
+    ? installedApps.filter(a =>
+        a.name.toLowerCase().includes(appSearch.toLowerCase()) ||
+        a.exe.toLowerCase().includes(appSearch.toLowerCase())
+      ).slice(0, 40)
+    : installedApps.slice(0, 40));
+
+  async function loadInstalledApps() {
+    if (areAppsLoaded) return;
+    try {
+      installedApps = await invoke<InstalledApp[]>('get_installed_apps');
+      areAppsLoaded = true;
+    } catch { /* dev mode */ }
+  }
+
+  function pickApp(app: InstalledApp) {
+    newExe = app.exe;
+    appSearch = app.name;
+    appPickerOpen = false;
+  }
+
+  function closeAppPicker(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    if (!target.closest('.app-picker-wrap')) appPickerOpen = false;
+  }
+
+  $effect(() => {
+    if (appPickerOpen) {
+      tick().then(() => window.addEventListener('click', closeAppPicker, { once: true }));
+    }
+  });
+
   function handleWindowClick() { profileDropdownOpen = false; }
 
   onMount(async () => {
     window.addEventListener('click', handleWindowClick);
+    loadInstalledApps();
     try {
       const [savedTone, savedIntensity, savedMappings] = await Promise.all([
         invoke<string | null>('get_setting', { key: 'default_tone' }),
@@ -82,6 +122,8 @@
     if (newExe.trim()) {
       saveMappings([...mappings, { exe: newExe.trim().toLowerCase(), profile: newProfile }]);
       newExe = '';
+      appSearch = '';
+      appPickerOpen = false;
     }
   }
 
@@ -152,7 +194,28 @@
     </div>
 
     <div class="add-mapping">
-      <input type="text" placeholder="e.g. slack.exe" bind:value={newExe} onkeydown={(e) => e.key === 'Enter' && addMapping()} />
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="app-picker-wrap" onclick={(e) => e.stopPropagation()}>
+        <input
+          class="app-search-input"
+          placeholder={areAppsLoaded ? 'Search apps…' : 'Loading apps…'}
+          bind:value={appSearch}
+          onfocus={() => { appPickerOpen = true; }}
+          oninput={() => { newExe = ''; appPickerOpen = true; }}
+          onkeydown={(e) => e.key === 'Enter' && addMapping()}
+        />
+        {#if appPickerOpen && filteredApps.length > 0}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div class="app-picker-menu" onclick={(e) => e.stopPropagation()}>
+            {#each filteredApps as app}
+              <button class="app-picker-item" onclick={() => pickApp(app)}>
+                <span class="app-picker-name">{app.name}</span>
+                <span class="app-picker-exe">{app.exe}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div class="profile-select" onclick={(e) => e.stopPropagation()}>
         <button class="profile-select-btn" onclick={() => (profileDropdownOpen = !profileDropdownOpen)}>
@@ -339,20 +402,75 @@
     display: flex;
     gap: 10px;
     max-width: 480px;
+    align-items: center;
   }
 
-  .add-mapping input {
+  .app-picker-wrap {
+    position: relative;
     flex: 1;
+  }
+
+  .app-search-input {
+    width: 100%;
+    box-sizing: border-box;
     background: transparent;
     border: 1px solid var(--line);
     padding: 0 12px;
     height: 34px;
     border-radius: var(--r-sm);
     font-size: 13px;
+    font-family: var(--sans);
     color: var(--ink);
     outline: none;
   }
-  .add-mapping input:focus { border-color: var(--ink-mute); }
+  .app-search-input:focus { border-color: var(--ink-mute); }
+
+  .app-picker-menu {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 4px);
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    box-shadow: 0 8px 24px rgba(13,10,8,0.14);
+    width: 100%;
+    max-height: 180px;
+    overflow-y: auto;
+    z-index: 20;
+  }
+
+  .app-picker-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 7px 10px;
+    font-family: var(--sans);
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    text-align: left;
+    gap: 8px;
+  }
+  .app-picker-item:last-child { border-bottom: none; }
+  .app-picker-item:hover { background: var(--paper); }
+
+  .app-picker-name {
+    font-size: 12px;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+  }
+
+  .app-picker-exe {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-mute);
+    flex-shrink: 0;
+  }
 
   .profile-select {
     position: relative;

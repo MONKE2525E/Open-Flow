@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentPage, settingsOpen, accentColor } from './lib/stores';
+  import { currentPage, settingsOpen, accentColor, setupComplete } from './lib/stores';
   import TitleBar from './lib/components/layout/TitleBar.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
@@ -9,6 +9,7 @@
   import Style from './lib/views/Style.svelte';
   import Settings from './lib/views/Settings.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
+  import Setup from './lib/views/Setup.svelte';
 
   const accentMap: Record<string, [string, string, string]> = {
     terracotta: ['oklch(0.62 0.14 40)',  'oklch(0.94 0.03 40)',   'oklch(0.42 0.12 40)'],
@@ -30,6 +31,14 @@
 
   onMount(async () => {
     try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const done = await invoke<boolean | null>('get_setting', { key: 'setup_complete' });
+      setupComplete.set(done === true);
+    } catch {
+      setupComplete.set(false);
+    }
+
+    try {
       const { listen } = await import('@tauri-apps/api/event');
       const unlisten = await listen<string>('open-flow:error', (ev) => {
         errorToast = ev.payload ?? 'Something went wrong';
@@ -46,6 +55,9 @@
 </svelte:head>
 
 <div class="app">
+  {#if $setupComplete === false}
+    <Setup />
+  {/if}
   <TitleBar />
   <div class="body">
     <Sidebar />

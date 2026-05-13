@@ -13,3 +13,6 @@ export const stats = writable({ totalWords: 0, wpm: 0, dayStreak: 0 });
 export const currentIntensity = writable('medium');
 export const currentTone = writable('casual');
 export const styleTab = writable('cleanup');
+
+// Setup — null means not yet checked, false = show wizard, true = done
+export const setupComplete = writable<boolean | null>(null);

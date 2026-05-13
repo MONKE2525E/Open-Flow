@@ -14,6 +14,7 @@ pub const DEFAULT_TONE:           &str = "default_tone";
 pub const CLEANUP_INTENSITY:      &str = "cleanup_intensity";
 pub const APP_MAPPINGS:           &str = "app_mappings";
 pub const NOISE_REDUCTION:        &str = "noise_reduction";
+pub const SETUP_COMPLETE:         &str = "setup_complete";
 
 // ---------- pipeline config ----------
 

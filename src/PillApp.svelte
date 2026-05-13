@@ -190,7 +190,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 8px 22px rgba(13,10,8,0.55), 0 0 0 1px rgba(255,255,255,0.07) inset;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.07) inset;
     animation: pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
 

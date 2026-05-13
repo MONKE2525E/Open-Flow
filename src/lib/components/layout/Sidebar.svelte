@@ -106,7 +106,7 @@
   }
 
   .brand-mark {
-    width: 18px;
+    width: 23px;
     height: 18px;
     display: flex;
     align-items: flex-end;
@@ -114,9 +114,9 @@
   }
 
   .brand-mark span {
-    width: 2px;
-    background: var(--accent);
-    border-radius: 1px;
+    width: 3px;
+    background: #d97757;
+    border-radius: 999px;
     display: block;
   }
 
