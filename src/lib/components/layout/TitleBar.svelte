@@ -22,11 +22,6 @@
 <div class="titlebar" data-tauri-drag-region>
   <div class="tb-left"></div>
   <div class="tb-right">
-    <button class="tb-btn has-notif" title="Notifications">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-      </svg>
-    </button>
     <button class="tb-btn" title="Minimize" onclick={minimize}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
         <path d="M5 12h14"/>
@@ -73,12 +68,5 @@
   .tb-btn:hover { background: var(--paper-2); color: var(--ink-strong); }
   .tb-btn.close:hover { background: var(--jap-600); color: white; }
 
-  .has-notif::after {
-    content: '';
-    position: absolute;
-    top: 5px; right: 5px;
-    width: 5px; height: 5px;
-    border-radius: 50%;
-    background: var(--accent);
-  }
+
 </style>
