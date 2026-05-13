@@ -73,7 +73,7 @@ async fn openai_compat(text: &str, api_key: &str, url: &str, model: &str, prompt
             Msg { role: "system".into(), content: prompt.to_owned() },
             Msg { role: "user".into(),   content: format!("<transcription>\n{}\n</transcription>", text) },
         ],
-        max_tokens: 1024,
+        max_tokens: 4096,
         temperature: 0.2,
     };
 

@@ -133,7 +133,7 @@ pub fn spawn_level_emitter(
     tauri::async_runtime::spawn(async move {
         // Give WebView2 a brief head start to wake up and process the 
         // "recording" state event before we flood the IPC with 16ms updates.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
 
         loop {
             if !active.load(Ordering::Relaxed) { break; }
@@ -141,7 +141,7 @@ pub fn spawn_level_emitter(
             if let Some(pill) = app.get_webview_window("pill") {
                 pill.emit("audio-level", level_val).ok();
             }
-            tokio::time::sleep(std::time::Duration::from_millis(16)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     });
 }
@@ -267,9 +267,10 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
                 "google" => cleanup::CleanupProvider::Google,
                 _        => cleanup::CleanupProvider::Groq,
             };
-            cleanup::cleanup(&raw, cp, &c_key, &profile, &cfg.cleanup_intensity)
+            let cleaned = cleanup::cleanup(&raw, cp, &c_key, &profile, &cfg.cleanup_intensity)
                 .await
-                .unwrap_or(raw.clone())
+                .unwrap_or_default();
+            if cleaned.is_empty() { raw.clone() } else { cleaned }
         } else {
             raw.clone()
         };

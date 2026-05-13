@@ -3,6 +3,10 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 
+# Exception: track release bundles
+!src-tauri/target/release/bundle/
+!src-tauri/target/release/bundle/**
+
 # Environment & secrets
 .env
 .env.local

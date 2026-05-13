@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, RegisterHotKey, UnregisterHotKey,
@@ -10,6 +10,32 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TranslateMessage, HC_ACTION, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL,
     WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
+
+// Returns true if the given specific-side VK (or its mirror) is currently held.
+// Uses generic VKs for Shift/Ctrl/Alt so either side satisfies the check.
+// Win key has no generic VK, so both sides are checked explicitly.
+unsafe fn modifier_held(vk: u32) -> bool {
+    let held = |v: u32| -> bool { (GetAsyncKeyState(v as i32) & 0x8000u16 as i16) != 0 };
+    match vk {
+        160 | 161 => held(16),        // L/RShift → VK_SHIFT
+        162 | 163 => held(17),        // L/RControl → VK_CONTROL
+        164 | 165 => held(18),        // L/RMenu → VK_MENU
+        91  | 92  => held(91) || held(92), // LWin / RWin (no generic VK_WIN)
+        _         => held(vk),
+    }
+}
+
+// Returns true if the hook vkCode matches the configured key, including the
+// mirror side for modifiers (so LCtrl binding also matches RCtrl events).
+fn vk_matches(vk: u32, key: u32) -> bool {
+    match key {
+        160 | 161 => vk == 160 || vk == 161,
+        162 | 163 => vk == 162 || vk == 163,
+        164 | 165 => vk == 164 || vk == 165,
+        91  | 92  => vk == 91  || vk == 92,
+        _         => vk == key,
+    }
+}
 
 pub fn is_hotkey_available(key1: &str, key2: &str) -> bool {
     let mod_flag = match key1 {
@@ -42,15 +68,21 @@ static KEY2: AtomicU32 = AtomicU32::new(32);  // VK_SPACE
 pub fn update_keys(k1: u32, k2: u32) {
     if k1 != 0 { KEY1.store(k1, Ordering::SeqCst); }
     if k2 != 0 { KEY2.store(k2, Ordering::SeqCst); }
-    // Reset all chord state so stale key events against the old binding can't
-    // trigger phantom presses or missed releases after a hotkey change.
+    reset_chord_state();
+    HANDLESS_WAITING_KEY1_2.store(false, Ordering::SeqCst);
+    HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);
+}
+
+// Clears all mid-chord state. Called from the Tokio handler after a handsfree
+// stop-via-cancel so the still-open double-tap window can't accidentally start
+// a fresh handsfree session on a stray second key press.
+pub fn reset_chord_state() {
     CHORD_DOWN.store(false, Ordering::SeqCst);
     KEY1_WAS_CHORD.store(false, Ordering::SeqCst);
+    KEY2_WAS_CHORD.store(false, Ordering::SeqCst);
     CHORD_PENDING.store(false, Ordering::SeqCst);
     CHORD_PENDING_END_MS.store(0, Ordering::SeqCst);
     CHORD_FIRST_DOWN_MS.store(0, Ordering::SeqCst);
-    HANDLESS_WAITING_KEY1_2.store(false, Ordering::SeqCst);
-    HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);
 }
 
 pub fn map_code_to_vk(code: &str) -> u32 {
@@ -121,6 +153,11 @@ static CANCEL_CB:   std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync
 
 static CHORD_DOWN: AtomicBool = AtomicBool::new(false);
 static KEY1_WAS_CHORD: AtomicBool = AtomicBool::new(false);
+// Set whenever key2 is captured as part of our chord. Guarantees key2-up is
+// suppressed even if key1 goes up first and clears CHORD_DOWN before key2 does.
+// Without this, Win key released after Ctrl reaches the OS and triggers the
+// Start menu (or other Win+key shortcuts).
+static KEY2_WAS_CHORD: AtomicBool = AtomicBool::new(false);
 static HANDLESS_KEY1_TIME: AtomicU64 = AtomicU64::new(0);
 static HANDLESS_WAITING_KEY1_2: AtomicBool = AtomicBool::new(false);
 static CHORD_FIRST_DOWN_MS: AtomicU64 = AtomicU64::new(0);
@@ -136,14 +173,15 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         let k1 = KEY1.load(Ordering::Relaxed);
         let k2 = KEY2.load(Ordering::Relaxed);
 
-        let is_key2 = vk == k2;
-        let is_key1 = vk == k1;
+        let is_key2 = vk_matches(vk, k2);
+        let is_key1 = vk_matches(vk, k1);
         let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
         let is_up   = msg == WM_KEYUP   || msg == WM_SYSKEYUP;
 
         if is_key2 && is_down {
-            let k1_held = (GetAsyncKeyState(k1 as i32) & 0x8000u16 as i16) != 0;
+            let k1_held = modifier_held(k1);
             if k1_held {
+                KEY2_WAS_CHORD.store(true, Ordering::SeqCst);
                 if CHORD_PENDING.load(Ordering::SeqCst) {
                     let t1  = CHORD_PENDING_END_MS.load(Ordering::SeqCst);
                     let now = GetTickCount64();
@@ -167,12 +205,16 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         }
 
         if is_key2 && is_up {
+            // KEY2_WAS_CHORD guarantees we suppress key2-up even if key1 went up
+            // first and cleared CHORD_DOWN — otherwise a bare Win-up reaches the OS
+            // and triggers the Start menu / Win shortcuts.
+            let key2_was_chord = KEY2_WAS_CHORD.swap(false, Ordering::SeqCst);
             if CHORD_DOWN.swap(false, Ordering::SeqCst) {
                 let now = GetTickCount64();
                 let t0  = CHORD_FIRST_DOWN_MS.load(Ordering::SeqCst);
                 let held_ms = now.saturating_sub(t0);
-                let k1_still_held = (GetAsyncKeyState(k1 as i32) & 0x8000u16 as i16) != 0;
-                
+                let k1_still_held = modifier_held(k1);
+
                 if held_ms < 200 && k1_still_held {
                     CHORD_PENDING.store(true, Ordering::SeqCst);
                     CHORD_PENDING_END_MS.store(now, Ordering::SeqCst);
@@ -182,10 +224,13 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 }
                 return LRESULT(1);
             }
+            if key2_was_chord {
+                return LRESULT(1);
+            }
         }
 
         if is_key1 && is_down {
-            let k2_held = (GetAsyncKeyState(k2 as i32) & 0x8000u16 as i16) != 0;
+            let k2_held = modifier_held(k2);
             if k2_held && !CHORD_DOWN.load(Ordering::SeqCst) {
                 let now = GetTickCount64();
                 if HANDLESS_WAITING_KEY1_2.load(Ordering::SeqCst) {
@@ -207,7 +252,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             CHORD_PENDING.store(false, Ordering::SeqCst);
             CHORD_PENDING_END_MS.store(0, Ordering::SeqCst);
 
-            let k2_held = (GetAsyncKeyState(k2 as i32) & 0x8000u16 as i16) != 0;
+            let k2_held = modifier_held(k2);
             if !k2_held {
                 HANDLESS_WAITING_KEY1_2.store(false, Ordering::SeqCst);
                 HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);

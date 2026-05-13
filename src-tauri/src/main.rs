@@ -194,11 +194,17 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                 }
 
                 HotkeyEvent::Cancel => {
-                    // Discard a very brief recording started by the first click of
-                    // an Alt+Space double-click gesture. No-op in handless mode so
-                    // we don't drop the ongoing handless session.
                     let is_handless = state_hk.lock().unwrap().handless;
-                    if !is_handless {
+                    if is_handless {
+                        // Quick tap while in handsfree = stop. Clear chord state
+                        // immediately so the still-open double-tap window can't
+                        // re-trigger a fresh handsfree session.
+                        core::hotkey::reset_chord_state();
+                        state_hk.lock().unwrap().handless = false;
+                        tauri::async_runtime::spawn(pipeline::run_pipeline(app_hk.clone(), state_hk.clone()));
+                    } else {
+                        // First click of a double-tap gesture outside handsfree —
+                        // discard the short recording that just started.
                         let had_session = state_hk.lock().unwrap().session.take().is_some();
                         if had_session {
                             std::thread::spawn(|| crate::system::volume::unmute());
