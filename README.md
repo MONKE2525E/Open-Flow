@@ -3,7 +3,6 @@
 </p>
 
 <p align="center">
-  <strong>Open-source AI dictation for Windows.</strong><br/>
   Hold <kbd>Alt</kbd>+<kbd>Space</kbd>, speak, release — your words appear instantly, cleaned up by an LLM, in whatever app is in focus.<br/>
   <em>A free, self-hosted alternative to Wispr Flow. Bring your own API keys. No subscriptions.</em>
 </p>
