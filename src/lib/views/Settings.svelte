@@ -584,14 +584,6 @@
 
           {:else if section === 'advanced'}
             <h2 class="settings-h">Advanced</h2>
-            <div class="setting-row">
-              <div><div class="label">Transcription history</div><div class="desc">How long past dictations are kept</div></div>
-              <div class="badge">30 days</div>
-            </div>
-            <div class="setting-row">
-              <div><div class="label">Text injection</div><div class="desc">Method used to insert transcribed text</div></div>
-              <div class="badge">Clipboard (Ctrl+V)</div>
-            </div>
             <div class="setting-row coming-soon-row">
               <div>
                 <div class="label coming-soon-label">Auto-learn corrections <span class="coming-soon-badge">Coming Soon</span></div>
