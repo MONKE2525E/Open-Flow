@@ -3,12 +3,14 @@
   import { icons } from '../icons';
   import { tick, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { fly, slide, fade } from 'svelte/transition';
+  import { flip } from 'svelte/animate';
+  import { expoOut } from 'svelte/easing';
 
   let section = 'general';
   let prevSection: string | null = null;
   let animDir: 'up' | 'down' | null = null;
   let isAnimating = false;
-  let isModalReady = false;
 
   // API key status — true means a key is saved; never expose the value
   let keyStatus = { groq: false, openai: false, google: false };
@@ -58,10 +60,8 @@
   ];
 
   $: if ($settingsOpen) {
-    tick().then(() => tick()).then(() => { isModalReady = true; });
     loadSettings();
   } else {
-    isModalReady = false;
     draftKeys = { groq: '', openai: '', google: '' };
     micDropdownOpen = false;
     appPickerOpen = false;
@@ -263,18 +263,11 @@
   function close() { $settingsOpen = false; }
 
   function goTo(id: string) {
-    if (id === section || isAnimating) return;
+    if (id === section) return;
     const oldIdx = sectionOrder.indexOf(section);
     const newIdx = sectionOrder.indexOf(id);
     animDir = newIdx > oldIdx ? 'up' : 'down';
-    prevSection = section;
-    isAnimating = true;
     section = id;
-    setTimeout(() => {
-      prevSection = null;
-      isAnimating = false;
-      animDir = null;
-    }, 280);
   }
 
   const navSections = [
@@ -319,14 +312,13 @@
   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
   <div
     class="settings-overlay"
-    style:opacity={isModalReady ? 1 : 0}
+    transition:fade={{ duration: 200 }}
     onclick={close}
   >
     <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
     <div
       class="settings-modal"
-      style:transform={isModalReady ? 'scale(1) translateY(0)' : 'scale(0.94) translateY(12px)'}
-      style:opacity={isModalReady ? 1 : 0}
+      transition:fly={{ y: 40, duration: 400, easing: expoOut }}
       onclick={(e) => e.stopPropagation()}
     >
       <!-- Left nav -->
@@ -353,11 +345,13 @@
 
       <!-- Right panel -->
       <div class="settings-body">
-        <div
-          class="panel"
-          style:animation={isAnimating ? `panelEnter${animDir === 'up' ? 'Up' : 'Down'} 0.28s cubic-bezier(0.22,1,0.36,1) both` : 'none'}
-        >
-          {#if section === 'general'}
+        {#key section}
+          <div
+            class="panel"
+            in:fly={{ y: animDir === 'up' ? 20 : -20, duration: 350, delay: 150, easing: expoOut }}
+            out:fly={{ y: animDir === 'up' ? -20 : 20, duration: 150, easing: expoOut }}
+          >
+            {#if section === 'general'}
             <h2 class="settings-h">General</h2>
             <div class="setting-row">
               <div><div class="label">Hotkey</div><div class="desc">Hold to record, release to transcribe</div></div>
@@ -418,8 +412,8 @@
 
             {#if mappings.length > 0}
               <div class="mapping-list">
-                {#each mappings as m}
-                  <div class="mapping-row">
+                {#each mappings as m (m.exe)}
+                  <div class="mapping-row" animate:flip={{duration: 300, easing: expoOut}} in:fly={{y: 10, duration: 300, easing: expoOut}} out:slide={{duration: 200, easing: expoOut}}>
                     <div class="mapping-app-info">
                       <span class="mapping-app-name">{m.name || m.exe.replace(/\.exe$/i, '')}</span>
                       <span class="mapping-exe-pill">{m.exe}</span>
@@ -608,6 +602,7 @@
             </div>
           {/if}
         </div>
+        {/key}
       </div>
     </div>
   </div>
@@ -621,7 +616,6 @@
     display: grid;
     place-items: center;
     z-index: 5;
-    transition: opacity 0.2s;
   }
 
   .settings-modal {
@@ -633,8 +627,6 @@
     box-shadow: 0 24px 60px rgba(13,10,8,0.18);
     display: flex;
     overflow: hidden;
-    transition: transform 0.25s cubic-bezier(0.22,1,0.36,1), opacity 0.2s;
-    transform-origin: bottom right;
   }
 
   /* Nav */
@@ -821,7 +813,7 @@
     border-radius: 999px;
     position: relative;
     cursor: pointer;
-    transition: background 0.15s;
+    transition: background 0.3s ease-out;
     flex-shrink: 0;
   }
 
@@ -834,7 +826,7 @@
     border-radius: 50%;
     top: 2px;
     left: 2px;
-    transition: left 0.15s;
+    transition: left 0.35s cubic-bezier(0.22, 1, 0.36, 1);
     box-shadow: 0 1px 2px rgba(13,10,8,0.15);
   }
 

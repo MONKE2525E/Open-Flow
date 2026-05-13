@@ -3,12 +3,24 @@
   import { invoke } from '@tauri-apps/api/core';
   import { currentPage, settingsOpen } from '../../stores';
   import { icons } from '../../icons';
+  import { tweened } from 'svelte/motion';
+  import { expoOut } from 'svelte/easing';
+  import { fly } from 'svelte/transition';
 
-  let memoryMb = $state(0);
+  let rawMemoryMb = $state(0);
+  let memoryDir = $state(1);
+  let memoryMb = tweened(0, { duration: 800, easing: expoOut });
 
   onMount(() => {
     const refresh = async () => {
-      try { memoryMb = await invoke<number>('get_memory_mb'); } catch { /* dev mode */ }
+      try {
+        const next = await invoke<number>('get_memory_mb');
+        if (next !== rawMemoryMb) {
+          memoryDir = next > rawMemoryMb ? 1 : -1;
+          rawMemoryMb = next;
+          memoryMb.set(next);
+        }
+      } catch { /* dev mode */ }
     };
     refresh();
     const id = setInterval(refresh, 2000);
@@ -80,9 +92,15 @@
     <div class="local-bar-row">
       <span class="local-dot"></span>
       <span>Running locally</span>
-      <span class="meta">{memoryMb} MB</span>
+      <div class="meta-wrapper">
+        {#key rawMemoryMb}
+          <span class="meta" in:fly={{ y: memoryDir * 10, duration: 400, easing: expoOut }} out:fly={{ y: -memoryDir * 10, duration: 400, easing: expoOut }}>
+            {rawMemoryMb} MB
+          </span>
+        {/key}
+      </div>
     </div>
-    <div class="local-meter-thin"><span style="width:{Math.min(memoryMb / 200 * 100, 100)}%"></span></div>
+    <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 200 * 100, 100)}%"></span></div>
   </div>
 </aside>
 
@@ -212,8 +230,17 @@
     display: block;
   }
 
-  .meta {
+  .meta-wrapper {
     margin-left: auto;
+    position: relative;
+    display: grid;
+    overflow: hidden;
+    height: 14px;
+    align-items: center;
+  }
+
+  .meta {
+    grid-area: 1 / 1;
     font-family: var(--mono);
     font-size: 10px;
     color: var(--ink-mute);

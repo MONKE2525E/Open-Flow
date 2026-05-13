@@ -1,5 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { fly } from 'svelte/transition';
+  import { flip } from 'svelte/animate';
+  import { expoOut } from 'svelte/easing';
   import { icons } from '../icons';
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
@@ -101,11 +104,11 @@
           No dictations yet. Hold <kbd>Alt</kbd> <kbd>Space</kbd> to get started.
         </div>
       {:else}
-        {#each grouped as group, gi}
+        {#each grouped as group, gi (group.label)}
           <div class="day-head" class:muted={gi > 0}>{group.label}</div>
           <div class="day-table">
-            {#each group.rows as r}
-              <div class="day-row">
+            {#each group.rows as r (r.id)}
+              <div class="day-row" in:fly={{ y: -10, duration: 400, easing: expoOut }} animate:flip={{ duration: 400, easing: expoOut }}>
                 <div class="day-time">{fmtTime(r.created_at)}</div>
                 <div class="day-text">{r.clean_text}</div>
                 <button

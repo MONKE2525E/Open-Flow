@@ -10,6 +10,8 @@
   import Settings from './lib/views/Settings.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
+  import { fly } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
 
   const accentMap: Record<string, [string, string, string]> = {
     terracotta: ['oklch(0.62 0.14 40)',  'oklch(0.94 0.03 40)',   'oklch(0.42 0.12 40)'],
@@ -62,20 +64,22 @@
   <div class="body">
     <Sidebar />
     <div class="content">
-      {#if $currentPage === 'home'}
-        <Home />
-      {:else if $currentPage === 'dictionary'}
-        <Dictionary />
-      {:else if $currentPage === 'snippets'}
-        <Snippets />
-      {:else if $currentPage === 'style'}
-        <Style />
-      {/if}
+      {#key $currentPage}
+        <div class="page-wrapper" in:fly={{ y: 8, duration: 400, delay: 150, easing: expoOut }} out:fly={{ y: -8, duration: 150, easing: expoOut }}>
+          {#if $currentPage === 'home'}
+            <Home />
+          {:else if $currentPage === 'dictionary'}
+            <Dictionary />
+          {:else if $currentPage === 'snippets'}
+            <Snippets />
+          {:else if $currentPage === 'style'}
+            <Style />
+          {/if}
+        </div>
+      {/key}
     </div>
   </div>
-  {#if $settingsOpen}
-    <Settings />
-  {/if}
+  <Settings />
   <DictationPill />
 
   {#if errorToast}
@@ -203,6 +207,12 @@
     background: transparent;
     overflow-y: auto;
     position: relative;
+    display: grid;
+  }
+
+  .page-wrapper {
+    grid-area: 1 / 1;
+    min-height: 100%;
   }
 
   .error-toast {

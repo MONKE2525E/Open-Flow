@@ -1,6 +1,14 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, onDestroy, tick } from 'svelte';
+  import { fly, slide, crossfade } from 'svelte/transition';
+  import { flip } from 'svelte/animate';
+  import { expoOut } from 'svelte/easing';
+
+  const [send, receive] = crossfade({
+    duration: 300,
+    easing: expoOut,
+  });
 
   let tab = $state('cleanup');
   let intensity = $state('medium');
@@ -143,102 +151,107 @@
         {#if t.pill}
           <span class="pill">{t.pill}</span>
         {/if}
+        {#if tab === t.id}
+          <div class="active-bar" in:receive={{key: 'tab'}} out:send={{key: 'tab'}}></div>
+        {/if}
       </button>
     {/each}
   </div>
 
-  {#if tab === 'cleanup'}
-    <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Open Flow does.</span></p>
-    <div class="style-grid four">
-      {#each cleanupCards as c}
-        <div class="style-card" class:active={intensity === c.id} role="button" tabindex="0"
-          onclick={() => selectIntensity(c.id)}
-          onkeydown={(e) => e.key === 'Enter' && selectIntensity(c.id)}>
-          <h4>{c.name}</h4>
-          <p class="desc">{c.desc}</p>
-          <div class="style-sample">"{c.sample}"</div>
-        </div>
-      {/each}
-    </div>
-  {/if}
-
-  {#if tab === 'personal'}
-    <p class="style-intro">Default tone. <span>Applies to any app not explicitly mapped.</span></p>
-    <div class="style-grid">
-      {#each personalCards as c}
-        <div class="style-card" class:active={tone === c.id} role="button" tabindex="0"
-          onclick={() => selectTone(c.id)}
-          onkeydown={(e) => e.key === 'Enter' && selectTone(c.id)}>
-          <h4>{c.name}</h4>
-          <p class="desc">{c.desc}</p>
-          <div class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</div>
-        </div>
-      {/each}
-    </div>
-  {/if}
-
-  {#if tab === 'apps'}
-    <p class="style-intro">App Mappings. <span>Automatically switch tone based on the active window.</span></p>
-    
-    <div class="mapping-list">
-      {#each mappings as m, i}
-        <div class="mapping-item">
-          <div class="mapping-info">
-            <span class="exe">{m.exe}</span>
-            <span class="arr">→</span>
-            <span class="prof">{m.profile}</span>
+  <div class="tab-content-area">
+    {#key tab}
+      <div class="tab-wrapper" in:fly={{ y: 8, duration: 400, delay: 150, easing: expoOut }} out:fly={{ y: -8, duration: 150, easing: expoOut }}>
+        {#if tab === 'cleanup'}
+          <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Open Flow does.</span></p>
+          <div class="style-grid four">
+            {#each cleanupCards as c}
+              <div class="style-card" class:active={intensity === c.id} role="button" tabindex="0"
+                onclick={() => selectIntensity(c.id)}
+                onkeydown={(e) => e.key === 'Enter' && selectIntensity(c.id)}>
+                <h4>{c.name}</h4>
+                <p class="desc">{c.desc}</p>
+                <div class="style-sample">"{c.sample}"</div>
+              </div>
+            {/each}
           </div>
-          <button class="icon-btn del-btn" aria-label="Remove mapping" onclick={() => removeMapping(i)}>✕</button>
-        </div>
-      {/each}
-    </div>
+        {:else if tab === 'personal'}
+          <p class="style-intro">Default tone. <span>Applies to any app not explicitly mapped.</span></p>
+          <div class="style-grid">
+            {#each personalCards as c}
+              <div class="style-card" class:active={tone === c.id} role="button" tabindex="0"
+                onclick={() => selectTone(c.id)}
+                onkeydown={(e) => e.key === 'Enter' && selectTone(c.id)}>
+                <h4>{c.name}</h4>
+                <p class="desc">{c.desc}</p>
+                <div class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</div>
+              </div>
+            {/each}
+          </div>
+        {:else if tab === 'apps'}
+          <p class="style-intro">App Mappings. <span>Automatically switch tone based on the active window.</span></p>
+          
+          <div class="mapping-list">
+            {#each mappings as m, i (m.exe)}
+              <div class="mapping-item" animate:flip={{duration: 300, easing: expoOut}} in:fly={{y: 10, duration: 300, easing: expoOut}} out:slide={{duration: 200, easing: expoOut}}>
+                <div class="mapping-info">
+                  <span class="exe">{m.exe}</span>
+                  <span class="arr">→</span>
+                  <span class="prof">{m.profile}</span>
+                </div>
+                <button class="icon-btn del-btn" aria-label="Remove mapping" onclick={() => removeMapping(i)}>✕</button>
+              </div>
+            {/each}
+          </div>
 
-    <div class="add-mapping">
-      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="app-picker-wrap" onclick={(e) => e.stopPropagation()}>
-        <input
-          class="app-search-input"
-          placeholder={areAppsLoaded ? 'Search apps…' : 'Loading apps…'}
-          bind:value={appSearch}
-          onfocus={() => { appPickerOpen = true; }}
-          oninput={() => { newExe = ''; appPickerOpen = true; }}
-          onkeydown={(e) => e.key === 'Enter' && addMapping()}
-        />
-        {#if appPickerOpen && filteredApps.length > 0}
-          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <div class="app-picker-menu" onclick={(e) => e.stopPropagation()}>
-            {#each filteredApps as app}
-              <button class="app-picker-item" onclick={() => pickApp(app)}>
-                <span class="app-picker-name">{app.name}</span>
-                <span class="app-picker-exe">{app.exe}</span>
+          <div class="add-mapping">
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div class="app-picker-wrap" onclick={(e) => e.stopPropagation()}>
+              <input
+                class="app-search-input"
+                placeholder={areAppsLoaded ? 'Search apps…' : 'Loading apps…'}
+                bind:value={appSearch}
+                onfocus={() => { appPickerOpen = true; }}
+                oninput={() => { newExe = ''; appPickerOpen = true; }}
+                onkeydown={(e) => e.key === 'Enter' && addMapping()}
+              />
+              {#if appPickerOpen && filteredApps.length > 0}
+                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                <div class="app-picker-menu" onclick={(e) => e.stopPropagation()}>
+                  {#each filteredApps as app}
+                    <button class="app-picker-item" onclick={() => pickApp(app)}>
+                      <span class="app-picker-name">{app.name}</span>
+                      <span class="app-picker-exe">{app.exe}</span>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div class="profile-select" onclick={(e) => e.stopPropagation()}>
+              <button class="profile-select-btn" onclick={() => (profileDropdownOpen = !profileDropdownOpen)}>
+                <span>{profileOptions.find(p => p.id === newProfile)?.label ?? 'Casual'}</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m6 9 6 6 6-6"/>
+                </svg>
               </button>
-            {/each}
+              {#if profileDropdownOpen}
+                <div class="profile-menu">
+                  {#each profileOptions as opt}
+                    <button
+                      class="profile-item"
+                      class:active={newProfile === opt.id}
+                      onclick={() => { newProfile = opt.id; profileDropdownOpen = false; }}
+                    >{opt.label}</button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+            <button class="btn-primary" onclick={addMapping}>Add</button>
           </div>
         {/if}
       </div>
-      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="profile-select" onclick={(e) => e.stopPropagation()}>
-        <button class="profile-select-btn" onclick={() => (profileDropdownOpen = !profileDropdownOpen)}>
-          <span>{profileOptions.find(p => p.id === newProfile)?.label ?? 'Casual'}</span>
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m6 9 6 6 6-6"/>
-          </svg>
-        </button>
-        {#if profileDropdownOpen}
-          <div class="profile-menu">
-            {#each profileOptions as opt}
-              <button
-                class="profile-item"
-                class:active={newProfile === opt.id}
-                onclick={() => { newProfile = opt.id; profileDropdownOpen = false; }}
-              >{opt.label}</button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-      <button class="btn-primary" onclick={addMapping}>Add</button>
-    </div>
-  {/if}
+    {/key}
+  </div>
 </div>
 
 <style>
@@ -246,6 +259,19 @@
     padding: 18px 28px 36px;
     max-width: 920px;
     position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+  }
+
+  .tab-content-area {
+    position: relative;
+    flex: 1;
+    display: grid;
+  }
+
+  .tab-wrapper {
+    grid-area: 1 / 1;
   }
 
   .page-h {
@@ -273,16 +299,24 @@
     color: var(--ink-mute);
     border: 0;
     background: transparent;
-    border-bottom: 1px solid transparent;
-    margin-bottom: -1px;
     display: flex;
     align-items: center;
     gap: 6px;
     cursor: pointer;
+    position: relative;
   }
 
   .tab:hover { color: var(--ink-soft); }
-  .tab.active { color: var(--ink); border-bottom-color: var(--ink); font-weight: 500; }
+  .tab.active { color: var(--ink); font-weight: 500; }
+
+  .active-bar {
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--ink);
+  }
 
   .tab .pill {
     font-family: var(--mono);
@@ -321,9 +355,19 @@
     flex-direction: column;
     min-height: 160px;
     cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .style-card:hover { background: var(--amber-50); }
+  .style-card:hover { 
+    background: var(--amber-50); 
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(13, 10, 8, 0.05);
+  }
+
+  .style-card:active {
+    transform: translateY(0) scale(0.98);
+    transition: all 0.1s cubic-bezier(0.22, 1, 0.36, 1);
+  }
 
   .style-card.active {
     background: var(--accent-soft);
@@ -353,6 +397,7 @@
     font-size: 13.5px;
     line-height: 1.5;
     color: var(--ink-soft);
+    transition: color 0.2s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .style-card.active .style-sample { color: var(--accent-ink); }

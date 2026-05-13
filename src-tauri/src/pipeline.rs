@@ -131,6 +131,10 @@ pub fn spawn_level_emitter(
     active: Arc<std::sync::atomic::AtomicBool>,
 ) {
     tauri::async_runtime::spawn(async move {
+        // Give WebView2 a brief head start to wake up and process the 
+        // "recording" state event before we flood the IPC with 16ms updates.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
         loop {
             if !active.load(Ordering::Relaxed) { break; }
             let level_val = f32::from_bits(level.load(Ordering::Relaxed));
