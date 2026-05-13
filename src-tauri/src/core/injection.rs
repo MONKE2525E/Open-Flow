@@ -50,17 +50,6 @@ pub async fn inject_text(text: &str) -> anyhow::Result<()> {
 
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-            // Key sequence to paste without triggering menu-bar activation:
-            //
-            //  1. Ctrl-down  — breaks the "Alt was pressed alone" invariant that
-            //                  DefWindowProc uses to decide whether to activate the
-            //                  menu bar on Alt-up. Previous message is now Ctrl-down,
-            //                  not Alt-down, so WM_SYSKEYUP(Alt) won't fire SC_KEYMENU.
-            //  2. Alt-up     — clears the dangling Alt-down the app received during
-            //                  recording. Without this, GetKeyState(VK_MENU) is still
-            //                  "held" and Ctrl+V is seen as Ctrl+Alt+V (no paste).
-            //  3. V-down/up  — Alt is now released; Ctrl is still held → Ctrl+V → paste.
-            //  4. Ctrl-up
             let ki = |vk, flags: u32| INPUT {
                 r#type: INPUT_KEYBOARD,
                 Anonymous: INPUT_0 {
@@ -73,14 +62,33 @@ pub async fn inject_text(text: &str) -> anyhow::Result<()> {
                     },
                 },
             };
-            let inputs = [
-                ki(VK_CONTROL,           0),
-                ki(VK_LMENU,             KEYEVENTF_KEYUP.0),
-                ki(VK_V,                 0),
-                ki(VK_V,                 KEYEVENTF_KEYUP.0),
-                ki(VK_CONTROL,           KEYEVENTF_KEYUP.0),
+
+            // Step 1 — clear any dangling Alt the target app may have from the
+            // recording gesture.  Ctrl-down is sent first so that the Alt-up is
+            // NOT the message immediately following Alt-down; this prevents
+            // DefWindowProc from firing SC_KEYMENU (menu-bar activation).
+            // We then release Ctrl so the app fully settles before the paste.
+            let clear = [
+                ki(VK_CONTROL, 0),
+                ki(VK_LMENU,   KEYEVENTF_KEYUP.0),
+                ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
             ];
-            SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+            SendInput(&clear, std::mem::size_of::<INPUT>() as i32);
+
+            // Step 2 — let the app process the modifier-state change before we
+            // inject Ctrl+V.  Without this pause, some apps (browsers, IDEs) end
+            // up processing V without Ctrl because the Alt-up and V-down land in
+            // the same message-pump cycle.
+            tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
+
+            // Step 3 — clean Ctrl+V with no dangling modifiers.
+            let paste = [
+                ki(VK_CONTROL, 0),
+                ki(VK_V,       0),
+                ki(VK_V,       KEYEVENTF_KEYUP.0),
+                ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
+            ];
+            SendInput(&paste, std::mem::size_of::<INPUT>() as i32);
             tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
 
             // Restore clipboard

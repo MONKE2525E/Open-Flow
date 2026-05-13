@@ -1,17 +1,13 @@
 use anyhow::{Context, Result};
 use reqwest::multipart;
-use serde::Deserialize;
+
+use super::gemini_types::GeminiResp;
 
 #[derive(Clone, Debug)]
 pub enum Provider {
     Groq,
     OpenAI,
     Google,
-}
-
-#[derive(Deserialize)]
-struct WhisperResponse {
-    text: String,
 }
 
 /// Single Gemini call that both transcribes the audio and applies the cleanup
@@ -22,7 +18,6 @@ pub async fn transcribe_and_cleanup_gemini(
     api_key: &str,
     profile_prompt: &str,
 ) -> Result<String> {
-    // Splice the profile rules into a single instruction so one model call does both jobs.
     let instruction = format!(
         "Transcribe this audio, then immediately apply the following formatting rules to your \
          transcription output.\n\n{profile_prompt}\n\nReturn ONLY the final cleaned text — \
@@ -49,8 +44,6 @@ pub async fn transcribe(wav: Vec<u8>, provider: Provider, api_key: &str) -> Resu
         )
         .await,
 
-        // Use Gemini multimodal audio — same key as Gemini cleanup (Google AI Studio).
-        // Google Cloud Speech-to-Text requires a separate Cloud project key; Gemini does not.
         Provider::Google => transcribe_gemini(wav, api_key).await,
     }
 }
@@ -61,6 +54,11 @@ async fn transcribe_whisper(
     url: &str,
     model: &str,
 ) -> Result<String> {
+    #[derive(serde::Deserialize)]
+    struct WhisperResponse {
+        text: String,
+    }
+
     let part = multipart::Part::bytes(wav)
         .file_name("audio.wav")
         .mime_str("audio/wav")?;
@@ -89,26 +87,6 @@ async fn transcribe_gemini(wav: Vec<u8>, api_key: &str) -> Result<String> {
 }
 
 async fn transcribe_gemini_with_prompt(wav: Vec<u8>, api_key: &str, prompt: &str, disable_thinking: bool) -> Result<String> {
-    #[derive(Deserialize, Debug)]
-    struct Resp {
-        candidates: Option<Vec<Candidate>>,
-        #[serde(rename = "promptFeedback")]
-        prompt_feedback: Option<serde_json::Value>,
-    }
-
-    #[derive(Deserialize, Debug)]
-    struct Candidate {
-        content: Option<RespContent>,
-        #[serde(rename = "finishReason")]
-        finish_reason: Option<String>,
-    }
-
-    #[derive(Deserialize, Debug)]
-    struct RespContent { parts: Vec<RespPart> }
-
-    #[derive(Deserialize, Debug)]
-    struct RespPart { text: Option<String> }
-
     let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &wav);
 
     let mut body = serde_json::json!({
@@ -144,10 +122,9 @@ async fn transcribe_gemini_with_prompt(wav: Vec<u8>, api_key: &str, prompt: &str
     let raw_body = resp.text().await?;
     log::debug!("Gemini transcription response: {raw_body}");
 
-    let data: Resp = serde_json::from_str(&raw_body)
+    let data: GeminiResp = serde_json::from_str(&raw_body)
         .with_context(|| format!("Gemini parse error. Response: {raw_body}"))?;
 
-    // Surface blocked/filtered responses as an explicit error
     if let Some(fb) = &data.prompt_feedback {
         if let Some(reason) = fb.get("blockReason").and_then(|v| v.as_str()) {
             anyhow::bail!("Gemini blocked: {reason}");

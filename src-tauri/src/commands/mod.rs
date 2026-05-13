@@ -1,0 +1,148 @@
+use tauri::{AppHandle, Manager};
+use tauri_plugin_store::StoreExt;
+
+use crate::data::{db, store};
+use crate::media::audio;
+use crate::pipeline::{self, SharedState};
+use crate::system::apps::{AppMapping, InstalledApp};
+use crate::DbHandle;
+
+// ---------- API keys ----------
+
+#[tauri::command]
+pub async fn save_api_key(app: AppHandle, provider: String, key: String) -> Result<(), String> {
+    let store = app.store("settings.json").map_err(|e| e.to_string())?;
+    let k = match provider.as_str() {
+        "groq"   => store::KEY_GROQ,
+        "openai" => store::KEY_OPENAI,
+        "google" => store::KEY_GOOGLE,
+        _        => return Err(format!("Unknown provider: {provider}")),
+    };
+    store.set(k, serde_json::json!(key));
+    store.save().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_api_key_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    let store = app.store("settings.json").map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "groq":   store.get(store::KEY_GROQ).is_some(),
+        "openai": store.get(store::KEY_OPENAI).is_some(),
+        "google": store.get(store::KEY_GOOGLE).is_some(),
+    }))
+}
+
+// ---------- generic settings ----------
+
+#[tauri::command]
+pub async fn save_setting(app: AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
+    let store = app.store("settings.json").map_err(|e| e.to_string())?;
+    store.set(key, value);
+    store.save().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_setting(app: AppHandle, key: String) -> Result<Option<serde_json::Value>, String> {
+    let store = app.store("settings.json").map_err(|e| e.to_string())?;
+    Ok(store.get(&key))
+}
+
+// ---------- window management ----------
+
+#[tauri::command]
+pub async fn show_main(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("main") {
+        w.show().ok(); w.set_focus().ok();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn hide_main(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("main") { w.hide().ok(); }
+    Ok(())
+}
+
+// ---------- history / stats ----------
+
+#[tauri::command]
+pub fn get_recent(app: AppHandle) -> Result<Vec<db::RecentEntry>, String> {
+    let db = app.state::<DbHandle>();
+    db::query_recent(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
+    let db = app.state::<DbHandle>();
+    db::query_stats(&db).map_err(|e| e.to_string())
+}
+
+// ---------- microphone ----------
+
+#[tauri::command]
+pub fn get_microphones() -> Vec<String> {
+    audio::list_input_devices()
+}
+
+// ---------- memory ----------
+
+#[tauri::command]
+pub fn get_memory_mb() -> u64 {
+    crate::system::memory::measure()
+}
+
+// ---------- recording control ----------
+
+#[tauri::command]
+pub async fn stop_recording(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    let session = {
+        let mut st = state.lock().unwrap();
+        st.handless = false;
+        st.session.take()
+    };
+    if let Some(s) = session {
+        let _ = s.stop();
+    }
+    pipeline::hide_pill(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_handless_mode(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    state.lock().unwrap().handless = false;
+    tauri::async_runtime::spawn(pipeline::run_pipeline(app, state.inner().clone()));
+    Ok(())
+}
+
+// ---------- app mappings ----------
+
+#[tauri::command]
+pub fn get_installed_apps() -> Vec<InstalledApp> {
+    crate::system::apps::list_installed_apps()
+}
+
+#[tauri::command]
+pub async fn get_app_mappings(app: AppHandle) -> Result<Vec<AppMapping>, String> {
+    let store = app.store("settings.json").map_err(|e| e.to_string())?;
+    let mappings = store
+        .get(store::APP_MAPPINGS)
+        .and_then(|v| serde_json::from_value::<Vec<AppMapping>>(v).ok())
+        .unwrap_or_default();
+    Ok(mappings)
+}
+
+#[tauri::command]
+pub async fn save_app_mappings(app: AppHandle, mappings: Vec<AppMapping>) -> Result<(), String> {
+    let store = app.store("settings.json").map_err(|e| e.to_string())?;
+    store.set(
+        store::APP_MAPPINGS,
+        serde_json::to_value(mappings).unwrap(),
+    );
+    store.save().map_err(|e| e.to_string())
+}

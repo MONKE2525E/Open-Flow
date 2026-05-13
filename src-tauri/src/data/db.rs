@@ -104,7 +104,6 @@ pub fn query_stats(db: &Db) -> Result<Stats> {
         |r| r.get(0),
     )?;
 
-    // Day streak
     let mut stmt = conn.prepare(
         "SELECT DISTINCT date(created_at) FROM transcriptions ORDER BY 1 DESC"
     )?;
@@ -113,16 +112,23 @@ pub fn query_stats(db: &Db) -> Result<Stats> {
         .collect();
 
     let today = chrono::Utc::now().date_naive();
+    let day_streak = compute_streak(&dates, today);
+
+    Ok(Stats { total_words, avg_wpm, day_streak })
+}
+
+/// Pure function: given a descending list of ISO date strings and a reference
+/// date, returns the consecutive-day streak ending on or before `today`.
+pub fn compute_streak(dates: &[String], today: chrono::NaiveDate) -> i64 {
     let mut streak = 0i64;
     let mut expected = today;
-    for d in &dates {
+    for d in dates {
         if let Ok(parsed) = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
-            if parsed == expected {
-                streak += 1;
-                expected = match expected.pred_opt() { Some(d) => d, None => break };
-            } else { break; }
+            if parsed != expected { break; }
+            streak += 1;
+            let Some(prev) = expected.pred_opt() else { break };
+            expected = prev;
         }
     }
-
-    Ok(Stats { total_words, avg_wpm, day_streak: streak })
+    streak
 }

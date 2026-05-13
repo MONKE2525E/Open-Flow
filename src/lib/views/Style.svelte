@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { invoke } from '@tauri-apps/api/core';
+  import { onMount, onDestroy } from 'svelte';
+
   let tab = $state('cleanup');
   let intensity = $state('medium');
   let tone = $state('casual');
@@ -10,10 +13,10 @@
   ];
 
   const cleanupCards = [
-    { id: 'none',   name: 'Verbatim', desc: 'Transcribes exactly what you said.',     sample: "so um yeah we should probably leave a bit earlier i think because there might be traffic" },
-    { id: 'light',  name: 'Light',    desc: 'Removes filler words.',                  sample: "Yeah, we should probably leave a bit earlier. There might be traffic." },
-    { id: 'medium', name: 'Medium',   desc: 'Edits for clarity and concision.',       sample: "We should leave earlier — there's likely traffic. Thoughts?" },
-    { id: 'high',   name: 'Direct',   desc: 'Rewrites for brevity.',                  sample: "Let's leave early to beat traffic." },
+    { id: 'none',   name: 'Verbatim', desc: 'Exactly what you said, word for word.',  sample: "so um i was thinking like we should probably leave a bit earlier you know cause there's gonna be traffic i think" },
+    { id: 'light',  name: 'Light',    desc: 'Removes filler words, nothing else.',    sample: "i was thinking we should probably leave a bit earlier, cause there's gonna be traffic i think" },
+    { id: 'medium', name: 'Medium',   desc: 'Cleans it up, keeps your words.',        sample: "I think we should leave a bit earlier — there's going to be traffic." },
+    { id: 'high',   name: 'Direct',   desc: 'Rewrites for max brevity.',              sample: "Leave early. Traffic." },
   ];
 
   const personalCards = [
@@ -23,24 +26,67 @@
     { id: 'code',   name: 'Code',   desc: 'No conversational filler. Raw syntax.',    sample: "def hello_world():\n    print('hello')" },
   ];
 
-  let mappings = $state([
+  const DEFAULT_MAPPINGS = [
     { exe: 'code.exe', profile: 'code' },
     { exe: 'cursor.exe', profile: 'code' },
     { exe: 'winword.exe', profile: 'formal' },
     { exe: 'discord.exe', profile: 'casual' }
-  ]);
+  ];
+
+  const profileOptions = [
+    { id: 'casual', label: 'Casual' },
+    { id: 'formal', label: 'Formal' },
+    { id: 'plain',  label: 'Plain' },
+    { id: 'code',   label: 'Code' },
+  ];
+
+  let mappings = $state(DEFAULT_MAPPINGS);
   let newExe = $state('');
   let newProfile = $state('casual');
+  let profileDropdownOpen = $state(false);
+
+  function handleWindowClick() { profileDropdownOpen = false; }
+
+  onMount(async () => {
+    window.addEventListener('click', handleWindowClick);
+    try {
+      const [savedTone, savedIntensity, savedMappings] = await Promise.all([
+        invoke<string | null>('get_setting', { key: 'default_tone' }),
+        invoke<string | null>('get_setting', { key: 'cleanup_intensity' }),
+        invoke<{ exe: string; profile: string }[] | null>('get_setting', { key: 'app_mappings' }),
+      ]);
+      if (savedTone) tone = savedTone as string;
+      if (savedIntensity) intensity = savedIntensity as string;
+      if (savedMappings) mappings = savedMappings as { exe: string; profile: string }[];
+    } catch { /* dev mode without Tauri */ }
+  });
+
+  onDestroy(() => { window.removeEventListener('click', handleWindowClick); });
+
+  function selectIntensity(id: string) {
+    intensity = id;
+    invoke('save_setting', { key: 'cleanup_intensity', value: id });
+  }
+
+  function selectTone(id: string) {
+    tone = id;
+    invoke('save_setting', { key: 'default_tone', value: id });
+  }
+
+  function saveMappings(updated: { exe: string; profile: string }[]) {
+    mappings = updated;
+    invoke('save_setting', { key: 'app_mappings', value: updated });
+  }
 
   function addMapping() {
     if (newExe.trim()) {
-      mappings = [...mappings, { exe: newExe.trim().toLowerCase(), profile: newProfile }];
+      saveMappings([...mappings, { exe: newExe.trim().toLowerCase(), profile: newProfile }]);
       newExe = '';
     }
   }
 
   function removeMapping(index: number) {
-    mappings = mappings.filter((_, i) => i !== index);
+    saveMappings(mappings.filter((_, i) => i !== index));
   }
 </script>
 
@@ -64,8 +110,8 @@
     <div class="style-grid four">
       {#each cleanupCards as c}
         <div class="style-card" class:active={intensity === c.id} role="button" tabindex="0"
-          onclick={() => (intensity = c.id)}
-          onkeydown={(e) => e.key === 'Enter' && (intensity = c.id)}>
+          onclick={() => selectIntensity(c.id)}
+          onkeydown={(e) => e.key === 'Enter' && selectIntensity(c.id)}>
           <h4>{c.name}</h4>
           <p class="desc">{c.desc}</p>
           <div class="style-sample">"{c.sample}"</div>
@@ -79,8 +125,8 @@
     <div class="style-grid">
       {#each personalCards as c}
         <div class="style-card" class:active={tone === c.id} role="button" tabindex="0"
-          onclick={() => (tone = c.id)}
-          onkeydown={(e) => e.key === 'Enter' && (tone = c.id)}>
+          onclick={() => selectTone(c.id)}
+          onkeydown={(e) => e.key === 'Enter' && selectTone(c.id)}>
           <h4>{c.name}</h4>
           <p class="desc">{c.desc}</p>
           <div class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</div>
@@ -107,13 +153,27 @@
 
     <div class="add-mapping">
       <input type="text" placeholder="e.g. slack.exe" bind:value={newExe} onkeydown={(e) => e.key === 'Enter' && addMapping()} />
-      <select bind:value={newProfile}>
-        <option value="casual">Casual</option>
-        <option value="formal">Formal</option>
-        <option value="plain">Plain</option>
-        <option value="code">Code</option>
-      </select>
-      <button class="btn-primary" onclick={addMapping}>Add Mapping</button>
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="profile-select" onclick={(e) => e.stopPropagation()}>
+        <button class="profile-select-btn" onclick={() => (profileDropdownOpen = !profileDropdownOpen)}>
+          <span>{profileOptions.find(p => p.id === newProfile)?.label ?? 'Casual'}</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </button>
+        {#if profileDropdownOpen}
+          <div class="profile-menu">
+            {#each profileOptions as opt}
+              <button
+                class="profile-item"
+                class:active={newProfile === opt.id}
+                onclick={() => { newProfile = opt.id; profileDropdownOpen = false; }}
+              >{opt.label}</button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <button class="btn-primary" onclick={addMapping}>Add</button>
     </div>
   {/if}
 </div>
@@ -294,16 +354,59 @@
   }
   .add-mapping input:focus { border-color: var(--ink-mute); }
 
-  .add-mapping select {
+  .profile-select {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .profile-select-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 12px;
     background: transparent;
     border: 1px solid var(--line);
-    padding: 0 12px;
-    height: 34px;
     border-radius: var(--r-sm);
     font-size: 13px;
+    font-family: var(--sans);
     color: var(--ink);
-    outline: none;
+    cursor: pointer;
+    white-space: nowrap;
   }
+
+  .profile-select-btn:hover { background: var(--amber-50); border-color: var(--ink-mute); }
+
+  .profile-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    box-shadow: 0 8px 24px rgba(13,10,8,0.14);
+    min-width: 110px;
+    z-index: 20;
+    overflow: hidden;
+  }
+
+  .profile-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: var(--sans);
+    color: var(--ink);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+  }
+
+  .profile-item:last-child { border-bottom: none; }
+  .profile-item:hover { background: var(--paper); }
+  .profile-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
 
   .btn-primary {
     background: var(--ink);

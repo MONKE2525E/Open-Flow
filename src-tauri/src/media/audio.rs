@@ -4,11 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc;
 
-/// Amplify mic input before encoding for the transcription API.
 const AUDIO_GAIN: f32 = 3.5;
-
-/// Separate multiplier used only for the pill level indicator.
-/// Much higher than AUDIO_GAIN so the bars respond to normal speech, not just loud taps.
 const DISPLAY_GAIN: f32 = 15.0;
 
 pub fn list_input_devices() -> Vec<String> {
@@ -22,15 +18,13 @@ pub fn list_input_devices() -> Vec<String> {
 /// Runs on a dedicated thread so cpal's !Send stream stays contained.
 pub struct RecordingSession {
     stop_tx: mpsc::SyncSender<()>,
-    result_rx: mpsc::Receiver<Result<(Vec<u8>, u64)>>,
-    /// Current RMS level of the (already-gained) input, as f32 bits.
+    result_rx: mpsc::Receiver<Result<(Vec<u8>, u64, f32)>>,
     pub level: Arc<AtomicU32>,
-    /// True while the audio thread is actively capturing.
     pub active: Arc<AtomicBool>,
 }
 
 impl RecordingSession {
-    pub fn start(device_name: Option<String>) -> Result<Self> {
+    pub fn start(device_name: Option<String>, noise_reduction: bool) -> Result<Self> {
         let host = cpal::default_host();
         let device = if let Some(name) = device_name {
             host.input_devices()?
@@ -64,10 +58,8 @@ impl RecordingSession {
                 cpal::SampleFormat::F32 => device.build_input_stream(
                     &config.into(),
                     move |data: &[f32], _| {
-                        // Display level uses raw RMS × DISPLAY_GAIN, capped at 1.0
                         let display = (rms_f32(data) * DISPLAY_GAIN).min(1.0);
                         level_cb.store(display.to_bits(), Ordering::Relaxed);
-                        // WAV samples use the API gain
                         let gained: Vec<f32> = data.iter()
                             .map(|&s| (s * AUDIO_GAIN).clamp(-1.0, 1.0))
                             .collect();
@@ -114,17 +106,25 @@ impl RecordingSession {
             active_w.store(false, Ordering::Relaxed);
             level_w.store(0f32.to_bits(), Ordering::Relaxed);
 
-            let data = samples.lock().unwrap().clone();
+            let data = std::mem::take(&mut *samples.lock().unwrap());
             let dur_ms = data.len() as u64 * 1000
                 / (sample_rate as u64 * channels as u64);
 
-            // Downsample to 16kHz mono before encoding.
-            // Speech only needs up to ~8kHz (Nyquist) and APIs transfer less data.
-            // A 5s clip at 48kHz stereo is ~960KB; at 16kHz mono it's ~160KB.
-            let (encode_data, encode_rate) = downsample_to_16k(&data, sample_rate, channels);
+            // RMS on post-gain samples; divide out the gain to get an
+            // approximation of the original mic level for silence detection.
+            let overall_rms = rms_f32(&data) / AUDIO_GAIN;
+
+            // Denoise then resample, or go straight to resample.
+            let (encode_data, encode_rate) = if noise_reduction {
+                let mono = mix_to_mono(&data, channels);
+                let denoised = denoise_mono(&mono);
+                resample_to_16k(&denoised, sample_rate)
+            } else {
+                downsample_to_16k(&data, sample_rate, channels)
+            };
 
             let result = encode_wav(&encode_data, encode_rate, 1)
-                .map(|wav| (wav, dur_ms));
+                .map(|wav| (wav, dur_ms, overall_rms));
 
             let _ = result_tx.send(result);
         });
@@ -132,7 +132,7 @@ impl RecordingSession {
         Ok(RecordingSession { stop_tx, result_rx, level, active })
     }
 
-    pub fn stop(self) -> Result<(Vec<u8>, u64)> {
+    pub fn stop(self) -> Result<(Vec<u8>, u64, f32)> {
         let _ = self.stop_tx.send(());
         self.result_rx
             .recv()
@@ -140,31 +140,66 @@ impl RecordingSession {
     }
 }
 
-/// Collapse multi-channel interleaved PCM to mono, then resample to 16kHz
-/// using linear interpolation. 16kHz captures speech up to 8kHz (well above
-/// the ~4kHz formant ceiling of human voice) while cutting file size ~6x
-/// compared to a typical 48kHz stereo capture.
-fn downsample_to_16k(data: &[f32], sample_rate: u32, channels: u16) -> (Vec<f32>, u32) {
-    const TARGET: u32 = 16_000;
+/// Apply RNNoise-based noise suppression to a mono f32 buffer at native rate.
+/// nnnoiseless expects samples in the i16 amplitude range [-32768, 32767].
+/// Processes in 480-sample frames (10 ms at 48 kHz); the last partial frame
+/// is zero-padded. Output is rescaled back to [-1, 1].
+fn denoise_mono(samples: &[f32]) -> Vec<f32> {
+    use nnnoiseless::DenoiseState;
+    const FRAME: usize = DenoiseState::FRAME_SIZE; // 480
 
-    // Mix down to mono
-    let mono: Vec<f32> = if channels == 1 {
-        data.to_vec()
-    } else {
-        let ch = channels as usize;
-        data.chunks(ch)
-            .map(|frame| frame.iter().sum::<f32>() / ch as f32)
-            .collect()
-    };
-
-    if sample_rate == TARGET {
-        return (mono, TARGET);
+    if samples.is_empty() {
+        return Vec::new();
     }
 
+    let mut state = DenoiseState::new();
+    let mut out = Vec::with_capacity(samples.len());
+    let mut frame_in  = [0.0f32; FRAME];
+    let mut frame_out = [0.0f32; FRAME];
+
+    let mut i = 0;
+    while i < samples.len() {
+        let end = (i + FRAME).min(samples.len());
+        let chunk = &samples[i..end];
+        let chunk_len = chunk.len();
+
+        // Scale [-1,1] → i16 range for nnnoiseless
+        for (dst, &src) in frame_in[..chunk_len].iter_mut().zip(chunk) {
+            *dst = src * 32767.0;
+        }
+        frame_in[chunk_len..].fill(0.0);
+
+        state.process_frame(&mut frame_out, &frame_in);
+
+        // Scale back to [-1,1]
+        for &s in &frame_out[..chunk_len] {
+            out.push((s / 32767.0).clamp(-1.0, 1.0));
+        }
+
+        i += FRAME;
+    }
+
+    out
+}
+
+fn mix_to_mono(data: &[f32], channels: u16) -> Vec<f32> {
+    if channels == 1 {
+        return data.to_vec();
+    }
+    let ch = channels as usize;
+    data.chunks(ch)
+        .map(|frame| frame.iter().sum::<f32>() / ch as f32)
+        .collect()
+}
+
+fn resample_to_16k(mono: &[f32], sample_rate: u32) -> (Vec<f32>, u32) {
+    const TARGET: u32 = 16_000;
+    if sample_rate == TARGET {
+        return (mono.to_vec(), TARGET);
+    }
     let ratio = sample_rate as f64 / TARGET as f64;
     let out_len = (mono.len() as f64 / ratio).ceil() as usize;
     let last = mono.len().saturating_sub(1);
-
     let resampled = (0..out_len)
         .map(|i| {
             let src = i as f64 * ratio;
@@ -174,8 +209,13 @@ fn downsample_to_16k(data: &[f32], sample_rate: u32, channels: u16) -> (Vec<f32>
             mono[lo] * (1.0 - t) + mono[hi] * t
         })
         .collect();
-
     (resampled, TARGET)
+}
+
+/// Collapse multi-channel interleaved PCM to mono, then resample to 16 kHz.
+fn downsample_to_16k(data: &[f32], sample_rate: u32, channels: u16) -> (Vec<f32>, u32) {
+    let mono = mix_to_mono(data, channels);
+    resample_to_16k(&mono, sample_rate)
 }
 
 fn rms_f32(data: &[f32]) -> f32 {

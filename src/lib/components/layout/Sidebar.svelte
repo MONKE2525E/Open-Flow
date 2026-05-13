@@ -2,11 +2,14 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { currentPage, settingsOpen } from '../../stores';
+  import { icons } from '../../icons';
 
   let memoryMb = $state(0);
 
   onMount(() => {
-    const refresh = async () => { memoryMb = await invoke<number>('get_memory_mb'); };
+    const refresh = async () => {
+      try { memoryMb = await invoke<number>('get_memory_mb'); } catch { /* dev mode */ }
+    };
     refresh();
     const id = setInterval(refresh, 2000);
     return () => clearInterval(id);
@@ -18,15 +21,6 @@
     { id: 'snippets',   label: 'Snippets',   icon: 'scissors', locked: true  },
     { id: 'style',      label: 'Style',      icon: 'type',     locked: false },
   ] as const;
-
-  // 24×24 viewBox SVG paths
-  const paths: Record<string, string> = {
-    home:     `<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>`,
-    book:     `<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h8M8 11h6"/>`,
-    scissors: `<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12"/>`,
-    type:     `<path d="M4 6V4h16v2"/><path d="M9 20h6M12 4v16"/>`,
-    settings: `<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>`,
-  };
 
   function nav(id: string) {
     if (id === 'settings') { $settingsOpen = true; return; }
@@ -58,7 +52,7 @@
         onkeydown={(e) => e.key === 'Enter' && !item.locked && nav(item.id)}
       >
         <!-- svelte-ignore html-self-closing -->
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html paths[item.icon]}</svg>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons[item.icon]}</svg>
         <span>{item.label}</span>
         {#if item.locked}
           <span class="lock-tag">Soon</span>
@@ -77,7 +71,7 @@
       onclick={() => nav('settings')}
       onkeydown={(e) => e.key === 'Enter' && nav('settings')}
     >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html paths.settings}</svg>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons.settings}</svg>
       <span>Settings</span>
     </div>
   </div>

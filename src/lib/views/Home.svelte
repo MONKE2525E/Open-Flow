@@ -1,8 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { icons } from '../icons';
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
   interface Stats { total_words: number; avg_wpm: number; day_streak: number; }
+
+  let copiedId: number | null = null;
+
+  async function copyText(entry: Entry) {
+    try {
+      await navigator.clipboard.writeText(entry.clean_text);
+      copiedId = entry.id;
+      setTimeout(() => { copiedId = null; }, 1500);
+    } catch { /* clipboard not available in dev */ }
+  }
 
   let recents: Entry[] = [];
   let stats: Stats = { total_words: 0, avg_wpm: 0, day_streak: 0 };
@@ -97,6 +108,21 @@
               <div class="day-row">
                 <div class="day-time">{fmtTime(r.created_at)}</div>
                 <div class="day-text">{r.clean_text}</div>
+                <button
+                  class="copy-btn"
+                  class:copied={copiedId === r.id}
+                  onclick={() => copyText(r)}
+                  title="Copy to clipboard"
+                  aria-label="Copy"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    {#if copiedId === r.id}
+                      {@html icons.check}
+                    {:else}
+                      {@html icons.copy}
+                    {/if}
+                  </svg>
+                </button>
               </div>
             {/each}
           </div>
@@ -225,7 +251,7 @@
 
   .day-row {
     display: grid;
-    grid-template-columns: 84px 1fr;
+    grid-template-columns: 84px 1fr auto;
     align-items: start;
     padding: 11px 4px;
     border-bottom: 1px solid var(--line);
@@ -233,6 +259,26 @@
     cursor: default;
   }
   .day-row:hover { background: var(--amber-100); }
+  .day-row:not(:hover) .copy-btn { opacity: 0; pointer-events: none; }
+
+  .copy-btn {
+    all: unset;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    color: var(--ink-mute);
+    opacity: 0.45;
+    transition: color 0.12s, opacity 0.12s;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .copy-btn:hover { opacity: 0.9; }
+  .copy-btn.copied { color: var(--jap-500, #d97757); opacity: 1; }
+  .copy-btn svg { width: 10px; height: 10px; }
 
   .day-time {
     font-family: var(--mono);

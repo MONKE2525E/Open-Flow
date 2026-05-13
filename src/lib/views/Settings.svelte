@@ -1,18 +1,33 @@
 <script lang="ts">
   import { settingsOpen } from '../stores';
+  import { icons } from '../icons';
   import { tick, onMount } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
 
   let section = 'general';
   let prevSection: string | null = null;
   let animDir: 'up' | 'down' | null = null;
   let isAnimating = false;
-  let modalReady = false;
+  let isModalReady = false;
 
   // API key status — true means a key is saved; never expose the value
   let keyStatus = { groq: false, openai: false, google: false };
 
   // Draft key inputs (only held in memory while settings is open, never read back from store)
   let draftKeys = { groq: '', openai: '', google: '' };
+
+  // App mappings state
+  interface InstalledApp { name: string; exe: string; }
+  interface AppMapping { exe: string; profile: string; name: string; }
+
+  let mappings: AppMapping[] = [];
+  let installedApps: InstalledApp[] = [];
+  let areAppsLoaded = false;
+  let addExe = '';
+  let addName = '';
+  let addProfile = 'casual';
+  let appSearch = '';
+  let appPickerOpen = false;
 
   // Microphone state
   let microphones: string[] = [];
@@ -24,22 +39,104 @@
   let cleanupModel = 'groq/llama-3.3-70b-versatile';
 
   // Toggle states
-  let toggleState = { cleanup: true, autoLearn: true, crashReports: false };
+  let toggleState = { cleanup: true, noiseReduction: true };
 
-  const sectionOrder = ['general','keys','models','privacy','advanced','about'];
+  // Transcription history retention dropdown
+  let historyRetention = '30 days';
+  let historyDropdownOpen = false;
+  const historyOptions = ['7 days', '30 days', '90 days', 'Forever'];
+
+  const sectionOrder = ['general','apps','keys','models','privacy','advanced','about'];
+  const profiles = [
+    { id: 'casual',      label: 'Casual' },
+    { id: 'formal',      label: 'Formal' },
+    { id: 'plain',       label: 'Plain' },
+    { id: 'code',        label: 'Code' },
+    { id: 'email',       label: 'Email' },
+    { id: 'excited',     label: 'Excited' },
+    { id: 'very_casual', label: 'Very Casual' },
+  ];
 
   $: if ($settingsOpen) {
-    tick().then(() => tick()).then(() => { modalReady = true; });
+    tick().then(() => tick()).then(() => { isModalReady = true; });
     loadSettings();
   } else {
-    modalReady = false;
+    isModalReady = false;
     draftKeys = { groq: '', openai: '', google: '' };
     micDropdownOpen = false;
+    appPickerOpen = false;
+  }
+
+  async function loadMappings() {
+    try {
+      mappings = await invoke<AppMapping[]>('get_app_mappings');
+    } catch { /* dev mode */ }
+  }
+
+  async function loadInstalledApps() {
+    if (areAppsLoaded) return;
+    try {
+      installedApps = await invoke<InstalledApp[]>('get_installed_apps');
+      areAppsLoaded = true;
+    } catch { /* dev mode */ }
+  }
+
+  async function deleteMapping(exe: string) {
+    mappings = mappings.filter(m => m.exe !== exe);
+    try {
+      await invoke('save_app_mappings', { mappings });
+    } catch {}
+  }
+
+  async function addMapping() {
+    if (!addExe) return;
+    const existing = mappings.findIndex(m => m.exe === addExe);
+    const entry: AppMapping = { exe: addExe, profile: addProfile, name: addName || addExe };
+    if (existing >= 0) {
+      mappings = mappings.map((m, i) => i === existing ? entry : m);
+    } else {
+      mappings = [...mappings, entry];
+    }
+    try {
+      await invoke('save_app_mappings', { mappings });
+    } catch {}
+    addExe = '';
+    addName = '';
+    addProfile = 'casual';
+    appSearch = '';
+    appPickerOpen = false;
+  }
+
+  function pickApp(app: InstalledApp) {
+    addExe = app.exe;
+    addName = app.name;
+    appSearch = app.name;
+    appPickerOpen = false;
+  }
+
+  $: filteredApps = appSearch
+    ? installedApps.filter(a =>
+        a.name.toLowerCase().includes(appSearch.toLowerCase()) ||
+        a.exe.toLowerCase().includes(appSearch.toLowerCase())
+      ).slice(0, 40)
+    : installedApps.slice(0, 40);
+
+  function closeAppPicker(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    if (!target.closest('.app-picker-wrap')) appPickerOpen = false;
+  }
+
+  $: if (appPickerOpen) {
+    tick().then(() => window.addEventListener('click', closeAppPicker, { once: true }));
+  }
+
+  $: if (section === 'apps' && $settingsOpen) {
+    loadMappings();
+    loadInstalledApps();
   }
 
   async function loadSettings() {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       keyStatus = await invoke('get_api_key_status');
       microphones = await invoke<string[]>('get_microphones');
 
@@ -50,9 +147,14 @@
       if (cModel) cleanupModel = cModel;
 
       const cleanupEnabled = await invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' });
-      if (cleanupEnabled !== null && cleanupEnabled !== undefined) {
-        toggleState = { ...toggleState, cleanup: cleanupEnabled };
-      }
+      const noiseReduction = await invoke<boolean | null>('get_setting', { key: 'noise_reduction' });
+      toggleState = {
+        cleanup: cleanupEnabled ?? true,
+        noiseReduction: noiseReduction ?? true,
+      };
+
+      const retention = await invoke<string | null>('get_setting', { key: 'history_retention' });
+      if (retention) historyRetention = retention;
 
       const mic = await invoke<string | null>('get_setting', { key: 'microphone_device' });
       selectedMic = mic ?? '';
@@ -65,7 +167,6 @@
     const key = draftKeys[provider].trim();
     if (!key) return;
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       await invoke('save_api_key', { provider, key });
       keyStatus = { ...keyStatus, [provider]: true };
       draftKeys = { ...draftKeys, [provider]: '' };
@@ -78,7 +179,6 @@
     transcriptionModel = id;
     const provider = id.split('/')[0];
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       await invoke('save_setting', { key: 'transcription_model', value: id });
       await invoke('save_setting', { key: 'transcription_provider', value: provider });
     } catch {}
@@ -88,7 +188,6 @@
     cleanupModel = id;
     const provider = id.split('/')[0];
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       await invoke('save_setting', { key: 'cleanup_model', value: id });
       await invoke('save_setting', { key: 'cleanup_provider', value: provider });
     } catch {}
@@ -97,8 +196,14 @@
   async function toggleCleanup() {
     toggleState = { ...toggleState, cleanup: !toggleState.cleanup };
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       await invoke('save_setting', { key: 'cleanup_enabled', value: toggleState.cleanup });
+    } catch {}
+  }
+
+  async function toggleNoiseReduction() {
+    toggleState = { ...toggleState, noiseReduction: !toggleState.noiseReduction };
+    try {
+      await invoke('save_setting', { key: 'noise_reduction', value: toggleState.noiseReduction });
     } catch {}
   }
 
@@ -106,7 +211,6 @@
     selectedMic = name;
     micDropdownOpen = false;
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       await invoke('save_setting', { key: 'microphone_device', value: name || null });
     } catch {}
   }
@@ -116,8 +220,25 @@
     if (!target.closest('.mic-dropdown')) micDropdownOpen = false;
   }
 
+  function closeHistoryDropdown(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    if (!target.closest('.history-dropdown')) historyDropdownOpen = false;
+  }
+
   $: if (micDropdownOpen) {
     tick().then(() => window.addEventListener('click', closeMicDropdown, { once: true }));
+  }
+
+  $: if (historyDropdownOpen) {
+    tick().then(() => window.addEventListener('click', closeHistoryDropdown, { once: true }));
+  }
+
+  async function saveHistoryRetention(value: string) {
+    historyRetention = value;
+    historyDropdownOpen = false;
+    try {
+      await invoke('save_setting', { key: 'history_retention', value });
+    } catch {}
   }
 
   async function openRepo() {
@@ -128,6 +249,7 @@
       window.open('https://github.com/MONKE2525E/Open-Flow', '_blank');
     }
   }
+
 
   function close() { $settingsOpen = false; }
 
@@ -148,14 +270,15 @@
 
   const navSections = [
     { group: 'Settings', items: [
-      { id: 'general',  label: 'General',  paths: `<circle cx="12" cy="12" r="3"/><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>` },
-      { id: 'keys',     label: 'API Keys', paths: `<circle cx="7.5" cy="15.5" r="3.5"/><path d="m21 2-9.6 9.6M15 6l3 3"/>` },
-      { id: 'models',   label: 'Models',   paths: `<path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z"/>` },
-      { id: 'privacy',  label: 'Privacy',  paths: `<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>` },
-      { id: 'advanced', label: 'Advanced', paths: `<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>` },
+      { id: 'general',  label: 'General',      icon: 'sliders'  as keyof typeof icons },
+      { id: 'apps',     label: 'App Mappings', icon: 'apps'     as keyof typeof icons },
+      { id: 'keys',     label: 'API Keys',     icon: 'key'      as keyof typeof icons },
+      { id: 'models',   label: 'Models',       icon: 'command'  as keyof typeof icons },
+      { id: 'privacy',  label: 'Privacy',      icon: 'lock'     as keyof typeof icons },
+      { id: 'advanced', label: 'Advanced',     icon: 'settings' as keyof typeof icons },
     ]},
     { group: 'Account', items: [
-      { id: 'about', label: 'About', paths: `<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/>` },
+      { id: 'about', label: 'About', icon: 'help' as keyof typeof icons },
     ]},
   ];
 
@@ -187,14 +310,14 @@
   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
   <div
     class="settings-overlay"
-    style:opacity={modalReady ? 1 : 0}
+    style:opacity={isModalReady ? 1 : 0}
     onclick={close}
   >
     <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
     <div
       class="settings-modal"
-      style:transform={modalReady ? 'scale(1) translateY(0)' : 'scale(0.94) translateY(12px)'}
-      style:opacity={modalReady ? 1 : 0}
+      style:transform={isModalReady ? 'scale(1) translateY(0)' : 'scale(0.94) translateY(12px)'}
+      style:opacity={isModalReady ? 1 : 0}
       onclick={(e) => e.stopPropagation()}
     >
       <!-- Left nav -->
@@ -210,7 +333,7 @@
               onclick={() => goTo(it.id)}
               onkeydown={(e) => e.key === 'Enter' && goTo(it.id)}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html it.paths}</svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons[it.icon]}</svg>
               <span>{it.label}</span>
             </div>
           {/each}
@@ -264,6 +387,81 @@
                 onclick={toggleCleanup}
                 onkeydown={(e) => e.key === 'Enter' && toggleCleanup()}
               ></div>
+            </div>
+            <div class="setting-row">
+              <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
+              <div class="toggle" class:on={toggleState.noiseReduction} role="switch" aria-checked={toggleState.noiseReduction} tabindex="0"
+                onclick={toggleNoiseReduction}
+                onkeydown={(e) => e.key === 'Enter' && toggleNoiseReduction()}
+              ></div>
+            </div>
+
+          {:else if section === 'apps'}
+            <h2 class="settings-h">App Mappings</h2>
+            <p class="panel-note">Switch profiles automatically based on the active window.</p>
+
+            {#if mappings.length > 0}
+              <div class="mapping-list">
+                {#each mappings as m}
+                  <div class="mapping-row">
+                    <div class="mapping-app-info">
+                      <span class="mapping-app-name">{m.name || m.exe.replace(/\.exe$/i, '')}</span>
+                      <span class="mapping-exe-pill">{m.exe}</span>
+                    </div>
+                    <svg class="mapping-arrow-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    <span class="mapping-profile-badge">{m.profile}</span>
+                    <button class="mapping-delete-btn" onclick={() => deleteMapping(m.exe)} title="Remove">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    </button>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <div class="mapping-empty">No app mappings yet. Add one below to get started.</div>
+            {/if}
+
+            <div class="add-mapping-section">
+              <div class="add-mapping-label">Add Mapping</div>
+              <div class="add-mapping-row">
+                <div class="app-picker-wrap">
+                  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+                  <input
+                    class="app-search-input"
+                    placeholder={areAppsLoaded ? 'Search apps…' : 'Loading apps…'}
+                    bind:value={appSearch}
+                    onfocus={() => { appPickerOpen = true; }}
+                    oninput={() => { appPickerOpen = true; }}
+                  />
+                  {#if appPickerOpen && filteredApps.length > 0}
+                    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+                    <div class="app-picker-menu" onclick={(e) => e.stopPropagation()}>
+                      {#each filteredApps as app}
+                        <button class="app-picker-item" onclick={() => pickApp(app)}>
+                          <span class="app-picker-name">{app.name}</span>
+                          <span class="app-picker-exe">{app.exe}</span>
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+                <select class="profile-select" bind:value={addProfile}>
+                  {#each profiles as p}
+                    <option value={p.id}>{p.label}</option>
+                  {/each}
+                </select>
+                <button
+                  class="btn-ghost add-btn"
+                  onclick={addMapping}
+                  disabled={!addExe}
+                >Add</button>
+              </div>
+              {#if addExe}
+                <div class="add-preview">
+                  <span class="mapping-exe-pill">{addExe}</span>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                  <span class="mapping-profile-badge">{addProfile}</span>
+                </div>
+              {/if}
             </div>
 
           {:else if section === 'keys'}
@@ -347,29 +545,43 @@
           {:else if section === 'privacy'}
             <h2 class="settings-h">Privacy</h2>
             <div class="setting-row">
-              <div><div class="label">Auto-learn corrections</div><div class="desc">Add confirmed corrections to dictionary</div></div>
-              <div class="toggle" class:on={toggleState.autoLearn} role="switch" aria-checked={toggleState.autoLearn} tabindex="0"
-                onclick={() => (toggleState = { ...toggleState, autoLearn: !toggleState.autoLearn })}
-                onkeydown={(e) => e.key === 'Enter' && (toggleState = { ...toggleState, autoLearn: !toggleState.autoLearn })}
-              ></div>
-            </div>
-            <div class="setting-row">
-              <div><div class="label">Crash reports</div><div class="desc">Send anonymised errors to improve Open Flow</div></div>
-              <div class="toggle" class:on={toggleState.crashReports} role="switch" aria-checked={toggleState.crashReports} tabindex="0"
-                onclick={() => (toggleState = { ...toggleState, crashReports: !toggleState.crashReports })}
-                onkeydown={(e) => e.key === 'Enter' && (toggleState = { ...toggleState, crashReports: !toggleState.crashReports })}
-              ></div>
+              <div><div class="label">Transcription history</div><div class="desc">How long to keep past dictations</div></div>
+              <div class="history-dropdown">
+                <button class="btn-ghost mic-btn" onclick={() => (historyDropdownOpen = !historyDropdownOpen)}>
+                  <span>{historyRetention}</span>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m6 9 6 6 6-6"/>
+                  </svg>
+                </button>
+                {#if historyDropdownOpen}
+                  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+                  <div class="mic-menu" onclick={(e) => e.stopPropagation()}>
+                    {#each historyOptions as opt}
+                      <button class="mic-item" class:active={historyRetention === opt} onclick={() => saveHistoryRetention(opt)}>
+                        {opt}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
             </div>
 
           {:else if section === 'advanced'}
             <h2 class="settings-h">Advanced</h2>
             <div class="setting-row">
-              <div><div class="label">Transcription history</div><div class="desc">How long to keep past dictations</div></div>
+              <div><div class="label">Transcription history</div><div class="desc">How long past dictations are kept</div></div>
               <div class="badge">30 days</div>
             </div>
             <div class="setting-row">
-              <div><div class="label">Injection method</div><div class="desc">How text is inserted into apps</div></div>
+              <div><div class="label">Text injection</div><div class="desc">Method used to insert transcribed text</div></div>
               <div class="badge">Clipboard (Ctrl+V)</div>
+            </div>
+            <div class="setting-row coming-soon-row">
+              <div>
+                <div class="label coming-soon-label">Auto-learn corrections <span class="coming-soon-badge">Coming Soon</span></div>
+                <div class="desc">Add confirmed corrections to dictionary automatically</div>
+              </div>
+              <div class="toggle" style="pointer-events:none;opacity:0.35"></div>
             </div>
 
           {:else if section === 'about'}
@@ -688,6 +900,29 @@
     font-style: italic;
   }
 
+  .history-dropdown {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .coming-soon-row { opacity: 0.6; }
+
+  .coming-soon-label { display: flex; align-items: center; gap: 8px; }
+
+  .coming-soon-badge {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    color: var(--ink-mute);
+    background: var(--paper);
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    padding: 1px 6px;
+    text-transform: uppercase;
+    vertical-align: middle;
+  }
+
   /* Models */
   .model-section-label {
     font-size: 12px;
@@ -784,5 +1019,208 @@
     margin-left: 6px;
     vertical-align: middle;
     text-transform: uppercase;
+  }
+
+  /* App Mappings */
+  .mapping-list {
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+
+  .mapping-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-elev);
+  }
+
+  .mapping-row:last-child { border-bottom: none; }
+
+  .mapping-app-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .mapping-app-name {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ink-strong);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 130px;
+  }
+
+  .mapping-exe-pill {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-mute);
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    flex-shrink: 0;
+  }
+
+  .mapping-arrow-icon {
+    color: var(--ink-mute);
+    flex-shrink: 0;
+  }
+
+  .mapping-profile-badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+    border-radius: 4px;
+    padding: 2px 7px;
+    flex-shrink: 0;
+    text-transform: lowercase;
+  }
+
+  .mapping-delete-btn {
+    background: none;
+    border: none;
+    padding: 3px;
+    border-radius: 4px;
+    color: var(--ink-mute);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .mapping-delete-btn:hover { color: var(--ink-strong); background: var(--paper); }
+
+  .mapping-empty {
+    font-size: 12px;
+    color: var(--ink-mute);
+    padding: 16px 0 20px;
+    font-style: italic;
+  }
+
+  .add-mapping-section {
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+  }
+
+  .add-mapping-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: var(--mono);
+    margin-bottom: 10px;
+  }
+
+  .add-mapping-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .app-picker-wrap {
+    position: relative;
+    flex: 1;
+  }
+
+  .app-search-input {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: var(--sans);
+    font-size: 12px;
+    background: transparent;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    padding: 5px 10px;
+    color: var(--ink-strong);
+  }
+
+  .app-search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .app-picker-menu {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 4px);
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    box-shadow: 0 8px 24px rgba(13,10,8,0.14);
+    width: 100%;
+    max-height: 180px;
+    overflow-y: auto;
+    z-index: 10;
+  }
+
+  .app-picker-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 7px 10px;
+    font-family: var(--sans);
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    text-align: left;
+    gap: 8px;
+  }
+
+  .app-picker-item:last-child { border-bottom: none; }
+  .app-picker-item:hover { background: var(--paper); }
+
+  .app-picker-name {
+    font-size: 12px;
+    color: var(--ink-strong);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+  }
+
+  .app-picker-exe {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-mute);
+    flex-shrink: 0;
+  }
+
+  .profile-select {
+    font-family: var(--sans);
+    font-size: 12px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    padding: 5px 8px;
+    color: var(--ink-strong);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .profile-select:focus { outline: none; border-color: var(--accent); }
+
+  .add-btn { flex-shrink: 0; }
+
+  .add-preview {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 4px 2px;
   }
 </style>

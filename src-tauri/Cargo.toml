@@ -25,6 +25,7 @@ tokio       = { version = "1", features = ["full"] }
 reqwest     = { version = "0.12", features = ["json", "multipart", "stream"] }
 cpal        = "0.15"
 hound       = "3.5"
+nnnoiseless = "0.4"
 base64      = "0.22"
 anyhow      = "1"
 log         = "0.4"
@@ -41,6 +42,7 @@ windows = { version = "0.61", features = [
   "Win32_System_ProcessStatus",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_SystemInformation",
+  "Win32_System_Registry",
 ] }
 
 [profile.release]

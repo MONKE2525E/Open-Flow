@@ -4,6 +4,9 @@
   type PillState = 'idle' | 'recording' | 'processing' | 'handsfree' | 'error';
   let state: PillState = 'idle';
   let errorMsg = '';
+  let showHfButtons = false;
+  let hfTimer: ReturnType<typeof setTimeout> | null = null;
+  let prevState: PillState = 'idle';
 
   const BARS = 12;
   const DOTS_PROC = 18;
@@ -24,13 +27,19 @@
   let noiseArr: number[] = Array.from({ length: BARS }, () => Math.random());
   let lastNoiseT = 0;
   let rafId: number;
+  const PEAK_FLOOR = 0.07;
+  let adaptivePeak = PEAK_FLOOR;
 
   function animateBars(time: number) {
     // Passive decay kicks in after 150ms of silence (between words is ~80–120ms,
     // so this only fires on deliberate pauses).
     if (time - lastLevelTime > 150) {
-      smoothed = Math.max(0, smoothed * 0.972);
+      smoothed = Math.max(0, smoothed * 0.979);
     }
+
+    // Peak decays ~1.8%/s toward floor — stable during a 30s recording,
+    // resets to floor after ~2-3 min of silence so quiet-mic calibration restarts.
+    adaptivePeak = Math.max(PEAK_FLOOR, adaptivePeak * 0.9997);
 
     // Shift per-bar noise every ~140ms for organic independent movement
     if (time - lastNoiseT > 140) {
@@ -38,14 +47,15 @@
       lastNoiseT = time;
     }
 
-    // Level is already 0–1; no extra division needed
+    // Gate on raw smoothed to suppress background noise; normalize against the
+    // adaptive peak so quiet mics still drive bars to full height.
     if (smoothed < GATE) {
-      barHeights = Array(BARS).fill(2);
+      barHeights = Array(BARS).fill(3);
     } else {
-      const active = (smoothed - GATE) / (1 - GATE);
+      const normalized = Math.min(smoothed / adaptivePeak, 1.0);
       barHeights = barGains.map((gain, i) => {
-        const energy = active * gain * (0.45 + noiseArr[i] * 0.55);
-        return 2 + energy * 14;
+        const energy = normalized * gain * (0.45 + noiseArr[i] * 0.55);
+        return 3 + energy * 13;
       });
     }
 
@@ -54,37 +64,50 @@
 
   onMount(() => {
     rafId = requestAnimationFrame(animateBars);
+    const unlisteners: Array<() => void> = [];
 
     (async () => {
       const { listen } = await import('@tauri-apps/api/event');
 
-      await listen<string>('pill-state', (ev) => {
-        state = (ev.payload as PillState) || 'idle';
+      unlisteners.push(await listen<string>('pill-state', (ev) => {
+        const incoming = (ev.payload as PillState) || 'idle';
+        if (hfTimer !== null) { clearTimeout(hfTimer); hfTimer = null; }
+        if (incoming === 'handsfree') {
+          showHfButtons = false;
+          hfTimer = setTimeout(() => { showHfButtons = true; hfTimer = null; }, 150);
+        }
+        prevState = state;
+        state = incoming;
         if (state !== 'recording' && state !== 'handsfree') smoothed = 0;
-      });
+      }));
 
-      await listen<string>('open-flow:error', (ev) => {
+      unlisteners.push(await listen<string>('open-flow:error', (ev) => {
         errorMsg = ev.payload ?? 'Failed';
-      });
+      }));
 
-      await listen<number>('audio-level', (ev) => {
+      unlisteners.push(await listen<number>('audio-level', (ev) => {
         const level = ev.payload ?? 0;
         if (level > smoothed) {
           smoothed = smoothed * 0.1 + level * 0.9;  // near-instant rise
         } else {
-          smoothed = smoothed * 0.88 + level * 0.12; // ~1s fall at 20Hz
+          smoothed = smoothed * 0.90 + level * 0.10; // fall (~1.1s to 10%)
         }
+        if (smoothed > adaptivePeak) adaptivePeak = smoothed;
         lastLevelTime = performance.now();
-      });
+      }));
     })();
 
-    return () => cancelAnimationFrame(rafId);
+    return () => {
+      cancelAnimationFrame(rafId);
+      unlisteners.forEach(u => u());
+    };
   });
 
   async function confirmHandless() {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('stop_handless_mode').catch(() => {});
-    state = 'idle';
+    // Don't set state = 'idle' here — let Rust emit 'processing' next so the pill
+    // morphs directly from handsfree to processing without disappearing first.
   }
 
   async function cancelHandless() {
@@ -103,7 +126,7 @@
     </div>
 
   {:else if state === 'processing'}
-    <div class="pill processing">
+    <div class="pill processing" class:from-rec={prevState === 'recording'} class:from-hf={prevState === 'handsfree'}>
       <div class="dots">
         {#each { length: DOTS_PROC } as _, i (i)}
           <i style="animation-delay:{i * 0.08}s"></i>
@@ -119,22 +142,26 @@
     </div>
 
   {:else if state === 'handsfree'}
-    <div class="pill handsfree">
-      <button class="hf-btn cancel" onclick={cancelHandless} aria-label="Cancel">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-          <path d="M6 6l12 12M6 18 18 6"/>
-        </svg>
-      </button>
+    <div class="pill handsfree" class:hf-expanded={showHfButtons} class:no-anim={prevState === 'recording'}>
+      {#if showHfButtons}
+        <button class="hf-btn cancel" onclick={cancelHandless} aria-label="Cancel">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+            <path d="M6 6l12 12M6 18 18 6"/>
+          </svg>
+        </button>
+      {/if}
       <div class="bars-hf">
         {#each barHeights as h, i (i)}
           <div class="bar" style="height: {h}px"></div>
         {/each}
       </div>
-      <button class="hf-btn confirm" onclick={confirmHandless} aria-label="Confirm">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M20 6L9 17l-5-5"/>
-        </svg>
-      </button>
+      {#if showHfButtons}
+        <button class="hf-btn confirm" onclick={confirmHandless} aria-label="Confirm">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 6L9 17l-5-5"/>
+          </svg>
+        </button>
+      {/if}
     </div>
   {/if}
 </div>
@@ -145,11 +172,11 @@
     margin: 0; padding: 0;
     background: transparent;
     overflow: hidden;
-    width: 220px; height: 60px;
+    width: 140px; height: 44px;
   }
 
   .wrap {
-    width: 220px; height: 60px;
+    width: 140px; height: 44px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -164,13 +191,24 @@
     align-items: center;
     justify-content: center;
     box-shadow: 0 8px 22px rgba(13,10,8,0.55), 0 0 0 1px rgba(255,255,255,0.07) inset;
+    animation: pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
 
+  @keyframes pillIn {
+    from { transform: translateY(8px) scale(0.92); opacity: 0; }
+    to   { transform: translateY(0) scale(1); opacity: 1; }
+  }
+
+  /* Skip entry animation for seamless continuations from recording */
+  .pill.no-anim { animation: none; }
+
   /* Recording: snug wrap — 12 bars × 3px + 11 gaps × 2px + 14px padding = 72px */
+  /* 0.25s delay keeps it invisible during a fast double-click handsfree activation */
   .pill.recording {
     gap: 2px;
     padding: 0 7px;
     width: 72px;
+    animation: pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) 0.25s both;
   }
 
   .bar {
@@ -182,13 +220,42 @@
   }
 
   /* Processing */
-  .pill.processing { width: 120px; padding: 0 12px; gap: 8px; }
+  .pill.processing { width: 120px; padding: 0 12px 0 18px; gap: 8px; }
 
-  .dots { display: flex; align-items: center; gap: 3px; flex: 1; justify-content: center; }
+  /* Recording→processing: grow in width instead of re-popping from below */
+  .pill.processing.from-rec {
+    animation: processIn 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes processIn {
+    from { width: 72px; }
+    to   { width: 120px; }
+  }
+  /* Spinner fades in last, after the pill has grown — "pops out the side" */
+  .pill.processing.from-rec .spinner {
+    animation: spin 0.75s linear infinite, spinnerIn 0.18s ease 0.18s both;
+  }
+  @keyframes spinnerIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* Handsfree→processing: pill stays in place, width barely shifts, spinner fades in */
+  .pill.processing.from-hf {
+    animation: processFromHf 0.25s ease-out both;
+  }
+  @keyframes processFromHf {
+    from { width: 112px; }
+    to   { width: 120px; }
+  }
+  .pill.processing.from-hf .spinner {
+    animation: spin 0.75s linear infinite, spinnerIn 0.18s ease 0.08s both;
+  }
+
+  .dots { display: flex; align-items: center; gap: 3px; flex: 1; justify-content: center; overflow: hidden; }
   .dots i {
-    width: 2.5px; height: 2.5px;
+    width: 2.5px; height: 3px;
     background: #ada299;
-    border-radius: 50%; display: block; flex-shrink: 0;
+    border-radius: 999px; display: block; flex-shrink: 0;
   }
   .pill.processing .dots i { animation: dotfade 1.5s infinite; }
   @keyframes dotfade {
@@ -216,9 +283,16 @@
   }
   .err-text { font-size: 11px; font-weight: 500; color: #f8a090; white-space: nowrap; }
 
-  /* Handsfree: 5px pad + 18px btn + 4px + bars(58px) + 4px + 18px btn + 5px = 112px       */
-  /* Bars start at ~55px from window left — close to recording pill's 74px+7px bar start    */
-  .pill.handsfree { width: 112px; padding: 0 5px; gap: 4px; }
+  /* Handsfree: starts compact (mirrors recording), expands to 112px after 450ms */
+  .pill.handsfree {
+    width: 72px;
+    padding: 0 7px;
+    gap: 2px;
+    transition: width 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+                padding 0.18s ease,
+                gap 0.18s ease;
+  }
+  .pill.handsfree.hf-expanded { width: 112px; padding: 0 5px; gap: 4px; }
 
   .bars-hf { display: flex; align-items: center; gap: 2px; flex: 1; justify-content: center; }
 
@@ -235,4 +309,11 @@
   .hf-btn.confirm { color: #d97757; }
   .hf-btn.cancel:hover  { color: rgba(255,255,255,0.85); }
   .hf-btn.confirm:hover { color: #f4a07a; }
+
+  @keyframes hfBtnIn {
+    from { opacity: 0; transform: scale(0.7); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  .hf-btn.cancel  { animation: hfBtnIn 0.12s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+  .hf-btn.confirm { animation: hfBtnIn 0.12s cubic-bezier(0.34, 1.56, 0.64, 1) 0.02s both; }
 </style>

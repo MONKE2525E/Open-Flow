@@ -31,11 +31,12 @@
   onMount(async () => {
     try {
       const { listen } = await import('@tauri-apps/api/event');
-      await listen<string>('open-flow:error', (ev) => {
+      const unlisten = await listen<string>('open-flow:error', (ev) => {
         errorToast = ev.payload ?? 'Something went wrong';
         clearTimeout(toastTimer);
         toastTimer = setTimeout(() => { errorToast = ''; }, 5000);
       });
+      return unlisten;
     } catch {}
   });
 </script>
