@@ -33,6 +33,12 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                w.show().ok();
+                w.set_focus().ok();
+            }
+        }))
         .manage(shared.clone())
         .manage(db_handle.clone())
         .setup(move |app| {
@@ -68,6 +74,7 @@ fn main() {
             commands::save_hotkey,     commands::check_hotkey,
             commands::save_api_key,    commands::get_api_key_status,
             commands::save_setting,    commands::get_setting,
+            commands::set_autostart,
             commands::show_main,       commands::hide_main,
             commands::get_recent,      commands::get_stats,
             commands::get_microphones, commands::get_memory_mb,

@@ -131,7 +131,7 @@ pub fn spawn_level_emitter(
     active: Arc<std::sync::atomic::AtomicBool>,
 ) {
     tauri::async_runtime::spawn(async move {
-        // Give WebView2 a brief head start to wake up and process the 
+        // Give WebView2 a brief head start to wake up and process the
         // "recording" state event before we flood the IPC with 16ms updates.
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
 
@@ -142,6 +142,11 @@ pub fn spawn_level_emitter(
                 pill.emit("audio-level", level_val).ok();
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        // Emit final reset to ensure level goes to 0 regardless of timing
+        if let Some(pill) = app.get_webview_window("pill") {
+            pill.emit("audio-level", 0.0).ok();
         }
     });
 }

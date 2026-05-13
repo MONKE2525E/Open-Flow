@@ -196,3 +196,60 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
     store.set("hotkey", serde_json::json!([key1, key2]));
     store.save().map_err(|e| e.to_string())
 }
+
+// ---------- autostart ----------
+
+#[tauri::command]
+pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::System::Registry::{RegOpenKeyExW, RegSetValueExW, RegDeleteValueW, RegCloseKey, HKEY_CURRENT_USER, KEY_WRITE, REG_SZ, HKEY};
+        use windows::core::PCWSTR;
+
+        let app_path = std::env::current_exe()
+            .map_err(|e| format!("Failed to get executable path: {}", e))?
+            .to_string_lossy()
+            .to_string();
+
+        let subkey: Vec<u16> = std::ffi::OsStr::new("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let value_name: Vec<u16> = std::ffi::OsStr::new("OpenFlow")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        unsafe {
+            let mut hkey = HKEY::default();
+            let status = RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(subkey.as_ptr()), None, KEY_WRITE, std::ptr::addr_of_mut!(hkey));
+
+            if status.is_err() {
+                return Err("Failed to open registry key".to_string());
+            }
+
+            let result = if enabled {
+                let app_path_wide: Vec<u16> = std::ffi::OsStr::new(&app_path)
+                    .encode_wide()
+                    .chain(std::iter::once(0))
+                    .collect();
+                let app_path_bytes = std::mem::transmute::<*const u16, *const u8>(app_path_wide.as_ptr());
+                let app_path_len = (app_path_wide.len() - 1) * 2;
+                RegSetValueExW(hkey, PCWSTR(value_name.as_ptr()), None, REG_SZ, Some(std::slice::from_raw_parts(app_path_bytes, app_path_len)))
+            } else {
+                RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()))
+            };
+
+            RegCloseKey(hkey);
+
+            if result.is_err() {
+                return Err("Failed to set registry value".to_string());
+            }
+        }
+    }
+
+    let store = _app.store("settings.json").map_err(|e| e.to_string())?;
+    store.set("autostart_enabled", serde_json::json!(enabled));
+    store.save().map_err(|e| e.to_string())
+}

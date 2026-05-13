@@ -1,11 +1,18 @@
 node_modules/
 dist/
-src-tauri/target/
 src-tauri/gen/
 
-# Exception: track release bundles
-!src-tauri/target/release/bundle/
-!src-tauri/target/release/bundle/**
+# src-tauri/target/ build artifacts — keep bundle/ and release/ folders
+src-tauri/target/debug/
+src-tauri/target/release/build/
+src-tauri/target/release/deps/
+src-tauri/target/release/.fingerprint/
+src-tauri/target/release/incremental/
+src-tauri/target/release/*.exe
+src-tauri/target/release/*.pdb
+src-tauri/target/.rustc_info.json
+src-tauri/target/CACHEDIR.TAG
+src-tauri/target/incremental/
 
 # Environment & secrets
 .env

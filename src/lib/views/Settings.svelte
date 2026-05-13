@@ -46,7 +46,7 @@
   let cleanupModel = 'groq/llama-3.3-70b-versatile';
 
   // Toggle states
-  let toggleState = { cleanup: true, noiseReduction: true, muteAudio: false };
+  let toggleState = { cleanup: true, noiseReduction: true, muteAudio: false, autostart: false };
 
   // Transcription history retention dropdown
   let historyRetention = '30 days';
@@ -159,10 +159,12 @@
       const cleanupEnabled = await invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' });
       const noiseReduction = await invoke<boolean | null>('get_setting', { key: 'noise_reduction' });
       const muteAudio = await invoke<boolean | null>('get_setting', { key: 'mute_audio' });
+      const autostartEnabled = await invoke<boolean | null>('get_setting', { key: 'autostart_enabled' });
       toggleState = {
         cleanup: cleanupEnabled ?? true,
         noiseReduction: noiseReduction ?? true,
         muteAudio: muteAudio ?? false,
+        autostart: autostartEnabled ?? false,
       };
 
       const retention = await invoke<string | null>('get_setting', { key: 'history_retention' });
@@ -326,6 +328,13 @@
     toggleState = { ...toggleState, muteAudio: !toggleState.muteAudio };
     try {
       await invoke('save_setting', { key: 'mute_audio', value: toggleState.muteAudio });
+    } catch {}
+  }
+
+  async function toggleAutostart() {
+    toggleState = { ...toggleState, autostart: !toggleState.autostart };
+    try {
+      await invoke('set_autostart', { enabled: toggleState.autostart });
     } catch {}
   }
 
@@ -526,6 +535,13 @@
               <div class="toggle" class:on={toggleState.muteAudio} role="switch" aria-checked={toggleState.muteAudio} tabindex="0"
                 onclick={toggleMuteAudio}
                 onkeydown={(e) => e.key === 'Enter' && toggleMuteAudio()}
+              ></div>
+            </div>
+            <div class="setting-row">
+              <div><div class="label">Start on Boot</div><div class="desc">Launch Open Flow when Windows starts</div></div>
+              <div class="toggle" class:on={toggleState.autostart} role="switch" aria-checked={toggleState.autostart} tabindex="0"
+                onclick={toggleAutostart}
+                onkeydown={(e) => e.key === 'Enter' && toggleAutostart()}
               ></div>
             </div>
 
