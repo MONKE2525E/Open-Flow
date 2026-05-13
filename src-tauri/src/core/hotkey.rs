@@ -1,30 +1,9 @@
-/// Low-level Windows keyboard hook for Alt+Space hold-to-talk and
-/// hands-free mode toggle via two symmetric gestures:
-///   • Space held → Alt double-clicked within 300ms
-///   • Alt held   → Space double-clicked within 300ms
-///
-/// `RegisterHotKey` (used by tauri-plugin-global-shortcut) only fires on
-/// press, never release — useless for hold-to-talk. We use WH_KEYBOARD_LL
-/// instead, which gives us both WM_KEYDOWN and WM_KEYUP.
-///
-/// Alt key suppression: when Alt+Space is detected we also suppress the
-/// matching Alt-up. Without this, apps receive a bare Alt-down / Alt-up
-/// pair which Windows interprets as "activate menu bar", blurring text fields.
-///
-/// Handless gesture A (Space-first): Space held → Alt pressed twice within
-/// 300ms fires the handless callback. Both Alt presses are suppressed.
-///
-/// Handless gesture B (Alt-first): Alt held → Space pressed and released
-/// quickly (< 200ms) → Space pressed again within 300ms fires the handless
-/// callback. The first Space press fires PRESS_CB immediately (to start
-/// recording); if the quick-release is detected, CANCEL_CB is fired to
-/// discard that recording before the second press arrives.
-
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_LMENU, VK_RMENU, VK_SPACE,
+    GetAsyncKeyState, RegisterHotKey, UnregisterHotKey,
+    MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, HOT_KEY_MODIFIERS,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW,
@@ -32,35 +11,121 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
+pub fn is_hotkey_available(key1: &str, key2: &str) -> bool {
+    let mod_flag = match key1 {
+        "ShiftLeft" | "ShiftRight" => MOD_SHIFT,
+        "ControlLeft" | "ControlRight" => MOD_CONTROL,
+        "AltLeft" | "AltRight" => MOD_ALT,
+        "MetaLeft" | "MetaRight" => MOD_WIN,
+        _ => return true,
+    };
+
+    let vk2 = map_code_to_vk(key2);
+    if vk2 == 0 {
+        return true;
+    }
+
+    unsafe {
+        // Use a dummy ID (e.g. 0x5A8E) and no HWND.
+        if RegisterHotKey(None, 0x5A8E, HOT_KEY_MODIFIERS(mod_flag.0), vk2).is_ok() {
+            let _ = UnregisterHotKey(None, 0x5A8E);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+static KEY1: AtomicU32 = AtomicU32::new(164); // VK_LMENU
+static KEY2: AtomicU32 = AtomicU32::new(32);  // VK_SPACE
+
+pub fn update_keys(k1: u32, k2: u32) {
+    if k1 != 0 { KEY1.store(k1, Ordering::SeqCst); }
+    if k2 != 0 { KEY2.store(k2, Ordering::SeqCst); }
+    // Reset all chord state so stale key events against the old binding can't
+    // trigger phantom presses or missed releases after a hotkey change.
+    CHORD_DOWN.store(false, Ordering::SeqCst);
+    KEY1_WAS_CHORD.store(false, Ordering::SeqCst);
+    CHORD_PENDING.store(false, Ordering::SeqCst);
+    CHORD_PENDING_END_MS.store(0, Ordering::SeqCst);
+    CHORD_FIRST_DOWN_MS.store(0, Ordering::SeqCst);
+    HANDLESS_WAITING_KEY1_2.store(false, Ordering::SeqCst);
+    HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);
+}
+
+pub fn map_code_to_vk(code: &str) -> u32 {
+    match code {
+        "ShiftLeft" => 160,
+        "ShiftRight" => 161,
+        "ControlLeft" => 162,
+        "ControlRight" => 163,
+        "AltLeft" => 164,
+        "AltRight" => 165,
+        "MetaLeft" => 91,
+        "MetaRight" => 92,
+        "Space" => 32,
+        "Escape" => 27,
+        "Enter" => 13,
+        "Backspace" => 8,
+        "Tab" => 9,
+        "CapsLock" => 20,
+        "Minus" => 189,
+        "Equal" => 187,
+        "BracketLeft" => 219,
+        "BracketRight" => 221,
+        "Backslash" => 220,
+        "Semicolon" => 186,
+        "Quote" => 222,
+        "Comma" => 188,
+        "Period" => 190,
+        "Slash" => 191,
+        "Backquote" => 192,
+        "ArrowUp" => 38,
+        "ArrowDown" => 40,
+        "ArrowLeft" => 37,
+        "ArrowRight" => 39,
+        "Insert" => 45,
+        "Delete" => 46,
+        "Home" => 36,
+        "End" => 35,
+        "PageUp" => 33,
+        "PageDown" => 34,
+        c if c.starts_with("Key") && c.len() == 4 => {
+            c.as_bytes()[3] as u32
+        }
+        c if c.starts_with("Digit") && c.len() == 6 => {
+            c.as_bytes()[5] as u32
+        }
+        c if c.starts_with("F") && c.len() > 1 => {
+            if let Ok(n) = c[1..].parse::<u32>() {
+                if n >= 1 && n <= 12 { 111 + n } else { 0 }
+            } else { 0 }
+        }
+        c if c.starts_with("Numpad") && c.len() == 7 => {
+            let b = c.as_bytes()[6];
+            if b >= b'0' && b <= b'9' { 96 + (b - b'0') as u32 } else { 0 }
+        }
+        "NumpadMultiply" => 106,
+        "NumpadAdd" => 107,
+        "NumpadSubtract" => 109,
+        "NumpadDecimal" => 110,
+        "NumpadDivide" => 111,
+        _ => 0,
+    }
+}
+
 static PRESS_CB:    std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 static RELEASE_CB:  std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 static HANDLESS_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 static CANCEL_CB:   std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 
-/// True while Space is held down as part of an Alt+Space chord we captured.
-static ALT_SPACE_DOWN: AtomicBool = AtomicBool::new(false);
-
-/// Set when an Alt+Space chord is first detected; cleared when Alt is released.
-/// Used to suppress the Alt-up that would otherwise trigger menu-mode in apps.
-static ALT_WAS_CHORD: AtomicBool = AtomicBool::new(false);
-
-/// Tick count (GetTickCount64) of the first Alt-down while Space was held.
-/// 0 means no pending first press.
-static HANDLESS_ALT1_TIME: AtomicU64 = AtomicU64::new(0);
-
-/// True while waiting for the second Alt-down to complete the handless double-click.
-static HANDLESS_WAITING_ALT2: AtomicBool = AtomicBool::new(false);
-
-// ── Alt-first double-Space gesture state ────────────────────────────────────
-
-/// GetTickCount64 when the first Space-down was detected while Alt was held.
-static ALT_SPACE_FIRST_DOWN_MS: AtomicU64 = AtomicU64::new(0);
-
-/// True after a quick Alt+Space click (< 200ms), waiting for a second Space press.
-static ALT_SPACE_PENDING: AtomicBool = AtomicBool::new(false);
-
-/// GetTickCount64 when the first quick Space click was released.
-static ALT_SPACE_PENDING_END_MS: AtomicU64 = AtomicU64::new(0);
+static CHORD_DOWN: AtomicBool = AtomicBool::new(false);
+static KEY1_WAS_CHORD: AtomicBool = AtomicBool::new(false);
+static HANDLESS_KEY1_TIME: AtomicU64 = AtomicU64::new(0);
+static HANDLESS_WAITING_KEY1_2: AtomicBool = AtomicBool::new(false);
+static CHORD_FIRST_DOWN_MS: AtomicU64 = AtomicU64::new(0);
+static CHORD_PENDING: AtomicBool = AtomicBool::new(false);
+static CHORD_PENDING_END_MS: AtomicU64 = AtomicU64::new(0);
 
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
@@ -68,50 +133,49 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         let msg = wparam.0 as u32;
         let vk = kb.vkCode;
 
-        let is_space = vk == VK_SPACE.0 as u32;
-        let is_alt   = vk == VK_LMENU.0 as u32 || vk == VK_RMENU.0 as u32;
-        let is_down  = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-        let is_up    = msg == WM_KEYUP   || msg == WM_SYSKEYUP;
+        let k1 = KEY1.load(Ordering::Relaxed);
+        let k2 = KEY2.load(Ordering::Relaxed);
 
-        if is_space && is_down {
-            let alt_held = (GetAsyncKeyState(VK_LMENU.0 as i32) & 0x8000u16 as i16) != 0
-                        || (GetAsyncKeyState(VK_RMENU.0 as i32) & 0x8000u16 as i16) != 0;
-            if alt_held {
-                if ALT_SPACE_PENDING.load(Ordering::SeqCst) {
-                    // Second Space press while Alt held — check double-click window.
-                    let t1  = ALT_SPACE_PENDING_END_MS.load(Ordering::SeqCst);
+        let is_key2 = vk == k2;
+        let is_key1 = vk == k1;
+        let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+        let is_up   = msg == WM_KEYUP   || msg == WM_SYSKEYUP;
+
+        if is_key2 && is_down {
+            let k1_held = (GetAsyncKeyState(k1 as i32) & 0x8000u16 as i16) != 0;
+            if k1_held {
+                if CHORD_PENDING.load(Ordering::SeqCst) {
+                    let t1  = CHORD_PENDING_END_MS.load(Ordering::SeqCst);
                     let now = GetTickCount64();
-                    ALT_SPACE_PENDING.store(false, Ordering::SeqCst);
-                    ALT_SPACE_PENDING_END_MS.store(0, Ordering::SeqCst);
+                    CHORD_PENDING.store(false, Ordering::SeqCst);
+                    CHORD_PENDING_END_MS.store(0, Ordering::SeqCst);
                     if now.saturating_sub(t1) <= 300 {
                         if let Some(cb) = HANDLESS_CB.get() { cb(); }
                     } else {
-                        // Too slow — start a fresh hold-to-talk.
-                        ALT_SPACE_DOWN.store(true, Ordering::SeqCst);
-                        ALT_WAS_CHORD.store(true, Ordering::SeqCst);
-                        ALT_SPACE_FIRST_DOWN_MS.store(GetTickCount64(), Ordering::SeqCst);
+                        CHORD_DOWN.store(true, Ordering::SeqCst);
+                        KEY1_WAS_CHORD.store(true, Ordering::SeqCst);
+                        CHORD_FIRST_DOWN_MS.store(GetTickCount64(), Ordering::SeqCst);
                         if let Some(cb) = PRESS_CB.get() { cb(); }
                     }
-                } else if !ALT_SPACE_DOWN.swap(true, Ordering::SeqCst) {
-                    ALT_WAS_CHORD.store(true, Ordering::SeqCst);
-                    ALT_SPACE_FIRST_DOWN_MS.store(GetTickCount64(), Ordering::SeqCst);
+                } else if !CHORD_DOWN.swap(true, Ordering::SeqCst) {
+                    KEY1_WAS_CHORD.store(true, Ordering::SeqCst);
+                    CHORD_FIRST_DOWN_MS.store(GetTickCount64(), Ordering::SeqCst);
                     if let Some(cb) = PRESS_CB.get() { cb(); }
                 }
                 return LRESULT(1);
             }
         }
 
-        if is_space && is_up {
-            if ALT_SPACE_DOWN.swap(false, Ordering::SeqCst) {
+        if is_key2 && is_up {
+            if CHORD_DOWN.swap(false, Ordering::SeqCst) {
                 let now = GetTickCount64();
-                let t0  = ALT_SPACE_FIRST_DOWN_MS.load(Ordering::SeqCst);
+                let t0  = CHORD_FIRST_DOWN_MS.load(Ordering::SeqCst);
                 let held_ms = now.saturating_sub(t0);
-                let alt_still_held = (GetAsyncKeyState(VK_LMENU.0 as i32) & 0x8000u16 as i16) != 0
-                                  || (GetAsyncKeyState(VK_RMENU.0 as i32) & 0x8000u16 as i16) != 0;
-                if held_ms < 200 && alt_still_held {
-                    // Quick click while Alt still held — potential first of a double-click.
-                    ALT_SPACE_PENDING.store(true, Ordering::SeqCst);
-                    ALT_SPACE_PENDING_END_MS.store(now, Ordering::SeqCst);
+                let k1_still_held = (GetAsyncKeyState(k1 as i32) & 0x8000u16 as i16) != 0;
+                
+                if held_ms < 200 && k1_still_held {
+                    CHORD_PENDING.store(true, Ordering::SeqCst);
+                    CHORD_PENDING_END_MS.store(now, Ordering::SeqCst);
                     if let Some(cb) = CANCEL_CB.get() { cb(); }
                 } else {
                     if let Some(cb) = RELEASE_CB.get() { cb(); }
@@ -120,47 +184,43 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             }
         }
 
-        // Handless gesture A: Alt pressed while Space is held (but not as part of
-        // an existing Alt+Space chord). Two Alt presses within 300ms toggles
-        // handless mode. Both presses are suppressed to prevent menu activation.
-        if is_alt && is_down {
-            let space_held = (GetAsyncKeyState(VK_SPACE.0 as i32) & 0x8000u16 as i16) != 0;
-            if space_held && !ALT_SPACE_DOWN.load(Ordering::SeqCst) {
+        if is_key1 && is_down {
+            let k2_held = (GetAsyncKeyState(k2 as i32) & 0x8000u16 as i16) != 0;
+            if k2_held && !CHORD_DOWN.load(Ordering::SeqCst) {
                 let now = GetTickCount64();
-                if HANDLESS_WAITING_ALT2.load(Ordering::SeqCst) {
-                    let t1 = HANDLESS_ALT1_TIME.load(Ordering::SeqCst);
-                    HANDLESS_WAITING_ALT2.store(false, Ordering::SeqCst);
-                    HANDLESS_ALT1_TIME.store(0, Ordering::SeqCst);
+                if HANDLESS_WAITING_KEY1_2.load(Ordering::SeqCst) {
+                    let t1 = HANDLESS_KEY1_TIME.load(Ordering::SeqCst);
+                    HANDLESS_WAITING_KEY1_2.store(false, Ordering::SeqCst);
+                    HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);
                     if now.saturating_sub(t1) <= 300 {
                         if let Some(cb) = HANDLESS_CB.get() { cb(); }
                     }
                 } else {
-                    HANDLESS_ALT1_TIME.store(now, Ordering::SeqCst);
-                    HANDLESS_WAITING_ALT2.store(true, Ordering::SeqCst);
+                    HANDLESS_KEY1_TIME.store(now, Ordering::SeqCst);
+                    HANDLESS_WAITING_KEY1_2.store(true, Ordering::SeqCst);
                 }
                 return LRESULT(1);
             }
         }
 
-        if is_alt && is_up {
-            // Alt released — clear both double-click gesture states.
-            ALT_SPACE_PENDING.store(false, Ordering::SeqCst);
-            ALT_SPACE_PENDING_END_MS.store(0, Ordering::SeqCst);
+        if is_key1 && is_up {
+            CHORD_PENDING.store(false, Ordering::SeqCst);
+            CHORD_PENDING_END_MS.store(0, Ordering::SeqCst);
 
-            // Reset the Space+Alt handless double-click window when Space is no longer held.
-            let space_held = (GetAsyncKeyState(VK_SPACE.0 as i32) & 0x8000u16 as i16) != 0;
-            if !space_held {
-                HANDLESS_WAITING_ALT2.store(false, Ordering::SeqCst);
-                HANDLESS_ALT1_TIME.store(0, Ordering::SeqCst);
+            let k2_held = (GetAsyncKeyState(k2 as i32) & 0x8000u16 as i16) != 0;
+            if !k2_held {
+                HANDLESS_WAITING_KEY1_2.store(false, Ordering::SeqCst);
+                HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);
             }
 
-            // Alt released while Space was still held — end the chord.
-            if ALT_SPACE_DOWN.swap(false, Ordering::SeqCst) {
+            if CHORD_DOWN.swap(false, Ordering::SeqCst) {
                 if let Some(cb) = RELEASE_CB.get() { cb(); }
             }
-            // Suppress the Alt-up if it was part of our chord.
-            if ALT_WAS_CHORD.swap(false, Ordering::SeqCst) {
-                return LRESULT(1);
+            if KEY1_WAS_CHORD.swap(false, Ordering::SeqCst) {
+                let is_menu_trigger = k1 == 164 || k1 == 165 || k1 == 18 || k1 == 91 || k1 == 92;
+                if is_menu_trigger {
+                    return LRESULT(1);
+                }
             }
         }
     }
@@ -168,8 +228,8 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-/// Spawn the hook on its own thread with a Win32 message loop.
-pub fn start<P, R, H, C>(on_press: P, on_release: R, on_handless: H, on_cancel: C) -> std::thread::JoinHandle<()>
+pub fn start<P, R, H, C>(on_press: P, on_release: R, on_handless: H, on_cancel: C)
+    -> Result<std::thread::JoinHandle<()>, String>
 where
     P: Fn() + Send + Sync + 'static,
     R: Fn() + Send + Sync + 'static,
@@ -181,9 +241,22 @@ where
     HANDLESS_CB.set(Box::new(on_handless)).ok();
     CANCEL_CB.set(Box::new(on_cancel)).ok();
 
-    std::thread::spawn(|| unsafe {
-        let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0)
-            .expect("SetWindowsHookExW failed");
+    // Verify the hook can be installed before spawning the thread so the caller
+    // gets a synchronous error instead of a silent panic on a background thread.
+    unsafe {
+        let probe = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0)
+            .map_err(|e| format!("Failed to install keyboard hook: {e}"))?;
+        windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(probe).ok();
+    }
+
+    let handle = std::thread::spawn(|| unsafe {
+        let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0) {
+            Ok(h) => h,
+            Err(e) => {
+                log::error!("SetWindowsHookExW failed on hook thread: {e}");
+                return;
+            }
+        };
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -192,5 +265,7 @@ where
         }
 
         windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook).ok();
-    })
+    });
+
+    Ok(handle)
 }

@@ -31,24 +31,32 @@
   let errorToast = '';
   let toastTimer: ReturnType<typeof setTimeout>;
 
-  onMount(async () => {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const done = await invoke<boolean | null>('get_setting', { key: 'setup_complete' });
-      setupComplete.set(done === true);
-    } catch {
-      setupComplete.set(false);
-    }
+  onMount(() => {
+    let cleanupFn: (() => void) | undefined;
 
-    try {
-      const { listen } = await import('@tauri-apps/api/event');
-      const unlisten = await listen<string>('open-flow:error', (ev) => {
-        errorToast = ev.payload ?? 'Something went wrong';
-        clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => { errorToast = ''; }, 5000);
-      });
-      return unlisten;
-    } catch {}
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const done = await invoke<boolean | null>('get_setting', { key: 'setup_complete' });
+        setupComplete.set(done === true);
+      } catch {
+        setupComplete.set(false);
+      }
+
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const unlisten = await listen<string>('open-flow:error', (ev) => {
+          errorToast = ev.payload ?? 'Something went wrong';
+          clearTimeout(toastTimer);
+          toastTimer = setTimeout(() => { errorToast = ''; }, 5000);
+        });
+        cleanupFn = unlisten;
+      } catch {}
+    })();
+
+    return () => {
+      if (cleanupFn) cleanupFn();
+    };
   });
 </script>
 

@@ -13,7 +13,7 @@ use crate::pipeline::{AppState, SharedState, hide_pill, start_recording_session}
 
 use std::sync::{Arc, Mutex};
 use tauri::{
-    Manager,
+    Emitter, Manager,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -36,6 +36,21 @@ fn main() {
         .manage(shared.clone())
         .manage(db_handle.clone())
         .setup(move |app| {
+            if let Ok(store) = tauri_plugin_store::StoreExt::store(app.handle(), "settings.json") {
+                let _ = store.reload();
+                if let Some(val) = store.get("hotkey") {
+                    if let Some(arr) = val.as_array() {
+                        if arr.len() == 2 {
+                            if let (Some(k1), Some(k2)) = (arr[0].as_str(), arr[1].as_str()) {
+                                let vk1 = crate::core::hotkey::map_code_to_vk(k1);
+                                let vk2 = crate::core::hotkey::map_code_to_vk(k2);
+                                crate::core::hotkey::update_keys(vk1, vk2);
+                            }
+                        }
+                    }
+                }
+            }
+
             setup_tray(app)?;
             setup_hotkey(app, shared.clone());
             crate::pipeline::show_pill(app.handle(), "idle");
@@ -50,6 +65,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            commands::save_hotkey,     commands::check_hotkey,
             commands::save_api_key,    commands::get_api_key_status,
             commands::save_setting,    commands::get_setting,
             commands::show_main,       commands::hide_main,
@@ -58,6 +74,8 @@ fn main() {
             commands::stop_recording,  commands::stop_handless_mode,
             commands::get_installed_apps,
             commands::get_app_mappings, commands::save_app_mappings,
+            commands::get_snippets, commands::create_snippet,
+            commands::edit_snippet, commands::remove_snippet,
         ])
         .run(tauri::generate_context!())
         .expect("error running Open Flow");
@@ -121,12 +139,25 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
     let tx_cancel   = hotkey_tx.clone();
     let tx_release  = hotkey_tx;
 
-    core::hotkey::start(
+    match core::hotkey::start(
         move || { let _ = tx_press.try_send(HotkeyEvent::Press); },
         move || { let _ = tx_release.try_send(HotkeyEvent::Release); },
         move || { let _ = tx_handless.try_send(HotkeyEvent::HandlessToggle); },
         move || { let _ = tx_cancel.try_send(HotkeyEvent::Cancel); },
-    );
+    ) {
+        Ok(_handle) => { /* hook thread running */ }
+        Err(e) => {
+            log::error!("Hotkey hook failed to start: {e}");
+            let app_h = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // Give the webview a moment to initialise before emitting.
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                app_h.emit("open-flow:error",
+                    format!("Keyboard hook failed to install — hotkey unavailable. {e}")).ok();
+            });
+            return;
+        }
+    }
 
     let app_hk   = app.handle().clone();
     let state_hk = shared;
@@ -168,7 +199,10 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     // we don't drop the ongoing handless session.
                     let is_handless = state_hk.lock().unwrap().handless;
                     if !is_handless {
-                        state_hk.lock().unwrap().session.take();
+                        let had_session = state_hk.lock().unwrap().session.take().is_some();
+                        if had_session {
+                            std::thread::spawn(|| crate::system::volume::unmute());
+                        }
                         hide_pill(&app_hk);
                     }
                 }

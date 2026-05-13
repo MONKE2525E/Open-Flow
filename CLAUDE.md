@@ -55,6 +55,12 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml <test_name>
 ```
 
+## Agent Skills
+
+When executing tasks, refer to the guidelines in the `Agent-Skills/` directory:
+- **Updating version**: See [`Agent-Skills/Updating_version.md`](Agent-Skills/Updating_version.md) for the required files to modify when bumping the application version.
+- **Smoke Tests**: See [`Agent-Skills/SmokeTest.md`](Agent-Skills/SmokeTest.md) for testing procedures.
+
 ## Project Structure
 
 ```

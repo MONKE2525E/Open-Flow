@@ -2,7 +2,7 @@
 name = "open-flow"
 version = "0.1.0"
 description = "Open Flow — local-first AI dictation"
-authors = []
+authors = ["Open Flow Team"]
 edition = "2021"
 
 [[bin]]
@@ -56,6 +56,4 @@ panic      = "abort"
 codegen-units = 1
 
 
-[[test]]
-name = "transcription_smoke"
-harness = false
+

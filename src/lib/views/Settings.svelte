@@ -1,7 +1,7 @@
 <script lang="ts">
   import { settingsOpen } from '../stores';
   import { icons } from '../icons';
-  import { tick, onMount } from 'svelte';
+  import { tick, onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { fly, slide, fade } from 'svelte/transition';
   import { flip } from 'svelte/animate';
@@ -11,6 +11,11 @@
   let prevSection: string | null = null;
   let animDir: 'up' | 'down' | null = null;
   let isAnimating = false;
+
+  // Hotkey state
+  let hotkey = ['AltLeft', 'Space'];
+  let recordingHotkey = false;
+  let capturedKeys: string[] = [];
 
   // API key status — true means a key is saved; never expose the value
   let keyStatus = { groq: false, openai: false, google: false };
@@ -62,10 +67,15 @@
   $: if ($settingsOpen) {
     loadSettings();
   } else {
+    cancelRecordingHotkey();
     draftKeys = { groq: '', openai: '', google: '' };
     micDropdownOpen = false;
     appPickerOpen = false;
   }
+
+  onDestroy(() => {
+    cancelRecordingHotkey();
+  });
 
   async function loadMappings() {
     try {
@@ -160,9 +170,112 @@
 
       const mic = await invoke<string | null>('get_setting', { key: 'microphone_device' });
       selectedMic = mic ?? '';
+
+      const hk = await invoke<string[] | null>('get_setting', { key: 'hotkey' });
+      if (hk && hk.length === 2) {
+        hotkey = hk;
+      }
     } catch {
       // dev mode without Tauri — best-effort
     }
+  }
+
+  const MODIFIER_CODES = new Set([
+    'ShiftLeft', 'ShiftRight',
+    'ControlLeft', 'ControlRight',
+    'AltLeft', 'AltRight',
+    'MetaLeft', 'MetaRight',
+  ]);
+
+  function startRecordingHotkey(e: MouseEvent | KeyboardEvent) {
+    e.stopPropagation();
+    if (recordingHotkey) return;
+    recordingHotkey = true;
+    capturedKeys = [];
+    window.addEventListener('keydown', handleHotkeyKeydown, { capture: true });
+    window.addEventListener('keyup', handleHotkeyKeyup, { capture: true });
+    window.addEventListener('mousedown', cancelRecordingHotkey, { capture: true });
+  }
+
+  function cancelRecordingHotkey(e?: MouseEvent | KeyboardEvent) {
+    if (e && (e.target as HTMLElement).closest('.keybind-btn')) {
+      // Don't cancel if they click the button itself again
+      return;
+    }
+    if (recordingHotkey) {
+      window.removeEventListener('keydown', handleHotkeyKeydown, { capture: true });
+      window.removeEventListener('keyup', handleHotkeyKeyup, { capture: true });
+      window.removeEventListener('mousedown', cancelRecordingHotkey, { capture: true });
+      recordingHotkey = false;
+      capturedKeys = [];
+    }
+  }
+
+  function handleHotkeyKeydown(e: KeyboardEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.repeat) return;
+
+    if (capturedKeys.length === 0) {
+      if (e.code === 'Escape') {
+        cancelRecordingHotkey();
+        return;
+      }
+      // First key must be a modifier to avoid suppressing arbitrary typing system-wide.
+      if (!MODIFIER_CODES.has(e.code)) {
+        // Flash the button label briefly so the user understands why nothing happened.
+        capturedKeys = ['__bad__'];
+        setTimeout(() => { capturedKeys = []; }, 800);
+        return;
+      }
+      capturedKeys = [e.code];
+    } else if (capturedKeys.length === 1 && e.code !== capturedKeys[0]) {
+      capturedKeys = [...capturedKeys, e.code];
+      finishRecordingHotkey();
+    }
+  }
+
+  function handleHotkeyKeyup(e: KeyboardEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  async function finishRecordingHotkey() {
+    window.removeEventListener('keydown', handleHotkeyKeydown, { capture: true });
+    window.removeEventListener('keyup', handleHotkeyKeyup, { capture: true });
+    window.removeEventListener('mousedown', cancelRecordingHotkey, { capture: true });
+    recordingHotkey = false;
+    if (capturedKeys.length === 2) {
+      try {
+        let available = true;
+        try {
+          available = await invoke<boolean>('check_hotkey', { key1: capturedKeys[0], key2: capturedKeys[1] });
+        } catch (e) {
+          console.warn("check_hotkey failed (likely running in browser dev mode)", e);
+        }
+
+        if (!available) {
+          const { emit } = await import('@tauri-apps/api/event');
+          // RegisterHotKey only catches apps using the same Win32 API — treat
+          // this as a best-effort signal, not a definitive conflict.
+          await emit('open-flow:error', "Hotkey may already be in use by another application");
+          return;
+        }
+
+        // Save first; only commit to the UI if the backend call succeeds.
+        await invoke('save_hotkey', { key1: capturedKeys[0], key2: capturedKeys[1] });
+        hotkey = capturedKeys;
+      } catch (e) {
+        console.error("Failed to save hotkey", e);
+        const { emit } = await import('@tauri-apps/api/event');
+        await emit('open-flow:error', "Failed to save hotkey — key may not be recognized");
+      }
+    }
+  }
+
+  function formatKey(code: string) {
+    if (!code) return '';
+    return code.replace('Left', '').replace('Right', '').replace('Key', '').replace('Digit', '');
   }
 
   async function saveKey(provider: 'groq' | 'openai' | 'google') {
@@ -355,7 +468,17 @@
             <h2 class="settings-h">General</h2>
             <div class="setting-row">
               <div><div class="label">Hotkey</div><div class="desc">Hold to record, release to transcribe</div></div>
-              <kbd class="badge key-badge">Alt Space</kbd>
+              <button class="badge key-badge keybind-btn" onclick={startRecordingHotkey} class:recording={recordingHotkey}>
+                {#if recordingHotkey}
+                  {#if capturedKeys.length === 0 || capturedKeys[0] === '__bad__'}
+                    {capturedKeys[0] === '__bad__' ? 'Must be Alt/Ctrl/Shift/Win' : 'Press Alt/Ctrl/Shift/Win...'}
+                  {:else}
+                    Press 2nd key...
+                  {/if}
+                {:else}
+                  {formatKey(hotkey[0])} + {formatKey(hotkey[1])}
+                {/if}
+              </button>
             </div>
             <div class="setting-row">
               <div><div class="label">Microphone</div><div class="desc">Input device for capture</div></div>
@@ -756,7 +879,6 @@
     font-family: var(--mono);
     font-size: 11px;
     letter-spacing: 0.04em;
-    pointer-events: none;
   }
 
   .key-input {
@@ -1222,5 +1344,24 @@
     gap: 6px;
     margin-top: 8px;
     padding: 4px 2px;
+  }
+
+  .keybind-btn {
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 0.2s;
+    user-select: none;
+  }
+  .keybind-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+  .keybind-btn.recording {
+    background: var(--accent);
+    color: #fff;
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
   }
 </style>

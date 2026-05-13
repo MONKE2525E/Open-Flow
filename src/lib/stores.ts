@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { invoke } from '@tauri-apps/api/core';
 
 export const currentPage = writable<'home' | 'dictionary' | 'snippets' | 'style'>('home');
 export const settingsOpen = writable(false);
@@ -16,3 +17,21 @@ export const styleTab = writable('cleanup');
 
 // Setup — null means not yet checked, false = show wizard, true = done
 export const setupComplete = writable<boolean | null>(null);
+
+// Snippets
+export interface Snippet {
+  id: number;
+  trigger: string;
+  expansion: string;
+  use_count: number;
+  created_at: string;
+}
+
+export const snippets = writable<Snippet[]>([]);
+
+export async function fetchSnippets(): Promise<void> {
+  try {
+    const data = await invoke<Snippet[]>('get_snippets');
+    snippets.set(data);
+  } catch { /* dev mode — no backend */ }
+}

@@ -147,3 +147,52 @@ pub async fn save_app_mappings(app: AppHandle, mappings: Vec<AppMapping>) -> Res
     );
     store.save().map_err(|e| e.to_string())
 }
+
+// ---------- snippets ----------
+
+#[tauri::command]
+pub fn get_snippets(app: AppHandle) -> Result<Vec<db::Snippet>, String> {
+    let db = app.state::<DbHandle>();
+    db::query_snippets(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_snippet(app: AppHandle, trigger: String, expansion: String) -> Result<(), String> {
+    let db = app.state::<DbHandle>();
+    db::insert_snippet(&db, &trigger, &expansion).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn edit_snippet(app: AppHandle, id: i64, trigger: String, expansion: String) -> Result<(), String> {
+    let db = app.state::<DbHandle>();
+    db::update_snippet(&db, id, &trigger, &expansion).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn remove_snippet(app: AppHandle, id: i64) -> Result<(), String> {
+    let db = app.state::<DbHandle>();
+    db::delete_snippet(&db, id).map_err(|e| e.to_string())
+}
+
+// ---------- hotkey ----------
+
+#[tauri::command]
+pub async fn check_hotkey(key1: String, key2: String) -> Result<bool, String> {
+    Ok(crate::core::hotkey::is_hotkey_available(&key1, &key2))
+}
+
+#[tauri::command]
+pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(), String> {
+    let vk1 = crate::core::hotkey::map_code_to_vk(&key1);
+    let vk2 = crate::core::hotkey::map_code_to_vk(&key2);
+    if vk1 == 0 {
+        return Err(format!("Unrecognized key code: {key1}"));
+    }
+    if vk2 == 0 {
+        return Err(format!("Unrecognized key code: {key2}"));
+    }
+    crate::core::hotkey::update_keys(vk1, vk2);
+    let store = app.store("settings.json").map_err(|e| e.to_string())?;
+    store.set("hotkey", serde_json::json!([key1, key2]));
+    store.save().map_err(|e| e.to_string())
+}

@@ -56,6 +56,15 @@ pub struct Stats {
     pub day_streak: i64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Snippet {
+    pub id: i64,
+    pub trigger: String,
+    pub expansion: String,
+    pub use_count: i64,
+    pub created_at: String,
+}
+
 // ---------- queries ----------
 
 pub fn insert_transcription(
@@ -131,4 +140,58 @@ pub fn compute_streak(dates: &[String], today: chrono::NaiveDate) -> i64 {
         }
     }
     streak
+}
+
+// ---------- snippets ----------
+
+pub fn insert_snippet(db: &Db, trigger: &str, expansion: &str) -> Result<()> {
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO snippets (trigger, expansion) VALUES (?1, ?2)",
+        params![trigger, expansion],
+    )?;
+    Ok(())
+}
+
+pub fn update_snippet(db: &Db, id: i64, trigger: &str, expansion: &str) -> Result<()> {
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "UPDATE snippets SET trigger=?2, expansion=?3 WHERE id=?1",
+        params![id, trigger, expansion],
+    )?;
+    Ok(())
+}
+
+pub fn delete_snippet(db: &Db, id: i64) -> Result<()> {
+    let conn = db.lock().unwrap();
+    conn.execute("DELETE FROM snippets WHERE id=?1", params![id])?;
+    Ok(())
+}
+
+pub fn query_snippets(db: &Db) -> Result<Vec<Snippet>> {
+    let conn = db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT id, trigger, expansion, use_count, created_at \
+         FROM snippets ORDER BY created_at DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(Snippet {
+            id:        r.get(0)?,
+            trigger:   r.get(1)?,
+            expansion: r.get(2)?,
+            use_count: r.get(3)?,
+            created_at: r.get(4)?,
+        })
+    })?
+    .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+pub fn increment_snippet_use(db: &Db, id: i64) -> Result<()> {
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "UPDATE snippets SET use_count = use_count + 1 WHERE id=?1",
+        params![id],
+    )?;
+    Ok(())
 }

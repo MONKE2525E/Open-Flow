@@ -5,7 +5,7 @@ use tauri_plugin_store::StoreExt;
 
 use crate::api::{cleanup, prompts, transcription};
 use crate::core::{injection, window_context};
-use crate::data::{db, store};
+use crate::data::{db, snippets, store};
 use crate::media::audio;
 use crate::system::apps::AppMapping;
 use crate::DbHandle;
@@ -280,6 +280,8 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     let words = final_text.split_whitespace().count() as i64;
     let db = app.state::<DbHandle>();
     let _ = db::insert_transcription(&db, &raw, &final_text, words, duration_ms as i64, &api_used);
+
+    let final_text = snippets::expand_snippets(&final_text, &db);
 
     hide_pill(&app);
     if let Err(e) = injection::inject_text(&final_text).await {

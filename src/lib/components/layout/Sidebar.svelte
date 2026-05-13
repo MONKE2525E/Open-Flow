@@ -30,7 +30,7 @@
   const navItems = [
     { id: 'home',       label: 'Home',       icon: 'home',     locked: false },
     { id: 'dictionary', label: 'Dictionary', icon: 'book',     locked: true  },
-    { id: 'snippets',   label: 'Snippets',   icon: 'scissors', locked: true  },
+    { id: 'snippets',   label: 'Snippets',   icon: 'scissors', locked: false },
     { id: 'style',      label: 'Style',      icon: 'type',     locked: false },
   ] as const;
 
