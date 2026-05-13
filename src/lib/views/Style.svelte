@@ -34,13 +34,6 @@
     { id: 'code',   name: 'Code',   desc: 'No conversational filler. Raw syntax.',    sample: "def hello_world():\n    print('hello')" },
   ];
 
-  const DEFAULT_MAPPINGS = [
-    { exe: 'code.exe', profile: 'code' },
-    { exe: 'cursor.exe', profile: 'code' },
-    { exe: 'winword.exe', profile: 'formal' },
-    { exe: 'discord.exe', profile: 'casual' }
-  ];
-
   const profileOptions = [
     { id: 'casual', label: 'Casual' },
     { id: 'formal', label: 'Formal' },
@@ -50,7 +43,7 @@
 
   interface InstalledApp { name: string; exe: string; }
 
-  let mappings = $state(DEFAULT_MAPPINGS);
+  let mappings = $state<{ exe: string; profile: string }[]>([]);
   let newExe = $state('');
   let newProfile = $state('casual');
   let profileDropdownOpen = $state(false);

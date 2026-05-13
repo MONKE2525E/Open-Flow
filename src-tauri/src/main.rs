@@ -42,7 +42,7 @@ fn main() {
         .manage(shared.clone())
         .manage(db_handle.clone())
         .setup(move |app| {
-            if let Ok(store) = tauri_plugin_store::StoreExt::store(app.handle(), "settings.json") {
+            let first_launch = if let Ok(store) = tauri_plugin_store::StoreExt::store(app.handle(), "settings.json") {
                 let _ = store.reload();
                 if let Some(val) = store.get("hotkey") {
                     if let Some(arr) = val.as_array() {
@@ -55,11 +55,22 @@ fn main() {
                         }
                     }
                 }
-            }
+                store.get("setup_complete").and_then(|v| v.as_bool()).unwrap_or(false) == false
+            } else {
+                false
+            };
 
             setup_tray(app)?;
             setup_hotkey(app, shared.clone());
             crate::pipeline::show_pill(app.handle(), "idle");
+
+            if first_launch {
+                if let Some(w) = app.get_webview_window("main") {
+                    w.show().ok();
+                    w.set_focus().ok();
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
