@@ -46,7 +46,7 @@ Open Flow handles the entire pipeline from your microphone to your active applic
 - **Hold-to-Record Hotkey:** Uses a low-level Windows keyboard hook for precise `<kbd>Alt</kbd>+<kbd>Space</kbd>` hold/release timing. Works in any app.
 - **Mix & Match AI Providers:** Native support for Groq, OpenAI, and Google. Choose your preferred transcription and cleanup models independently you're not locked in.
 - **Smart LLM Cleanup:** Automatically removes filler words, fixes punctuation, and applies formatting — all powered by open APIs you control.
-- **Prompt Injection Protection:** The system prompt explicitly prevents the LLM from acting on any instructions accidentally spoken into the microphone.
+- **Prompt Injection Protection:** Uses `<raw_dictation>` isolation boundaries to explicitly prevent the LLM from acting on any instructions accidentally spoken into the microphone.
 
 ### Customization
 - **Formatting Profiles:** Switch between *Casual*, *Formal*, and *Very Casual* modes. Profiles adapt automatically based on the active app.

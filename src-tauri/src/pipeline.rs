@@ -174,9 +174,7 @@ pub fn spawn_level_emitter(
 
 // ---------- pipeline ----------
 
-fn is_quota_error(e: &anyhow::Error) -> bool {
-    e.to_string().starts_with("QUOTA_EXCEEDED:")
-}
+
 
 fn fallback_providers(primary: &str) -> &'static [&'static str] {
     match primary {
@@ -273,14 +271,15 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         return;
     }
 
-    let cfg = match app.store("settings.json") {
-        Ok(s) => store::load_pipeline_config(&s),
+    let settings_store = match app.store("settings.json") {
+        Ok(s) => s,
         Err(e) => {
             log::error!("store: {e}");
             hide_pill(&app);
             return;
         }
     };
+    let cfg = store::load_pipeline_config(&settings_store);
 
     let t_key = cfg.key_for(&cfg.transcription_provider).to_owned();
     if t_key.is_empty() {
@@ -293,8 +292,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     }
 
     // Resolve profile: user-defined app mapping → default tone.
-    let settings_store = app.store("settings.json").ok();
-    let profile = resolve_profile(settings_store.as_deref(), &process_name, &cfg.default_tone);
+    let profile = resolve_profile(Some(&settings_store), &process_name, &cfg.default_tone);
 
     let app_context: Option<String> = if cfg.app_context_hint {
         window_context::get_app_context_hint(&process_name)
@@ -304,50 +302,28 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
 
     let c_key = cfg.key_for(&cfg.cleanup_provider).to_owned();
 
-    // Build provider order for transcription: primary first, then fallbacks if enabled.
-    let mut t_providers: Vec<&str> = vec![cfg.transcription_provider.as_str()];
-    if cfg.api_fallback_enabled {
-        for fb in fallback_providers(&cfg.transcription_provider) {
-            if !cfg.key_for(fb).is_empty() {
-                t_providers.push(fb);
-            }
+    let (raw, used_t_provider) = match try_providers(
+        &[&cfg.transcription_provider],
+        &cfg,
+        |provider_id, key| {
+            let w = wav.clone();
+            let provider = match provider_id {
+                "openai" => transcription::Provider::OpenAI,
+                "google" => transcription::Provider::Google,
+                _ => transcription::Provider::Groq,
+            };
+            Box::pin(async move {
+                transcription::transcribe(w, provider, &key).await
+            })
         }
-    }
-
-    let mut raw_result: Option<String> = None;
-    let mut t_last_err: Option<anyhow::Error> = None;
-    let mut used_t_provider = cfg.transcription_provider.as_str();
-    for provider_id in &t_providers {
-        let key = cfg.key_for(provider_id);
-        if key.is_empty() { continue; }
-        let provider = match *provider_id {
-            "openai" => transcription::Provider::OpenAI,
-            "google" => transcription::Provider::Google,
-            _ => transcription::Provider::Groq,
-        };
-        match transcription::transcribe(wav.clone(), provider, key).await {
-            Ok(t) => {
-                used_t_provider = provider_id;
-                raw_result = Some(t);
-                break;
-            }
-            Err(e) => {
-                if cfg.api_fallback_enabled && is_quota_error(&e) {
-                    log::warn!("transcription quota on {provider_id}, trying fallback");
-                    t_last_err = Some(e);
-                } else {
-                    show_error_pill(&app, &trim_err(&e.to_string())).await;
-                    return;
-                }
-            }
+    ).await {
+        Ok(res) => res,
+        Err(Some(e)) => {
+            show_error_pill(&app, &trim_err(&e.to_string())).await;
+            return;
         }
-    }
-
-    let raw = match raw_result {
-        Some(t) => t,
-        None => {
-            let msg = t_last_err.map(|e| trim_err(&e.to_string())).unwrap_or_else(|| "Transcription failed".into());
-            show_error_pill(&app, &msg).await;
+        Err(None) => {
+            show_error_pill(&app, "Transcription failed").await;
             return;
         }
     };
@@ -363,7 +339,9 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     // text itself. Otherwise the literal expansion would overwrite any work
     // the model did on the trigger area, making instructions feel ignored.
     let db = app.state::<DbHandle>();
-    let snippet_instructions = snippets::collect_snippet_instructions(&raw, &db);
+    let mut db_snippets = db::query_snippets(&db).unwrap_or_default();
+    let dict_entries = db::query_dictionary(&db).unwrap_or_default();
+    let snippet_instructions = snippets::collect_snippet_instructions_from(&raw, &db_snippets);
 
     // Fast path: the entire transcription was just a snippet trigger.
     // try_pure_snippet_expand strips trailing punctuation the transcription model
@@ -372,17 +350,17 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     // If the snippet has cleanup instructions, fall through to the normal path so
     // the LLM can apply them.
     let pure_expansion = if snippet_instructions.is_empty() {
-        snippets::try_pure_snippet_expand(&raw, &db)
+        snippets::try_pure_snippet_expand_from(&raw, &db_snippets, &db)
     } else {
         None
     };
 
     let expanded = pure_expansion
         .clone()
-        .unwrap_or_else(|| snippets::expand_snippets(&raw, &db));
+        .unwrap_or_else(|| snippets::expand_snippets_from(&raw, &mut db_snippets, &db));
 
     let final_text = if cfg.cleanup_enabled && !c_key.is_empty() && pure_expansion.is_none() && cfg.cleanup_intensity != "none" {
-        let dict_instructions = dictionary::build_dictionary_prompt(&db);
+        let dict_instructions = dictionary::build_dictionary_prompt_from(&dict_entries);
         let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str()]
             .iter()
             .filter(|s| !s.is_empty())
@@ -390,54 +368,46 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        // Build provider order for cleanup: primary first, then fallbacks if enabled.
-        let mut c_providers: Vec<&str> = vec![cfg.cleanup_provider.as_str()];
-        if cfg.api_fallback_enabled {
-            for fb in fallback_providers(&cfg.cleanup_provider) {
-                if !cfg.key_for(fb).is_empty() {
-                    c_providers.push(fb);
-                }
-            }
-        }
+        let cleaned_res = try_providers(
+            &[&cfg.cleanup_provider],
+            &cfg,
+            |provider_id, key| {
+                let cp = match provider_id {
+                    "openai" => cleanup::CleanupProvider::OpenAI,
+                    "google" => cleanup::CleanupProvider::Google,
+                    _ => cleanup::CleanupProvider::Groq,
+                };
+                let expanded_ref = expanded.clone();
+                let profile_ref = profile.clone();
+                let intensity_ref = cfg.cleanup_intensity.clone();
+                let rules_ref = extra_rules.clone();
+                let ctx_ref = app_context.clone();
+                Box::pin(async move {
+                    cleanup::cleanup(
+                        &expanded_ref,
+                        cp,
+                        &key,
+                        &profile_ref,
+                        &intensity_ref,
+                        &rules_ref,
+                        ctx_ref.as_deref(),
+                    )
+                    .await
+                })
+            },
+        )
+        .await;
 
-        let mut cleaned_result: Option<String> = None;
-        let mut c_last_err: Option<anyhow::Error> = None;
-        for provider_id in &c_providers {
-            let key = cfg.key_for(provider_id);
-            if key.is_empty() { continue; }
-            let cp = match *provider_id {
-                "openai" => cleanup::CleanupProvider::OpenAI,
-                "google" => cleanup::CleanupProvider::Google,
-                _ => cleanup::CleanupProvider::Groq,
-            };
-            match cleanup::cleanup(&expanded, cp, key, &profile, &cfg.cleanup_intensity, &extra_rules, app_context.as_deref()).await {
-                Ok(t) => { cleaned_result = Some(t); break; }
-                Err(e) => {
-                    if cfg.api_fallback_enabled && is_quota_error(&e) {
-                        log::warn!("cleanup quota on {provider_id}, trying fallback");
-                        c_last_err = Some(e);
-                    } else {
-                        show_error_pill(&app, &format!("Cleanup failed: {}", trim_err(&e.to_string()))).await;
-                        return;
-                    }
-                }
-            }
-        }
-
-        match cleaned_result {
-            Some(cleaned) if !cleaned.is_empty() => {
+        match cleaned_res {
+            Ok((cleaned, _)) if !cleaned.is_empty() => {
                 snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions)
             }
-            Some(_) => {
-                snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
+            Ok(_) => snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions),
+            Err(Some(e)) => {
+                show_error_pill(&app, &format!("Cleanup failed: {}", trim_err(&e.to_string()))).await;
+                return;
             }
-            None => {
-                if let Some(e) = c_last_err {
-                    show_error_pill(&app, &format!("Cleanup failed: {}", trim_err(&e.to_string()))).await;
-                    return;
-                }
-                snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
-            }
+            Err(None) => snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions),
         }
     } else {
         snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
@@ -449,10 +419,10 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         return;
     }
 
-    let final_text = dictionary::apply_substitutions(&final_text, &db);
+    let final_text = dictionary::apply_substitutions_from(&final_text, &dict_entries);
 
     hide_pill(&app);
-    if let Err(e) = injection::inject_text(&final_text, target_hwnd).await {
+    if let Err(e) = injection::inject_text(&final_text, target_hwnd, cfg.contextual_caps_enabled).await {
         log::error!("inject: {e}");
         show_error_pill(&app, "Failed to paste — text saved to history").await;
     }
@@ -461,4 +431,46 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     if cfg.auto_learn_enabled {
         auto_learn::start_monitor(final_text.clone(), db.inner().clone(), app.clone());
     }
+}
+
+use std::future::Future;
+use std::pin::Pin;
+
+async fn try_providers<F>(
+    providers: &[&str],
+    cfg: &store::PipelineConfig,
+    mut call: F,
+) -> Result<(String, String), Option<anyhow::Error>>
+where
+    F: FnMut(&str, String) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send>>,
+{
+    let mut to_try = vec![providers[0]];
+    if cfg.api_fallback_enabled {
+        for fb in fallback_providers(providers[0]) {
+            if !cfg.key_for(fb).is_empty() {
+                to_try.push(fb);
+            }
+        }
+    }
+
+    let mut last_err = None;
+    for provider_id in to_try {
+        let key = cfg.key_for(provider_id).to_owned();
+        if key.is_empty() {
+            continue;
+        }
+
+        match call(provider_id, key).await {
+            Ok(result) => return Ok((result, provider_id.to_string())),
+            Err(e) => {
+                if cfg.api_fallback_enabled && crate::api::is_quota_error(&e) {
+                    log::warn!("quota on {provider_id}, trying fallback");
+                    last_err = Some(e);
+                } else {
+                    return Err(Some(e));
+                }
+            }
+        }
+    }
+    Err(last_err)
 }

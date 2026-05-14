@@ -1,68 +1,104 @@
 ---
 name: smoke-tests
-description: Guides any AI agent through making the Open Flow Playwright smoke tests pass by fixing app code — never the tests.
+description: Guides any AI agent through making the Open Flow smoke tests pass by fixing app code — never the tests.
 ---
 
 # Smoke Tests — Open Flow
 
-You are helping make the Open Flow Playwright smoke tests pass. Read every rule before touching any code.
+You are helping make the Open Flow smoke tests pass. Read every rule before touching any code.
 
 ## Hard Rules — No Exceptions
 
-1. **Never edit any file inside `tests/smoke/`.** This includes test.js, test-app.js, playwright-test-ui.cjs, playwright-test-fixes.cjs, and smoke_test.wav. The tests are the contract. They do not change.
-2. **Never fake functionality.** Do not hardcode expected values into the DOM, do not hide elements that only appear for Playwright, do not add invisible nodes to satisfy a selector. Every passing assertion must reflect real, working UI.
-3. **Fix the app.** The Svelte components in `src/lib/views/` and `src/lib/components/` are where the work happens. CSS class names in the components must exactly match what the tests assert.
+1. **Never edit any file inside `tests/smoke/`** unless the user explicitly grants permission for a specific session.
+2. **Never fake functionality.** Do not hardcode expected values, hide elements, or add invisible nodes for Playwright. Every assertion must reflect real, working UI.
+3. **Fix the app.** The Svelte components in `src/lib/views/` and `src/lib/components/` are where the work happens.
 
 ---
 
-## The Four Tests and Their Expected Results
+## The Six Tests and Their Expected Results
 
-### `test.js` — port 5173 (Vite dev server)
-Loads the app, waits 2 s, checks that `document.body.innerHTML` contains the string `"app"`, saves a screenshot to `G:\Open Flow\screenshot.png`.
+### `test.cjs` — port 5173 (Vite dev server)
 
-**Pass criteria:** No page-level JS errors, body contains content, screenshot writes without throwing.
+Loads the app, waits for at least one `.nav-item` to appear, asserts at least 4 nav items exist and `.app` root is visible. Saves `screenshot.png`. Fails on any JS page errors.
+
+**Pass criteria:** No JS errors on load, ≥4 `.nav-item` elements, `.app` root visible, screenshot writes.
 
 ---
 
-### `test-app.js` — port 5173 (Vite dev server)
-Opens the **Style** tab, then clicks the **App Mappings** sub-tab. Then:
-1. Finds `input[placeholder="e.g. slack.exe"]`
-2. Types `chrome.exe`, picks `casual` from the `<select>`, clicks `button:has-text("Add Mapping")`
-3. Asserts `text=chrome.exe` appears on the page
+### `test-app.cjs` — port 5173 (Vite dev server)
 
-**Pass criteria:** The App Mappings UI exists with those exact placeholder/select/button elements, and adding a mapping makes it visible in the list. The mapping must be real — it must go through the actual store or backend, not just render a static string.
+Clicks `.nav-item:has-text("Style")`, then `text=App Mappings`. Fills `input[placeholder="e.g. slack.exe"]` with `chrome.exe`, picks `casual`, clicks `button:has-text("Add Mapping")`, then waits for `text=chrome.exe` to appear.
+
+**Pass criteria:** Style nav, App Mappings tab, and the add flow all work end-to-end. The mapping must render in the list via the real store/backend.
 
 ---
 
 ### `playwright-test-ui.cjs` — port 1420 (Tauri window)
-Clicks each sidebar nav item by class+text: `.nav-item:has-text("Home")`, `.nav-item:has-text("Dictionary")`, `.nav-item:has-text("Snippets")`, `.nav-item:has-text("Style")`.
 
-Then clicks `.nav-item:has-text("Settings")` and asserts `.settings-modal` is visible.
+Clicks each sidebar nav item and asserts the **view actually changes** by waiting for the corresponding `h1.page-h`:
 
-Inside Settings, clicks each section: `.settings-nav-item:has-text("General")`, `"API Keys"`, `"Models"`, `"Privacy"`, `"Advanced"`, `"About"`.
+| Nav label  | Expected heading  |
+|------------|-------------------|
+| Home       | `Welcome back`    |
+| Dictionary | `Dictionary`      |
+| Snippets   | `Snippets`        |
+| Style      | `Style`           |
 
-On the Privacy page, finds all `.toggle` elements and clicks each one. Closes by clicking at coordinates `(10, 10)` (outside the modal).
+Then opens Settings, clicks each of the 6 section nav items and asserts `h2.settings-h` renders. Navigates to Privacy, finds all `.toggle` elements, reads `aria-checked` before each click, clicks, asserts `aria-checked` changed. Closes settings via `(10, 10)` click and asserts `.settings-modal` is hidden.
 
 **Pass criteria:**
-- All four main nav items use class `nav-item`
-- Settings opens a container with class `settings-modal`
-- All six settings sections use class `settings-nav-item`
-- Privacy page has at least one element with class `toggle`
-- Clicking `(10, 10)` (outside the modal) closes it
+- All nav clicks produce the correct heading (not just no crash)
+- Settings section clicks produce the correct `h2.settings-h`
+- Each toggle's `aria-checked` flips on click
+- `.settings-modal` becomes hidden after outside click
 
 ---
 
 ### `playwright-test-fixes.cjs` — port 1420 (Tauri window)
-Asserts that these exact elements are visible — tag, class, and text must all match:
 
-| Location | Selector |
-|---|---|
-| Settings → Advanced | `div.badge` containing text `"30 days"` |
-| Settings → Advanced | `div.badge` containing text `"Clipboard (Ctrl+V)"` |
-| Settings → General | `kbd.badge.key-badge` containing text `"Alt Space"` |
-| Settings → About | `button.btn-ghost` containing text `"github.com/MONKE2525E/Open-Flow"` |
+Uses `waitFor({ state: 'visible' })` (not `waitForTimeout`) on every element. Asserts:
 
-**Pass criteria:** All four elements present with the exact tag+class combination shown above. A `<span class="badge">` will not satisfy `div.badge`. A `<button>` without class `btn-ghost` will not satisfy the About check.
+| Location             | Selector                                              |
+|----------------------|-------------------------------------------------------|
+| Settings → Advanced  | `div.badge:has-text("30 days")`                       |
+| Settings → Advanced  | `div.badge:has-text("Clipboard (Ctrl+V)")`            |
+| Settings → General   | `kbd.badge.key-badge:has-text("Alt Space")`           |
+| Settings → About     | `button.btn-ghost:has-text("github.com/MONKE2525E/Open-Flow")` |
+
+**Pass criteria:** All four elements exist with the exact tag+class shown. A `<span class="badge">` won't satisfy `div.badge`; a `<button>` without `.btn-ghost` won't satisfy the About check.
+
+---
+
+### `playwright-test-state.cjs` — port 1420 (Tauri window)
+
+Tests that state changes actually persist through a settings close/reopen cycle:
+
+1. All 3 transcription and 3 cleanup model buttons render as `.model-row` elements.
+2. At least one `.model-row.active` exists.
+3. Clicking a non-active model row makes it active; closing and reopening settings shows the new selection still active.
+4. Clicking a `.toggle` in Advanced changes `aria-checked`; closing and reopening settings shows the same value.
+5. Restores original state at the end.
+
+**Pass criteria:** Model selection and toggle state both survive a settings close/reopen cycle — proving the Tauri store write is happening.
+
+---
+
+### `playwright-test-pipeline.cjs` — no browser (Node.js only)
+
+Standalone test that hits the API directly. Does **not** require `npm run tauri dev`.
+
+1. Verifies `tests/smoke/smoke_test.wav` exists and has a valid `RIFF/WAVE` header.
+2. Reads the store at `%APPDATA%\com.openflow.app\settings.json` to find configured API keys.
+3. If a Groq or OpenAI key is found: calls the transcription API with the WAV and verifies non-empty output.
+4. If transcript is obtained and Groq key exists: runs cleanup for all three profiles (`casual`, `formal`, `very_casual`) and checks:
+   - Each profile returns non-empty text.
+   - Profiles produce **distinct** outputs (differentiation is real).
+   - `formal` output contains no contractions.
+   - `very_casual` output starts with a lowercase word (only `I` may be uppercase).
+5. If an OpenAI key is also present: runs a bonus gpt-4o-mini cleanup check.
+
+**Pass criteria (with keys):** Transcription non-empty, all profiles distinct, format rules enforced.
+**Skip (without keys):** Reports `SKIP` and exits 0 — not a failure.
 
 ---
 
@@ -71,35 +107,49 @@ Asserts that these exact elements are visible — tag, class, and text must all 
 When fixing components, verify these classes are applied exactly as written:
 
 - Sidebar nav buttons → `nav-item`
+- App root div → `app`
+- View headings → `h1.page-h` with the view's name as text
 - Settings container → `settings-modal`
 - Settings section buttons → `settings-nav-item`
-- Privacy toggles → `toggle`
-- Info badges (div) → `badge`
+- Settings section headings → `h2.settings-h` with the section name as text
+- Privacy / Advanced toggles → `toggle` + `role="switch"` + `aria-checked` attribute
+- Info badges (div) → `badge` on a `<div>`
 - Hotkey badge → `badge key-badge` on a `<kbd>` element
-- About GitHub button → `btn-ghost` on a `<button>` element
+- About GitHub button → `btn-ghost` on a `<button>`
+- Model buttons → `model-row` (active selection adds `active`)
 
 ---
 
 ## How to Run
 
 ```bash
-# Port-5173 tests — Vite dev server only
+# Port-5173 tests — Vite dev server
 npm run dev            # terminal 1
-node tests/smoke/test.js
-node tests/smoke/test-app.js
+node tests/smoke/test.cjs
+node tests/smoke/test-app.cjs
 
 # Port-1420 tests — full Tauri window
 npm run tauri dev      # terminal 1
 node tests/smoke/playwright-test-ui.cjs
 node tests/smoke/playwright-test-fixes.cjs
+node tests/smoke/playwright-test-state.cjs
+
+# Pipeline test — no server needed
+node tests/smoke/playwright-test-pipeline.cjs
 ```
 
-**Note:** `tests/smoke/smoke_test.wav` is gitignored. The user provides this file separately with an AI-generated voice. Do not try to create, generate, or commit it.
+All tests exit with code 0 on pass and code 1 on failure so they integrate cleanly with CI.
+
+---
+
+## smoke_test.wav
+
+`tests/smoke/smoke_test.wav` is gitignored. The user provides this separately as an ElevenLabs-generated voice recording. It must be a real WAV file (RIFF/WAVE header, ≥5 KB). See the user for the recording script.
 
 ---
 
 ## Slash Commands
-You can invoke this skill across different tools using the following commands:
+
 - **Claude Code**: `/smoke-tests`
 - **Gemini CLI**: `/smoke-tests`
 - **Codex**: `/smoke-tests`

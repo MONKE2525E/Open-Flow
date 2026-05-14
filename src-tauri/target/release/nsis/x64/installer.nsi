@@ -30,8 +30,8 @@ ${StrLoc}
 
 !define MANUFACTURER "Open Flow Team"
 !define PRODUCTNAME "Open Flow"
-!define VERSION "0.5.0"
-!define VERSIONWITHBUILD "0.5.0.0"
+!define VERSION "0.6.0"
+!define VERSIONWITHBUILD "0.6.0.0"
 !define HOMEPAGE ""
 !define INSTALLMODE "currentUser"
 !define LICENSE ""
@@ -58,7 +58,7 @@ ${StrLoc}
 !define MANUKEY "Software\${MANUFACTURER}"
 !define MANUPRODUCTKEY "${MANUKEY}\${PRODUCTNAME}"
 !define UNINSTALLERSIGNCOMMAND ""
-!define ESTIMATEDSIZE "7711"
+!define ESTIMATEDSIZE "7693"
 !define STARTMENUFOLDER ""
 
 Var PassiveMode

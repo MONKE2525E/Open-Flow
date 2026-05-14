@@ -294,15 +294,15 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
                     .encode_wide()
                     .chain(std::iter::once(0))
                     .collect();
-                let app_path_bytes =
-                    std::mem::transmute::<*const u16, *const u8>(app_path_wide.as_ptr());
-                let app_path_len = (app_path_wide.len() - 1) * 2;
                 RegSetValueExW(
                     hkey,
                     PCWSTR(value_name.as_ptr()),
                     None,
                     REG_SZ,
-                    Some(std::slice::from_raw_parts(app_path_bytes, app_path_len)),
+                    Some(std::slice::from_raw_parts(
+                        app_path_wide.as_ptr() as *const u8,
+                        (app_path_wide.len() - 1) * 2,
+                    )),
                 )
             } else {
                 RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()))
@@ -362,4 +362,22 @@ pub async fn install_update(download_url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+// ---------- connectivity ----------
+
+#[tauri::command]
+pub async fn check_connectivity() -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    client
+        .head("https://www.google.com")
+        .send()
+        .await
+        .is_ok()
 }

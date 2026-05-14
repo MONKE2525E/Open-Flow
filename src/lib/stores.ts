@@ -63,3 +63,6 @@ export interface UpdateInfo {
 }
 
 export const updateInfo = writable<UpdateInfo | null>(null);
+
+// Connectivity — starts true to avoid a false offline flash on mount
+export const isOnline = writable<boolean>(true);

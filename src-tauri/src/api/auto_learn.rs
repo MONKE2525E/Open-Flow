@@ -38,36 +38,86 @@ fn edit_distance(a: &str, b: &str) -> usize {
     row[n]
 }
 
+/// COM apartment guard — initializes once per thread, uninitializes on drop.
+/// Stored in a thread-local so COM is set up at most once per spawned thread.
+#[cfg(windows)]
+struct ComGuard(bool);
+
+#[cfg(windows)]
+impl ComGuard {
+    fn init() -> Self {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+        let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+        // S_OK / S_FALSE = we initialized it; RPC_E_CHANGED_MODE = already init'd by caller.
+        ComGuard(hr.is_ok())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ComGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            use windows::Win32::System::Com::CoUninitialize;
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
+#[cfg(windows)]
+thread_local! {
+    static COM_INIT: std::cell::RefCell<Option<ComGuard>> = std::cell::RefCell::new(None);
+}
+
 /// Read the text value of the currently focused UI element via Windows UI Automation.
+/// Tries ValuePattern first (simple inputs), then TextPattern (browsers, rich text editors).
 #[cfg(windows)]
 pub fn read_focused_text() -> Option<String> {
-    use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_APARTMENTTHREADED,
-    };
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
     use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationValuePattern, UIA_ValuePatternId,
+        CUIAutomation, IUIAutomation, IUIAutomationTextPattern, IUIAutomationValuePattern,
+        UIA_TextPatternId, UIA_ValuePatternId,
     };
+
+    // Ensure COM is initialized for this thread — no-op after the first call.
+    COM_INIT.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        if guard.is_none() {
+            *guard = Some(ComGuard::init());
+        }
+    });
 
     unsafe {
-        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        let com_ok = hr.is_ok();
+        let automation: IUIAutomation =
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+        let element = automation.GetFocusedElement().ok()?;
 
-        let result = (|| -> Option<String> {
-            let automation: IUIAutomation =
-                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
-            let element = automation.GetFocusedElement().ok()?;
-            let pattern = element
-                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-                .ok()?;
-            Some(pattern.CurrentValue().ok()?.to_string())
-        })();
-
-        if com_ok {
-            CoUninitialize();
+        // Try ValuePattern first (input fields, textareas in native apps).
+        if let Ok(pattern) =
+            element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+        {
+            if let Ok(val) = pattern.CurrentValue() {
+                let s = val.to_string();
+                if !s.is_empty() {
+                    return Some(s);
+                }
+            }
         }
 
-        result
+        // Fall back to TextPattern (browsers, rich text editors, VS Code, etc.).
+        if let Ok(pattern) =
+            element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+        {
+            if let Ok(doc_range) = pattern.DocumentRange() {
+                if let Ok(val) = doc_range.GetText(-1) {
+                    let s = val.to_string();
+                    if !s.is_empty() {
+                        return Some(s);
+                    }
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -82,8 +132,8 @@ pub fn diff_words(original: &str, current: &str) -> Vec<(String, String)> {
     let orig: Vec<&str> = original.split_whitespace().collect();
     let curr: Vec<&str> = current.split_whitespace().collect();
 
-    // If word count grew >2x the user typed substantial new content — ignore.
-    if curr.len() > orig.len() * 2 {
+    // If word count grew >2x+10 the user typed substantial new content — ignore.
+    if curr.len() > orig.len() * 2 + 10 {
         return vec![];
     }
 
@@ -108,8 +158,8 @@ pub fn diff_words(original: &str, current: &str) -> Vec<(String, String)> {
 /// After the same (wrong → correct) pair is seen 3 times within a 7-day window
 /// across any number of sessions, it is added to the dictionary automatically.
 pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
-    // Skip very short injections — positional diff on < 3 words is too noisy.
-    if injected_text.split_whitespace().count() < 3 {
+    // Skip very short injections — positional diff on < 2 words is too noisy.
+    if injected_text.split_whitespace().count() < 2 {
         return;
     }
 
@@ -120,7 +170,7 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
 
     tauri::async_runtime::spawn(async move {
         let mut last_text: Option<String> = None;
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
         // Track pairs already recorded this session so one 30-second window only
         // contributes one row per (wrong, correct) pair to pending_corrections.
         let mut recorded_this_session: HashSet<(String, String)> = HashSet::new();
@@ -136,7 +186,8 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
 
             let current_text = match current_text {
                 Ok(Some(t)) => t,
-                _ => break,
+                // UIA read failed (focus moved to unsupported element) — skip this tick.
+                _ => continue,
             };
 
             let orig_wc = injected_text.split_whitespace().count();
@@ -164,7 +215,7 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
                 let count = db::count_pending_corrections_last_week(&db, &mistake, &correction)
                     .unwrap_or(0);
 
-                if count >= 3 {
+                if count >= 2 {
                     let _ = db::insert_dictionary_entry_auto_learned(
                         &db,
                         &correction,

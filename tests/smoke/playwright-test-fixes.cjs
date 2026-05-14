@@ -1,48 +1,101 @@
+// Smoke test: element contract assertions — Tauri window (port 1420)
+// Verifies exact tag + class combos for critical UI elements.
 const { chromium } = require('playwright');
+const { tauriMock } = require('./_tauri-mock.cjs');
+
 const TARGET_URL = 'http://localhost:1420';
+const TIMEOUT = 8_000;
+
+async function assert(label, locator, errors) {
+  try {
+    await locator.waitFor({ state: 'visible', timeout: 3_000 });
+    console.log(`  ✓ ${label}`);
+  } catch {
+    errors.push(`${label} — not found or not visible`);
+    console.error(`  ✗ ${label}`);
+  }
+}
 
 (async () => {
-  console.log('Starting Fix Assertions for Open Flow...');
+  console.log('Starting element contract assertions...');
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   const errors = [];
-  
+
+  await page.addInitScript(tauriMock);
+
   try {
-    await page.goto(TARGET_URL, { waitUntil: 'networkidle' });
+    await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: TIMEOUT });
 
-    console.log('Testing Settings page badges...');
-    await page.locator('.nav-item:has-text("Settings")').click();
-    await page.waitForTimeout(500);
+    // Open Settings
+    const settingsBtn = page.locator('.nav-item:has-text("Settings")');
+    await settingsBtn.waitFor({ state: 'visible', timeout: TIMEOUT });
+    await settingsBtn.click();
+    await page.locator('.settings-modal').waitFor({ state: 'visible', timeout: 3_000 });
+    console.log('Settings opened.');
 
-    // Advanced tab badges
+    // ── Advanced tab ─────────────────────────────────────────────────────────
+    console.log('Checking Advanced tab...');
     await page.locator('.settings-nav-item:has-text("Advanced")').click();
-    await page.waitForTimeout(500);
-    const historyBadge = page.locator('div.badge:has-text("30 days")');
-    if (!(await historyBadge.isVisible())) errors.push('30 days badge not found or not a div.badge!');
+    await page.locator('h2.settings-h:has-text("Advanced")').waitFor({ state: 'visible', timeout: 3_000 });
 
-    const clipboardBadge = page.locator('div.badge:has-text("Clipboard (Ctrl+V)")');
-    if (!(await clipboardBadge.isVisible())) errors.push('Clipboard badge not found or not a div.badge!');
+    // At least one toggle must exist in Advanced
+    await assert(
+      '.toggle (aria switch) in Advanced',
+      page.locator('.toggle[role="switch"]').first(),
+      errors,
+    );
 
-    // General tab kbd badge
+    // Gain value display must render as "X.X×"
+    await assert(
+      'span.gain-value showing mic gain',
+      page.locator('span.gain-value'),
+      errors,
+    );
+
+    // ── General tab ──────────────────────────────────────────────────────────
+    console.log('Checking General tab hotkey badge...');
     await page.locator('.settings-nav-item:has-text("General")').click();
-    await page.waitForTimeout(500);
-    const hotkeyBadge = page.locator('kbd.badge.key-badge:has-text("Alt Space")');
-    if (!(await hotkeyBadge.isVisible())) errors.push('Alt Space badge not found or not a kbd.badge!');
+    await page.locator('h2.settings-h:has-text("General")').waitFor({ state: 'visible', timeout: 3_000 });
 
-    // About tab GitHub link
-    await page.locator('.settings-nav-item:has-text("About")').click();
-    await page.waitForTimeout(500);
-    const githubBtn = page.locator('button.btn-ghost:has-text("github.com/MONKE2525E/Open-Flow")');
-    if (!(await githubBtn.isVisible())) errors.push('GitHub button not found!');
+    // Hotkey is button.badge.key-badge showing "Alt + Space"
+    await assert(
+      'button.badge.key-badge containing "Alt"',
+      page.locator('button.badge.key-badge:has-text("Alt")'),
+      errors,
+    );
 
-    if (errors.length === 0) {
-      console.log('✅ All fix assertions passed successfully!');
+    // Verify the exact text includes the separator
+    const hotkeyBtn = page.locator('button.badge.key-badge');
+    await hotkeyBtn.waitFor({ state: 'visible', timeout: 2_000 });
+    const hotkeyText = await hotkeyBtn.textContent();
+    if (!hotkeyText?.includes('+')) {
+      errors.push(`Hotkey badge text "${hotkeyText}" missing expected "+" separator`);
     } else {
-      console.log('❌ Errors found:');
-      errors.forEach(e => console.log('- ' + e));
+      console.log(`  ✓ Hotkey text: "${hotkeyText?.trim()}"`);
     }
-  } catch(e) {
-    console.error('Test execution failed:', e.message);
+
+    // ── About tab ────────────────────────────────────────────────────────────
+    console.log('Checking About tab GitHub button...');
+    await page.locator('.settings-nav-item:has-text("About")').click();
+    await page.locator('h2.settings-h:has-text("About")').waitFor({ state: 'visible', timeout: 3_000 });
+
+    await assert(
+      'button.btn-ghost containing "github.com/MONKE2525E/Open-Flow"',
+      page.locator('button.btn-ghost:has-text("github.com/MONKE2525E/Open-Flow")'),
+      errors,
+    );
+
+    // ── Final verdict ─────────────────────────────────────────────────────────
+    if (errors.length > 0) {
+      console.error('\nFAIL — missing or wrong elements:');
+      errors.forEach(e => console.error('  ' + e));
+      process.exit(1);
+    }
+    console.log('\nPASS — all element contracts satisfied.');
+  } catch (err) {
+    console.error('FAIL — test threw:', err.message);
+    process.exit(1);
   } finally {
     await browser.close();
   }

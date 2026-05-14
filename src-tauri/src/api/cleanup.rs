@@ -90,7 +90,7 @@ async fn openai_compat(
             },
             Msg {
                 role: "user".into(),
-                content: format!("<transcription>\n{}\n</transcription>", text),
+                content: format!("<raw_dictation>\n{}\n</raw_dictation>", text),
             },
         ],
         max_tokens: 4096,
@@ -105,7 +105,7 @@ async fn openai_compat(
         .await?;
 
     if resp.status().as_u16() == 429 {
-        anyhow::bail!("QUOTA_EXCEEDED: {} quota reached", model);
+        return Err(crate::api::quota_bail(model));
     }
     let resp = resp.error_for_status().context("Cleanup API error")?;
 
@@ -153,7 +153,7 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
     let req = Req {
         contents: vec![GContent {
             parts: vec![GPart {
-                text: format!("<transcription>\n{}\n</transcription>", text),
+                text: format!("<raw_dictation>\n{}\n</raw_dictation>", text),
             }],
         }],
         system_instruction: GContent {
@@ -175,7 +175,7 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
         .await?;
 
     if resp.status().as_u16() == 429 {
-        anyhow::bail!("QUOTA_EXCEEDED: Google quota reached");
+        return Err(crate::api::quota_bail("Google"));
     }
     let resp = resp.error_for_status().context("Google Cleanup API error")?;
 

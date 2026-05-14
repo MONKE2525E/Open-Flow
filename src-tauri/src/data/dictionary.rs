@@ -11,6 +11,10 @@ pub fn build_dictionary_prompt(db: &Db) -> String {
             return String::new();
         }
     };
+    build_dictionary_prompt_from(&entries)
+}
+
+pub fn build_dictionary_prompt_from(entries: &[db::DictionaryEntry]) -> String {
     if entries.is_empty() {
         return String::new();
     }
@@ -54,7 +58,10 @@ pub fn apply_substitutions(text: &str, db: &Db) -> String {
             return text.to_string();
         }
     };
+    apply_substitutions_from(text, &entries)
+}
 
+pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> String {
     let replaceable: Vec<(&str, &str)> = entries
         .iter()
         .filter_map(|e| e.mistake.as_deref().map(|m| (m, e.term.as_str())))
@@ -65,6 +72,7 @@ pub fn apply_substitutions(text: &str, db: &Db) -> String {
     }
 
     let mut result = text.to_string();
+    let mut haystack = result.to_lowercase();
     for (mistake, term) in &replaceable {
         let needle = mistake.to_lowercase();
         // Guard: skip empty patterns — find("") always returns Some(0), causing an
@@ -72,13 +80,15 @@ pub fn apply_substitutions(text: &str, db: &Db) -> String {
         if needle.is_empty() {
             continue;
         }
-        let haystack = result.to_lowercase();
         let mut positions = Vec::new();
         let mut from = 0usize;
         while let Some(p) = haystack[from..].find(&needle) {
             let abs = from + p;
             positions.push(abs);
             from = abs + needle.len();
+        }
+        if positions.is_empty() {
+            continue;
         }
         // Use needle.len() (the length of what was actually found in the lowercase
         // haystack) rather than mistake.len(). For any character whose lowercase
@@ -88,6 +98,8 @@ pub fn apply_substitutions(text: &str, db: &Db) -> String {
         for pos in positions.into_iter().rev() {
             result.replace_range(pos..pos + needle.len(), term);
         }
+        // Refresh haystack only when result actually changed.
+        haystack = result.to_lowercase();
     }
     result
 }

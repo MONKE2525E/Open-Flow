@@ -74,7 +74,7 @@ async fn transcribe_whisper(wav: Vec<u8>, api_key: &str, url: &str, model: &str)
         .await?;
 
     if resp.status().as_u16() == 429 {
-        anyhow::bail!("QUOTA_EXCEEDED: {} quota reached", model);
+        return Err(crate::api::quota_bail(model));
     }
     let resp = resp.error_for_status().context("Transcription API error")?;
 
@@ -96,19 +96,30 @@ async fn transcribe_gemini_with_prompt(
 ) -> Result<String> {
     let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &wav);
 
-    let mut body = serde_json::json!({
-        "contents": [{
-            "parts": [
-                { "inlineData": { "mimeType": "audio/wav", "data": encoded } },
-                { "text": prompt }
-            ]
-        }]
-    });
-    if disable_thinking {
-        body["generationConfig"] = serde_json::json!({
-            "thinkingConfig": { "thinkingBudget": 0 }
-        });
-    }
+    let body = super::gemini_types::GeminiTranscribeReq {
+        contents: vec![super::gemini_types::GeminiReqContent {
+            parts: vec![
+                super::gemini_types::GeminiReqPart {
+                    inline_data: Some(super::gemini_types::GeminiInlineData {
+                        mime_type: "audio/wav".to_string(),
+                        data: encoded,
+                    }),
+                    text: None,
+                },
+                super::gemini_types::GeminiReqPart {
+                    inline_data: None,
+                    text: Some(prompt.to_string()),
+                },
+            ],
+        }],
+        generation_config: if disable_thinking {
+            Some(super::gemini_types::GeminiGenConfig {
+                thinking_config: super::gemini_types::GeminiThinkingConfig { thinking_budget: 0 },
+            })
+        } else {
+            None
+        },
+    };
 
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
@@ -118,7 +129,7 @@ async fn transcribe_gemini_with_prompt(
 
     let status = resp.status();
     if status.as_u16() == 429 {
-        anyhow::bail!("QUOTA_EXCEEDED: Google quota reached");
+        return Err(crate::api::quota_bail("Google"));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();

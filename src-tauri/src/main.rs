@@ -120,6 +120,7 @@ fn main() {
             commands::remove_dictionary_entry,
             commands::check_for_update,
             commands::install_update,
+            commands::check_connectivity,
         ])
         .run(tauri::generate_context!())
         .expect("error running Open Flow");
@@ -145,7 +146,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .icon(tray_icon)
         .menu(&menu)
         .menu_on_left_click(false)
-        .tooltip("Open Flow — Alt+Space to record")
+        .tooltip("Open Flow — Ctrl+Win to record")
         .on_menu_event(|app, ev| match ev.id.as_ref() {
             "show" => {
                 if let Some(w) = app.get_webview_window("main") {

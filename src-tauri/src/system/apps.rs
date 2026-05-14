@@ -39,12 +39,14 @@ pub fn list_installed_apps() -> Vec<InstalledApp> {
         ] {
             apps.extend(scan_uninstall(root, path));
         }
-        let registry_exes: std::collections::HashSet<String> =
-            apps.iter().map(|a| a.exe.clone()).collect();
-        for proc in get_running_processes() {
-            if !registry_exes.contains(&proc.exe) {
-                apps.push(proc);
-            }
+        {
+            let registry_exes: std::collections::HashSet<&str> =
+                apps.iter().map(|a| a.exe.as_str()).collect();
+            let to_add: Vec<_> = get_running_processes()
+                .into_iter()
+                .filter(|p| !registry_exes.contains(p.exe.as_str()))
+                .collect();
+            apps.extend(to_add);
         }
         let mut seen = std::collections::HashSet::new();
         apps.retain(|a| seen.insert(a.exe.clone()));
