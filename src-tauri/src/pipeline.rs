@@ -114,12 +114,19 @@ pub fn start_recording_session(
         .and_then(|s| s.get(store::MUTE_AUDIO))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let mic_gain = settings
+        .as_deref()
+        .and_then(|s| s.get(store::MIC_GAIN))
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .unwrap_or(3.5)
+        .clamp(1.0, 8.0);
 
     if mute_audio {
         std::thread::spawn(|| crate::system::volume::mute());
     }
 
-    match audio::RecordingSession::start(device, noise_reduction) {
+    match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
         Ok(session) => {
             let level_arc = session.level.clone();
             let active_arc = session.active.clone();
@@ -224,7 +231,10 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         let mut st = state.lock().unwrap();
         (st.session.take(), st.target_hwnd)
     };
-    let Some(session) = session else { return };
+    let Some(session) = session else {
+        log::debug!("pipeline: no session — recording never started or was already consumed");
+        return;
+    };
 
     // Capture the foreground process name NOW, before any await points.
     // After transcription/cleanup the foreground window may have changed to a
@@ -238,10 +248,19 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
 
     show_pill(&app, "processing");
 
-    let (wav, duration_ms, rms) = match session.stop() {
-        Ok(v) => v,
-        Err(e) => {
+    // session.stop() blocks on std::sync::mpsc::recv() until the audio thread
+    // finishes processing (denoise + resample + WAV encode). Use spawn_blocking
+    // so the tokio worker thread stays free for other tasks during that wait.
+    let stop_result = tokio::task::spawn_blocking(move || session.stop()).await;
+    let (wav, duration_ms, rms) = match stop_result {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => {
             log::error!("audio stop: {e}");
+            hide_pill(&app);
+            return;
+        }
+        Err(e) => {
+            log::error!("audio stop task panicked: {e}");
             hide_pill(&app);
             return;
         }
@@ -249,6 +268,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     // Reject recordings that are too short or too quiet to contain real speech.
     // Short taps hallucinate words; near-silence recordings do the same.
     if duration_ms < 700 || rms < 0.008 {
+        log::debug!("pipeline: rejected — duration={duration_ms}ms rms={rms:.4}");
         hide_pill(&app);
         return;
     }
@@ -334,7 +354,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
 
     let api_used = format!("{}/transcription", used_t_provider);
     if raw.is_empty() {
-        hide_pill(&app);
+        show_error_pill(&app, "Nothing transcribed — please try speaking more clearly").await;
         return;
     }
 
@@ -424,21 +444,21 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     };
 
     let words = final_text.split_whitespace().count() as i64;
-    let _ = db::insert_transcription(&db, &raw, &final_text, words, duration_ms as i64, &api_used);
+    if let Err(e) = db::insert_transcription(&db, &raw, &final_text, words, duration_ms as i64, &api_used) {
+        show_error_pill(&app, &format!("Failed to save transcription: {}", trim_err(&e.to_string()))).await;
+        return;
+    }
 
     let final_text = dictionary::apply_substitutions(&final_text, &db);
 
     hide_pill(&app);
     if let Err(e) = injection::inject_text(&final_text, target_hwnd).await {
         log::error!("inject: {e}");
+        show_error_pill(&app, "Failed to paste — text saved to history").await;
     }
     app.emit("open-flow:transcribed", &final_text).ok();
 
     if cfg.auto_learn_enabled {
-        let al_state = app
-            .state::<auto_learn::SharedAutoLearnState>()
-            .inner()
-            .clone();
-        auto_learn::start_monitor(final_text.clone(), db.inner().clone(), al_state, app.clone());
+        auto_learn::start_monitor(final_text.clone(), db.inner().clone(), app.clone());
     }
 }

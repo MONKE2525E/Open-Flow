@@ -55,3 +55,11 @@ export async function fetchDictionary(): Promise<void> {
     dictionary.set(data);
   } catch { /* dev mode — no backend */ }
 }
+
+// Updates
+export interface UpdateInfo {
+  version: string;
+  downloadUrl: string;
+}
+
+export const updateInfo = writable<UpdateInfo | null>(null);

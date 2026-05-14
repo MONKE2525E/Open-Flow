@@ -192,9 +192,7 @@ fn dedup_trailing_periods(text: &str) -> String {
         body.pop();
         period_count += 1;
     }
-    if period_count > 1 {
-        body.push('.');
-    } else if period_count == 1 {
+    if period_count > 0 {
         body.push('.');
     }
 

@@ -4,6 +4,7 @@
 - Run npm dev commands yourself please
 - Github Repo: https://github.com/MONKE2525E/Open-Flow
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
+- ROADMAP.md Keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
 
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -153,7 +154,7 @@ Built-in profiles: `casual`, `formal`, `email`, `excited`, `very_casual`. Profil
 ## Key Design Constraints
 
 - **No bundled browser.** Tauri uses Windows WebView2 — keep this. Never switch to Electron.
-- **RAM target: 100MB idle.** Profile before adding any heavy JS dependency.
+- **RAM target: ~200MB idle.** Profile before adding any heavy JS dependency.
 - **Text injection is clipboard-based.** `SendInput` character-by-character is unreliable across apps; clipboard + Ctrl+V works everywhere.
 - **API keys never touch the DB.** Use `tauri-plugin-store` only. Commands that check key presence return a boolean status, never the key itself.
 - **Dictionary and snippets are stubs.** The DB tables and UI exist, but `apply_substitutions()` and `expand_snippets()` are no-ops pending implementation.

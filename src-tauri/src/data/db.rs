@@ -31,6 +31,14 @@ CREATE TABLE IF NOT EXISTS snippets (
   use_count    INTEGER NOT NULL DEFAULT 0,
   created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS pending_corrections (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  wrong_word   TEXT    NOT NULL,
+  correct_word TEXT    NOT NULL,
+  created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_pending_words
+  ON pending_corrections(wrong_word, correct_word);
 ";
 
 pub fn open(path: &str) -> Result<Db> {
@@ -46,6 +54,17 @@ pub fn open(path: &str) -> Result<Db> {
     // connection close — causing all user data to vanish on restart.
     let _ = conn
         .execute_batch("ALTER TABLE snippets ADD COLUMN instructions TEXT NOT NULL DEFAULT '';");
+    // Create pending_corrections on existing installs that predate the SCHEMA entry.
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS pending_corrections (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          wrong_word   TEXT    NOT NULL,
+          correct_word TEXT    NOT NULL,
+          created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_pending_words
+          ON pending_corrections(wrong_word, correct_word);
+    ");
     // Migrate dictionary to final schema: term (required) + mistake (optional).
     // Handles all prior states (original wrong/correct columns, or already migrated).
     let _ = conn.execute_batch("
@@ -239,10 +258,35 @@ pub fn insert_dictionary_entry(db: &Db, term: &str, mistake: Option<&str>) -> Re
 pub fn insert_dictionary_entry_auto_learned(db: &Db, term: &str, mistake: Option<&str>) -> Result<()> {
     let conn = db.lock().unwrap();
     conn.execute(
-        "INSERT OR IGNORE INTO dictionary (term, mistake, auto_learned) VALUES (?1, ?2, 1)",
+        "INSERT INTO dictionary (term, mistake, auto_learned, correction_count) \
+         VALUES (?1, ?2, 1, 1) \
+         ON CONFLICT(term) DO UPDATE SET \
+           auto_learned = 1, \
+           correction_count = correction_count + 1",
         params![term, mistake],
     )?;
     Ok(())
+}
+
+pub fn insert_pending_correction(db: &Db, wrong: &str, correct: &str) -> Result<()> {
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO pending_corrections (wrong_word, correct_word) VALUES (?1, ?2)",
+        params![wrong, correct],
+    )?;
+    Ok(())
+}
+
+pub fn count_pending_corrections_last_week(db: &Db, wrong: &str, correct: &str) -> Result<i64> {
+    let conn = db.lock().unwrap();
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pending_corrections \
+         WHERE wrong_word=?1 AND correct_word=?2 \
+         AND created_at >= datetime('now', '-7 days')",
+        params![wrong, correct],
+        |r| r.get(0),
+    )?;
+    Ok(count)
 }
 
 pub fn update_dictionary_entry(db: &Db, id: i64, term: &str, mistake: Option<&str>) -> Result<()> {

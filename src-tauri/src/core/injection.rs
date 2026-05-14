@@ -32,7 +32,7 @@ pub async fn inject_text(text: &str, target_hwnd: usize) -> anyhow::Result<()> {
                             len += 1;
                         }
                         let v = std::slice::from_raw_parts(ptr, len + 1).to_vec();
-                        GlobalUnlock(windows::Win32::Foundation::HGLOBAL(h.0));
+                        let _ = GlobalUnlock(windows::Win32::Foundation::HGLOBAL(h.0));
                         Some(v)
                     });
                     CloseClipboard().ok();
@@ -44,16 +44,28 @@ pub async fn inject_text(text: &str, target_hwnd: usize) -> anyhow::Result<()> {
                 None
             };
 
-            // Write new text
+            // Write new text — retry up to 3 times if another process holds the clipboard.
             let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-            if OpenClipboard(None).is_ok() {
-                EmptyClipboard().ok();
-                let hg = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2)?;
-                let ptr = GlobalLock(hg) as *mut u16;
-                std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
-                GlobalUnlock(hg);
-                SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hg.0))).ok();
-                CloseClipboard().ok();
+            let mut clipboard_written = false;
+            for attempt in 0..3u32 {
+                if OpenClipboard(None).is_ok() {
+                    EmptyClipboard().ok();
+                    let hg = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2)?;
+                    let ptr = GlobalLock(hg) as *mut u16;
+                    std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
+                    let _ = GlobalUnlock(hg);
+                    SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hg.0)))
+                        .map_err(|e| anyhow::anyhow!("SetClipboardData failed: {e}"))?;
+                    CloseClipboard().ok();
+                    clipboard_written = true;
+                    break;
+                }
+                if attempt < 2 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                }
+            }
+            if !clipboard_written {
+                return Err(anyhow::anyhow!("OpenClipboard failed after 3 attempts — clipboard held by another process"));
             }
 
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -116,7 +128,7 @@ pub async fn inject_text(text: &str, target_hwnd: usize) -> anyhow::Result<()> {
                     let hg = GlobalAlloc(GMEM_MOVEABLE, saved_wide.len() * 2)?;
                     let ptr = GlobalLock(hg) as *mut u16;
                     std::ptr::copy_nonoverlapping(saved_wide.as_ptr(), ptr, saved_wide.len());
-                    GlobalUnlock(hg);
+                    let _ = GlobalUnlock(hg);
                     SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hg.0))).ok();
                     CloseClipboard().ok();
                 }
