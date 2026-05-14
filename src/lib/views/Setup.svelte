@@ -1615,12 +1615,13 @@
   }
 
   /* ── Quick Settings step ───────────────────────────────────────────── */
-  .qs-step { max-width: 560px; }
+  .qs-step { max-width: 760px; }
 
   .qs-cards {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: stretch;
   }
 
   .qs-card {
