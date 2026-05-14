@@ -1,0 +1,42 @@
+node_modules/
+dist/
+src-tauri/gen/
+
+# src-tauri/target/ build artifacts — keep bundle/ and release/ folders
+src-tauri/target/debug/
+src-tauri/target/release/build/
+src-tauri/target/release/deps/
+src-tauri/target/release/.fingerprint/
+src-tauri/target/release/incremental/
+src-tauri/target/release/*.exe
+src-tauri/target/release/*.pdb
+src-tauri/target/release/*.d
+src-tauri/target/.rustc_info.json
+src-tauri/target/CACHEDIR.TAG
+src-tauri/target/incremental/
+
+# Environment & secrets
+.env
+.env.local
+
+# Editor & OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+*.tmp
+
+# Logs
+*.log
+
+# Test files — audio clip provided separately, not committed
+tests/smoke/*.wav
+
+# AI Agent workspace
+.claude/
