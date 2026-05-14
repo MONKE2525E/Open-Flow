@@ -8,7 +8,6 @@ mod media;
 mod pipeline;
 mod system;
 
-use crate::api::auto_learn::{AutoLearnState, SharedAutoLearnState};
 use crate::data::db;
 use crate::pipeline::{hide_pill, start_recording_session, AppState, SharedState};
 
@@ -35,9 +34,6 @@ fn main() {
     let db_handle: DbHandle =
         db::open(db_dir.join("openflow.db").to_str().unwrap()).expect("failed to open database");
 
-    let auto_learn_state: SharedAutoLearnState =
-        Arc::new(Mutex::new(AutoLearnState::new()));
-
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_shell::init())
@@ -49,7 +45,6 @@ fn main() {
         }))
         .manage(shared.clone())
         .manage(db_handle.clone())
-        .manage(auto_learn_state)
         .setup(move |app| {
             let first_launch = if let Ok(store) =
                 tauri_plugin_store::StoreExt::store(app.handle(), "settings.json")
@@ -123,6 +118,8 @@ fn main() {
             commands::create_dictionary_entry,
             commands::edit_dictionary_entry,
             commands::remove_dictionary_entry,
+            commands::check_for_update,
+            commands::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error running Open Flow");

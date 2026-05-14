@@ -3,12 +3,17 @@
   import { fly } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
+  import { invoke } from '@tauri-apps/api/core';
+  import { getVersion } from '@tauri-apps/api/app';
   import { icons } from '../icons';
+  import { updateInfo, type UpdateInfo } from '../stores';
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
   interface Stats { total_words: number; avg_wpm: number; day_streak: number; }
 
   let copiedId: number | null = null;
+  let currentVersion = '';
+  let installing = false;
 
   async function copyText(entry: Entry) {
     try {
@@ -50,7 +55,6 @@
 
   async function load() {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
       const [r, s] = await Promise.all([invoke<Entry[]>('get_recent'), invoke<Stats>('get_stats')]);
       recents = r;
       stats = s;
@@ -62,10 +66,30 @@
     loading = false;
   }
 
+  async function handleInstall() {
+    if (!$updateInfo) return;
+    installing = true;
+    try {
+      await invoke('install_update', { downloadUrl: $updateInfo.downloadUrl });
+    } catch (e) {
+      console.error('Install failed:', e);
+    } finally {
+      installing = false;
+    }
+  }
+
   onMount(() => {
+    getVersion().then(v => currentVersion = v);
     load();
     let unlisten: (() => void) | undefined;
-    
+
+    // Check for updates
+    invoke<any>('check_for_update').then((update: any) => {
+      if (update) {
+        updateInfo.set(update as UpdateInfo);
+      }
+    }).catch(() => {});
+
     // Refresh when a new transcription comes in
     import('@tauri-apps/api/event').then(({ listen }) => {
       listen('open-flow:transcribed', load).then(u => unlisten = u).catch(() => {});
@@ -96,6 +120,17 @@
           </p>
         </div>
       </div>
+
+      {#if $updateInfo}
+        <div class="update-banner">
+          <span class="update-text">
+            Update available — v{currentVersion} → v{$updateInfo.version}
+          </span>
+          <button class="update-btn" onclick={handleInstall} disabled={installing}>
+            {installing ? 'Downloading…' : 'Install Now'}
+          </button>
+        </div>
+      {/if}
 
       {#if loading}
         <div class="empty-state">Loading history…</div>
@@ -239,6 +274,46 @@
     font-family: var(--serif);
     font-style: italic;
     color: var(--amber-50);
+  }
+
+  .update-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 18px;
+    margin-bottom: 22px;
+    background: rgba(217, 119, 87, 0.08);
+    border: 1px solid rgba(217, 119, 87, 0.20);
+    border-radius: var(--r-lg);
+    font-size: 13px;
+    color: var(--ink-strong);
+  }
+
+  .update-text {
+    flex: 1;
+    font-family: var(--serif);
+    font-weight: 500;
+  }
+
+  .update-btn {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    background: var(--jap-500);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+  }
+  .update-btn:hover:not(:disabled) {
+    background: var(--jap-600);
+  }
+  .update-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .day-head {

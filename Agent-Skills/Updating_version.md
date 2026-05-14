@@ -10,3 +10,5 @@ When you are asked to update the application version (e.g., bump the version to 
    - Update the `version` field under the `[package]` section.
 
 **Crucial:** Ensure the version numbers match exactly in all three files to prevent build issues and keep the frontend and backend in sync.
+
+**Note:** The version is now read dynamically from `@tauri-apps/api/app` via `getVersion()` in `Settings.svelte` and `Home.svelte`, so hardcoded version strings in those files are no longer used. These three files above are the only source of truth for versioning.

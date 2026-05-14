@@ -129,7 +129,7 @@ pub fn map_code_to_vk(code: &str) -> u32 {
         c if c.starts_with("Digit") && c.len() == 6 => c.as_bytes()[5] as u32,
         c if c.starts_with("F") && c.len() > 1 => {
             if let Ok(n) = c[1..].parse::<u32>() {
-                if n >= 1 && n <= 12 {
+                if (1..=12).contains(&n) {
                     111 + n
                 } else {
                     0

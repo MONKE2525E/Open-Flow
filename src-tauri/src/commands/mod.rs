@@ -320,3 +320,46 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
     store.set("autostart_enabled", serde_json::json!(enabled));
     store.save().map_err(|e| e.to_string())
 }
+
+// ---------- updates ----------
+
+#[tauri::command]
+pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
+    match crate::api::updater::check().await {
+        Ok(Some(info)) => Ok(Some(serde_json::json!({
+            "version": info.version,
+            "downloadUrl": info.download_url,
+        }))),
+        Ok(None) => Ok(None),
+        Err(e) => {
+            log::warn!("Update check failed: {e}");
+            Ok(None)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn install_update(download_url: String) -> Result<(), String> {
+    use std::io::Write;
+    let bytes = crate::api::client::get()
+        .get(&download_url)
+        .header("User-Agent", "open-flow")
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| e.to_string())?
+        .bytes()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let path = std::env::temp_dir().join("open-flow-update.exe");
+    let mut f = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    f.write_all(&bytes).map_err(|e| e.to_string())?;
+    drop(f);
+
+    std::process::Command::new(&path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}

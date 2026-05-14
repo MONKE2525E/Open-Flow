@@ -15,6 +15,7 @@ pub const CLEANUP_INTENSITY: &str = "cleanup_intensity";
 pub const APP_MAPPINGS: &str = "app_mappings";
 pub const NOISE_REDUCTION: &str = "noise_reduction";
 pub const MUTE_AUDIO: &str = "mute_audio";
+pub const MIC_GAIN: &str = "mic_gain";
 pub const SETUP_COMPLETE: &str = "setup_complete";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const API_FALLBACK_ENABLED: &str = "api_fallback_enabled";
