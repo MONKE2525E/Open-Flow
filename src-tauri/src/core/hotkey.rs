@@ -61,8 +61,8 @@ pub fn is_hotkey_available(key1: &str, key2: &str) -> bool {
     }
 }
 
-static KEY1: AtomicU32 = AtomicU32::new(164); // VK_LMENU
-static KEY2: AtomicU32 = AtomicU32::new(32); // VK_SPACE
+static KEY1: AtomicU32 = AtomicU32::new(162); // VK_LCONTROL
+static KEY2: AtomicU32 = AtomicU32::new(91); // VK_LWIN
 
 pub fn update_keys(k1: u32, k2: u32) {
     if k1 != 0 {
@@ -70,6 +70,9 @@ pub fn update_keys(k1: u32, k2: u32) {
     }
     if k2 != 0 {
         KEY2.store(k2, Ordering::SeqCst);
+    }
+    if PRESS_CB.get().is_some() {
+        return;
     }
     reset_chord_state();
     HANDLESS_WAITING_KEY1_2.store(false, Ordering::SeqCst);
@@ -308,10 +311,10 @@ where
     H: Fn() + Send + Sync + 'static,
     C: Fn() + Send + Sync + 'static,
 {
-    PRESS_CB.set(Box::new(on_press)).ok();
-    RELEASE_CB.set(Box::new(on_release)).ok();
-    HANDLESS_CB.set(Box::new(on_handless)).ok();
-    CANCEL_CB.set(Box::new(on_cancel)).ok();
+    let _ = PRESS_CB.set(Box::new(on_press));
+    let _ = RELEASE_CB.set(Box::new(on_release));
+    let _ = HANDLESS_CB.set(Box::new(on_handless));
+    let _ = CANCEL_CB.set(Box::new(on_cancel));
 
     // Verify the hook can be installed before spawning the thread so the caller
     // gets a synchronous error instead of a silent panic on a background thread.

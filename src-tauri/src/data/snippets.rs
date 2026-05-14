@@ -11,6 +11,10 @@ use crate::data::db::{self, Db};
 /// Returns None if the text is not a pure trigger (contains other spoken words).
 pub fn try_pure_snippet_expand(text: &str, db: &Db) -> Option<String> {
     let snippets = db::query_snippets(db).ok()?;
+    try_pure_snippet_expand_from(text, &snippets, db)
+}
+
+pub fn try_pure_snippet_expand_from(text: &str, snippets: &[db::Snippet], db: &Db) -> Option<String> {
     let normalized = text
         .trim()
         .trim_end_matches(|c: char| matches!(c, '.' | ',' | '?' | '!'))
@@ -30,11 +34,14 @@ pub fn collect_snippet_instructions(text: &str, db: &Db) -> String {
             return String::new();
         }
     };
+    collect_snippet_instructions_from(text, &snippets)
+}
 
+pub fn collect_snippet_instructions_from(text: &str, snippets: &[db::Snippet]) -> String {
     let text_lower = text.to_lowercase();
     let mut active_instructions: Vec<String> = Vec::new();
 
-    for snippet in &snippets {
+    for snippet in snippets.iter() {
         let needle = snippet.trigger.to_lowercase();
         if text_lower.contains(&needle) && !snippet.instructions.is_empty() {
             active_instructions.push(snippet.instructions.clone());
@@ -60,13 +67,16 @@ pub fn expand_snippets(text: &str, db: &Db) -> String {
             return text.to_string();
         }
     };
+    expand_snippets_from(text, &mut snippets, db)
+}
 
+pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -> String {
     // Longest triggers first — prevents short prefix matches shadowing longer ones.
     snippets.sort_by(|a, b| b.trigger.len().cmp(&a.trigger.len()));
 
     let mut result = text.to_string();
 
-    for snippet in &snippets {
+    for snippet in snippets.iter() {
         let needle = snippet.trigger.to_lowercase();
         let haystack = result.to_lowercase();
 

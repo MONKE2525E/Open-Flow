@@ -45,53 +45,57 @@ pub fn open(path: &str) -> Result<Db> {
     let conn = Connection::open(path)?;
     conn.execute_batch(SCHEMA)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
-    // Migrate existing tables — ignore errors if already applied.
-    // IMPORTANT: each migration uses BEGIN/COMMIT for atomicity, followed by an
-    // explicit ROLLBACK. If the migration fails mid-way (e.g. referencing a column
-    // that no longer exists after a prior migration), sqlite3_exec aborts but leaves
-    // the BEGIN open. Without the ROLLBACK cleanup, every subsequent INSERT the app
-    // makes would execute inside that ghost transaction and be silently discarded on
-    // connection close — causing all user data to vanish on restart.
-    let _ = conn
-        .execute_batch("ALTER TABLE snippets ADD COLUMN instructions TEXT NOT NULL DEFAULT '';");
-    // Create pending_corrections on existing installs that predate the SCHEMA entry.
-    let _ = conn.execute_batch("
-        CREATE TABLE IF NOT EXISTS pending_corrections (
-          id           INTEGER PRIMARY KEY AUTOINCREMENT,
-          wrong_word   TEXT    NOT NULL,
-          correct_word TEXT    NOT NULL,
-          created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
+
+    let user_version: i64 =
+        conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+
+    if user_version < 2 {
+        // IMPORTANT: each migration uses BEGIN/COMMIT for atomicity, followed by an
+        // explicit ROLLBACK. If the migration fails mid-way, sqlite3_exec aborts but
+        // leaves the BEGIN open. Without the ROLLBACK cleanup, every subsequent INSERT
+        // would execute inside that ghost transaction and be silently discarded on
+        // connection close — causing all user data to vanish on restart.
+        let _ = conn.execute_batch(
+            "ALTER TABLE snippets ADD COLUMN instructions TEXT NOT NULL DEFAULT '';",
         );
-        CREATE INDEX IF NOT EXISTS idx_pending_words
-          ON pending_corrections(wrong_word, correct_word);
-    ");
-    // Migrate dictionary to final schema: term (required) + mistake (optional).
-    // Handles all prior states (original wrong/correct columns, or already migrated).
-    let _ = conn.execute_batch("
-        BEGIN;
-        CREATE TABLE IF NOT EXISTS dictionary_v3 (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            term             TEXT    NOT NULL UNIQUE,
-            mistake          TEXT,
-            auto_learned     INTEGER NOT NULL DEFAULT 0,
-            correction_count INTEGER NOT NULL DEFAULT 0,
-            created_at       DATETIME NOT NULL DEFAULT (datetime('now'))
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pending_corrections (
+               id           INTEGER PRIMARY KEY AUTOINCREMENT,
+               wrong_word   TEXT    NOT NULL,
+               correct_word TEXT    NOT NULL,
+               created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
+             );
+             CREATE INDEX IF NOT EXISTS idx_pending_words
+               ON pending_corrections(wrong_word, correct_word);",
         );
-        INSERT OR IGNORE INTO dictionary_v3 (id, term, mistake, auto_learned, correction_count, created_at)
-            SELECT
-                id,
-                COALESCE(correct, wrong),
-                CASE WHEN correct IS NOT NULL THEN wrong ELSE NULL END,
-                auto_learned, correction_count, created_at
-            FROM dictionary;
-        DROP TABLE dictionary;
-        ALTER TABLE dictionary_v3 RENAME TO dictionary;
-        COMMIT;
-    ");
-    // Clean up any dangling transaction left by a failed migration above.
-    // If the migration succeeded, ROLLBACK errors (no active tx) — let _ = ignores it.
-    // If it failed, ROLLBACK undoes the partial BEGIN so the connection is clean.
-    let _ = conn.execute_batch("ROLLBACK;");
+        // Migrate dictionary to final schema: term (required) + mistake (optional).
+        // Handles all prior states (original wrong/correct columns, or already migrated).
+        let _ = conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS dictionary_v3 (
+                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                 term             TEXT    NOT NULL UNIQUE,
+                 mistake          TEXT,
+                 auto_learned     INTEGER NOT NULL DEFAULT 0,
+                 correction_count INTEGER NOT NULL DEFAULT 0,
+                 created_at       DATETIME NOT NULL DEFAULT (datetime('now'))
+             );
+             INSERT OR IGNORE INTO dictionary_v3
+                 (id, term, mistake, auto_learned, correction_count, created_at)
+                 SELECT id,
+                        COALESCE(correct, wrong),
+                        CASE WHEN correct IS NOT NULL THEN wrong ELSE NULL END,
+                        auto_learned, correction_count, created_at
+                 FROM dictionary;
+             DROP TABLE dictionary;
+             ALTER TABLE dictionary_v3 RENAME TO dictionary;
+             COMMIT;",
+        );
+        // Clean up any dangling transaction left by a failed migration above.
+        let _ = conn.execute_batch("ROLLBACK;");
+        conn.execute_batch("PRAGMA user_version = 2;")?;
+    }
+
     Ok(Arc::new(Mutex::new(conn)))
 }
 
@@ -176,41 +180,28 @@ pub fn query_stats(db: &Db) -> Result<Stats> {
         |r| r.get(0),
     )?;
 
-    let mut stmt =
-        conn.prepare("SELECT DISTINCT date(created_at) FROM transcriptions ORDER BY 1 DESC")?;
-    let dates: Vec<String> = stmt
-        .query_map([], |r| r.get(0))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let today = chrono::Utc::now().date_naive();
-    let day_streak = compute_streak(&dates, today);
+    let day_streak: i64 = conn.query_row(
+        "WITH consecutive AS (
+           SELECT DISTINCT date(created_at, 'localtime') AS d
+           FROM transcriptions
+           ORDER BY d DESC
+         )
+         SELECT COUNT(*) FROM (
+           SELECT d,
+                  ROW_NUMBER() OVER (ORDER BY d DESC) AS rn,
+                  julianday(date('now','localtime')) - julianday(d) AS gap
+           FROM consecutive
+         )
+         WHERE gap = rn - 1",
+        [],
+        |r| r.get(0),
+    )?;
 
     Ok(Stats {
         total_words,
         avg_wpm,
         day_streak,
     })
-}
-
-/// Pure function: given a descending list of ISO date strings and a reference
-/// date, returns the consecutive-day streak ending on or before `today`.
-pub fn compute_streak(dates: &[String], today: chrono::NaiveDate) -> i64 {
-    let mut streak = 0i64;
-    let mut expected = today;
-    for d in dates {
-        if let Ok(parsed) = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
-            if parsed != expected {
-                break;
-            }
-            streak += 1;
-            let Some(prev) = expected.pred_opt() else {
-                break;
-            };
-            expected = prev;
-        }
-    }
-    streak
 }
 
 // ---------- dictionary ----------

@@ -1,47 +1,78 @@
+// Smoke test: App Mappings add flow (Settings → App Mappings)
+// Verifies that picking an app and clicking Add creates a visible mapping entry.
 const { chromium } = require('playwright');
+const { tauriMock } = require('./_tauri-mock.cjs');
 
-const TARGET_URL = 'http://localhost:5173';
+const TARGET_URL = 'http://localhost:1420';
+const TIMEOUT = 10_000;
 
 (async () => {
-  console.log('Launching browser...');
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
+  const errors = [];
 
-  console.log('Navigating to target URL...');
+  await page.addInitScript(tauriMock);
+
+  page.on('pageerror', err => errors.push(`Page exception: ${err.message}`));
+  page.on('console', msg => {
+    if (msg.type() === 'error') errors.push(`Console error: ${msg.text()}`);
+  });
+
   try {
-    await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: 5000 });
-  } catch (e) {
-    console.log('Retrying...');
-    await new Promise(r => setTimeout(r, 1000));
-    await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: 5000 });
+    await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: TIMEOUT });
+
+    // Open Settings
+    const settingsBtn = page.locator('.nav-item:has-text("Settings")');
+    await settingsBtn.waitFor({ state: 'visible', timeout: 5_000 });
+    await settingsBtn.click();
+    await page.locator('.settings-modal').waitFor({ state: 'visible', timeout: 3_000 });
+    console.log('Settings opened.');
+
+    // Navigate to App Mappings section
+    const appsSection = page.locator('.settings-nav-item:has-text("App Mappings")');
+    await appsSection.waitFor({ state: 'visible', timeout: 3_000 });
+    await appsSection.click();
+    await page.locator('h2.settings-h:has-text("App Mappings")').waitFor({ state: 'visible', timeout: 3_000 });
+    console.log('App Mappings section open.');
+
+    // Click the search input to open the app picker
+    const searchInput = page.locator('.app-search-input');
+    await searchInput.waitFor({ state: 'visible', timeout: 3_000 });
+    await searchInput.click();
+
+    // App picker should show the mocked installed apps
+    const chromeItem = page.locator('.app-picker-item:has-text("chrome.exe")');
+    await chromeItem.waitFor({ state: 'visible', timeout: 3_000 });
+    console.log('App picker opened with mock apps.');
+
+    // Pick Google Chrome
+    await chromeItem.click();
+    console.log('Picked chrome.exe from picker.');
+
+    // Select profile using the native <select>
+    await page.locator('.profile-select').selectOption('casual');
+
+    // Add button is now enabled (addExe is set)
+    const addBtn = page.locator('button.btn-ghost.add-btn, button:has-text("Add")').first();
+    await addBtn.waitFor({ state: 'visible', timeout: 2_000 });
+    await addBtn.click();
+    console.log('Clicked Add.');
+
+    // Mapping must appear in the list
+    await page.locator('.mapping-exe-pill:has-text("chrome.exe")').waitFor({ state: 'visible', timeout: 3_000 });
+    console.log('chrome.exe mapping visible in list.');
+
+    if (errors.length > 0) {
+      console.error('FAIL — JS errors during test:');
+      errors.forEach(e => console.error('  ' + e));
+      process.exit(1);
+    }
+
+    console.log('PASS — App Mappings add flow works end-to-end.');
+  } catch (err) {
+    console.error('FAIL — test threw:', err.message);
+    process.exit(1);
+  } finally {
+    await browser.close();
   }
-
-  console.log('Page loaded:', await page.title());
-
-  // Click on the Style tab in Sidebar
-  // Wait, let's just see if we can click the "Style" button in the sidebar.
-  // The sidebar might have a button with the text "Style" or an icon.
-  // We can select it by text.
-  await page.click('text=Style');
-  console.log('Clicked Style tab.');
-
-  // Now click on 'App Mappings' tab inside Style page
-  await page.click('text=App Mappings');
-  console.log('Clicked App Mappings tab.');
-
-  // Verify the input exists
-  await page.waitForSelector('input[placeholder="e.g. slack.exe"]');
-  console.log('App Mappings UI is visible.');
-
-  // Add a new mapping
-  await page.fill('input[placeholder="e.g. slack.exe"]', 'chrome.exe');
-  await page.selectOption('select', 'casual');
-  await page.click('button:has-text("Add Mapping")');
-
-  // Verify it was added
-  await page.waitForSelector('text=chrome.exe');
-  console.log('Mapping added successfully.');
-
-  await browser.close();
-  console.log('Test completed successfully.');
 })();

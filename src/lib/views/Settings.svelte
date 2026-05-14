@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { settingsOpen } from '../stores';
+  import { settingsOpen, updateInfo, type UpdateInfo } from '../stores';
   import { icons } from '../icons';
   import { tick, onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
@@ -9,13 +9,18 @@
   import { expoOut } from 'svelte/easing';
 
   let section = 'general';
-  let prevSection: string | null = null;
+
   let animDir: 'up' | 'down' | null = null;
-  let isAnimating = false;
+
   let appVersion = '';
 
+  // About page update state
+  type UpdateCheckState = 'idle' | 'checking' | 'up-to-date' | 'available';
+  let updateCheckState: UpdateCheckState = 'idle';
+  let installingFromAbout = false;
+
   // Hotkey state
-  let hotkey = ['AltLeft', 'Space'];
+  let hotkey = ['ControlLeft', 'MetaLeft'];
   let recordingHotkey = false;
   let capturedKeys: string[] = [];
 
@@ -48,7 +53,7 @@
   let cleanupModel = 'groq/llama-3.3-70b-versatile';
 
   // Toggle states
-  let toggleState = { cleanup: true, noiseReduction: true, muteAudio: false, autostart: false, appContextHint: false, apiFallback: false, autoLearn: false };
+  let toggleState = { cleanup: true, noiseReduction: true, muteAudio: false, autostart: false, appContextHint: false, apiFallback: false, autoLearn: false, contextualCaps: true };
 
   // Mic gain (1.0–8.0, default 3.5)
   let micGain = 3.5;
@@ -67,11 +72,14 @@
 
   $: if ($settingsOpen) {
     loadSettings();
+    // If an update was already detected (e.g. from Home), surface it in About
+    if ($updateInfo) updateCheckState = 'available';
   } else {
     cancelRecordingHotkey();
     draftKeys = { groq: '', openai: '', google: '' };
     micDropdownOpen = false;
     appPickerOpen = false;
+    updateCheckState = 'idle';
   }
 
   onDestroy(() => {
@@ -152,44 +160,62 @@
 
   async function loadSettings() {
     try {
-      keyStatus = await invoke('get_api_key_status');
-      microphones = await invoke<string[]>('get_microphones');
+      const [
+        keyStatusResult,
+        microphonesResult,
+        tModel,
+        cModel,
+        cleanupEnabled,
+        noiseReduction,
+        muteAudio,
+        autostartEnabled,
+        appContextHint,
+        apiFallback,
+        autoLearn,
+        contextualCaps,
+        savedGain,
+        retention,
+        mic,
+        hk,
+      ] = await Promise.all([
+        invoke('get_api_key_status'),
+        invoke<string[]>('get_microphones'),
+        invoke<string | null>('get_setting', { key: 'transcription_model' }),
+        invoke<string | null>('get_setting', { key: 'cleanup_model' }),
+        invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
+        invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
+        invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
+        invoke<boolean | null>('get_setting', { key: 'autostart_enabled' }),
+        invoke<boolean | null>('get_setting', { key: 'app_context_hint' }),
+        invoke<boolean | null>('get_setting', { key: 'api_fallback_enabled' }),
+        invoke<boolean | null>('get_setting', { key: 'auto_learn_enabled' }),
+        invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
+        invoke<number | null>('get_setting', { key: 'mic_gain' }),
+        invoke<string | null>('get_setting', { key: 'history_retention' }),
+        invoke<string | null>('get_setting', { key: 'microphone_device' }),
+        invoke<string[] | null>('get_setting', { key: 'hotkey' }),
+      ]);
 
-      const tModel = await invoke<string | null>('get_setting', { key: 'transcription_model' });
-      if (tModel) transcriptionModel = tModel;
-
-      const cModel = await invoke<string | null>('get_setting', { key: 'cleanup_model' });
-      if (cModel) cleanupModel = cModel;
-
-      const cleanupEnabled = await invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' });
-      const noiseReduction = await invoke<boolean | null>('get_setting', { key: 'noise_reduction' });
-      const muteAudio = await invoke<boolean | null>('get_setting', { key: 'mute_audio' });
-      const autostartEnabled = await invoke<boolean | null>('get_setting', { key: 'autostart_enabled' });
-      const appContextHint = await invoke<boolean | null>('get_setting', { key: 'app_context_hint' });
-      const apiFallback = await invoke<boolean | null>('get_setting', { key: 'api_fallback_enabled' });
-      const autoLearn = await invoke<boolean | null>('get_setting', { key: 'auto_learn_enabled' });
-      const savedGain = await invoke<number | null>('get_setting', { key: 'mic_gain' });
-      if (savedGain !== null && savedGain !== undefined) micGain = Math.max(1, Math.min(8, savedGain));
-      toggleState = {
-        cleanup: cleanupEnabled ?? true,
-        noiseReduction: noiseReduction ?? true,
-        muteAudio: muteAudio ?? false,
-        autostart: autostartEnabled ?? false,
-        appContextHint: appContextHint ?? false,
-        apiFallback: apiFallback ?? false,
-        autoLearn: autoLearn ?? false,
-      };
-
-      const retention = await invoke<string | null>('get_setting', { key: 'history_retention' });
-      if (retention) historyRetention = retention;
-
-      const mic = await invoke<string | null>('get_setting', { key: 'microphone_device' });
-      selectedMic = mic ?? '';
-
-      const hk = await invoke<string[] | null>('get_setting', { key: 'hotkey' });
-      if (hk && hk.length === 2) {
-        hotkey = hk;
+      keyStatus = keyStatusResult as typeof keyStatus;
+      microphones = microphonesResult as string[];
+      if (tModel) transcriptionModel = tModel as string;
+      if (cModel) cleanupModel = cModel as string;
+      if ((savedGain as number | null) !== null && savedGain !== undefined) {
+        micGain = Math.max(1, Math.min(8, savedGain as number));
       }
+      toggleState = {
+        cleanup: (cleanupEnabled as boolean | null) ?? true,
+        noiseReduction: (noiseReduction as boolean | null) ?? true,
+        muteAudio: (muteAudio as boolean | null) ?? false,
+        autostart: (autostartEnabled as boolean | null) ?? false,
+        appContextHint: (appContextHint as boolean | null) ?? false,
+        apiFallback: (apiFallback as boolean | null) ?? false,
+        autoLearn: (autoLearn as boolean | null) ?? false,
+        contextualCaps: (contextualCaps as boolean | null) ?? true,
+      };
+      if (retention) historyRetention = retention as string;
+      selectedMic = (mic as string | null) ?? '';
+      if (hk && (hk as string[]).length === 2) hotkey = hk as string[];
     } catch {
       // dev mode without Tauri — best-effort
     }
@@ -378,6 +404,13 @@
     } catch {}
   }
 
+  async function toggleContextualCaps() {
+    toggleState = { ...toggleState, contextualCaps: !toggleState.contextualCaps };
+    try {
+      await invoke('save_setting', { key: 'contextual_caps_enabled', value: toggleState.contextualCaps });
+    } catch {}
+  }
+
   async function saveMic(name: string) {
     selectedMic = name;
     micDropdownOpen = false;
@@ -421,6 +454,34 @@
     }
   }
 
+  async function checkForUpdateManual() {
+    updateCheckState = 'checking';
+    try {
+      const update = await invoke<any>('check_for_update');
+      if (update) {
+        // Clear any dismissed flag so the install flow works from here
+        try { await invoke('save_setting', { key: 'update_dismissed_version', value: null }); } catch {}
+        updateInfo.set(update as UpdateInfo);
+        updateCheckState = 'available';
+      } else {
+        updateCheckState = 'up-to-date';
+      }
+    } catch {
+      updateCheckState = 'idle';
+    }
+  }
+
+  async function handleInstallFromAbout() {
+    if (!$updateInfo) return;
+    installingFromAbout = true;
+    try {
+      await invoke('install_update', { downloadUrl: $updateInfo.downloadUrl });
+    } catch (e) {
+      console.error('Install failed:', e);
+    } finally {
+      installingFromAbout = false;
+    }
+  }
 
   function close() { $settingsOpen = false; }
 
@@ -757,6 +818,13 @@
                 onkeydown={(e) => e.key === 'Enter' && toggleCleanup()}
               ></div>
             </div>
+            <div class="setting-row">
+              <div><div class="label">Contextual capitalization</div><div class="desc">Lowercases the first word when injecting mid-sentence</div></div>
+              <div class="toggle" class:on={toggleState.contextualCaps} role="switch" aria-checked={toggleState.contextualCaps} tabindex="0"
+                onclick={toggleContextualCaps}
+                onkeydown={(e) => e.key === 'Enter' && toggleContextualCaps()}
+              ></div>
+            </div>
             <div class="setting-row gain-row">
               <div class="gain-header">
                 <div>
@@ -838,6 +906,31 @@
             <div class="setting-row">
               <div><div class="label">Source</div></div>
               <button class="btn-ghost" onclick={openRepo}>github.com/MONKE2525E/Open-Flow</button>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="label">Updates</div>
+                {#if updateCheckState === 'up-to-date'}
+                  <div class="desc update-ok">You're on the latest version</div>
+                {:else if updateCheckState === 'available' && $updateInfo}
+                  <div class="desc update-available">v{$updateInfo.version} is available</div>
+                {/if}
+              </div>
+              <div class="update-controls">
+                {#if updateCheckState === 'available' && $updateInfo}
+                  <button class="btn-ghost" onclick={handleInstallFromAbout} disabled={installingFromAbout}>
+                    {installingFromAbout ? 'Downloading…' : 'Install Now'}
+                  </button>
+                {:else}
+                  <button
+                    class="btn-ghost"
+                    onclick={checkForUpdateManual}
+                    disabled={updateCheckState === 'checking'}
+                  >
+                    {updateCheckState === 'checking' ? 'Checking…' : 'Check for Updates'}
+                  </button>
+                {/if}
+              </div>
             </div>
           {/if}
         </div>
@@ -1626,5 +1719,17 @@
 
   .gain-tip strong {
     font-weight: 600;
+  }
+
+  .update-controls {
+    flex-shrink: 0;
+  }
+
+  .update-ok {
+    color: #5a8a52;
+  }
+
+  .update-available {
+    color: var(--accent);
   }
 </style>

@@ -6,7 +6,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { getVersion } from '@tauri-apps/api/app';
   import { icons } from '../icons';
-  import { updateInfo, type UpdateInfo } from '../stores';
+  import { updateInfo, isOnline, type UpdateInfo } from '../stores';
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
   interface Stats { total_words: number; avg_wpm: number; day_streak: number; }
@@ -78,14 +78,49 @@
     }
   }
 
+  async function dismissUpdate() {
+    if (!$updateInfo) return;
+    try {
+      await invoke('save_setting', { key: 'update_dismissed_version', value: $updateInfo.version });
+    } catch { /* dev mode */ }
+    updateInfo.set(null);
+  }
+
+  async function pingConnectivity() {
+    try {
+      const online = await invoke<boolean>('check_connectivity');
+      isOnline.set(online);
+    } catch {
+      isOnline.set(false);
+    }
+  }
+
   onMount(() => {
     getVersion().then(v => currentVersion = v);
     load();
     let unlisten: (() => void) | undefined;
 
-    // Check for updates
-    invoke<any>('check_for_update').then((update: any) => {
+    // Connectivity polling — HEAD to google.com every 20s
+    pingConnectivity();
+    let connectivityTimer = setInterval(pingConnectivity, 20_000);
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        clearInterval(connectivityTimer);
+      } else {
+        pingConnectivity();
+        connectivityTimer = setInterval(pingConnectivity, 20_000);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    // Check for updates, skip banner if user dismissed this version
+    invoke<any>('check_for_update').then(async (update: any) => {
       if (update) {
+        try {
+          const dismissed = await invoke<string | null>('get_setting', { key: 'update_dismissed_version' });
+          if (dismissed === update.version) return;
+        } catch { /* dev mode */ }
         updateInfo.set(update as UpdateInfo);
       }
     }).catch(() => {});
@@ -96,6 +131,8 @@
     }).catch(() => {});
 
     return () => {
+      clearInterval(connectivityTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
       if (unlisten) unlisten();
     };
   });
@@ -121,14 +158,27 @@
         </div>
       </div>
 
-      {#if $updateInfo}
-        <div class="update-banner">
-          <span class="update-text">
-            Update available — v{currentVersion} → v{$updateInfo.version}
-          </span>
-          <button class="update-btn" onclick={handleInstall} disabled={installing}>
-            {installing ? 'Downloading…' : 'Install Now'}
-          </button>
+      {#if $updateInfo || !$isOnline}
+        <div class="notice-wrap">
+          {#if $updateInfo}
+            <div class="update-banner" class:dimmed={!$isOnline}>
+              <span class="update-text">
+                Update available — v{currentVersion} → v{$updateInfo.version}
+              </span>
+              <div class="update-actions">
+                <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
+                <button class="update-btn" onclick={handleInstall} disabled={installing}>
+                  {installing ? 'Downloading…' : 'Install Now'}
+                </button>
+              </div>
+            </div>
+          {/if}
+          {#if !$isOnline}
+            <div class="offline-badge" class:overlay={!!$updateInfo}>
+              <span class="offline-dot"></span>
+              No connection
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -276,13 +326,17 @@
     color: var(--amber-50);
   }
 
+  .notice-wrap {
+    position: relative;
+    margin-bottom: 22px;
+  }
+
   .update-banner {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 14px;
     padding: 12px 18px;
-    margin-bottom: 22px;
     background: rgba(217, 119, 87, 0.08);
     border: 1px solid rgba(217, 119, 87, 0.20);
     border-radius: var(--r-lg);
@@ -290,10 +344,69 @@
     color: var(--ink-strong);
   }
 
+  .update-banner.dimmed {
+    visibility: hidden;
+  }
+
+  .offline-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: rgba(160, 50, 40, 0.07);
+    border: 1px solid rgba(160, 50, 40, 0.18);
+    border-radius: var(--r-lg);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-mute);
+  }
+
+  .offline-badge.overlay {
+    position: absolute;
+    inset: 0;
+  }
+
+  .offline-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #c0392b;
+    flex-shrink: 0;
+    animation: dot-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes dot-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
   .update-text {
     flex: 1;
     font-family: var(--serif);
     font-weight: 500;
+  }
+
+  .update-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .update-dismiss {
+    padding: 6px 12px;
+    background: transparent;
+    color: var(--ink-mute);
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .update-dismiss:hover {
+    color: var(--ink-strong);
+    border-color: var(--ink-mute);
   }
 
   .update-btn {
