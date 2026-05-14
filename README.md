@@ -4,7 +4,7 @@
 
 <p align="center">
   Hold <kbd>Alt</kbd>+<kbd>Space</kbd>, speak, release — your words appear instantly, cleaned up by an LLM, in whatever app is in focus.<br/>
-  <em>Free, lightweight, local-first AI dictation. Bring your own API keys. No subscriptions. No telemetry. ~100MB RAM.</em>
+  <em>Free, lightweight, local-first AI dictation. Bring your own API keys. No subscriptions. No telemetry. ~200MB RAM.</em>
 </p>
 
 ---
@@ -12,7 +12,7 @@
 ## Why Open Flow?
 
 **Lightweight & Fast**
-- Uses just ~150MB of RAM idle runs silently in the background without bloat.
+- Uses just ~200MB of RAM idle runs silently in the background without bloat.
 - Native Tauri app, not Electron. No bundled browser overhead.
 - Latency-optimized: Groq transcription completes in ~0.5 seconds.
 
@@ -116,4 +116,4 @@ Open Flow is intentionally lightweight. Here's why:
 - **Rust Backend** — Fast, memory-safe, zero-cost abstractions. Audio capture, hotkey handling, and clipboard injection run with near-zero overhead.
 - **SQLite** — Embedded database. No server, no network latency, no extra process.
 
-**Result:** ~150MB RAM idle. Starts in <100ms. Runs silently in the background without slowing down your system.
+**Result:** ~200MB RAM idle. Starts in <100ms. Runs silently in the background without slowing down your system.
