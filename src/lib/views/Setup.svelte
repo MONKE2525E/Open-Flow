@@ -19,11 +19,15 @@
 
   // ── Step state ──────────────────────────────────────────────────────────────
   let step = 0;
-  const TOTAL_STEPS = 6; // steps 1–6 show progress dots (0 = intro)
+  const TOTAL_STEPS = 7; // steps 1–7 show progress dots (0 = intro)
 
   let direction: 'forward' | 'back' = 'forward';
   let animating = false;
   let visible = true;
+
+  // ── Quick Settings (step 6) ───────────────────────────────────────────────
+  let quickPrefs = { cleanup: true, noise: true, caps: true, autoLearn: false, autostart: false, muteAudio: false, apiFallback: false };
+  let quickSettingsReady = false;
 
   // ── Provider ─────────────────────────────────────────────────────────────────
   let selectedProvider: 'groq' | 'openai' | 'google' = 'groq';
@@ -156,12 +160,13 @@
   // ── Navigation ────────────────────────────────────────────────────────────────
   async function goNext() {
     if (animating) return;
-    if (step === 6) { await finish(); return; }
+    if (step === 7) { await finish(); return; }
     direction = 'forward';
     animating = true;
     visible = false;
     await delay(220);
     step++;
+    if (step === 6) setTimeout(() => { quickSettingsReady = true; }, 60);
     visible = true;
     await delay(220);
     animating = false;
@@ -169,11 +174,13 @@
 
   async function goBack() {
     if (animating || step === 0) return;
+    if (step === 6 || step === 7) quickSettingsReady = false;
     direction = 'back';
     animating = true;
     visible = false;
     await delay(220);
     step--;
+    if (step === 6) setTimeout(() => { quickSettingsReady = true; }, 60);
     visible = true;
     await delay(220);
     animating = false;
@@ -210,13 +217,20 @@
 
   async function finish() {
     try {
-      await invoke('save_setting', { key: 'cleanup_intensity',    value: selectedIntensity });
-      await invoke('save_setting', { key: 'default_tone',         value: selectedTone });
-      await invoke('save_setting', { key: 'transcription_provider', value: selectedProvider });
-      await invoke('save_setting', { key: 'cleanup_provider',     value: selectedProvider });
+      await invoke('save_setting', { key: 'cleanup_intensity',       value: selectedIntensity });
+      await invoke('save_setting', { key: 'default_tone',            value: selectedTone });
+      await invoke('save_setting', { key: 'transcription_provider',  value: selectedProvider });
+      await invoke('save_setting', { key: 'cleanup_provider',        value: selectedProvider });
       if (mappings.length > 0) {
         await invoke('save_app_mappings', { mappings });
       }
+      await invoke('save_setting', { key: 'cleanup_enabled',         value: quickPrefs.cleanup });
+      await invoke('save_setting', { key: 'noise_reduction',         value: quickPrefs.noise });
+      await invoke('save_setting', { key: 'contextual_caps_enabled', value: quickPrefs.caps });
+      await invoke('save_setting', { key: 'auto_learn_enabled',      value: quickPrefs.autoLearn });
+      await invoke('save_setting', { key: 'mute_audio',              value: quickPrefs.muteAudio });
+      await invoke('save_setting', { key: 'api_fallback_enabled',    value: quickPrefs.apiFallback });
+      if (quickPrefs.autostart) await invoke('set_autostart', { enabled: true });
       await invoke('save_setting', { key: 'setup_complete', value: true });
     } catch {}
     setupComplete.set(true);
@@ -233,7 +247,7 @@
 
   // ── Done animation ────────────────────────────────────────────────────────────
   let checkAnimating = false;
-  $: if (step === 6) { setTimeout(() => { checkAnimating = true; }, 200); }
+  $: if (step === 7) { setTimeout(() => { checkAnimating = true; }, 200); }
 </script>
 
 <svelte:window onclick={closeDropdowns} />
@@ -258,7 +272,7 @@
   </div>
 
   <!-- Progress dots (steps 1–6) -->
-  {#if step > 0 && step < 6}
+  {#if step > 0 && step < 7}
     <div class="progress">
       {#each Array(TOTAL_STEPS) as _, i}
         <button
@@ -304,7 +318,7 @@
             <div class="how-step">
               <div class="how-num">1</div>
               <div>
-                <strong>Hold <kbd>Alt</kbd> + <kbd>Space</kbd></strong>
+                <strong>Hold <kbd>Ctrl</kbd> + <kbd>Win</kbd></strong>
                 <p>Start recording. A floating pill shows your audio level.</p>
               </div>
             </div>
@@ -552,13 +566,133 @@
         <div class="step-footer">
           <button class="btn-skip" onclick={skip}>I'll set this up later</button>
           <button class="btn-primary" onclick={goNext}>
-            {mappings.length > 0 ? `Save ${mappings.length} mapping${mappings.length !== 1 ? 's' : ''} & Finish` : 'Finish'}
+            {mappings.length > 0 ? `Save ${mappings.length} mapping${mappings.length !== 1 ? 's' : ''} & Next` : 'Next'}
           </button>
         </div>
       </div>
 
-    <!-- ── Step 6: Done ───────────────────────────────────── -->
+    <!-- ── Step 6: Quick Settings ──────────────────────────── -->
     {:else if step === 6}
+      <div class="step qs-step">
+        <div class="step-header">
+          <h2>A few things worth knowing about</h2>
+          <p class="step-sub">Defaults that work for most people — change them anytime in Settings.</p>
+        </div>
+
+        <div class="qs-cards" class:ready={quickSettingsReady}>
+          <!-- Card 1: Smart Processing -->
+          <div class="qs-card qs-card-1">
+            <div class="qs-card-header">
+              <div class="qs-card-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                </svg>
+              </div>
+              <div>
+                <h3 class="qs-card-title">Smart Processing</h3>
+                <p class="qs-card-sub">AI cleanup and on-device learning</p>
+              </div>
+            </div>
+            <div class="qs-toggle-list">
+              <div class="qs-toggle-row">
+                <div>
+                  <div class="qs-toggle-label">AI cleanup</div>
+                  <div class="qs-toggle-desc">Refine every transcription with an LLM automatically</div>
+                </div>
+                <div class="qs-toggle" class:on={quickPrefs.cleanup} role="switch" aria-checked={quickPrefs.cleanup} tabindex="0"
+                  onclick={() => { quickPrefs = { ...quickPrefs, cleanup: !quickPrefs.cleanup }; }}
+                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, cleanup: !quickPrefs.cleanup })}
+                ></div>
+              </div>
+              <div class="qs-toggle-row">
+                <div>
+                  <div class="qs-toggle-label">Noise reduction</div>
+                  <div class="qs-toggle-desc">Suppress background noise before transcription</div>
+                </div>
+                <div class="qs-toggle" class:on={quickPrefs.noise} role="switch" aria-checked={quickPrefs.noise} tabindex="0"
+                  onclick={() => { quickPrefs = { ...quickPrefs, noise: !quickPrefs.noise }; }}
+                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, noise: !quickPrefs.noise })}
+                ></div>
+              </div>
+              <div class="qs-toggle-row">
+                <div>
+                  <div class="qs-toggle-label">Contextual capitalization</div>
+                  <div class="qs-toggle-desc">Lowercase the first word when injecting mid-sentence</div>
+                </div>
+                <div class="qs-toggle" class:on={quickPrefs.caps} role="switch" aria-checked={quickPrefs.caps} tabindex="0"
+                  onclick={() => { quickPrefs = { ...quickPrefs, caps: !quickPrefs.caps }; }}
+                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, caps: !quickPrefs.caps })}
+                ></div>
+              </div>
+              <div class="qs-toggle-row">
+                <div>
+                  <div class="qs-toggle-label">Auto-learn corrections</div>
+                  <div class="qs-toggle-desc">Add confirmed corrections to your dictionary automatically</div>
+                </div>
+                <div class="qs-toggle" class:on={quickPrefs.autoLearn} role="switch" aria-checked={quickPrefs.autoLearn} tabindex="0"
+                  onclick={() => { quickPrefs = { ...quickPrefs, autoLearn: !quickPrefs.autoLearn }; }}
+                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, autoLearn: !quickPrefs.autoLearn })}
+                ></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 2: System -->
+          <div class="qs-card qs-card-2">
+            <div class="qs-card-header">
+              <div class="qs-card-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+                </svg>
+              </div>
+              <div>
+                <h3 class="qs-card-title">System</h3>
+                <p class="qs-card-sub">Launch and recording preferences</p>
+              </div>
+            </div>
+            <div class="qs-toggle-list">
+              <div class="qs-toggle-row">
+                <div>
+                  <div class="qs-toggle-label">Start on boot</div>
+                  <div class="qs-toggle-desc">Launch Open Flow with Windows</div>
+                </div>
+                <div class="qs-toggle" class:on={quickPrefs.autostart} role="switch" aria-checked={quickPrefs.autostart} tabindex="0"
+                  onclick={() => { quickPrefs = { ...quickPrefs, autostart: !quickPrefs.autostart }; }}
+                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, autostart: !quickPrefs.autostart })}
+                ></div>
+              </div>
+              <div class="qs-toggle-row">
+                <div>
+                  <div class="qs-toggle-label">Mute while recording</div>
+                  <div class="qs-toggle-desc">Silence other audio during dictation</div>
+                </div>
+                <div class="qs-toggle" class:on={quickPrefs.muteAudio} role="switch" aria-checked={quickPrefs.muteAudio} tabindex="0"
+                  onclick={() => { quickPrefs = { ...quickPrefs, muteAudio: !quickPrefs.muteAudio }; }}
+                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, muteAudio: !quickPrefs.muteAudio })}
+                ></div>
+              </div>
+              <div class="qs-toggle-row">
+                <div>
+                  <div class="qs-toggle-label">Auto-retry on quota errors</div>
+                  <div class="qs-toggle-desc">Switch to another provider if the primary hits its limit</div>
+                </div>
+                <div class="qs-toggle" class:on={quickPrefs.apiFallback} role="switch" aria-checked={quickPrefs.apiFallback} tabindex="0"
+                  onclick={() => { quickPrefs = { ...quickPrefs, apiFallback: !quickPrefs.apiFallback }; }}
+                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, apiFallback: !quickPrefs.apiFallback })}
+                ></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="step-footer">
+          <button class="btn-skip" onclick={skip}>Skip</button>
+          <button class="btn-primary" onclick={goNext}>Next</button>
+        </div>
+      </div>
+
+    <!-- ── Step 7: Done ───────────────────────────────────── -->
+    {:else if step === 7}
       <div class="step done-step">
         <div class="done-check-wrap">
           <svg class="done-check" class:animate={checkAnimating} width="64" height="64" viewBox="0 0 64 64" fill="none">
@@ -583,7 +717,7 @@
         </div>
         <h2 class="done-title">You're all set.</h2>
         <p class="done-sub">
-          Hold <kbd>Alt</kbd> + <kbd>Space</kbd> anywhere to start dictating.
+          Hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> anywhere to start dictating.
           Open Flow lives in your system tray and is always ready.
         </p>
         <div class="done-summary">
@@ -1479,4 +1613,122 @@
     color: var(--ink-faint);
     margin: 0;
   }
+
+  /* ── Quick Settings step ───────────────────────────────────────────── */
+  .qs-step { max-width: 560px; }
+
+  .qs-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .qs-card {
+    background: var(--bg-elev);
+    border: 1.5px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 16px 18px;
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 0.3s ease, transform 0.3s ease, border-color 0.15s;
+  }
+
+  .qs-cards.ready .qs-card-1 {
+    opacity: 1;
+    transform: none;
+  }
+
+  .qs-cards.ready .qs-card-2 {
+    opacity: 1;
+    transform: none;
+    transition-delay: 0.1s;
+  }
+
+  .qs-card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .qs-card-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: var(--r-sm);
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .qs-card-title {
+    font-family: var(--serif);
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--ink-strong);
+    margin: 0 0 2px;
+    line-height: 1.2;
+  }
+
+  .qs-card-sub {
+    font-size: 11.5px;
+    color: var(--ink-mute);
+    margin: 0;
+  }
+
+  .qs-toggle-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .qs-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-top: 1px solid var(--line);
+    gap: 16px;
+  }
+
+  .qs-toggle-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-strong);
+    margin-bottom: 2px;
+  }
+
+  .qs-toggle-desc {
+    font-size: 11.5px;
+    color: var(--ink-mute);
+    line-height: 1.4;
+  }
+
+  .qs-toggle {
+    width: 30px;
+    height: 16px;
+    background: var(--jap-300);
+    border-radius: 999px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.3s ease-out;
+    flex-shrink: 0;
+  }
+
+  .qs-toggle::after {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: white;
+    border-radius: 50%;
+    top: 2px;
+    left: 2px;
+    transition: left 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: 0 1px 2px rgba(13,10,8,0.15);
+  }
+
+  .qs-toggle.on { background: var(--jap-400); }
+  .qs-toggle.on::after { left: 16px; }
 </style>

@@ -18,7 +18,7 @@
             UpgradeCode="b560374e-cb36-57e0-8651-19b4c52098ac"
             Language="!(loc.TauriLanguage)"
             Manufacturer="Open Flow Team"
-            Version="0.5.0">
+            Version="0.6.0">
 
         <Package Id="*"
                  Keywords="Installer"

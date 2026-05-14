@@ -27,9 +27,9 @@ pub async fn check() -> anyhow::Result<Option<UpdateInfo>> {
         .error_for_status()?;
 
     let release: GhRelease = resp.json().await?;
-    let latest = release.tag_name.trim_start_matches('v');
+    let display_version = normalize_version(&release.tag_name);
 
-    if !is_newer(latest, env!("CARGO_PKG_VERSION")) {
+    if !is_newer(&display_version, env!("CARGO_PKG_VERSION")) {
         return Ok(None);
     }
 
@@ -39,16 +39,33 @@ pub async fn check() -> anyhow::Result<Option<UpdateInfo>> {
         .ok_or_else(|| anyhow::anyhow!("No .exe asset in release"))?;
 
     Ok(Some(UpdateInfo {
-        version: latest.to_owned(),
+        version: display_version,
         download_url: asset.browser_download_url.clone(),
     }))
 }
 
+/// Extract the first three numeric groups from any version string, return as "major.minor.patch".
+/// Handles tags like "vOpen-Flow-0.5.0-beta", "v1.2.3", "0.5.0", etc.
+fn normalize_version(tag: &str) -> String {
+    let parts: Vec<u32> = tag
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|s| if s.is_empty() { None } else { s.parse().ok() })
+        .take(3)
+        .collect();
+
+    match parts.as_slice() {
+        [a, b, c] => format!("{}.{}.{}", a, b, c),
+        [a, b]    => format!("{}.{}.0", a, b),
+        [a]       => format!("{}.0.0", a),
+        _         => tag.trim_start_matches('v').to_owned(),
+    }
+}
+
 fn is_newer(latest: &str, current: &str) -> bool {
-    let parse = |s: &str| -> Vec<u32> {
-        s.split('.')
-            .filter_map(|p| p.parse().ok())
-            .collect()
-    };
-    parse(latest) > parse(current)
+    version_tuple(&normalize_version(latest)) > version_tuple(&normalize_version(current))
+}
+
+fn version_tuple(version: &str) -> (u64, u64, u64) {
+    let mut parts = version.split('.').filter_map(|p| p.parse::<u64>().ok());
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0), parts.next().unwrap_or(0))
 }

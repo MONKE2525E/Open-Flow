@@ -128,16 +128,25 @@ impl RecordingSession {
                     move |data: &[f32], _| {
                         let display = (rms_f32(data) * DISPLAY_GAIN).min(1.0);
                         level_cb.store(display.to_bits(), Ordering::Relaxed);
-                        let gained: Vec<f32> = data
-                            .iter()
-                            .map(|&s| (s * gain).clamp(-1.0, 1.0))
-                            .collect();
-                        let mono = mix_to_mono(&gained, channels);
+                        let ch = channels as usize;
                         let mut store = samples_clone.lock().unwrap();
                         if let Some(d) = &denoiser_cb {
+                            let mono: Vec<f32> = if ch == 1 {
+                                data.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).collect()
+                            } else {
+                                data.chunks(ch).map(|frame| {
+                                    frame.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).sum::<f32>() / ch as f32
+                                }).collect()
+                            };
                             d.lock().unwrap().push(&mono, &mut store);
                         } else {
-                            store.extend_from_slice(&mono);
+                            if ch == 1 {
+                                store.extend(data.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)));
+                            } else {
+                                store.extend(data.chunks(ch).map(|frame| {
+                                    frame.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).sum::<f32>() / ch as f32
+                                }));
+                            }
                         }
                     },
                     err_fn,
@@ -150,16 +159,25 @@ impl RecordingSession {
                             data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
                         let display = (rms_f32(&floats) * DISPLAY_GAIN).min(1.0);
                         level_cb.store(display.to_bits(), Ordering::Relaxed);
-                        let gained: Vec<f32> = floats
-                            .iter()
-                            .map(|&s| (s * gain).clamp(-1.0, 1.0))
-                            .collect();
-                        let mono = mix_to_mono(&gained, channels);
+                        let ch = channels as usize;
                         let mut store = samples_clone.lock().unwrap();
                         if let Some(d) = &denoiser_cb {
+                            let mono: Vec<f32> = if ch == 1 {
+                                floats.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).collect()
+                            } else {
+                                floats.chunks(ch).map(|frame| {
+                                    frame.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).sum::<f32>() / ch as f32
+                                }).collect()
+                            };
                             d.lock().unwrap().push(&mono, &mut store);
                         } else {
-                            store.extend_from_slice(&mono);
+                            if ch == 1 {
+                                store.extend(floats.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)));
+                            } else {
+                                store.extend(floats.chunks(ch).map(|frame| {
+                                    frame.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).sum::<f32>() / ch as f32
+                                }));
+                            }
                         }
                     },
                     err_fn,
@@ -227,14 +245,15 @@ impl RecordingSession {
     }
 }
 
-fn mix_to_mono(data: &[f32], channels: u16) -> Vec<f32> {
+fn mix_to_mono<'a>(data: &'a [f32], channels: u16) -> std::borrow::Cow<'a, [f32]> {
     if channels == 1 {
-        return data.to_vec();
+        return std::borrow::Cow::Borrowed(data);
     }
     let ch = channels as usize;
-    data.chunks(ch)
+    let mixed = data.chunks(ch)
         .map(|frame| frame.iter().sum::<f32>() / ch as f32)
-        .collect()
+        .collect();
+    std::borrow::Cow::Owned(mixed)
 }
 
 fn resample_to_16k(mono: &[f32], sample_rate: u32) -> (Vec<f32>, u32) {

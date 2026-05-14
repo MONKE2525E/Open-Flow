@@ -24,3 +24,47 @@ pub struct GeminiContent {
 pub struct GeminiPart {
     pub text: Option<String>,
 }
+
+use serde::Serialize;
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiTranscribeReq {
+    pub contents: Vec<GeminiReqContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation_config: Option<GeminiGenConfig>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiReqContent {
+    pub parts: Vec<GeminiReqPart>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiReqPart {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inline_data: Option<GeminiInlineData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiInlineData {
+    pub mime_type: String,
+    pub data: String,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiGenConfig {
+    pub thinking_config: GeminiThinkingConfig,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiThinkingConfig {
+    pub thinking_budget: u32,
+}

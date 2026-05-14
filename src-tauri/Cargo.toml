@@ -1,6 +1,6 @@
 [package]
 name = "open-flow"
-version = "0.5.0"
+version = "0.6.0"
 description = "Open Flow — local-first AI dictation"
 authors = ["Open Flow Team"]
 edition = "2021"

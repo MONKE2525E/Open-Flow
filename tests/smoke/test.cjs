@@ -1,38 +1,51 @@
+// Smoke test: app mount + DOM structure
+// Verifies the app mounts without JS errors and exposes required DOM structure.
 const { chromium } = require('playwright');
+const { tauriMock } = require('./_tauri-mock.cjs');
 
-const TARGET_URL = 'http://localhost:5173'; // Vite default
+const TARGET_URL = 'http://localhost:1420';
+const TIMEOUT = 10_000;
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
-  
-  page.on('console', msg => {
-    if (msg.type() === 'error') {
-      console.error('Browser Error:', msg.text());
-    }
-  });
+  const errors = [];
 
-  page.on('pageerror', err => {
-    console.error('Page Exception:', err.message);
+  // Inject Tauri IPC mock before the page loads so setup_complete = true
+  await page.addInitScript(tauriMock);
+
+  page.on('pageerror', err => errors.push(`Page exception: ${err.message}`));
+  page.on('console', msg => {
+    if (msg.type() === 'error') errors.push(`Console error: ${msg.text()}`);
   });
 
   try {
-    await page.goto(TARGET_URL);
-    console.log('Page loaded:', await page.title());
-    
-    await page.waitForTimeout(2000);
-    
-    const appBody = await page.innerHTML('body');
-    if (!appBody.includes('app')) {
-      console.log('App might not be mounted.');
-    } else {
-      console.log('App body contains content.');
-    }
-    
+    await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: TIMEOUT });
+
+    // App must mount and render at least one nav item within 5 s
+    await page.locator('.nav-item').first().waitFor({ state: 'visible', timeout: 5_000 });
+    const count = await page.locator('.nav-item').count();
+    if (count < 4) errors.push(`Expected ≥4 .nav-item elements, got ${count}`);
+
+    // Title bar or root wrapper must exist
+    const appDiv = page.locator('.app');
+    if (!(await appDiv.isVisible())) errors.push('.app root element not found');
+
+    // Screenshot for visual inspection
     await page.screenshot({ path: 'G:\\Open Flow\\screenshot.png', fullPage: true });
-    console.log('Screenshot saved');
-  } catch (error) {
-    console.error('Error during test:', error.message);
+    console.log('Screenshot saved to screenshot.png');
+
+    // Fail if any JS errors occurred during load or interaction
+    if (errors.length > 0) {
+      console.error('FAIL — errors found:');
+      errors.forEach(e => console.error('  ' + e));
+      process.exit(1);
+    }
+
+    console.log('PASS — app loaded, nav mounted, no JS errors.');
+  } catch (err) {
+    console.error('FAIL — test threw:', err.message);
+    process.exit(1);
   } finally {
     await browser.close();
   }

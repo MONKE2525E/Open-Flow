@@ -20,6 +20,7 @@ pub const SETUP_COMPLETE: &str = "setup_complete";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const API_FALLBACK_ENABLED: &str = "api_fallback_enabled";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
+pub const CONTEXTUAL_CAPS: &str = "contextual_caps_enabled";
 
 // ---------- pipeline config ----------
 
@@ -36,6 +37,7 @@ pub struct PipelineConfig {
     pub app_context_hint: bool,
     pub api_fallback_enabled: bool,
     pub auto_learn_enabled: bool,
+    pub contextual_caps_enabled: bool,
 }
 
 impl PipelineConfig {
@@ -88,5 +90,9 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             .get(AUTO_LEARN_ENABLED)
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        contextual_caps_enabled: store
+            .get(CONTEXTUAL_CAPS)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
     }
 }
