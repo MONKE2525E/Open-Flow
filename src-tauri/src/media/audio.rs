@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-const AUDIO_GAIN: f32 = 3.5;
 const DISPLAY_GAIN: f32 = 15.0;
 
 pub fn list_input_devices() -> Vec<String> {
@@ -12,6 +11,63 @@ pub fn list_input_devices() -> Vec<String> {
     host.input_devices()
         .map(|iter| iter.filter_map(|d| d.name().ok()).collect())
         .unwrap_or_default()
+}
+
+/// Processes RNNoise denoising incrementally during recording so the CPU cost
+/// is spread across the hold duration rather than spiking on release.
+/// Buffers incoming mono samples until a full 480-sample frame is ready,
+/// then runs RNNoise immediately and emits the denoised output.
+struct FrameDenoiser {
+    state: Box<nnnoiseless::DenoiseState<'static>>,
+    buf: Vec<f32>,
+}
+
+impl FrameDenoiser {
+    fn new() -> Self {
+        Self {
+            state: nnnoiseless::DenoiseState::new(),
+            buf: Vec::with_capacity(nnnoiseless::DenoiseState::FRAME_SIZE),
+        }
+    }
+
+    fn push(&mut self, input: &[f32], out: &mut Vec<f32>) {
+        const FRAME: usize = nnnoiseless::DenoiseState::FRAME_SIZE;
+        let mut frame_in = [0.0f32; FRAME];
+        let mut frame_out = [0.0f32; FRAME];
+
+        for &s in input {
+            self.buf.push(s);
+            if self.buf.len() == FRAME {
+                for (dst, &src) in frame_in.iter_mut().zip(&self.buf) {
+                    *dst = src * 32767.0;
+                }
+                self.state.process_frame(&mut frame_out, &frame_in);
+                for &s in &frame_out {
+                    out.push((s / 32767.0).clamp(-1.0, 1.0));
+                }
+                self.buf.clear();
+            }
+        }
+    }
+
+    /// Flush any buffered samples that didn't fill a complete frame.
+    fn flush(&mut self, out: &mut Vec<f32>) {
+        if self.buf.is_empty() {
+            return;
+        }
+        const FRAME: usize = nnnoiseless::DenoiseState::FRAME_SIZE;
+        let mut frame_in = [0.0f32; FRAME];
+        let mut frame_out = [0.0f32; FRAME];
+        let len = self.buf.len();
+        for (i, &s) in self.buf.iter().enumerate() {
+            frame_in[i] = s * 32767.0;
+        }
+        self.state.process_frame(&mut frame_out, &frame_in);
+        for &s in &frame_out[..len] {
+            out.push((s / 32767.0).clamp(-1.0, 1.0));
+        }
+        self.buf.clear();
+    }
 }
 
 /// Blocking: records until `stop_tx` fires, returns WAV bytes + duration.
@@ -24,7 +80,7 @@ pub struct RecordingSession {
 }
 
 impl RecordingSession {
-    pub fn start(device_name: Option<String>, noise_reduction: bool) -> Result<Self> {
+    pub fn start(device_name: Option<String>, noise_reduction: bool, gain: f32) -> Result<Self> {
         let host = cpal::default_host();
         let device = if let Some(name) = device_name {
             host.input_devices()?
@@ -49,9 +105,20 @@ impl RecordingSession {
         let active_w = Arc::clone(&active);
 
         std::thread::spawn(move || {
+            // Mono samples stored here. Callbacks always mix to mono so the
+            // channel count doesn't affect the stored data layout.
             let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
             let samples_clone = Arc::clone(&samples);
             let level_cb = Arc::clone(&level_w);
+
+            // FrameDenoiser lives behind a Mutex so both the callback closure
+            // and the post-recording flush can reach it from the same thread.
+            let denoiser: Option<Arc<Mutex<FrameDenoiser>>> = if noise_reduction {
+                Some(Arc::new(Mutex::new(FrameDenoiser::new())))
+            } else {
+                None
+            };
+            let denoiser_cb = denoiser.as_ref().map(Arc::clone);
 
             let err_fn = |e| log::error!("Audio stream error: {e}");
 
@@ -63,9 +130,15 @@ impl RecordingSession {
                         level_cb.store(display.to_bits(), Ordering::Relaxed);
                         let gained: Vec<f32> = data
                             .iter()
-                            .map(|&s| (s * AUDIO_GAIN).clamp(-1.0, 1.0))
+                            .map(|&s| (s * gain).clamp(-1.0, 1.0))
                             .collect();
-                        samples_clone.lock().unwrap().extend_from_slice(&gained);
+                        let mono = mix_to_mono(&gained, channels);
+                        let mut store = samples_clone.lock().unwrap();
+                        if let Some(d) = &denoiser_cb {
+                            d.lock().unwrap().push(&mono, &mut store);
+                        } else {
+                            store.extend_from_slice(&mono);
+                        }
                     },
                     err_fn,
                     None,
@@ -79,9 +152,15 @@ impl RecordingSession {
                         level_cb.store(display.to_bits(), Ordering::Relaxed);
                         let gained: Vec<f32> = floats
                             .iter()
-                            .map(|&s| (s * AUDIO_GAIN).clamp(-1.0, 1.0))
+                            .map(|&s| (s * gain).clamp(-1.0, 1.0))
                             .collect();
-                        samples_clone.lock().unwrap().extend(gained);
+                        let mono = mix_to_mono(&gained, channels);
+                        let mut store = samples_clone.lock().unwrap();
+                        if let Some(d) = &denoiser_cb {
+                            d.lock().unwrap().push(&mono, &mut store);
+                        } else {
+                            store.extend_from_slice(&mono);
+                        }
                     },
                     err_fn,
                     None,
@@ -112,21 +191,19 @@ impl RecordingSession {
             active_w.store(false, Ordering::Relaxed);
             level_w.store(0f32.to_bits(), Ordering::Relaxed);
 
-            let data = std::mem::take(&mut *samples.lock().unwrap());
-            let dur_ms = data.len() as u64 * 1000 / (sample_rate as u64 * channels as u64);
+            let mut data = std::mem::take(&mut *samples.lock().unwrap());
 
-            // RMS on post-gain samples; divide out the gain to get an
-            // approximation of the original mic level for silence detection.
-            let overall_rms = rms_f32(&data) / AUDIO_GAIN;
+            // Flush any samples sitting in the partial frame buffer.
+            if let Some(d) = &denoiser {
+                d.lock().unwrap().flush(&mut data);
+            }
 
-            // Denoise then resample, or go straight to resample.
-            let (encode_data, encode_rate) = if noise_reduction {
-                let mono = mix_to_mono(&data, channels);
-                let denoised = denoise_mono(&mono);
-                resample_to_16k(&denoised, sample_rate)
-            } else {
-                downsample_to_16k(&data, sample_rate, channels)
-            };
+            // data is now mono; duration is simply len / sample_rate.
+            let dur_ms = data.len() as u64 * 1000 / sample_rate as u64;
+            let overall_rms = rms_f32(&data);
+
+            // Denoising already happened in real-time; just resample to 16 kHz.
+            let (encode_data, encode_rate) = resample_to_16k(&data, sample_rate);
 
             let result =
                 encode_wav(&encode_data, encode_rate, 1).map(|wav| (wav, dur_ms, overall_rms));
@@ -148,48 +225,6 @@ impl RecordingSession {
             .recv()
             .context("Recording thread dropped channel")?
     }
-}
-
-/// Apply RNNoise-based noise suppression to a mono f32 buffer at native rate.
-/// nnnoiseless expects samples in the i16 amplitude range [-32768, 32767].
-/// Processes in 480-sample frames (10 ms at 48 kHz); the last partial frame
-/// is zero-padded. Output is rescaled back to [-1, 1].
-fn denoise_mono(samples: &[f32]) -> Vec<f32> {
-    use nnnoiseless::DenoiseState;
-    const FRAME: usize = DenoiseState::FRAME_SIZE; // 480
-
-    if samples.is_empty() {
-        return Vec::new();
-    }
-
-    let mut state = DenoiseState::new();
-    let mut out = Vec::with_capacity(samples.len());
-    let mut frame_in = [0.0f32; FRAME];
-    let mut frame_out = [0.0f32; FRAME];
-
-    let mut i = 0;
-    while i < samples.len() {
-        let end = (i + FRAME).min(samples.len());
-        let chunk = &samples[i..end];
-        let chunk_len = chunk.len();
-
-        // Scale [-1,1] → i16 range for nnnoiseless
-        for (dst, &src) in frame_in[..chunk_len].iter_mut().zip(chunk) {
-            *dst = src * 32767.0;
-        }
-        frame_in[chunk_len..].fill(0.0);
-
-        state.process_frame(&mut frame_out, &frame_in);
-
-        // Scale back to [-1,1]
-        for &s in &frame_out[..chunk_len] {
-            out.push((s / 32767.0).clamp(-1.0, 1.0));
-        }
-
-        i += FRAME;
-    }
-
-    out
 }
 
 fn mix_to_mono(data: &[f32], channels: u16) -> Vec<f32> {
@@ -220,12 +255,6 @@ fn resample_to_16k(mono: &[f32], sample_rate: u32) -> (Vec<f32>, u32) {
         })
         .collect();
     (resampled, TARGET)
-}
-
-/// Collapse multi-channel interleaved PCM to mono, then resample to 16 kHz.
-fn downsample_to_16k(data: &[f32], sample_rate: u32, channels: u16) -> (Vec<f32>, u32) {
-    let mono = mix_to_mono(data, channels);
-    resample_to_16k(&mono, sample_rate)
 }
 
 fn rms_f32(data: &[f32]) -> f32 {

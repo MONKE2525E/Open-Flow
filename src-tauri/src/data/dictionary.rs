@@ -67,6 +67,11 @@ pub fn apply_substitutions(text: &str, db: &Db) -> String {
     let mut result = text.to_string();
     for (mistake, term) in &replaceable {
         let needle = mistake.to_lowercase();
+        // Guard: skip empty patterns — find("") always returns Some(0), causing an
+        // infinite loop in the position-collection loop below.
+        if needle.is_empty() {
+            continue;
+        }
         let haystack = result.to_lowercase();
         let mut positions = Vec::new();
         let mut from = 0usize;
@@ -75,8 +80,13 @@ pub fn apply_substitutions(text: &str, db: &Db) -> String {
             positions.push(abs);
             from = abs + needle.len();
         }
+        // Use needle.len() (the length of what was actually found in the lowercase
+        // haystack) rather than mistake.len(). For any character whose lowercase
+        // form has a different UTF-8 byte length (e.g. 'İ' → 'i' + combining dot),
+        // using mistake.len() would produce an out-of-bounds range and panic.
+        // expand_snippets in snippets.rs already uses this correct pattern.
         for pos in positions.into_iter().rev() {
-            result.replace_range(pos..pos + mistake.len(), term);
+            result.replace_range(pos..pos + needle.len(), term);
         }
     }
     result

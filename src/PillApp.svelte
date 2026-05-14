@@ -9,7 +9,6 @@
   let prevState: PillState = 'idle';
 
   const BARS = 12;
-  const DOTS_PROC = 18;
 
   // Level from Rust is already 0–1 (raw_rms × 15, capped).
   // Gate: ignore anything below 4% of full scale (background noise).
@@ -146,12 +145,7 @@
 
   {:else if state === 'processing'}
     <div class="pill processing" class:from-rec={prevState === 'recording'} class:from-hf={prevState === 'handsfree'}>
-      <div class="dots">
-        {#each { length: DOTS_PROC } as _, i (i)}
-          <i style="animation-delay:{i * 0.08}s"></i>
-        {/each}
-      </div>
-      <div class="spinner"></div>
+      <div class="scan-line"></div>
     </div>
 
   {:else if state === 'error'}
@@ -239,57 +233,59 @@
   }
 
   /* Processing */
-  .pill.processing { width: 120px; padding: 0 12px 0 18px; gap: 8px; }
+  .pill.processing { width: 100px; padding: 0 14px; }
 
-  /* Recording→processing: grow in width instead of re-popping from below */
+  /* Recording→processing: grow in width */
   .pill.processing.from-rec {
     animation: processIn 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
   @keyframes processIn {
     from { width: 72px; }
-    to   { width: 120px; }
+    to   { width: 100px; }
   }
-  /* Spinner fades in last, after the pill has grown — "pops out the side" */
-  .pill.processing.from-rec .spinner {
-    animation: spin 0.75s linear infinite, spinnerIn 0.18s ease 0.18s both;
-  }
-  @keyframes spinnerIn {
-    from { opacity: 0; }
-    to   { opacity: 1; }
+  /* Scan line fades in after the pill has grown */
+  .pill.processing.from-rec .scan-line {
+    animation: scanIn 0.18s ease 0.18s both;
   }
 
-  /* Handsfree→processing: pill stays in place, width barely shifts, spinner fades in */
+  /* Handsfree→processing: pill shrinks slightly */
   .pill.processing.from-hf {
     animation: processFromHf 0.25s ease-out both;
   }
   @keyframes processFromHf {
     from { width: 112px; }
-    to   { width: 120px; }
+    to   { width: 100px; }
   }
-  .pill.processing.from-hf .spinner {
-    animation: spin 0.75s linear infinite, spinnerIn 0.18s ease 0.08s both;
-  }
-
-  .dots { display: flex; align-items: center; gap: 3px; flex: 1; justify-content: center; overflow: hidden; }
-  .dots i {
-    width: 2.5px; height: 3px;
-    background: #ada299;
-    border-radius: 999px; display: block; flex-shrink: 0;
-  }
-  .pill.processing .dots i { animation: dotfade 1.5s infinite; }
-  @keyframes dotfade {
-    0%, 100% { opacity: 0.3; }
-    50%       { opacity: 1; }
+  .pill.processing.from-hf .scan-line {
+    animation: scanIn 0.18s ease 0.08s both;
   }
 
-  .spinner {
-    width: 11px; height: 11px; flex-shrink: 0;
-    border-radius: 50%;
-    border: 1.5px solid #4a433a;
-    border-top-color: white;
-    animation: spin 0.75s linear infinite;
+  /* Scan line: dim track with a bright light sweeping back and forth */
+  .scan-line {
+    flex: 1;
+    height: 2px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.12);
+    position: relative;
+    overflow: hidden;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  .scan-line::after {
+    content: '';
+    position: absolute;
+    top: 0; left: -40%;
+    width: 80%; height: 100%;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.9) 50%, transparent 100%);
+    border-radius: 999px;
+    animation: scan 1.1s ease-in-out infinite alternate;
+  }
+  @keyframes scan {
+    from { left: -40%; }
+    to   { left: 60%; }
+  }
+  @keyframes scanIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
 
   /* Error */
   .pill.error { width: 110px; gap: 7px; padding: 0 14px; background: #1a0806; }
