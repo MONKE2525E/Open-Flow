@@ -15,10 +15,28 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager,
+    AppHandle, Emitter, Manager, Theme,
 };
+use tauri_plugin_store::StoreExt;
 
 pub type DbHandle = db::Db;
+
+const TRAY_ID: &str = "open-flow-tray";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IconTheme {
+    Light,
+    Dark,
+}
+
+#[derive(Clone, Copy)]
+struct IconRect {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    radius: u32,
+}
 
 fn lock_app_state(state: &SharedState) -> Option<MutexGuard<'_, AppState>> {
     match state.lock() {
@@ -94,9 +112,18 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if window.label() == "main" {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    window.hide().ok();
+                match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        window.hide().ok();
+                    }
+                    tauri::WindowEvent::ThemeChanged(theme) => {
+                        let app = window.app_handle();
+                        if appearance_mode(app).as_deref().unwrap_or("system") == "system" {
+                            apply_runtime_icons(app, Some(*theme));
+                        }
+                    }
+                    _ => {}
                 }
             }
         })
@@ -145,20 +172,14 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&title_i, &sep, &show_i, &quit_i])?;
 
-    if let Some(w) = app.get_webview_window("main") {
-        if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png")) {
-            w.set_icon(icon).ok();
-        }
-    }
+    let icon_theme = resolve_icon_theme(app.handle(), None);
+    let tray_icon = runtime_icon_image(icon_theme, 32);
 
-    let tray_icon =
-        tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png")).expect("tray icon");
-
-    TrayIconBuilder::new()
+    TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("Open Flow — Ctrl+Windows to record")
+        .tooltip("Open Flow - Ctrl+Windows to record")
         .on_menu_event(|app, ev| match ev.id.as_ref() {
             "show" => {
                 if let Some(w) = app.get_webview_window("main") {
@@ -189,7 +210,151 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         })
         .build(app)?;
 
+    apply_runtime_icons(app.handle(), None);
+
     Ok(())
+}
+
+pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
+    let icon_theme = resolve_icon_theme(app, theme_hint);
+
+    if let Some(w) = app.get_webview_window("main") {
+        if let Err(err) = w.set_icon(runtime_icon_image(icon_theme, 128)) {
+            log::warn!("Failed to update window icon: {err}");
+        }
+    }
+
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        if let Err(err) = tray.set_icon(Some(runtime_icon_image(icon_theme, 32))) {
+            log::warn!("Failed to update tray icon: {err}");
+        }
+    }
+}
+
+fn resolve_icon_theme(app: &AppHandle, theme_hint: Option<Theme>) -> IconTheme {
+    match appearance_mode(app).as_deref() {
+        Some("dark") => IconTheme::Dark,
+        Some("light") => IconTheme::Light,
+        _ => match theme_hint.or_else(|| {
+            app.get_webview_window("main")
+                .and_then(|window| window.theme().ok())
+        }) {
+            Some(Theme::Dark) => IconTheme::Dark,
+            _ => IconTheme::Light,
+        },
+    }
+}
+
+fn appearance_mode(app: &AppHandle) -> Option<String> {
+    app.store("settings.json")
+        .ok()
+        .and_then(|store| store.get(crate::data::store::APPEARANCE_MODE))
+        .and_then(|value| value.as_str().map(String::from))
+}
+
+fn runtime_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'static> {
+    let mut rgba = vec![0_u8; (size * size * 4) as usize];
+    let background = match theme {
+        IconTheme::Light => [249, 247, 243, 255],
+        IconTheme::Dark => [20, 17, 14, 255],
+    };
+    let accent = [217, 119, 87, 255];
+
+    draw_rounded_rect(
+        &mut rgba,
+        size,
+        IconRect {
+            x: 0,
+            y: 0,
+            width: size,
+            height: size,
+            radius: scale(size, 96),
+        },
+        background,
+    );
+
+    for (x, y, width, height, radius) in [
+        (76, 302, 56, 98, 28),
+        (152, 204, 56, 196, 28),
+        (228, 120, 56, 280, 28),
+        (304, 246, 56, 154, 28),
+        (380, 330, 56, 70, 28),
+    ] {
+        draw_rounded_rect(
+            &mut rgba,
+            size,
+            IconRect {
+                x: scale(size, x),
+                y: scale(size, y),
+                width: scale(size, width),
+                height: scale(size, height),
+                radius: scale(size, radius),
+            },
+            accent,
+        );
+    }
+
+    tauri::image::Image::new_owned(rgba, size, size)
+}
+
+fn scale(size: u32, value: u32) -> u32 {
+    ((value * size) / 512).max(1)
+}
+
+fn draw_rounded_rect(rgba: &mut [u8], canvas_size: u32, rect: IconRect, color: [u8; 4]) {
+    let right = rect.x.saturating_add(rect.width).min(canvas_size);
+    let bottom = rect.y.saturating_add(rect.height).min(canvas_size);
+    let radius = rect.radius.min(rect.width / 2).min(rect.height / 2) as i32;
+
+    for py in rect.y..bottom {
+        for px in rect.x..right {
+            if is_inside_rounded_rect(
+                px as i32,
+                py as i32,
+                rect.x as i32,
+                rect.y as i32,
+                right as i32,
+                bottom as i32,
+                radius,
+            ) {
+                let idx = ((py * canvas_size + px) * 4) as usize;
+                rgba[idx..idx + 4].copy_from_slice(&color);
+            }
+        }
+    }
+}
+
+fn is_inside_rounded_rect(
+    px: i32,
+    py: i32,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    radius: i32,
+) -> bool {
+    if radius <= 0 {
+        return true;
+    }
+
+    let cx = if px < left + radius {
+        left + radius
+    } else if px >= right - radius {
+        right - radius - 1
+    } else {
+        px
+    };
+    let cy = if py < top + radius {
+        top + radius
+    } else if py >= bottom - radius {
+        bottom - radius - 1
+    } else {
+        py
+    };
+
+    let dx = px - cx;
+    let dy = py - cy;
+    dx * dx + dy * dy <= radius * radius
 }
 
 fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
