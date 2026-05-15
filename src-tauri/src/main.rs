@@ -119,9 +119,8 @@ fn main() {
                     }
                     tauri::WindowEvent::ThemeChanged(theme) => {
                         let app = window.app_handle();
-                        if appearance_mode(&app).as_deref().unwrap_or("system") == "system" {
-                            apply_runtime_icons(&app, Some(*theme));
-                        }
+                        if appearance_mode(app).as_deref().unwrap_or("system") == "system" {
+                            apply_runtime_icons(app, Some(*theme));
                         }
                     }
                     _ => {}
@@ -173,7 +172,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&title_i, &sep, &show_i, &quit_i])?;
 
-    let icon_theme = resolve_icon_theme(&app.handle(), None);
+    let icon_theme = resolve_icon_theme(app.handle(), None);
     let tray_icon = runtime_icon_image(icon_theme, 32);
 
     TrayIconBuilder::with_id(TRAY_ID)
@@ -211,7 +210,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         })
         .build(app)?;
 
-    apply_runtime_icons(&app.handle(), None);
+    apply_runtime_icons(app.handle(), None);
 
     Ok(())
 }
