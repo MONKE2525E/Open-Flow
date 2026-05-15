@@ -17,6 +17,11 @@ function tauriMock() {
   };
 
   // ── In-memory store (save_setting writes here, get_setting reads here) ─────
+  let storedMem = {};
+  try {
+    storedMem = JSON.parse(window.localStorage.getItem('__open_flow_tauri_mock_settings') || '{}');
+  } catch {}
+
   const mem = {
     setup_complete:          true,
     transcription_model:     'groq/whisper-large-v3-turbo',
@@ -35,7 +40,15 @@ function tauriMock() {
     history_retention:       '30 days',
     mic_gain:                3.5,
     microphone_device:       '',
+    appearance_mode:         'system',
+    ...storedMem,
   };
+
+  function persistMem() {
+    try {
+      window.localStorage.setItem('__open_flow_tauri_mock_settings', JSON.stringify(mem));
+    } catch {}
+  }
 
   // ── Callback registry (mirrors official mock — uses crypto so ID is a Number) ─
   const callbacks = new Map();
@@ -86,7 +99,24 @@ function tauriMock() {
 
     switch (cmd) {
       case 'get_setting':        return mem[args?.key] ?? null;
-      case 'save_setting':       mem[args?.key] = args?.value; return null;
+      case 'save_setting':       mem[args?.key] = args?.value; persistMem(); return null;
+      case 'get_all_settings':   return {
+        transcription_model:     mem.transcription_model ?? null,
+        cleanup_model:           mem.cleanup_model ?? null,
+        cleanup_enabled:         mem.cleanup_enabled ?? null,
+        noise_reduction:         mem.noise_reduction ?? null,
+        mute_audio:              mem.mute_audio ?? null,
+        autostart_enabled:       mem.autostart_enabled ?? null,
+        app_context_hint:        mem.app_context_hint ?? null,
+        api_fallback_enabled:    mem.api_fallback_enabled ?? null,
+        auto_learn_enabled:      mem.auto_learn_enabled ?? null,
+        contextual_caps_enabled: mem.contextual_caps_enabled ?? null,
+        mic_gain:                mem.mic_gain ?? null,
+        history_retention:       mem.history_retention ?? null,
+        microphone_device:       mem.microphone_device ?? null,
+        hotkey:                  mem.hotkey ?? null,
+        appearance_mode:         mem.appearance_mode ?? null,
+      };
       case 'get_api_key_status': return { groq: false, openai: false, google: false };
       case 'check_api_key_set':  return false;
       case 'get_microphones':    return [];
@@ -97,7 +127,7 @@ function tauriMock() {
         { name: 'Notion',              exe: 'notion.exe'  },
       ];
       case 'get_app_mappings':   return mem._app_mappings ?? [];
-      case 'save_app_mappings':  mem._app_mappings = args?.mappings ?? []; return null;
+      case 'save_app_mappings':  mem._app_mappings = args?.mappings ?? []; persistMem(); return null;
       case 'get_recent':         return [];
       case 'get_stats':          return { total_words: 0, avg_wpm: 0, day_streak: 0 };
       case 'get_dictionary':     return [];

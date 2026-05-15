@@ -12,7 +12,7 @@
 ## Why Open Flow?
 
 **Lightweight & Fast**
-- Uses just ~150MB of RAM idle runs silently in the background without bloat.
+- Uses just ~200MB of RAM idle runs silently in the background without bloat.
 - Native Tauri app, not Electron. No bundled browser overhead.
 - Latency-optimized: Groq transcription completes in ~0.5 seconds.
 
@@ -43,7 +43,7 @@ Open Flow handles the entire pipeline from your microphone to your active applic
 ##  Features
 
 ### Core Dictation
-- **Hold-to-Record Hotkey:** Uses a low-level Windows keyboard hook for precise `<kbd>Alt</kbd>+<kbd>Space</kbd>` hold/release timing. Works in any app.
+- **Hold-to-Record Hotkey:** Uses a low-level Windows keyboard hook for precise <kbd>Alt</kbd>+<kbd>Space</kbd> hold/release timing. Works in any app.
 - **Mix & Match AI Providers:** Native support for Groq, OpenAI, and Google. Choose your preferred transcription and cleanup models independently you're not locked in.
 - **Smart LLM Cleanup:** Automatically removes filler words, fixes punctuation, and applies formatting — all powered by open APIs you control.
 - **Prompt Injection Protection:** Uses `<raw_dictation>` isolation boundaries to explicitly prevent the LLM from acting on any instructions accidentally spoken into the microphone.

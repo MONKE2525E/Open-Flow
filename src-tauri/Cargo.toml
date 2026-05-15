@@ -1,6 +1,6 @@
 [package]
 name = "open-flow"
-version = "0.6.0"
+version = "0.7.0"
 description = "Open Flow — local-first AI dictation"
 authors = ["Open Flow Team"]
 edition = "2021"
@@ -24,6 +24,7 @@ serde       = { version = "1", features = ["derive"] }
 serde_json  = "1"
 tokio       = { version = "1", features = ["full"] }
 reqwest     = { version = "0.12", features = ["json", "multipart", "stream"] }
+bytes       = "1"
 cpal        = "0.15"
 hound       = "3.5"
 nnnoiseless = "0.4"
@@ -56,6 +57,4 @@ lto        = true
 strip      = true
 panic      = "abort"
 codegen-units = 1
-
-
 

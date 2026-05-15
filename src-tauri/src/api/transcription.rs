@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use reqwest::multipart;
 
 use super::gemini_types::GeminiResp;
@@ -13,8 +14,12 @@ pub enum Provider {
 /// Single Gemini call that both transcribes the audio and applies the cleanup
 /// profile. Used when Google is selected for both transcription and cleanup so
 /// we only pay one API round trip instead of two.
+#[expect(
+    dead_code,
+    reason = "Planned Google fast path, but pipeline still needs raw text for history"
+)]
 pub async fn transcribe_and_cleanup_gemini(
-    wav: Vec<u8>,
+    wav: Bytes,
     api_key: &str,
     profile_prompt: &str,
 ) -> Result<String> {
@@ -26,7 +31,7 @@ pub async fn transcribe_and_cleanup_gemini(
     transcribe_gemini_with_prompt(wav, api_key, &instruction, true).await
 }
 
-pub async fn transcribe(wav: Vec<u8>, provider: Provider, api_key: &str) -> Result<String> {
+pub async fn transcribe(wav: Bytes, provider: Provider, api_key: &str) -> Result<String> {
     match provider {
         Provider::Groq => {
             transcribe_whisper(
@@ -52,15 +57,16 @@ pub async fn transcribe(wav: Vec<u8>, provider: Provider, api_key: &str) -> Resu
     }
 }
 
-async fn transcribe_whisper(wav: Vec<u8>, api_key: &str, url: &str, model: &str) -> Result<String> {
+async fn transcribe_whisper(wav: Bytes, api_key: &str, url: &str, model: &str) -> Result<String> {
     #[derive(serde::Deserialize)]
     struct WhisperResponse {
         text: String,
     }
 
-    let part = multipart::Part::bytes(wav)
-        .file_name("audio.wav")
-        .mime_str("audio/wav")?;
+    let part =
+        multipart::Part::stream_with_length(reqwest::Body::from(wav.clone()), wav.len() as u64)
+            .file_name("audio.wav")
+            .mime_str("audio/wav")?;
     let form = multipart::Form::new()
         .part("file", part)
         .text("model", model.to_owned())
@@ -82,14 +88,14 @@ async fn transcribe_whisper(wav: Vec<u8>, api_key: &str, url: &str, model: &str)
     Ok(body.text.trim().to_owned())
 }
 
-async fn transcribe_gemini(wav: Vec<u8>, api_key: &str) -> Result<String> {
+async fn transcribe_gemini(wav: Bytes, api_key: &str) -> Result<String> {
     let prompt = "Transcribe this audio exactly as spoken. \
                   Return only the spoken words — no commentary, no formatting, no explanation.";
     transcribe_gemini_with_prompt(wav, api_key, prompt, false).await
 }
 
 async fn transcribe_gemini_with_prompt(
-    wav: Vec<u8>,
+    wav: Bytes,
     api_key: &str,
     prompt: &str,
     disable_thinking: bool,
@@ -137,10 +143,8 @@ async fn transcribe_gemini_with_prompt(
     }
 
     let raw_body = resp.text().await?;
-    log::debug!("Gemini transcription response: {raw_body}");
-
-    let data: GeminiResp = serde_json::from_str(&raw_body)
-        .with_context(|| format!("Gemini parse error. Response: {raw_body}"))?;
+    let data: GeminiResp =
+        serde_json::from_str(&raw_body).context("Gemini transcription response parse error")?;
 
     if let Some(fb) = &data.prompt_feedback {
         if let Some(reason) = fb.get("blockReason").and_then(|v| v.as_str()) {

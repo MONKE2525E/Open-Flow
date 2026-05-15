@@ -7,6 +7,7 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { icons } from '../icons';
   import { updateInfo, isOnline, type UpdateInfo } from '../stores';
+  import { saveSetting } from '../settings';
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
   interface Stats { total_words: number; avg_wpm: number; day_streak: number; }
@@ -14,6 +15,79 @@
   let copiedId: number | null = null;
   let currentVersion = '';
   let installing = false;
+
+  function getGreeting(): string {
+    const now = new Date();
+    const h = now.getHours();
+    // Days since epoch — avoids the obvious 7-day weekday cycle
+    const seed = Math.floor(now.getTime() / 86_400_000);
+
+    const pick = (msgs: string[]) => msgs[seed % msgs.length];
+
+    if (h >= 5 && h < 12) {
+      return pick([
+        'Good morning.',
+        'Morning — ready to roll.',
+        'Early start. Let\'s get into it.',
+        'Morning. Coffee first, then dictation.',
+        'Rise and grind.',
+        'Big day ahead?',
+        'Morning. Let\'s make it count.',
+        'Up and at it.',
+        'Another day, another wall of text.',
+        'Morning. What\'s on the agenda?',
+        'Fresh start. Let\'s go.',
+        'Good morning. The day\'s yours.',
+      ]);
+    } else if (h >= 12 && h < 17) {
+      return pick([
+        'Good afternoon.',
+        'Afternoon. Keep the momentum.',
+        'Halfway through — still going.',
+        'Afternoon grind. Let\'s go.',
+        'Still going strong?',
+        'Post-lunch slump? Push through.',
+        'Afternoon. Knock out the list.',
+        'How\'s the day treating you?',
+        'Deep work hour. Let\'s make it count.',
+        'Head down, get it done.',
+        'Afternoon. The finish line\'s in sight.',
+        'Good afternoon. Lot left to do?',
+      ]);
+    } else if (h >= 17 && h < 21) {
+      return pick([
+        'Good evening.',
+        'Wrapping things up?',
+        'Almost done for the day.',
+        'Evening — one last push.',
+        'How\'d the day go?',
+        'Winding down? Get those last thoughts out.',
+        'Evening mode.',
+        'End of day. Finish strong.',
+        'Evening. You made it.',
+        'Tying up loose ends?',
+        'Good evening. Almost there.',
+        'Last stretch of the day.',
+      ]);
+    } else {
+      return pick([
+        'Working late?',
+        'Burning the midnight oil.',
+        'Still at it. Respect.',
+        'Late night session.',
+        'Night owl mode.',
+        'The quiet hours hit different.',
+        'Up late. You\'ve got this.',
+        'Late night. Make it count.',
+        'Can\'t sleep, or just in the zone?',
+        'Night shift. Let\'s go.',
+        'Everyone else is asleep. Your move.',
+        'Late night grind. Respect.',
+      ]);
+    }
+  }
+
+  const greeting = getGreeting();
 
   async function copyText(entry: Entry) {
     try {
@@ -58,8 +132,8 @@
       const [r, s] = await Promise.all([invoke<Entry[]>('get_recent'), invoke<Stats>('get_stats')]);
       recents = r;
       stats = s;
-    } catch {
-      // dev mode — show placeholder
+    } catch (err) {
+      console.error('Home load failed:', err);
       recents = [];
       stats = { total_words: 0, avg_wpm: 0, day_streak: 0 };
     }
@@ -81,7 +155,7 @@
   async function dismissUpdate() {
     if (!$updateInfo) return;
     try {
-      await invoke('save_setting', { key: 'update_dismissed_version', value: $updateInfo.version });
+      await saveSetting('update_dismissed_version', $updateInfo.version);
     } catch { /* dev mode */ }
     updateInfo.set(null);
   }
@@ -115,13 +189,13 @@
     document.addEventListener('visibilitychange', handleVisibility);
 
     // Check for updates, skip banner if user dismissed this version
-    invoke<any>('check_for_update').then(async (update: any) => {
+    invoke<UpdateInfo | null>('check_for_update').then(async (update) => {
       if (update) {
         try {
           const dismissed = await invoke<string | null>('get_setting', { key: 'update_dismissed_version' });
           if (dismissed === update.version) return;
         } catch { /* dev mode */ }
-        updateInfo.set(update as UpdateInfo);
+        updateInfo.set(update);
       }
     }).catch(() => {});
 
@@ -143,7 +217,7 @@
     <!-- Left column -->
     <div>
       <h1 class="page-h">Welcome back</h1>
-      <p class="page-sub">Local-first dictation. Bring your own keys.</p>
+      <p class="page-sub">{greeting}</p>
 
       <!-- Dark hero card -->
       <div class="hero-photo">
@@ -246,14 +320,21 @@
 
 <style>
   .content-inner {
-    padding: 18px 28px 36px;
-    max-width: 920px;
+    width: min(100%, var(--page-max));
+    margin-inline: auto;
+    padding: var(--page-pad-y) var(--page-pad-x) 36px;
+    min-width: 0;
   }
 
   .home-grid {
     display: grid;
-    grid-template-columns: 1fr 240px;
-    gap: 18px;
+    grid-template-columns: minmax(540px, 1fr) minmax(220px, 280px);
+    gap: clamp(18px, 3vw, 32px);
+    align-items: start;
+  }
+
+  .home-grid > div {
+    min-width: 0;
   }
 
   .page-h {
@@ -273,7 +354,7 @@
     border-radius: var(--r-lg);
     overflow: hidden;
     margin-bottom: 22px;
-    height: 120px;
+    height: clamp(112px, 14vw, 160px);
     background: var(--arm-950);
   }
 
@@ -289,7 +370,7 @@
   .hero-photo-content {
     position: relative;
     padding: 22px 28px;
-    max-width: 80%;
+    max-width: min(520px, 100%);
   }
 
   .hero-photo-title {
@@ -299,12 +380,12 @@
     letter-spacing: -0.02em;
     margin: 0 0 8px;
     line-height: 1.15;
-    color: white;
+    color: var(--pill-fg);
   }
 
   .hero-photo-title :global(kbd) {
-    background: rgba(255,255,255,0.10);
-    border: 1px solid rgba(255,255,255,0.18);
+    background: color-mix(in srgb, var(--pill-fg) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--pill-fg) 18%, transparent);
     border-radius: 5px;
     font-family: var(--mono);
     font-size: 13px;
@@ -315,7 +396,7 @@
 
   .hero-photo-sub {
     font-size: 12.5px;
-    color: var(--arm-400);
+    color: color-mix(in srgb, var(--pill-fg) 58%, transparent);
     margin: 0;
     line-height: 1.5;
   }
@@ -323,7 +404,7 @@
   .hero-em {
     font-family: var(--serif);
     font-style: italic;
-    color: var(--amber-50);
+    color: color-mix(in srgb, var(--pill-fg) 82%, transparent);
   }
 
   .notice-wrap {
@@ -370,7 +451,7 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #c0392b;
+    background: var(--danger);
     flex-shrink: 0;
     animation: dot-pulse 2s ease-in-out infinite;
   }
@@ -412,8 +493,8 @@
   .update-btn {
     flex-shrink: 0;
     padding: 6px 14px;
-    background: var(--jap-500);
-    color: white;
+    background: var(--accent);
+    color: var(--on-accent);
     border: none;
     border-radius: 6px;
     font-size: 13px;
@@ -422,7 +503,7 @@
     transition: background 0.15s, opacity 0.15s;
   }
   .update-btn:hover:not(:disabled) {
-    background: var(--jap-600);
+    background: var(--accent-ink);
   }
   .update-btn:disabled {
     opacity: 0.6;
@@ -449,7 +530,7 @@
     gap: 14px;
     cursor: default;
   }
-  .day-row:hover { background: var(--amber-100); }
+  .day-row:hover { background: var(--control-active); }
   .day-row:not(:hover) .copy-btn { opacity: 0; pointer-events: none; }
 
   .copy-btn {
@@ -480,7 +561,13 @@
     font-weight: 500;
   }
 
-  .day-text { font-size: 13px; line-height: 1.55; color: var(--ink-strong); }
+  .day-text {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--ink-strong);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
 
   .empty-state {
     padding: 32px 4px;
@@ -531,4 +618,42 @@
   }
 
   .stat-label { font-size: 11.5px; color: var(--ink-mute); margin-left: auto; }
+
+  @media (max-width: 1060px) {
+    .home-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .stat-card {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .stat-line {
+      border-bottom: 0;
+      border-top: 1px solid var(--line);
+      padding: 10px 0 0;
+      min-width: 0;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .hero-photo-content {
+      padding: 18px 20px;
+    }
+
+    .hero-photo-title {
+      font-size: 20px;
+    }
+
+    .day-row {
+      grid-template-columns: 68px 1fr auto;
+      gap: 10px;
+    }
+
+    .stat-card {
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    }
+  }
 </style>

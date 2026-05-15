@@ -56,8 +56,8 @@
     left: 50%;
     transform: translateX(-50%);
     z-index: 999;
-    background: var(--arm-950);
-    color: white;
+    background: var(--pill-bg);
+    color: var(--pill-fg);
     border-radius: 999px;
     height: 30px;
     display: flex;
@@ -82,7 +82,7 @@
   .bars i {
     display: block;
     width: 2px;
-    background: white;
+    background: var(--pill-bar);
     border-radius: 1px;
     animation: barwave 0.85s infinite ease-in-out;
   }
@@ -123,7 +123,7 @@
     height: 11px;
     border-radius: 50%;
     border: 1.5px solid var(--arm-700);
-    border-top-color: white;
+    border-top-color: var(--pill-fg);
     animation: spin 0.75s linear infinite;
     flex-shrink: 0;
   }
@@ -139,8 +139,8 @@
     border-radius: 4px; padding: 0;
     transition: opacity 0.15s;
   }
-  .hf-btn.cancel  { color: rgba(255,255,255,0.45); }
-  .hf-btn.confirm { color: var(--jap-400); }
-  .hf-btn.cancel:hover  { color: rgba(255,255,255,0.85); }
-  .hf-btn.confirm:hover { color: var(--jap-300, #f4a07a); }
+  .hf-btn.cancel  { color: var(--pill-muted); }
+  .hf-btn.confirm { color: var(--accent); }
+  .hf-btn.cancel:hover  { color: var(--pill-muted-strong); }
+  .hf-btn.confirm:hover { color: var(--accent-ink); }
 </style>

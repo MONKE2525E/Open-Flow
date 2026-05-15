@@ -4,14 +4,14 @@
 - Run npm dev commands yourself please
 - Github Repo: https://github.com/MONKE2525E/Open-Flow
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
-- ROADMAP.md Keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
+- docs/ROADMAP.md keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
 
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What This Is
 
-Open Flow is an open-source AI dictation desktop app for Windows — a free, API-key-based alternative to the paid "Wispr Flow" app. Users supply their own API keys; there is no subscription. Target RAM usage is ~100MB idle.
+Open Flow is an open-source AI dictation desktop app for Windows — a free, API-key-based alternative to the paid "Wispr Flow" app. Users supply their own API keys; there is no subscription. Target RAM usage is ~200MB idle.
 
 ## Stack
 
@@ -27,7 +27,7 @@ Open Flow is an open-source AI dictation desktop app for Windows — a free, API
 
 ## Design System
 
-See [colors.md](colors.md) for the complete color palette, typography, and theming system. The design uses a warm, earthy aesthetic with:
+See [docs/colors.md](docs/colors.md) for the complete color palette, typography, and theming system. The design uses a warm, earthy aesthetic with:
 - Soft-amber paper background (`#f9f7f3`)
 - Japonica terracotta accent (`#d97757`)
 - Armadillo warm-dark text palette
@@ -49,19 +49,22 @@ npm run tauri build
 # Type-check frontend only
 npm run check
 
-# Lint frontend
+# Lint frontend and Rust
 npm run lint
 
 # Run Rust tests
-cargo test --manifest-path src-tauri/Cargo.toml
+npm run test:rust
 
 # Run a single Rust test
 cargo test --manifest-path src-tauri/Cargo.toml <test_name>
 
 # Smoke tests — Vite dev server (port 5173)
 npm run dev   # terminal 1
-node tests/smoke/test.js
-node tests/smoke/test-app.js
+node tests/smoke/test.cjs
+node tests/smoke/test-app.cjs
+node tests/smoke/playwright-test-ui.cjs
+node tests/smoke/playwright-test-state.cjs
+node tests/smoke/playwright-test-fixes.cjs
 
 # Smoke tests — full Tauri window (port 1420)
 npm run tauri dev   # terminal 1
@@ -86,6 +89,8 @@ src/                        # Svelte 5 frontend
     stores.ts               # All Svelte writable stores (single file)
     icons.ts                # SVG icon definitions
     components/layout/      # TitleBar, Sidebar, DictationPill
+    components/             # Shared: Toggle, Dropdown, MicInputButton
+    components/settings/    # Settings sections: General, Models, ApiKeys, AppMappings, Privacy, Advanced, About
     views/                  # Home, Dictionary, Snippets, Settings, Style pages
 src-tauri/
   src/
@@ -114,6 +119,7 @@ src-tauri/
   tauri.conf.json           # 2 windows: main (1100×720) + pill (220×60 always-on-top)
 tests/
   smoke/                    # Playwright smoke tests — NEVER edit these files
+  manual/                   # Manual test scripts (hotkey, layout bounds) — not automated
 ```
 
 ## Core Data Flow
@@ -127,18 +133,18 @@ tests/
   → audio.rs: encode PCM → WAV in memory
   → pipeline.rs run_pipeline():
     1. Quality gates: reject if duration_ms < 700 or rms < 0.008
-    2. transcription.rs → raw_text
-    3. dictionary.rs apply_substitutions()
-    4. prompts.rs get_system_prompt_with_extras() → assembles profile prompt + snippet instructions
-    5. cleanup.rs → clean_text (LLM with assembled prompt)
-    6. snippets.rs expand_snippets() (pure expansions applied directly)
-    7. db.rs INSERT transcription record
-    8. injection.rs: save clipboard → write clean_text → Ctrl+V → restore clipboard
-    9. Emit 'open-flow:transcribed' to frontend
-    10. auto_learn.rs: monitor focused text for 30s via UI Automation for corrections
+    2. Capture foreground HWND (before any async work — foreground may change mid-pipeline)
+    3. transcription.rs → raw_text
+    4. Pure-snippet fast-path: if entire transcription is a single trigger → expand directly, skip cleanup
+    5. Otherwise: snippets.rs collect instruction-based triggers → prompts.rs assemble system prompt
+    6. cleanup.rs → clean_text (LLM with assembled prompt + snippet instructions)
+    7. snippets.rs expand_snippets() (remaining pure-token expansions in clean_text)
+    8. dictionary.rs apply_substitutions() (applied last, to final text before injection)
+    9. db.rs INSERT transcription record
+    10. injection.rs: re-focus captured HWND → save clipboard → contextual-cap check → Ctrl+V → restore clipboard
+    11. Emit 'open-flow:transcribed' to frontend
+    12. auto_learn.rs: monitor focused text for 30s via UI Automation for corrections
 ```
-
-**Google shortcut:** When Google is selected for both transcription and cleanup, `transcribe_and_cleanup_gemini()` combines both steps into a single API call to save a round-trip.
 
 ## SQLite Schema
 
@@ -160,12 +166,14 @@ WAL mode is enabled. Migrations use `execute_batch` wrapped in explicit `BEGIN/C
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
 | Google | `gemini-2.5-flash` (inline audio) | `gemini-2.5-flash` |
 
-Groq is the recommended default — free tier, fast LPU inference. Google uses base64-encoded audio in the request body; Groq/OpenAI use multipart form upload. The cleanup API wraps transcription text in `<raw_dictation>` XML delimiters before sending. Google cleanup sets `thinking_budget: 0` to disable deep thinking. 429 quota-exceeded errors are handled distinctly from other API errors.
+Groq is the recommended default — free tier, fast LPU inference. Google uses base64-encoded audio in the request body; Groq/OpenAI use multipart form upload. The cleanup API wraps transcription text in `<raw_dictation>` XML delimiters before sending. Google cleanup sets `thinking_budget: 0` to disable deep thinking.
+
+**API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to a secondary provider when `api_fallback_enabled` is true. Fallback chains: groq→[openai, google], openai→[groq, google], google→[groq, openai]. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately.
 
 ## Global Hotkey Behavior
 
-- **Alt+Space (hold)** → start recording
-- **Alt+Space (release)** → stop and process
+- **Ctrl+Win (hold)** → start recording
+- **Ctrl+Win (release)** → stop and process
 
 The hotkey uses a raw `SetWindowsHookExW(WH_KEYBOARD_LL)` hook in `core/hotkey.rs`, not `tauri-plugin-global-shortcut`, because that plugin only fires on keydown — hold/release state requires the low-level hook.
 
@@ -173,7 +181,9 @@ The hotkey uses a raw `SetWindowsHookExW(WH_KEYBOARD_LL)` hook in `core/hotkey.r
 
 Active window process name → profile → system prompt prefix sent to cleanup LLM.
 
-Built-in profiles: `casual`, `formal`, `email`, `excited`, `very_casual`. Profile system prompts live in `src-tauri/src/api/cleanup.rs`. `resolve_profile()` reads `AppMapping` entries (`Vec<AppMapping>`) from `tauri-plugin-store` at pipeline time to map foreground process name → profile name.
+Built-in profiles: `casual`, `formal`, `email`, `excited`, `very_casual`. Profile system prompts live in `src-tauri/src/api/cleanup.rs`. `resolve_profile()` reads `AppMapping` entries (`Vec<AppMapping>`) from `tauri-plugin-store` at pipeline time to map foreground process name → profile name. Lookup key is the lowercase `.exe` name. Falls back to `default_tone` setting if no mapping found.
+
+Store keys (API keys, settings) are defined as constants in `src-tauri/src/data/store.rs` — always use the constant, never a raw string literal.
 
 ## Prompt Assembly (`prompts.rs`)
 
@@ -183,20 +193,32 @@ Built-in profiles: `casual`, `formal`, `email`, `excited`, `very_casual`. Profil
 
 Two execution paths:
 
-1. **Pure expansion** — trigger found as a standalone token in transcribed text → replace directly with expansion (strips trailing punctuation added by the transcription model).
+1. **Pure expansion** — trigger found as a standalone token in text → replace directly with expansion (strips trailing punctuation added by the transcription model). If the *entire* transcription is a single trigger, this fast-paths past the cleanup LLM entirely.
 2. **Instruction collection** — triggers found in text → gather their expansions as instructions → pass to `get_system_prompt_with_extras()` → cleanup LLM applies them contextually.
+
+Cleanup instruction keywords are applied mechanically to LLM output *after* the API call: "all capitals" → uppercase; "no period" / "never add period" → strip trailing periods; "end with exclamation" → force `!`. Negated forms ("don't use all caps") are also checked to prevent conflicts.
 
 ## Auto-Learn System (`api/auto_learn.rs`)
 
-After injection, monitors the focused text field for 30 seconds using Windows UI Automation. Detects user corrections by comparing pre/post text with Levenshtein edit distance (`edit_distance`, `is_spelling_correction`). A (wrong → correct) pair must be observed ≥3 times within 7 days before being promoted to the dictionary. Word count growth is capped at 2× + 10 original words to filter out unrelated edits.
+After injection, monitors the focused text field for 30 seconds using Windows UI Automation. Only one monitor runs at a time (`MONITOR_ACTIVE` flag prevents overlaps). Detects user corrections via Levenshtein edit distance (`edit_distance`, `is_spelling_correction`) — pairs must differ by ≤2 chars or ≤50% of max length. A (wrong → correct) pair must be observed ≥2 times within 7 days before being promoted to the dictionary. Word count growth is capped at 2× + 10 original words to filter out unrelated edits.
+
+Requires COM initialization (`CoInitializeEx`) per thread via a `ComGuard` — UI Automation will fail silently without it.
 
 ## Key Design Constraints
 
 - **No bundled browser.** Tauri uses Windows WebView2 — keep this. Never switch to Electron.
-- **RAM target: ~200MB idle.** Profile before adding any heavy JS dependency.
+- **RAM target: ~200MB idle.** Profile before adding any heavy JS dependency. See [docs/transcription-ram-reliability-plan.md](docs/transcription-ram-reliability-plan.md) for the prioritized list of known memory and reliability issues in the Rust pipeline.
 - **Text injection is clipboard-based.** `SendInput` character-by-character is unreliable across apps; clipboard + Ctrl+V works everywhere.
 - **API keys never touch the DB.** Use `tauri-plugin-store` only. Commands that check key presence return a boolean status, never the key itself.
 - **MVP scope:** transcription + history + dictionary + snippets + cleanup + hotkey. Insights/stats and IDE integrations are post-MVP.
+
+## Shared Frontend Components
+
+Three reusable components in `src/lib/components/`:
+
+- **Toggle** — `<Toggle checked={bool} onchange={(v) => ...} />`. Renders as `<div class="toggle" role="switch" aria-checked>`. Required by smoke tests — the `toggle` class must stay.
+- **Dropdown** — `<Dropdown bind:open closeSelector="">`. Handles click-outside to close; `closeSelector` exempts an element from triggering close.
+- **MicInputButton** — `<MicInputButton onResult={(text) => ...} />`. Drives a recording state machine (idle → recording → loading) via `start_input_recording` / `stop_and_transcribe_input` Tauri commands. Shows spinner while loading.
 
 ## Patterns & Gotchas
 
@@ -212,6 +234,12 @@ Hiding the pill window suspends the WebView2 renderer. The next state event emit
 - `rms < 0.008` — near-silence, likely accidental activation
 
 No user-facing feedback is shown when rejected. These are currently magic numbers in `pipeline.rs`.
+
+### Injection — contextual capitalization and timing
+`injection.rs` peeks at the character before the cursor using Shift+Left + Ctrl+C, then inspects the clipboard. If the preceding character is not a sentence-ending `.!?\n\r`, the first letter of the injected text is lowercased (mid-sentence join). Two timing constraints: 60ms wait after the Shift+Left+Ctrl+C sequence for the clipboard to populate, and 30ms between releasing modifier keys and sending Ctrl+V — without this gap, some apps miss the Ctrl key in the same message-pump cycle.
+
+### HWND capture — foreground window before async work
+The foreground window HWND is captured at the very start of `run_pipeline()`, before any async API call. This ensures Ctrl+V is sent to the correct window even if the user switches apps during the transcription/cleanup round-trip. The captured HWND is re-focused just before injection.
 
 ### Error handling convention
 Use `anyhow::Result` throughout Rust. Pipeline errors call `show_error_pill()` which logs, emits `open-flow:error` to the frontend (caught as a toast in `App.svelte`), and returns without crashing. Match this pattern for any new error path in the pipeline.
@@ -231,3 +259,4 @@ Files in `tests/smoke/` are a frozen contract — **never edit them**. Fix the a
 | Info badges | `badge` on a `<div>` |
 | Hotkey badge | `badge key-badge` on a `<kbd>` |
 | About GitHub button | `btn-ghost` on a `<button>` |
+| Model selector rows | `model-row` |

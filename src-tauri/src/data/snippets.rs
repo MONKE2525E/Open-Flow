@@ -8,33 +8,20 @@ use crate::data::db::{self, Db};
 /// This function strips that punctuation before matching and returns the raw expansion
 /// text, so no period bleeds through. Also increments the snippet's use_count.
 ///
-/// Returns None if the text is not a pure trigger (contains other spoken words).
-pub fn try_pure_snippet_expand(text: &str, db: &Db) -> Option<String> {
-    let snippets = db::query_snippets(db).ok()?;
-    try_pure_snippet_expand_from(text, &snippets, db)
-}
-
-pub fn try_pure_snippet_expand_from(text: &str, snippets: &[db::Snippet], db: &Db) -> Option<String> {
+pub fn try_pure_snippet_expand_from(
+    text: &str,
+    snippets: &[db::Snippet],
+    db: &Db,
+) -> Option<String> {
     let normalized = text
         .trim()
-        .trim_end_matches(|c: char| matches!(c, '.' | ',' | '?' | '!'))
+        .trim_end_matches(['.', ',', '?', '!'])
         .to_lowercase();
-    let matched = snippets.iter().find(|s| s.trigger.to_lowercase() == normalized)?;
+    let matched = snippets
+        .iter()
+        .find(|s| s.trigger.to_lowercase() == normalized)?;
     let _ = db::increment_snippet_use(db, matched.id);
     Some(matched.expansion.clone())
-}
-
-/// Collect instructions from snippets that match triggers in `text`.
-/// Returns a formatted string of instructions to pass to the cleanup LLM.
-pub fn collect_snippet_instructions(text: &str, db: &Db) -> String {
-    let snippets = match db::query_snippets(db) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("collect_snippet_instructions: {e}");
-            return String::new();
-        }
-    };
-    collect_snippet_instructions_from(text, &snippets)
 }
 
 pub fn collect_snippet_instructions_from(text: &str, snippets: &[db::Snippet]) -> String {
@@ -53,21 +40,6 @@ pub fn collect_snippet_instructions_from(text: &str, snippets: &[db::Snippet]) -
     } else {
         active_instructions.join("\n")
     }
-}
-
-/// Replace all snippet triggers in `text` with their expansions.
-/// Matching is case-insensitive. Longer triggers are evaluated first so a
-/// short trigger can't shadow a longer one that shares its prefix.
-/// Each matched snippet's `use_count` is incremented in the database.
-pub fn expand_snippets(text: &str, db: &Db) -> String {
-    let mut snippets = match db::query_snippets(db) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("expand_snippets: {e}");
-            return text.to_string();
-        }
-    };
-    expand_snippets_from(text, &mut snippets, db)
 }
 
 pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -> String {
