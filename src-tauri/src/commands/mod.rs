@@ -89,8 +89,14 @@ pub async fn save_setting(
 ) -> Result<(), String> {
     validate_setting(&key, &value)?;
     let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    store.set(key, value);
-    store.save().map_err(|e| e.to_string())
+    store.set(key.clone(), value);
+    store.save().map_err(|e| e.to_string())?;
+
+    if key == store::APPEARANCE_MODE {
+        crate::apply_runtime_icons(&app, None);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
