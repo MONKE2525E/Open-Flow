@@ -62,7 +62,7 @@ Uses `waitFor({ state: 'visible' })` (not `waitForTimeout`) on every element. As
 |----------------------|-------------------------------------------------------|
 | Settings → Advanced  | `div.badge:has-text("30 days")`                       |
 | Settings → Advanced  | `div.badge:has-text("Clipboard (Ctrl+V)")`            |
-| Settings → General   | `kbd.badge.key-badge:has-text("Alt Space")`           |
+| Settings → General   | `button.badge.key-badge:has-text("Ctrl")`             |
 | Settings → About     | `button.btn-ghost:has-text("github.com/MONKE2525E/Open-Flow")` |
 
 **Pass criteria:** All four elements exist with the exact tag+class shown. A `<span class="badge">` won't satisfy `div.badge`; a `<button>` without `.btn-ghost` won't satisfy the About check.

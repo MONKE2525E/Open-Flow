@@ -125,11 +125,11 @@ tests/
 ## Core Data Flow
 
 ```
-[Alt+Space held]
+[Ctrl+Windows held]
   → audio.rs: CPAL captures mic PCM, applies 3.5× gain
   → Emits 'audio-level' every 50ms (RMS) → pill visualizer bars
 
-[Alt+Space released]
+[Ctrl+Windows released]
   → audio.rs: encode PCM → WAV in memory
   → pipeline.rs run_pipeline():
     1. Quality gates: reject if duration_ms < 700 or rms < 0.008
@@ -172,8 +172,8 @@ Groq is the recommended default — free tier, fast LPU inference. Google uses b
 
 ## Global Hotkey Behavior
 
-- **Ctrl+Win (hold)** → start recording
-- **Ctrl+Win (release)** → stop and process
+- **Ctrl+Windows (hold)** → start recording
+- **Ctrl+Windows (release)** → stop and process
 
 The hotkey uses a raw `SetWindowsHookExW(WH_KEYBOARD_LL)` hook in `core/hotkey.rs`, not `tauri-plugin-global-shortcut`, because that plugin only fires on keydown — hold/release state requires the low-level hook.
 

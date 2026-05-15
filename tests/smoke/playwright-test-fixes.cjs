@@ -58,10 +58,10 @@ async function assert(label, locator, errors) {
     await page.locator('.settings-nav-item:has-text("General")').click();
     await page.locator('h2.settings-h:has-text("General")').waitFor({ state: 'visible', timeout: 3_000 });
 
-    // Hotkey is button.badge.key-badge showing "Alt + Space"
+    // Hotkey is button.badge.key-badge showing "Ctrl + Windows"
     await assert(
-      'button.badge.key-badge containing "Alt"',
-      page.locator('button.badge.key-badge:has-text("Alt")'),
+      'button.badge.key-badge containing "Ctrl"',
+      page.locator('button.badge.key-badge:has-text("Ctrl")'),
       errors,
     );
 

@@ -223,7 +223,7 @@
       <div class="hero-photo">
         <div class="hero-photo-content">
           <h2 class="hero-photo-title">
-            Hold <kbd>Alt</kbd> <kbd>Space</kbd> to dictate
+            Hold <kbd>Ctrl</kbd> <kbd>Windows</kbd> to dictate
           </h2>
           <p class="hero-photo-sub">
             Open Flow works in any app. Try it in
@@ -260,7 +260,7 @@
         <div class="empty-state">Loading history…</div>
       {:else if recents.length === 0}
         <div class="empty-state">
-          No dictations yet. Hold <kbd>Alt</kbd> <kbd>Space</kbd> to get started.
+          No dictations yet. Hold <kbd>Ctrl</kbd> <kbd>Windows</kbd> to get started.
         </div>
       {:else}
         {#each grouped as group, gi (group.label)}

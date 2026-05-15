@@ -158,7 +158,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .icon(tray_icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("Open Flow — Alt+Space to record")
+        .tooltip("Open Flow — Ctrl+Windows to record")
         .on_menu_event(|app, ev| match ev.id.as_ref() {
             "show" => {
                 if let Some(w) = app.get_webview_window("main") {

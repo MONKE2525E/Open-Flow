@@ -10,7 +10,7 @@
   let micDropdownOpen = $state(false);
   let muteAudio = $state(false);
   let autostart = $state(false);
-  let hotkey = $state(['AltLeft', 'Space']);
+  let hotkey = $state(['ControlLeft', 'MetaLeft']);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
   const appearanceOptions: { id: AppearanceMode; label: string }[] = [
@@ -99,7 +99,16 @@
   }
 
   function formatKey(code: string) {
-    return code.replace('Left', '').replace('Right', '').replace('Key', '').replace('Digit', '');
+    const labels: Record<string, string> = {
+      ControlLeft: 'Ctrl',
+      ControlRight: 'Ctrl',
+      MetaLeft: 'Windows',
+      MetaRight: 'Windows',
+      AltLeft: 'Alt',
+      AltRight: 'Alt',
+      Space: 'Space',
+    };
+    return labels[code] ?? code.replace('Left', '').replace('Right', '').replace('Key', '').replace('Digit', '');
   }
 
   function micLabel(name: string) {

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Hold <kbd>Alt</kbd>+<kbd>Space</kbd>, speak, release — your words appear instantly, cleaned up by an LLM, in whatever app is in focus.<br/>
+  Hold <kbd>Ctrl</kbd>+<kbd>Windows</kbd>, speak, release — your words appear instantly, cleaned up by an LLM, in whatever app is in focus.<br/>
   <em>Free, lightweight, local-first AI dictation. Bring your own API keys. No subscriptions. No telemetry. ~100MB RAM.</em>
 </p>
 
@@ -33,7 +33,7 @@
 
 Open Flow handles the entire pipeline from your microphone to your active application seamlessly:
 
-1. **Record:** Hold <kbd>Alt</kbd>+<kbd>Space</kbd> to capture audio locally. A floating pill window shows live audio levels in real time.
+1. **Record:** Hold <kbd>Ctrl</kbd>+<kbd>Windows</kbd> to capture audio locally. A floating pill window shows live audio levels in real time.
 2. **Transcribe:** Audio is sent to your chosen transcription model (Groq, OpenAI, or Google) to generate raw text.
 3. **Clean & Format:** An LLM strips filler words, fixes grammar, and applies your context-specific formatting profile all text processing stays in your control.
 4. **Inject:** The polished text is instantly injected into your focused app via the clipboard (`Ctrl+V`), no permissions required.
@@ -43,7 +43,7 @@ Open Flow handles the entire pipeline from your microphone to your active applic
 ##  Features
 
 ### Core Dictation
-- **Hold-to-Record Hotkey:** Uses a low-level Windows keyboard hook for precise <kbd>Alt</kbd>+<kbd>Space</kbd> hold/release timing. Works in any app.
+- **Hold-to-Record Hotkey:** Uses a low-level Windows keyboard hook for precise <kbd>Ctrl</kbd>+<kbd>Windows</kbd> hold/release timing. Works in any app.
 - **Mix & Match AI Providers:** Native support for Groq, OpenAI, and Google. Choose your preferred transcription and cleanup models independently you're not locked in.
 - **Smart LLM Cleanup:** Automatically removes filler words, fixes punctuation, and applies formatting — all powered by open APIs you control.
 - **Prompt Injection Protection:** Uses `<raw_dictation>` isolation boundaries to explicitly prevent the LLM from acting on any instructions accidentally spoken into the microphone.
