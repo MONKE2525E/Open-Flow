@@ -4,6 +4,7 @@
   import { fly, slide, crossfade } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
+  import { saveSetting, type CleanupIntensity, type ToneId, type AppMapping } from '../settings';
 
   const [send, receive] = crossfade({
     duration: 300,
@@ -41,7 +42,7 @@
 
   interface InstalledApp { name: string; exe: string; }
 
-  let mappings = $state<{ exe: string; profile: string }[]>([]);
+  let mappings = $state<AppMapping[]>([]);
   let newExe = $state('');
   let newProfile = $state('casual');
   let profileDropdownOpen = $state(false);
@@ -92,11 +93,11 @@
       const [savedTone, savedIntensity, savedMappings] = await Promise.all([
         invoke<string | null>('get_setting', { key: 'default_tone' }),
         invoke<string | null>('get_setting', { key: 'cleanup_intensity' }),
-        invoke<{ exe: string; profile: string }[] | null>('get_setting', { key: 'app_mappings' }),
+        invoke<AppMapping[] | null>('get_setting', { key: 'app_mappings' }),
       ]);
       if (savedTone) tone = savedTone as string;
       if (savedIntensity) intensity = savedIntensity as string;
-      if (savedMappings) mappings = savedMappings as { exe: string; profile: string }[];
+      if (savedMappings) mappings = savedMappings;
     } catch { /* dev mode without Tauri */ }
   });
 
@@ -104,17 +105,17 @@
 
   function selectIntensity(id: string) {
     intensity = id;
-    invoke('save_setting', { key: 'cleanup_intensity', value: id });
+    saveSetting('cleanup_intensity', id as CleanupIntensity);
   }
 
   function selectTone(id: string) {
     tone = id;
-    invoke('save_setting', { key: 'default_tone', value: id });
+    saveSetting('default_tone', id as ToneId);
   }
 
-  function saveMappings(updated: { exe: string; profile: string }[]) {
+  function saveMappings(updated: AppMapping[]) {
     mappings = updated;
-    invoke('save_setting', { key: 'app_mappings', value: updated });
+    saveSetting('app_mappings', updated);
   }
 
   function addMapping() {
@@ -195,8 +196,7 @@
           </div>
 
           <div class="add-mapping">
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="app-picker-wrap" onclick={(e) => e.stopPropagation()}>
+            <div class="app-picker-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
               <input
                 class="app-search-input"
                 placeholder={areAppsLoaded ? 'Search apps…' : 'Loading apps…'}
@@ -206,8 +206,7 @@
                 onkeydown={(e) => e.key === 'Enter' && addMapping()}
               />
               {#if appPickerOpen && filteredApps.length > 0}
-                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                <div class="app-picker-menu" onclick={(e) => e.stopPropagation()}>
+                <div class="app-picker-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
                   {#each filteredApps as app}
                     <button class="app-picker-item" onclick={() => pickApp(app)}>
                       <span class="app-picker-name">{app.name}</span>
@@ -217,8 +216,7 @@
                 </div>
               {/if}
             </div>
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="profile-select" onclick={(e) => e.stopPropagation()}>
+            <div class="profile-select" role="presentation" onclick={(e) => e.stopPropagation()}>
               <button class="profile-select-btn" onclick={() => (profileDropdownOpen = !profileDropdownOpen)}>
                 <span>{profileOptions.find(p => p.id === newProfile)?.label ?? 'Casual'}</span>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -247,8 +245,10 @@
 
 <style>
   .content-inner {
-    padding: 18px 28px 36px;
-    max-width: 920px;
+    width: min(100%, var(--page-max));
+    margin-inline: auto;
+    padding: var(--page-pad-y) var(--page-pad-x) 36px;
+    min-width: 0;
     position: relative;
     display: flex;
     flex-direction: column;
@@ -279,6 +279,7 @@
 
   .tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: 22px;
     border-bottom: 1px solid var(--line);
     margin-bottom: 22px;
@@ -331,11 +332,11 @@
 
   .style-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
     gap: 10px;
   }
 
-  .style-grid.four { grid-template-columns: repeat(4, 1fr); }
+  .style-grid.four { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 
   .style-card {
     padding: 14px;
@@ -349,10 +350,10 @@
     transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .style-card:hover { 
-    background: var(--amber-50); 
+  .style-card:hover {
+    background: var(--control-hover);
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(13, 10, 8, 0.05);
+    box-shadow: var(--shadow-popover);
   }
 
   .style-card:active {
@@ -362,7 +363,7 @@
 
   .style-card.active {
     background: var(--accent-soft);
-    border-color: var(--jap-200);
+    border-color: var(--accent);
   }
 
   .style-card h4 {
@@ -398,7 +399,7 @@
     flex-direction: column;
     gap: 8px;
     margin-bottom: 16px;
-    max-width: 480px;
+    max-width: 640px;
   }
 
   .mapping-item {
@@ -436,14 +437,16 @@
 
   .add-mapping {
     display: flex;
+    flex-wrap: wrap;
     gap: 10px;
-    max-width: 480px;
+    max-width: 640px;
     align-items: center;
   }
 
   .app-picker-wrap {
     position: relative;
-    flex: 1;
+    flex: 1 1 260px;
+    min-width: 0;
   }
 
   .app-search-input {
@@ -468,7 +471,7 @@
     background: var(--bg-elev);
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
-    box-shadow: 0 8px 24px rgba(13,10,8,0.14);
+    box-shadow: var(--shadow-popover);
     width: 100%;
     max-height: 180px;
     overflow-y: auto;
@@ -510,38 +513,39 @@
 
   .profile-select {
     position: relative;
-    flex-shrink: 0;
+    flex: 0 0 auto;
   }
 
   .profile-select-btn {
     display: flex;
     align-items: center;
     gap: 6px;
-    height: 34px;
-    padding: 0 12px;
     background: transparent;
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    font-size: 13px;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
     font-family: var(--sans);
-    color: var(--ink);
+    color: var(--ink-strong);
+    font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
   }
 
-  .profile-select-btn:hover { background: var(--amber-50); border-color: var(--ink-mute); }
+  .profile-select-btn:hover { background: var(--paper); }
 
   .profile-menu {
     position: absolute;
     top: calc(100% + 4px);
-    left: 0;
+    right: 0;
     background: var(--bg-elev);
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
-    box-shadow: 0 8px 24px rgba(13,10,8,0.14);
-    min-width: 110px;
+    box-shadow: var(--shadow-popover);
+    min-width: 130px;
+    max-height: 200px;
+    overflow-y: auto;
     z-index: 20;
-    overflow: hidden;
   }
 
   .profile-item {
@@ -549,13 +553,16 @@
     width: 100%;
     text-align: left;
     padding: 8px 12px;
-    font-size: 13px;
+    font-size: 12px;
     font-family: var(--sans);
-    color: var(--ink);
+    color: var(--ink-strong);
     background: transparent;
     border: none;
     border-bottom: 1px solid var(--line);
     cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .profile-item:last-child { border-bottom: none; }
@@ -571,6 +578,7 @@
     border-radius: var(--r-sm);
     font-size: 13px;
     cursor: pointer;
+    flex: 0 0 auto;
   }
   .btn-primary:hover { background: var(--ink-soft); }
 
@@ -587,5 +595,25 @@
     height: 24px;
     border-radius: 4px;
   }
-  .del-btn:hover { background: var(--amber-100); color: var(--ink); }
+  .del-btn:hover { background: var(--control-active); color: var(--ink); }
+
+  @media (max-width: 720px) {
+    .tabs {
+      gap: 14px;
+    }
+
+    .mapping-info {
+      min-width: 0;
+    }
+
+    .exe {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .app-picker-wrap {
+      flex-basis: 100%;
+    }
+  }
 </style>

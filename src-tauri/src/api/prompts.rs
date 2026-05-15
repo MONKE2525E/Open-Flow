@@ -125,7 +125,7 @@ pub fn get_system_prompt(
             3. Does any sentence restate an idea already stated? If yes, delete that sentence.\n\
             Only output when all three checks pass.",
 
-        "medium" | _ => "CLEANUP LEVEL — Medium:\n\
+        _ => "CLEANUP LEVEL — Medium:\n\
             Your job: remove noise and restructure for clarity. The output must be meaningfully shorter and cleaner than the input.\n\
             \n\
             MANDATORY cuts — every one of these must be gone:\n\
@@ -178,7 +178,7 @@ pub fn get_system_prompt(
             Use a period only when its absence would make two sentences genuinely confusing to parse as one. \
             Use a question mark only for direct questions. No exclamation marks unless the speaker's words explicitly call for one. \
             Keep contractions exactly as spoken. This should feel like a quick text message typed without thinking.",
-        "casual" | _ => "TONE — Casual: Conversational and natural. Capitalize the first word of each sentence and proper nouns only. \
+        _ => "TONE — Casual: Conversational and natural. Capitalize the first word of each sentence and proper nouns only. \
             Light punctuation — end sentences with a period, use a comma where there is a natural spoken pause, skip punctuation elsewhere. \
             Keep contractions as spoken (don't, I'm, it's, can't). \
             No em dashes or formal connectors — if the thought runs on, let it. \

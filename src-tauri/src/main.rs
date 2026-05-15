@@ -11,7 +11,7 @@ mod system;
 use crate::data::db;
 use crate::pipeline::{hide_pill, start_recording_session, AppState, SharedState};
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -19,6 +19,16 @@ use tauri::{
 };
 
 pub type DbHandle = db::Db;
+
+fn lock_app_state(state: &SharedState) -> Option<MutexGuard<'_, AppState>> {
+    match state.lock() {
+        Ok(guard) => Some(guard),
+        Err(_) => {
+            log::error!("Recording state lock was poisoned");
+            None
+        }
+    }
+}
 
 fn main() {
     let shared: SharedState = Arc::new(Mutex::new(AppState {
@@ -61,13 +71,12 @@ fn main() {
                         }
                     }
                 }
-                store
+                !store
                     .get("setup_complete")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)
-                    == false
             } else {
-                false
+                true
             };
 
             setup_tray(app)?;
@@ -98,6 +107,7 @@ fn main() {
             commands::get_api_key_status,
             commands::save_setting,
             commands::get_setting,
+            commands::get_all_settings,
             commands::set_autostart,
             commands::show_main,
             commands::hide_main,
@@ -105,6 +115,8 @@ fn main() {
             commands::get_stats,
             commands::get_microphones,
             commands::get_memory_mb,
+            commands::start_input_recording,
+            commands::stop_and_transcribe_input,
             commands::stop_recording,
             commands::stop_handless_mode,
             commands::get_installed_apps,
@@ -145,8 +157,8 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     TrayIconBuilder::new()
         .icon(tray_icon)
         .menu(&menu)
-        .menu_on_left_click(false)
-        .tooltip("Open Flow — Ctrl+Win to record")
+        .show_menu_on_left_click(false)
+        .tooltip("Open Flow — Alt+Space to record")
         .on_menu_event(|app, ev| match ev.id.as_ref() {
             "show" => {
                 if let Some(w) = app.get_webview_window("main") {
@@ -237,7 +249,9 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
             match event {
                 HotkeyEvent::Press => {
                     let (already, is_handless) = {
-                        let st = state_hk.lock().unwrap();
+                        let Some(st) = lock_app_state(&state_hk) else {
+                            continue;
+                        };
                         (st.session.is_some(), st.handless)
                     };
                     if !already && !is_handless {
@@ -245,13 +259,17 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         // inject_text can restore focus to it after the pipeline,
                         // even if the user switched windows during transcription.
                         let hwnd = crate::core::window_context::get_foreground_hwnd();
-                        state_hk.lock().unwrap().target_hwnd = hwnd;
+                        if let Some(mut st) = lock_app_state(&state_hk) {
+                            st.target_hwnd = hwnd;
+                        }
                         start_recording_session(&app_hk, &state_hk, "recording", false);
                     }
                 }
 
                 HotkeyEvent::Release => {
-                    state_hk.lock().unwrap().handless = false;
+                    if let Some(mut st) = lock_app_state(&state_hk) {
+                        st.handless = false;
+                    }
                     tauri::async_runtime::spawn(pipeline::run_pipeline(
                         app_hk.clone(),
                         state_hk.clone(),
@@ -260,30 +278,40 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
 
                 HotkeyEvent::HandlessToggle => {
                     let (is_handless, has_session) = {
-                        let st = state_hk.lock().unwrap();
+                        let Some(st) = lock_app_state(&state_hk) else {
+                            continue;
+                        };
                         (st.handless, st.session.is_some())
                     };
                     if is_handless {
-                        state_hk.lock().unwrap().handless = false;
+                        if let Some(mut st) = lock_app_state(&state_hk) {
+                            st.handless = false;
+                        }
                         tauri::async_runtime::spawn(pipeline::run_pipeline(
                             app_hk.clone(),
                             state_hk.clone(),
                         ));
                     } else if !has_session {
                         let hwnd = crate::core::window_context::get_foreground_hwnd();
-                        state_hk.lock().unwrap().target_hwnd = hwnd;
+                        if let Some(mut st) = lock_app_state(&state_hk) {
+                            st.target_hwnd = hwnd;
+                        }
                         start_recording_session(&app_hk, &state_hk, "handsfree", true);
                     }
                 }
 
                 HotkeyEvent::Cancel => {
-                    let is_handless = state_hk.lock().unwrap().handless;
+                    let Some(is_handless) = lock_app_state(&state_hk).map(|st| st.handless) else {
+                        continue;
+                    };
                     if is_handless {
                         // Quick tap while in handsfree = stop. Clear chord state
                         // immediately so the still-open double-tap window can't
                         // re-trigger a fresh handsfree session.
                         core::hotkey::reset_chord_state();
-                        state_hk.lock().unwrap().handless = false;
+                        if let Some(mut st) = lock_app_state(&state_hk) {
+                            st.handless = false;
+                        }
                         tauri::async_runtime::spawn(pipeline::run_pipeline(
                             app_hk.clone(),
                             state_hk.clone(),
@@ -291,9 +319,11 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     } else {
                         // First click of a double-tap gesture outside handsfree —
                         // discard the short recording that just started.
-                        let had_session = state_hk.lock().unwrap().session.take().is_some();
+                        let had_session = lock_app_state(&state_hk)
+                            .and_then(|mut st| st.session.take())
+                            .is_some();
                         if had_session {
-                            std::thread::spawn(|| crate::system::volume::unmute());
+                            std::thread::spawn(crate::system::volume::unmute);
                         }
                         hide_pill(&app_hk);
                     }

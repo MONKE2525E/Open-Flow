@@ -63,8 +63,7 @@
         onclick={() => !item.locked && nav(item.id)}
         onkeydown={(e) => e.key === 'Enter' && !item.locked && nav(item.id)}
       >
-        <!-- svelte-ignore html-self-closing -->
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons[item.icon]}</svg>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={$currentPage === item.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[item.icon]}</svg>
         <span>{item.label}</span>
         {#if item.locked}
           <span class="lock-tag">Soon</span>
@@ -93,11 +92,19 @@
       <span class="local-dot"></span>
       <span>Running locally</span>
       <div class="meta-wrapper">
-        {#key rawMemoryMb}
-          <span class="meta" in:fly={{ y: memoryDir * 10, duration: 400, easing: expoOut }} out:fly={{ y: -memoryDir * 10, duration: 400, easing: expoOut }}>
-            {rawMemoryMb} MB
-          </span>
-        {/key}
+        <span class="meta">
+          {#each String(rawMemoryMb).split('') as digit, i (i)}
+            <span class="digit-slot">
+              {#key digit}
+                <span
+                  class="digit-char"
+                  in:fly={{ y: memoryDir * 10, duration: 400, easing: expoOut }}
+                  out:fly={{ y: -memoryDir * 10, duration: 400, easing: expoOut }}
+                >{digit}</span>
+              {/key}
+            </span>
+          {/each}<span class="meta-unit"> MB</span>
+        </span>
       </div>
     </div>
     <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 200 * 100, 100)}%"></span></div>
@@ -133,7 +140,7 @@
 
   .brand-mark span {
     width: 3px;
-    background: #d97757;
+    background: var(--accent);
     border-radius: 999px;
     display: block;
   }
@@ -167,12 +174,12 @@
 
   .nav-item :global(svg) { opacity: 0.75; flex-shrink: 0; }
 
-  .nav-item:hover { color: var(--ink-strong); background: var(--amber-50); }
+  .nav-item:hover { color: var(--ink-strong); background: var(--control-hover); }
 
   .nav-item.active {
     color: var(--ink);
     font-weight: 500;
-    background: var(--amber-100);
+    background: var(--control-active);
   }
   .nav-item.active :global(svg) { opacity: 1; }
 
@@ -207,7 +214,7 @@
     margin: 4px 8px 10px;
     padding: 9px 10px;
     border-radius: 8px;
-    background: var(--amber-100);
+    background: var(--control-active);
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -232,19 +239,40 @@
 
   .meta-wrapper {
     margin-left: auto;
-    position: relative;
-    display: grid;
-    overflow: hidden;
-    height: 14px;
+    display: flex;
     align-items: center;
   }
 
   .meta {
-    grid-area: 1 / 1;
+    display: inline-flex;
+    align-items: center;
     font-family: var(--mono);
     font-size: 10px;
     color: var(--ink-mute);
     font-variant-numeric: tabular-nums;
+  }
+
+  .digit-slot {
+    position: relative;
+    display: inline-block;
+    overflow: hidden;
+    width: 1ch;
+    height: 14px;
+  }
+
+  .digit-char {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    text-align: center;
+    line-height: 14px;
+  }
+
+  .meta-unit {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-mute);
   }
 
   .local-meter-thin {
@@ -257,7 +285,7 @@
   .local-meter-thin span {
     display: block;
     height: 100%;
-    background: var(--jap-300);
+    background: var(--accent);
     border-radius: 999px;
   }
 </style>

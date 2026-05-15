@@ -1,6 +1,6 @@
 {
   "name": "open-flow",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Open Flow - An open-source AI dictation app for Windows",
   "main": "index.js",
   "type": "module",
@@ -9,6 +9,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "lint": "npm run check && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:smoke": "node tests/smoke/test.cjs && node tests/smoke/test-app.cjs && node tests/smoke/playwright-test-ui.cjs && node tests/smoke/playwright-test-fixes.cjs",
+    "test:smoke:state": "node tests/smoke/playwright-test-state.cjs",
     "tauri": "tauri"
   },
   "keywords": [],

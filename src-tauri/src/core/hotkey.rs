@@ -61,8 +61,8 @@ pub fn is_hotkey_available(key1: &str, key2: &str) -> bool {
     }
 }
 
-static KEY1: AtomicU32 = AtomicU32::new(162); // VK_LCONTROL
-static KEY2: AtomicU32 = AtomicU32::new(91); // VK_LWIN
+static KEY1: AtomicU32 = AtomicU32::new(164); // VK_LMENU / Alt
+static KEY2: AtomicU32 = AtomicU32::new(32); // VK_SPACE
 
 pub fn update_keys(k1: u32, k2: u32) {
     if k1 != 0 {
@@ -143,7 +143,7 @@ pub fn map_code_to_vk(code: &str) -> u32 {
         }
         c if c.starts_with("Numpad") && c.len() == 7 => {
             let b = c.as_bytes()[6];
-            if b >= b'0' && b <= b'9' {
+            if b.is_ascii_digit() {
                 96 + (b - b'0') as u32
             } else {
                 0

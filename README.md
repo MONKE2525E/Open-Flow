@@ -4,7 +4,7 @@
 
 <p align="center">
   Hold <kbd>Alt</kbd>+<kbd>Space</kbd>, speak, release — your words appear instantly, cleaned up by an LLM, in whatever app is in focus.<br/>
-  <em>Free, lightweight, local-first AI dictation. Bring your own API keys. No subscriptions. No telemetry. ~200MB RAM.</em>
+  <em>Free, lightweight, local-first AI dictation. Bring your own API keys. No subscriptions. No telemetry. ~100MB RAM.</em>
 </p>
 
 ---
@@ -43,7 +43,7 @@ Open Flow handles the entire pipeline from your microphone to your active applic
 ##  Features
 
 ### Core Dictation
-- **Hold-to-Record Hotkey:** Uses a low-level Windows keyboard hook for precise `<kbd>Ctrl</kbd>+<kbd>Win</kbd>` hold/release timing. Works in any app.
+- **Hold-to-Record Hotkey:** Uses a low-level Windows keyboard hook for precise <kbd>Alt</kbd>+<kbd>Space</kbd> hold/release timing. Works in any app.
 - **Mix & Match AI Providers:** Native support for Groq, OpenAI, and Google. Choose your preferred transcription and cleanup models independently you're not locked in.
 - **Smart LLM Cleanup:** Automatically removes filler words, fixes punctuation, and applies formatting — all powered by open APIs you control.
 - **Prompt Injection Protection:** Uses `<raw_dictation>` isolation boundaries to explicitly prevent the LLM from acting on any instructions accidentally spoken into the microphone.
@@ -116,4 +116,4 @@ Open Flow is intentionally lightweight. Here's why:
 - **Rust Backend** — Fast, memory-safe, zero-cost abstractions. Audio capture, hotkey handling, and clipboard injection run with near-zero overhead.
 - **SQLite** — Embedded database. No server, no network latency, no extra process.
 
-**Result:** ~200MB RAM idle. Starts in <100ms. Runs silently in the background without slowing down your system.
+**Result:** ~150MB RAM idle. Starts in <100ms. Runs silently in the background without slowing down your system.

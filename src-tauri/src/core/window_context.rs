@@ -35,7 +35,7 @@ pub fn get_active_process_name() -> Option<String> {
     #[cfg(windows)]
     unsafe {
         let hwnd = GetForegroundWindow();
-        if hwnd.0 == std::ptr::null_mut() {
+        if hwnd.0.is_null() {
             return None;
         }
 
@@ -102,7 +102,7 @@ fn get_active_window_title() -> Option<String> {
     #[cfg(windows)]
     unsafe {
         let hwnd = GetForegroundWindow();
-        if hwnd.0 == std::ptr::null_mut() {
+        if hwnd.0.is_null() {
             return None;
         }
         let mut buf = [0u16; 512];
@@ -129,10 +129,7 @@ fn strip_browser_suffix(title: &str, browser_name: &str) -> String {
                 .split_whitespace()
                 .next()
                 .unwrap_or(browser_name);
-            if tail
-                .to_lowercase()
-                .starts_with(&first_word.to_lowercase())
-            {
+            if tail.to_lowercase().starts_with(&first_word.to_lowercase()) {
                 return title[..pos].trim().to_string();
             }
         }

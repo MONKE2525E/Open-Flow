@@ -6,6 +6,16 @@ use std::sync::{Arc, Mutex};
 
 const DISPLAY_GAIN: f32 = 15.0;
 
+fn lock_audio<'a, T>(mutex: &'a Mutex<T>, label: &str) -> Option<std::sync::MutexGuard<'a, T>> {
+    match mutex.lock() {
+        Ok(guard) => Some(guard),
+        Err(_) => {
+            log::error!("Audio {label} lock was poisoned");
+            None
+        }
+    }
+}
+
 pub fn list_input_devices() -> Vec<String> {
     let host = cpal::default_host();
     host.input_devices()
@@ -129,22 +139,36 @@ impl RecordingSession {
                         let display = (rms_f32(data) * DISPLAY_GAIN).min(1.0);
                         level_cb.store(display.to_bits(), Ordering::Relaxed);
                         let ch = channels as usize;
-                        let mut store = samples_clone.lock().unwrap();
+                        let Some(mut store) = lock_audio(&samples_clone, "sample buffer") else {
+                            return;
+                        };
                         if let Some(d) = &denoiser_cb {
                             let mono: Vec<f32> = if ch == 1 {
                                 data.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).collect()
                             } else {
-                                data.chunks(ch).map(|frame| {
-                                    frame.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).sum::<f32>() / ch as f32
-                                }).collect()
+                                data.chunks(ch)
+                                    .map(|frame| {
+                                        frame
+                                            .iter()
+                                            .map(|&s| (s * gain).clamp(-1.0, 1.0))
+                                            .sum::<f32>()
+                                            / ch as f32
+                                    })
+                                    .collect()
                             };
-                            d.lock().unwrap().push(&mono, &mut store);
+                            if let Some(mut denoiser) = lock_audio(d, "denoiser") {
+                                denoiser.push(&mono, &mut store);
+                            }
                         } else {
                             if ch == 1 {
                                 store.extend(data.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)));
                             } else {
                                 store.extend(data.chunks(ch).map(|frame| {
-                                    frame.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).sum::<f32>() / ch as f32
+                                    frame
+                                        .iter()
+                                        .map(|&s| (s * gain).clamp(-1.0, 1.0))
+                                        .sum::<f32>()
+                                        / ch as f32
                                 }));
                             }
                         }
@@ -160,22 +184,40 @@ impl RecordingSession {
                         let display = (rms_f32(&floats) * DISPLAY_GAIN).min(1.0);
                         level_cb.store(display.to_bits(), Ordering::Relaxed);
                         let ch = channels as usize;
-                        let mut store = samples_clone.lock().unwrap();
+                        let Some(mut store) = lock_audio(&samples_clone, "sample buffer") else {
+                            return;
+                        };
                         if let Some(d) = &denoiser_cb {
                             let mono: Vec<f32> = if ch == 1 {
-                                floats.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).collect()
+                                floats
+                                    .iter()
+                                    .map(|&s| (s * gain).clamp(-1.0, 1.0))
+                                    .collect()
                             } else {
-                                floats.chunks(ch).map(|frame| {
-                                    frame.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).sum::<f32>() / ch as f32
-                                }).collect()
+                                floats
+                                    .chunks(ch)
+                                    .map(|frame| {
+                                        frame
+                                            .iter()
+                                            .map(|&s| (s * gain).clamp(-1.0, 1.0))
+                                            .sum::<f32>()
+                                            / ch as f32
+                                    })
+                                    .collect()
                             };
-                            d.lock().unwrap().push(&mono, &mut store);
+                            if let Some(mut denoiser) = lock_audio(d, "denoiser") {
+                                denoiser.push(&mono, &mut store);
+                            }
                         } else {
                             if ch == 1 {
                                 store.extend(floats.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)));
                             } else {
                                 store.extend(floats.chunks(ch).map(|frame| {
-                                    frame.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).sum::<f32>() / ch as f32
+                                    frame
+                                        .iter()
+                                        .map(|&s| (s * gain).clamp(-1.0, 1.0))
+                                        .sum::<f32>()
+                                        / ch as f32
                                 }));
                             }
                         }
@@ -209,11 +251,19 @@ impl RecordingSession {
             active_w.store(false, Ordering::Relaxed);
             level_w.store(0f32.to_bits(), Ordering::Relaxed);
 
-            let mut data = std::mem::take(&mut *samples.lock().unwrap());
+            let mut data = match lock_audio(&samples, "sample buffer") {
+                Some(mut samples) => std::mem::take(&mut *samples),
+                None => {
+                    let _ = result_tx.send(Err(anyhow::anyhow!("Audio sample buffer unavailable")));
+                    return;
+                }
+            };
 
             // Flush any samples sitting in the partial frame buffer.
             if let Some(d) = &denoiser {
-                d.lock().unwrap().flush(&mut data);
+                if let Some(mut denoiser) = lock_audio(d, "denoiser") {
+                    denoiser.flush(&mut data);
+                }
             }
 
             // data is now mono; duration is simply len / sample_rate.
@@ -243,17 +293,6 @@ impl RecordingSession {
             .recv()
             .context("Recording thread dropped channel")?
     }
-}
-
-fn mix_to_mono<'a>(data: &'a [f32], channels: u16) -> std::borrow::Cow<'a, [f32]> {
-    if channels == 1 {
-        return std::borrow::Cow::Borrowed(data);
-    }
-    let ch = channels as usize;
-    let mixed = data.chunks(ch)
-        .map(|frame| frame.iter().sum::<f32>() / ch as f32)
-        .collect();
-    std::borrow::Cow::Owned(mixed)
 }
 
 fn resample_to_16k(mono: &[f32], sample_rate: u32) -> (Vec<f32>, u32) {
