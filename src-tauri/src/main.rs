@@ -211,7 +211,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         })
         .build(app)?;
 
-    apply_runtime_icons(app.handle(), None);
+    apply_runtime_icons(&app.handle(), None);
 
     Ok(())
 }
