@@ -119,8 +119,9 @@ fn main() {
                     }
                     tauri::WindowEvent::ThemeChanged(theme) => {
                         let app = window.app_handle();
-                        if appearance_mode(app).as_deref().unwrap_or("system") == "system" {
-                            apply_runtime_icons(app, Some(*theme));
+                        if appearance_mode(&app).as_deref().unwrap_or("system") == "system" {
+                            apply_runtime_icons(&app, Some(*theme));
+                        }
                         }
                     }
                     _ => {}
