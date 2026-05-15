@@ -19,8 +19,8 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^7.1.1",
-    "@tailwindcss/postcss": "^4.2.4",
+    "@sveltejs/vite-plugin-svelte": "^7.1.2",
+    "@tailwindcss/postcss": "^4.3.0",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/cli": "^2.11.1",
     "autoprefixer": "^10.5.0",
@@ -30,7 +30,7 @@
     "svelte": "^5.55.5",
     "svelte-check": "^4.4.8",
     "typescript": "^6.0.3",
-    "vite": "^8.0.10"
+    "vite": "^8.0.13"
   },
   "dependencies": {
     "@tauri-apps/plugin-shell": "^2.3.5"
