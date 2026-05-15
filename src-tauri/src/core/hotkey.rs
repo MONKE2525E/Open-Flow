@@ -61,8 +61,8 @@ pub fn is_hotkey_available(key1: &str, key2: &str) -> bool {
     }
 }
 
-static KEY1: AtomicU32 = AtomicU32::new(164); // VK_LMENU / Alt
-static KEY2: AtomicU32 = AtomicU32::new(32); // VK_SPACE
+static KEY1: AtomicU32 = AtomicU32::new(162); // VK_LCONTROL / Ctrl
+static KEY2: AtomicU32 = AtomicU32::new(91); // VK_LWIN / Windows
 
 pub fn update_keys(k1: u32, k2: u32) {
     if k1 != 0 {

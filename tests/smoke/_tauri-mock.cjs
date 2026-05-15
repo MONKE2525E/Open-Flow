@@ -30,7 +30,7 @@ function tauriMock() {
     noise_reduction:         true,
     mute_audio:              false,
     autostart_enabled:       false,
-    hotkey:                  ['AltLeft', 'Space'],
+    hotkey:                  ['ControlLeft', 'MetaLeft'],
     app_context_hint:        false,
     api_fallback_enabled:    false,
     auto_learn_enabled:      false,

@@ -319,7 +319,7 @@
             <div class="how-step">
               <div class="how-num">1</div>
               <div>
-                <strong>Hold <kbd>Alt</kbd> + <kbd>Space</kbd></strong>
+                <strong>Hold <kbd>Ctrl</kbd> + <kbd>Windows</kbd></strong>
                 <p>Start recording. A floating pill shows your audio level.</p>
               </div>
             </div>
@@ -718,7 +718,7 @@
         </div>
         <h2 class="done-title">You're all set.</h2>
         <p class="done-sub">
-          Hold <kbd>Alt</kbd> + <kbd>Space</kbd> anywhere to start dictating.
+          Hold <kbd>Ctrl</kbd> + <kbd>Windows</kbd> anywhere to start dictating.
           Open Flow lives in your system tray and is always ready.
         </p>
         <div class="done-summary">
