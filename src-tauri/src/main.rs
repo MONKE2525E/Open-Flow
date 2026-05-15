@@ -173,7 +173,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&title_i, &sep, &show_i, &quit_i])?;
 
-    let icon_theme = resolve_icon_theme(app.handle(), None);
+    let icon_theme = resolve_icon_theme(&app.handle(), None);
     let tray_icon = runtime_icon_image(icon_theme, 32);
 
     TrayIconBuilder::with_id(TRAY_ID)
