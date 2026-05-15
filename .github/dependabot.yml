@@ -1,0 +1,40 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Vancouver
+    open-pull-requests-limit: 5
+    groups:
+      frontend-tooling:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:15"
+      timezone: America/Vancouver
+    open-pull-requests-limit: 5
+    groups:
+      rust-patch-minor:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:30"
+      timezone: America/Vancouver
+    open-pull-requests-limit: 3
