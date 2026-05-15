@@ -27,7 +27,7 @@ reqwest     = { version = "0.12", features = ["json", "multipart", "stream"] }
 bytes       = "1"
 cpal        = "0.15"
 hound       = "3.5"
-nnnoiseless = "0.4"
+nnnoiseless = "0.5"
 base64      = "0.22"
 anyhow      = "1"
 log         = "0.4"
