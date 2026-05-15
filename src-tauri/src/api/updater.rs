@@ -33,7 +33,8 @@ pub async fn check() -> anyhow::Result<Option<UpdateInfo>> {
         return Ok(None);
     }
 
-    let asset = release.assets
+    let asset = release
+        .assets
         .iter()
         .find(|a| a.name.ends_with(".exe"))
         .ok_or_else(|| anyhow::anyhow!("No .exe asset in release"))?;
@@ -55,9 +56,9 @@ fn normalize_version(tag: &str) -> String {
 
     match parts.as_slice() {
         [a, b, c] => format!("{}.{}.{}", a, b, c),
-        [a, b]    => format!("{}.{}.0", a, b),
-        [a]       => format!("{}.0.0", a),
-        _         => tag.trim_start_matches('v').to_owned(),
+        [a, b] => format!("{}.{}.0", a, b),
+        [a] => format!("{}.0.0", a),
+        _ => tag.trim_start_matches('v').to_owned(),
     }
 }
 
@@ -67,5 +68,9 @@ fn is_newer(latest: &str, current: &str) -> bool {
 
 fn version_tuple(version: &str) -> (u64, u64, u64) {
     let mut parts = version.split('.').filter_map(|p| p.parse::<u64>().ok());
-    (parts.next().unwrap_or(0), parts.next().unwrap_or(0), parts.next().unwrap_or(0))
+    (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    )
 }

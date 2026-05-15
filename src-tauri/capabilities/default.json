@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/schema/capabilities.schema.json",
   "identifier": "default",
   "description": "Default permissions",
-  "windows": ["main", "pill"],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:allow-close",

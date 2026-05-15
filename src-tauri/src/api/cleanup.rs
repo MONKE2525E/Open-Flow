@@ -19,7 +19,8 @@ pub async fn cleanup(
     snippet_instructions: &str,
     app_context: Option<&str>,
 ) -> Result<String> {
-    let prompt = get_system_prompt_with_extras(profile, intensity, snippet_instructions, app_context);
+    let prompt =
+        get_system_prompt_with_extras(profile, intensity, snippet_instructions, app_context);
     match provider {
         CleanupProvider::Groq => {
             openai_compat(
@@ -168,16 +169,14 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
 
     let url = format!("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}", api_key);
 
-    let resp = super::client::get()
-        .post(&url)
-        .json(&req)
-        .send()
-        .await?;
+    let resp = super::client::get().post(&url).json(&req).send().await?;
 
     if resp.status().as_u16() == 429 {
         return Err(crate::api::quota_bail("Google"));
     }
-    let resp = resp.error_for_status().context("Google Cleanup API error")?;
+    let resp = resp
+        .error_for_status()
+        .context("Google Cleanup API error")?;
 
     let data: GeminiResp = resp.json().await?;
     data.candidates

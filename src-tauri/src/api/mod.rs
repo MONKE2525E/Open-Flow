@@ -13,3 +13,33 @@ pub fn quota_bail(provider: &str) -> anyhow::Error {
 pub fn is_quota_error(e: &anyhow::Error) -> bool {
     e.to_string().starts_with("QUOTA_EXCEEDED:")
 }
+
+pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
+    if is_quota_error(e) {
+        return true;
+    }
+
+    for cause in e.chain() {
+        if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
+            if reqwest_err.is_timeout() || reqwest_err.is_connect() || reqwest_err.is_request() {
+                return true;
+            }
+            if let Some(status) = reqwest_err.status() {
+                return status.as_u16() == 408
+                    || status.as_u16() == 429
+                    || status.is_server_error();
+            }
+        }
+    }
+
+    let msg = e.to_string().to_lowercase();
+    msg.contains("timeout")
+        || msg.contains("timed out")
+        || msg.contains("connection")
+        || msg.contains("temporarily unavailable")
+        || msg.contains("overloaded")
+        || msg.contains("rate limit")
+        || msg.contains(" 502")
+        || msg.contains(" 503")
+        || msg.contains(" 504")
+}

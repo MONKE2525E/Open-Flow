@@ -6,9 +6,34 @@ use crate::data::db;
 use crate::DbHandle;
 
 static MONITOR_ACTIVE: AtomicBool = AtomicBool::new(false);
+const MONITOR_WINDOW_SECS: u64 = 30;
+const POLL_INTERVAL_SECS: u64 = 2;
+const PENDING_RETENTION_DAYS: i64 = 14;
+const PROMOTION_THRESHOLD: i64 = 3;
+const MAX_SPAN_GROWTH_WORDS: usize = 5;
+const MAX_REPLACEMENTS_PER_SPAN: usize = 3;
+const MAX_CHANGED_OPS_PER_SPAN: usize = 5;
 
-/// Minimum edit distance threshold for two words to be considered a spelling
-/// correction rather than a completely different word.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WordToken {
+    raw: String,
+    norm: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TextAnchor {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AlignOp {
+    Equal,
+    Replace,
+    Insert,
+    Delete,
+}
+
 fn is_spelling_correction(a: &str, b: &str) -> bool {
     let max_len = a.len().max(b.len());
     if max_len == 0 {
@@ -38,8 +63,430 @@ fn edit_distance(a: &str, b: &str) -> usize {
     row[n]
 }
 
-/// COM apartment guard — initializes once per thread, uninitializes on drop.
-/// Stored in a thread-local so COM is set up at most once per spawned thread.
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '\'' | '-' | '_')
+}
+
+fn normalize_word(word: &str) -> String {
+    word.chars()
+        .filter(|c| is_word_char(*c))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn tokenize_words(text: &str) -> Vec<WordToken> {
+    let mut tokens = Vec::new();
+    let mut start = None;
+
+    for (idx, ch) in text.char_indices() {
+        if is_word_char(ch) {
+            if start.is_none() {
+                start = Some(idx);
+            }
+        } else if let Some(s) = start.take() {
+            let raw = &text[s..idx];
+            let norm = normalize_word(raw);
+            if !norm.is_empty() {
+                tokens.push(WordToken {
+                    raw: raw.to_string(),
+                    norm,
+                });
+            }
+        }
+    }
+
+    if let Some(s) = start {
+        let raw = &text[s..];
+        let norm = normalize_word(raw);
+        if !norm.is_empty() {
+            tokens.push(WordToken {
+                raw: raw.to_string(),
+                norm,
+            });
+        }
+    }
+
+    tokens
+}
+
+fn has_distinctive_features(token: &str) -> bool {
+    if !token.is_ascii() {
+        return true;
+    }
+    if token
+        .chars()
+        .any(|c| c.is_ascii_digit() || matches!(c, '\'' | '-' | '_'))
+    {
+        return true;
+    }
+
+    let uppercase_count = token.chars().filter(|c| c.is_uppercase()).count();
+    uppercase_count > 1 || token.chars().skip(1).any(|c| c.is_uppercase())
+}
+
+fn is_common_word(word: &str) -> bool {
+    matches!(
+        word,
+        "a" | "about"
+            | "after"
+            | "all"
+            | "also"
+            | "am"
+            | "an"
+            | "and"
+            | "are"
+            | "as"
+            | "ask"
+            | "at"
+            | "be"
+            | "but"
+            | "by"
+            | "can"
+            | "do"
+            | "for"
+            | "from"
+            | "get"
+            | "go"
+            | "had"
+            | "has"
+            | "have"
+            | "he"
+            | "her"
+            | "him"
+            | "his"
+            | "i"
+            | "if"
+            | "in"
+            | "is"
+            | "it"
+            | "its"
+            | "just"
+            | "me"
+            | "my"
+            | "no"
+            | "not"
+            | "of"
+            | "on"
+            | "or"
+            | "our"
+            | "out"
+            | "so"
+            | "that"
+            | "the"
+            | "them"
+            | "then"
+            | "there"
+            | "they"
+            | "this"
+            | "to"
+            | "up"
+            | "us"
+            | "was"
+            | "we"
+            | "what"
+            | "when"
+            | "with"
+            | "you"
+            | "your"
+    )
+}
+
+fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool {
+    if original.norm.is_empty() || corrected.norm.is_empty() {
+        return false;
+    }
+    if original.norm == corrected.norm {
+        return false;
+    }
+
+    let original_distinct = has_distinctive_features(&original.raw);
+    let corrected_distinct = has_distinctive_features(&corrected.raw);
+    if original.norm.len().max(corrected.norm.len()) <= 3
+        && !original_distinct
+        && !corrected_distinct
+    {
+        return false;
+    }
+
+    if is_common_word(&original.norm)
+        && is_common_word(&corrected.norm)
+        && !original_distinct
+        && !corrected_distinct
+    {
+        return false;
+    }
+
+    is_spelling_correction(&original.norm, &corrected.norm)
+}
+
+fn find_unique_anchor(haystack: &str, needle: &str) -> Option<TextAnchor> {
+    if needle.trim().is_empty() {
+        return None;
+    }
+
+    let mut matches = haystack.match_indices(needle);
+    let (start, _) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+
+    Some(TextAnchor {
+        start,
+        end: start + needle.len(),
+    })
+}
+
+fn common_prefix_len(a: &str, b: &str) -> usize {
+    let mut len = 0;
+    for ((a_idx, a_ch), (_, b_ch)) in a.char_indices().zip(b.char_indices()) {
+        if a_ch != b_ch {
+            break;
+        }
+        len = a_idx + a_ch.len_utf8();
+    }
+    len
+}
+
+fn common_suffix_len_after(a: &str, b: &str, prefix_len: usize) -> usize {
+    let mut len = 0;
+    for (a_ch, b_ch) in a[prefix_len..]
+        .chars()
+        .rev()
+        .zip(b[prefix_len..].chars().rev())
+    {
+        if a_ch != b_ch {
+            break;
+        }
+        len += a_ch.len_utf8();
+    }
+    len
+}
+
+fn current_anchored_span<'a>(
+    baseline: &str,
+    current: &'a str,
+    anchor: TextAnchor,
+) -> Option<&'a str> {
+    if baseline == current {
+        return Some(&current[anchor.start..anchor.end]);
+    }
+
+    let prefix = common_prefix_len(baseline, current);
+    let suffix = common_suffix_len_after(baseline, current, prefix);
+    let base_change_start = prefix;
+    let base_change_end = baseline.len().saturating_sub(suffix);
+    let current_change_end = current.len().saturating_sub(suffix);
+
+    let overlaps_anchor = base_change_start <= anchor.end && base_change_end >= anchor.start;
+    if !overlaps_anchor {
+        if base_change_end <= anchor.start {
+            return None;
+        }
+        return Some(&current[anchor.start..anchor.end]);
+    }
+
+    if base_change_start < anchor.start || base_change_end > anchor.end {
+        return None;
+    }
+
+    let base_change_len = base_change_end.saturating_sub(base_change_start);
+    let current_change_len = current_change_end.saturating_sub(base_change_start);
+    let new_end = if current_change_len >= base_change_len {
+        anchor.end + (current_change_len - base_change_len)
+    } else {
+        anchor
+            .end
+            .checked_sub(base_change_len - current_change_len)?
+    };
+
+    if anchor.start > new_end || new_end > current.len() {
+        return None;
+    }
+    if !current.is_char_boundary(anchor.start) || !current.is_char_boundary(new_end) {
+        return None;
+    }
+
+    Some(&current[anchor.start..new_end])
+}
+
+fn align_word_ops(
+    original: &[WordToken],
+    current: &[WordToken],
+) -> Vec<(AlignOp, Option<usize>, Option<usize>)> {
+    let m = original.len();
+    let n = current.len();
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+
+    for (i, row) in dp.iter_mut().enumerate().take(m + 1) {
+        row[0] = i;
+    }
+    for (j, cell) in dp[0].iter_mut().enumerate().take(n + 1) {
+        *cell = j;
+    }
+
+    for i in 1..=m {
+        for j in 1..=n {
+            let replace_cost = if original[i - 1].norm == current[j - 1].norm {
+                0
+            } else {
+                1
+            };
+            dp[i][j] = (dp[i - 1][j - 1] + replace_cost)
+                .min(dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1);
+        }
+    }
+
+    let mut ops = Vec::new();
+    let (mut i, mut j) = (m, n);
+    while i > 0 || j > 0 {
+        if i > 0 && j > 0 {
+            let replace_cost = if original[i - 1].norm == current[j - 1].norm {
+                0
+            } else {
+                1
+            };
+            if dp[i][j] == dp[i - 1][j - 1] + replace_cost {
+                let op = if replace_cost == 0 {
+                    AlignOp::Equal
+                } else {
+                    AlignOp::Replace
+                };
+                ops.push((op, Some(i - 1), Some(j - 1)));
+                i -= 1;
+                j -= 1;
+                continue;
+            }
+        }
+        if i > 0 && dp[i][j] == dp[i - 1][j] + 1 {
+            ops.push((AlignOp::Delete, Some(i - 1), None));
+            i -= 1;
+        } else {
+            ops.push((AlignOp::Insert, None, Some(j - 1)));
+            j -= 1;
+        }
+    }
+
+    ops.reverse();
+    ops
+}
+
+fn detect_span_corrections(original_span: &str, current_span: &str) -> Vec<(String, String)> {
+    let original = tokenize_words(original_span);
+    let current = tokenize_words(current_span);
+
+    if original.is_empty() || current.is_empty() {
+        return vec![];
+    }
+    if current.len() > original.len() * 2 + MAX_SPAN_GROWTH_WORDS {
+        return vec![];
+    }
+
+    let ops = align_word_ops(&original, &current);
+    let changed_ops = ops
+        .iter()
+        .filter(|(op, _, _)| *op != AlignOp::Equal)
+        .count();
+    if changed_ops > MAX_CHANGED_OPS_PER_SPAN {
+        log::debug!("auto-learn: rejected span with too many changed word operations");
+        return vec![];
+    }
+
+    let replacements: Vec<_> = ops
+        .iter()
+        .filter_map(|(op, old_idx, new_idx)| {
+            if *op == AlignOp::Replace {
+                Some((old_idx.unwrap(), new_idx.unwrap()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if replacements.len() > MAX_REPLACEMENTS_PER_SPAN {
+        log::debug!("auto-learn: rejected span with too many replacements");
+        return vec![];
+    }
+
+    replacements
+        .into_iter()
+        .filter_map(|(old_idx, new_idx)| {
+            let old = &original[old_idx];
+            let new = &current[new_idx];
+            if is_candidate_correction(old, new) {
+                Some((old.raw.clone(), new.raw.clone()))
+            } else {
+                log::debug!("auto-learn: rejected low-confidence candidate");
+                None
+            }
+        })
+        .collect()
+}
+
+pub fn detect_corrections_from_anchored_text(
+    injected_text: &str,
+    baseline_full_text: &str,
+    current_full_text: &str,
+) -> Vec<(String, String)> {
+    let Some(anchor) = find_unique_anchor(baseline_full_text, injected_text) else {
+        log::debug!("auto-learn: injected text was not uniquely anchored");
+        return vec![];
+    };
+
+    let Some(current_span) = current_anchored_span(baseline_full_text, current_full_text, anchor)
+    else {
+        log::debug!("auto-learn: current edit changed text outside the injected span");
+        return vec![];
+    };
+
+    detect_span_corrections(injected_text, current_span)
+}
+
+#[cfg(test)]
+fn diff_words(original: &str, current: &str) -> Vec<(String, String)> {
+    detect_span_corrections(original, current)
+}
+
+fn record_candidate(
+    db: &DbHandle,
+    recorded_this_session: &mut HashSet<(String, String)>,
+    mistake: String,
+    correction: String,
+) -> bool {
+    let key = (mistake.clone(), correction.clone());
+    if recorded_this_session.contains(&key) {
+        return false;
+    }
+    recorded_this_session.insert(key);
+
+    if let Err(e) = db::insert_pending_correction(db, &mistake, &correction) {
+        log::warn!("auto-learn pending insert failed: {e}");
+        return false;
+    }
+
+    let count =
+        db::count_pending_corrections_recent(db, &mistake, &correction, PENDING_RETENTION_DAYS)
+            .unwrap_or(0);
+
+    if count < PROMOTION_THRESHOLD {
+        return false;
+    }
+
+    match db::insert_dictionary_entry_auto_learned(db, &correction, Some(&mistake)) {
+        Ok(true) => true,
+        Ok(false) => {
+            log::debug!(
+                "auto-learn: promotion skipped because dictionary entry is manual or mismatched"
+            );
+            false
+        }
+        Err(e) => {
+            log::warn!("auto-learn dictionary promotion failed: {e}");
+            false
+        }
+    }
+}
+
 #[cfg(windows)]
 struct ComGuard(bool);
 
@@ -48,7 +495,6 @@ impl ComGuard {
     fn init() -> Self {
         use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
         let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-        // S_OK / S_FALSE = we initialized it; RPC_E_CHANGED_MODE = already init'd by caller.
         ComGuard(hr.is_ok())
     }
 }
@@ -65,11 +511,9 @@ impl Drop for ComGuard {
 
 #[cfg(windows)]
 thread_local! {
-    static COM_INIT: std::cell::RefCell<Option<ComGuard>> = std::cell::RefCell::new(None);
+    static COM_INIT: std::cell::RefCell<Option<ComGuard>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Read the text value of the currently focused UI element via Windows UI Automation.
-/// Tries ValuePattern first (simple inputs), then TextPattern (browsers, rich text editors).
 #[cfg(windows)]
 pub fn read_focused_text() -> Option<String> {
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
@@ -78,7 +522,6 @@ pub fn read_focused_text() -> Option<String> {
         UIA_TextPatternId, UIA_ValuePatternId,
     };
 
-    // Ensure COM is initialized for this thread — no-op after the first call.
     COM_INIT.with(|cell| {
         let mut guard = cell.borrow_mut();
         if guard.is_none() {
@@ -91,7 +534,6 @@ pub fn read_focused_text() -> Option<String> {
             CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
         let element = automation.GetFocusedElement().ok()?;
 
-        // Try ValuePattern first (input fields, textareas in native apps).
         if let Ok(pattern) =
             element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
         {
@@ -103,7 +545,6 @@ pub fn read_focused_text() -> Option<String> {
             }
         }
 
-        // Fall back to TextPattern (browsers, rich text editors, VS Code, etc.).
         if let Ok(pattern) =
             element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
         {
@@ -126,53 +567,24 @@ pub fn read_focused_text() -> Option<String> {
     None
 }
 
-/// Word-level positional diff returning (injected_word, user_corrected_word) pairs.
-/// Only returns pairs that look like spelling corrections (similar words, not rewrites).
-pub fn diff_words(original: &str, current: &str) -> Vec<(String, String)> {
-    let orig: Vec<&str> = original.split_whitespace().collect();
-    let curr: Vec<&str> = current.split_whitespace().collect();
-
-    // If word count grew >2x+10 the user typed substantial new content — ignore.
-    if curr.len() > orig.len() * 2 + 10 {
-        return vec![];
-    }
-
-    let mut diffs = Vec::new();
-    for i in 0..orig.len().min(curr.len()) {
-        let o = orig[i].trim_matches(|c: char| !c.is_alphanumeric());
-        let c = curr[i].trim_matches(|c: char| !c.is_alphanumeric());
-        if o.is_empty() || c.is_empty() {
-            continue;
-        }
-        let o_low = o.to_lowercase();
-        let c_low = c.to_lowercase();
-        if o_low != c_low && is_spelling_correction(&o_low, &c_low) {
-            diffs.push((o.to_string(), c.to_string()));
-        }
-    }
-    diffs
-}
-
-/// Spawn a background monitor task that polls the focused text field every 2 seconds
-/// and records word-level spelling corrections.
-/// After the same (wrong → correct) pair is seen 3 times within a 7-day window
-/// across any number of sessions, it is added to the dictionary automatically.
 pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
-    // Skip very short injections — positional diff on < 2 words is too noisy.
     if injected_text.split_whitespace().count() < 2 {
         return;
     }
 
-    // Only one monitor at a time.
     if MONITOR_ACTIVE.swap(true, Ordering::AcqRel) {
         return;
     }
 
     tauri::async_runtime::spawn(async move {
+        if let Err(e) = db::prune_pending_corrections(&db, PENDING_RETENTION_DAYS) {
+            log::warn!("auto-learn prune failed: {e}");
+        }
+
+        let mut baseline_text: Option<String> = None;
         let mut last_text: Option<String> = None;
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
-        // Track pairs already recorded this session so one 30-second window only
-        // contributes one row per (wrong, correct) pair to pending_corrections.
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(MONITOR_WINDOW_SECS);
         let mut recorded_this_session: HashSet<(String, String)> = HashSet::new();
 
         loop {
@@ -180,19 +592,22 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
                 break;
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
 
             let current_text = tokio::task::spawn_blocking(read_focused_text).await;
-
             let current_text = match current_text {
                 Ok(Some(t)) => t,
-                // UIA read failed (focus moved to unsupported element) — skip this tick.
                 _ => continue,
             };
 
-            let orig_wc = injected_text.split_whitespace().count();
-            if current_text.split_whitespace().count() > orig_wc * 2 + 10 {
-                break;
+            if baseline_text.is_none() {
+                if find_unique_anchor(&current_text, &injected_text).is_some() {
+                    baseline_text = Some(current_text.clone());
+                    last_text = Some(current_text);
+                } else {
+                    log::debug!("auto-learn: could not anchor injected text in focused control");
+                }
+                continue;
             }
 
             if last_text.as_deref() == Some(current_text.as_str()) {
@@ -200,32 +615,22 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
                 continue;
             }
 
-            let diffs = diff_words(&injected_text, &current_text);
+            let baseline = baseline_text.as_deref().unwrap_or_default();
+            let diffs =
+                detect_corrections_from_anchored_text(&injected_text, baseline, &current_text);
             last_text = Some(current_text);
 
             for (mistake, correction) in diffs {
-                let key = (mistake.clone(), correction.clone());
-                if recorded_this_session.contains(&key) {
-                    continue;
-                }
-                recorded_this_session.insert(key);
-
-                let _ = db::insert_pending_correction(&db, &mistake, &correction);
-
-                let count = db::count_pending_corrections_last_week(&db, &mistake, &correction)
-                    .unwrap_or(0);
-
-                if count >= 2 {
-                    let _ = db::insert_dictionary_entry_auto_learned(
-                        &db,
-                        &correction,
-                        Some(&mistake),
-                    );
+                if record_candidate(
+                    &db,
+                    &mut recorded_this_session,
+                    mistake.clone(),
+                    correction.clone(),
+                ) {
                     log::info!(
-                        "auto-learn: '{}' → '{}' promoted to dictionary after {} corrections",
+                        "auto-learn: '{}' -> '{}' promoted to dictionary",
                         mistake,
-                        correction,
-                        count
+                        correction
                     );
                     app.emit("open-flow:dictionary-updated", ()).ok();
                 }
@@ -234,4 +639,125 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
 
         MONITOR_ACTIVE.store(false, Ordering::Release);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::db;
+
+    #[test]
+    fn anchored_text_ignores_surrounding_content() {
+        let injected = "Ask me about Koobernetes today";
+        let baseline = "Before this. Ask me about Koobernetes today After this.";
+        let current = "Before this. Ask me about Kubernetes today After this.";
+
+        assert_eq!(
+            detect_corrections_from_anchored_text(injected, baseline, current),
+            vec![("Koobernetes".to_string(), "Kubernetes".to_string())]
+        );
+    }
+
+    #[test]
+    fn edits_before_injected_span_are_ignored() {
+        let injected = "Ask me about Koobernetes today";
+        let baseline = "Before this. Ask me about Koobernetes today After this.";
+        let current = "Before this please. Ask me about Kubernetes today After this.";
+
+        assert!(detect_corrections_from_anchored_text(injected, baseline, current).is_empty());
+    }
+
+    #[test]
+    fn simple_typo_correction_is_detected() {
+        assert_eq!(
+            diff_words(
+                "please use Koobernetes today",
+                "please use Kubernetes today"
+            ),
+            vec![("Koobernetes".to_string(), "Kubernetes".to_string())]
+        );
+    }
+
+    #[test]
+    fn casing_and_punctuation_only_changes_are_rejected() {
+        assert!(diff_words("Ask.", "Ask").is_empty());
+        assert!(diff_words("ask", "Ask").is_empty());
+    }
+
+    #[test]
+    fn inserted_words_do_not_shift_later_alignment() {
+        assert_eq!(
+            diff_words(
+                "please use Koobernetes today",
+                "please use the Kubernetes today"
+            ),
+            vec![("Koobernetes".to_string(), "Kubernetes".to_string())]
+        );
+    }
+
+    #[test]
+    fn full_sentence_rewrites_are_ignored() {
+        assert!(diff_words(
+            "please use Koobernetes in the deployment tomorrow",
+            "rewrite this whole sentence into something else"
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn short_common_word_swaps_are_rejected() {
+        assert!(diff_words("as me later", "ask me later").is_empty());
+    }
+
+    #[test]
+    fn repeated_candidate_counts_once_per_session() {
+        let db = db::open(":memory:").expect("test db");
+        let mut recorded = HashSet::new();
+
+        assert!(!record_candidate(
+            &db,
+            &mut recorded,
+            "Koobernetes".to_string(),
+            "Kubernetes".to_string()
+        ));
+        assert!(!record_candidate(
+            &db,
+            &mut recorded,
+            "Koobernetes".to_string(),
+            "Kubernetes".to_string()
+        ));
+
+        let count = db::count_pending_corrections_recent(
+            &db,
+            "Koobernetes",
+            "Kubernetes",
+            PENDING_RETENTION_DAYS,
+        )
+        .expect("pending count");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn candidate_promotes_after_three_sessions() {
+        let db = db::open(":memory:").expect("test db");
+
+        for expected in [false, false, true] {
+            let mut recorded = HashSet::new();
+            assert_eq!(
+                record_candidate(
+                    &db,
+                    &mut recorded,
+                    "Koobernetes".to_string(),
+                    "Kubernetes".to_string()
+                ),
+                expected
+            );
+        }
+
+        let entries = db::query_dictionary(&db).expect("dictionary");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].term, "Kubernetes");
+        assert_eq!(entries[0].mistake.as_deref(), Some("Koobernetes"));
+        assert!(entries[0].auto_learned);
+    }
 }

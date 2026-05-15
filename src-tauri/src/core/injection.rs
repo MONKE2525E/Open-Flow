@@ -53,7 +53,11 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
     }
 }
 
-pub async fn inject_text(text: &str, target_hwnd: usize, contextual_caps: bool) -> anyhow::Result<()> {
+pub async fn inject_text(
+    text: &str,
+    target_hwnd: usize,
+    contextual_caps: bool,
+) -> anyhow::Result<String> {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::Foundation::HWND;
@@ -164,7 +168,9 @@ pub async fn inject_text(text: &str, target_hwnd: usize, contextual_caps: bool) 
                 }
             }
             if !clipboard_written {
-                return Err(anyhow::anyhow!("OpenClipboard failed after 3 attempts — clipboard held by another process"));
+                return Err(anyhow::anyhow!(
+                    "OpenClipboard failed after 3 attempts — clipboard held by another process"
+                ));
             }
 
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -201,11 +207,15 @@ pub async fn inject_text(text: &str, target_hwnd: usize, contextual_caps: bool) 
             if let Some(saved_wide) = saved {
                 let _ = write_clipboard_unicode(&saved_wide);
             }
+
+            Ok(text_to_inject.to_string())
         }
     }
 
     #[cfg(not(target_os = "windows"))]
-    log::warn!("inject_text: not on Windows — skipping. text={text} target_hwnd={target_hwnd}");
+    {
+        log::warn!("inject_text: not on Windows — skipping target_hwnd={target_hwnd}");
 
-    Ok(())
+        Ok(text.to_string())
+    }
 }

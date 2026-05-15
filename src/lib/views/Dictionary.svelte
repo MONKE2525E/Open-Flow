@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { fly, fade } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
   import { dictionary, fetchDictionary, type DictionaryEntry } from '../stores';
+  import MicInputButton from '../components/MicInputButton.svelte';
 
   let search = $state('');
   let modal = $state<{ mode: 'add' | 'edit'; entry?: DictionaryEntry } | null>(null);
@@ -29,7 +31,17 @@
     return list.sort((a, b) => b.created_at.localeCompare(a.created_at));
   });
 
-  onMount(() => { fetchDictionary(); });
+  onMount(() => {
+    let unlisten: (() => void) | undefined;
+    fetchDictionary();
+    listen('open-flow:dictionary-updated', () => fetchDictionary())
+      .then((cleanup) => { unlisten = cleanup; })
+      .catch(() => {});
+
+    return () => {
+      unlisten?.();
+    };
+  });
 
   function openAdd() {
     draftTerm = '';
@@ -185,7 +197,7 @@
 
 {#if modal}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" onclick={closeModal} in:fade={{ duration: 150 }} out:fade={{ duration: 100 }}></div>
+  <button class="modal-backdrop" aria-label="Close dialog" onclick={closeModal} in:fade={{ duration: 150 }} out:fade={{ duration: 100 }}></button>
   <div
     class="modal-card"
     role="dialog"
@@ -202,32 +214,38 @@
 
     <div class="modal-body">
       <label class="field-label" for="dict-term">Term</label>
-      <input
-        id="dict-term"
-        class="field-input"
-        type="text"
-        placeholder="e.g. Kubernetes, Björk, ChatGPT"
-        bind:value={draftTerm}
-        bind:this={termInput}
-        maxlength={TERM_LIMIT}
-        autocomplete="off"
-        spellcheck="false"
-      />
+      <div class="input-row">
+        <input
+          id="dict-term"
+          class="field-input"
+          type="text"
+          placeholder="e.g. Kubernetes, Björk, ChatGPT"
+          bind:value={draftTerm}
+          bind:this={termInput}
+          maxlength={TERM_LIMIT}
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <MicInputButton onResult={(t) => draftTerm = t} />
+      </div>
       <p class="field-hint">The exact word or phrase you want the AI to use.</p>
 
       <label class="field-label" for="dict-mistake">
         Often mistranscribed as <span class="optional">optional</span>
       </label>
-      <input
-        id="dict-mistake"
-        class="field-input"
-        type="text"
-        placeholder="e.g. koobernetes, byork"
-        bind:value={draftMistake}
-        maxlength={MISTAKE_LIMIT}
-        autocomplete="off"
-        spellcheck="false"
-      />
+      <div class="input-row">
+        <input
+          id="dict-mistake"
+          class="field-input"
+          type="text"
+          placeholder="e.g. koobernetes, byork"
+          bind:value={draftMistake}
+          maxlength={MISTAKE_LIMIT}
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <MicInputButton onResult={(t) => draftMistake = t} />
+      </div>
       <p class="field-hint">What the transcription model typically writes instead. Skip this if the term just needs to be in the AI's awareness.</p>
     </div>
 
@@ -252,8 +270,10 @@
 
 <style>
   .content-inner {
-    padding: 18px 28px 36px;
-    max-width: 920px;
+    width: min(100%, var(--page-max));
+    margin-inline: auto;
+    padding: var(--page-pad-y) var(--page-pad-x) 36px;
+    min-width: 0;
   }
 
   .page-h {
@@ -281,10 +301,11 @@
     gap: 8px;
     align-items: center;
     margin-bottom: 14px;
+    flex-wrap: wrap;
   }
 
   .search {
-    flex: 1;
+    flex: 1 1 260px;
     min-width: 160px;
     background: var(--bg-elev);
     border: 1px solid var(--line);
@@ -353,7 +374,13 @@
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
-  .btn-ghost:hover { background: var(--amber-50); color: var(--ink-strong); }
+  .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
+
+  @media (max-width: 720px) {
+    .search {
+      flex-basis: 100%;
+    }
+  }
 
   /* ── list ── */
 
@@ -374,7 +401,7 @@
     transition: background 0.12s;
   }
   .dict-row:last-child { border-bottom: 0; }
-  .dict-row:hover { background: var(--amber-50); }
+  .dict-row:hover { background: var(--control-hover); }
 
   .dict-content {
     display: flex;
@@ -392,9 +419,9 @@
   }
 
   .auto-star {
-    color: #f97316;
+    color: var(--accent-ink);
     flex-shrink: 0;
-    opacity: 0.85;
+    opacity: 0.92;
   }
 
   .dict-mistake-label {
@@ -402,13 +429,13 @@
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: var(--arm-300);
+    color: var(--ink-faint);
     line-height: 1;
   }
 
   .dict-mistake {
     font-size: 12.5px;
-    color: var(--ink-mute);
+    color: var(--ink-soft);
     font-style: italic;
   }
 
@@ -432,14 +459,14 @@
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
-  .icon-btn:hover { background: var(--amber-100); color: var(--ink-strong); }
+  .icon-btn:hover { background: var(--control-active); color: var(--ink-strong); }
 
   .delete-btn.armed {
-    background: #fef2f2;
-    color: #dc2626;
-    box-shadow: inset 0 0 0 1px #fca5a5;
+    background: var(--danger-bg);
+    color: var(--danger);
+    box-shadow: inset 0 0 0 1px var(--danger-line);
   }
-  .delete-btn.armed:hover { background: #fee2e2; }
+  .delete-btn.armed:hover { background: var(--danger-bg); }
 
   /* ── empty states ── */
 
@@ -474,9 +501,13 @@
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(13, 10, 8, 0.28);
+    border: 0;
+    padding: 0;
+    appearance: none;
+    background: var(--overlay);
     z-index: 50;
     backdrop-filter: blur(2px);
+    outline: none;
   }
 
   .modal-card {
@@ -489,7 +520,7 @@
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
     width: min(460px, calc(100vw - 40px));
-    box-shadow: 0 20px 60px -12px rgba(13, 10, 8, 0.16);
+    box-shadow: var(--shadow-elev);
     overflow: hidden;
   }
 
@@ -549,6 +580,12 @@
     font-weight: 400;
   }
 
+  .input-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
   .field-input {
     width: 100%;
     background: var(--paper);
@@ -563,6 +600,7 @@
     box-sizing: border-box;
     line-height: 1.5;
   }
+  .input-row .field-input { flex: 1; width: auto; min-width: 0; }
   .field-input:focus { border-color: var(--arm-400); }
 
   .field-hint {
@@ -573,11 +611,11 @@
 
   .save-error {
     font-size: 11.5px;
-    color: #dc2626;
+    color: var(--danger);
     margin: 0 0 8px;
     padding: 6px 10px;
-    background: #fef2f2;
-    border: 1px solid #fca5a5;
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-line);
     border-radius: var(--r-sm);
   }
 

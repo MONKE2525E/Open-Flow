@@ -196,8 +196,8 @@
   }
 
   .pill {
-    background: #0d0a08;
-    color: white;
+    background: var(--pill-bg);
+    color: var(--pill-fg);
     border-radius: 999px;
     height: 34px;
     display: flex;
@@ -226,7 +226,7 @@
 
   .bar {
     width: 3px;
-    background: white;
+    background: var(--pill-bar);
     border-radius: 999px;
     flex-shrink: 0;
     /* Instant response — no CSS transition so bars snap cleanly */
@@ -288,15 +288,15 @@
   }
 
   /* Error */
-  .pill.error { width: 110px; gap: 7px; padding: 0 14px; background: #1a0806; }
+  .pill.error { width: 110px; gap: 7px; padding: 0 14px; background: var(--danger-bg); }
   .err-icon {
     width: 15px; height: 15px; flex-shrink: 0;
     border-radius: 50%;
-    background: #c44632;
+    background: var(--danger);
     display: grid; place-items: center;
-    font-size: 10px; font-weight: 700; color: white;
+    font-size: 10px; font-weight: 700; color: var(--on-accent);
   }
-  .err-text { font-size: 11px; font-weight: 500; color: #f8a090; white-space: nowrap; }
+  .err-text { font-size: 11px; font-weight: 500; color: var(--danger); white-space: nowrap; }
 
   /* Handsfree: starts compact (mirrors recording), expands to 112px after 450ms */
   .pill.handsfree {
@@ -320,10 +320,10 @@
     padding: 0;
     transition: opacity 0.15s;
   }
-  .hf-btn.cancel  { color: rgba(255,255,255,0.45); }
-  .hf-btn.confirm { color: #d97757; }
-  .hf-btn.cancel:hover  { color: rgba(255,255,255,0.85); }
-  .hf-btn.confirm:hover { color: #f4a07a; }
+  .hf-btn.cancel  { color: var(--pill-muted); }
+  .hf-btn.confirm { color: var(--accent); }
+  .hf-btn.cancel:hover  { color: var(--pill-muted-strong); }
+  .hf-btn.confirm:hover { color: var(--accent-ink); }
 
   @keyframes hfBtnIn {
     from { opacity: 0; transform: scale(0.7); }

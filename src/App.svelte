@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentPage, settingsOpen, accentColor, setupComplete } from './lib/stores';
+  import { currentPage, settingsOpen, accentColor, appearanceMode, setupComplete } from './lib/stores';
   import TitleBar from './lib/components/layout/TitleBar.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
@@ -13,18 +13,46 @@
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
 
-  const accentMap: Record<string, [string, string, string]> = {
-    terracotta: ['oklch(0.62 0.14 40)',  'oklch(0.94 0.03 40)',   'oklch(0.42 0.12 40)'],
-    moss:       ['oklch(0.55 0.1 145)',  'oklch(0.94 0.03 145)',  'oklch(0.4 0.1 145)' ],
-    slate:      ['oklch(0.45 0.04 250)', 'oklch(0.94 0.015 250)', 'oklch(0.35 0.05 250)'],
-    ink:        ['oklch(0.18 0.01 60)',  'oklch(0.92 0.005 70)',  'oklch(0.18 0.01 60)' ],
+  type EffectiveTheme = 'light' | 'dark';
+
+  const accentMap: Record<EffectiveTheme, Record<string, [string, string, string]>> = {
+    light: {
+      terracotta: ['oklch(0.62 0.14 40)',  'oklch(0.94 0.03 40)',   'oklch(0.42 0.12 40)'],
+      moss:       ['oklch(0.55 0.1 145)',  'oklch(0.94 0.03 145)',  'oklch(0.4 0.1 145)' ],
+      slate:      ['oklch(0.45 0.04 250)', 'oklch(0.94 0.015 250)', 'oklch(0.35 0.05 250)'],
+      ink:        ['oklch(0.18 0.01 60)',  'oklch(0.92 0.005 70)',  'oklch(0.18 0.01 60)' ],
+    },
+    dark: {
+      terracotta: ['oklch(0.70 0.13 42)',  '#3a241d',              '#f0a987'],
+      moss:       ['oklch(0.72 0.10 145)', '#1f3022',              '#a7d99f'],
+      slate:      ['oklch(0.72 0.04 250)', '#202532',              '#b7c4e3'],
+      ink:        ['oklch(0.82 0.01 70)',  '#2a241d',              '#f2e6d5'],
+    },
   };
 
-  $: {
-    const [a, b, c] = accentMap[$accentColor] ?? accentMap.terracotta;
-    document.documentElement.style.setProperty('--accent',      a);
+  function systemTheme(): EffectiveTheme {
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  function effectiveTheme(mode: 'system' | 'light' | 'dark'): EffectiveTheme {
+    return mode === 'system' ? systemTheme() : mode;
+  }
+
+  function applyTheme() {
+    const theme = effectiveTheme($appearanceMode);
+    document.documentElement.dataset.theme = theme;
+
+    const accents = accentMap[theme];
+    const [a, b, c] = accents[$accentColor] ?? accents.terracotta;
+    document.documentElement.style.setProperty('--accent', a);
     document.documentElement.style.setProperty('--accent-soft', b);
-    document.documentElement.style.setProperty('--accent-ink',  c);
+    document.documentElement.style.setProperty('--accent-ink', c);
+  }
+
+  $: {
+    $appearanceMode;
+    $accentColor;
+    if (typeof document !== 'undefined') applyTheme();
   }
 
   // Error toast
@@ -37,8 +65,14 @@
     (async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        const done = await invoke<boolean | null>('get_setting', { key: 'setup_complete' });
+        const [done, appearance] = await Promise.all([
+          invoke<boolean | null>('get_setting', { key: 'setup_complete' }),
+          invoke<'system' | 'light' | 'dark' | null>('get_setting', { key: 'appearance_mode' }),
+        ]);
         setupComplete.set(done === true);
+        if (appearance === 'light' || appearance === 'dark' || appearance === 'system') {
+          appearanceMode.set(appearance);
+        }
       } catch {
         setupComplete.set(false);
       }
@@ -54,8 +88,15 @@
       } catch {}
     })();
 
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const onSystemThemeChange = () => {
+      if ($appearanceMode === 'system') applyTheme();
+    };
+    media?.addEventListener?.('change', onSystemThemeChange);
+
     return () => {
       if (cleanupFn) cleanupFn();
+      media?.removeEventListener?.('change', onSystemThemeChange);
     };
   });
 </script>
@@ -102,7 +143,7 @@
 </div>
 
 <style>
-  :global(:root) {
+  :global(:root[data-theme="legacy-unused"]) {
     /* Soft-amber — paper / surfaces */
     --amber-50: #f9f7f3;
     --amber-100: #f1ebe3;
@@ -156,6 +197,11 @@
     --r-sm: 8px;
     --r-md: 12px;
     --r-lg: 16px;
+
+    --page-pad-x: clamp(18px, 3vw, 42px);
+    --page-pad-y: clamp(16px, 2.4vw, 30px);
+    --page-max: 1160px;
+    --page-readable: 680px;
   }
 
   :global(*) {
@@ -214,14 +260,39 @@
   .content {
     flex: 1;
     background: transparent;
-    overflow-y: auto;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
     position: relative;
     display: grid;
+    justify-items: center;
+    min-width: 0;
+  }
+
+  .content::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .content::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .content::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--ink-faint) 42%, transparent);
+    border: 3px solid var(--paper);
+    border-radius: 999px;
+  }
+
+  .content::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--ink-faint) 62%, transparent);
   }
 
   .page-wrapper {
     grid-area: 1 / 1;
-    min-height: 100%;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: calc(100% + 1px);
   }
 
   .error-toast {
@@ -229,16 +300,16 @@
     bottom: 18px;
     left: 50%;
     transform: translateX(-50%);
-    background: #1e0f0c;
-    border: 1px solid #c44632;
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-line);
     border-radius: 8px;
     padding: 9px 14px;
     display: flex;
     align-items: center;
     gap: 8px;
     font-size: 12.5px;
-    color: #f8a090;
-    box-shadow: 0 8px 24px rgba(13,10,8,0.35);
+    color: var(--danger);
+    box-shadow: var(--shadow-popover);
     z-index: 20;
     max-width: 480px;
     animation: toastIn 0.2s ease;
@@ -252,7 +323,7 @@
   .toast-close {
     background: transparent;
     border: none;
-    color: #f8a090;
+    color: var(--danger);
     opacity: 0.6;
     font-size: 11px;
     cursor: pointer;

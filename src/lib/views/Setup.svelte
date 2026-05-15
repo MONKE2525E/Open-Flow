@@ -2,8 +2,9 @@
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
   import { setupComplete } from '../stores';
+  import { saveSetting, type CleanupIntensity, type ToneId } from '../settings';
 
-  let win: any = null;
+  let win: { minimize: () => Promise<void> } | null = null;
   onMount(async () => {
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
@@ -217,21 +218,21 @@
 
   async function finish() {
     try {
-      await invoke('save_setting', { key: 'cleanup_intensity',       value: selectedIntensity });
-      await invoke('save_setting', { key: 'default_tone',            value: selectedTone });
-      await invoke('save_setting', { key: 'transcription_provider',  value: selectedProvider });
-      await invoke('save_setting', { key: 'cleanup_provider',        value: selectedProvider });
+      await saveSetting('cleanup_intensity', selectedIntensity as CleanupIntensity);
+      await saveSetting('default_tone', selectedTone as ToneId);
+      await saveSetting('transcription_provider', selectedProvider);
+      await saveSetting('cleanup_provider', selectedProvider);
       if (mappings.length > 0) {
         await invoke('save_app_mappings', { mappings });
       }
-      await invoke('save_setting', { key: 'cleanup_enabled',         value: quickPrefs.cleanup });
-      await invoke('save_setting', { key: 'noise_reduction',         value: quickPrefs.noise });
-      await invoke('save_setting', { key: 'contextual_caps_enabled', value: quickPrefs.caps });
-      await invoke('save_setting', { key: 'auto_learn_enabled',      value: quickPrefs.autoLearn });
-      await invoke('save_setting', { key: 'mute_audio',              value: quickPrefs.muteAudio });
-      await invoke('save_setting', { key: 'api_fallback_enabled',    value: quickPrefs.apiFallback });
+      await saveSetting('cleanup_enabled', quickPrefs.cleanup);
+      await saveSetting('noise_reduction', quickPrefs.noise);
+      await saveSetting('contextual_caps_enabled', quickPrefs.caps);
+      await saveSetting('auto_learn_enabled', quickPrefs.autoLearn);
+      await saveSetting('mute_audio', quickPrefs.muteAudio);
+      await saveSetting('api_fallback_enabled', quickPrefs.apiFallback);
       if (quickPrefs.autostart) await invoke('set_autostart', { enabled: true });
-      await invoke('save_setting', { key: 'setup_complete', value: true });
+      await saveSetting('setup_complete', true);
     } catch {}
     setupComplete.set(true);
   }
@@ -318,7 +319,7 @@
             <div class="how-step">
               <div class="how-num">1</div>
               <div>
-                <strong>Hold <kbd>Ctrl</kbd> + <kbd>Win</kbd></strong>
+                <strong>Hold <kbd>Alt</kbd> + <kbd>Space</kbd></strong>
                 <p>Start recording. A floating pill shows your audio level.</p>
               </div>
             </div>
@@ -717,7 +718,7 @@
         </div>
         <h2 class="done-title">You're all set.</h2>
         <p class="done-sub">
-          Hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> anywhere to start dictating.
+          Hold <kbd>Alt</kbd> + <kbd>Space</kbd> anywhere to start dictating.
           Open Flow lives in your system tray and is always ready.
         </p>
         <div class="done-summary">
@@ -790,7 +791,7 @@
   }
 
   .tb-btn:hover { background: var(--paper-2); color: var(--ink-strong); }
-  .tb-btn.close:hover { background: var(--jap-600); color: white; }
+  .tb-btn.close:hover { background: var(--danger); color: var(--on-accent); }
 
   /* ── Progress dots ─────────────────────────────────────────────────── */
   .progress {
@@ -886,7 +887,7 @@
   /* ── Buttons ───────────────────────────────────────────────────────── */
   .btn-primary {
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     border: none;
     border-radius: var(--r-sm);
     padding: 9px 22px;
@@ -956,7 +957,7 @@
 
   .intro-mark span {
     flex: 1;
-    background: #d97757;
+    background: var(--accent);
     border-radius: 999px;
     display: block;
   }
@@ -1114,7 +1115,7 @@
     font-size: 10.5px;
     font-weight: 600;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     border-radius: 20px;
     padding: 1px 8px;
     letter-spacing: 0.02em;
@@ -1265,7 +1266,7 @@
 
   .show-btn:hover { color: var(--ink-mute); }
 
-  .key-error { font-size: 12px; color: #c44632; margin: 0; }
+  .key-error { font-size: 12px; color: var(--danger); margin: 0; }
   .key-saved { font-size: 12px; color: var(--accent-ink); margin: 0; }
 
   /* ── Option cards (cleanup intensity) ─────────────────────────────── */
@@ -1382,7 +1383,7 @@
     height: 16px;
     border-radius: 50%;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1483,7 +1484,7 @@
     align-items: center;
     justify-content: center;
     transition: background 0.12s, border-color 0.12s;
-    color: #fff;
+    color: var(--on-accent);
   }
 
   .app-toggle-check.checked {
@@ -1502,55 +1503,55 @@
   .profile-drop-btn {
     display: flex;
     align-items: center;
-    gap: 4px;
-    font-family: var(--sans);
-    font-size: 12px;
-    font-weight: 450;
-    color: var(--ink-soft);
-    background: var(--paper);
+    gap: 6px;
+    background: transparent;
     border: 1px solid var(--line-strong);
     border-radius: 6px;
-    padding: 4px 8px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-family: var(--sans);
+    color: var(--ink-strong);
+    font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
-    transition: border-color 0.15s, background 0.15s;
   }
 
-  .profile-drop-btn:hover {
-    border-color: var(--accent);
-    background: var(--accent-soft);
-    color: var(--accent-ink);
-  }
+  .profile-drop-btn:hover { background: var(--paper); }
 
   .profile-drop-list {
     position: absolute;
     right: 0;
     top: calc(100% + 4px);
     background: var(--bg-elev);
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line);
     border-radius: var(--r-sm);
-    box-shadow: 0 6px 20px rgba(13,10,8,0.12);
+    box-shadow: var(--shadow-popover);
+    min-width: 130px;
+    max-height: 200px;
+    overflow-y: auto;
     z-index: 10;
-    min-width: 110px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
   }
 
   .profile-drop-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 12px;
     font-family: var(--sans);
-    font-size: 12.5px;
-    color: var(--ink-soft);
+    color: var(--ink-strong);
     background: transparent;
     border: none;
-    padding: 7px 12px;
-    text-align: left;
+    border-bottom: 1px solid var(--line);
     cursor: pointer;
-    transition: background 0.12s, color 0.12s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .profile-drop-item:hover { background: var(--paper-2); color: var(--ink-strong); }
-  .profile-drop-item.active { color: var(--accent-ink); font-weight: 500; background: var(--accent-soft); }
+  .profile-drop-item:last-child { border-bottom: none; }
+  .profile-drop-item:hover { background: var(--paper); }
+  .profile-drop-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
 
   /* ── Done step ─────────────────────────────────────────────────────── */
   .done-step {
@@ -1709,7 +1710,7 @@
   .qs-toggle {
     width: 30px;
     height: 16px;
-    background: var(--jap-300);
+    background: var(--line-strong);
     border-radius: 999px;
     position: relative;
     cursor: pointer;
@@ -1722,14 +1723,14 @@
     position: absolute;
     width: 12px;
     height: 12px;
-    background: white;
+    background: var(--bg-elev);
     border-radius: 50%;
     top: 2px;
     left: 2px;
     transition: left 0.35s cubic-bezier(0.22, 1, 0.36, 1);
-    box-shadow: 0 1px 2px rgba(13,10,8,0.15);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 15%, transparent);
   }
 
-  .qs-toggle.on { background: var(--jap-400); }
+  .qs-toggle.on { background: var(--accent); }
   .qs-toggle.on::after { left: 16px; }
 </style>

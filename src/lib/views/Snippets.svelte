@@ -4,6 +4,7 @@
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { snippets, fetchSnippets, type Snippet } from '../stores';
+  import MicInputButton from '../components/MicInputButton.svelte';
 
   type SortKey = 'newest' | 'oldest' | 'alpha' | 'most_used';
 
@@ -308,7 +309,7 @@
 
 {#if modal}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" onclick={closeModal} in:fade={{ duration: 150 }} out:fade={{ duration: 100 }}></div>
+  <button class="modal-backdrop" aria-label="Close dialog" onclick={closeModal} in:fade={{ duration: 150 }} out:fade={{ duration: 100 }}></button>
   <div
     class="modal-card"
     role="dialog"
@@ -328,29 +329,35 @@
         Trigger
         <span class="char-count" class:over={draftTrigger.length > TRIGGER_LIMIT}>{draftTrigger.length}/{TRIGGER_LIMIT}</span>
       </label>
-      <input
-        id="trigger-input"
-        class="field-input"
-        type="text"
-        placeholder="e.g. my email"
-        bind:value={draftTrigger}
-        bind:this={triggerInput}
-        maxlength={TRIGGER_LIMIT}
-        autocomplete="off"
-        spellcheck="false"
-      />
+      <div class="input-row">
+        <input
+          id="trigger-input"
+          class="field-input"
+          type="text"
+          placeholder="e.g. my email"
+          bind:value={draftTrigger}
+          bind:this={triggerInput}
+          maxlength={TRIGGER_LIMIT}
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <MicInputButton onResult={(t) => draftTrigger = t} />
+      </div>
       <p class="field-hint">Speak this phrase to trigger the expansion.</p>
 
       <label class="field-label" for="expansion-input">Expansion</label>
-      <textarea
-        id="expansion-input"
-        class="field-input"
-        placeholder="e.g. hello@example.com"
-        bind:value={draftExpansion}
-        use:autoGrow
-        rows="3"
-        spellcheck="false"
-      ></textarea>
+      <div class="input-row input-row--top">
+        <textarea
+          id="expansion-input"
+          class="field-input"
+          placeholder="e.g. hello@example.com"
+          bind:value={draftExpansion}
+          use:autoGrow
+          rows="3"
+          spellcheck="false"
+        ></textarea>
+        <MicInputButton onResult={(t) => draftExpansion = t} />
+      </div>
 
       <label class="field-label instructions-label" for="instructions-input">
         <span class="instructions-label-text">
@@ -394,8 +401,10 @@
 
 <style>
   .content-inner {
-    padding: 18px 28px 36px;
-    max-width: 960px;
+    width: min(100%, var(--page-max));
+    margin-inline: auto;
+    padding: var(--page-pad-y) var(--page-pad-x) 36px;
+    min-width: 0;
   }
 
   .page-h {
@@ -421,7 +430,7 @@
   }
 
   .search {
-    flex: 1;
+    flex: 1 1 260px;
     min-width: 160px;
     background: var(--bg-elev);
     border: 1px solid var(--line);
@@ -481,7 +490,7 @@
     white-space: nowrap;
     transition: background 0.12s, color 0.12s;
   }
-  .sort-pill:hover { color: var(--ink-strong); background: var(--amber-50); }
+  .sort-pill:hover { color: var(--ink-strong); background: var(--control-hover); }
   .sort-pill.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
 
   .btn-primary {
@@ -514,7 +523,7 @@
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
-  .btn-ghost:hover { background: var(--amber-50); color: var(--ink-strong); }
+  .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
 
   /* ── two-column layout ── */
 
@@ -542,8 +551,8 @@
     border-radius: var(--r-sm);
     transition: background 0.12s;
   }
-  .snip-row:hover { background: var(--amber-100); }
-  .snip-row.is-selected { background: var(--amber-100); outline: 1.5px solid var(--arm-300); outline-offset: -1px; }
+  .snip-row:hover { background: var(--control-active); }
+  .snip-row.is-selected { background: var(--control-active); outline: 1.5px solid var(--line-strong); outline-offset: -1px; }
 
   .snip-left { min-width: 0; }
 
@@ -699,9 +708,9 @@
     cursor: pointer;
     transition: background 0.12s, color 0.12s, border-color 0.12s;
   }
-  .btn-insp-delete:hover { background: var(--amber-50); color: var(--ink-strong); }
-  .btn-insp-delete.armed { background: #fef2f2; color: #dc2626; border-color: #fca5a5; }
-  .btn-insp-delete.armed:hover { background: #fee2e2; }
+  .btn-insp-delete:hover { background: var(--control-hover); color: var(--ink-strong); }
+  .btn-insp-delete.armed { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); }
+  .btn-insp-delete.armed:hover { background: var(--danger-bg); }
 
   .inspector-empty {
     background: var(--bg-elev);
@@ -766,16 +775,20 @@
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
-  .icon-btn:hover { background: var(--amber-100); color: var(--ink-strong); }
+  .icon-btn:hover { background: var(--control-active); color: var(--ink-strong); }
 
   /* ── modal ── */
 
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(13, 10, 8, 0.28);
+    border: 0;
+    padding: 0;
+    appearance: none;
+    background: var(--overlay);
     z-index: 50;
     backdrop-filter: blur(2px);
+    outline: none;
   }
 
   .modal-card {
@@ -788,7 +801,7 @@
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
     width: min(500px, calc(100vw - 40px));
-    box-shadow: 0 20px 60px -12px rgba(13, 10, 8, 0.16);
+    box-shadow: var(--shadow-elev);
     overflow: hidden;
   }
 
@@ -832,11 +845,11 @@
 
   .save-error {
     font-size: 11.5px;
-    color: #dc2626;
+    color: var(--danger);
     margin: 0;
     padding: 6px 10px;
-    background: #fef2f2;
-    border: 1px solid #fca5a5;
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-line);
     border-radius: var(--r-sm);
   }
 
@@ -857,7 +870,14 @@
     color: var(--ink-mute);
     font-weight: 400;
   }
-  .char-count.over { color: #dc2626; }
+  .char-count.over { color: var(--danger); }
+
+  .input-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .input-row--top { align-items: flex-start; }
 
   .field-input {
     width: 100%;
@@ -874,6 +894,7 @@
     resize: none;
     line-height: 1.5;
   }
+  .input-row .field-input { flex: 1; width: auto; min-width: 0; }
   .field-input:focus { border-color: var(--arm-400); }
 
   .field-hint {
@@ -919,6 +940,42 @@
     font-size: 12.5px;
   }
   .instructions-input:focus { border-color: var(--arm-400); border-style: solid; }
+
+  @media (max-width: 1060px) {
+    .snip-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .inspector-col {
+      position: static;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .search {
+      flex-basis: 100%;
+    }
+
+    .sort-pills {
+      order: 3;
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .snip-row {
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .snip-meta {
+      flex-direction: row;
+      align-items: center;
+    }
+
+    .meta-dot {
+      display: inline;
+    }
+  }
 
   /* ── inspector instructions ── */
 

@@ -7,6 +7,53 @@ use crate::pipeline::{self, SharedState};
 use crate::system::apps::{AppMapping, InstalledApp};
 use crate::DbHandle;
 
+fn lock_state<'a>(
+    state: &'a tauri::State<'_, SharedState>,
+) -> Result<std::sync::MutexGuard<'a, pipeline::AppState>, String> {
+    state
+        .lock()
+        .map_err(|_| "Recording state lock was poisoned".to_string())
+}
+
+fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> {
+    let valid = match key {
+        store::TRANSCRIPTION_PROVIDER | store::CLEANUP_PROVIDER => value
+            .as_str()
+            .is_some_and(|v| matches!(v, "groq" | "openai" | "google")),
+        store::TRANSCRIPTION_MODEL
+        | store::CLEANUP_MODEL
+        | store::DEFAULT_TONE
+        | store::CLEANUP_INTENSITY
+        | store::MICROPHONE_DEVICE
+        | "history_retention"
+        | "update_dismissed_version" => value.is_string() || value.is_null(),
+        store::APPEARANCE_MODE => value
+            .as_str()
+            .is_some_and(|v| matches!(v, "system" | "light" | "dark")),
+        store::CLEANUP_ENABLED
+        | store::NOISE_REDUCTION
+        | store::MUTE_AUDIO
+        | store::APP_CONTEXT_HINT
+        | store::API_FALLBACK_ENABLED
+        | store::AUTO_LEARN_ENABLED
+        | store::CONTEXTUAL_CAPS
+        | store::SETUP_COMPLETE
+        | "autostart_enabled" => value.is_boolean(),
+        store::MIC_GAIN => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
+        store::APP_MAPPINGS => serde_json::from_value::<Vec<AppMapping>>(value.clone()).is_ok(),
+        store::HOTKEY => value
+            .as_array()
+            .is_some_and(|keys| keys.len() == 2 && keys.iter().all(serde_json::Value::is_string)),
+        _ => false,
+    };
+
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("Invalid or unsupported setting: {key}"))
+    }
+}
+
 // ---------- API keys ----------
 
 #[tauri::command]
@@ -40,6 +87,7 @@ pub async fn save_setting(
     key: String,
     value: serde_json::Value,
 ) -> Result<(), String> {
+    validate_setting(&key, &value)?;
     let store = app.store("settings.json").map_err(|e| e.to_string())?;
     store.set(key, value);
     store.save().map_err(|e| e.to_string())
@@ -49,6 +97,56 @@ pub async fn save_setting(
 pub async fn get_setting(app: AppHandle, key: String) -> Result<Option<serde_json::Value>, String> {
     let store = app.store("settings.json").map_err(|e| e.to_string())?;
     Ok(store.get(&key))
+}
+
+#[derive(serde::Serialize)]
+pub struct AllSettings {
+    pub transcription_model: Option<String>,
+    pub cleanup_model: Option<String>,
+    pub cleanup_enabled: Option<bool>,
+    pub noise_reduction: Option<bool>,
+    pub mute_audio: Option<bool>,
+    pub autostart_enabled: Option<bool>,
+    pub app_context_hint: Option<bool>,
+    pub api_fallback_enabled: Option<bool>,
+    pub auto_learn_enabled: Option<bool>,
+    pub contextual_caps_enabled: Option<bool>,
+    pub mic_gain: Option<f64>,
+    pub history_retention: Option<String>,
+    pub microphone_device: Option<String>,
+    pub hotkey: Option<Vec<String>>,
+    pub appearance_mode: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
+    let s = app.store("settings.json").map_err(|e| e.to_string())?;
+    let bool_val = |key: &str| s.get(key).and_then(|v| v.as_bool());
+    let str_val = |key: &str| s.get(key).and_then(|v| v.as_str().map(String::from));
+    let f64_val = |key: &str| s.get(key).and_then(|v| v.as_f64());
+    Ok(AllSettings {
+        transcription_model: str_val(store::TRANSCRIPTION_MODEL),
+        cleanup_model: str_val(store::CLEANUP_MODEL),
+        cleanup_enabled: bool_val(store::CLEANUP_ENABLED),
+        noise_reduction: bool_val(store::NOISE_REDUCTION),
+        mute_audio: bool_val(store::MUTE_AUDIO),
+        autostart_enabled: bool_val("autostart_enabled"),
+        app_context_hint: bool_val(store::APP_CONTEXT_HINT),
+        api_fallback_enabled: bool_val(store::API_FALLBACK_ENABLED),
+        auto_learn_enabled: bool_val(store::AUTO_LEARN_ENABLED),
+        contextual_caps_enabled: bool_val(store::CONTEXTUAL_CAPS),
+        mic_gain: f64_val(store::MIC_GAIN),
+        history_retention: str_val("history_retention"),
+        microphone_device: str_val(store::MICROPHONE_DEVICE),
+        hotkey: s.get(store::HOTKEY).and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+        }),
+        appearance_mode: str_val(store::APPEARANCE_MODE),
+    })
 }
 
 // ---------- window management ----------
@@ -101,18 +199,40 @@ pub fn get_memory_mb() -> u64 {
 // ---------- recording control ----------
 
 #[tauri::command]
+pub async fn start_input_recording(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    if lock_state(&state)?.session.is_some() {
+        return Err("Already recording".to_string());
+    }
+    pipeline::start_recording_session(&app, &state, "recording", false);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_and_transcribe_input(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<String, String> {
+    pipeline::transcribe_input_only(app, state.inner().clone())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn stop_recording(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
     let session = {
-        let mut st = state.lock().unwrap();
+        let mut st = lock_state(&state)?;
         st.handless = false;
         st.session.take()
     };
     if let Some(s) = session {
         let _ = s.stop();
-        std::thread::spawn(|| crate::system::volume::unmute());
+        std::thread::spawn(crate::system::volume::unmute);
     }
     pipeline::hide_pill(&app);
     Ok(())
@@ -123,7 +243,7 @@ pub async fn stop_handless_mode(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    state.lock().unwrap().handless = false;
+    lock_state(&state)?.handless = false;
     tauri::async_runtime::spawn(pipeline::run_pipeline(app, state.inner().clone()));
     Ok(())
 }
@@ -148,7 +268,8 @@ pub async fn get_app_mappings(app: AppHandle) -> Result<Vec<AppMapping>, String>
 #[tauri::command]
 pub async fn save_app_mappings(app: AppHandle, mappings: Vec<AppMapping>) -> Result<(), String> {
     let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    store.set(store::APP_MAPPINGS, serde_json::to_value(mappings).unwrap());
+    let value = serde_json::to_value(mappings).map_err(|e| e.to_string())?;
+    store.set(store::APP_MAPPINGS, value);
     store.save().map_err(|e| e.to_string())
 }
 
@@ -308,7 +429,7 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
                 RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()))
             };
 
-            RegCloseKey(hkey);
+            let _ = RegCloseKey(hkey);
 
             if result.is_err() {
                 return Err("Failed to set registry value".to_string());
@@ -375,9 +496,5 @@ pub async fn check_connectivity() -> bool {
         Ok(c) => c,
         Err(_) => return false,
     };
-    client
-        .head("https://www.google.com")
-        .send()
-        .await
-        .is_ok()
+    client.head("https://www.google.com").send().await.is_ok()
 }

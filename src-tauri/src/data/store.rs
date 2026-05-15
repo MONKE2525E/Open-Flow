@@ -21,6 +21,7 @@ pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const API_FALLBACK_ENABLED: &str = "api_fallback_enabled";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
 pub const CONTEXTUAL_CAPS: &str = "contextual_caps_enabled";
+pub const APPEARANCE_MODE: &str = "appearance_mode";
 
 // ---------- pipeline config ----------
 

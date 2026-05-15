@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  let win: any = null;
+
+  let win: { minimize: () => Promise<void> } | null = null;
 
   onMount(async () => {
     try {
@@ -55,18 +56,18 @@
   .tb-btn {
     width: 24px;
     height: 24px;
+    padding: 0;
     display: grid;
     place-items: center;
     background: transparent;
     border: 0;
     border-radius: 6px;
     color: var(--ink-mute);
-    position: relative;
     cursor: pointer;
   }
 
-  .tb-btn:hover { background: var(--paper-2); color: var(--ink-strong); }
-  .tb-btn.close:hover { background: var(--jap-600); color: white; }
+  .tb-btn:hover { background: var(--control-active); color: var(--ink-strong); }
+  .tb-btn.close:hover { background: var(--danger); color: var(--on-accent); }
 
 
 </style>
