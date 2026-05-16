@@ -290,7 +290,8 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     let result = try_providers(&[&cfg.transcription_provider], &cfg, |provider_id, key| {
         let w = wav.clone();
         let provider = transcription_provider_from_str(provider_id);
-        Box::pin(async move { transcription::transcribe(w, provider, &key).await })
+        let language = cfg.transcription_language.clone();
+        Box::pin(async move { transcription::transcribe(w, provider, &key, &language).await })
     })
     .await;
 
@@ -446,7 +447,8 @@ async fn run_transcription(
     match try_providers(&[&cfg.transcription_provider], cfg, |provider_id, key| {
         let w = wav.clone();
         let provider = transcription_provider_from_str(provider_id);
-        Box::pin(async move { transcription::transcribe(w, provider, &key).await })
+        let language = cfg.transcription_language.clone();
+        Box::pin(async move { transcription::transcribe(w, provider, &key, &language).await })
     })
     .await
     {

@@ -1,10 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { TranscriptionLanguageCode } from './transcriptionLanguages';
 
 export type ProviderId = 'groq' | 'openai' | 'google';
 export type ToneId = 'casual' | 'formal' | 'very_casual';
 export type CleanupIntensity = 'none' | 'light' | 'medium' | 'high';
 export type HistoryRetention = '7 days' | '30 days' | '90 days' | 'Forever';
 export type AppearanceMode = 'system' | 'light' | 'dark';
+export type { TranscriptionLanguageCode } from './transcriptionLanguages';
 
 export interface AppMapping {
   exe: string;
@@ -14,6 +16,7 @@ export interface AppMapping {
 
 type SettingsValueMap = {
   transcription_provider: ProviderId;
+  transcription_language: TranscriptionLanguageCode;
   cleanup_provider: ProviderId;
   transcription_model: string;
   cleanup_model: string;

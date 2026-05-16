@@ -20,6 +20,9 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         store::TRANSCRIPTION_PROVIDER | store::CLEANUP_PROVIDER => value
             .as_str()
             .is_some_and(|v| matches!(v, "groq" | "openai" | "google")),
+        store::TRANSCRIPTION_LANGUAGE => value
+            .as_str()
+            .is_some_and(store::is_supported_transcription_language),
         store::TRANSCRIPTION_MODEL
         | store::CLEANUP_MODEL
         | store::DEFAULT_TONE
@@ -108,6 +111,7 @@ pub async fn get_setting(app: AppHandle, key: String) -> Result<Option<serde_jso
 #[derive(serde::Serialize)]
 pub struct AllSettings {
     pub transcription_model: Option<String>,
+    pub transcription_language: Option<String>,
     pub cleanup_model: Option<String>,
     pub cleanup_enabled: Option<bool>,
     pub noise_reduction: Option<bool>,
@@ -132,6 +136,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
     let f64_val = |key: &str| s.get(key).and_then(|v| v.as_f64());
     Ok(AllSettings {
         transcription_model: str_val(store::TRANSCRIPTION_MODEL),
+        transcription_language: str_val(store::TRANSCRIPTION_LANGUAGE),
         cleanup_model: str_val(store::CLEANUP_MODEL),
         cleanup_enabled: bool_val(store::CLEANUP_ENABLED),
         noise_reduction: bool_val(store::NOISE_REDUCTION),

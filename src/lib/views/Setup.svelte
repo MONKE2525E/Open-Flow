@@ -3,6 +3,11 @@
   import { onMount } from 'svelte';
   import { setupComplete } from '../stores';
   import { saveSetting, type CleanupIntensity, type ToneId } from '../settings';
+  import {
+    getTranscriptionLanguageLabel,
+    transcriptionLanguages,
+    type TranscriptionLanguageCode,
+  } from '../transcriptionLanguages';
 
   let win: { minimize: () => Promise<void> } | null = null;
   onMount(async () => {
@@ -29,6 +34,8 @@
   // ── Quick Settings (step 6) ───────────────────────────────────────────────
   let quickPrefs = { cleanup: true, noise: true, caps: true, autoLearn: false, autostart: false, muteAudio: false, apiFallback: false };
   let quickSettingsReady = false;
+  let selectedLanguage = 'en' as TranscriptionLanguageCode;
+  let languageDropdownOpen = false;
 
   // ── Provider ─────────────────────────────────────────────────────────────────
   let selectedProvider: 'groq' | 'openai' | 'google' = 'groq';
@@ -125,7 +132,20 @@
     openDropdownExe = '';
   }
 
-  function closeDropdowns() { openDropdownExe = ''; }
+  function closeDropdowns() {
+    openDropdownExe = '';
+    languageDropdownOpen = false;
+  }
+
+  function toggleLanguageDropdown(e: MouseEvent) {
+    e.stopPropagation();
+    languageDropdownOpen = !languageDropdownOpen;
+  }
+
+  function pickLanguage(code: TranscriptionLanguageCode) {
+    selectedLanguage = code;
+    languageDropdownOpen = false;
+  }
 
   $: filteredApps = appSearch
     ? installedApps.filter(a =>
@@ -221,6 +241,7 @@
       await saveSetting('cleanup_intensity', selectedIntensity as CleanupIntensity);
       await saveSetting('default_tone', selectedTone as ToneId);
       await saveSetting('transcription_provider', selectedProvider);
+      await saveSetting('transcription_language', selectedLanguage);
       await saveSetting('cleanup_provider', selectedProvider);
       if (mappings.length > 0) {
         await invoke('save_app_mappings', { mappings });
@@ -684,6 +705,46 @@
               </div>
             </div>
           </div>
+
+          <!-- Card 3: Language -->
+          <div class="qs-card qs-card-3">
+            <div class="qs-card-header">
+              <div class="qs-card-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/>
+                </svg>
+              </div>
+              <div>
+                <h3 class="qs-card-title">Spoken Language</h3>
+                <p class="qs-card-sub">Language expected in your dictation</p>
+              </div>
+            </div>
+            <div class="setup-language-wrap">
+              <button class="setup-language-btn" onclick={toggleLanguageDropdown}>
+                <span>{getTranscriptionLanguageLabel(selectedLanguage)}</span>
+                <span class="setup-language-code">{selectedLanguage}</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m6 9 6 6 6-6"/>
+                </svg>
+              </button>
+              {#if languageDropdownOpen}
+                <div class="setup-language-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
+                  {#each transcriptionLanguages as language}
+                    <button
+                      class="setup-language-item"
+                      class:active={selectedLanguage === language.code}
+                      onclick={() => pickLanguage(language.code)}
+                    >
+                      <span>{language.label}</span>
+                      <span>{language.code}</span>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+            <p class="setup-language-note">This guides transcription only. It does not translate the app.</p>
+          </div>
         </div>
 
         <div class="step-footer">
@@ -733,6 +794,10 @@
           <div class="summary-item">
             <span class="summary-label">Tone</span>
             <span class="summary-val">{toneCards.find(t => t.id === selectedTone)?.name}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Language</span>
+            <span class="summary-val">{getTranscriptionLanguageLabel(selectedLanguage)}</span>
           </div>
           {#if mappings.length > 0}
             <div class="summary-item">
@@ -1616,12 +1681,12 @@
   }
 
   /* ── Quick Settings step ───────────────────────────────────────────── */
-  .qs-step { max-width: 760px; }
+  .qs-step { max-width: 920px; }
 
   .qs-cards {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
     align-items: stretch;
   }
 
@@ -1629,7 +1694,7 @@
     background: var(--bg-elev);
     border: 1.5px solid var(--line);
     border-radius: var(--r-md);
-    padding: 16px 18px;
+    padding: 14px 14px;
     opacity: 0;
     transform: translateY(12px);
     transition: opacity 0.3s ease, transform 0.3s ease, border-color 0.15s;
@@ -1644,6 +1709,12 @@
     opacity: 1;
     transform: none;
     transition-delay: 0.1s;
+  }
+
+  .qs-cards.ready .qs-card-3 {
+    opacity: 1;
+    transform: none;
+    transition-delay: 0.2s;
   }
 
   .qs-card-header {
@@ -1733,4 +1804,87 @@
 
   .qs-toggle.on { background: var(--accent); }
   .qs-toggle.on::after { left: 16px; }
+
+  .setup-language-wrap {
+    position: relative;
+  }
+
+  .setup-language-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    padding: 10px 12px;
+    color: var(--ink-strong);
+    font-family: var(--sans);
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .setup-language-btn span:first-child {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+  }
+
+  .setup-language-code {
+    color: var(--ink-faint);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    text-transform: uppercase;
+  }
+
+  .setup-language-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 20;
+    width: 100%;
+    min-width: 220px;
+    max-height: 220px;
+    overflow-y: auto;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    box-shadow: var(--shadow-popover);
+  }
+
+  .setup-language-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    padding: 8px 10px;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-strong);
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 12px;
+    text-align: left;
+  }
+
+  .setup-language-item:last-child { border-bottom: 0; }
+  .setup-language-item:hover { background: var(--paper); }
+  .setup-language-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
+  .setup-language-item span:last-child {
+    color: var(--ink-faint);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    text-transform: uppercase;
+  }
+
+  .setup-language-note {
+    margin: 10px 0 0;
+    color: var(--ink-mute);
+    font-size: 11.5px;
+    line-height: 1.4;
+  }
 </style>
