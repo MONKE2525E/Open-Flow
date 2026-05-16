@@ -475,10 +475,10 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
     use std::io::Write;
 
     // Back up the database before touching anything.
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        let db = std::path::Path::new(&appdata).join("OpenFlow").join("openflow.db");
-        if db.exists() {
-            let _ = std::fs::copy(&db, db.with_extension("db.bak"));
+    if let Ok(mut db_path) = app.path().app_data_dir() {
+        db_path.push("openflow.db");
+        if db_path.exists() {
+            let _ = std::fs::copy(&db_path, db_path.with_extension("db.bak"));
         }
     }
 
