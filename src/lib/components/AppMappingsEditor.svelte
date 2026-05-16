@@ -169,7 +169,7 @@
 </script>
 
 {#if showHeading}
-  <h2 class="settings-h">App Mappings</h2>
+  <h2 class="settings-h">Apps</h2>
 {/if}
 <p class="panel-note">{intro}</p>
 
