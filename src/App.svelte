@@ -269,21 +269,17 @@
     min-width: 0;
   }
 
-  .content::-webkit-scrollbar {
-    width: 10px;
-  }
-
-  .content::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
+  .content::-webkit-scrollbar { width: 10px; }
+  .content::-webkit-scrollbar-track { background: transparent; }
   .content::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--ink-faint) 42%, transparent);
+    background: transparent;
     border: 3px solid var(--paper);
     border-radius: 999px;
   }
-
-  .content::-webkit-scrollbar-thumb:hover {
+  .content:hover::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--ink-faint) 42%, transparent);
+  }
+  .content:hover::-webkit-scrollbar-thumb:hover {
     background: color-mix(in srgb, var(--ink-faint) 62%, transparent);
   }
 
