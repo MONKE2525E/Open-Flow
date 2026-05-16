@@ -289,7 +289,7 @@ fn is_plain_suffix_completion(original: &str, corrected: &str) -> bool {
 }
 
 fn is_low_signal_suffix(suffix: &str) -> bool {
-    matches!(suffix, "s" | "d" | "e" | "g" | "ed" | "er" | "es")
+    matches!(suffix, "s" | "d" | "e" | "g" | "ed" | "er" | "es" | "ing")
         || suffix
             .chars()
             .all(|ch| matches!(ch, 'a' | 'e' | 'i' | 'o' | 'u'))
