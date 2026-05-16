@@ -716,8 +716,8 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
                 if record_candidate(
                     &db,
                     &mut recorded_this_session,
-                    mistake.clone(),
-                    correction.clone(),
+                    mistake,
+                    correction,
                 ) {
                     log::info!("auto-learn: promoted candidate pair");
                     app.emit("open-flow:dictionary-updated", ()).ok();
