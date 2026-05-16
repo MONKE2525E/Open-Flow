@@ -273,10 +273,6 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
 }
 
 fn is_plain_suffix_completion(original: &str, corrected: &str) -> bool {
-    if original.len() < 4 || corrected.len() < 4 {
-        return false;
-    }
-
     if let Some(suffix) = corrected.strip_prefix(original) {
         return is_low_signal_suffix(suffix);
     }
@@ -809,6 +805,8 @@ mod tests {
         assert!(diff_words("bran rot hostin", "bran rot hosting").is_empty());
         assert!(diff_words("send the file", "sends the file").is_empty());
         assert!(diff_words("say nugga", "say nuggaaaa").is_empty());
+        assert!(diff_words("scratch the cat", "scratch the cats").is_empty());
+        assert!(diff_words("we should do", "we should doing").is_empty());
     }
 
     #[test]
