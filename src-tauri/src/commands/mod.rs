@@ -501,10 +501,13 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
     // Write a hidden PowerShell bootstrap that waits for this process to exit,
     // runs the installer silently, then relaunches the app at the same path.
     let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let pid = std::process::id();
     let script = format!(
-        "Start-Sleep -Seconds 1\r\nStart-Process -Wait -FilePath '{}' -ArgumentList '/S'\r\nStart-Process -FilePath '{}'",
-        installer.display(),
-        current_exe.display()
+        "Wait-Process -Id {pid} -ErrorAction SilentlyContinue
+Start-Process -Wait -FilePath '{}' -ArgumentList '/S'
+Start-Process -FilePath '{}'",
+        installer.to_string_lossy().replace("'", "''"),
+        current_exe.to_string_lossy().replace("'", "''")
     );
     let script_path = std::env::temp_dir().join("open-flow-updater.ps1");
     std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
