@@ -513,11 +513,9 @@ Start-Process -FilePath '{}'",
     std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
 
     std::process::Command::new("powershell")
-        .args([
-            "-WindowStyle", "Hidden",
-            "-ExecutionPolicy", "Bypass",
-            "-File", script_path.to_str().unwrap_or(""),
-        ])
+        .arg("-WindowStyle").arg("Hidden")
+        .arg("-ExecutionPolicy").arg("Bypass")
+        .arg("-File").arg(&script_path)
         .spawn()
         .map_err(|e| e.to_string())?;
 
