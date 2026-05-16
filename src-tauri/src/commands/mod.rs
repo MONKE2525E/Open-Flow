@@ -473,6 +473,8 @@ pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
 #[tauri::command]
 pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), String> {
     use std::io::Write;
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     // Back up the database before touching anything.
     if let Ok(mut db_path) = app.path().app_data_dir() {
@@ -498,29 +500,27 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
     f.write_all(&bytes).map_err(|e| e.to_string())?;
     drop(f);
 
-    // Write a hidden PowerShell bootstrap that waits for this process to exit,
-    // runs the installer silently, then relaunches the app at the same path.
+    // Batch launcher: waits for this process to exit, runs the installer silently,
+    // then relaunches the app. cmd.exe avoids PowerShell execution-policy issues;
+    // CREATE_NO_WINDOW suppresses any console flash.
     let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let pid = std::process::id();
     let script = format!(
-        "Wait-Process -Id {pid} -ErrorAction SilentlyContinue
-Start-Process -Wait -FilePath '{}' -ArgumentList '/S'
-Start-Process -FilePath '{}'",
-        installer.to_string_lossy().replace("'", "''"),
-        current_exe.to_string_lossy().replace("'", "''")
+        "@echo off\r\ntimeout /t 2 /nobreak >nul\r\n\"{}\" /S\r\nstart \"\" \"{}\"\r\n",
+        installer.display(),
+        current_exe.display()
     );
-    let script_path = std::env::temp_dir().join("open-flow-updater.ps1");
-    std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
+    let script_path = std::env::temp_dir().join("open-flow-updater.cmd");
+    std::fs::write(&script_path, &script).map_err(|e| e.to_string())?;
 
-    std::process::Command::new("powershell")
-        .arg("-WindowStyle").arg("Hidden")
-        .arg("-ExecutionPolicy").arg("Bypass")
-        .arg("-File").arg(&script_path)
+    std::process::Command::new("cmd")
+        .arg("/c")
+        .arg(&script_path)
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| e.to_string())?;
 
-    app.exit(0);
-    Ok(())
+    // Exit immediately so the binary is free before the installer starts.
+    std::process::exit(0);
 }
 
 // ---------- connectivity ----------
