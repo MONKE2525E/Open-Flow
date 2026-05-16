@@ -1,10 +1,10 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { onMount, onDestroy, tick } from 'svelte';
-  import { fly, slide, crossfade } from 'svelte/transition';
-  import { flip } from 'svelte/animate';
+  import { onMount } from 'svelte';
+  import { fly, crossfade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { saveSetting, type CleanupIntensity, type ToneId, type AppMapping } from '../settings';
+  import { saveSetting, type CleanupIntensity, type ToneId } from '../settings';
+  import AppMappingsEditor from '../components/AppMappingsEditor.svelte';
 
   const [send, receive] = crossfade({
     duration: 300,
@@ -16,92 +16,36 @@
   let tone = $state('casual');
 
   const tabs = [
-    { id: 'cleanup',  label: 'Auto-cleanup', pill: '' },
-    { id: 'personal', label: 'Personal Tone',pill: '' },
-    { id: 'apps',     label: 'App Mappings', pill: 'New' },
+    { id: 'cleanup', label: 'Auto-cleanup', pill: '' },
+    { id: 'personal', label: 'Personal Tone', pill: '' },
+    { id: 'apps', label: 'App Mappings', pill: 'New' },
   ];
 
   const cleanupCards = [
-    { id: 'none',   name: 'Verbatim', desc: 'Exactly what you said, word for word.',  sample: "so um i was thinking like we should probably leave a bit earlier you know cause there's gonna be traffic i think" },
-    { id: 'light',  name: 'Light',    desc: 'Removes filler words, nothing else.',    sample: "i was thinking we should probably leave a bit earlier, cause there's gonna be traffic i think" },
-    { id: 'medium', name: 'Medium',   desc: 'Cleans it up, keeps your words.',        sample: "I think we should leave a bit earlier — there's going to be traffic." },
-    { id: 'high',   name: 'Direct',   desc: 'Rewrites for max brevity.',              sample: "Leave early. Traffic." },
+    { id: 'none', name: 'Verbatim', desc: 'Exactly what you said, word for word.', sample: "so um i was thinking like we should probably leave a bit earlier you know cause there's gonna be traffic i think" },
+    { id: 'light', name: 'Light', desc: 'Removes filler words, nothing else.', sample: "i was thinking we should probably leave a bit earlier, cause there's gonna be traffic i think" },
+    { id: 'medium', name: 'Medium', desc: 'Cleans it up, keeps your words.', sample: "I think we should leave a bit earlier, there's going to be traffic." },
+    { id: 'high', name: 'Direct', desc: 'Rewrites for max brevity.', sample: 'Leave early. Traffic.' },
   ];
 
   const personalCards = [
-    { id: 'casual',      name: 'Casual',      desc: 'Conversational. Light caps and punctuation.',              sample: "Hey, are you free for lunch tomorrow? Let's do 12 if that works" },
-    { id: 'formal',      name: 'Formal',      desc: 'Professional prose. Full punctuation, formal vocabulary.', sample: "Hey, are you free for lunch tomorrow? I would love to do 12 if that works for you." },
-    { id: 'very_casual', name: 'Very Casual', desc: 'All lowercase, almost no punctuation.',                    sample: "hey are you free for lunch tomorrow let's do 12 if that works" },
+    { id: 'casual', name: 'Casual', desc: 'Conversational. Light caps and punctuation.', sample: "Hey, are you free for lunch tomorrow? Let's do 12 if that works" },
+    { id: 'formal', name: 'Formal', desc: 'Professional prose. Full punctuation, formal vocabulary.', sample: 'Hey, are you free for lunch tomorrow? I would love to do 12 if that works for you.' },
+    { id: 'very_casual', name: 'Very Casual', desc: 'All lowercase, almost no punctuation.', sample: "hey are you free for lunch tomorrow let's do 12 if that works" },
   ];
-
-  const profileOptions = [
-    { id: 'casual',      label: 'Casual'      },
-    { id: 'formal',      label: 'Formal'      },
-    { id: 'very_casual', label: 'Very Casual' },
-  ];
-
-  interface InstalledApp { name: string; exe: string; }
-
-  let mappings = $state<AppMapping[]>([]);
-  let newExe = $state('');
-  let newProfile = $state('casual');
-  let profileDropdownOpen = $state(false);
-
-  let installedApps = $state<InstalledApp[]>([]);
-  let areAppsLoaded = $state(false);
-  let appSearch = $state('');
-  let appPickerOpen = $state(false);
-
-  let filteredApps = $derived(appSearch
-    ? installedApps.filter(a =>
-        a.name.toLowerCase().includes(appSearch.toLowerCase()) ||
-        a.exe.toLowerCase().includes(appSearch.toLowerCase())
-      ).slice(0, 40)
-    : installedApps.slice(0, 40));
-
-  async function loadInstalledApps() {
-    if (areAppsLoaded) return;
-    try {
-      installedApps = await invoke<InstalledApp[]>('get_installed_apps');
-      areAppsLoaded = true;
-    } catch { /* dev mode */ }
-  }
-
-  function pickApp(app: InstalledApp) {
-    newExe = app.exe;
-    appSearch = app.name;
-    appPickerOpen = false;
-  }
-
-  function closeAppPicker(e: MouseEvent) {
-    const target = e.target as HTMLElement;
-    if (!target.closest('.app-picker-wrap')) appPickerOpen = false;
-  }
-
-  $effect(() => {
-    if (appPickerOpen) {
-      tick().then(() => window.addEventListener('click', closeAppPicker, { once: true }));
-    }
-  });
-
-  function handleWindowClick() { profileDropdownOpen = false; }
 
   onMount(async () => {
-    window.addEventListener('click', handleWindowClick);
-    loadInstalledApps();
     try {
-      const [savedTone, savedIntensity, savedMappings] = await Promise.all([
+      const [savedTone, savedIntensity] = await Promise.all([
         invoke<string | null>('get_setting', { key: 'default_tone' }),
         invoke<string | null>('get_setting', { key: 'cleanup_intensity' }),
-        invoke<AppMapping[] | null>('get_setting', { key: 'app_mappings' }),
       ]);
       if (savedTone) tone = savedTone as string;
       if (savedIntensity) intensity = savedIntensity as string;
-      if (savedMappings) mappings = savedMappings;
-    } catch { /* dev mode without Tauri */ }
+    } catch {
+      // Dev mode without Tauri.
+    }
   });
-
-  onDestroy(() => { window.removeEventListener('click', handleWindowClick); });
 
   function selectIntensity(id: string) {
     intensity = id;
@@ -111,24 +55,6 @@
   function selectTone(id: string) {
     tone = id;
     saveSetting('default_tone', id as ToneId);
-  }
-
-  function saveMappings(updated: AppMapping[]) {
-    mappings = updated;
-    saveSetting('app_mappings', updated);
-  }
-
-  function addMapping() {
-    if (newExe.trim()) {
-      saveMappings([...mappings, { exe: newExe.trim().toLowerCase(), profile: newProfile }]);
-      newExe = '';
-      appSearch = '';
-      appPickerOpen = false;
-    }
-  }
-
-  function removeMapping(index: number) {
-    saveMappings(mappings.filter((_, i) => i !== index));
   }
 </script>
 
@@ -157,9 +83,14 @@
           <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Open Flow does.</span></p>
           <div class="style-grid four">
             {#each cleanupCards as c}
-              <div class="style-card" class:active={intensity === c.id} role="button" tabindex="0"
+              <div
+                class="style-card"
+                class:active={intensity === c.id}
+                role="button"
+                tabindex="0"
                 onclick={() => selectIntensity(c.id)}
-                onkeydown={(e) => e.key === 'Enter' && selectIntensity(c.id)}>
+                onkeydown={(e) => e.key === 'Enter' && selectIntensity(c.id)}
+              >
                 <h4>{c.name}</h4>
                 <p class="desc">{c.desc}</p>
                 <div class="style-sample">"{c.sample}"</div>
@@ -170,9 +101,14 @@
           <p class="style-intro">Default tone. <span>Applies to any app not explicitly mapped.</span></p>
           <div class="style-grid">
             {#each personalCards as c}
-              <div class="style-card" class:active={tone === c.id} role="button" tabindex="0"
+              <div
+                class="style-card"
+                class:active={tone === c.id}
+                role="button"
+                tabindex="0"
                 onclick={() => selectTone(c.id)}
-                onkeydown={(e) => e.key === 'Enter' && selectTone(c.id)}>
+                onkeydown={(e) => e.key === 'Enter' && selectTone(c.id)}
+              >
                 <h4>{c.name}</h4>
                 <p class="desc">{c.desc}</p>
                 <div class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</div>
@@ -180,63 +116,12 @@
             {/each}
           </div>
         {:else if tab === 'apps'}
-          <p class="style-intro">App Mappings. <span>Automatically switch tone based on the active window.</span></p>
-          
-          <div class="mapping-list">
-            {#each mappings as m, i (m.exe)}
-              <div class="mapping-item" animate:flip={{duration: 300, easing: expoOut}} in:fly={{y: 10, duration: 300, easing: expoOut}} out:slide={{duration: 200, easing: expoOut}}>
-                <div class="mapping-info">
-                  <span class="exe">{m.exe}</span>
-                  <span class="arr">→</span>
-                  <span class="prof">{m.profile}</span>
-                </div>
-                <button class="icon-btn del-btn" aria-label="Remove mapping" onclick={() => removeMapping(i)}>✕</button>
-              </div>
-            {/each}
-          </div>
-
-          <div class="add-mapping">
-            <div class="app-picker-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
-              <input
-                class="app-search-input"
-                placeholder={areAppsLoaded ? 'Search apps…' : 'Loading apps…'}
-                bind:value={appSearch}
-                onfocus={() => { appPickerOpen = true; }}
-                oninput={() => { newExe = ''; appPickerOpen = true; }}
-                onkeydown={(e) => e.key === 'Enter' && addMapping()}
-              />
-              {#if appPickerOpen && filteredApps.length > 0}
-                <div class="app-picker-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
-                  {#each filteredApps as app}
-                    <button class="app-picker-item" onclick={() => pickApp(app)}>
-                      <span class="app-picker-name">{app.name}</span>
-                      <span class="app-picker-exe">{app.exe}</span>
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-            <div class="profile-select" role="presentation" onclick={(e) => e.stopPropagation()}>
-              <button class="profile-select-btn" onclick={() => (profileDropdownOpen = !profileDropdownOpen)}>
-                <span>{profileOptions.find(p => p.id === newProfile)?.label ?? 'Casual'}</span>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="m6 9 6 6 6-6"/>
-                </svg>
-              </button>
-              {#if profileDropdownOpen}
-                <div class="profile-menu">
-                  {#each profileOptions as opt}
-                    <button
-                      class="profile-item"
-                      class:active={newProfile === opt.id}
-                      onclick={() => { newProfile = opt.id; profileDropdownOpen = false; }}
-                    >{opt.label}</button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-            <button class="btn-primary" onclick={addMapping}>Add</button>
-          </div>
+          <AppMappingsEditor
+            showHeading={false}
+            intro="Give specific apps their own tone. Open Flow switches automatically while you type."
+            emptyText="No app tones yet."
+            addLabel="Add App Tone"
+          />
         {/if}
       </div>
     {/key}
@@ -269,13 +154,17 @@
     font-family: var(--serif);
     font-size: 26px;
     font-weight: 500;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     margin: 0 0 4px;
     line-height: 1.1;
     color: var(--ink);
   }
 
-  .page-sub { color: var(--ink-mute); font-size: 12.5px; margin: 0 0 22px; }
+  .page-sub {
+    color: var(--ink-mute);
+    font-size: 12.5px;
+    margin: 0 0 22px;
+  }
 
   .tabs {
     display: flex;
@@ -336,7 +225,9 @@
     gap: 10px;
   }
 
-  .style-grid.four { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+  .style-grid.four {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
 
   .style-card {
     padding: 14px;
@@ -371,7 +262,7 @@
     font-size: 16px;
     font-weight: 500;
     margin: 0 0 2px;
-    letter-spacing: -0.015em;
+    letter-spacing: 0;
     color: var(--ink);
   }
 
@@ -394,226 +285,9 @@
 
   .style-card.active .style-sample { color: var(--accent-ink); }
 
-  .mapping-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 16px;
-    max-width: 640px;
-  }
-
-  .mapping-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-  }
-
-  .mapping-info {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .exe {
-    font-family: var(--mono);
-    font-size: 13px;
-    color: var(--ink);
-  }
-
-  .arr { color: var(--ink-mute); font-size: 12px; }
-
-  .prof {
-    font-size: 13px;
-    color: var(--accent-ink);
-    background: var(--accent-soft);
-    padding: 2px 8px;
-    border-radius: 4px;
-    text-transform: capitalize;
-  }
-
-  .add-mapping {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    max-width: 640px;
-    align-items: center;
-  }
-
-  .app-picker-wrap {
-    position: relative;
-    flex: 1 1 260px;
-    min-width: 0;
-  }
-
-  .app-search-input {
-    width: 100%;
-    box-sizing: border-box;
-    background: transparent;
-    border: 1px solid var(--line);
-    padding: 0 12px;
-    height: 34px;
-    border-radius: var(--r-sm);
-    font-size: 13px;
-    font-family: var(--sans);
-    color: var(--ink);
-    outline: none;
-  }
-  .app-search-input:focus { border-color: var(--ink-mute); }
-
-  .app-picker-menu {
-    position: absolute;
-    left: 0;
-    top: calc(100% + 4px);
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
-    width: 100%;
-    max-height: 180px;
-    overflow-y: auto;
-    z-index: 20;
-  }
-
-  .app-picker-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    padding: 7px 10px;
-    font-family: var(--sans);
-    background: none;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    text-align: left;
-    gap: 8px;
-  }
-  .app-picker-item:last-child { border-bottom: none; }
-  .app-picker-item:hover { background: var(--paper); }
-
-  .app-picker-name {
-    font-size: 12px;
-    color: var(--ink);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: 1;
-  }
-
-  .app-picker-exe {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--ink-mute);
-    flex-shrink: 0;
-  }
-
-  .profile-select {
-    position: relative;
-    flex: 0 0 auto;
-  }
-
-  .profile-select-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: transparent;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    padding: 5px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .profile-select-btn:hover { background: var(--paper); }
-
-  .profile-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
-    min-width: 130px;
-    max-height: 200px;
-    overflow-y: auto;
-    z-index: 20;
-  }
-
-  .profile-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 8px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .profile-item:last-child { border-bottom: none; }
-  .profile-item:hover { background: var(--paper); }
-  .profile-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
-
-  .btn-primary {
-    background: var(--ink);
-    color: var(--paper);
-    border: none;
-    padding: 0 14px;
-    height: 34px;
-    border-radius: var(--r-sm);
-    font-size: 13px;
-    cursor: pointer;
-    flex: 0 0 auto;
-  }
-  .btn-primary:hover { background: var(--ink-soft); }
-
-  .del-btn {
-    background: transparent;
-    border: none;
-    color: var(--ink-mute);
-    cursor: pointer;
-    font-size: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-  }
-  .del-btn:hover { background: var(--control-active); color: var(--ink); }
-
   @media (max-width: 720px) {
     .tabs {
       gap: 14px;
-    }
-
-    .mapping-info {
-      min-width: 0;
-    }
-
-    .exe {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .app-picker-wrap {
-      flex-basis: 100%;
     }
   }
 </style>

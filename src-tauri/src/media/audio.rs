@@ -159,18 +159,16 @@ impl RecordingSession {
                             if let Some(mut denoiser) = lock_audio(d, "denoiser") {
                                 denoiser.push(&mono, &mut store);
                             }
+                        } else if ch == 1 {
+                            store.extend(data.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)));
                         } else {
-                            if ch == 1 {
-                                store.extend(data.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)));
-                            } else {
-                                store.extend(data.chunks(ch).map(|frame| {
-                                    frame
-                                        .iter()
-                                        .map(|&s| (s * gain).clamp(-1.0, 1.0))
-                                        .sum::<f32>()
-                                        / ch as f32
-                                }));
-                            }
+                            store.extend(data.chunks(ch).map(|frame| {
+                                frame
+                                    .iter()
+                                    .map(|&s| (s * gain).clamp(-1.0, 1.0))
+                                    .sum::<f32>()
+                                    / ch as f32
+                            }));
                         }
                     },
                     err_fn,
@@ -208,18 +206,16 @@ impl RecordingSession {
                             if let Some(mut denoiser) = lock_audio(d, "denoiser") {
                                 denoiser.push(&mono, &mut store);
                             }
+                        } else if ch == 1 {
+                            store.extend(floats.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)));
                         } else {
-                            if ch == 1 {
-                                store.extend(floats.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)));
-                            } else {
-                                store.extend(floats.chunks(ch).map(|frame| {
-                                    frame
-                                        .iter()
-                                        .map(|&s| (s * gain).clamp(-1.0, 1.0))
-                                        .sum::<f32>()
-                                        / ch as f32
-                                }));
-                            }
+                            store.extend(floats.chunks(ch).map(|frame| {
+                                frame
+                                    .iter()
+                                    .map(|&s| (s * gain).clamp(-1.0, 1.0))
+                                    .sum::<f32>()
+                                    / ch as f32
+                            }));
                         }
                     },
                     err_fn,
