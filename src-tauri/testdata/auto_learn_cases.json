@@ -1,0 +1,72 @@
+[
+  {
+    "name": "technical brand qroq from rock",
+    "original": "bran rock hosting",
+    "corrected": "bran qroq hosting",
+    "expect": [["rock", "qroq"]],
+    "promotes_after_two_sessions": true
+  },
+  {
+    "name": "technical brand qroq from rot",
+    "original": "bran rot hosting",
+    "corrected": "bran qroq hosting",
+    "expect": [["rot", "qroq"]],
+    "promotes_after_two_sessions": true
+  },
+  {
+    "name": "kubernetes misspelling",
+    "original": "please use Koobernetes today",
+    "corrected": "please use Kubernetes today",
+    "expect": [["Koobernetes", "Kubernetes"]],
+    "promotes_after_two_sessions": true
+  },
+  {
+    "name": "suffix completion noise",
+    "original": "bran rot hostin",
+    "corrected": "bran rot hosting",
+    "expect": [],
+    "promotes_after_two_sessions": false
+  },
+  {
+    "name": "repeated vowel typing noise",
+    "original": "say nugga",
+    "corrected": "say nuggaaaa",
+    "expect": [],
+    "promotes_after_two_sessions": false
+  },
+  {
+    "name": "common word swap",
+    "original": "the thing is good",
+    "corrected": "is thing is good",
+    "expect": [],
+    "promotes_after_two_sessions": false
+  },
+  {
+    "name": "one letter source junk",
+    "original": "use x hosting",
+    "corrected": "use qroq hosting",
+    "expect": [],
+    "promotes_after_two_sessions": false
+  },
+  {
+    "name": "one letter target junk",
+    "original": "use rock hosting",
+    "corrected": "use q hosting",
+    "expect": [],
+    "promotes_after_two_sessions": false
+  },
+  {
+    "name": "case only change",
+    "original": "ask me later",
+    "corrected": "Ask me later",
+    "expect": [],
+    "promotes_after_two_sessions": false
+  },
+  {
+    "name": "sentence rewrite",
+    "original": "please use Koobernetes in the deployment tomorrow",
+    "corrected": "rewrite this whole sentence into something else",
+    "expect": [],
+    "promotes_after_two_sessions": false
+  }
+]
