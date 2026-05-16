@@ -116,4 +116,4 @@ Open Flow is intentionally lightweight. Here's why:
 - **Rust Backend** — Fast, memory-safe, zero-cost abstractions. Audio capture, hotkey handling, and clipboard injection run with near-zero overhead.
 - **SQLite** — Embedded database. No server, no network latency, no extra process.
 
-**Result:** ~150MB RAM idle. Starts in <100ms. Runs silently in the background without slowing down your system.
+**Result:** ~200MB RAM idle. Starts in <200ms. Runs silently in the background without slowing down your system.
