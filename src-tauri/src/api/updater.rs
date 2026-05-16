@@ -55,9 +55,9 @@ fn normalize_version(tag: &str) -> String {
         .collect();
 
     match parts.as_slice() {
-        [a, b, c] => format!("{}.{}.{}", a, b, c),
-        [a, b] => format!("{}.{}.0", a, b),
-        [a] => format!("{}.0.0", a),
+        [a, b, c] => format!("{a}.{b}.{c}"),
+        [a, b] => format!("{a}.{b}.0"),
+        [a] => format!("{a}.0.0"),
         _ => tag.trim_start_matches('v').to_owned(),
     }
 }

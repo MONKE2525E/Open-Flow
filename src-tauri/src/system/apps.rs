@@ -50,9 +50,127 @@ pub fn list_installed_apps() -> Vec<InstalledApp> {
         }
         let mut seen = std::collections::HashSet::new();
         apps.retain(|a| seen.insert(a.exe.clone()));
-        apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        apps.retain(is_user_facing_app);
+        apps.sort_by_key(|app| app.name.to_lowercase());
         apps
     }
+}
+
+#[cfg(windows)]
+fn friendly_app_name(exe: &str, name: &str) -> String {
+    if let Some(name) = known_app_name(exe) {
+        return name.to_string();
+    }
+
+    let trimmed = name.trim();
+    if !trimmed.is_empty() && trimmed.to_lowercase() != exe.trim_end_matches(".exe") {
+        return trimmed.to_string();
+    }
+
+    let spaced = exe
+        .trim_end_matches(".exe")
+        .chars()
+        .map(|ch| if ch == '_' || ch == '-' { ' ' } else { ch })
+        .collect::<String>();
+    title_case(&spaced)
+}
+
+#[cfg(windows)]
+fn known_app_name(exe: &str) -> Option<&'static str> {
+    match exe.to_lowercase().as_str() {
+        "chrome.exe" => Some("Google Chrome"),
+        "msedge.exe" => Some("Microsoft Edge"),
+        "firefox.exe" => Some("Firefox"),
+        "brave.exe" => Some("Brave"),
+        "code.exe" => Some("Visual Studio Code"),
+        "notion.exe" => Some("Notion"),
+        "slack.exe" => Some("Slack"),
+        "discord.exe" => Some("Discord"),
+        "teams.exe" | "ms-teams.exe" => Some("Microsoft Teams"),
+        "outlook.exe" => Some("Outlook"),
+        "winword.exe" => Some("Microsoft Word"),
+        "excel.exe" => Some("Microsoft Excel"),
+        "powerpnt.exe" => Some("Microsoft PowerPoint"),
+        "onenote.exe" => Some("OneNote"),
+        "robloxplayerinstaller.exe" => Some("Roblox Player Installer"),
+        "robloxplayerbeta.exe" => Some("Roblox"),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn title_case(value: &str) -> String {
+    value
+        .split_whitespace()
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str().to_lowercase()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(windows)]
+fn is_user_facing_app(app: &InstalledApp) -> bool {
+    let exe = app.exe.to_lowercase();
+    let name = app.name.to_lowercase();
+
+    const CLUTTER_EXES: &[&str] = &[
+        "aggregatorhost.exe",
+        "applicationframehost.exe",
+        "audiodg.exe",
+        "backgroundtaskhost.exe",
+        "conhost.exe",
+        "csrss.exe",
+        "ctfmon.exe",
+        "dllhost.exe",
+        "dwm.exe",
+        "fontdrvhost.exe",
+        "lsass.exe",
+        "open-flow.exe",
+        "registry",
+        "runtimebroker.exe",
+        "searchhost.exe",
+        "securityhealthservice.exe",
+        "securityhealthsystray.exe",
+        "services.exe",
+        "shellexperiencehost.exe",
+        "sihost.exe",
+        "smartscreen.exe",
+        "smss.exe",
+        "startmenuexperiencehost.exe",
+        "svchost.exe",
+        "system",
+        "system idle process",
+        "taskhostw.exe",
+        "textinputhost.exe",
+        "widgetservice.exe",
+        "widgets.exe",
+        "wininit.exe",
+        "winlogon.exe",
+        "winstore.app.exe",
+    ];
+
+    if CLUTTER_EXES.contains(&exe.as_str()) {
+        return false;
+    }
+
+    const CLUTTER_NAME_PARTS: &[&str] = &[
+        "microsoft edge update",
+        "microsoft update",
+        "search host",
+        "service host",
+        "shell experience host",
+        "start menu experience host",
+        "windows input experience",
+        "windows security notification",
+    ];
+
+    !CLUTTER_NAME_PARTS.iter().any(|part| name.contains(part))
 }
 
 #[cfg(windows)]
@@ -152,6 +270,7 @@ fn scan_uninstall(root: windows::Win32::System::Registry::HKEY, path: &str) -> V
                 let display_icon = reg_read_string(hsubkey, "DisplayIcon");
                 if let (Some(name), Some(icon)) = (display_name, display_icon) {
                     if let Some(exe) = parse_exe_from_icon(&icon) {
+                        let name = friendly_app_name(&exe, &name);
                         apps.push(InstalledApp { name, exe });
                     }
                 }
@@ -182,8 +301,11 @@ fn get_running_processes() -> Vec<InstalledApp> {
                     let end = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
                     let exe = String::from_utf16_lossy(&raw[..end]).to_lowercase();
                     if !exe.is_empty() && exe != "system idle process" && !exe.starts_with('[') {
-                        let name = exe.strip_suffix(".exe").unwrap_or(&exe).to_string();
-                        apps.push(InstalledApp { name, exe });
+                        let name = friendly_app_name(&exe, exe.strip_suffix(".exe").unwrap_or(&exe));
+                        let app = InstalledApp { name, exe };
+                        if is_user_facing_app(&app) {
+                            apps.push(app);
+                        }
                     }
                     if Process32NextW(snap, &mut entry).is_err() {
                         break;

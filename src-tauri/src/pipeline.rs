@@ -451,7 +451,7 @@ async fn run_transcription(
     .await
     {
         Ok((raw, t_provider)) if !raw.is_empty() => {
-            Some((raw, format!("{}/transcription", t_provider)))
+            Some((raw, format!("{t_provider}/transcription")))
         }
         Ok(_) => {
             show_error_pill(

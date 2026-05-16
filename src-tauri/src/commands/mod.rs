@@ -388,7 +388,7 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
         };
 
         let app_path = std::env::current_exe()
-            .map_err(|e| format!("Failed to get executable path: {}", e))?
+            .map_err(|e| format!("Failed to get executable path: {e}"))?
             .to_string_lossy()
             .to_string();
 

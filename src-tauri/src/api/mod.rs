@@ -7,7 +7,7 @@ pub mod transcription;
 pub mod updater;
 
 pub fn quota_bail(provider: &str) -> anyhow::Error {
-    anyhow::anyhow!("QUOTA_EXCEEDED: {} quota reached", provider)
+    anyhow::anyhow!("QUOTA_EXCEEDED: {provider} quota reached")
 }
 
 pub fn is_quota_error(e: &anyhow::Error) -> bool {
