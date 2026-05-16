@@ -11,7 +11,7 @@
   import ApiKeysSection from '../components/settings/ApiKeysSection.svelte';
   import ModelsSection from '../components/settings/ModelsSection.svelte';
   import PrivacySection from '../components/settings/PrivacySection.svelte';
-  import AdvancedSection from '../components/settings/AdvancedSection.svelte';
+  import AudioSection from '../components/settings/AudioSection.svelte';
   import AboutSection from '../components/settings/AboutSection.svelte';
 
   let section = $state('general');
@@ -23,11 +23,11 @@
   const navSections = [
     { group: 'Settings', items: [
       { id: 'general',  label: 'General',      icon: 'sliders'  as keyof typeof icons },
-      { id: 'apps',     label: 'App Mappings', icon: 'apps'     as keyof typeof icons },
+      { id: 'apps',     label: 'Apps',         icon: 'apps'     as keyof typeof icons },
       { id: 'keys',     label: 'API Keys',     icon: 'key'      as keyof typeof icons },
       { id: 'models',   label: 'Models',       icon: 'command'  as keyof typeof icons },
       { id: 'privacy',  label: 'Privacy',      icon: 'lock'     as keyof typeof icons },
-      { id: 'advanced', label: 'Advanced',     icon: 'settings' as keyof typeof icons },
+      { id: 'advanced', label: 'Audio',         icon: 'mic'      as keyof typeof icons },
     ]},
     { group: 'Account', items: [
       { id: 'about', label: 'About', icon: 'help' as keyof typeof icons },
@@ -109,7 +109,7 @@
             {:else if section === 'privacy'}
               <PrivacySection />
             {:else if section === 'advanced'}
-              <AdvancedSection />
+              <AudioSection />
             {:else if section === 'about'}
               <AboutSection {appVersion} />
             {/if}
