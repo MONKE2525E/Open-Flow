@@ -1,18 +1,20 @@
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter};
 
 use crate::data::db;
 use crate::DbHandle;
 
-static MONITOR_ACTIVE: AtomicBool = AtomicBool::new(false);
-const MONITOR_WINDOW_SECS: u64 = 30;
+const MONITOR_WINDOW_SECS: u64 = 60;
 const POLL_INTERVAL_SECS: u64 = 2;
-const PENDING_RETENTION_DAYS: i64 = 14;
-const PROMOTION_THRESHOLD: i64 = 3;
+const BASELINE_CAPTURE_DELAY_MS: u64 = 250;
+const BASELINE_RETRY_DELAY_MS: u64 = 500;
+const PENDING_RETENTION_DAYS: i64 = 2;
+const PROMOTION_THRESHOLD: i64 = 2;
+const STABLE_TEXT_OBSERVATIONS_REQUIRED: usize = 2;
+const MIN_CANDIDATE_NORM_LEN: usize = 2;
 const MAX_SPAN_GROWTH_WORDS: usize = 5;
-const MAX_REPLACEMENTS_PER_SPAN: usize = 3;
-const MAX_CHANGED_OPS_PER_SPAN: usize = 5;
+const MAX_REPLACEMENTS_PER_SPAN: usize = 2;
+const MAX_CHANGED_OPS_PER_SPAN: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WordToken {
@@ -32,6 +34,36 @@ enum AlignOp {
     Replace,
     Insert,
     Delete,
+}
+
+#[derive(Debug, Default)]
+struct StableTextGate {
+    pending_text: Option<String>,
+    pending_observations: usize,
+    processed_text: Option<String>,
+}
+
+impl StableTextGate {
+    fn observe(&mut self, text: String) -> Option<&str> {
+        if self.pending_text.as_deref() == Some(text.as_str()) {
+            self.pending_observations += 1;
+        } else {
+            self.pending_text = Some(text);
+            self.pending_observations = 1;
+        }
+
+        if self.pending_observations < STABLE_TEXT_OBSERVATIONS_REQUIRED {
+            return None;
+        }
+
+        let stable_text = self.pending_text.as_deref()?;
+        if self.processed_text.as_deref() == Some(stable_text) {
+            return None;
+        }
+
+        self.processed_text = Some(stable_text.to_string());
+        self.processed_text.as_deref()
+    }
 }
 
 fn is_spelling_correction(a: &str, b: &str) -> bool {
@@ -111,6 +143,13 @@ fn tokenize_words(text: &str) -> Vec<WordToken> {
 
 fn has_distinctive_features(token: &str) -> bool {
     if !token.is_ascii() {
+        return true;
+    }
+    if token.len() >= 4
+        && token
+            .chars()
+            .any(|c| matches!(c.to_ascii_lowercase(), 'q' | 'x' | 'z'))
+    {
         return true;
     }
     if token
@@ -198,6 +237,10 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
     if original.norm == corrected.norm {
         return false;
     }
+    if original.norm.len() < MIN_CANDIDATE_NORM_LEN || corrected.norm.len() < MIN_CANDIDATE_NORM_LEN
+    {
+        return false;
+    }
 
     let original_distinct = has_distinctive_features(&original.raw);
     let corrected_distinct = has_distinctive_features(&corrected.raw);
@@ -216,7 +259,36 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
         return false;
     }
 
+    if is_plain_suffix_completion(&original.norm, &corrected.norm)
+        && !original_distinct
+        && !corrected_distinct
+    {
+        return false;
+    }
+
     is_spelling_correction(&original.norm, &corrected.norm)
+        || ((original_distinct || corrected_distinct)
+            && original.norm.len().max(corrected.norm.len()) >= 4
+            && edit_distance(&original.norm, &corrected.norm) <= 3)
+}
+
+fn is_plain_suffix_completion(original: &str, corrected: &str) -> bool {
+    if let Some(suffix) = corrected.strip_prefix(original) {
+        return is_low_signal_suffix(suffix);
+    }
+
+    if let Some(suffix) = original.strip_prefix(corrected) {
+        return is_low_signal_suffix(suffix);
+    }
+
+    false
+}
+
+fn is_low_signal_suffix(suffix: &str) -> bool {
+    matches!(suffix, "s" | "d" | "e" | "g" | "ed" | "er" | "es" | "ing")
+        || suffix
+            .chars()
+            .all(|ch| matches!(ch, 'a' | 'e' | 'i' | 'o' | 'u'))
 }
 
 fn find_unique_anchor(haystack: &str, needle: &str) -> Option<TextAnchor> {
@@ -307,6 +379,15 @@ fn current_anchored_span<'a>(
     }
 
     Some(&current[anchor.start..new_end])
+}
+
+fn capture_baseline_text(injected_text: &str) -> Option<String> {
+    let current_text = read_focused_text()?;
+    if find_unique_anchor(&current_text, injected_text).is_some() {
+        Some(current_text)
+    } else {
+        None
+    }
 }
 
 fn align_word_ops(
@@ -572,17 +653,37 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
         return;
     }
 
-    if MONITOR_ACTIVE.swap(true, Ordering::AcqRel) {
-        return;
-    }
-
     tauri::async_runtime::spawn(async move {
         if let Err(e) = db::prune_pending_corrections(&db, PENDING_RETENTION_DAYS) {
             log::warn!("auto-learn prune failed: {e}");
         }
 
-        let mut baseline_text: Option<String> = None;
-        let mut last_text: Option<String> = None;
+        tokio::time::sleep(std::time::Duration::from_millis(BASELINE_CAPTURE_DELAY_MS)).await;
+        let mut baseline_text = tokio::task::spawn_blocking({
+            let injected_text = injected_text.clone();
+            move || capture_baseline_text(&injected_text)
+        })
+        .await
+        .ok()
+        .flatten();
+
+        if baseline_text.is_none() {
+            tokio::time::sleep(std::time::Duration::from_millis(BASELINE_RETRY_DELAY_MS)).await;
+            baseline_text = tokio::task::spawn_blocking({
+                let injected_text = injected_text.clone();
+                move || capture_baseline_text(&injected_text)
+            })
+            .await
+            .ok()
+            .flatten();
+        }
+
+        let Some(baseline_text) = baseline_text else {
+            log::debug!("auto-learn: could not anchor injected text in focused control");
+            return;
+        };
+
+        let mut stable_text_gate = StableTextGate::default();
         let deadline =
             tokio::time::Instant::now() + std::time::Duration::from_secs(MONITOR_WINDOW_SECS);
         let mut recorded_this_session: HashSet<(String, String)> = HashSet::new();
@@ -600,40 +701,25 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
                 _ => continue,
             };
 
-            if baseline_text.is_none() {
-                if find_unique_anchor(&current_text, &injected_text).is_some() {
-                    baseline_text = Some(current_text.clone());
-                    last_text = Some(current_text);
-                } else {
-                    log::debug!("auto-learn: could not anchor injected text in focused control");
-                }
+            let Some(stable_text) = stable_text_gate.observe(current_text) else {
                 continue;
-            }
+            };
 
-            if last_text.as_deref() == Some(current_text.as_str()) {
-                last_text = Some(current_text);
-                continue;
-            }
-
-            let baseline = baseline_text.as_deref().unwrap_or_default();
             let diffs =
-                detect_corrections_from_anchored_text(&injected_text, baseline, &current_text);
-            last_text = Some(current_text);
+                detect_corrections_from_anchored_text(&injected_text, &baseline_text, stable_text);
 
             for (mistake, correction) in diffs {
                 if record_candidate(
                     &db,
                     &mut recorded_this_session,
-                    mistake.clone(),
-                    correction.clone(),
+                    mistake,
+                    correction,
                 ) {
-                    log::info!("auto-learn: '{mistake}' -> '{correction}' promoted to dictionary");
+                    log::info!("auto-learn: promoted candidate pair");
                     app.emit("open-flow:dictionary-updated", ()).ok();
                 }
             }
         }
-
-        MONITOR_ACTIVE.store(false, Ordering::Release);
     });
 }
 
@@ -641,6 +727,15 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
 mod tests {
     use super::*;
     use crate::data::db;
+
+    #[derive(Debug, serde::Deserialize)]
+    struct AutoLearnCase {
+        name: String,
+        original: String,
+        corrected: String,
+        expect: Vec<[String; 2]>,
+        promotes_after_two_sessions: bool,
+    }
 
     #[test]
     fn anchored_text_ignores_surrounding_content() {
@@ -706,6 +801,33 @@ mod tests {
     }
 
     #[test]
+    fn plain_suffix_completion_is_rejected() {
+        assert!(diff_words("bran rot hostin", "bran rot hosting").is_empty());
+        assert!(diff_words("send the file", "sends the file").is_empty());
+        assert!(diff_words("say nugga", "say nuggaaaa").is_empty());
+        assert!(diff_words("scratch the cat", "scratch the cats").is_empty());
+        assert!(diff_words("we should do", "we should doing").is_empty());
+    }
+
+    #[test]
+    fn short_technical_brand_term_correction_is_detected() {
+        assert_eq!(
+            diff_words("bran rock hosting", "bran qroq hosting"),
+            vec![("rock".to_string(), "qroq".to_string())]
+        );
+        assert_eq!(
+            diff_words("bran rot hosting", "bran qroq hosting"),
+            vec![("rot".to_string(), "qroq".to_string())]
+        );
+    }
+
+    #[test]
+    fn one_letter_candidate_is_rejected() {
+        assert!(diff_words("use x hosting", "use qroq hosting").is_empty());
+        assert!(diff_words("use rock hosting", "use q hosting").is_empty());
+    }
+
+    #[test]
     fn repeated_candidate_counts_once_per_session() {
         let db = db::open(":memory:").expect("test db");
         let mut recorded = HashSet::new();
@@ -734,10 +856,10 @@ mod tests {
     }
 
     #[test]
-    fn candidate_promotes_after_three_sessions() {
+    fn candidate_promotes_after_two_sessions() {
         let db = db::open(":memory:").expect("test db");
 
-        for expected in [false, false, true] {
+        for expected in [false, true] {
             let mut recorded = HashSet::new();
             assert_eq!(
                 record_candidate(
@@ -755,5 +877,75 @@ mod tests {
         assert_eq!(entries[0].term, "Kubernetes");
         assert_eq!(entries[0].mistake.as_deref(), Some("Koobernetes"));
         assert!(entries[0].auto_learned);
+    }
+
+    #[test]
+    fn short_technical_term_promotes_only_after_two_sessions() {
+        let db = db::open(":memory:").expect("test db");
+
+        for expected in [false, true] {
+            let mut recorded = HashSet::new();
+            assert_eq!(
+                record_candidate(&db, &mut recorded, "rock".to_string(), "qroq".to_string()),
+                expected
+            );
+        }
+
+        let entries = db::query_dictionary(&db).expect("dictionary");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].term, "qroq");
+        assert_eq!(entries[0].mistake.as_deref(), Some("rock"));
+        assert!(entries[0].auto_learned);
+    }
+
+    #[test]
+    fn stable_text_gate_waits_for_consecutive_identical_reads() {
+        let mut gate = StableTextGate::default();
+
+        assert_eq!(gate.observe("say nugga".to_string()), None);
+        assert_eq!(gate.observe("say nuggaaaa".to_string()), None);
+        assert_eq!(gate.observe("say nuggaaaaa".to_string()), None);
+        assert_eq!(gate.observe("say nuggaaaa".to_string()), None);
+        assert_eq!(
+            gate.observe("say nuggaaaa".to_string()),
+            Some("say nuggaaaa")
+        );
+        assert_eq!(gate.observe("say nuggaaaa".to_string()), None);
+    }
+
+    #[test]
+    fn auto_learn_regression_matrix() {
+        let raw = include_str!("../../testdata/auto_learn_cases.json");
+        let cases: Vec<AutoLearnCase> = serde_json::from_str(raw).expect("valid cases");
+
+        for case in cases {
+            let actual = diff_words(&case.original, &case.corrected);
+            let expected: Vec<(String, String)> = case
+                .expect
+                .iter()
+                .map(|pair| (pair[0].clone(), pair[1].clone()))
+                .collect();
+            assert_eq!(actual, expected, "case {}", case.name);
+
+            if case.promotes_after_two_sessions {
+                assert!(
+                    !expected.is_empty(),
+                    "case {} marked promotable without expected pair",
+                    case.name
+                );
+                let db = db::open(":memory:").expect("test db");
+                let (mistake, correction) = expected[0].clone();
+
+                for expected_promoted in [false, true] {
+                    let mut recorded = HashSet::new();
+                    assert_eq!(
+                        record_candidate(&db, &mut recorded, mistake.clone(), correction.clone()),
+                        expected_promoted,
+                        "case {} promotion threshold",
+                        case.name
+                    );
+                }
+            }
+        }
     }
 }
