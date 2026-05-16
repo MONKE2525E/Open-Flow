@@ -94,7 +94,7 @@
       <div class="settings-body">
         {#key section}
           <div
-            class="panel"
+            class="panel scroll-styled"
             in:fly={{ y: animDir === 'up' ? 20 : -20, duration: 350, delay: 150, easing: expoOut }}
             out:fly={{ y: animDir === 'up' ? -20 : 20, duration: 150, easing: expoOut }}
           >
@@ -200,19 +200,7 @@
     scrollbar-gutter: stable;
   }
 
-  .panel::-webkit-scrollbar { width: 10px; }
-  .panel::-webkit-scrollbar-track { background: transparent; }
-  .panel::-webkit-scrollbar-thumb {
-    background: transparent;
-    border: 3px solid var(--bg-elev);
-    border-radius: 999px;
-  }
-  .panel:hover::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--ink-faint) 45%, transparent);
-  }
-  .panel:hover::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--ink-faint) 65%, transparent);
-  }
+  .panel::-webkit-scrollbar-thumb { border: 3px solid var(--bg-elev); }
 
   /* Shared styles for all section components — scoped to .settings-body */
   .settings-body :global(.settings-h) {

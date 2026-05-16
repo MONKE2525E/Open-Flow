@@ -112,7 +112,7 @@
   <TitleBar />
   <div class="body">
     <Sidebar />
-    <div class="content">
+    <div class="content scroll-styled">
       {#key $currentPage}
         <div class="page-wrapper" in:fly={{ y: 8, duration: 400, delay: 150, easing: expoOut }} out:fly={{ y: -8, duration: 150, easing: expoOut }}>
           {#if $currentPage === 'home'}
@@ -269,19 +269,7 @@
     min-width: 0;
   }
 
-  .content::-webkit-scrollbar { width: 10px; }
-  .content::-webkit-scrollbar-track { background: transparent; }
-  .content::-webkit-scrollbar-thumb {
-    background: transparent;
-    border: 3px solid var(--paper);
-    border-radius: 999px;
-  }
-  .content:hover::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--ink-faint) 42%, transparent);
-  }
-  .content:hover::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--ink-faint) 62%, transparent);
-  }
+  .content::-webkit-scrollbar-thumb { border: 3px solid var(--paper); }
 
   .page-wrapper {
     grid-area: 1 / 1;
