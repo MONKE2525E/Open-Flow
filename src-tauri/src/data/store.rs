@@ -4,6 +4,7 @@ pub const KEY_OPENAI: &str = "api_key_openai";
 pub const KEY_GOOGLE: &str = "api_key_google";
 
 pub const TRANSCRIPTION_PROVIDER: &str = "transcription_provider";
+pub const TRANSCRIPTION_LANGUAGE: &str = "transcription_language";
 pub const CLEANUP_PROVIDER: &str = "cleanup_provider";
 pub const TRANSCRIPTION_MODEL: &str = "transcription_model";
 pub const CLEANUP_MODEL: &str = "cleanup_model";
@@ -28,6 +29,7 @@ pub const APPEARANCE_MODE: &str = "appearance_mode";
 /// All settings values needed by run_pipeline, loaded in one place.
 pub struct PipelineConfig {
     pub transcription_provider: String,
+    pub transcription_language: String,
     pub cleanup_provider: String,
     pub cleanup_enabled: bool,
     pub key_groq: String,
@@ -39,6 +41,79 @@ pub struct PipelineConfig {
     pub api_fallback_enabled: bool,
     pub auto_learn_enabled: bool,
     pub contextual_caps_enabled: bool,
+}
+
+pub const TRANSCRIPTION_LANGUAGE_OPTIONS: &[(&str, &str)] = &[
+    ("af", "Afrikaans"),
+    ("ar", "Arabic"),
+    ("hy", "Armenian"),
+    ("az", "Azerbaijani"),
+    ("be", "Belarusian"),
+    ("bs", "Bosnian"),
+    ("bg", "Bulgarian"),
+    ("ca", "Catalan"),
+    ("zh", "Chinese"),
+    ("hr", "Croatian"),
+    ("cs", "Czech"),
+    ("da", "Danish"),
+    ("nl", "Dutch"),
+    ("en", "English"),
+    ("et", "Estonian"),
+    ("fi", "Finnish"),
+    ("fr", "French"),
+    ("gl", "Galician"),
+    ("de", "German"),
+    ("el", "Greek"),
+    ("he", "Hebrew"),
+    ("hi", "Hindi"),
+    ("hu", "Hungarian"),
+    ("is", "Icelandic"),
+    ("id", "Indonesian"),
+    ("it", "Italian"),
+    ("ja", "Japanese"),
+    ("kn", "Kannada"),
+    ("kk", "Kazakh"),
+    ("ko", "Korean"),
+    ("lv", "Latvian"),
+    ("lt", "Lithuanian"),
+    ("mk", "Macedonian"),
+    ("ms", "Malay"),
+    ("mr", "Marathi"),
+    ("mi", "Maori"),
+    ("ne", "Nepali"),
+    ("no", "Norwegian"),
+    ("fa", "Persian"),
+    ("pl", "Polish"),
+    ("pt", "Portuguese"),
+    ("ro", "Romanian"),
+    ("ru", "Russian"),
+    ("sr", "Serbian"),
+    ("sk", "Slovak"),
+    ("sl", "Slovenian"),
+    ("es", "Spanish"),
+    ("sw", "Swahili"),
+    ("sv", "Swedish"),
+    ("tl", "Tagalog"),
+    ("ta", "Tamil"),
+    ("th", "Thai"),
+    ("tr", "Turkish"),
+    ("uk", "Ukrainian"),
+    ("ur", "Urdu"),
+    ("vi", "Vietnamese"),
+    ("cy", "Welsh"),
+];
+
+pub fn is_supported_transcription_language(code: &str) -> bool {
+    TRANSCRIPTION_LANGUAGE_OPTIONS
+        .iter()
+        .any(|(candidate, _)| *candidate == code)
+}
+
+pub fn transcription_language_label(code: &str) -> &'static str {
+    TRANSCRIPTION_LANGUAGE_OPTIONS
+        .iter()
+        .find_map(|(candidate, label)| (*candidate == code).then_some(*label))
+        .unwrap_or("English")
 }
 
 impl PipelineConfig {
@@ -66,9 +141,18 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             v
         }
     };
+    let language_or_default = |key: &str, default: &str| -> String {
+        let v = str_or(key, default);
+        if is_supported_transcription_language(&v) {
+            v
+        } else {
+            default.into()
+        }
+    };
 
     PipelineConfig {
         transcription_provider: str_or(TRANSCRIPTION_PROVIDER, "groq"),
+        transcription_language: language_or_default(TRANSCRIPTION_LANGUAGE, "en"),
         cleanup_provider: str_or(CLEANUP_PROVIDER, "groq"),
         cleanup_enabled: store
             .get(CLEANUP_ENABLED)
