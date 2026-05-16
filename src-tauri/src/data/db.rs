@@ -53,11 +53,14 @@ pub fn open(path: &str) -> Result<Db> {
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
 
-    if user_version < 2 {
+    if user_version < 2 { // Update this whenever the latest migration version increases
         let db_path = std::path::Path::new(path);
         if db_path.exists() {
             let _ = std::fs::copy(db_path, db_path.with_extension("db.bak"));
         }
+    }
+
+    if user_version < 2 {
 
         // IMPORTANT: each migration uses BEGIN/COMMIT for atomicity, followed by an
         // explicit ROLLBACK. If the migration fails mid-way, sqlite3_exec aborts but
