@@ -1,10 +1,10 @@
 # CLAUDE.md
 
 # Notes from user
-- Run npm dev commands yourself please
 - Github Repo: https://github.com/MONKE2525E/Open-Flow
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
 - docs/ROADMAP.md keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
+- currently working towards OpenFlow 0.9.0.
 
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
