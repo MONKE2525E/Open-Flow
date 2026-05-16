@@ -4,10 +4,17 @@
   import Toggle from '../Toggle.svelte';
   import { appearanceMode } from '../../stores';
   import { saveSetting, type AppearanceMode } from '../../settings';
+  import {
+    getTranscriptionLanguageLabel,
+    transcriptionLanguages,
+    type TranscriptionLanguageCode,
+  } from '../../transcriptionLanguages';
 
   let microphones = $state<string[]>([]);
   let selectedMic = $state('');
   let micDropdownOpen = $state(false);
+  let selectedLanguage = $state<TranscriptionLanguageCode>('en');
+  let languageDropdownOpen = $state(false);
   let muteAudio = $state(false);
   let autostart = $state(false);
   let hotkey = $state(['ControlLeft', 'MetaLeft']);
@@ -26,13 +33,14 @@
 
   async function loadSettings() {
     try {
-      const [mics, muteVal, autostartVal, mic, hk, appearance] = await Promise.all([
+      const [mics, muteVal, autostartVal, mic, hk, appearance, language] = await Promise.all([
         invoke<string[]>('get_microphones'),
         invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
         invoke<boolean | null>('get_setting', { key: 'autostart_enabled' }),
         invoke<string | null>('get_setting', { key: 'microphone_device' }),
         invoke<string[] | null>('get_setting', { key: 'hotkey' }),
         invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
+        invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       ]);
       microphones = mics;
       muteAudio = muteVal ?? false;
@@ -41,6 +49,9 @@
       if (hk && hk.length === 2) hotkey = hk;
       if (appearance === 'system' || appearance === 'light' || appearance === 'dark') {
         appearanceMode.set(appearance);
+      }
+      if (language && transcriptionLanguages.some((option) => option.code === language)) {
+        selectedLanguage = language;
       }
     } catch (err) {
       console.error('GeneralSection load failed:', err);
@@ -61,11 +72,33 @@
     if (!(e.target as HTMLElement).closest('.mic-dropdown')) micDropdownOpen = false;
   }
 
+  function closeLanguageDropdown(e: MouseEvent) {
+    if (!(e.target as HTMLElement).closest('.language-dropdown')) languageDropdownOpen = false;
+  }
+
   $effect(() => {
     if (micDropdownOpen) {
       tick().then(() => window.addEventListener('click', closeMicDropdown, { once: true }));
     }
   });
+
+  $effect(() => {
+    if (languageDropdownOpen) {
+      tick().then(() => window.addEventListener('click', closeLanguageDropdown, { once: true }));
+    }
+  });
+
+  async function saveLanguage(code: TranscriptionLanguageCode) {
+    const previous = selectedLanguage;
+    selectedLanguage = code;
+    languageDropdownOpen = false;
+    try {
+      await saveSetting('transcription_language', code);
+    } catch (err) {
+      selectedLanguage = previous;
+      console.error('save transcription_language failed:', err);
+    }
+  }
 
   async function handleMuteAudio(value: boolean) {
     muteAudio = value;
@@ -231,6 +264,33 @@
   </div>
 </div>
 <div class="setting-row">
+  <div><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect</div></div>
+  <div class="language-dropdown">
+    <button class="btn-ghost language-btn" onclick={() => (languageDropdownOpen = !languageDropdownOpen)}>
+      <span>{getTranscriptionLanguageLabel(selectedLanguage)}</span>
+      <span class="language-code">{selectedLanguage}</span>
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m6 9 6 6 6-6"/>
+      </svg>
+    </button>
+    {#if languageDropdownOpen}
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="language-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
+        {#each transcriptionLanguages as language}
+          <button
+            class="language-item"
+            class:active={selectedLanguage === language.code}
+            onclick={() => saveLanguage(language.code)}
+          >
+            <span>{language.label}</span>
+            <span>{language.code}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+</div>
+<div class="setting-row">
   <div><div class="label">Mute PC Audio</div><div class="desc">Mutes Windows volume while dictating to prevent audio interference</div></div>
   <Toggle checked={muteAudio} onchange={handleMuteAudio} />
 </div>
@@ -258,10 +318,17 @@
   .keybind-btn:hover { background: var(--control-hover); }
   .keybind-btn.recording { background: var(--accent); color: var(--on-accent); animation: pulse 1.5s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
-  .mic-dropdown { position: relative; flex-shrink: 0; }
-  .mic-btn { display: flex; align-items: center; gap: 6px; max-width: 180px; }
-  .mic-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
-  .mic-menu {
+  .mic-dropdown, .language-dropdown { position: relative; flex-shrink: 0; }
+  .mic-btn, .language-btn { display: flex; align-items: center; gap: 6px; max-width: 180px; }
+  .language-btn { max-width: 210px; }
+  .mic-btn span, .language-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+  .language-code {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+  }
+  .mic-menu, .language-menu {
     position: absolute;
     right: 0;
     top: calc(100% + 4px);
@@ -275,7 +342,8 @@
     overflow-y: auto;
     z-index: 10;
   }
-  .mic-item {
+  .language-menu { min-width: 220px; max-height: 260px; }
+  .mic-item, .language-item {
     display: block;
     width: 100%;
     text-align: left;
@@ -291,9 +359,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .mic-item:last-child { border-bottom: none; }
-  .mic-item:hover { background: var(--paper); }
-  .mic-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
+  .language-item { display: flex; justify-content: space-between; gap: 12px; }
+  .language-item span:last-child {
+    color: var(--ink-faint);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    text-transform: uppercase;
+  }
+  .mic-item:last-child, .language-item:last-child { border-bottom: none; }
+  .mic-item:hover, .language-item:hover { background: var(--paper); }
+  .mic-item.active, .language-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
   .mic-empty { padding: 10px 12px; font-size: 12px; color: var(--ink-mute); font-style: italic; }
   .appearance-segment {
     display: inline-flex;

@@ -25,13 +25,18 @@ pub async fn transcribe_and_cleanup_gemini(
 ) -> Result<String> {
     let instruction = format!(
         "Transcribe this audio, then immediately apply the following formatting rules to your \
-         transcription output.\n\n{profile_prompt}\n\nReturn ONLY the final cleaned text — \
+         transcription output.\n\n{profile_prompt}\n\nReturn ONLY the final cleaned text, \
          no commentary, no quotes, no explanation."
     );
     transcribe_gemini_with_prompt(wav, api_key, &instruction, true).await
 }
 
-pub async fn transcribe(wav: Bytes, provider: Provider, api_key: &str) -> Result<String> {
+pub async fn transcribe(
+    wav: Bytes,
+    provider: Provider,
+    api_key: &str,
+    language: &str,
+) -> Result<String> {
     match provider {
         Provider::Groq => {
             transcribe_whisper(
@@ -39,6 +44,7 @@ pub async fn transcribe(wav: Bytes, provider: Provider, api_key: &str) -> Result
                 api_key,
                 "https://api.groq.com/openai/v1/audio/transcriptions",
                 "whisper-large-v3-turbo",
+                language,
             )
             .await
         }
@@ -49,15 +55,22 @@ pub async fn transcribe(wav: Bytes, provider: Provider, api_key: &str) -> Result
                 api_key,
                 "https://api.openai.com/v1/audio/transcriptions",
                 "gpt-4o-transcribe",
+                language,
             )
             .await
         }
 
-        Provider::Google => transcribe_gemini(wav, api_key).await,
+        Provider::Google => transcribe_gemini(wav, api_key, language).await,
     }
 }
 
-async fn transcribe_whisper(wav: Bytes, api_key: &str, url: &str, model: &str) -> Result<String> {
+async fn transcribe_whisper(
+    wav: Bytes,
+    api_key: &str,
+    url: &str,
+    model: &str,
+    language: &str,
+) -> Result<String> {
     #[derive(serde::Deserialize)]
     struct WhisperResponse {
         text: String,
@@ -70,7 +83,8 @@ async fn transcribe_whisper(wav: Bytes, api_key: &str, url: &str, model: &str) -
     let form = multipart::Form::new()
         .part("file", part)
         .text("model", model.to_owned())
-        .text("response_format", "json");
+        .text("response_format", "json")
+        .text("language", language.to_owned());
 
     let resp = super::client::get()
         .post(url)
@@ -88,10 +102,13 @@ async fn transcribe_whisper(wav: Bytes, api_key: &str, url: &str, model: &str) -
     Ok(body.text.trim().to_owned())
 }
 
-async fn transcribe_gemini(wav: Bytes, api_key: &str) -> Result<String> {
-    let prompt = "Transcribe this audio exactly as spoken. \
-                  Return only the spoken words — no commentary, no formatting, no explanation.";
-    transcribe_gemini_with_prompt(wav, api_key, prompt, false).await
+async fn transcribe_gemini(wav: Bytes, api_key: &str, language: &str) -> Result<String> {
+    let language_label = crate::data::store::transcription_language_label(language);
+    let prompt = format!(
+        "Transcribe this audio exactly as spoken in {language_label}. \
+         Return only the spoken words, no commentary, no formatting, no explanation."
+    );
+    transcribe_gemini_with_prompt(wav, api_key, &prompt, false).await
 }
 
 async fn transcribe_gemini_with_prompt(

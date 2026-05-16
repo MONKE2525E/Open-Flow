@@ -125,6 +125,7 @@
     position: absolute;
     inset: 0;
     background: var(--overlay);
+    backdrop-filter: blur(2px);
     display: grid;
     place-items: center;
     z-index: 5;

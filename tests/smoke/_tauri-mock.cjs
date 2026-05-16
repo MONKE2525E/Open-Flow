@@ -25,6 +25,7 @@ function tauriMock() {
   const mem = {
     setup_complete:          true,
     transcription_model:     'groq/whisper-large-v3-turbo',
+    transcription_language:  'en',
     cleanup_model:           'groq/llama-3.3-70b-versatile',
     cleanup_enabled:         true,
     noise_reduction:         true,
@@ -102,6 +103,7 @@ function tauriMock() {
       case 'save_setting':       mem[args?.key] = args?.value; persistMem(); return null;
       case 'get_all_settings':   return {
         transcription_model:     mem.transcription_model ?? null,
+        transcription_language:  mem.transcription_language ?? null,
         cleanup_model:           mem.cleanup_model ?? null,
         cleanup_enabled:         mem.cleanup_enabled ?? null,
         noise_reduction:         mem.noise_reduction ?? null,
