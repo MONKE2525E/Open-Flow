@@ -94,7 +94,7 @@
       <div class="settings-body">
         {#key section}
           <div
-            class="panel"
+            class="panel scroll-styled"
             in:fly={{ y: animDir === 'up' ? 20 : -20, duration: 350, delay: 150, easing: expoOut }}
             out:fly={{ y: animDir === 'up' ? -20 : 20, duration: 150, easing: expoOut }}
           >
@@ -197,7 +197,10 @@
     inset: 0;
     padding: 26px 30px;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
+
+  .panel::-webkit-scrollbar-thumb { border: 3px solid var(--bg-elev); }
 
   /* Shared styles for all section components — scoped to .settings-body */
   .settings-body :global(.settings-h) {
