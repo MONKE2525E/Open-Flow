@@ -471,8 +471,17 @@ pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
 }
 
 #[tauri::command]
-pub async fn install_update(download_url: String) -> Result<(), String> {
+pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), String> {
     use std::io::Write;
+
+    // Back up the database before touching anything.
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let db = std::path::Path::new(&appdata).join("OpenFlow").join("openflow.db");
+        if db.exists() {
+            let _ = std::fs::copy(&db, db.with_extension("db.bak"));
+        }
+    }
+
     let bytes = crate::api::client::get()
         .get(&download_url)
         .header("User-Agent", "open-flow")
@@ -484,15 +493,32 @@ pub async fn install_update(download_url: String) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    let path = std::env::temp_dir().join("open-flow-update.exe");
-    let mut f = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    let installer = std::env::temp_dir().join("open-flow-update.exe");
+    let mut f = std::fs::File::create(&installer).map_err(|e| e.to_string())?;
     f.write_all(&bytes).map_err(|e| e.to_string())?;
     drop(f);
 
-    std::process::Command::new(&path)
+    // Write a hidden PowerShell bootstrap that waits for this process to exit,
+    // runs the installer silently, then relaunches the app at the same path.
+    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let script = format!(
+        "Start-Sleep -Seconds 1\r\nStart-Process -Wait -FilePath '{}' -ArgumentList '/S'\r\nStart-Process -FilePath '{}'",
+        installer.display(),
+        current_exe.display()
+    );
+    let script_path = std::env::temp_dir().join("open-flow-updater.ps1");
+    std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
+
+    std::process::Command::new("powershell")
+        .args([
+            "-WindowStyle", "Hidden",
+            "-ExecutionPolicy", "Bypass",
+            "-File", script_path.to_str().unwrap_or(""),
+        ])
         .spawn()
         .map_err(|e| e.to_string())?;
 
+    app.exit(0);
     Ok(())
 }
 

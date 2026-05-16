@@ -140,16 +140,15 @@
     loading = false;
   }
 
-  async function handleInstall() {
+  function handleInstall() {
     if (!$updateInfo) return;
     installing = true;
-    try {
-      await invoke('install_update', { downloadUrl: $updateInfo.downloadUrl });
-    } catch (e) {
+    // Happy path: backend exits the process — no response ever arrives.
+    // Error path: invoke rejects and we reset the button.
+    invoke('install_update', { downloadUrl: $updateInfo.downloadUrl }).catch((e) => {
       console.error('Install failed:', e);
-    } finally {
       installing = false;
-    }
+    });
   }
 
   async function dismissUpdate() {
@@ -242,7 +241,7 @@
               <div class="update-actions">
                 <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
                 <button class="update-btn" onclick={handleInstall} disabled={installing}>
-                  {installing ? 'Downloading…' : 'Install Now'}
+                  {installing ? 'Installing…' : 'Install & Restart'}
                 </button>
               </div>
             </div>
