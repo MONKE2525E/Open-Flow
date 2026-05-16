@@ -15,6 +15,7 @@
   let micDropdownOpen = $state(false);
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   let languageDropdownOpen = $state(false);
+  let languageTouched = false;
   let muteAudio = $state(false);
   let autostart = $state(false);
   let hotkey = $state(['ControlLeft', 'MetaLeft']);
@@ -50,7 +51,7 @@
       if (appearance === 'system' || appearance === 'light' || appearance === 'dark') {
         appearanceMode.set(appearance);
       }
-      if (language && transcriptionLanguages.some((option) => option.code === language)) {
+      if (!languageTouched && language && transcriptionLanguages.some((option) => option.code === language)) {
         selectedLanguage = language;
       }
     } catch (err) {
@@ -89,13 +90,12 @@
   });
 
   async function saveLanguage(code: TranscriptionLanguageCode) {
-    const previous = selectedLanguage;
+    languageTouched = true;
     selectedLanguage = code;
     languageDropdownOpen = false;
     try {
       await saveSetting('transcription_language', code);
     } catch (err) {
-      selectedLanguage = previous;
       console.error('save transcription_language failed:', err);
     }
   }
