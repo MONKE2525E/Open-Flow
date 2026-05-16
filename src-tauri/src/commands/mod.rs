@@ -471,8 +471,17 @@ pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
 }
 
 #[tauri::command]
-pub async fn install_update(download_url: String) -> Result<(), String> {
+pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), String> {
     use std::io::Write;
+
+    // Back up the database before touching anything.
+    if let Ok(mut db_path) = app.path().app_data_dir() {
+        db_path.push("openflow.db");
+        if db_path.exists() {
+            let _ = std::fs::copy(&db_path, db_path.with_extension("db.bak"));
+        }
+    }
+
     let bytes = crate::api::client::get()
         .get(&download_url)
         .header("User-Agent", "open-flow")
@@ -484,15 +493,33 @@ pub async fn install_update(download_url: String) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    let path = std::env::temp_dir().join("open-flow-update.exe");
-    let mut f = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    let installer = std::env::temp_dir().join("open-flow-update.exe");
+    let mut f = std::fs::File::create(&installer).map_err(|e| e.to_string())?;
     f.write_all(&bytes).map_err(|e| e.to_string())?;
     drop(f);
 
-    std::process::Command::new(&path)
+    // Write a hidden PowerShell bootstrap that waits for this process to exit,
+    // runs the installer silently, then relaunches the app at the same path.
+    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let pid = std::process::id();
+    let script = format!(
+        "Wait-Process -Id {pid} -ErrorAction SilentlyContinue
+Start-Process -Wait -FilePath '{}' -ArgumentList '/S'
+Start-Process -FilePath '{}'",
+        installer.to_string_lossy().replace("'", "''"),
+        current_exe.to_string_lossy().replace("'", "''")
+    );
+    let script_path = std::env::temp_dir().join("open-flow-updater.ps1");
+    std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
+
+    std::process::Command::new("powershell")
+        .arg("-WindowStyle").arg("Hidden")
+        .arg("-ExecutionPolicy").arg("Bypass")
+        .arg("-File").arg(&script_path)
         .spawn()
         .map_err(|e| e.to_string())?;
 
+    app.exit(0);
     Ok(())
 }
 

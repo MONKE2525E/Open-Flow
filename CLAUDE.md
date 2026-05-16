@@ -87,6 +87,8 @@ src/                        # Svelte 5 frontend
   main.ts / pill-main.ts    # Vite entry points for each window
   lib/
     stores.ts               # All Svelte writable stores (single file)
+    settings.ts             # Typed settings registry: SettingsValueMap, saveSetting() helper, shared types (ProviderId, AppearanceMode, etc.)
+    transcriptionLanguages.ts  # ISO 639-1 language list + TranscriptionLanguageCode type (frontend mirror of store.rs validation)
     icons.ts                # SVG icon definitions
     components/layout/      # TitleBar, Sidebar, DictationPill
     components/             # Shared: Toggle, Dropdown, MicInputButton
@@ -168,6 +170,8 @@ WAL mode is enabled. Migrations use `execute_batch` wrapped in explicit `BEGIN/C
 
 Groq is the recommended default — free tier, fast LPU inference. Google uses base64-encoded audio in the request body; Groq/OpenAI use multipart form upload. The cleanup API wraps transcription text in `<raw_dictation>` XML delimiters before sending. Google cleanup sets `thinking_budget: 0` to disable deep thinking.
 
+The `transcription_language` setting (ISO 639-1 code, default `en`) is passed to Groq/OpenAI as a `language` form field, and to Gemini as a natural-language label in the prompt (resolved via `transcription_language_label()` in `store.rs`). The supported language list lives in `src/lib/transcriptionLanguages.ts` (frontend) and is validated by `is_supported_transcription_language()` (Rust).
+
 **API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to a secondary provider when `api_fallback_enabled` is true. Fallback chains: groq→[openai, google], openai→[groq, google], google→[groq, openai]. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately.
 
 ## Global Hotkey Behavior
@@ -183,7 +187,7 @@ Active window process name → profile → system prompt prefix sent to cleanup 
 
 Built-in profiles: `casual`, `formal`, `email`, `excited`, `very_casual`. Profile system prompts live in `src-tauri/src/api/cleanup.rs`. `resolve_profile()` reads `AppMapping` entries (`Vec<AppMapping>`) from `tauri-plugin-store` at pipeline time to map foreground process name → profile name. Lookup key is the lowercase `.exe` name. Falls back to `default_tone` setting if no mapping found.
 
-Store keys (API keys, settings) are defined as constants in `src-tauri/src/data/store.rs` — always use the constant, never a raw string literal.
+Store keys (API keys, settings) are defined as constants in `src-tauri/src/data/store.rs` — always use the constant, never a raw string literal. When adding a new setting, update both `store.rs` (Rust constant + validation) and `src/lib/settings.ts` (frontend `SettingsValueMap` type entry).
 
 ## Prompt Assembly (`prompts.rs`)
 
