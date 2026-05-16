@@ -2,57 +2,33 @@
   import { invoke } from '@tauri-apps/api/core';
   import { slide } from 'svelte/transition';
   import Toggle from '../Toggle.svelte';
-  import { saveSetting, type SettingKey } from '../../settings';
+  import { saveSetting } from '../../settings';
 
-  let toggles = $state({
-    cleanup: true,
-    contextualCaps: true,
-    noiseReduction: true,
-    apiFallback: false,
-    autoLearn: false,
-  });
+  let noiseReduction = $state(true);
   let micGain = $state(3.5);
 
   async function loadSettings() {
     try {
-      const [cleanup, contextualCaps, noiseReduction, apiFallback, autoLearn, savedGain] =
-        await Promise.all([
-          invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
-          invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
-          invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
-          invoke<boolean | null>('get_setting', { key: 'api_fallback_enabled' }),
-          invoke<boolean | null>('get_setting', { key: 'auto_learn_enabled' }),
-          invoke<number | null>('get_setting', { key: 'mic_gain' }),
-        ]);
-      toggles = {
-        cleanup: cleanup ?? true,
-        contextualCaps: contextualCaps ?? true,
-        noiseReduction: noiseReduction ?? true,
-        apiFallback: apiFallback ?? false,
-        autoLearn: autoLearn ?? false,
-      };
+      const [nr, savedGain] = await Promise.all([
+        invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
+        invoke<number | null>('get_setting', { key: 'mic_gain' }),
+      ]);
+      noiseReduction = nr ?? true;
       if (savedGain !== null && savedGain !== undefined) {
         micGain = Math.max(1, Math.min(8, savedGain));
       }
     } catch (err) {
-      console.error('AdvancedSection load failed:', err);
+      console.error('AudioSection load failed:', err);
     }
   }
 
-  async function handleToggle(key: string, value: boolean) {
-    toggles = { ...toggles, [key]: value };
-    const invokeKey: Record<string, SettingKey> = {
-      cleanup: 'cleanup_enabled',
-      contextualCaps: 'contextual_caps_enabled',
-      noiseReduction: 'noise_reduction',
-      apiFallback: 'api_fallback_enabled',
-      autoLearn: 'auto_learn_enabled',
-    };
+  async function handleNoiseReduction(value: boolean) {
+    noiseReduction = value;
     try {
-      await saveSetting(invokeKey[key], value);
+      await saveSetting('noise_reduction', value);
     } catch (err) {
-      toggles = { ...toggles, [key]: !value };
-      console.error(`save toggle ${key} failed:`, err);
+      noiseReduction = !value;
+      console.error('save noise_reduction failed:', err);
     }
   }
 
@@ -67,15 +43,7 @@
   loadSettings();
 </script>
 
-<h2 class="settings-h">Advanced</h2>
-<div class="setting-row">
-  <div><div class="label">Auto-cleanup</div><div class="desc">Run LLM cleanup on every transcription</div></div>
-  <Toggle checked={toggles.cleanup} onchange={(v) => handleToggle('cleanup', v)} />
-</div>
-<div class="setting-row">
-  <div><div class="label">Contextual capitalization</div><div class="desc">Lowercases the first word when injecting mid-sentence</div></div>
-  <Toggle checked={toggles.contextualCaps} onchange={(v) => handleToggle('contextualCaps', v)} />
-</div>
+<h2 class="settings-h">Audio</h2>
 <div class="setting-row gain-row">
   <div class="gain-header">
     <div>
@@ -109,30 +77,7 @@
 </div>
 <div class="setting-row">
   <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
-  <Toggle checked={toggles.noiseReduction} onchange={(v) => handleToggle('noiseReduction', v)} />
-</div>
-<div class="setting-row">
-  <div>
-    <div class="label">API fallback</div>
-    <div class="desc">If your primary provider hits its quota, automatically retry with another configured API key</div>
-  </div>
-  <Toggle checked={toggles.apiFallback} onchange={(v) => handleToggle('apiFallback', v)} />
-</div>
-<div class="setting-row">
-  <div>
-    <div class="label" style="display:flex;align-items:center;gap:7px;">
-      Auto-learn corrections
-      <span class="privacy-eye-wrap">
-        <svg class="privacy-eye" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-          <circle cx="12" cy="12" r="3"/>
-        </svg>
-        <span class="privacy-tooltip">Entirely on-device — no text is sent to any API.</span>
-      </span>
-    </div>
-    <div class="desc">Add confirmed corrections to dictionary automatically</div>
-  </div>
-  <Toggle checked={toggles.autoLearn} onchange={(v) => handleToggle('autoLearn', v)} />
+  <Toggle checked={noiseReduction} onchange={handleNoiseReduction} />
 </div>
 
 <style>
@@ -203,27 +148,4 @@
   }
   .gain-tip svg { flex-shrink: 0; color: var(--warning); }
   .gain-tip strong { font-weight: 600; }
-  .privacy-eye-wrap { position: relative; display: inline-flex; align-items: center; }
-  .privacy-eye { color: var(--ink-mute); cursor: default; flex-shrink: 0; transition: color 0.15s ease, transform 0.15s ease; }
-  .privacy-eye-wrap:hover .privacy-eye { color: var(--ink-soft); transform: scale(1.18); }
-  .privacy-tooltip {
-    position: absolute;
-    left: 50%;
-    bottom: calc(100% + 7px);
-    transform: translateX(-50%) translateY(4px);
-    background: var(--ink);
-    color: var(--paper);
-    font-size: 11px;
-    font-family: var(--sans);
-    font-weight: 400;
-    white-space: nowrap;
-    padding: 4px 9px;
-    border-radius: 6px;
-    pointer-events: none;
-    z-index: 20;
-    box-shadow: var(--shadow-popover);
-    opacity: 0;
-    transition: opacity 0.16s ease, transform 0.16s ease;
-  }
-  .privacy-eye-wrap:hover .privacy-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
