@@ -91,7 +91,7 @@ async fn openai_compat(
             },
             Msg {
                 role: "user".into(),
-                content: format!("<raw_dictation>\n{}\n</raw_dictation>", text),
+                content: format!("<raw_dictation>\n{text}\n</raw_dictation>"),
             },
         ],
         max_tokens: 4096,
@@ -154,7 +154,7 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
     let req = Req {
         contents: vec![GContent {
             parts: vec![GPart {
-                text: format!("<raw_dictation>\n{}\n</raw_dictation>", text),
+                text: format!("<raw_dictation>\n{text}\n</raw_dictation>"),
             }],
         }],
         system_instruction: GContent {
@@ -167,7 +167,9 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
         },
     };
 
-    let url = format!("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}", api_key);
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    );
 
     let resp = super::client::get().post(&url).json(&req).send().await?;
 

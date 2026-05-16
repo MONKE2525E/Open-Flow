@@ -239,10 +239,8 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     if let Some(cb) = CANCEL_CB.get() {
                         cb();
                     }
-                } else {
-                    if let Some(cb) = RELEASE_CB.get() {
-                        cb();
-                    }
+                } else if let Some(cb) = RELEASE_CB.get() {
+                    cb();
                 }
                 return LRESULT(1);
             }

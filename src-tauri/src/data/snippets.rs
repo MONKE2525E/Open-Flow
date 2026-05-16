@@ -1,4 +1,5 @@
 use crate::data::db::{self, Db};
+use std::cmp::Reverse;
 
 /// If the entire transcription is just a snippet trigger (ignoring trailing punctuation
 /// added by the transcription model), return the expansion directly.
@@ -44,7 +45,7 @@ pub fn collect_snippet_instructions_from(text: &str, snippets: &[db::Snippet]) -
 
 pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -> String {
     // Longest triggers first — prevents short prefix matches shadowing longer ones.
-    snippets.sort_by(|a, b| b.trigger.len().cmp(&a.trigger.len()));
+    snippets.sort_by_key(|snippet| Reverse(snippet.trigger.len()));
 
     let mut result = text.to_string();
 

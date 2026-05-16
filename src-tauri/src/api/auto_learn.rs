@@ -627,11 +627,7 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
                     mistake.clone(),
                     correction.clone(),
                 ) {
-                    log::info!(
-                        "auto-learn: '{}' -> '{}' promoted to dictionary",
-                        mistake,
-                        correction
-                    );
+                    log::info!("auto-learn: '{mistake}' -> '{correction}' promoted to dictionary");
                     app.emit("open-flow:dictionary-updated", ()).ok();
                 }
             }
