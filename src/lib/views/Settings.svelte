@@ -11,7 +11,7 @@
   import ApiKeysSection from '../components/settings/ApiKeysSection.svelte';
   import ModelsSection from '../components/settings/ModelsSection.svelte';
   import PrivacySection from '../components/settings/PrivacySection.svelte';
-  import AdvancedSection from '../components/settings/AdvancedSection.svelte';
+  import AudioSection from '../components/settings/AudioSection.svelte';
   import AboutSection from '../components/settings/AboutSection.svelte';
 
   let section = $state('general');
@@ -109,7 +109,7 @@
             {:else if section === 'privacy'}
               <PrivacySection />
             {:else if section === 'advanced'}
-              <AdvancedSection />
+              <AudioSection />
             {:else if section === 'about'}
               <AboutSection {appVersion} />
             {/if}

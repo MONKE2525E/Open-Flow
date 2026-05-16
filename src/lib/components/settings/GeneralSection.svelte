@@ -35,34 +35,44 @@
   ]);
 
   async function loadSettings() {
-    try {
-      const [mics, muteVal, autostartVal, mic, hk, appearance, language, cleanupVal, capsVal] = await Promise.all([
-        invoke<string[]>('get_microphones'),
-        invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
-        invoke<boolean | null>('get_setting', { key: 'autostart_enabled' }),
-        invoke<string | null>('get_setting', { key: 'microphone_device' }),
-        invoke<string[] | null>('get_setting', { key: 'hotkey' }),
-        invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
-        invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
-        invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
-        invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
-      ]);
-      microphones = mics;
-      muteAudio = muteVal ?? false;
-      autostart = autostartVal ?? false;
-      selectedMic = mic ?? '';
-      cleanup = cleanupVal ?? true;
-      contextualCaps = capsVal ?? true;
-      if (hk && hk.length === 2) hotkey = hk;
-      if (appearance === 'system' || appearance === 'light' || appearance === 'dark') {
-        appearanceMode.set(appearance);
-      }
-      if (!languageTouched && language && transcriptionLanguages.some((option) => option.code === language)) {
-        selectedLanguage = language;
-      }
-    } catch (err) {
-      console.error('GeneralSection load failed:', err);
+    const results = await Promise.allSettled([
+      invoke<string[]>('get_microphones'),
+      invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
+      invoke<boolean | null>('get_setting', { key: 'autostart_enabled' }),
+      invoke<string | null>('get_setting', { key: 'microphone_device' }),
+      invoke<string[] | null>('get_setting', { key: 'hotkey' }),
+      invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
+      invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
+      invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
+      invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
+    ]);
+
+    const val = <T>(i: number, fallback: T): T =>
+      results[i].status === 'fulfilled' ? (results[i] as PromiseFulfilledResult<T>).value ?? fallback : fallback;
+
+    microphones = val<string[]>(0, []);
+    muteAudio = val<boolean | null>(1, null) ?? false;
+    autostart = val<boolean | null>(2, null) ?? false;
+    selectedMic = val<string | null>(3, null) ?? '';
+    cleanup = val<boolean | null>(7, null) ?? true;
+    contextualCaps = val<boolean | null>(8, null) ?? true;
+
+    const hk = val<string[] | null>(4, null);
+    if (hk && hk.length === 2) hotkey = hk;
+
+    const appearance = val<AppearanceMode | null>(5, null);
+    if (appearance === 'system' || appearance === 'light' || appearance === 'dark') {
+      appearanceMode.set(appearance);
     }
+
+    const language = val<TranscriptionLanguageCode | null>(6, null);
+    if (!languageTouched && language && transcriptionLanguages.some((option) => option.code === language)) {
+      selectedLanguage = language;
+    }
+
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
+    });
   }
 
   async function saveMic(name: string) {
