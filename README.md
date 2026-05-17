@@ -1,6 +1,6 @@
-<p align="center">
+<div align="center">
   <img src="docs/banner.svg" alt="Open Flow" width="800"/>
-</p>
+</div>
 
 <p align="center">
   Hold <kbd>Ctrl</kbd>+<kbd>Windows</kbd>, speak, release — your words appear instantly, cleaned up by an LLM, in whatever app is in focus.<br/>
