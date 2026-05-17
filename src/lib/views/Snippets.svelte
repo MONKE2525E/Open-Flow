@@ -264,7 +264,7 @@
                 out:fade={{ duration: motionMs(MOTION_MS.fast) }}
                 animate:flip={{ duration: motionMs(MOTION_MS.base), easing: expoOut }}
                 onclick={() => selectRow(s)}
-                onkeydown={(e) => e.key === 'Enter' && selectRow(s)}
+                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRow(s); } }}
               >
                 <div class="snip-left">
                   <div class="snip-trigger">{s.trigger}</div>
@@ -294,7 +294,7 @@
             <div
               class="inspector"
               in:fly={{ x: inspectorDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
-              out:fly={{ x: -inspectorDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.base), easing: expoOut }}
+              out:fade={{ duration: 0 }}
             >
               <div class="insp-trigger">{selected.trigger}</div>
               <div class="insp-arrow" aria-hidden="true">

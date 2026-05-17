@@ -242,7 +242,7 @@
                 out:fade={{ duration: motionMs(MOTION_MS.fast) }}
                 animate:flip={{ duration: motionMs(MOTION_MS.base), easing: expoOut }}
                 onclick={() => selectRow(e)}
-                onkeydown={(ev) => ev.key === 'Enter' && selectRow(e)}
+                onkeydown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectRow(e); } }}
               >
                 <div class="dict-left">
                   <div class="dict-main">
