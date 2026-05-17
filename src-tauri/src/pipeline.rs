@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use crate::api::{auto_learn, cleanup, transcription};
 use crate::api::prompts::{AppContextMode, PromptProfile};
 use crate::core::{injection, window_context};
@@ -294,6 +295,55 @@ fn cleanup_path_for(
     } else {
         CleanupPath::LlmStandard
     }
+}
+
+fn normalize_cleanup_cache_key(input: &str) -> String {
+    input
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+fn parse_sqlite_utc(s: &str) -> Option<DateTime<Utc>> {
+    let naive = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok()?;
+    Some(DateTime::from_naive_utc_and_offset(naive, Utc))
+}
+
+fn sqlite_utc_plus(days: i64) -> String {
+    (Utc::now() + Duration::days(days))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string()
+}
+
+fn next_cache_expiry(
+    hit_count: i64,
+    created_at: &str,
+    existing_expires_at: &str,
+    now: DateTime<Utc>,
+) -> String {
+    let base = now + Duration::days(7);
+    let created = parse_sqlite_utc(created_at).unwrap_or(now);
+    let age = now.signed_duration_since(created);
+
+    let next = if hit_count >= 5 && age <= Duration::days(60) {
+        now + Duration::days(365)
+    } else if hit_count >= 5 && age <= Duration::days(30) {
+        now + Duration::days(30)
+    } else if hit_count >= 2 && age <= Duration::days(14) {
+        now + Duration::days(30)
+    } else if hit_count >= 2 && age <= Duration::days(7) {
+        now + Duration::days(7)
+    } else {
+        let existing = parse_sqlite_utc(existing_expires_at).unwrap_or(base);
+        if existing > base {
+            existing
+        } else {
+            base
+        }
+    };
+
+    next.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 async fn show_error_pill(app: &AppHandle, msg: &str) {
@@ -608,6 +658,27 @@ async fn run_cleanup_and_snippets(
         cleanup_path,
         CleanupPath::LlmMinimalUnder50 | CleanupPath::LlmStandard
     ) {
+        let cache_key = normalize_cleanup_cache_key(raw);
+        if !cache_key.is_empty() {
+            if let Ok(Some(entry)) = db::cleanup_cache_get_active(&db, &cache_key) {
+                let now = Utc::now();
+                let new_hit_count = entry.hit_count + 1;
+                let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
+                let new_expires_at =
+                    next_cache_expiry(new_hit_count, &entry.created_at, &entry.expires_at, now);
+                let _ = db::cleanup_cache_touch_hit(
+                    &db,
+                    &cache_key,
+                    new_hit_count,
+                    &now_str,
+                    &new_expires_at,
+                );
+                let overridden =
+                    snippets::apply_cleanup_instruction_overrides(&entry.clean_text, &snippet_instructions);
+                return Some((overridden, dict_entries));
+            }
+        }
+
         let dict_instructions =
             dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
         let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str()]
@@ -643,7 +714,13 @@ async fn run_cleanup_and_snippets(
 
         match cleaned_res {
             Ok((cleaned, _)) if !cleaned.is_empty() => {
-                snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions)
+                let overridden =
+                    snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
+                let cache_key = normalize_cleanup_cache_key(raw);
+                if !cache_key.is_empty() {
+                    let _ = db::cleanup_cache_insert_new(&db, &cache_key, &cleaned, &sqlite_utc_plus(7));
+                }
+                overridden
             }
             Ok(_) => {
                 snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
@@ -712,10 +789,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        cleanup_path_for, estimate_tokens, select_app_context_mode, select_prompt_profile,
-        CleanupPath,
+        cleanup_path_for, estimate_tokens, next_cache_expiry, normalize_cleanup_cache_key,
+        select_app_context_mode, select_prompt_profile, CleanupPath,
     };
     use crate::api::prompts::{AppContextMode, PromptProfile};
+    use chrono::{DateTime, Utc};
 
     #[test]
     fn token_estimator_uses_word_count_times_point_13() {
@@ -775,6 +853,34 @@ mod tests {
         assert_eq!(
             cleanup_path_for(true, true, false, "medium", 50),
             CleanupPath::LlmStandard
+        );
+    }
+
+    #[test]
+    fn cleanup_cache_key_normalization_works() {
+        assert_eq!(
+            normalize_cleanup_cache_key("Okay, great. It looks amazing, honestly."),
+            "okaygreatitlooksamazinghonestly"
+        );
+        assert_eq!(normalize_cleanup_cache_key(" \n\t!!! "), "");
+    }
+
+    #[test]
+    fn cache_ttl_promotion_matches_contract() {
+        let now = DateTime::parse_from_rfc3339("2026-01-15T00:00:00Z")
+            .expect("now")
+            .with_timezone(&Utc);
+        assert_eq!(
+            next_cache_expiry(5, "2026-01-01 00:00:00", "2026-01-20 00:00:00", now),
+            "2027-01-15 00:00:00"
+        );
+        assert_eq!(
+            next_cache_expiry(2, "2026-01-05 00:00:00", "2026-01-20 00:00:00", now),
+            "2026-02-14 00:00:00"
+        );
+        assert_eq!(
+            next_cache_expiry(1, "2025-10-01 00:00:00", "2026-02-01 00:00:00", now),
+            "2026-02-01 00:00:00"
         );
     }
 }
