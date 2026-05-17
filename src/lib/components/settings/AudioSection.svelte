@@ -43,7 +43,7 @@
   loadSettings();
 </script>
 
-<h2 class="settings-h">Advanced</h2>
+<h2 class="settings-h">Audio</h2>
 <div class="setting-row gain-row">
   <div class="gain-header">
     <div>
