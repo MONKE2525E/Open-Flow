@@ -59,6 +59,7 @@ pub fn get_system_prompt_with_extras(
     )
 }
 
+/// Normalise a raw user instruction string into a MUST / MUST NOT imperative.
 fn to_imperative(raw: &str) -> String {
     let s = raw.trim();
     let s = s.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')');
@@ -114,11 +115,41 @@ pub fn get_system_prompt(
             Your job: strip filler words and false starts. Nothing else.\n\
             REMOVE these filler words wherever they appear: um, uh, like (when not a comparison), you know, sort of, kind of, right, okay, I mean, basically, literally (as emphasis).",
         "high" => "CLEANUP LEVEL - Direct:\n\
-            WORD COUNT RULE: Your output MUST be 30-50% of input word count.\n\
-            Keep only core meaning and remove repetition.",
+            WORD COUNT RULE: Your output MUST be 30-50% of the input word count. \
+            Count the input words. Count your output words. If your output exceeds 50% of the input, cut more before outputting.\n\
+            \n\
+            Your job: extract only the core meaning. Rewrite completely. Every word must earn its place.\n\
+            \n\
+            MANDATORY cuts - none of these may appear in the output:\n\
+            - Filler words: um, uh, like, you know, sort of, kind of, right, okay, I mean, basically, literally\n\
+            - Hedges: \"I think\", \"I feel like\", \"maybe\", \"probably\", \"I guess\", \"kind of\", \"sort of\", \"really\" (as emphasis)\n\
+            - All repetition: if an idea appears more than once, keep the single clearest version and delete the rest\n\
+            - False starts, restated sentences, circular phrasing\n\
+            \n\
+            REWRITE freely: merge sentences, split where it adds clarity, reorder if a different structure is cleaner.\n\
+            \n\
+            SELF-CHECK - mandatory before outputting:\n\
+            1. Count input words. Count output words. Is output <= 50% of input? If no, cut more.\n\
+            2. Does the output contain any filler or hedge word from the list above? If yes, delete it.\n\
+            3. Does any sentence restate an idea already stated? If yes, delete that sentence.\n\
+            Only output when all three checks pass.",
         _ => "CLEANUP LEVEL - Medium:\n\
-            Remove filler, repeated ideas, and circular phrasing.\n\
-            You may reorder or merge sentences for clarity.",
+            Your job: remove noise and restructure for clarity. The output must be meaningfully shorter and cleaner than the input.\n\
+            \n\
+            MANDATORY cuts - every one of these must be gone:\n\
+            - All filler words: um, uh, like (when not a comparison), you know, sort of, kind of, right (as filler), \
+            okay (as sentence-boundary filler), I mean, basically, literally (as empty emphasis)\n\
+            - All repeated ideas: if the speaker says the same thing more than once, keep the clearest version and cut the duplicates\n\
+            - Circular phrases: \"the reason is because\", \"what I'm saying is\", \"what I mean is\"\n\
+            \n\
+            RESTRUCTURING: You may reorder, merge, or split sentences if it makes the output tighter and clearer. \
+            Do not add content that wasn't said. Do not cut genuine detail that wasn't repeated.\n\
+            \n\
+            AIM: If stripping fillers alone produces less than a 15% word-count reduction, look harder - there is almost always structural bloat to cut.\n\
+            \n\
+            SELF-CHECK before outputting: Does the output contain any filler from the list above? \
+            Does any sentence restate an idea already said? Is the output noticeably shorter than the input? \
+            If the first two are yes or the third is no, revise and check again.",
     };
 
     let intensity_rules = if has_snippet_overrides {
