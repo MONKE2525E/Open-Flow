@@ -49,6 +49,7 @@ windows = { version = "0.61", features = [
   "Win32_Media_Audio_Endpoints",
   "Win32_System_Com",
   "Win32_UI_Accessibility",
+  "Win32_Storage_FileSystem",
 ] }
 
 [profile.release]
@@ -57,4 +58,3 @@ lto        = true
 strip      = true
 panic      = "abort"
 codegen-units = 1
-

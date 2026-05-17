@@ -61,6 +61,7 @@ fn main() {
     std::fs::create_dir_all(&db_dir).ok();
     let db_handle: DbHandle =
         db::open(db_dir.join("openflow.db").to_str().unwrap()).expect("failed to open database");
+    let _ = db::cleanup_cache_prune_expired(&db_handle);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -140,6 +141,8 @@ fn main() {
             commands::hide_main,
             commands::get_recent,
             commands::get_stats,
+            commands::get_cleanup_cache_status,
+            commands::clear_cleanup_cache,
             commands::get_microphones,
             commands::get_memory_mb,
             commands::start_input_recording,
