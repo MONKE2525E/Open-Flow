@@ -23,6 +23,14 @@
     } catch { return iso.slice(0, 10); }
   }
 
+  function confidenceLabel(tier?: string | null): string {
+    if (tier === 'high') return 'High confidence';
+    if (tier === 'medium') return 'Medium confidence';
+    if (tier === 'low') return 'Low confidence';
+    if (tier === 'manual') return 'Manual';
+    return 'Unknown confidence';
+  }
+
   let search        = $state('');
   let sort          = $state<SortKey>('newest');
   let selected      = $state<DictionaryEntry | null>(null);
@@ -264,6 +272,9 @@
                   {#if e.correction_count > 0}
                     <span>{e.correction_count} {e.correction_count === 1 ? 'correction' : 'corrections'}</span>
                   {/if}
+                  {#if e.auto_learned}
+                    <span>{confidenceLabel(e.confidence_tier)}</span>
+                  {/if}
                   <span>{fmtDate(e.created_at)}</span>
                 </div>
               </div>
@@ -297,6 +308,10 @@
                   </svg>
                   Auto-learned
                 </div>
+                <div class="insp-often">
+                  <span class="insp-often-label">Confidence:</span>
+                  <span class="insp-often-text">{confidenceLabel(selected.confidence_tier)}</span>
+                </div>
               {/if}
 
               <div class="insp-divider"></div>
@@ -312,6 +327,12 @@
                   <span class="insp-stat-label">Added</span>
                   <span class="insp-stat-date">{fmtDate(selected.created_at)}</span>
                 </div>
+                {#if selected.last_seen_at}
+                  <div class="insp-stat-row">
+                    <span class="insp-stat-label">Last seen</span>
+                    <span class="insp-stat-date">{fmtDate(selected.last_seen_at)}</span>
+                  </div>
+                {/if}
               </div>
 
               <div class="insp-actions">

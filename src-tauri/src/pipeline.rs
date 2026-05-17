@@ -417,7 +417,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     app.emit("open-flow:transcribed", &injected_text).ok();
 
     if cfg.auto_learn_enabled {
-        auto_learn::start_monitor(injected_text, db.inner().clone(), app.clone());
+        auto_learn::start_monitor(injected_text, process_name, db.inner().clone(), app.clone());
     }
 }
 
