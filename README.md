@@ -4,7 +4,7 @@
 
 <p align="center">
   Hold <kbd>Ctrl</kbd>+<kbd>Windows</kbd>, speak, release — your words appear instantly, cleaned up by an LLM, in whatever app is in focus.<br/>
-  <em>Free, lightweight, local-first AI dictation. Bring your own API keys. No subscriptions. No telemetry. ~100MB RAM.</em>
+  <em>Free, lightweight, local-first AI dictation. Bring your own API keys. No subscriptions. No telemetry. ~200MB RAM.</em>
 </p>
 
 ---
