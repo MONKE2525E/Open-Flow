@@ -78,46 +78,76 @@ fn format_dictionary_entry(entry: &db::DictionaryEntry) -> String {
 }
 
 pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> String {
-    let replaceable: Vec<(&str, &str)> = entries
+    let mut replaceable: Vec<(&str, &str)> = entries
         .iter()
         .filter_map(|e| e.mistake.as_deref().map(|m| (m, e.term.as_str())))
         .collect();
+    replaceable.sort_by_key(|(mistake, _)| std::cmp::Reverse(mistake.len()));
 
     if replaceable.is_empty() {
         return text.to_string();
     }
 
+    fn is_word_char(ch: char) -> bool {
+        ch.is_alphanumeric() || matches!(ch, '\'' | '-' | '_')
+    }
+
+    fn is_boundary(haystack: &str, start: usize, end: usize) -> bool {
+        let left_ok = haystack[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_word_char(ch));
+        let right_ok = haystack[end..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_word_char(ch));
+        left_ok && right_ok
+    }
+
     let mut result = text.to_string();
-    let mut haystack = result.to_lowercase();
     for (mistake, term) in &replaceable {
-        let needle = mistake.to_lowercase();
-        if needle.is_empty() {
+        if mistake.is_empty() {
             continue;
         }
         let mut positions = Vec::new();
-        let mut from = 0usize;
-        while let Some(p) = haystack[from..].find(&needle) {
-            let abs = from + p;
-            positions.push(abs);
-            from = abs + needle.len();
+        if mistake.is_ascii() {
+            let mut i = 0usize;
+            while i + mistake.len() <= result.len() {
+                if !result.is_char_boundary(i) {
+                    i += 1;
+                    continue;
+                }
+                let end = i + mistake.len();
+                if !result.is_char_boundary(end) {
+                    i += 1;
+                    continue;
+                }
+                if result[i..end].eq_ignore_ascii_case(mistake) && is_boundary(&result, i, end) {
+                    positions.push(i);
+                }
+                i += 1;
+            }
+        } else {
+            for (start, matched) in result.match_indices(mistake) {
+                let end = start + matched.len();
+                if is_boundary(&result, start, end) {
+                    positions.push(start);
+                }
+            }
         }
         if positions.is_empty() {
             continue;
         }
-        // Use the lowercase needle length because result indices were found in
-        // the lowercase haystack. Using the original mistake length can panic
-        // when lowercase expansion changes UTF-8 byte length.
         for pos in positions.into_iter().rev() {
-            result.replace_range(pos..pos + needle.len(), term);
+            result.replace_range(pos..pos + mistake.len(), term);
         }
-        haystack = result.to_lowercase();
     }
     result
 }
 
 #[cfg(test)]
 mod tests {
-    use super::build_relevant_dictionary_prompt_from;
+    use super::{apply_substitutions_from, build_relevant_dictionary_prompt_from};
     use crate::data::db::DictionaryEntry;
 
     fn entry(id: i64, term: &str, mistake: Option<&str>) -> DictionaryEntry {
@@ -127,6 +157,8 @@ mod tests {
             mistake: mistake.map(str::to_string),
             auto_learned: false,
             correction_count: 0,
+            confidence_tier: "manual".to_string(),
+            last_seen_at: None,
             created_at: "now".to_string(),
         }
     }
@@ -158,5 +190,19 @@ mod tests {
 
         assert!(prompt.contains("RecentTerm"));
         assert!(prompt.contains("AnotherTerm"));
+    }
+
+    #[test]
+    fn substitutions_respect_word_boundaries() {
+        let entries = vec![entry(1, "Kubernetes", Some("kube"))];
+        let out = apply_substitutions_from("kube kubelet", &entries);
+        assert_eq!(out, "Kubernetes kubelet");
+    }
+
+    #[test]
+    fn substitutions_support_non_ascii_terms() {
+        let entries = vec![entry(1, "cliche", Some("cliché"))];
+        let out = apply_substitutions_from("Use cliché in this line.", &entries);
+        assert_eq!(out, "Use cliche in this line.");
     }
 }
