@@ -254,13 +254,17 @@ fn next_cache_expiry(
     let age = now.signed_duration_since(created);
 
     let next = if hit_count >= 5 && age <= Duration::days(60) {
-        now + Duration::days(365)
-    } else if hit_count >= 5 && age <= Duration::days(30) {
-        now + Duration::days(30)
+        if age <= Duration::days(30) {
+            now + Duration::days(30)
+        } else {
+            now + Duration::days(365)
+        }
     } else if hit_count >= 2 && age <= Duration::days(14) {
-        now + Duration::days(30)
-    } else if hit_count >= 2 && age <= Duration::days(7) {
-        now + Duration::days(7)
+        if age <= Duration::days(7) {
+            now + Duration::days(7)
+        } else {
+            now + Duration::days(30)
+        }
     } else {
         let existing = parse_sqlite_utc(existing_expires_at).unwrap_or(base);
         if existing > base {
@@ -610,7 +614,6 @@ async fn run_cleanup_and_snippets(
             Ok((cleaned, _)) if !cleaned.is_empty() => {
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
-                let cache_key = normalize_cleanup_cache_key(raw);
                 if !cache_key.is_empty() {
                     let _ = db::cleanup_cache_insert_new(&db, &cache_key, &cleaned, &sqlite_utc_plus(7));
                 }
