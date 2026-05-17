@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { settingsOpen } from '../stores';
+  import { devModeEnabled, settingsOpen } from '../stores';
   import { icons } from '../icons';
   import { onDestroy, onMount } from 'svelte';
   import { fly, fade } from 'svelte/transition';
@@ -14,6 +14,7 @@
   import PrivacySection from '../components/settings/PrivacySection.svelte';
   import AudioSection from '../components/settings/AudioSection.svelte';
   import AboutSection from '../components/settings/AboutSection.svelte';
+  import DeveloperSection from '../components/settings/DeveloperSection.svelte';
 
   let section = $state('general');
   let animDir: 1 | -1 = $state(1);
@@ -21,19 +22,20 @@
 
   const sectionOrder = SETTINGS_SECTION_ORDER;
 
-  const navSections = [
+  const navSections = $derived([
     { group: 'Settings', items: [
       { id: 'general',  label: 'General',      icon: 'sliders'  as keyof typeof icons },
       { id: 'apps',     label: 'App Mappings', icon: 'apps'     as keyof typeof icons },
       { id: 'keys',     label: 'API Keys',     icon: 'key'      as keyof typeof icons },
       { id: 'models',   label: 'Models',       icon: 'command'  as keyof typeof icons },
       { id: 'privacy',  label: 'Privacy',      icon: 'lock'     as keyof typeof icons },
-      { id: 'advanced', label: 'Advanced',      icon: 'mic'      as keyof typeof icons },
+      { id: 'advanced', label: 'Advanced',     icon: 'mic'      as keyof typeof icons },
+      ...($devModeEnabled ? [{ id: 'developer', label: 'Developer', icon: 'command' as keyof typeof icons }] : []),
     ]},
     { group: 'Account', items: [
       { id: 'about', label: 'About', icon: 'help' as keyof typeof icons },
     ]},
-  ];
+  ]);
 
   onMount(async () => {
     appVersion = await getVersion();
@@ -46,6 +48,12 @@
     animDir = directionFromOrder(section, id, sectionOrder);
     section = id;
   }
+
+  $effect(() => {
+    if (!$devModeEnabled && section === 'developer') {
+      section = 'about';
+    }
+  });
 </script>
 
 {#if $settingsOpen}
@@ -111,6 +119,8 @@
               <AudioSection />
             {:else if section === 'about'}
               <AboutSection {appVersion} />
+            {:else if section === 'developer' && $devModeEnabled}
+              <DeveloperSection />
             {/if}
           </div>
         {/key}
