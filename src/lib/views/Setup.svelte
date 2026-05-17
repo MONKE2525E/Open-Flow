@@ -2,6 +2,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
   import { setupComplete } from '../stores';
+  import { animateWidth } from '../motion';
   import { saveSetting, type CleanupIntensity, type ToneId } from '../settings';
   import {
     getTranscriptionLanguageLabel,
@@ -545,7 +546,7 @@
         {:else if filteredApps.length === 0}
           <p class="apps-loading">No apps found.</p>
         {:else}
-          <div class="apps-list">
+          <div class="apps-list scroll-styled">
             {#each filteredApps as app}
               {@const mapped = mappings.find(m => m.exe === app.exe)}
               <div class="app-row" class:mapped={!!mapped}>
@@ -562,13 +563,14 @@
                   <div class="profile-drop-wrap">
                     <button
                       class="profile-drop-btn"
+                      use:animateWidth={{ text: profileOptions.find(o => o.id === mapped.profile)?.label ?? 'Casual' }}
                       onclick={(e) => toggleProfileDropdown(app.exe, e)}
                     >
                       {profileOptions.find(o => o.id === mapped.profile)?.label ?? 'Casual'}
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
                     {#if openDropdownExe === app.exe}
-                      <div class="profile-drop-list">
+                      <div class="profile-drop-list scroll-styled">
                         {#each profileOptions as opt}
                           <button
                             class="profile-drop-item"
@@ -729,7 +731,7 @@
                 </svg>
               </button>
               {#if languageDropdownOpen}
-                <div class="setup-language-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
+                <div class="setup-language-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
                   {#each transcriptionLanguages as language}
                     <button
                       class="setup-language-item"

@@ -5,30 +5,65 @@
   import { fly, fade } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
+  import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
   import { dictionary, fetchDictionary, type DictionaryEntry } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
 
-  let search = $state('');
-  let modal = $state<{ mode: 'add' | 'edit'; entry?: DictionaryEntry } | null>(null);
-  let deleteTarget = $state<number | null>(null);
-  let draftTerm = $state('');
-  let draftMistake = $state('');
-  let termInput = $state<HTMLInputElement | null>(null);
-  let saving = $state(false);
-  let saveError = $state('');
+  type SortKey = 'newest' | 'oldest' | 'alpha' | 'most_corrected';
 
-  const TERM_LIMIT = 120;
+  function fmtDate(iso: string): string {
+    try {
+      const d = new Date(iso + 'Z');
+      const diffDays = Math.floor((Date.now() - d.getTime()) / 86400000);
+      if (diffDays === 0) return 'Today';
+      if (diffDays === 1) return 'Yesterday';
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    } catch { return iso.slice(0, 10); }
+  }
+
+  let search        = $state('');
+  let sort          = $state<SortKey>('newest');
+  let selected      = $state<DictionaryEntry | null>(null);
+  let modal         = $state<{ mode: 'add' | 'edit'; entry?: DictionaryEntry } | null>(null);
+  let saving        = $state(false);
+  let saveError     = $state('');
+  let deleteTarget  = $state<number | null>(null);
+  let draftTerm     = $state('');
+  let draftMistake  = $state('');
+  let termInput     = $state<HTMLInputElement | null>(null);
+  let inspectorDir  = $state<1 | -1>(1);
+  let sortWrapEl    = $state<HTMLDivElement | null>(null);
+  let sortButtonEls = $state<Record<SortKey, HTMLButtonElement | null>>({
+    newest: null, oldest: null, alpha: null, most_corrected: null,
+  });
+  let sortIndicatorStyle = $state('opacity:0;');
+
+  const TERM_LIMIT    = 120;
   const MISTAKE_LIMIT = 120;
+
+  const sortLabels: { key: SortKey; label: string }[] = [
+    { key: 'newest',         label: 'Newest'         },
+    { key: 'oldest',         label: 'Oldest'         },
+    { key: 'alpha',          label: 'A → Z'          },
+    { key: 'most_corrected', label: 'Most corrected' },
+  ];
 
   const filtered = $derived.by(() => {
     const q = search.trim().toLowerCase();
-    const list = q
+    let list = q
       ? $dictionary.filter(e =>
           e.term.toLowerCase().includes(q) ||
           (e.mistake ?? '').toLowerCase().includes(q)
         )
       : [...$dictionary];
-    return list.sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+    if (sort === 'newest')         list.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    if (sort === 'oldest')         list.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    if (sort === 'alpha')          list.sort((a, b) => a.term.localeCompare(b.term));
+    if (sort === 'most_corrected') list.sort((a, b) => b.correction_count - a.correction_count);
+
+    return list;
   });
 
   onMount(() => {
@@ -37,39 +72,52 @@
     listen('open-flow:dictionary-updated', () => fetchDictionary())
       .then((cleanup) => { unlisten = cleanup; })
       .catch(() => {});
-
-    return () => {
-      unlisten?.();
-    };
+    updateSortIndicator();
+    const onResize = () => updateSortIndicator();
+    window.addEventListener('resize', onResize);
+    return () => { unlisten?.(); window.removeEventListener('resize', onResize); };
   });
 
+  function selectRow(e: DictionaryEntry) {
+    if (selected?.id === e.id) {
+      inspectorDir = -1;
+      selected = null;
+    } else {
+      inspectorDir = 1;
+      selected = e;
+    }
+    deleteTarget = null;
+  }
+
   function openAdd() {
-    draftTerm = '';
-    draftMistake = '';
+    draftTerm = ''; draftMistake = '';
     modal = { mode: 'add' };
   }
 
   function openEdit(e: DictionaryEntry) {
-    draftTerm = e.term;
+    draftTerm    = e.term;
     draftMistake = e.mistake ?? '';
     modal = { mode: 'edit', entry: e };
-    deleteTarget = null;
   }
 
   function closeModal() { modal = null; saveError = ''; }
 
   async function saveModal() {
-    const term = draftTerm.trim();
+    const term    = draftTerm.trim();
     const mistake = draftMistake.trim() || null;
     if (!term) return;
     saving = true; saveError = '';
     try {
+      const editedId = modal?.mode === 'edit' ? modal.entry?.id : undefined;
       if (modal?.mode === 'add') {
         await invoke('create_dictionary_entry', { term, mistake });
       } else if (modal?.mode === 'edit' && modal.entry) {
         await invoke('edit_dictionary_entry', { id: modal.entry.id, term, mistake });
       }
       await fetchDictionary();
+      if (editedId !== undefined) {
+        selected = $dictionary.find(e => e.id === editedId) ?? null;
+      }
       closeModal();
     } catch (err) {
       const msg = String(err);
@@ -81,6 +129,7 @@
     if (deleteTarget === id) {
       try {
         await invoke('remove_dictionary_entry', { id });
+        if (selected?.id === id) selected = null;
         await fetchDictionary();
       } catch (err) { console.error(err); }
       deleteTarget = null;
@@ -92,13 +141,29 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       if (modal) closeModal();
-      else if (deleteTarget !== null) deleteTarget = null;
+      else selected = null;
     }
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && modal) saveModal();
   }
 
   $effect(() => {
     if (modal && termInput) setTimeout(() => termInput?.focus(), 50);
+  });
+
+  function updateSortIndicator() {
+    const wrap = sortWrapEl;
+    const btn  = sortButtonEls[sort];
+    if (!wrap || !btn) return;
+    const wrapRect = wrap.getBoundingClientRect();
+    const btnRect  = btn.getBoundingClientRect();
+    const left  = Math.round(btnRect.left - wrapRect.left);
+    const width = Math.round(btnRect.width);
+    sortIndicatorStyle = `opacity:1; transform:translateX(${left}px); width:${width}px; transition: transform ${motionMs(MOTION_MS.base)}ms cubic-bezier(0.22, 1, 0.36, 1), width ${motionMs(MOTION_MS.base)}ms cubic-bezier(0.22, 1, 0.36, 1), opacity ${motionMs(MOTION_MS.fast)}ms ease;`;
+  }
+
+  $effect(() => {
+    sort;
+    setTimeout(updateSortIndicator, 0);
   });
 </script>
 
@@ -127,6 +192,18 @@
       {/if}
     </div>
 
+    <div class="sort-pills" bind:this={sortWrapEl}>
+      <span class="sort-indicator" style={sortIndicatorStyle}></span>
+      {#each sortLabels as { key, label }}
+        <button
+          class="sort-pill"
+          class:active={sort === key}
+          bind:this={sortButtonEls[key]}
+          onclick={() => { sort = key; }}
+        >{label}</button>
+      {/each}
+    </div>
+
     <button class="btn-primary" onclick={openAdd}>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       Add term
@@ -142,55 +219,131 @@
         Add term
       </button>
     </div>
-  {:else if filtered.length === 0}
-    <div class="empty-state" in:fade={{ duration: 200 }}>
-      <p class="empty-h">No matches</p>
-      <p class="empty-sub">Nothing matches "{search}".</p>
-      <button class="btn-ghost" onclick={() => search = ''}>Clear search</button>
-    </div>
   {:else}
-    <div class="list-wrap">
-      {#each filtered as e (e.id)}
-        <div
-          class="dict-row"
-          in:fly={{ y: 6, duration: 220, easing: expoOut }}
-          out:fade={{ duration: 120 }}
-          animate:flip={{ duration: 220, easing: expoOut }}
-        >
-          <div class="dict-content">
-            <div class="dict-term">{e.term}</div>
-            {#if e.auto_learned}
-              <svg class="auto-star" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"
-                aria-label="Auto-learned">
-                <title>Added automatically by Auto-learn corrections</title>
-                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-              </svg>
-            {/if}
-            {#if e.mistake}
-              <div class="dict-mistake-label" aria-hidden="true">often:</div>
-              <div class="dict-mistake">"{e.mistake}"</div>
-            {/if}
-          </div>
+    <div class="dict-layout">
 
-          <div class="row-actions">
-            <button class="icon-btn" onclick={() => openEdit(e)} aria-label="Edit">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
-            </button>
-            <button
-              class="icon-btn delete-btn"
-              class:armed={deleteTarget === e.id}
-              onclick={() => confirmDelete(e.id)}
-              aria-label={deleteTarget === e.id ? 'Confirm delete' : 'Delete'}
-            >
-              {#if deleteTarget === e.id}
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-              {:else}
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="m19 6-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-              {/if}
-            </button>
+      <!-- Left: list -->
+      <div class="dict-list-col">
+        {#if filtered.length === 0}
+          <div class="empty-state" in:fade={{ duration: 200 }}>
+            <p class="empty-h">No matches</p>
+            <p class="empty-sub">Nothing matches "{search}".</p>
+            <button class="btn-ghost" onclick={() => search = ''}>Clear search</button>
           </div>
-        </div>
-      {/each}
+        {:else}
+          <div class="dict-list">
+            {#each filtered as e (e.id)}
+              <div
+                class="dict-row"
+                class:is-selected={selected?.id === e.id}
+                role="button"
+                tabindex="0"
+                in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}
+                out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+                animate:flip={{ duration: motionMs(MOTION_MS.base), easing: expoOut }}
+                onclick={() => selectRow(e)}
+                onkeydown={(ev) => ev.key === 'Enter' && selectRow(e)}
+              >
+                <div class="dict-left">
+                  <div class="dict-main">
+                    <span class="dict-term">{e.term}</span>
+                    {#if e.auto_learned}
+                      <svg class="dict-auto-star" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-label="Auto-learned">
+                        <title>Added automatically by Auto-learn</title>
+                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                      </svg>
+                    {/if}
+                    {#if e.mistake}
+                      <span class="dict-often-label">often:</span>
+                      <span class="dict-mistake">"{e.mistake}"</span>
+                    {/if}
+                  </div>
+                </div>
+                <div class="dict-meta">
+                  {#if e.correction_count > 0}
+                    <span>{e.correction_count} {e.correction_count === 1 ? 'correction' : 'corrections'}</span>
+                  {/if}
+                  <span>{fmtDate(e.created_at)}</span>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <!-- Right: inspector -->
+      <div class="inspector-col">
+        {#if selected}
+          {#key selected.id}
+            <div
+              class="inspector"
+              in:fly={{ x: inspectorDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+              out:fade={{ duration: 0 }}
+            >
+              <div class="insp-trigger">{selected.term}</div>
+
+              {#if selected.mistake}
+                <div class="insp-often">
+                  <span class="insp-often-label">often:</span>
+                  <span class="insp-often-text">"{selected.mistake}"</span>
+                </div>
+              {/if}
+
+              {#if selected.auto_learned}
+                <div class="insp-auto-badge">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                  </svg>
+                  Auto-learned
+                </div>
+              {/if}
+
+              <div class="insp-divider"></div>
+
+              <div class="insp-stats">
+                {#if selected.correction_count > 0}
+                  <div class="insp-stat-row">
+                    <span class="insp-stat-num">{selected.correction_count}</span>
+                    <span class="insp-stat-label">{selected.correction_count === 1 ? 'correction' : 'corrections'}</span>
+                  </div>
+                {/if}
+                <div class="insp-stat-row">
+                  <span class="insp-stat-label">Added</span>
+                  <span class="insp-stat-date">{fmtDate(selected.created_at)}</span>
+                </div>
+              </div>
+
+              <div class="insp-actions">
+                <button class="btn-insp-edit" onclick={() => openEdit(selected!)}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                  Edit
+                </button>
+                <button
+                  class="btn-insp-delete"
+                  class:armed={deleteTarget === selected.id}
+                  onclick={() => confirmDelete(selected!.id)}
+                >
+                  {#if deleteTarget === selected.id}
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    Confirm
+                  {:else}
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="m19 6-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                    Delete
+                  {/if}
+                </button>
+              </div>
+            </div>
+          {/key}
+        {:else}
+          <div class="inspector-empty" in:fade={{ duration: motionMs(MOTION_MS.base) }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="color:var(--arm-300)">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            </svg>
+            <p>Select a term<br>to inspect it</p>
+          </div>
+        {/if}
+      </div>
+
     </div>
   {/if}
 </div>
@@ -231,7 +384,7 @@
       <p class="field-hint">The exact word or phrase you want the AI to use.</p>
 
       <label class="field-label" for="dict-mistake">
-        Often mistranscribed as <span class="optional">optional</span>
+        Often mistranscribed as <span class="field-optional">optional</span>
       </label>
       <div class="input-row">
         <input
@@ -246,7 +399,7 @@
         />
         <MicInputButton onResult={(t) => draftMistake = t} />
       </div>
-      <p class="field-hint">What the transcription model typically writes instead. Skip this if the term just needs to be in the AI's awareness.</p>
+      <p class="field-hint">What the transcription model typically writes instead. Skip if the term just needs to be in the AI's awareness.</p>
     </div>
 
     <div class="modal-footer">
@@ -286,13 +439,7 @@
     color: var(--ink);
   }
 
-  .page-sub {
-    color: var(--ink-mute);
-    font-size: 12.5px;
-    margin: 0 0 22px;
-    max-width: 560px;
-    line-height: 1.5;
-  }
+  .page-sub { color: var(--ink-mute); font-size: 12.5px; margin: 0 0 22px; max-width: 560px; line-height: 1.5; }
 
   /* ── toolbar ── */
 
@@ -300,7 +447,7 @@
     display: flex;
     gap: 8px;
     align-items: center;
-    margin-bottom: 14px;
+    margin-bottom: 18px;
     flex-wrap: wrap;
   }
 
@@ -344,6 +491,46 @@
   }
   .clear-btn:hover { color: var(--ink-strong); }
 
+  .sort-pills {
+    display: flex;
+    gap: 2px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 3px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .sort-indicator {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    height: calc(100% - 6px);
+    border-radius: 5px;
+    background: var(--accent-soft);
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0;
+  }
+
+  .sort-pill {
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    padding: 3px 9px;
+    font-size: 11.5px;
+    font-family: var(--sans);
+    color: var(--ink-mute);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s, color 0.12s;
+    position: relative;
+    z-index: 1;
+  }
+  .sort-pill:hover { color: var(--ink-strong); background: var(--control-hover); }
+  .sort-pill.active { color: var(--accent-ink); font-weight: 500; }
+
   .btn-primary {
     background: var(--ink);
     color: var(--amber-50);
@@ -376,15 +563,20 @@
   }
   .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
 
-  @media (max-width: 720px) {
-    .search {
-      flex-basis: 100%;
-    }
+  /* ── two-column layout ── */
+
+  .dict-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    align-items: start;
   }
 
-  /* ── list ── */
+  /* ── list column ── */
 
-  .list-wrap {
+  .dict-list-col { min-width: 0; }
+
+  .dict-list {
     border: 1px solid var(--line);
     border-radius: var(--r-md);
     overflow: hidden;
@@ -394,84 +586,235 @@
   .dict-row {
     display: grid;
     grid-template-columns: 1fr auto;
-    gap: 16px;
     align-items: center;
-    padding: 11px 14px;
+    gap: 16px;
+    padding: 12px 14px;
     border-bottom: 1px solid var(--line);
+    cursor: pointer;
     transition: background 0.12s;
   }
   .dict-row:last-child { border-bottom: 0; }
   .dict-row:hover { background: var(--control-hover); }
+  .dict-row.is-selected { background: var(--control-active); }
 
-  .dict-content {
+  .dict-left { min-width: 0; overflow: hidden; }
+
+  .dict-main {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    align-items: baseline;
+    gap: 6px;
     min-width: 0;
-    flex-wrap: wrap;
+    overflow: hidden;
   }
 
   .dict-term {
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--ink);
-    letter-spacing: -0.005em;
-  }
-
-  .auto-star {
-    color: var(--accent-ink);
     flex-shrink: 0;
-    opacity: 0.92;
   }
 
-  .dict-mistake-label {
+  .dict-auto-star {
+    color: var(--accent);
+    flex-shrink: 0;
+    position: relative;
+    top: -1px;
+  }
+
+  .dict-often-label {
     font-family: var(--mono);
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.08em;
     color: var(--ink-faint);
-    line-height: 1;
+    flex-shrink: 0;
   }
 
   .dict-mistake {
     font-size: 12.5px;
+    color: var(--ink-mute);
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .dict-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    font-size: 11px;
+    color: var(--ink-faint);
+    white-space: nowrap;
+  }
+
+  /* ── inspector column ── */
+
+  .inspector-col {
+    position: sticky;
+    top: 0;
+  }
+
+  .inspector {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .insp-trigger {
+    font-family: var(--serif);
+    font-size: 19px;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    color: var(--ink);
+    line-height: 1.2;
+  }
+
+  .insp-often {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .insp-often-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    flex-shrink: 0;
+  }
+
+  .insp-often-text {
+    font-size: 13px;
     color: var(--ink-soft);
     font-style: italic;
+    line-height: 1.5;
+    word-break: break-word;
   }
 
-  .row-actions {
+  .insp-auto-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 12px;
+    padding: 4px 9px;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 500;
+    align-self: flex-start;
+  }
+
+  .insp-divider {
+    height: 1px;
+    background: var(--line-soft);
+    margin: 18px 0 14px;
+  }
+
+  .insp-stats {
     display: flex;
-    gap: 2px;
-    opacity: 0;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+
+  .insp-stat-row {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+  }
+
+  .insp-stat-num {
+    font-family: var(--serif);
+    font-size: 22px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--accent-ink);
+    line-height: 1;
+  }
+
+  .insp-stat-label { font-size: 11.5px; color: var(--ink-mute); }
+
+  .insp-stat-date {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    font-weight: 500;
+    margin-left: auto;
+  }
+
+  .insp-actions { display: flex; gap: 8px; }
+
+  .btn-insp-edit {
+    flex: 1;
+    background: var(--ink);
+    color: var(--amber-50);
+    border: 0;
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-size: 12.5px;
+    font-weight: 500;
+    font-family: var(--sans);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
     transition: opacity 0.15s;
   }
-  .dict-row:hover .row-actions,
-  .dict-row:focus-within .row-actions { opacity: 1; }
+  .btn-insp-edit:hover { opacity: 0.82; }
 
-  .icon-btn {
-    width: 26px; height: 26px;
+  .btn-insp-delete {
     background: transparent;
-    border: 0;
-    border-radius: 6px;
-    display: grid;
-    place-items: center;
-    color: var(--ink-mute);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-size: 12.5px;
+    font-family: var(--sans);
+    color: var(--ink-soft);
+    display: flex;
+    align-items: center;
+    gap: 6px;
     cursor: pointer;
-    transition: background 0.12s, color 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
   }
-  .icon-btn:hover { background: var(--control-active); color: var(--ink-strong); }
+  .btn-insp-delete:hover { background: var(--control-hover); color: var(--ink-strong); }
+  .btn-insp-delete.armed { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); }
+  .btn-insp-delete.armed:hover { background: var(--danger-bg); }
 
-  .delete-btn.armed {
-    background: var(--danger-bg);
-    color: var(--danger);
-    box-shadow: inset 0 0 0 1px var(--danger-line);
+  .inspector-empty {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 40px 22px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    text-align: center;
   }
-  .delete-btn.armed:hover { background: var(--danger-bg); }
+
+  .inspector-empty p {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 14px;
+    color: var(--ink-mute);
+    margin: 0;
+    line-height: 1.6;
+  }
 
   /* ── empty states ── */
 
   .empty-state {
-    padding: 56px 4px;
+    padding: 52px 4px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -495,6 +838,21 @@
     margin: 0 0 10px;
     max-width: 360px;
   }
+
+  /* ── icon button (modal close) ── */
+
+  .icon-btn {
+    width: 26px; height: 26px;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    display: grid;
+    place-items: center;
+    color: var(--ink-mute);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .icon-btn:hover { background: var(--control-active); color: var(--ink-strong); }
 
   /* ── modal ── */
 
@@ -551,6 +909,9 @@
   .modal-footer {
     padding: 12px 20px 16px;
     border-top: 1px solid var(--line-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
 
   .footer-actions {
@@ -571,20 +932,14 @@
   }
   .field-label:first-child { margin-top: 0; }
 
-  .optional {
-    font-family: var(--mono);
-    font-size: 9.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--ink-mute);
+  .field-optional {
+    font-size: 10.5px;
+    color: var(--ink-faint);
     font-weight: 400;
+    font-style: italic;
   }
 
-  .input-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
+  .input-row { display: flex; align-items: center; gap: 6px; }
 
   .field-input {
     width: 100%;
@@ -603,16 +958,12 @@
   .input-row .field-input { flex: 1; width: auto; min-width: 0; }
   .field-input:focus { border-color: var(--arm-400); }
 
-  .field-hint {
-    font-size: 11px;
-    color: var(--ink-mute);
-    margin: 4px 0 0;
-  }
+  .field-hint { font-size: 11px; color: var(--ink-mute); margin: 4px 0 0; }
 
   .save-error {
     font-size: 11.5px;
     color: var(--danger);
-    margin: 0 0 8px;
+    margin: 0;
     padding: 6px 10px;
     background: var(--danger-bg);
     border: 1px solid var(--danger-line);
@@ -630,4 +981,16 @@
   }
 
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── responsive ── */
+
+  @media (max-width: 1060px) {
+    .dict-layout { grid-template-columns: 1fr; }
+    .inspector-col { position: static; }
+  }
+
+  @media (max-width: 720px) {
+    .search { flex-basis: 100%; }
+    .sort-pills { order: 3; width: 100%; overflow-x: auto; }
+  }
 </style>
