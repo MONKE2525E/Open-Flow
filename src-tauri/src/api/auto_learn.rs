@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 
 use crate::data::db;
@@ -15,11 +17,26 @@ const MIN_CANDIDATE_NORM_LEN: usize = 2;
 const MAX_SPAN_GROWTH_WORDS: usize = 5;
 const MAX_REPLACEMENTS_PER_SPAN: usize = 2;
 const MAX_CHANGED_OPS_PER_SPAN: usize = 4;
+const MIN_CANDIDATE_CONFIDENCE: f64 = 0.45;
+const PAIR_COOLDOWN_MINUTES: i64 = 0;
+
+static ACTIVE_MONITORS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn active_monitors() -> &'static Mutex<HashSet<String>> {
+    ACTIVE_MONITORS.get_or_init(|| Mutex::new(HashSet::new()))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WordToken {
     raw: String,
     norm: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CandidateCorrection {
+    mistake: String,
+    correction: String,
+    confidence: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,11 +227,14 @@ fn is_common_word(word: &str) -> bool {
             | "our"
             | "out"
             | "so"
+            | "ship"
+            | "shop"
             | "that"
             | "the"
             | "them"
             | "then"
             | "there"
+            | "their"
             | "they"
             | "this"
             | "to"
@@ -270,6 +290,44 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
         || ((original_distinct || corrected_distinct)
             && original.norm.len().max(corrected.norm.len()) >= 4
             && edit_distance(&original.norm, &corrected.norm) <= 3)
+}
+
+fn pair_hash(left: &str, right: &str) -> (String, String) {
+    fn hash_str(value: &str) -> String {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        value.to_lowercase().hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+    (hash_str(left), hash_str(right))
+}
+
+fn monitor_key(injected_text: &str, app_context: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    injected_text.to_lowercase().hash(&mut hasher);
+    app_context.hash(&mut hasher);
+    format!("{}:{:016x}", app_context, hasher.finish())
+}
+
+fn candidate_confidence(
+    original: &WordToken,
+    corrected: &WordToken,
+    changed_ops: usize,
+    replacements_len: usize,
+) -> f64 {
+    let distance = edit_distance(&original.norm, &corrected.norm) as f64;
+    let max_len = original.norm.len().max(corrected.norm.len()).max(1) as f64;
+    let ratio_score = 1.0 - (distance / max_len).min(1.0);
+
+    let mut score = ratio_score * 0.55;
+    if has_distinctive_features(&original.raw) || has_distinctive_features(&corrected.raw) {
+        score += 0.25;
+    }
+    if is_common_word(&original.norm) && is_common_word(&corrected.norm) {
+        score -= 0.2;
+    }
+    score -= (changed_ops.saturating_sub(1) as f64) * 0.07;
+    score -= (replacements_len.saturating_sub(1) as f64) * 0.08;
+    score.clamp(0.0, 1.0)
 }
 
 fn is_plain_suffix_completion(original: &str, corrected: &str) -> bool {
@@ -452,7 +510,7 @@ fn align_word_ops(
     ops
 }
 
-fn detect_span_corrections(original_span: &str, current_span: &str) -> Vec<(String, String)> {
+fn detect_span_corrections(original_span: &str, current_span: &str) -> Vec<CandidateCorrection> {
     let original = tokenize_words(original_span);
     let current = tokenize_words(current_span);
 
@@ -489,13 +547,18 @@ fn detect_span_corrections(original_span: &str, current_span: &str) -> Vec<(Stri
         return vec![];
     }
 
+    let replacements_len = replacements.len();
     replacements
         .into_iter()
         .filter_map(|(old_idx, new_idx)| {
             let old = &original[old_idx];
             let new = &current[new_idx];
             if is_candidate_correction(old, new) {
-                Some((old.raw.clone(), new.raw.clone()))
+                Some(CandidateCorrection {
+                    mistake: old.raw.clone(),
+                    correction: new.raw.clone(),
+                    confidence: candidate_confidence(old, new, changed_ops, replacements_len),
+                })
             } else {
                 log::debug!("auto-learn: rejected low-confidence candidate");
                 None
@@ -504,11 +567,11 @@ fn detect_span_corrections(original_span: &str, current_span: &str) -> Vec<(Stri
         .collect()
 }
 
-pub fn detect_corrections_from_anchored_text(
+fn detect_corrections_from_anchored_text(
     injected_text: &str,
     baseline_full_text: &str,
     current_full_text: &str,
-) -> Vec<(String, String)> {
+) -> Vec<CandidateCorrection> {
     let Some(anchor) = find_unique_anchor(baseline_full_text, injected_text) else {
         log::debug!("auto-learn: injected text was not uniquely anchored");
         return vec![];
@@ -526,22 +589,74 @@ pub fn detect_corrections_from_anchored_text(
 #[cfg(test)]
 fn diff_words(original: &str, current: &str) -> Vec<(String, String)> {
     detect_span_corrections(original, current)
+        .into_iter()
+        .map(|c| (c.mistake, c.correction))
+        .collect()
 }
 
 fn record_candidate(
     db: &DbHandle,
     recorded_this_session: &mut HashSet<(String, String)>,
+    app_context: &str,
     mistake: String,
     correction: String,
+    confidence: f64,
 ) -> bool {
     let key = (mistake.clone(), correction.clone());
     if recorded_this_session.contains(&key) {
+        let _ = db::log_auto_learn_event(
+            db,
+            "candidate",
+            "duplicate_in_session",
+            app_context,
+            "",
+            "",
+            confidence,
+        );
         return false;
     }
     recorded_this_session.insert(key);
+    let (mistake_hash, correction_hash) = pair_hash(&mistake, &correction);
+
+    if confidence < MIN_CANDIDATE_CONFIDENCE {
+        let _ = db::log_auto_learn_event(
+            db,
+            "candidate",
+            "low_confidence",
+            app_context,
+            &mistake_hash,
+            &correction_hash,
+            confidence,
+        );
+        return false;
+    }
+
+    if !db::upsert_auto_learn_candidate(db, &mistake, &correction, confidence, PAIR_COOLDOWN_MINUTES)
+        .unwrap_or(false)
+    {
+        let _ = db::log_auto_learn_event(
+            db,
+            "candidate",
+            "cooldown_skip",
+            app_context,
+            &mistake_hash,
+            &correction_hash,
+            confidence,
+        );
+        return false;
+    }
 
     if let Err(e) = db::insert_pending_correction(db, &mistake, &correction) {
         log::warn!("auto-learn pending insert failed: {e}");
+        let _ = db::log_auto_learn_event(
+            db,
+            "candidate",
+            "pending_insert_failed",
+            app_context,
+            &mistake_hash,
+            &correction_hash,
+            confidence,
+        );
         return false;
     }
 
@@ -550,19 +665,66 @@ fn record_candidate(
             .unwrap_or(0);
 
     if count < PROMOTION_THRESHOLD {
+        let _ = db::log_auto_learn_event(
+            db,
+            "candidate",
+            "below_threshold",
+            app_context,
+            &mistake_hash,
+            &correction_hash,
+            confidence,
+        );
         return false;
     }
 
-    match db::insert_dictionary_entry_auto_learned(db, &correction, Some(&mistake)) {
-        Ok(true) => true,
+    let tier = if confidence >= 0.85 {
+        "high"
+    } else if confidence >= 0.72 {
+        "medium"
+    } else {
+        "low"
+    };
+
+    match db::insert_dictionary_entry_auto_learned(db, &correction, Some(&mistake), tier) {
+        Ok(true) => {
+            let _ = db::mark_auto_learn_candidate_promoted(db, &mistake, &correction);
+            let _ = db::log_auto_learn_event(
+                db,
+                "promotion",
+                "promoted",
+                app_context,
+                &mistake_hash,
+                &correction_hash,
+                confidence,
+            );
+            true
+        }
         Ok(false) => {
             log::debug!(
                 "auto-learn: promotion skipped because dictionary entry is manual or mismatched"
+            );
+            let _ = db::log_auto_learn_event(
+                db,
+                "promotion",
+                "promotion_skipped",
+                app_context,
+                &mistake_hash,
+                &correction_hash,
+                confidence,
             );
             false
         }
         Err(e) => {
             log::warn!("auto-learn dictionary promotion failed: {e}");
+            let _ = db::log_auto_learn_event(
+                db,
+                "promotion",
+                "promotion_failed",
+                app_context,
+                &mistake_hash,
+                &correction_hash,
+                confidence,
+            );
             false
         }
     }
@@ -648,10 +810,45 @@ pub fn read_focused_text() -> Option<String> {
     None
 }
 
-pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
+pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, app: AppHandle) {
     if injected_text.split_whitespace().count() < 2 {
+        let _ = db::log_auto_learn_event(
+            &db,
+            "monitor",
+            "too_short",
+            &app_context,
+            "",
+            "",
+            0.0,
+        );
         return;
     }
+    let key = monitor_key(&injected_text, &app_context);
+    let inserted = match active_monitors().lock() {
+        Ok(mut active) => active.insert(key.clone()),
+        Err(_) => false,
+    };
+    if !inserted {
+        let _ = db::log_auto_learn_event(
+            &db,
+            "monitor",
+            "duplicate_skip",
+            &app_context,
+            "",
+            "",
+            0.0,
+        );
+        return;
+    }
+    let _ = db::log_auto_learn_event(
+        &db,
+        "monitor",
+        "started",
+        &app_context,
+        "",
+        "",
+        0.0,
+    );
 
     tauri::async_runtime::spawn(async move {
         if let Err(e) = db::prune_pending_corrections(&db, PENDING_RETENTION_DAYS) {
@@ -680,8 +877,21 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
 
         let Some(baseline_text) = baseline_text else {
             log::debug!("auto-learn: could not anchor injected text in focused control");
+            let _ = db::log_auto_learn_event(
+                &db,
+                "anchor",
+                "anchor_miss",
+                &app_context,
+                "",
+                "",
+                0.0,
+            );
+            if let Ok(mut active) = active_monitors().lock() {
+                active.remove(&key);
+            }
             return;
         };
+        let _ = db::log_auto_learn_event(&db, "anchor", "anchor_ok", &app_context, "", "", 0.0);
 
         let mut stable_text_gate = StableTextGate::default();
         let deadline =
@@ -704,21 +914,36 @@ pub fn start_monitor(injected_text: String, db: DbHandle, app: AppHandle) {
             let Some(stable_text) = stable_text_gate.observe(current_text) else {
                 continue;
             };
+            let _ = db::log_auto_learn_event(
+                &db,
+                "stable_text",
+                "stable_pass",
+                &app_context,
+                "",
+                "",
+                0.0,
+            );
 
             let diffs =
                 detect_corrections_from_anchored_text(&injected_text, &baseline_text, stable_text);
 
-            for (mistake, correction) in diffs {
+            for candidate in diffs {
                 if record_candidate(
                     &db,
                     &mut recorded_this_session,
-                    mistake,
-                    correction,
+                    &app_context,
+                    candidate.mistake,
+                    candidate.correction,
+                    candidate.confidence,
                 ) {
                     log::info!("auto-learn: promoted candidate pair");
                     app.emit("open-flow:dictionary-updated", ()).ok();
                 }
             }
+        }
+        let _ = db::log_auto_learn_event(&db, "monitor", "timeout", &app_context, "", "", 0.0);
+        if let Ok(mut active) = active_monitors().lock() {
+            active.remove(&key);
         }
     });
 }
@@ -743,10 +968,11 @@ mod tests {
         let baseline = "Before this. Ask me about Koobernetes today After this.";
         let current = "Before this. Ask me about Kubernetes today After this.";
 
-        assert_eq!(
-            detect_corrections_from_anchored_text(injected, baseline, current),
-            vec![("Koobernetes".to_string(), "Kubernetes".to_string())]
-        );
+        let diffs = detect_corrections_from_anchored_text(injected, baseline, current);
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].mistake, "Koobernetes");
+        assert_eq!(diffs[0].correction, "Kubernetes");
+        assert!(diffs[0].confidence > 0.0);
     }
 
     #[test]
@@ -835,14 +1061,18 @@ mod tests {
         assert!(!record_candidate(
             &db,
             &mut recorded,
+            "test-app",
             "Koobernetes".to_string(),
-            "Kubernetes".to_string()
+            "Kubernetes".to_string(),
+            0.9,
         ));
         assert!(!record_candidate(
             &db,
             &mut recorded,
+            "test-app",
             "Koobernetes".to_string(),
-            "Kubernetes".to_string()
+            "Kubernetes".to_string(),
+            0.9,
         ));
 
         let count = db::count_pending_corrections_recent(
@@ -865,8 +1095,10 @@ mod tests {
                 record_candidate(
                     &db,
                     &mut recorded,
+                    "test-app",
                     "Koobernetes".to_string(),
-                    "Kubernetes".to_string()
+                    "Kubernetes".to_string(),
+                    0.9,
                 ),
                 expected
             );
@@ -886,7 +1118,14 @@ mod tests {
         for expected in [false, true] {
             let mut recorded = HashSet::new();
             assert_eq!(
-                record_candidate(&db, &mut recorded, "rock".to_string(), "qroq".to_string()),
+                record_candidate(
+                    &db,
+                    &mut recorded,
+                    "test-app",
+                    "rock".to_string(),
+                    "qroq".to_string(),
+                    0.9,
+                ),
                 expected
             );
         }
@@ -939,7 +1178,14 @@ mod tests {
                 for expected_promoted in [false, true] {
                     let mut recorded = HashSet::new();
                     assert_eq!(
-                        record_candidate(&db, &mut recorded, mistake.clone(), correction.clone()),
+                        record_candidate(
+                            &db,
+                            &mut recorded,
+                            "test-app",
+                            mistake.clone(),
+                            correction.clone(),
+                            0.9,
+                        ),
                         expected_promoted,
                         "case {} promotion threshold",
                         case.name

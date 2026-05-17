@@ -15,14 +15,25 @@
   let cleanupCacheSpaceConstrained = $state(false);
   let cleanupCacheFreeBytes = $state(0);
   let clearingCleanupCache = $state(false);
+  let autoLearnSummary = $state({
+    monitors_started: 0,
+    anchor_misses: 0,
+    low_confidence_rejections: 0,
+    promotions: 0,
+    duplicate_monitor_skips: 0,
+    timeout_finishes: 0,
+  });
+  let recentAutoLearn = $state<Array<{ id: number; event_type: string; reason_code: string; created_at: string }>>([]);
 
   async function loadSettings() {
     try {
-      const [retention, hint, learn, cacheStatus] = await Promise.all([
+      const [retention, hint, learn, cacheStatus, summary, recent] = await Promise.all([
         invoke<string | null>('get_setting', { key: 'history_retention' }),
         invoke<boolean | null>('get_setting', { key: 'app_context_hint' }),
         invoke<boolean | null>('get_setting', { key: 'auto_learn_enabled' }),
         invoke<{ entry_count: number; is_space_constrained: boolean; free_bytes: number }>('get_cleanup_cache_status'),
+        invoke<typeof autoLearnSummary>('get_auto_learn_status_summary'),
+        invoke<typeof recentAutoLearn>('get_recent_auto_learn_activity', { limit: 5 }),
       ]);
       if (retention) historyRetention = retention;
       appContextHint = hint ?? false;
@@ -30,6 +41,8 @@
       cleanupCacheEntries = cacheStatus.entry_count ?? 0;
       cleanupCacheSpaceConstrained = cacheStatus.is_space_constrained ?? false;
       cleanupCacheFreeBytes = cacheStatus.free_bytes ?? 0;
+      autoLearnSummary = summary ?? autoLearnSummary;
+      recentAutoLearn = recent ?? [];
     } catch (err) {
       console.error('PrivacySection load failed:', err);
     }
@@ -139,6 +152,19 @@
     <div class="desc">Add confirmed corrections to dictionary automatically</div>
   </div>
   <Toggle checked={autoLearn} onchange={handleAutoLearn} />
+</div>
+<div class="setting-row">
+  <div>
+    <div class="label">Auto-learn activity</div>
+    <div class="desc">
+      Promoted: {autoLearnSummary.promotions} | Low-confidence blocked: {autoLearnSummary.low_confidence_rejections} | Anchor misses: {autoLearnSummary.anchor_misses}
+    </div>
+    {#if recentAutoLearn.length > 0}
+      <div class="desc" style="margin-top:4px;">
+        Latest: {recentAutoLearn[0].event_type} ({recentAutoLearn[0].reason_code})
+      </div>
+    {/if}
+  </div>
 </div>
 <div class="setting-row">
   <div>

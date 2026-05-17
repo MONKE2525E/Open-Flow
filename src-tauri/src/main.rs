@@ -160,6 +160,8 @@ fn main() {
             commands::create_dictionary_entry,
             commands::edit_dictionary_entry,
             commands::remove_dictionary_entry,
+            commands::get_auto_learn_status_summary,
+            commands::get_recent_auto_learn_activity,
             commands::check_for_update,
             commands::install_update,
             commands::check_connectivity,
