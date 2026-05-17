@@ -12,6 +12,7 @@
   import Setup from './lib/views/Setup.svelte';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
+  import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx } from './lib/motion';
 
   type EffectiveTheme = 'light' | 'dark';
 
@@ -49,15 +50,23 @@
     document.documentElement.style.setProperty('--accent-ink', c);
   }
 
-  $: {
+  $effect(() => {
     $appearanceMode;
     $accentColor;
     if (typeof document !== 'undefined') applyTheme();
-  }
+  });
 
   // Error toast
-  let errorToast = '';
+  let errorToast = $state('');
   let toastTimer: ReturnType<typeof setTimeout>;
+  let pageDir = $state<1 | -1>(1);
+  let prevPage = $state<string>('home');
+
+  $effect(() => {
+    const next = $currentPage;
+    pageDir = directionFromOrder(prevPage, next, NAV_ORDER);
+    prevPage = next;
+  });
 
   onMount(() => {
     let cleanupFn: (() => void) | undefined;
@@ -114,7 +123,11 @@
     <Sidebar />
     <div class="content scroll-styled">
       {#key $currentPage}
-        <div class="page-wrapper" in:fly={{ y: 8, duration: 400, delay: 150, easing: expoOut }} out:fly={{ y: -8, duration: 150, easing: expoOut }}>
+        <div
+          class="page-wrapper"
+          in:fly={{ y: pageDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.page + 120), easing: expoOut }}
+          out:fly={{ y: -pageDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.base + 100), easing: expoOut }}
+        >
           {#if $currentPage === 'home'}
             <Home />
           {:else if $currentPage === 'dictionary'}
@@ -296,7 +309,7 @@
     box-shadow: var(--shadow-popover);
     z-index: 20;
     max-width: 480px;
-    animation: toastIn 0.2s ease;
+    animation: toastIn 0.18s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   @keyframes toastIn {

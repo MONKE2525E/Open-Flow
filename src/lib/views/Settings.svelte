@@ -5,6 +5,7 @@
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { getVersion } from '@tauri-apps/api/app';
+  import { MOTION_MS, MOTION_PX, SETTINGS_SECTION_ORDER, directionFromOrder, motionMs, motionPx } from '../motion';
 
   import GeneralSection from '../components/settings/GeneralSection.svelte';
   import AppMappingsSection from '../components/settings/AppMappingsSection.svelte';
@@ -15,10 +16,10 @@
   import AboutSection from '../components/settings/AboutSection.svelte';
 
   let section = $state('general');
-  let animDir: 'up' | 'down' | null = $state(null);
+  let animDir: 1 | -1 = $state(1);
   let appVersion = $state('');
 
-  const sectionOrder = ['general', 'apps', 'keys', 'models', 'privacy', 'advanced', 'about'];
+  const sectionOrder = SETTINGS_SECTION_ORDER;
 
   const navSections = [
     { group: 'Settings', items: [
@@ -42,9 +43,7 @@
 
   function goTo(id: string) {
     if (id === section) return;
-    const oldIdx = sectionOrder.indexOf(section);
-    const newIdx = sectionOrder.indexOf(id);
-    animDir = newIdx > oldIdx ? 'up' : 'down';
+    animDir = directionFromOrder(section, id, sectionOrder);
     section = id;
   }
 </script>
@@ -95,8 +94,8 @@
         {#key section}
           <div
             class="panel scroll-styled"
-            in:fly={{ y: animDir === 'up' ? 20 : -20, duration: 350, delay: 150, easing: expoOut }}
-            out:fly={{ y: animDir === 'up' ? -20 : 20, duration: 150, easing: expoOut }}
+            in:fly={{ y: animDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.page + 120), easing: expoOut }}
+            out:fly={{ y: -animDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.base + 100), easing: expoOut }}
           >
             {#if section === 'general'}
               <GeneralSection />

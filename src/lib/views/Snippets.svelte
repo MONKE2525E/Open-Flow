@@ -2,9 +2,11 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { fly, fade } from 'svelte/transition';
+  import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
   import { snippets, fetchSnippets, type Snippet } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
+  import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
 
   type SortKey = 'newest' | 'oldest' | 'alpha' | 'most_used';
 
@@ -30,6 +32,15 @@
   let draftExpansion     = $state('');
   let draftInstructions  = $state('');
   let triggerInput   = $state<HTMLInputElement | null>(null);
+  let inspectorDir = $state<1 | -1>(1);
+  let sortWrapEl = $state<HTMLDivElement | null>(null);
+  let sortButtonEls = $state<Record<SortKey, HTMLButtonElement | null>>({
+    newest: null,
+    oldest: null,
+    alpha: null,
+    most_used: null,
+  });
+  let sortIndicatorStyle = $state('opacity:0;');
 
   const TRIGGER_LIMIT = 300;
 
@@ -54,7 +65,13 @@
   onMount(() => { fetchSnippets(); });
 
   function selectRow(s: Snippet) {
-    selected = selected?.id === s.id ? null : s;
+    if (selected?.id === s.id) {
+      inspectorDir = -1;
+      selected = null;
+    } else {
+      inspectorDir = 1;
+      selected = s;
+    }
     deleteTarget = null;
   }
 
@@ -139,6 +156,34 @@
     { key: 'alpha',     label: 'A → Z'     },
     { key: 'most_used', label: 'Most used' },
   ];
+
+  function setSort(next: SortKey) {
+    if (next === sort) return;
+    sort = next;
+  }
+
+  function updateSortIndicator() {
+    const wrap = sortWrapEl;
+    const btn = sortButtonEls[sort];
+    if (!wrap || !btn) return;
+    const wrapRect = wrap.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const left = Math.round(btnRect.left - wrapRect.left);
+    const width = Math.round(btnRect.width);
+    sortIndicatorStyle = `opacity:1; transform:translateX(${left}px); width:${width}px; transition: transform ${motionMs(MOTION_MS.base)}ms cubic-bezier(0.22, 1, 0.36, 1), width ${motionMs(MOTION_MS.base)}ms cubic-bezier(0.22, 1, 0.36, 1), opacity ${motionMs(MOTION_MS.fast)}ms ease;`;
+  }
+
+  $effect(() => {
+    sort;
+    setTimeout(updateSortIndicator, 0);
+  });
+
+  onMount(() => {
+    updateSortIndicator();
+    const onResize = () => updateSortIndicator();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  });
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -166,9 +211,18 @@
       {/if}
     </div>
 
-    <div class="sort-pills">
+    <div class="sort-pills" bind:this={sortWrapEl}>
+      <span
+        class="sort-indicator"
+        style={sortIndicatorStyle}
+      ></span>
       {#each sortLabels as { key, label }}
-        <button class="sort-pill" class:active={sort === key} onclick={() => sort = key}>{label}</button>
+        <button
+          class="sort-pill"
+          class:active={sort === key}
+          bind:this={sortButtonEls[key]}
+          onclick={() => setSort(key)}
+        >{label}</button>
       {/each}
     </div>
 
@@ -206,10 +260,11 @@
                 class:is-selected={selected?.id === s.id}
                 role="button"
                 tabindex="0"
-                in:fly={{ y: 6, duration: 200, easing: expoOut }}
-                out:fade={{ duration: 120 }}
+                in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}
+                out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+                animate:flip={{ duration: motionMs(MOTION_MS.base), easing: expoOut }}
                 onclick={() => selectRow(s)}
-                onkeydown={(e) => e.key === 'Enter' && selectRow(s)}
+                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRow(s); } }}
               >
                 <div class="snip-left">
                   <div class="snip-trigger">{s.trigger}</div>
@@ -235,47 +290,52 @@
       <!-- Right: inspector -->
       <div class="inspector-col">
         {#if selected}
-          <div class="inspector" in:fly={{ x: 8, duration: 220, easing: expoOut }}>
-            <div class="insp-trigger">{selected.trigger}</div>
-            <div class="insp-arrow" aria-hidden="true">
+          {#key selected.id}
+            <div
+              class="inspector"
+              in:fly={{ x: inspectorDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+              out:fade={{ duration: 0 }}
+            >
+              <div class="insp-trigger">{selected.trigger}</div>
+              <div class="insp-arrow" aria-hidden="true">
               <svg width="11" height="16" viewBox="0 0 11 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="5.5" y1="0" x2="5.5" y2="12"/>
                 <polyline points="2,9 5.5,13.5 9,9"/>
               </svg>
-            </div>
-            <div class="insp-expansion">{selected.expansion}</div>
+              </div>
+              <div class="insp-expansion">{selected.expansion}</div>
 
-            {#if selected.instructions}
-              <div class="insp-instructions" in:fly={{ y: 4, duration: 200, easing: expoOut }}>
-                <div class="insp-instr-label">
+              {#if selected.instructions}
+                <div class="insp-instructions" in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}>
+                  <div class="insp-instr-label">
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
                   </svg>
                   Cleanup instructions
+                  </div>
+                  <p class="insp-instr-text">{selected.instructions}</p>
                 </div>
-                <p class="insp-instr-text">{selected.instructions}</p>
-              </div>
-            {/if}
+              {/if}
 
-            <div class="insp-divider"></div>
+              <div class="insp-divider"></div>
 
-            <div class="insp-stats">
-              <div class="insp-stat-row">
+              <div class="insp-stats">
+                <div class="insp-stat-row">
                 <span class="insp-stat-num">{selected.use_count}</span>
                 <span class="insp-stat-label">{selected.use_count === 1 ? 'use' : 'uses'}</span>
-              </div>
-              <div class="insp-stat-row">
+                </div>
+                <div class="insp-stat-row">
                 <span class="insp-stat-label">Added</span>
                 <span class="insp-stat-date">{fmtDate(selected.created_at)}</span>
+                </div>
               </div>
-            </div>
 
-            <div class="insp-actions">
-              <button class="btn-insp-edit" onclick={() => openEdit(selected!)}>
+              <div class="insp-actions">
+                <button class="btn-insp-edit" onclick={() => openEdit(selected!)}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
                 Edit
-              </button>
-              <button
+                </button>
+                <button
                 class="btn-insp-delete"
                 class:armed={deleteTarget === selected.id}
                 onclick={() => confirmDelete(selected!.id)}
@@ -287,11 +347,12 @@
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="m19 6-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
                   Delete
                 {/if}
-              </button>
+                </button>
+              </div>
             </div>
-          </div>
+          {/key}
         {:else}
-          <div class="inspector-empty" in:fade={{ duration: 200 }}>
+          <div class="inspector-empty" in:fade={{ duration: motionMs(MOTION_MS.base) }}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="color:var(--arm-300)">
               <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
               <polyline points="14 2 14 8 20 8"/>
@@ -476,6 +537,20 @@
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 3px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .sort-indicator {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    height: calc(100% - 6px);
+    border-radius: 5px;
+    background: var(--accent-soft);
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0;
   }
 
   .sort-pill {
@@ -489,9 +564,11 @@
     cursor: pointer;
     white-space: nowrap;
     transition: background 0.12s, color 0.12s;
+    position: relative;
+    z-index: 1;
   }
   .sort-pill:hover { color: var(--ink-strong); background: var(--control-hover); }
-  .sort-pill.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
+  .sort-pill.active { color: var(--accent-ink); font-weight: 500; }
 
   .btn-primary {
     background: var(--ink);
@@ -538,21 +615,26 @@
 
   .snip-list-col { min-width: 0; }
 
-  .snip-list { border-top: 1px solid var(--line); }
+  .snip-list {
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    overflow: hidden;
+    background: var(--bg-elev);
+  }
 
   .snip-row {
     display: grid;
     grid-template-columns: 1fr auto;
     align-items: center;
     gap: 16px;
-    padding: 12px 10px;
+    padding: 12px 14px;
     border-bottom: 1px solid var(--line);
     cursor: pointer;
-    border-radius: var(--r-sm);
     transition: background 0.12s;
   }
-  .snip-row:hover { background: var(--control-active); }
-  .snip-row.is-selected { background: var(--control-active); outline: 1.5px solid var(--line-strong); outline-offset: -1px; }
+  .snip-row:last-child { border-bottom: 0; }
+  .snip-row:hover { background: var(--control-hover); }
+  .snip-row.is-selected { background: var(--control-active); }
 
   .snip-left { min-width: 0; }
 

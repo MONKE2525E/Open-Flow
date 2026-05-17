@@ -3,6 +3,7 @@
   import { tick } from 'svelte';
   import Toggle from '../Toggle.svelte';
   import { saveSetting, type HistoryRetention } from '../../settings';
+  import { animateWidth } from '../../motion';
 
   const historyOptions = ['7 days', '30 days', '90 days', 'Forever'];
 
@@ -97,7 +98,11 @@
 <div class="setting-row">
   <div><div class="label">Transcription history</div><div class="desc">How long to keep past dictations</div></div>
   <div class="history-dropdown">
-    <button class="btn-ghost mic-btn" onclick={() => (historyDropdownOpen = !historyDropdownOpen)}>
+    <button
+      class="btn-ghost mic-btn"
+      use:animateWidth={{ text: historyRetention }}
+      onclick={() => (historyDropdownOpen = !historyDropdownOpen)}
+    >
       <span>{historyRetention}</span>
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="m6 9 6 6 6-6"/>
@@ -105,7 +110,7 @@
     </button>
     {#if historyDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="mic-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
+      <div class="mic-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
         {#each historyOptions as opt}
           <button class="mic-item" class:active={historyRetention === opt} onclick={() => saveHistoryRetention(opt)}>
             {opt}

@@ -1,9 +1,12 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { tick } from 'svelte';
+  import { fly, fade } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
   import { appearanceMode } from '../../stores';
   import { saveSetting, type AppearanceMode } from '../../settings';
+  import { MOTION_MS, MOTION_PX, motionMs, motionPx, animateWidth } from '../../motion';
   import {
     getTranscriptionLanguageLabel,
     transcriptionLanguages,
@@ -23,6 +26,49 @@
   let hotkey = $state(['ControlLeft', 'MetaLeft']);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
+  let hotkeyState = $state<'idle' | 'armed' | 'first' | 'saving' | 'success' | 'error'>('idle');
+  let keybindEl: HTMLElement | null = $state(null);
+  let capturedWidth = 0;
+  let segmentEl: HTMLElement | null = $state(null);
+  let indicatorStyle = $state('');
+
+  $effect(() => {
+    const idx = appearanceOptions.findIndex(o => o.id === $appearanceMode);
+    if (!segmentEl) return;
+    const btn = segmentEl.querySelectorAll<HTMLElement>('.appearance-option')[idx];
+    if (!btn) return;
+    indicatorStyle = `left:${btn.offsetLeft}px;width:${btn.offsetWidth}px`;
+  });
+
+  let buttonText = $derived(
+    recordingHotkey
+      ? capturedKeys[0] === '__bad__'
+        ? 'Must be Alt/Ctrl/Shift/Win'
+        : capturedKeys.length === 0
+          ? 'Press Alt/Ctrl/Shift/Win...'
+          : 'Press 2nd key...'
+      : `${formatKey(hotkey[0])} + ${formatKey(hotkey[1])}`
+  );
+
+  $effect.pre(() => {
+    void buttonText;
+    if (keybindEl) capturedWidth = keybindEl.getBoundingClientRect().width;
+  });
+
+  $effect(() => {
+    void buttonText;
+    if (!keybindEl || capturedWidth === 0) return;
+    const el = keybindEl;
+    const prevW = capturedWidth;
+    el.style.transition = 'none';
+    el.style.width = 'max-content';
+    const newW = Math.ceil(el.getBoundingClientRect().width);
+    el.style.width = `${prevW}px`;
+    void el.offsetWidth;
+    el.style.transition = '';
+    el.style.width = `${newW}px`;
+  });
+
   const appearanceOptions: { id: AppearanceMode; label: string }[] = [
     { id: 'system', label: 'System' },
     { id: 'light', label: 'Light' },
@@ -181,13 +227,14 @@
   }
 
   function micLabel(name: string) {
-    return name.length > 32 ? name.slice(0, 32) + '…' : name;
+    return name;
   }
 
   function startRecordingHotkey(e: MouseEvent | KeyboardEvent) {
     e.stopPropagation();
     if (recordingHotkey) return;
     recordingHotkey = true;
+    hotkeyState = 'armed';
     capturedKeys = [];
     window.addEventListener('keydown', handleHotkeyKeydown, { capture: true });
     window.addEventListener('keyup', handleHotkeyKeyup, { capture: true });
@@ -201,6 +248,7 @@
       window.removeEventListener('keyup', handleHotkeyKeyup, { capture: true });
       window.removeEventListener('mousedown', cancelRecordingHotkey, { capture: true });
       recordingHotkey = false;
+      hotkeyState = 'idle';
       capturedKeys = [];
     }
   }
@@ -217,8 +265,10 @@
         return;
       }
       capturedKeys = [e.code];
+      hotkeyState = 'first';
     } else if (capturedKeys.length === 1 && e.code !== capturedKeys[0]) {
       capturedKeys = [...capturedKeys, e.code];
+      hotkeyState = 'saving';
       finishRecordingHotkey();
     }
   }
@@ -242,16 +292,22 @@
           console.warn('check_hotkey failed (likely running in browser dev mode)', e);
         }
         if (!available) {
+          hotkeyState = 'error';
           const { emit } = await import('@tauri-apps/api/event');
           await emit('open-flow:error', 'Hotkey may already be in use by another application');
+          setTimeout(() => { hotkeyState = 'idle'; }, 900);
           return;
         }
         await invoke('save_hotkey', { key1: capturedKeys[0], key2: capturedKeys[1] });
         hotkey = capturedKeys;
+        hotkeyState = 'success';
+        setTimeout(() => { hotkeyState = 'idle'; }, 700);
       } catch (e) {
         console.error('Failed to save hotkey', e);
+        hotkeyState = 'error';
         const { emit } = await import('@tauri-apps/api/event');
-        await emit('open-flow:error', 'Failed to save hotkey — key may not be recognized');
+        await emit('open-flow:error', 'Failed to save hotkey - key may not be recognized');
+        setTimeout(() => { hotkeyState = 'idle'; }, 900);
       }
     }
   }
@@ -262,30 +318,44 @@
 <h2 class="settings-h">General</h2>
 <div class="setting-row">
   <div><div class="label">Hotkey</div><div class="desc">Hold to record, release to transcribe</div></div>
-  <button class="badge key-badge keybind-btn" onclick={startRecordingHotkey} class:recording={recordingHotkey}>
-    {#if recordingHotkey}
-      {#if capturedKeys.length === 0 || capturedKeys[0] === '__bad__'}
-        {capturedKeys[0] === '__bad__' ? 'Must be Alt/Ctrl/Shift/Win' : 'Press Alt/Ctrl/Shift/Win...'}
-      {:else}
-        Press 2nd key...
-      {/if}
-    {:else}
-      {formatKey(hotkey[0])} + {formatKey(hotkey[1])}
-    {/if}
+  <button
+    bind:this={keybindEl}
+    class="badge key-badge keybind-btn"
+    onclick={startRecordingHotkey}
+    class:recording={recordingHotkey}
+    class:armed={hotkeyState === 'armed'}
+    class:first={hotkeyState === 'first'}
+    class:saving={hotkeyState === 'saving'}
+    class:success={hotkeyState === 'success'}
+    class:error={hotkeyState === 'error'}
+  >
+    {#key buttonText}
+      <span in:fade={{ duration: motionMs(MOTION_MS.fast) }}>{buttonText}</span>
+    {/key}
   </button>
 </div>
 <div class="setting-row">
   <div><div class="label">Microphone</div><div class="desc">Input device for capture</div></div>
   <div class="mic-dropdown">
-    <button class="btn-ghost mic-btn" onclick={() => (micDropdownOpen = !micDropdownOpen)}>
-      <span>{selectedMic ? micLabel(selectedMic) : 'Default Device'}</span>
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <button
+      class="btn-ghost mic-btn"
+      use:animateWidth={{ text: selectedMic ? micLabel(selectedMic) : 'Default Device', max: 180 }}
+      onclick={() => (micDropdownOpen = !micDropdownOpen)}
+    >
+      <span class="mic-btn-label">{selectedMic ? micLabel(selectedMic) : 'Default Device'}</span>
+      <svg class:open={micDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="m6 9 6 6 6-6"/>
       </svg>
     </button>
     {#if micDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="mic-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
+      <div
+        class="mic-menu scroll-styled"
+        role="presentation"
+        onclick={(e) => e.stopPropagation()}
+        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+      >
         <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>Default Device</button>
         {#each microphones as m}
           <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>
@@ -302,7 +372,11 @@
 <div class="setting-row">
   <div><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect</div></div>
   <div class="language-dropdown">
-    <button class="btn-ghost language-btn" onclick={() => (languageDropdownOpen = !languageDropdownOpen)}>
+    <button
+      class="btn-ghost language-btn"
+      use:animateWidth={{ text: getTranscriptionLanguageLabel(selectedLanguage) }}
+      onclick={() => (languageDropdownOpen = !languageDropdownOpen)}
+    >
       <span>{getTranscriptionLanguageLabel(selectedLanguage)}</span>
       <span class="language-code">{selectedLanguage}</span>
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -311,7 +385,7 @@
     </button>
     {#if languageDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="language-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
+      <div class="language-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
         {#each transcriptionLanguages as language}
           <button
             class="language-item"
@@ -332,7 +406,10 @@
 </div>
 <div class="setting-row">
   <div><div class="label">Appearance</div><div class="desc">Follow Windows or force a specific theme</div></div>
-  <div class="appearance-segment" role="radiogroup" aria-label="Appearance">
+  <div class="appearance-segment" role="radiogroup" aria-label="Appearance" bind:this={segmentEl}>
+    {#if indicatorStyle}
+      <div class="appearance-indicator" style={indicatorStyle} aria-hidden="true"></div>
+    {/if}
     {#each appearanceOptions as option}
       <button
         class="appearance-option"
@@ -358,14 +435,57 @@
 </div>
 
 <style>
-  .keybind-btn { cursor: pointer; border: 1px solid transparent; transition: all 0.2s; user-select: none; }
+  .keybind-btn {
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition:
+      width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      background 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+      color 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+      transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+    user-select: none;
+    transform-origin: center;
+    white-space: nowrap;
+    overflow: hidden;
+  }
   .keybind-btn:hover { background: var(--control-hover); }
   .keybind-btn.recording { background: var(--accent); color: var(--on-accent); animation: pulse 1.5s infinite; }
+  .keybind-btn.armed { transform: scale(1.02); }
+  .keybind-btn.first { transform: scale(1.03); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+  .keybind-btn.saving { opacity: 0.9; }
+  .keybind-btn.success { background: color-mix(in srgb, var(--accent) 82%, white 18%); color: var(--on-accent); transform: scale(1.03); }
+  .keybind-btn.error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); animation: none; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
   .mic-dropdown, .language-dropdown { position: relative; flex-shrink: 0; }
   .mic-btn, .language-btn { display: flex; align-items: center; gap: 6px; max-width: 180px; }
+  .mic-btn {
+    max-width: 180px;
+    display: grid;
+    grid-template-columns: minmax(0, auto) 10px;
+    column-gap: 8px;
+    justify-content: start;
+    align-items: center;
+    transition: background 0.12s, color 0.12s;
+  }
+  .mic-btn-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    text-align: left;
+  }
+  .mic-btn svg {
+    transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    transform-origin: 50% 50%;
+    flex-shrink: 0;
+  }
+  .mic-btn svg.open { transform: rotate(180deg); }
   .language-btn { max-width: 210px; }
-  .mic-btn span, .language-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+  .language-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
   .language-code {
     font-family: var(--mono);
     font-size: 10.5px;
@@ -415,6 +535,7 @@
   .mic-item.active, .language-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
   .mic-empty { padding: 10px 12px; font-size: 12px; color: var(--ink-mute); font-style: italic; }
   .appearance-segment {
+    position: relative;
     display: inline-flex;
     align-items: center;
     padding: 2px;
@@ -423,7 +544,19 @@
     border-radius: 7px;
     gap: 2px;
   }
+  .appearance-indicator {
+    position: absolute;
+    top: 2px;
+    height: calc(100% - 4px);
+    background: var(--bg-elev);
+    border-radius: 5px;
+    box-shadow: 0 0 0 1px var(--line-soft);
+    pointer-events: none;
+    transition: left 180ms cubic-bezier(0.22, 1, 0.36, 1), width 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
   .appearance-option {
+    position: relative;
+    z-index: 1;
     border: 0;
     border-radius: 5px;
     background: transparent;
@@ -433,8 +566,8 @@
     font-weight: 500;
     padding: 4px 9px;
     cursor: pointer;
-    transition: background 0.12s, color 0.12s;
+    transition: color 0.12s;
   }
-  .appearance-option:hover { color: var(--ink-strong); background: var(--control-hover); }
-  .appearance-option.active { color: var(--ink); background: var(--bg-elev); box-shadow: 0 0 0 1px var(--line-soft); }
+  .appearance-option:hover { color: var(--ink-strong); }
+  .appearance-option.active { color: var(--ink); }
 </style>

@@ -68,9 +68,13 @@
   <div>
     <div class="label">Updates</div>
     {#if updateCheckState === 'up-to-date'}
-      <div class="desc update-ok">You're on the latest version</div>
+      <div class="update-status-wrap">
+        <div class="desc update-ok update-status">You're on the latest version</div>
+      </div>
     {:else if updateCheckState === 'available' && $updateInfo}
-      <div class="desc update-available">v{$updateInfo.version} is available</div>
+      <div class="update-status-wrap">
+        <div class="desc update-available update-status">v{$updateInfo.version} is available</div>
+      </div>
     {/if}
   </div>
   <div class="update-controls">
@@ -94,4 +98,23 @@
   .update-controls { flex-shrink: 0; }
   .update-ok { color: var(--success); }
   .update-available { color: var(--accent); }
+
+  .update-status-wrap {
+    overflow: hidden;
+  }
+
+  .update-status {
+    animation: update-drop 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @keyframes update-drop {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
 </style>

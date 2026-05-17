@@ -16,6 +16,7 @@ src-tauri/target/release/bundle/*
 # Generated screenshots
 screenshot.png
 setup_step6.png
+tmp-screenshots/
 
 # Environment & secrets
 .env
