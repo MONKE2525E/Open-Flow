@@ -211,7 +211,7 @@
         onkeydown={(e) => e.key === 'Enter' && addMapping()}
       />
       {#if appPickerOpen && filteredApps.length > 0}
-        <div class="app-picker-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <div class="app-picker-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
           {#each filteredApps as app}
             <button class="app-picker-item" onclick={() => pickApp(app)}>
               <span class="app-picker-name">{cleanAppName(app.name || app.exe)}</span>
@@ -234,7 +234,7 @@
         </svg>
       </button>
       {#if profileDropdownOpen}
-        <div class="profile-drop-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <div class="profile-drop-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
           {#each profileOptions as profile}
             <button
               class="profile-drop-item"
