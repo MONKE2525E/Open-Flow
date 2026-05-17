@@ -131,10 +131,10 @@ pub fn open(path: &str) -> Result<Db> {
                ON cleanup_cache(expires_at);
              CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
                ON cleanup_cache(last_hit_at);
+             PRAGMA user_version = 3;
              COMMIT;",
         );
         let _ = conn.execute_batch("ROLLBACK;");
-        conn.execute_batch("PRAGMA user_version = 3;")?;
     }
 
     Ok(Arc::new(Mutex::new(conn)))

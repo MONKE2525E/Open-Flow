@@ -202,12 +202,6 @@ pub fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
     db::query_stats(&db).map_err(|e| e.to_string())
 }
 
-fn app_data_dir_for_db() -> std::path::PathBuf {
-    std::env::var("APPDATA")
-        .map(|p| std::path::PathBuf::from(p).join("OpenFlow"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-}
-
 #[cfg(target_os = "windows")]
 fn free_bytes_for_path(path: &std::path::Path) -> Result<u64, String> {
     use std::os::windows::ffi::OsStrExt;
@@ -232,7 +226,7 @@ fn free_bytes_for_path(path: &std::path::Path) -> Result<u64, String> {
         )
     };
     result
-        .map(|_| total_free_bytes)
+        .map(|_| free_bytes_available)
         .map_err(|_| "Failed to read free disk space".to_string())
 }
 
@@ -251,7 +245,10 @@ pub fn clear_cleanup_cache(app: AppHandle) -> Result<usize, String> {
 pub fn get_cleanup_cache_status(app: AppHandle) -> Result<CleanupCacheStatus, String> {
     let db = app.state::<DbHandle>();
     let entry_count = db::cleanup_cache_count(&db).map_err(|e| e.to_string())?;
-    let app_data = app_data_dir_for_db();
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
     let free_bytes = free_bytes_for_path(&app_data)?;
     Ok(CleanupCacheStatus {
         entry_count,

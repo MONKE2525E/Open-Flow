@@ -65,7 +65,7 @@
   }
 
   async function clearCleanupCache() {
-    if (cleanupCacheSpaceConstrained || clearingCleanupCache) return;
+    if (clearingCleanupCache) return;
     clearingCleanupCache = true;
     try {
       await invoke<number>('clear_cleanup_cache');
@@ -141,7 +141,7 @@
     <div class="desc">
       {cleanupCacheEntries} cached phrase{cleanupCacheEntries === 1 ? '' : 's'}.
       {#if cleanupCacheSpaceConstrained}
-        Disabled: low disk space (&lt;1 GB free).
+        Low disk space (&lt;1 GB free). Clearing cache may help free space.
       {:else}
         {(cleanupCacheFreeBytes / 1024 / 1024 / 1024).toFixed(1)} GB free.
       {/if}
@@ -150,8 +150,8 @@
   <button
     class="btn-ghost"
     onclick={clearCleanupCache}
-    disabled={cleanupCacheSpaceConstrained || clearingCleanupCache}
-    title={cleanupCacheSpaceConstrained ? 'Disabled: low disk space (<1 GB free).' : ''}
+    disabled={clearingCleanupCache}
+    title={cleanupCacheSpaceConstrained ? 'Low disk space detected (<1 GB free).' : ''}
   >
     {clearingCleanupCache ? 'Clearing…' : 'Clear Cache'}
   </button>
