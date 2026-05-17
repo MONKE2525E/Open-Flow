@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use super::prompts::get_system_prompt_with_extras;
+use super::prompts::{get_system_prompt_with_extras, AppContextMode, PromptProfile};
 
 #[derive(Clone, Debug)]
 pub enum CleanupProvider {
@@ -18,9 +18,17 @@ pub async fn cleanup(
     intensity: &str,
     snippet_instructions: &str,
     app_context: Option<&str>,
+    app_context_mode: AppContextMode,
+    prompt_profile: PromptProfile,
 ) -> Result<String> {
-    let prompt =
-        get_system_prompt_with_extras(profile, intensity, snippet_instructions, app_context);
+    let prompt = get_system_prompt_with_extras(
+        profile,
+        intensity,
+        snippet_instructions,
+        app_context,
+        app_context_mode,
+        prompt_profile,
+    );
     match provider {
         CleanupProvider::Groq => {
             openai_compat(

@@ -4,6 +4,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
 use crate::api::{auto_learn, cleanup, transcription};
+use crate::api::prompts::{AppContextMode, PromptProfile};
 use crate::core::{injection, window_context};
 use crate::data::{db, dictionary, snippets, store};
 use crate::media::audio;
@@ -12,6 +13,27 @@ use crate::DbHandle;
 
 const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CleanupPath {
+    LlmMinimalUnder50,
+    LlmStandard,
+    SkippedNone,
+    PureSnippet,
+    Disabled,
+}
+
+impl CleanupPath {
+    fn as_str(self) -> &'static str {
+        match self {
+            CleanupPath::LlmMinimalUnder50 => "llm_minimal_under_50",
+            CleanupPath::LlmStandard => "llm_standard",
+            CleanupPath::SkippedNone => "skipped_none",
+            CleanupPath::PureSnippet => "pure_snippet",
+            CleanupPath::Disabled => "disabled",
+        }
+    }
+}
 
 fn transcription_provider_from_str(s: &str) -> transcription::Provider {
     match s {
@@ -220,6 +242,57 @@ fn trim_err(s: &str) -> String {
         format!("{}…", s.chars().take(117).collect::<String>())
     } else {
         s.to_string()
+    }
+}
+
+fn estimate_tokens(text: &str) -> u32 {
+    let words = text.split_whitespace().count() as f32;
+    (words * 1.3).floor() as u32
+}
+
+fn select_prompt_profile(estimated_tokens: u32) -> PromptProfile {
+    if estimated_tokens < 50 {
+        PromptProfile::Minimal
+    } else {
+        PromptProfile::Standard
+    }
+}
+
+fn select_app_context_mode(
+    app_context_enabled: bool,
+    app_context_available: bool,
+    estimated_tokens: u32,
+) -> AppContextMode {
+    if !app_context_enabled || !app_context_available {
+        return AppContextMode::None;
+    }
+    if estimated_tokens >= 100 {
+        AppContextMode::Full4Row
+    } else {
+        AppContextMode::Compact
+    }
+}
+
+fn cleanup_path_for(
+    cleanup_enabled: bool,
+    has_cleanup_key: bool,
+    has_pure_expansion: bool,
+    cleanup_intensity: &str,
+    estimated_tokens: u32,
+) -> CleanupPath {
+    if has_pure_expansion {
+        return CleanupPath::PureSnippet;
+    }
+    if !cleanup_enabled || !has_cleanup_key {
+        return CleanupPath::Disabled;
+    }
+    if cleanup_intensity == "none" {
+        return CleanupPath::SkippedNone;
+    }
+    if estimated_tokens < 50 {
+        CleanupPath::LlmMinimalUnder50
+    } else {
+        CleanupPath::LlmStandard
     }
 }
 
@@ -499,13 +572,42 @@ async fn run_cleanup_and_snippets(
     let expanded = pure_expansion
         .clone()
         .unwrap_or_else(|| snippets::expand_snippets_from(raw, &mut db_snippets, &db));
+    let estimated_tokens = estimate_tokens(&expanded);
 
     let c_key = cfg.key_for(&cfg.cleanup_provider).to_owned();
-    let final_text = if cfg.cleanup_enabled
-        && !c_key.is_empty()
-        && pure_expansion.is_none()
-        && cfg.cleanup_intensity != "none"
-    {
+    let app_context_mode = select_app_context_mode(
+        cfg.app_context_hint,
+        app_context.is_some(),
+        estimated_tokens,
+    );
+    let cleanup_path = cleanup_path_for(
+        cfg.cleanup_enabled,
+        !c_key.is_empty(),
+        pure_expansion.is_some(),
+        &cfg.cleanup_intensity,
+        estimated_tokens,
+    );
+    let prompt_profile = select_prompt_profile(estimated_tokens);
+
+    let app_context_mode_label = match app_context_mode {
+        AppContextMode::None => "none",
+        AppContextMode::Compact => "compact",
+        AppContextMode::Full4Row => "full_4row",
+    };
+    log::info!(
+        "cleanup_routing estimated_tokens={} cleanup_path={} app_context_setting_enabled={} app_context_available={} app_context_sent={} app_context_mode={}",
+        estimated_tokens,
+        cleanup_path.as_str(),
+        cfg.app_context_hint,
+        app_context.is_some(),
+        app_context_mode != AppContextMode::None,
+        app_context_mode_label
+    );
+
+    let final_text = if matches!(
+        cleanup_path,
+        CleanupPath::LlmMinimalUnder50 | CleanupPath::LlmStandard
+    ) {
         let dict_instructions =
             dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
         let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str()]
@@ -531,6 +633,8 @@ async fn run_cleanup_and_snippets(
                     &intensity_ref,
                     &rules_ref,
                     ctx_ref.as_deref(),
+                    app_context_mode,
+                    prompt_profile,
                 )
                 .await
             })
@@ -603,4 +707,74 @@ where
         }
     }
     Err(last_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        cleanup_path_for, estimate_tokens, select_app_context_mode, select_prompt_profile,
+        CleanupPath,
+    };
+    use crate::api::prompts::{AppContextMode, PromptProfile};
+
+    #[test]
+    fn token_estimator_uses_word_count_times_point_13() {
+        assert_eq!(estimate_tokens("one two three"), 3);
+        assert_eq!(estimate_tokens("one two three four five"), 6);
+    }
+
+    #[test]
+    fn prompt_profile_thresholds_work() {
+        assert_eq!(select_prompt_profile(49), PromptProfile::Minimal);
+        assert_eq!(select_prompt_profile(50), PromptProfile::Standard);
+        assert_eq!(select_prompt_profile(100), PromptProfile::Standard);
+    }
+
+    #[test]
+    fn app_context_mode_thresholds_work() {
+        assert_eq!(
+            select_app_context_mode(false, true, 120),
+            AppContextMode::None
+        );
+        assert_eq!(
+            select_app_context_mode(true, false, 120),
+            AppContextMode::None
+        );
+        assert_eq!(
+            select_app_context_mode(true, true, 80),
+            AppContextMode::Compact
+        );
+        assert_eq!(
+            select_app_context_mode(true, true, 100),
+            AppContextMode::Full4Row
+        );
+    }
+
+    #[test]
+    fn cleanup_path_selection_matches_contract() {
+        assert_eq!(
+            cleanup_path_for(true, true, true, "medium", 10),
+            CleanupPath::PureSnippet
+        );
+        assert_eq!(
+            cleanup_path_for(false, true, false, "medium", 10),
+            CleanupPath::Disabled
+        );
+        assert_eq!(
+            cleanup_path_for(true, false, false, "medium", 10),
+            CleanupPath::Disabled
+        );
+        assert_eq!(
+            cleanup_path_for(true, true, false, "none", 10),
+            CleanupPath::SkippedNone
+        );
+        assert_eq!(
+            cleanup_path_for(true, true, false, "medium", 49),
+            CleanupPath::LlmMinimalUnder50
+        );
+        assert_eq!(
+            cleanup_path_for(true, true, false, "medium", 50),
+            CleanupPath::LlmStandard
+        );
+    }
 }
