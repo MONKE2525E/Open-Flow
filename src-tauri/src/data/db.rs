@@ -10,6 +10,27 @@ fn lock_conn(db: &Db) -> Result<MutexGuard<'_, Connection>> {
         .map_err(|_| anyhow::anyhow!("Database lock was poisoned"))
 }
 
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let pragma = format!("PRAGMA table_info({table})");
+    let mut stmt = conn.prepare(&pragma)?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn ensure_table_column(conn: &Connection, table: &str, column: &str, def_sql: &str) -> Result<()> {
+    if table_has_column(conn, table, column)? {
+        return Ok(());
+    }
+    conn.execute_batch(def_sql)?;
+    Ok(())
+}
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS transcriptions (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,6 +47,8 @@ CREATE TABLE IF NOT EXISTS dictionary (
   mistake          TEXT,
   auto_learned     INTEGER NOT NULL DEFAULT 0,
   correction_count INTEGER NOT NULL DEFAULT 0,
+  confidence_tier  TEXT    NOT NULL DEFAULT 'low',
+  last_seen_at     DATETIME,
   created_at       DATETIME NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS snippets (
@@ -44,6 +67,32 @@ CREATE TABLE IF NOT EXISTS pending_corrections (
 );
 CREATE INDEX IF NOT EXISTS idx_pending_words
   ON pending_corrections(wrong_word, correct_word);
+CREATE TABLE IF NOT EXISTS auto_learn_events (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type     TEXT    NOT NULL,
+  reason_code    TEXT    NOT NULL DEFAULT '',
+  app_context    TEXT    NOT NULL DEFAULT '',
+  mistake_hash   TEXT    NOT NULL DEFAULT '',
+  correction_hash TEXT   NOT NULL DEFAULT '',
+  confidence     REAL    NOT NULL DEFAULT 0.0,
+  created_at     DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_auto_learn_events_event_type
+  ON auto_learn_events(event_type, created_at);
+CREATE TABLE IF NOT EXISTS auto_learn_candidates (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  wrong_word         TEXT    NOT NULL,
+  correct_word       TEXT    NOT NULL,
+  confidence_sum     REAL    NOT NULL DEFAULT 0.0,
+  confidence_avg     REAL    NOT NULL DEFAULT 0.0,
+  seen_count         INTEGER NOT NULL DEFAULT 0,
+  last_seen_at       DATETIME NOT NULL DEFAULT (datetime('now')),
+  cooldown_until     DATETIME,
+  promoted_at        DATETIME,
+  UNIQUE(wrong_word, correct_word)
+);
+CREATE INDEX IF NOT EXISTS idx_auto_learn_candidates_seen
+  ON auto_learn_candidates(last_seen_at);
 CREATE TABLE IF NOT EXISTS cleanup_cache (
   key         TEXT PRIMARY KEY,
   clean_text  TEXT NOT NULL,
@@ -138,6 +187,57 @@ pub fn open(path: &str) -> Result<Db> {
             let _ = conn.execute_batch("ROLLBACK;");
             return Err(err.into());
         }
+    }
+    if user_version < 4 {
+        conn.execute_batch("BEGIN;")?;
+        if let Err(err) = (|| -> Result<()> {
+            ensure_table_column(
+                &conn,
+                "dictionary",
+                "confidence_tier",
+                "ALTER TABLE dictionary ADD COLUMN confidence_tier TEXT NOT NULL DEFAULT 'low';",
+            )?;
+            ensure_table_column(
+                &conn,
+                "dictionary",
+                "last_seen_at",
+                "ALTER TABLE dictionary ADD COLUMN last_seen_at DATETIME;",
+            )?;
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS auto_learn_events (
+                   id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                   event_type     TEXT    NOT NULL,
+                   reason_code    TEXT    NOT NULL DEFAULT '',
+                   app_context    TEXT    NOT NULL DEFAULT '',
+                   mistake_hash   TEXT    NOT NULL DEFAULT '',
+                   correction_hash TEXT   NOT NULL DEFAULT '',
+                   confidence     REAL    NOT NULL DEFAULT 0.0,
+                   created_at     DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_auto_learn_events_event_type
+                   ON auto_learn_events(event_type, created_at);
+                 CREATE TABLE IF NOT EXISTS auto_learn_candidates (
+                   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                   wrong_word         TEXT    NOT NULL,
+                   correct_word       TEXT    NOT NULL,
+                   confidence_sum     REAL    NOT NULL DEFAULT 0.0,
+                   confidence_avg     REAL    NOT NULL DEFAULT 0.0,
+                   seen_count         INTEGER NOT NULL DEFAULT 0,
+                   last_seen_at       DATETIME NOT NULL DEFAULT (datetime('now')),
+                   cooldown_until     DATETIME,
+                   promoted_at        DATETIME,
+                   UNIQUE(wrong_word, correct_word)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_auto_learn_candidates_seen
+                   ON auto_learn_candidates(last_seen_at);
+                 PRAGMA user_version = 4;",
+            )?;
+            Ok(())
+        })() {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err);
+        }
+        conn.execute_batch("COMMIT;")?;
     }
 
     Ok(Arc::new(Mutex::new(conn)))
@@ -267,13 +367,37 @@ pub struct DictionaryEntry {
     pub mistake: Option<String>,
     pub auto_learned: bool,
     pub correction_count: i64,
+    pub confidence_tier: String,
+    pub last_seen_at: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AutoLearnEvent {
+    pub id: i64,
+    pub event_type: String,
+    pub reason_code: String,
+    pub app_context: String,
+    pub mistake_hash: String,
+    pub correction_hash: String,
+    pub confidence: f64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AutoLearnStatusSummary {
+    pub monitors_started: i64,
+    pub anchor_misses: i64,
+    pub low_confidence_rejections: i64,
+    pub promotions: i64,
+    pub duplicate_monitor_skips: i64,
+    pub timeout_finishes: i64,
 }
 
 pub fn query_dictionary(db: &Db) -> Result<Vec<DictionaryEntry>> {
     let conn = lock_conn(db)?;
     let mut stmt = conn.prepare(
-        "SELECT id, term, mistake, auto_learned, correction_count, created_at \
+        "SELECT id, term, mistake, auto_learned, correction_count, confidence_tier, last_seen_at, created_at \
          FROM dictionary ORDER BY created_at DESC",
     )?;
     let rows = stmt
@@ -284,7 +408,9 @@ pub fn query_dictionary(db: &Db) -> Result<Vec<DictionaryEntry>> {
                 mistake: r.get(2)?,
                 auto_learned: r.get::<_, i64>(3)? != 0,
                 correction_count: r.get(4)?,
-                created_at: r.get(5)?,
+                confidence_tier: r.get(5)?,
+                last_seen_at: r.get(6)?,
+                created_at: r.get(7)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -294,7 +420,7 @@ pub fn query_dictionary(db: &Db) -> Result<Vec<DictionaryEntry>> {
 pub fn insert_dictionary_entry(db: &Db, term: &str, mistake: Option<&str>) -> Result<()> {
     let conn = lock_conn(db)?;
     conn.execute(
-        "INSERT INTO dictionary (term, mistake) VALUES (?1, ?2)",
+        "INSERT INTO dictionary (term, mistake, confidence_tier, last_seen_at) VALUES (?1, ?2, 'manual', datetime('now'))",
         params![term, mistake],
     )?;
     Ok(())
@@ -304,18 +430,142 @@ pub fn insert_dictionary_entry_auto_learned(
     db: &Db,
     term: &str,
     mistake: Option<&str>,
+    confidence_tier: &str,
 ) -> Result<bool> {
     let conn = lock_conn(db)?;
     let changed = conn.execute(
         "INSERT INTO dictionary (term, mistake, auto_learned, correction_count) \
          VALUES (?1, ?2, 1, 1) \
          ON CONFLICT(term) DO UPDATE SET \
-           correction_count = correction_count + 1 \
+           correction_count = correction_count + 1, \
+           confidence_tier = ?3, \
+           last_seen_at = datetime('now') \
          WHERE dictionary.auto_learned = 1 \
            AND COALESCE(dictionary.mistake, '') = COALESCE(excluded.mistake, '')",
-        params![term, mistake],
+        params![term, mistake, confidence_tier],
     )?;
     Ok(changed > 0)
+}
+
+pub fn log_auto_learn_event(
+    db: &Db,
+    event_type: &str,
+    reason_code: &str,
+    app_context: &str,
+    mistake_hash: &str,
+    correction_hash: &str,
+    confidence: f64,
+) -> Result<()> {
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "INSERT INTO auto_learn_events
+         (event_type, reason_code, app_context, mistake_hash, correction_hash, confidence)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![event_type, reason_code, app_context, mistake_hash, correction_hash, confidence],
+    )?;
+    Ok(())
+}
+
+pub fn upsert_auto_learn_candidate(
+    db: &Db,
+    wrong: &str,
+    correct: &str,
+    confidence: f64,
+    cooldown_minutes: i64,
+) -> Result<bool> {
+    let conn = lock_conn(db)?;
+    let blocked: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM auto_learn_candidates
+         WHERE wrong_word = ?1
+           AND correct_word = ?2
+           AND cooldown_until IS NOT NULL
+           AND cooldown_until > datetime('now')",
+        params![wrong, correct],
+        |r| r.get(0),
+    )?;
+    if blocked > 0 {
+        return Ok(false);
+    }
+    conn.execute(
+        "INSERT INTO auto_learn_candidates
+         (wrong_word, correct_word, confidence_sum, confidence_avg, seen_count, last_seen_at, cooldown_until)
+         VALUES (?1, ?2, ?3, ?3, 1, datetime('now'), datetime('now', ?4))
+         ON CONFLICT(wrong_word, correct_word) DO UPDATE SET
+           confidence_sum = auto_learn_candidates.confidence_sum + excluded.confidence_sum,
+           seen_count = auto_learn_candidates.seen_count + 1,
+           confidence_avg = (auto_learn_candidates.confidence_sum + excluded.confidence_sum) / (auto_learn_candidates.seen_count + 1),
+           last_seen_at = datetime('now'),
+           cooldown_until = datetime('now', ?4)",
+        params![wrong, correct, confidence, format!("+{} minutes", cooldown_minutes.max(0))],
+    )?;
+    Ok(true)
+}
+
+pub fn mark_auto_learn_candidate_promoted(db: &Db, wrong: &str, correct: &str) -> Result<()> {
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "UPDATE auto_learn_candidates
+         SET promoted_at = datetime('now')
+         WHERE wrong_word = ?1 AND correct_word = ?2",
+        params![wrong, correct],
+    )?;
+    Ok(())
+}
+
+pub fn get_auto_learn_status_summary(db: &Db) -> Result<AutoLearnStatusSummary> {
+    let conn = lock_conn(db)?;
+    let count_by = |event_type: &str, reason_code: &str| -> Result<i64> {
+        conn.query_row(
+            "SELECT COUNT(*) FROM auto_learn_events WHERE event_type = ?1 AND reason_code = ?2",
+            params![event_type, reason_code],
+            |r| r.get(0),
+        )
+        .map_err(Into::into)
+    };
+    let monitors_started: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM auto_learn_events WHERE event_type = 'monitor'",
+        [],
+        |r| r.get(0),
+    )?;
+    let promotions: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM auto_learn_events WHERE event_type = 'promotion' AND reason_code = 'promoted'",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(AutoLearnStatusSummary {
+        monitors_started,
+        anchor_misses: count_by("anchor", "anchor_miss")?,
+        low_confidence_rejections: count_by("candidate", "low_confidence")?,
+        promotions,
+        duplicate_monitor_skips: count_by("monitor", "duplicate_skip")?,
+        timeout_finishes: count_by("monitor", "timeout")?,
+    })
+}
+
+pub fn get_recent_auto_learn_activity(db: &Db, limit: i64) -> Result<Vec<AutoLearnEvent>> {
+    let conn = lock_conn(db)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, event_type, reason_code, app_context, mistake_hash, correction_hash, confidence, created_at
+         FROM auto_learn_events
+         ORDER BY created_at DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map(params![limit.max(1)], |r| {
+            Ok(AutoLearnEvent {
+                id: r.get(0)?,
+                event_type: r.get(1)?,
+                reason_code: r.get(2)?,
+                app_context: r.get(3)?,
+                mistake_hash: r.get(4)?,
+                correction_hash: r.get(5)?,
+                confidence: r.get(6)?,
+                created_at: r.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
 }
 
 pub fn insert_pending_correction(db: &Db, wrong: &str, correct: &str) -> Result<()> {
@@ -517,7 +767,12 @@ mod tests {
         let db = test_db();
 
         insert_dictionary_entry(&db, "Kubernetes", Some("manual typo")).expect("manual insert");
-        let promoted = insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Koobernetes"))
+        let promoted = insert_dictionary_entry_auto_learned(
+            &db,
+            "Kubernetes",
+            Some("Koobernetes"),
+            "high",
+        )
             .expect("auto insert");
 
         assert!(!promoted);
@@ -534,15 +789,20 @@ mod tests {
         let db = test_db();
 
         assert!(
-            insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Koobernetes"))
+            insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Koobernetes"), "high")
                 .expect("first insert")
         );
         assert!(
-            insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Koobernetes"))
+            insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Koobernetes"), "high")
                 .expect("same pair")
         );
         assert!(
-            !insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Kubernetties"))
+            !insert_dictionary_entry_auto_learned(
+                &db,
+                "Kubernetes",
+                Some("Kubernetties"),
+                "low",
+            )
                 .expect("different pair")
         );
 

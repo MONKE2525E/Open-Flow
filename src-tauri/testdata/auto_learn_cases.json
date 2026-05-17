@@ -68,5 +68,26 @@
     "corrected": "rewrite this whole sentence into something else",
     "expect": [],
     "promotes_after_two_sessions": false
+  },
+  {
+    "name": "near homophone should not promote",
+    "original": "their deployment passed",
+    "corrected": "there deployment passed",
+    "expect": [],
+    "promotes_after_two_sessions": false
+  },
+  {
+    "name": "ambiguous short common swap rejected",
+    "original": "we can ship this now",
+    "corrected": "we can shop this now",
+    "expect": [],
+    "promotes_after_two_sessions": false
+  },
+  {
+    "name": "brand typo with numbers promotes",
+    "original": "please open vsc0de now",
+    "corrected": "please open vscode now",
+    "expect": [["vsc0de", "vscode"]],
+    "promotes_after_two_sessions": true
   }
 ]

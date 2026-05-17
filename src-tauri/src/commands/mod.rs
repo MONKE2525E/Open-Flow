@@ -420,6 +420,21 @@ pub fn remove_dictionary_entry(app: AppHandle, id: i64) -> Result<(), String> {
     db::delete_dictionary_entry(&db, id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn get_auto_learn_status_summary(app: AppHandle) -> Result<db::AutoLearnStatusSummary, String> {
+    let db = app.state::<DbHandle>();
+    db::get_auto_learn_status_summary(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_recent_auto_learn_activity(
+    app: AppHandle,
+    limit: Option<i64>,
+) -> Result<Vec<db::AutoLearnEvent>, String> {
+    let db = app.state::<DbHandle>();
+    db::get_recent_auto_learn_activity(&db, limit.unwrap_or(20)).map_err(|e| e.to_string())
+}
+
 // ---------- hotkey ----------
 
 #[tauri::command]

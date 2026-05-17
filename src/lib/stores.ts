@@ -45,6 +45,8 @@ export interface DictionaryEntry {
   mistake: string | null; // optional: what the transcription typically writes instead
   auto_learned: boolean;
   correction_count: number;
+  confidence_tier?: 'manual' | 'low' | 'medium' | 'high';
+  last_seen_at?: string | null;
   created_at: string;
 }
 
