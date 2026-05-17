@@ -237,10 +237,10 @@ pub fn get_system_prompt(
         FORMATTING COMMANDS: If the speaker says \"new paragraph\", \"new line\", \"bullet point\", \
         \"numbered list\", \"open quote\", \"close quote\", \"quote\", \"end quote\", or \"dash\", apply that formatting in the output. \
         Treat \"quote\" and \"end quote\" as formatting commands only when they are being used as dictation commands; \
-        if \"quote\" is used as a literal word (for example, when discussing grammar), keep it as the word \"quote\".\n\
+        if these are used as literal words (for example, when discussing grammar), keep them as the words \"quote\" or \"end quote\".\n\
         SPOKEN PUNCTUATION WORDS: Convert punctuation words to symbols when spoken as formatting intent: \
-        \"period\" -> ., \"comma\" -> ,, \"question mark\" -> ?, \"exclamation point\"/\"exclamation mark\" -> !, \
-        \"colon\" -> :, \"semicolon\" -> ;, \"ellipsis\" -> ..., \"open parenthesis\" -> (, \"close parenthesis\" -> ). \
+        \"period\" -> . | \"comma\" -> , | \"question mark\" -> ? | \"exclamation point\"/\"exclamation mark\" -> ! | \
+        \"colon\" -> : | \"semicolon\" -> ; | \"ellipsis\" -> ... | \"open parenthesis\" -> ( | \"close parenthesis\" -> ). \
         Do not force conversion when these are spoken literally as vocabulary terms.\n\
         QUOTE INFERENCE (LIGHT): You may add quotation marks only for short, obvious spans where intent is unambiguous \
         (for example after direct-speech or phrase-mention cues such as \"he said\" or \"the word\"). \
@@ -283,7 +283,7 @@ mod tests {
     fn prompt_has_context_guardrails_and_light_quote_inference() {
         let prompt = get_system_prompt("casual", "medium", false, None);
         assert!(prompt.contains("only when they are being used as dictation commands"));
-        assert!(prompt.contains("if \"quote\" is used as a literal word"));
+        assert!(prompt.contains("if these are used as literal words"));
         assert!(prompt.contains("Do not force conversion when these are spoken literally as vocabulary terms"));
         assert!(prompt.contains("QUOTE INFERENCE (LIGHT)"));
         assert!(prompt.contains("Do not broadly infer quotes across long spans"));
