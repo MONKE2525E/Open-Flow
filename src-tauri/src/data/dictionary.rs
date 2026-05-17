@@ -88,36 +88,59 @@ pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> 
         return text.to_string();
     }
 
-    fn is_word_byte(ch: u8) -> bool {
-        ch.is_ascii_alphanumeric() || matches!(ch, b'\'' | b'-' | b'_')
+    fn is_word_char(ch: char) -> bool {
+        ch.is_alphanumeric() || matches!(ch, '\'' | '-' | '_')
+    }
+
+    fn is_boundary(haystack: &str, start: usize, end: usize) -> bool {
+        let left_ok = haystack[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_word_char(ch));
+        let right_ok = haystack[end..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_word_char(ch));
+        left_ok && right_ok
     }
 
     let mut result = text.to_string();
-    let mut haystack = result.to_lowercase();
     for (mistake, term) in &replaceable {
-        let needle = mistake.to_lowercase();
-        if needle.is_empty() || !needle.is_ascii() {
+        if mistake.is_empty() {
             continue;
         }
         let mut positions = Vec::new();
-        let mut from = 0usize;
-        while let Some(p) = haystack[from..].find(&needle) {
-            let abs = from + p;
-            let start_ok = abs == 0 || !is_word_byte(haystack.as_bytes()[abs - 1]);
-            let end = abs + needle.len();
-            let end_ok = end >= haystack.len() || !is_word_byte(haystack.as_bytes()[end]);
-            if start_ok && end_ok {
-                positions.push(abs);
+        if mistake.is_ascii() {
+            let mut i = 0usize;
+            while i + mistake.len() <= result.len() {
+                if !result.is_char_boundary(i) {
+                    i += 1;
+                    continue;
+                }
+                let end = i + mistake.len();
+                if !result.is_char_boundary(end) {
+                    i += 1;
+                    continue;
+                }
+                if result[i..end].eq_ignore_ascii_case(mistake) && is_boundary(&result, i, end) {
+                    positions.push(i);
+                }
+                i += 1;
             }
-            from = abs + needle.len();
+        } else {
+            for (start, matched) in result.match_indices(mistake) {
+                let end = start + matched.len();
+                if is_boundary(&result, start, end) {
+                    positions.push(start);
+                }
+            }
         }
         if positions.is_empty() {
             continue;
         }
         for pos in positions.into_iter().rev() {
-            result.replace_range(pos..pos + needle.len(), term);
+            result.replace_range(pos..pos + mistake.len(), term);
         }
-        haystack = result.to_lowercase();
     }
     result
 }
@@ -174,5 +197,12 @@ mod tests {
         let entries = vec![entry(1, "Kubernetes", Some("kube"))];
         let out = apply_substitutions_from("kube kubelet", &entries);
         assert_eq!(out, "Kubernetes kubelet");
+    }
+
+    #[test]
+    fn substitutions_support_non_ascii_terms() {
+        let entries = vec![entry(1, "cliche", Some("cliché"))];
+        let out = apply_substitutions_from("Use cliché in this line.", &entries);
+        assert_eq!(out, "Use cliche in this line.");
     }
 }
