@@ -21,6 +21,26 @@ pub async fn cleanup(
 ) -> Result<String> {
     let prompt =
         get_system_prompt_with_extras(profile, intensity, snippet_instructions, app_context);
+    log::debug!(
+        "cleanup: start provider={:?} profile={} intensity={} input_chars={} prompt_chars={} snippet_rule_lines={} app_context={}",
+        provider,
+        profile,
+        intensity,
+        text.chars().count(),
+        prompt.chars().count(),
+        snippet_instructions.lines().filter(|l| !l.trim().is_empty()).count(),
+        app_context.is_some()
+    );
+    if crate::system::logger::is_verbose() {
+        log::debug!("cleanup: input_full=\"{}\"", text);
+        log::debug!("cleanup: prompt_full=\"{}\"", prompt);
+        if !snippet_instructions.is_empty() {
+            log::debug!("cleanup: snippet_rules_full=\"{}\"", snippet_instructions);
+        }
+        if let Some(ctx) = app_context {
+            log::debug!("cleanup: app_context_full=\"{}\"", ctx);
+        }
+    }
     match provider {
         CleanupProvider::Groq => {
             openai_compat(
@@ -98,12 +118,31 @@ async fn openai_compat(
         temperature: 0.0,
     };
 
+    log::debug!(
+        "cleanup: openai_compat request model={} url={} input_chars={} prompt_chars={}",
+        model,
+        url,
+        text.chars().count(),
+        prompt.chars().count()
+    );
+    let request_started = std::time::Instant::now();
     let resp = super::client::get()
         .post(url)
         .bearer_auth(api_key)
         .json(&body)
         .send()
         .await?;
+    let request_id = resp
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-");
+    log::debug!(
+        "cleanup: openai_compat response status={} request_id={} latency_ms={}",
+        resp.status(),
+        request_id,
+        request_started.elapsed().as_millis()
+    );
 
     if resp.status().as_u16() == 429 {
         return Err(crate::api::quota_bail(model));
@@ -111,10 +150,16 @@ async fn openai_compat(
     let resp = resp.error_for_status().context("Cleanup API error")?;
 
     let data: ChatResp = resp.json().await?;
-    data.choices
+    let output = data
+        .choices
         .first()
         .map(|c| c.message.content.trim().to_owned())
-        .ok_or_else(|| anyhow::anyhow!("No choices in OpenAI response"))
+        .ok_or_else(|| anyhow::anyhow!("No choices in OpenAI response"))?;
+    log::debug!("cleanup: openai_compat parsed chars={}", output.chars().count());
+    if crate::system::logger::is_verbose() {
+        log::debug!("cleanup: openai_compat output_full=\"{}\"", output);
+    }
+    Ok(output)
 }
 
 async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<String> {
@@ -151,6 +196,11 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
         text: String,
     }
 
+    log::debug!(
+        "cleanup: google request input_chars={} prompt_chars={}",
+        text.chars().count(),
+        prompt.chars().count()
+    );
     let req = Req {
         contents: vec![GContent {
             parts: vec![GPart {
@@ -171,7 +221,19 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
     );
 
+    let request_started = std::time::Instant::now();
     let resp = super::client::get().post(&url).json(&req).send().await?;
+    let request_id = resp
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-");
+    log::debug!(
+        "cleanup: google response status={} request_id={} latency_ms={}",
+        resp.status(),
+        request_id,
+        request_started.elapsed().as_millis()
+    );
 
     if resp.status().as_u16() == 429 {
         return Err(crate::api::quota_bail("Google"));
@@ -181,7 +243,7 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
         .context("Google Cleanup API error")?;
 
     let data: GeminiResp = resp.json().await?;
-    data.candidates
+    let output = data.candidates
         .unwrap_or_default()
         .into_iter()
         .next()
@@ -189,5 +251,10 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
         .and_then(|c| c.parts.into_iter().next())
         .and_then(|p| p.text)
         .map(|t| t.trim().to_owned())
-        .ok_or_else(|| anyhow::anyhow!("No candidates or parts in Google response"))
+        .ok_or_else(|| anyhow::anyhow!("No candidates or parts in Google response"))?;
+    log::debug!("cleanup: google parsed chars={}", output.chars().count());
+    if crate::system::logger::is_verbose() {
+        log::debug!("cleanup: google output_full=\"{}\"", output);
+    }
+    Ok(output)
 }
