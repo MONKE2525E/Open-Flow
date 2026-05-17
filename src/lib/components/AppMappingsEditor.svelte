@@ -41,11 +41,7 @@
   const filteredApps = $derived(
     installedApps
       .filter((app) => !mappedExes.has(normalizeExe(app.exe)))
-      .filter((app) => {
-        const query = appSearch.trim().toLowerCase();
-        if (!query) return true;
-        return cleanAppName(app.name).toLowerCase().includes(query);
-      })
+      .filter((app) => matchesAppSearch(app, appSearch))
       .slice(0, 40),
   );
 
@@ -141,6 +137,21 @@
     };
   }
 
+  function matchesAppSearch(app: InstalledApp, search: string) {
+    const query = search.trim().toLowerCase();
+    if (!query) return true;
+
+    const appName = cleanAppName(app.name || app.exe).toLowerCase();
+    const appExe = normalizeExe(app.exe);
+    const compactQuery = query.replace(/[^a-z0-9]/g, '');
+    const compactName = appName.replace(/[^a-z0-9]/g, '');
+    const compactExe = appExe.replace(/[^a-z0-9]/g, '');
+
+    return appName.includes(query)
+      || appExe.includes(query)
+      || (compactQuery.length > 0 && (compactName.includes(compactQuery) || compactExe.includes(compactQuery)));
+  }
+
   $effect(() => {
     if (!appPickerOpen) return;
 
@@ -211,7 +222,7 @@
         onkeydown={(e) => e.key === 'Enter' && addMapping()}
       />
       {#if appPickerOpen && filteredApps.length > 0}
-        <div class="app-picker-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <div class="app-picker-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
           {#each filteredApps as app}
             <button class="app-picker-item" onclick={() => pickApp(app)}>
               <span class="app-picker-name">{cleanAppName(app.name || app.exe)}</span>
@@ -234,7 +245,7 @@
         </svg>
       </button>
       {#if profileDropdownOpen}
-        <div class="profile-drop-menu" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <div class="profile-drop-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
           {#each profileOptions as profile}
             <button
               class="profile-drop-item"
