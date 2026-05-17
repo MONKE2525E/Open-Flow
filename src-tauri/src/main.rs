@@ -75,6 +75,7 @@ fn main() {
         .manage(shared.clone())
         .manage(db_handle.clone())
         .setup(move |app| {
+            crate::system::logger::init(app.handle())?;
             let first_launch = if let Ok(store) =
                 tauri_plugin_store::StoreExt::store(app.handle(), "settings.json")
             {
@@ -165,6 +166,9 @@ fn main() {
             commands::check_for_update,
             commands::install_update,
             commands::check_connectivity,
+            commands::get_recent_logs,
+            commands::download_logs,
+            commands::set_dev_logging_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error running Open Flow");

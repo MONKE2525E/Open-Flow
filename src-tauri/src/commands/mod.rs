@@ -615,3 +615,20 @@ pub async fn check_connectivity() -> bool {
     };
     client.head("https://www.google.com").send().await.is_ok()
 }
+
+// ---------- developer logs ----------
+
+#[tauri::command]
+pub fn get_recent_logs(limit: Option<usize>) -> Vec<String> {
+    crate::system::logger::recent(limit)
+}
+
+#[tauri::command]
+pub fn download_logs(app: AppHandle) -> Result<String, String> {
+    crate::system::logger::export_to_downloads(&app)
+}
+
+#[tauri::command]
+pub fn set_dev_logging_enabled(enabled: bool) {
+    crate::system::logger::set_verbose(enabled);
+}
