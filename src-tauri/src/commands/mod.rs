@@ -7,6 +7,8 @@ use crate::pipeline::{self, SharedState};
 use crate::system::apps::{AppMapping, InstalledApp};
 use crate::DbHandle;
 
+const SPACE_CONSTRAINED_THRESHOLD_BYTES: u64 = 1_073_741_824;
+
 fn lock_state<'a>(
     state: &'a tauri::State<'_, SharedState>,
 ) -> Result<std::sync::MutexGuard<'a, pipeline::AppState>, String> {
@@ -128,6 +130,13 @@ pub struct AllSettings {
     pub appearance_mode: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+pub struct CleanupCacheStatus {
+    pub entry_count: i64,
+    pub is_space_constrained: bool,
+    pub free_bytes: u64,
+}
+
 #[tauri::command]
 pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
     let s = app.store("settings.json").map_err(|e| e.to_string())?;
@@ -191,6 +200,61 @@ pub fn get_recent(app: AppHandle) -> Result<Vec<db::RecentEntry>, String> {
 pub fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
     let db = app.state::<DbHandle>();
     db::query_stats(&db).map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn free_bytes_for_path(path: &std::path::Path) -> Result<u64, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    use windows::core::PCWSTR;
+
+    let mut free_bytes_available: u64 = 0;
+    let mut total_bytes: u64 = 0;
+    let mut total_free_bytes: u64 = 0;
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let result = unsafe {
+        GetDiskFreeSpaceExW(
+            PCWSTR(wide.as_ptr()),
+            Some(&mut free_bytes_available),
+            Some(&mut total_bytes),
+            Some(&mut total_free_bytes),
+        )
+    };
+    result
+        .map(|_| free_bytes_available)
+        .map_err(|_| "Failed to read free disk space".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn free_bytes_for_path(_path: &std::path::Path) -> Result<u64, String> {
+    Ok(u64::MAX)
+}
+
+#[tauri::command]
+pub fn clear_cleanup_cache(app: AppHandle) -> Result<usize, String> {
+    let db = app.state::<DbHandle>();
+    db::cleanup_cache_clear_all(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_cleanup_cache_status(app: AppHandle) -> Result<CleanupCacheStatus, String> {
+    let db = app.state::<DbHandle>();
+    let entry_count = db::cleanup_cache_count(&db).map_err(|e| e.to_string())?;
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
+    let free_bytes = free_bytes_for_path(&app_data)?;
+    Ok(CleanupCacheStatus {
+        entry_count,
+        is_space_constrained: free_bytes < SPACE_CONSTRAINED_THRESHOLD_BYTES,
+        free_bytes,
+    })
 }
 
 // ---------- microphone ----------

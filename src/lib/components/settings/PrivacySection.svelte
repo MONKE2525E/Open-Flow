@@ -10,17 +10,25 @@
   let historyDropdownOpen = $state(false);
   let appContextHint = $state(false);
   let autoLearn = $state(false);
+  let cleanupCacheEntries = $state(0);
+  let cleanupCacheSpaceConstrained = $state(false);
+  let cleanupCacheFreeBytes = $state(0);
+  let clearingCleanupCache = $state(false);
 
   async function loadSettings() {
     try {
-      const [retention, hint, learn] = await Promise.all([
+      const [retention, hint, learn, cacheStatus] = await Promise.all([
         invoke<string | null>('get_setting', { key: 'history_retention' }),
         invoke<boolean | null>('get_setting', { key: 'app_context_hint' }),
         invoke<boolean | null>('get_setting', { key: 'auto_learn_enabled' }),
+        invoke<{ entry_count: number; is_space_constrained: boolean; free_bytes: number }>('get_cleanup_cache_status'),
       ]);
       if (retention) historyRetention = retention;
       appContextHint = hint ?? false;
       autoLearn = learn ?? false;
+      cleanupCacheEntries = cacheStatus.entry_count ?? 0;
+      cleanupCacheSpaceConstrained = cacheStatus.is_space_constrained ?? false;
+      cleanupCacheFreeBytes = cacheStatus.free_bytes ?? 0;
     } catch (err) {
       console.error('PrivacySection load failed:', err);
     }
@@ -53,6 +61,22 @@
     } catch (err) {
       autoLearn = !value;
       console.error('save auto_learn_enabled failed:', err);
+    }
+  }
+
+  async function clearCleanupCache() {
+    if (clearingCleanupCache) return;
+    clearingCleanupCache = true;
+    try {
+      await invoke<number>('clear_cleanup_cache');
+      const status = await invoke<{ entry_count: number; is_space_constrained: boolean; free_bytes: number }>('get_cleanup_cache_status');
+      cleanupCacheEntries = status.entry_count ?? 0;
+      cleanupCacheSpaceConstrained = status.is_space_constrained ?? false;
+      cleanupCacheFreeBytes = status.free_bytes ?? 0;
+    } catch (err) {
+      console.error('clearCleanupCache failed:', err);
+    } finally {
+      clearingCleanupCache = false;
     }
   }
 
@@ -110,6 +134,27 @@
     <div class="desc">Add confirmed corrections to dictionary automatically</div>
   </div>
   <Toggle checked={autoLearn} onchange={handleAutoLearn} />
+</div>
+<div class="setting-row">
+  <div>
+    <div class="label">Cleanup cache</div>
+    <div class="desc">
+      {cleanupCacheEntries} cached phrase{cleanupCacheEntries === 1 ? '' : 's'}.
+      {#if cleanupCacheSpaceConstrained}
+        Low disk space (&lt;1 GB free). Clearing cache may help free space.
+      {:else}
+        {(cleanupCacheFreeBytes / 1024 / 1024 / 1024).toFixed(1)} GB free.
+      {/if}
+    </div>
+  </div>
+  <button
+    class="btn-ghost"
+    onclick={clearCleanupCache}
+    disabled={clearingCleanupCache}
+    title={cleanupCacheSpaceConstrained ? 'Low disk space detected (<1 GB free).' : ''}
+  >
+    {clearingCleanupCache ? 'Clearing…' : 'Clear Cache'}
+  </button>
 </div>
 
 <style>
