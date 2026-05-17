@@ -41,11 +41,7 @@
   const filteredApps = $derived(
     installedApps
       .filter((app) => !mappedExes.has(normalizeExe(app.exe)))
-      .filter((app) => {
-        const query = appSearch.trim().toLowerCase();
-        if (!query) return true;
-        return cleanAppName(app.name).toLowerCase().includes(query);
-      })
+      .filter((app) => matchesAppSearch(app, appSearch))
       .slice(0, 40),
   );
 
@@ -139,6 +135,21 @@
       profile: entry.profile || 'casual',
       name: getAppDisplayName({ exe, name: entry.name }, installedApps),
     };
+  }
+
+  function matchesAppSearch(app: InstalledApp, search: string) {
+    const query = search.trim().toLowerCase();
+    if (!query) return true;
+
+    const appName = cleanAppName(app.name || app.exe).toLowerCase();
+    const appExe = normalizeExe(app.exe);
+    const compactQuery = query.replace(/[^a-z0-9]/g, '');
+    const compactName = appName.replace(/[^a-z0-9]/g, '');
+    const compactExe = appExe.replace(/[^a-z0-9]/g, '');
+
+    return appName.includes(query)
+      || appExe.includes(query)
+      || (compactQuery.length > 0 && (compactName.includes(compactQuery) || compactExe.includes(compactQuery)));
   }
 
   $effect(() => {
