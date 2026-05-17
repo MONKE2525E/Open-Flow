@@ -141,15 +141,16 @@
     const query = search.trim().toLowerCase();
     if (!query) return true;
 
-    const appName = cleanAppName(app.name || app.exe).toLowerCase();
-    const appExe = normalizeExe(app.exe);
-    const compactQuery = query.replace(/[^a-z0-9]/g, '');
-    const compactName = appName.replace(/[^a-z0-9]/g, '');
-    const compactExe = appExe.replace(/[^a-z0-9]/g, '');
+    const appName = app.name.toLowerCase();
+    const appExe = app.exe;
 
-    return appName.includes(query)
-      || appExe.includes(query)
-      || (compactQuery.length > 0 && (compactName.includes(compactQuery) || compactExe.includes(compactQuery)));
+    if (appName.includes(query) || appExe.includes(query)) return true;
+
+    const compactQuery = query.replace(/[^a-z0-9]/g, '');
+    if (!compactQuery) return false;
+
+    return appName.replace(/[^a-z0-9]/g, '').includes(compactQuery)
+      || appExe.replace(/[^a-z0-9]/g, '').includes(compactQuery);
   }
 
   $effect(() => {
@@ -434,6 +435,10 @@
     z-index: 20;
   }
 
+  .app-picker-menu::-webkit-scrollbar-thumb {
+    border: 3px solid var(--bg-elev);
+  }
+
   .app-picker-item {
     display: block;
     width: 100%;
@@ -514,6 +519,10 @@
     max-height: 200px;
     overflow-y: auto;
     z-index: 20;
+  }
+
+  .profile-drop-menu::-webkit-scrollbar-thumb {
+    border: 3px solid var(--bg-elev);
   }
 
   .profile-drop-item {
