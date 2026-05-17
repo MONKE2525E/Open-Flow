@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 
@@ -24,6 +23,24 @@ static ACTIVE_MONITORS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 fn active_monitors() -> &'static Mutex<HashSet<String>> {
     ACTIVE_MONITORS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+struct MonitorKeyGuard {
+    key: String,
+}
+
+impl MonitorKeyGuard {
+    fn new(key: String) -> Self {
+        Self { key }
+    }
+}
+
+impl Drop for MonitorKeyGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = active_monitors().lock() {
+            active.remove(&self.key);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -293,19 +310,24 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
 }
 
 fn pair_hash(left: &str, right: &str) -> (String, String) {
+    // FNV-1a 64-bit with a fixed offset/prime gives stable hashes across
+    // app versions and process runs. This is telemetry bucketing, not crypto.
     fn hash_str(value: &str) -> String {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        value.to_lowercase().hash(&mut hasher);
-        format!("{:016x}", hasher.finish())
+        const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+        const FNV_PRIME: u64 = 0x100000001b3;
+        let mut hash = FNV_OFFSET_BASIS;
+        for b in value.to_lowercase().as_bytes() {
+            hash ^= u64::from(*b);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        format!("{hash:016x}")
     }
     (hash_str(left), hash_str(right))
 }
 
 fn monitor_key(injected_text: &str, app_context: &str) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    injected_text.to_lowercase().hash(&mut hasher);
-    app_context.hash(&mut hasher);
-    format!("{}:{:016x}", app_context, hasher.finish())
+    let (lhs, rhs) = pair_hash(injected_text, app_context);
+    format!("{rhs}:{lhs}")
 }
 
 fn candidate_confidence(
@@ -851,6 +873,7 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
     );
 
     tauri::async_runtime::spawn(async move {
+        let _monitor_guard = MonitorKeyGuard::new(key);
         if let Err(e) = db::prune_pending_corrections(&db, PENDING_RETENTION_DAYS) {
             log::warn!("auto-learn prune failed: {e}");
         }
@@ -886,9 +909,6 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
                 "",
                 0.0,
             );
-            if let Ok(mut active) = active_monitors().lock() {
-                active.remove(&key);
-            }
             return;
         };
         let _ = db::log_auto_learn_event(&db, "anchor", "anchor_ok", &app_context, "", "", 0.0);
@@ -942,9 +962,6 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
             }
         }
         let _ = db::log_auto_learn_event(&db, "monitor", "timeout", &app_context, "", "", 0.0);
-        if let Ok(mut active) = active_monitors().lock() {
-            active.remove(&key);
-        }
     });
 }
 

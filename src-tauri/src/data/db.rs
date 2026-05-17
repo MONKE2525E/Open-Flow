@@ -10,6 +10,27 @@ fn lock_conn(db: &Db) -> Result<MutexGuard<'_, Connection>> {
         .map_err(|_| anyhow::anyhow!("Database lock was poisoned"))
 }
 
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let pragma = format!("PRAGMA table_info({table})");
+    let mut stmt = conn.prepare(&pragma)?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn ensure_table_column(conn: &Connection, table: &str, column: &str, def_sql: &str) -> Result<()> {
+    if table_has_column(conn, table, column)? {
+        return Ok(());
+    }
+    conn.execute_batch(def_sql)?;
+    Ok(())
+}
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS transcriptions (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -168,44 +189,22 @@ pub fn open(path: &str) -> Result<Db> {
         }
     }
     if user_version < 4 {
-        let res = conn.execute_batch(
-            "BEGIN;
-             ALTER TABLE dictionary ADD COLUMN confidence_tier TEXT NOT NULL DEFAULT 'low';
-             ALTER TABLE dictionary ADD COLUMN last_seen_at DATETIME;
-             CREATE TABLE IF NOT EXISTS auto_learn_events (
-               id             INTEGER PRIMARY KEY AUTOINCREMENT,
-               event_type     TEXT    NOT NULL,
-               reason_code    TEXT    NOT NULL DEFAULT '',
-               app_context    TEXT    NOT NULL DEFAULT '',
-               mistake_hash   TEXT    NOT NULL DEFAULT '',
-               correction_hash TEXT   NOT NULL DEFAULT '',
-               confidence     REAL    NOT NULL DEFAULT 0.0,
-               created_at     DATETIME NOT NULL DEFAULT (datetime('now'))
-             );
-             CREATE INDEX IF NOT EXISTS idx_auto_learn_events_event_type
-               ON auto_learn_events(event_type, created_at);
-             CREATE TABLE IF NOT EXISTS auto_learn_candidates (
-               id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-               wrong_word         TEXT    NOT NULL,
-               correct_word       TEXT    NOT NULL,
-               confidence_sum     REAL    NOT NULL DEFAULT 0.0,
-               confidence_avg     REAL    NOT NULL DEFAULT 0.0,
-               seen_count         INTEGER NOT NULL DEFAULT 0,
-               last_seen_at       DATETIME NOT NULL DEFAULT (datetime('now')),
-               cooldown_until     DATETIME,
-               promoted_at        DATETIME,
-               UNIQUE(wrong_word, correct_word)
-             );
-             CREATE INDEX IF NOT EXISTS idx_auto_learn_candidates_seen
-               ON auto_learn_candidates(last_seen_at);
-             PRAGMA user_version = 4;
-             COMMIT;",
-        );
-        if res.is_err() {
-            let _ = conn.execute_batch("ROLLBACK;");
-            let res_retry = conn.execute_batch(
-                "BEGIN;
-                 CREATE TABLE IF NOT EXISTS auto_learn_events (
+        conn.execute_batch("BEGIN;")?;
+        if let Err(err) = (|| -> Result<()> {
+            ensure_table_column(
+                &conn,
+                "dictionary",
+                "confidence_tier",
+                "ALTER TABLE dictionary ADD COLUMN confidence_tier TEXT NOT NULL DEFAULT 'low';",
+            )?;
+            ensure_table_column(
+                &conn,
+                "dictionary",
+                "last_seen_at",
+                "ALTER TABLE dictionary ADD COLUMN last_seen_at DATETIME;",
+            )?;
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS auto_learn_events (
                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
                    event_type     TEXT    NOT NULL,
                    reason_code    TEXT    NOT NULL DEFAULT '',
@@ -231,14 +230,14 @@ pub fn open(path: &str) -> Result<Db> {
                  );
                  CREATE INDEX IF NOT EXISTS idx_auto_learn_candidates_seen
                    ON auto_learn_candidates(last_seen_at);
-                 PRAGMA user_version = 4;
-                 COMMIT;",
-            );
-            if let Err(err) = res_retry {
-                let _ = conn.execute_batch("ROLLBACK;");
-                return Err(err.into());
-            }
+                 PRAGMA user_version = 4;",
+            )?;
+            Ok(())
+        })() {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err);
         }
+        conn.execute_batch("COMMIT;")?;
     }
 
     Ok(Arc::new(Mutex::new(conn)))
