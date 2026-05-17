@@ -38,12 +38,8 @@ pub fn recent(limit: Option<usize>) -> Vec<String> {
     let count = requested.min(guard.len());
     guard
         .iter()
-        .rev()
-        .take(count)
+        .skip(guard.len().saturating_sub(count))
         .cloned()
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
         .collect()
 }
 
@@ -89,14 +85,12 @@ fn redact_message(input: &str) -> String {
 fn redact_after_token_ci(input: &str, token: &str) -> String {
     let mut cursor = 0usize;
     let mut remaining = input.to_string();
-    let token_l = token.to_ascii_lowercase();
 
     loop {
-        let lower = remaining.to_ascii_lowercase();
-        let Some(found_rel) = lower[cursor..].find(&token_l) else {
+        let Some(found_idx) = find_ascii_case_insensitive_from(&remaining, token, cursor) else {
             break;
         };
-        let idx = cursor + found_rel + token.len();
+        let idx = found_idx + token.len();
         let end_rel = remaining[idx..]
             .find(|ch: char| ch.is_whitespace() || ch == ',' || ch == ';' || ch == '"')
             .unwrap_or(remaining.len() - idx);
@@ -108,24 +102,22 @@ fn redact_after_token_ci(input: &str, token: &str) -> String {
 }
 
 fn redact_json_key_ci(input: &str, key: &str) -> String {
-    let pattern = format!("\"{}\":", key.to_ascii_lowercase());
+    let pattern = format!("\"{}\":", key);
     let mut cursor = 0usize;
     let mut remaining = input.to_string();
 
     loop {
-        let lower = remaining.to_ascii_lowercase();
-        let Some(found_rel) = lower[cursor..].find(&pattern) else {
+        let Some(found_idx) = find_ascii_case_insensitive_from(&remaining, &pattern, cursor) else {
             break;
         };
-        let start = cursor + found_rel + pattern.len();
+        let start = found_idx + pattern.len();
         let mut value_start = start;
         while value_start < remaining.len() && remaining.as_bytes()[value_start].is_ascii_whitespace() {
             value_start += 1;
         }
         if value_start < remaining.len() && remaining.as_bytes()[value_start] == b'"' {
             let content_start = value_start + 1;
-            if let Some(next_quote_rel) = remaining[content_start..].find('"') {
-                let content_end = content_start + next_quote_rel;
+            if let Some(content_end) = find_json_string_end(&remaining, content_start) {
                 remaining.replace_range(content_start..content_end, "[REDACTED]");
                 cursor = content_start + "[REDACTED]".len();
                 continue;
@@ -134,6 +126,58 @@ fn redact_json_key_ci(input: &str, key: &str) -> String {
         cursor = value_start;
     }
     remaining
+}
+
+fn find_ascii_case_insensitive_from(haystack: &str, needle: &str, start: usize) -> Option<usize> {
+    if needle.is_empty() || start >= haystack.len() {
+        return None;
+    }
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    if n.len() > h.len().saturating_sub(start) {
+        return None;
+    }
+
+    for i in start..=h.len() - n.len() {
+        if !haystack.is_char_boundary(i) {
+            continue;
+        }
+        let mut matches = true;
+        for j in 0..n.len() {
+            if !h[i + j].eq_ignore_ascii_case(&n[j]) {
+                matches = false;
+                break;
+            }
+        }
+        if matches {
+            return Some(i);
+        }
+    }
+    None
+}
+
+fn find_json_string_end(input: &str, content_start: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
+    let mut i = content_start;
+    let mut escaped = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+        if b == b'\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+        if b == b'"' {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
 }
 
 struct SessionLogger;
@@ -147,8 +191,17 @@ impl Log for SessionLogger {
         if !self.enabled(record.metadata()) {
             return;
         }
+        let verbose = is_verbose();
+        if !verbose
+            && record.level() <= log::Level::Debug
+            && !record.target().starts_with("open_flow")
+            && !record.target().starts_with("open-flow")
+            && !record.target().starts_with("src_tauri")
+        {
+            return;
+        }
         let msg = record.args().to_string();
-        if !is_verbose() && msg.starts_with("starting new connection:") {
+        if !verbose && msg.starts_with("starting new connection:") {
             return;
         }
         let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
@@ -174,4 +227,40 @@ impl Log for SessionLogger {
     }
 
     fn flush(&self) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{find_json_string_end, recent, redact_json_key_ci, LOG_BUFFER};
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    #[test]
+    fn redacts_json_value_with_escaped_quote() {
+        let input = r#"{"api_key":"abc\"def","other":"ok"}"#;
+        let out = redact_json_key_ci(input, "api_key");
+        assert!(out.contains(r#""api_key":"[REDACTED]""#));
+        assert!(!out.contains(r#"abc\"def"#));
+    }
+
+    #[test]
+    fn json_string_end_handles_escape_sequences() {
+        let s = r#""abc\"def""#;
+        let end = find_json_string_end(s, 1).expect("expected end quote");
+        assert_eq!(&s[end..=end], "\"");
+    }
+
+    #[test]
+    fn recent_returns_tail_in_order() {
+        let _ = LOG_BUFFER.set(Mutex::new(VecDeque::new()));
+        let buf = LOG_BUFFER.get().expect("buffer");
+        let mut guard = buf.lock().expect("lock");
+        guard.clear();
+        guard.push_back("a".into());
+        guard.push_back("b".into());
+        guard.push_back("c".into());
+        drop(guard);
+
+        assert_eq!(recent(Some(2)), vec!["b".to_string(), "c".to_string()]);
+    }
 }
