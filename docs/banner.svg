@@ -2,8 +2,6 @@
   <!-- warm paper background -->
   <rect width="800" height="150" rx="16" fill="#f9f7f3"/>
 
-  <!-- subtle bottom border accent -->
-  <rect x="0" y="148" width="800" height="2" rx="1" fill="#f0cbb8" opacity="0.6"/>
 
   <!--
     Brand mark — 5 bars bottom-aligned, scaled to 88px tall
