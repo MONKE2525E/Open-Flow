@@ -27,6 +27,8 @@
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
   let hotkeyState = $state<'idle' | 'armed' | 'first' | 'saving' | 'success' | 'error'>('idle');
+  const HOTKEY_SUCCESS_MS = 700;
+  const HOTKEY_ERROR_MS   = 900;
   let keybindEl: HTMLElement | null = $state(null);
   let capturedWidth = 0;
   let segmentEl: HTMLElement | null = $state(null);
@@ -295,19 +297,19 @@
           hotkeyState = 'error';
           const { emit } = await import('@tauri-apps/api/event');
           await emit('open-flow:error', 'Hotkey may already be in use by another application');
-          setTimeout(() => { hotkeyState = 'idle'; }, 900);
+          setTimeout(() => { hotkeyState = 'idle'; }, HOTKEY_ERROR_MS);
           return;
         }
         await invoke('save_hotkey', { key1: capturedKeys[0], key2: capturedKeys[1] });
         hotkey = capturedKeys;
         hotkeyState = 'success';
-        setTimeout(() => { hotkeyState = 'idle'; }, 700);
+        setTimeout(() => { hotkeyState = 'idle'; }, HOTKEY_SUCCESS_MS);
       } catch (e) {
         console.error('Failed to save hotkey', e);
         hotkeyState = 'error';
         const { emit } = await import('@tauri-apps/api/event');
         await emit('open-flow:error', 'Failed to save hotkey - key may not be recognized');
-        setTimeout(() => { hotkeyState = 'idle'; }, 900);
+        setTimeout(() => { hotkeyState = 'idle'; }, HOTKEY_ERROR_MS);
       }
     }
   }

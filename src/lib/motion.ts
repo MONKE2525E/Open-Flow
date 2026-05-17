@@ -67,18 +67,25 @@ export function animateWidth(node: HTMLElement, params: AnimateWidthParams = { t
     }
   }
 
+  let rafId = 0;
+  let domListener: (() => void) | null = null;
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => requestAnimationFrame(() => applyWidth(false)), {
-      once: true,
-    });
+    domListener = () => { rafId = requestAnimationFrame(() => applyWidth(false)); };
+    document.addEventListener('DOMContentLoaded', domListener, { once: true });
   } else {
-    requestAnimationFrame(() => applyWidth(false));
+    rafId = requestAnimationFrame(() => applyWidth(false));
   }
 
   return {
     update(newParams: AnimateWidthParams) {
       params = newParams;
-      requestAnimationFrame(() => applyWidth(true));
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => applyWidth(true));
+    },
+    destroy() {
+      cancelAnimationFrame(rafId);
+      if (domListener) document.removeEventListener('DOMContentLoaded', domListener);
     },
   };
 }
