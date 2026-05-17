@@ -117,7 +117,7 @@ pub fn open(path: &str) -> Result<Db> {
         conn.execute_batch("PRAGMA user_version = 2;")?;
     }
     if user_version < 3 {
-        let _ = conn.execute_batch(
+        let res = conn.execute_batch(
             "BEGIN;
              CREATE TABLE IF NOT EXISTS cleanup_cache (
                key         TEXT PRIMARY KEY,
@@ -134,7 +134,10 @@ pub fn open(path: &str) -> Result<Db> {
              PRAGMA user_version = 3;
              COMMIT;",
         );
-        let _ = conn.execute_batch("ROLLBACK;");
+        if let Err(err) = res {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err.into());
+        }
     }
 
     Ok(Arc::new(Mutex::new(conn)))
