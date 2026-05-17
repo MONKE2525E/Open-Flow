@@ -37,6 +37,12 @@ pub async fn transcribe(
     api_key: &str,
     language: &str,
 ) -> Result<String> {
+    log::debug!(
+        "transcription: start provider={:?} language={} wav_bytes={}",
+        provider,
+        language,
+        wav.len()
+    );
     match provider {
         Provider::Groq => {
             transcribe_whisper(
@@ -76,6 +82,13 @@ async fn transcribe_whisper(
         text: String,
     }
 
+    log::debug!(
+        "transcription: whisper request model={} url={} language={} wav_bytes={}",
+        model,
+        url,
+        language,
+        wav.len()
+    );
     let part =
         multipart::Part::stream_with_length(reqwest::Body::from(wav.clone()), wav.len() as u64)
             .file_name("audio.wav")
@@ -86,12 +99,24 @@ async fn transcribe_whisper(
         .text("response_format", "json")
         .text("language", language.to_owned());
 
+    let request_started = std::time::Instant::now();
     let resp = super::client::get()
         .post(url)
         .bearer_auth(api_key)
         .multipart(form)
         .send()
         .await?;
+    let request_id = resp
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-");
+    log::debug!(
+        "transcription: whisper response status={} request_id={} latency_ms={}",
+        resp.status(),
+        request_id,
+        request_started.elapsed().as_millis()
+    );
 
     if resp.status().as_u16() == 429 {
         return Err(crate::api::quota_bail(model));
@@ -99,6 +124,7 @@ async fn transcribe_whisper(
     let resp = resp.error_for_status().context("Transcription API error")?;
 
     let body: WhisperResponse = resp.json().await?;
+    log::debug!("transcription: whisper parsed chars={}", body.text.trim().chars().count());
     Ok(body.text.trim().to_owned())
 }
 
@@ -117,6 +143,12 @@ async fn transcribe_gemini_with_prompt(
     prompt: &str,
     disable_thinking: bool,
 ) -> Result<String> {
+    log::debug!(
+        "transcription: gemini request disable_thinking={} wav_bytes={} prompt_chars={}",
+        disable_thinking,
+        wav.len(),
+        prompt.chars().count()
+    );
     let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &wav);
 
     let body = super::gemini_types::GeminiTranscribeReq {
@@ -148,9 +180,21 @@ async fn transcribe_gemini_with_prompt(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
     );
 
+    let request_started = std::time::Instant::now();
     let resp = super::client::get().post(&url).json(&body).send().await?;
 
     let status = resp.status();
+    let request_id = resp
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-");
+    log::debug!(
+        "transcription: gemini response status={} request_id={} latency_ms={}",
+        status,
+        request_id,
+        request_started.elapsed().as_millis()
+    );
     if status.as_u16() == 429 {
         return Err(crate::api::quota_bail("Google"));
     }
@@ -188,6 +232,7 @@ async fn transcribe_gemini_with_prompt(
         .unwrap_or("")
         .trim()
         .to_owned();
+    log::debug!("transcription: gemini parsed chars={}", text.chars().count());
 
     Ok(text)
 }
