@@ -82,7 +82,7 @@ pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> 
         .iter()
         .filter_map(|e| e.mistake.as_deref().map(|m| (m, e.term.as_str())))
         .collect();
-    replaceable.sort_by(|(a, _), (b, _)| b.len().cmp(&a.len()));
+    replaceable.sort_by_key(|(mistake, _)| std::cmp::Reverse(mistake.len()));
 
     if replaceable.is_empty() {
         return text.to_string();
