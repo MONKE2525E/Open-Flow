@@ -5,13 +5,16 @@
   import { expoOut } from 'svelte/easing';
   import { saveSetting, type CleanupIntensity, type ToneId } from '../settings';
   import AppMappingsEditor from '../components/AppMappingsEditor.svelte';
+  import { MOTION_MS, MOTION_PX, STYLE_TAB_ORDER, directionFromOrder, motionMs, motionPx } from '../motion';
 
   const [send, receive] = crossfade({
-    duration: 300,
+    duration: motionMs(MOTION_MS.base),
     easing: expoOut,
   });
 
   let tab = $state('cleanup');
+  let tabDir = $state<1 | -1>(1);
+  let mountedTabs = $state<Record<string, boolean>>({});
   let intensity = $state('medium');
   let tone = $state('casual');
 
@@ -56,6 +59,18 @@
     tone = id;
     saveSetting('default_tone', id as ToneId);
   }
+
+  function selectTab(id: string) {
+    if (id === tab) return;
+    tabDir = directionFromOrder(tab, id, STYLE_TAB_ORDER);
+    tab = id;
+  }
+
+  $effect(() => {
+    if (!mountedTabs[tab]) {
+      mountedTabs = { ...mountedTabs, [tab]: true };
+    }
+  });
 </script>
 
 <div class="content-inner">
@@ -64,7 +79,7 @@
 
   <div class="tabs">
     {#each tabs as t}
-      <button class="tab" class:active={tab === t.id} onclick={() => (tab = t.id)}>
+      <button class="tab" class:active={tab === t.id} onclick={() => selectTab(t.id)}>
         {t.label}
         {#if t.pill}
           <span class="pill">{t.pill}</span>
@@ -78,7 +93,11 @@
 
   <div class="tab-content-area">
     {#key tab}
-      <div class="tab-wrapper" in:fly={{ y: 8, duration: 400, delay: 150, easing: expoOut }} out:fly={{ y: -8, duration: 150, easing: expoOut }}>
+      <div
+        class="tab-wrapper"
+        in:fly={{ x: tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel + 140), easing: expoOut }}
+        out:fly={{ x: -tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.base + 120), easing: expoOut }}
+      >
         {#if tab === 'cleanup'}
           <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Open Flow does.</span></p>
           <div class="style-grid four">
@@ -90,6 +109,7 @@
                 tabindex="0"
                 onclick={() => selectIntensity(c.id)}
                 onkeydown={(e) => e.key === 'Enter' && selectIntensity(c.id)}
+                in:fly={!mountedTabs.cleanup ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
                 <h4>{c.name}</h4>
                 <p class="desc">{c.desc}</p>
@@ -108,6 +128,7 @@
                 tabindex="0"
                 onclick={() => selectTone(c.id)}
                 onkeydown={(e) => e.key === 'Enter' && selectTone(c.id)}
+                in:fly={!mountedTabs.personal ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
                 <h4>{c.name}</h4>
                 <p class="desc">{c.desc}</p>
@@ -238,7 +259,10 @@
     flex-direction: column;
     min-height: 160px;
     cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    transition: background 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+      transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 0.18s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .style-card:hover {
@@ -255,6 +279,8 @@
   .style-card.active {
     background: var(--accent-soft);
     border-color: var(--accent);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 12%, transparent);
   }
 
   .style-card h4 {
