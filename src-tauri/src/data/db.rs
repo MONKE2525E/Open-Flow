@@ -44,6 +44,18 @@ CREATE TABLE IF NOT EXISTS pending_corrections (
 );
 CREATE INDEX IF NOT EXISTS idx_pending_words
   ON pending_corrections(wrong_word, correct_word);
+CREATE TABLE IF NOT EXISTS cleanup_cache (
+  key         TEXT PRIMARY KEY,
+  clean_text  TEXT NOT NULL,
+  hit_count   INTEGER NOT NULL DEFAULT 0,
+  created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
+  last_hit_at DATETIME NOT NULL DEFAULT (datetime('now')),
+  expires_at  DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at
+  ON cleanup_cache(expires_at);
+CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
+  ON cleanup_cache(last_hit_at);
 ";
 
 pub fn open(path: &str) -> Result<Db> {
@@ -104,6 +116,29 @@ pub fn open(path: &str) -> Result<Db> {
         let _ = conn.execute_batch("ROLLBACK;");
         conn.execute_batch("PRAGMA user_version = 2;")?;
     }
+    if user_version < 3 {
+        let res = conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS cleanup_cache (
+               key         TEXT PRIMARY KEY,
+               clean_text  TEXT NOT NULL,
+               hit_count   INTEGER NOT NULL DEFAULT 0,
+               created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
+               last_hit_at DATETIME NOT NULL DEFAULT (datetime('now')),
+               expires_at  DATETIME NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at
+               ON cleanup_cache(expires_at);
+             CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
+               ON cleanup_cache(last_hit_at);
+             PRAGMA user_version = 3;
+             COMMIT;",
+        );
+        if let Err(err) = res {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err.into());
+        }
+    }
 
     Ok(Arc::new(Mutex::new(conn)))
 }
@@ -133,6 +168,16 @@ pub struct Snippet {
     pub instructions: String,
     pub use_count: i64,
     pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CleanupCacheEntry {
+    pub key: String,
+    pub clean_text: String,
+    pub hit_count: i64,
+    pub created_at: String,
+    pub last_hit_at: String,
+    pub expires_at: String,
 }
 
 // ---------- queries ----------
@@ -386,6 +431,79 @@ pub fn increment_snippet_use(db: &Db, id: i64) -> Result<()> {
     Ok(())
 }
 
+// ---------- cleanup cache ----------
+
+pub fn cleanup_cache_get_active(db: &Db, key: &str) -> Result<Option<CleanupCacheEntry>> {
+    let conn = lock_conn(db)?;
+    let mut stmt = conn.prepare(
+        "SELECT key, clean_text, hit_count, created_at, last_hit_at, expires_at
+         FROM cleanup_cache
+         WHERE key = ?1 AND expires_at > datetime('now')
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![key])?;
+    let Some(row) = rows.next()? else {
+        return Ok(None);
+    };
+    Ok(Some(CleanupCacheEntry {
+        key: row.get(0)?,
+        clean_text: row.get(1)?,
+        hit_count: row.get(2)?,
+        created_at: row.get(3)?,
+        last_hit_at: row.get(4)?,
+        expires_at: row.get(5)?,
+    }))
+}
+
+pub fn cleanup_cache_insert_new(db: &Db, key: &str, clean_text: &str, expires_at: &str) -> Result<()> {
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO cleanup_cache
+         (key, clean_text, hit_count, created_at, last_hit_at, expires_at)
+         VALUES (?1, ?2, 1, datetime('now'), datetime('now'), ?3)",
+        params![key, clean_text, expires_at],
+    )?;
+    Ok(())
+}
+
+pub fn cleanup_cache_touch_hit(
+    db: &Db,
+    key: &str,
+    new_hit_count: i64,
+    last_hit_at: &str,
+    expires_at: &str,
+) -> Result<()> {
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "UPDATE cleanup_cache
+         SET hit_count = ?2, last_hit_at = ?3, expires_at = ?4
+         WHERE key = ?1",
+        params![key, new_hit_count, last_hit_at, expires_at],
+    )?;
+    Ok(())
+}
+
+pub fn cleanup_cache_prune_expired(db: &Db) -> Result<usize> {
+    let conn = lock_conn(db)?;
+    let changed = conn.execute(
+        "DELETE FROM cleanup_cache WHERE expires_at <= datetime('now')",
+        [],
+    )?;
+    Ok(changed)
+}
+
+pub fn cleanup_cache_clear_all(db: &Db) -> Result<usize> {
+    let conn = lock_conn(db)?;
+    let changed = conn.execute("DELETE FROM cleanup_cache", [])?;
+    Ok(changed)
+}
+
+pub fn cleanup_cache_count(db: &Db) -> Result<i64> {
+    let conn = lock_conn(db)?;
+    conn.query_row("SELECT COUNT(*) FROM cleanup_cache", [], |r| r.get(0))
+        .map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,5 +550,33 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].mistake.as_deref(), Some("Koobernetes"));
         assert_eq!(entries[0].correction_count, 2);
+    }
+
+    #[test]
+    fn cleanup_cache_insert_get_and_clear() {
+        let db = test_db();
+        cleanup_cache_insert_new(&db, "abc", "hello", "2999-01-01 00:00:00").expect("insert");
+        let hit = cleanup_cache_get_active(&db, "abc")
+            .expect("query")
+            .expect("exists");
+        assert_eq!(hit.clean_text, "hello");
+        assert_eq!(hit.hit_count, 1);
+
+        assert_eq!(cleanup_cache_count(&db).expect("count"), 1);
+        assert_eq!(cleanup_cache_clear_all(&db).expect("clear"), 1);
+        assert_eq!(cleanup_cache_count(&db).expect("count"), 0);
+    }
+
+    #[test]
+    fn cleanup_cache_prunes_expired_only() {
+        let db = test_db();
+        cleanup_cache_insert_new(&db, "old", "x", "2000-01-01 00:00:00").expect("insert old");
+        cleanup_cache_insert_new(&db, "live", "y", "2999-01-01 00:00:00").expect("insert live");
+
+        assert_eq!(cleanup_cache_prune_expired(&db).expect("prune"), 1);
+        assert!(cleanup_cache_get_active(&db, "old").expect("query old").is_none());
+        assert!(cleanup_cache_get_active(&db, "live")
+            .expect("query live")
+            .is_some());
     }
 }
