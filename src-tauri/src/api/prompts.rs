@@ -112,7 +112,7 @@ pub fn get_system_prompt(
             Output the transcription completely unchanged. Do not alter a single character.",
         "light" => "CLEANUP LEVEL - Light:\n\
             Your job: strip filler words and false starts. Nothing else.\n\
-            REMOVE these filler words wherever they appear: um, uh, like, you know, sort of, kind of, right, okay, I mean, basically, literally.",
+            REMOVE these filler words wherever they appear: um, uh, like (when not a comparison), you know, sort of, kind of, right, okay, I mean, basically, literally (as emphasis).",
         "high" => "CLEANUP LEVEL - Direct:\n\
             WORD COUNT RULE: Your output MUST be 30-50% of input word count.\n\
             Keep only core meaning and remove repetition.",
