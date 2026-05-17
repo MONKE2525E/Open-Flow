@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { updateInfo, type UpdateInfo } from '../../stores';
+  import { devModeEnabled, updateInfo, type UpdateInfo } from '../../stores';
   import { saveSetting } from '../../settings';
 
   let { appVersion }: { appVersion: string } = $props();
@@ -8,6 +8,9 @@
   type UpdateCheckState = 'idle' | 'checking' | 'up-to-date' | 'available';
   let updateCheckState: UpdateCheckState = $state('idle');
   let installingFromAbout = $state(false);
+  let versionTapCount = $state(0);
+  let versionTapTimer: ReturnType<typeof setTimeout> | null = null;
+  let devModeHintVisible = $state(false);
 
   $effect(() => {
     if ($updateInfo) updateCheckState = 'available';
@@ -49,13 +52,40 @@
       installingFromAbout = false;
     }
   }
+
+  function handleVersionTap() {
+    if ($devModeEnabled) return;
+    versionTapCount += 1;
+    if (versionTapTimer) clearTimeout(versionTapTimer);
+    versionTapTimer = setTimeout(() => {
+      versionTapCount = 0;
+    }, 2600);
+    if (versionTapCount >= 10) {
+      devModeEnabled.set(true);
+      invoke('set_dev_logging_enabled', { enabled: true }).catch(() => {});
+      versionTapCount = 0;
+      if (versionTapTimer) {
+        clearTimeout(versionTapTimer);
+        versionTapTimer = null;
+      }
+      devModeHintVisible = true;
+      setTimeout(() => {
+        devModeHintVisible = false;
+      }, 1800);
+    }
+  }
 </script>
 
 <h2 class="settings-h">About</h2>
 <div class="setting-row">
   <div><div class="label">Version</div></div>
-  <span class="desc">v{appVersion}</span>
+  <button class="version-tap desc" onclick={handleVersionTap}>v{appVersion}</button>
 </div>
+{#if devModeHintVisible}
+  <div class="dev-hint-row">
+    <span class="desc dev-hint">Developer mode enabled for this session.</span>
+  </div>
+{/if}
 <div class="setting-row">
   <div><div class="label">License</div></div>
   <span class="desc">MIT</span>
@@ -96,6 +126,18 @@
 
 <style>
   .update-controls { flex-shrink: 0; }
+  .version-tap {
+    border: none;
+    background: transparent;
+    padding: 0;
+  }
+  .dev-hint-row {
+    margin-top: -4px;
+    margin-bottom: 8px;
+  }
+  .dev-hint {
+    color: var(--ink-faint);
+  }
   .update-ok { color: var(--success); }
   .update-available { color: var(--accent); }
 

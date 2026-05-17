@@ -224,6 +224,16 @@ fn trim_err(s: &str) -> String {
     }
 }
 
+fn preview_text(s: &str, limit: usize) -> String {
+    let compact = s.replace(['\n', '\r'], " ");
+    let compact = compact.trim();
+    if compact.chars().count() > limit {
+        format!("{}...", compact.chars().take(limit).collect::<String>())
+    } else {
+        compact.to_string()
+    }
+}
+
 fn normalize_cleanup_cache_key(input: &str) -> String {
     input
         .chars()
@@ -359,6 +369,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
 }
 
 pub async fn run_pipeline(app: AppHandle, state: SharedState) {
+    let started_at = std::time::Instant::now();
     let Some((session, target_hwnd)) = take_pipeline_session(&state) else {
         log::debug!("pipeline: no session — recording never started or was already consumed");
         return;
@@ -369,25 +380,73 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     let process_name = window_context::get_active_process_name()
         .unwrap_or_else(|| "unknown".into())
         .to_lowercase();
+    log::info!("pipeline: start process={process_name} target_hwnd={target_hwnd}");
 
     std::thread::spawn(crate::system::volume::unmute);
     show_pill(&app, "processing");
 
+    let stage_audio = std::time::Instant::now();
     let Some((wav, duration_ms)) = stop_and_validate_audio(&app, session).await else {
         return;
     };
+    log::debug!(
+        "pipeline: audio accepted duration_ms={duration_ms} wav_bytes={} stage_ms={}",
+        wav.len(),
+        stage_audio.elapsed().as_millis()
+    );
+    let stage_config = std::time::Instant::now();
     let Some((cfg, profile, app_context)) = open_config_and_context(&app, &process_name).await
     else {
         return;
     };
+    log::debug!(
+        "pipeline: config t_provider={} c_provider={} cleanup_enabled={} intensity={} fallback={} app_context_hint={} profile={}",
+        cfg.transcription_provider,
+        cfg.cleanup_provider,
+        cfg.cleanup_enabled,
+        cfg.cleanup_intensity,
+        cfg.api_fallback_enabled,
+        cfg.app_context_hint,
+        profile
+    );
+    log::debug!(
+        "pipeline: context resolved app_context={} stage_ms={}",
+        app_context.as_deref().unwrap_or("none"),
+        stage_config.elapsed().as_millis()
+    );
+    let stage_transcribe = std::time::Instant::now();
     let Some((raw, api_used)) = run_transcription(&app, &wav, &cfg).await else {
         return;
     };
+    log::debug!(
+        "pipeline: transcription ok provider={} raw_chars={} raw_preview=\"{}\"",
+        api_used,
+        raw.chars().count(),
+        preview_text(&raw, 140)
+    );
+    if crate::system::logger::is_verbose() {
+        log::debug!("pipeline: transcription raw_full=\"{}\"", raw);
+    }
+    log::debug!(
+        "pipeline: transcription stage_ms={}",
+        stage_transcribe.elapsed().as_millis()
+    );
+    let stage_cleanup = std::time::Instant::now();
     let Some((final_text, dict_entries)) =
         run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
     else {
         return;
     };
+    log::debug!(
+        "pipeline: cleanup/snippets ok final_chars={} final_preview=\"{}\" dict_entries={}",
+        final_text.chars().count(),
+        preview_text(&final_text, 140),
+        dict_entries.len()
+    );
+    if crate::system::logger::is_verbose() {
+        log::debug!("pipeline: final_text_full=\"{}\"", final_text);
+    }
+    log::debug!("pipeline: cleanup stage_ms={}", stage_cleanup.elapsed().as_millis());
 
     let db = app.state::<DbHandle>();
     let words = final_text.split_whitespace().count() as i64;
@@ -402,9 +461,24 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         return;
     }
 
+    let dict_stage = std::time::Instant::now();
+    let final_before_dict = final_text.clone();
     let final_text = dictionary::apply_substitutions_from(&final_text, &dict_entries);
+    let dict_changed = final_text != final_before_dict;
+    log::debug!(
+        "pipeline: dictionary apply changed={} before_chars={} after_chars={} stage_ms={}",
+        dict_changed,
+        final_before_dict.chars().count(),
+        final_text.chars().count(),
+        dict_stage.elapsed().as_millis()
+    );
+    if dict_changed && crate::system::logger::is_verbose() {
+        log::debug!("pipeline: dictionary before_full=\"{}\"", final_before_dict);
+        log::debug!("pipeline: dictionary after_full=\"{}\"", final_text);
+    }
 
     hide_pill(&app);
+    let inject_stage = std::time::Instant::now();
     let injected_text =
         match injection::inject_text(&final_text, target_hwnd, cfg.contextual_caps_enabled).await {
             Ok(text) => text,
@@ -414,9 +488,22 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
                 final_text.clone()
             }
         };
+    log::debug!(
+        "pipeline: injection done contextual_caps={} output_chars={} stage_ms={}",
+        cfg.contextual_caps_enabled,
+        injected_text.chars().count(),
+        inject_stage.elapsed().as_millis()
+    );
     app.emit("open-flow:transcribed", &injected_text).ok();
+    log::info!(
+        "pipeline: completed words={} duration_ms={} elapsed_ms={}",
+        words,
+        duration_ms,
+        started_at.elapsed().as_millis()
+    );
 
     if cfg.auto_learn_enabled {
+        log::debug!("pipeline: auto_learn monitor starting");
         auto_learn::start_monitor(injected_text, process_name, db.inner().clone(), app.clone());
     }
 }
@@ -497,6 +584,12 @@ async fn run_transcription(
     cfg: &store::PipelineConfig,
 ) -> Option<(String, String)> {
     let wav = wav.clone();
+    log::debug!(
+        "pipeline: transcription stage start provider={} language={} bytes={}",
+        cfg.transcription_provider,
+        cfg.transcription_language,
+        wav.len()
+    );
     match try_providers(&[&cfg.transcription_provider], cfg, |provider_id, key| {
         let w = wav.clone();
         let provider = transcription_provider_from_str(provider_id);
@@ -506,6 +599,11 @@ async fn run_transcription(
     .await
     {
         Ok((raw, t_provider)) if !raw.is_empty() => {
+            log::debug!(
+                "pipeline: transcription provider success={} chars={}",
+                t_provider,
+                raw.chars().count()
+            );
             Some((raw, format!("{t_provider}/transcription")))
         }
         Ok(_) => {
@@ -517,6 +615,7 @@ async fn run_transcription(
             None
         }
         Err(Some(e)) => {
+            log::error!("pipeline: transcription failed error={}", trim_err(&e.to_string()));
             show_error_pill(app, &trim_err(&e.to_string())).await;
             None
         }
@@ -540,8 +639,25 @@ async fn run_cleanup_and_snippets(
     let db = app.state::<DbHandle>();
     let mut db_snippets = db::query_snippets(&db).unwrap_or_default();
     let dict_entries = db::query_dictionary(&db).unwrap_or_default();
+    log::debug!(
+        "pipeline: cleanup inputs snippets={} dict_entries={}",
+        db_snippets.len(),
+        dict_entries.len()
+    );
 
     let snippet_instructions = snippets::collect_snippet_instructions_from(raw, &db_snippets);
+    log::debug!(
+        "pipeline: cleanup stage start raw_chars={} snippet_override_lines={} cleanup_enabled={}",
+        raw.chars().count(),
+        snippet_instructions.lines().filter(|l| !l.trim().is_empty()).count(),
+        cfg.cleanup_enabled
+    );
+    if crate::system::logger::is_verbose() {
+        log::debug!("pipeline: cleanup raw_full=\"{}\"", raw);
+        if !snippet_instructions.is_empty() {
+            log::debug!("pipeline: cleanup snippet_instructions_full=\"{}\"", snippet_instructions);
+        }
+    }
 
     // Fast path: entire transcription was a single snippet trigger — skip the LLM.
     let pure_expansion = if snippet_instructions.is_empty() {
@@ -552,6 +668,11 @@ async fn run_cleanup_and_snippets(
     let expanded = pure_expansion
         .clone()
         .unwrap_or_else(|| snippets::expand_snippets_from(raw, &mut db_snippets, &db));
+    log::debug!(
+        "pipeline: snippets expanded pure_fast_path={} expanded_chars={}",
+        pure_expansion.is_some(),
+        expanded.chars().count()
+    );
 
     let c_key = cfg.key_for(&cfg.cleanup_provider).to_owned();
     let final_text = if cfg.cleanup_enabled
@@ -562,6 +683,11 @@ async fn run_cleanup_and_snippets(
         let cache_key = normalize_cleanup_cache_key(raw);
         if !cache_key.is_empty() {
             if let Ok(Some(entry)) = db::cleanup_cache_get_active(&db, &cache_key) {
+                log::debug!(
+                    "pipeline: cleanup cache hit key_len={} hit_count={}",
+                    cache_key.len(),
+                    entry.hit_count
+                );
                 let now = Utc::now();
                 let new_hit_count = entry.hit_count + 1;
                 let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -574,11 +700,17 @@ async fn run_cleanup_and_snippets(
                     &now_str,
                     &new_expires_at,
                 );
+                log::debug!(
+                    "pipeline: cleanup cache touch hit_count={} expires_at={}",
+                    new_hit_count,
+                    new_expires_at
+                );
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&entry.clean_text, &snippet_instructions);
                 return Some((overridden, dict_entries));
             }
         }
+        log::debug!("pipeline: cleanup cache miss key_len={}", cache_key.len());
         let dict_instructions =
             dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
         let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str()]
@@ -587,6 +719,11 @@ async fn run_cleanup_and_snippets(
             .copied()
             .collect::<Vec<_>>()
             .join("\n\n");
+        log::debug!(
+            "pipeline: cleanup extra_rules chars={} lines={}",
+            extra_rules.chars().count(),
+            extra_rules.lines().filter(|l| !l.trim().is_empty()).count()
+        );
 
         let cleaned_res = try_providers(&[&cfg.cleanup_provider], cfg, |provider_id, key| {
             let cp = cleanup_provider_from_str(provider_id);
@@ -612,10 +749,15 @@ async fn run_cleanup_and_snippets(
 
         match cleaned_res {
             Ok((cleaned, _)) if !cleaned.is_empty() => {
+                log::debug!("pipeline: cleanup provider success cleaned_chars={}", cleaned.chars().count());
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
                 if !cache_key.is_empty() {
-                    let _ = db::cleanup_cache_insert_new(&db, &cache_key, &cleaned, &sqlite_utc_plus(7));
+                    let expires = sqlite_utc_plus(7);
+                    match db::cleanup_cache_insert_new(&db, &cache_key, &cleaned, &expires) {
+                        Ok(_) => log::debug!("pipeline: cleanup cache insert ok expires_at={expires}"),
+                        Err(err) => log::warn!("pipeline: cleanup cache insert failed: {err}"),
+                    }
                 }
                 overridden
             }
@@ -623,6 +765,7 @@ async fn run_cleanup_and_snippets(
                 snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
             }
             Err(Some(e)) => {
+                log::error!("pipeline: cleanup failed error={}", trim_err(&e.to_string()));
                 show_error_pill(
                     app,
                     &format!("Cleanup failed: {}", trim_err(&e.to_string())),
@@ -662,14 +805,26 @@ where
     }
 
     let mut last_err = None;
-    for provider_id in to_try {
+    log::debug!("pipeline: provider chain={}", to_try.join("->"));
+    for (idx, provider_id) in to_try.iter().enumerate() {
+        let provider_id = *provider_id;
+        log::debug!(
+            "pipeline: provider attempt {}/{} id={}",
+            idx + 1,
+            to_try.len(),
+            provider_id
+        );
         let key = cfg.key_for(provider_id).to_owned();
         if key.is_empty() {
+            log::debug!("pipeline: provider {} skipped (missing key)", provider_id);
             continue;
         }
 
         match call(provider_id, key).await {
-            Ok(result) => return Ok((result, provider_id.to_string())),
+            Ok(result) => {
+                log::debug!("pipeline: provider {} succeeded", provider_id);
+                return Ok((result, provider_id.to_string()));
+            }
             Err(e) => {
                 if cfg.api_fallback_enabled && crate::api::is_retryable_provider_error(&e) {
                     log::warn!("retryable provider error on {provider_id}, trying fallback: {e}");
