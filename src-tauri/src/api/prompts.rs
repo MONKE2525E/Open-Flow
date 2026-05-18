@@ -1,4 +1,4 @@
-use crate::system::text::tokenize_lower_alnum;
+use crate::system::text::{is_number_word_token, tokenize_lower_alnum};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PromptTier {
@@ -23,18 +23,10 @@ fn tier_from_input(input_text: &str) -> PromptTier {
 }
 
 fn input_has_numeric_content(input_text: &str) -> bool {
-    const NUMBER_WORDS: &[&str] = &[
-        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-        "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
-        "eighteen", "nineteen", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
-        "eighty", "ninety", "hundred", "thousand", "million", "billion", "trillion", "first",
-        "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
-    ];
-
     let tokens = tokenize_lower_alnum(input_text);
     tokens
         .iter()
-        .any(|t| t.chars().any(|c| c.is_ascii_digit()) || NUMBER_WORDS.contains(&t.as_str()))
+        .any(|t| t.chars().any(|c| c.is_ascii_digit()) || is_number_word_token(t))
 }
 
 /// Builds the cleanup system prompt and appends override rules.
