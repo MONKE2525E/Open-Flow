@@ -246,22 +246,15 @@ fn normalize_transcription_math_artifacts(raw: &str) -> String {
         return raw.to_string();
     }
 
-    let chunks = digit_x_digit_chunks(raw);
-    if chunks.len() < 2 {
-        return raw.to_string();
-    }
-    let Some(first) = chunks.first() else {
+    let chars: Vec<char> = raw.chars().collect();
+    let Some(_) = repeated_digit_x_digit_chunk(&chars) else {
         return raw.to_string();
     };
-    if !chunks.iter().all(|c| c == first) {
-        return raw.to_string();
-    }
-    fold_digit_x_digit_chunks(raw)
+    fold_digit_x_digit_chunks_from_chars(&chars)
 }
 
-fn fold_digit_x_digit_chunks(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let chars: Vec<char> = input.chars().collect();
+fn fold_digit_x_digit_chunks_from_chars(chars: &[char]) -> String {
+    let mut out = String::with_capacity(chars.len());
     let mut i = 0usize;
     while i < chars.len() {
         if i + 2 < chars.len()
@@ -280,22 +273,34 @@ fn fold_digit_x_digit_chunks(input: &str) -> String {
     out
 }
 
-fn digit_x_digit_chunks(input: &str) -> Vec<String> {
-    let chars: Vec<char> = input.chars().collect();
-    let mut chunks = Vec::new();
+fn repeated_digit_x_digit_chunk(chars: &[char]) -> Option<(char, char)> {
+    let mut first: Option<(char, char)> = None;
+    let mut count = 0usize;
     let mut i = 0usize;
     while i + 2 < chars.len() {
         if chars[i].is_ascii_digit()
             && (chars[i + 1] == 'x' || chars[i + 1] == 'X')
             && chars[i + 2].is_ascii_digit()
         {
-            chunks.push(format!("{}x{}", chars[i], chars[i + 2]));
+            let pair = (chars[i], chars[i + 2]);
+            if let Some(existing) = first {
+                if pair != existing {
+                    return None;
+                }
+            } else {
+                first = Some(pair);
+            }
+            count += 1;
             i += 3;
             continue;
         }
         i += 1;
     }
-    chunks
+    if count >= 2 {
+        first
+    } else {
+        None
+    }
 }
 
 fn normalize_cleanup_cache_key(input: &str) -> String {
@@ -1249,7 +1254,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        fold_digit_x_digit_chunks, normalize_cleanup_cache_key, normalize_transcription_math_artifacts,
+        fold_digit_x_digit_chunks_from_chars, normalize_cleanup_cache_key,
+        normalize_transcription_math_artifacts,
         should_use_cleanup_cache,
     };
 
@@ -1338,7 +1344,8 @@ mod tests {
     fn transcription_does_not_touch_non_plus_digit_x_digit() {
         let out = normalize_transcription_math_artifacts("Calculate 6x7");
         assert_eq!(out, "Calculate 6x7");
-        let folded = fold_digit_x_digit_chunks("6x7 and 3x4");
+        let chars: Vec<char> = "6x7 and 3x4".chars().collect();
+        let folded = fold_digit_x_digit_chunks_from_chars(&chars);
         assert_eq!(folded, "67 and 34");
     }
 

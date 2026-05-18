@@ -16,9 +16,14 @@ pub fn build_relevant_dictionary_prompt_from(
 
     let raw_lower = raw_text.to_lowercase();
     let raw_tokens = tokenize_lower_alnum(raw_text);
+    let raw_match_tokens: Vec<&str> = raw_tokens
+        .iter()
+        .map(String::as_str)
+        .filter(|token| token.chars().count() >= 4)
+        .collect();
     let mut selected: Vec<&db::DictionaryEntry> = entries
         .iter()
-        .filter(|entry| entry_matches_raw(entry, &raw_lower, &raw_tokens))
+        .filter(|entry| entry_matches_raw(entry, &raw_lower, &raw_match_tokens))
         .collect();
 
     if selected.len() < MIN_MATCHED_PROMPT_ENTRIES {
@@ -36,7 +41,7 @@ pub fn build_relevant_dictionary_prompt_from(
     build_dictionary_prompt_limited(selected.into_iter())
 }
 
-fn entry_matches_raw(entry: &db::DictionaryEntry, raw_lower: &str, raw_tokens: &[String]) -> bool {
+fn entry_matches_raw(entry: &db::DictionaryEntry, raw_lower: &str, raw_tokens: &[&str]) -> bool {
     contains_nonempty(raw_lower, &entry.term.to_lowercase())
         || entry
             .mistake
@@ -49,26 +54,28 @@ fn contains_nonempty(haystack: &str, needle: &str) -> bool {
     !needle.trim().is_empty() && haystack.contains(needle)
 }
 
-fn fuzzy_token_match(entry: &db::DictionaryEntry, raw_tokens: &[String]) -> bool {
-    let mut candidates = tokenize_lower_alnum(&entry.term);
-    if let Some(mistake) = &entry.mistake {
-        candidates.extend(tokenize_lower_alnum(mistake));
-    }
-    for candidate in candidates {
+fn fuzzy_token_match(entry: &db::DictionaryEntry, raw_tokens: &[&str]) -> bool {
+    matches_source_tokens(&entry.term, raw_tokens)
+        || entry
+            .mistake
+            .as_ref()
+            .is_some_and(|mistake| matches_source_tokens(mistake, raw_tokens))
+}
+
+fn matches_source_tokens(source: &str, raw_tokens: &[&str]) -> bool {
+    for token in source
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+    {
+        let candidate = token.to_lowercase();
         if candidate.chars().count() < 4 {
             continue;
         }
         for raw in raw_tokens {
-            if raw.chars().count() < 4 {
-                continue;
-            }
-            if candidate == *raw {
+            if candidate == *raw || candidate.starts_with(raw) || raw.starts_with(&candidate) {
                 return true;
             }
-            if candidate.starts_with(raw) || raw.starts_with(&candidate) {
-                return true;
-            }
-            if edit_distance_bounded(&candidate, raw, 1) <= 1 {
+            if edit_distance_leq_one(&candidate, raw) {
                 return true;
             }
         }
@@ -76,36 +83,53 @@ fn fuzzy_token_match(entry: &db::DictionaryEntry, raw_tokens: &[String]) -> bool
     false
 }
 
-fn edit_distance_bounded(a: &str, b: &str, bound: usize) -> usize {
+fn edit_distance_leq_one(a: &str, b: &str) -> bool {
     if a == b {
-        return 0;
-    }
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
-    let a_len = a_chars.len();
-    let b_len = b_chars.len();
-    if a_len.abs_diff(b_len) > bound {
-        return bound + 1;
+        return true;
     }
 
-    let mut prev: Vec<usize> = (0..=b_len).collect();
-    let mut curr = vec![0usize; b_len + 1];
-    for (i, a_ch) in a_chars.iter().enumerate() {
-        curr[0] = i + 1;
-        let mut row_min = curr[0];
-        for (j, b_ch) in b_chars.iter().enumerate() {
-            let cost = usize::from(a_ch != b_ch);
-            curr[j + 1] = (curr[j] + 1).min(prev[j + 1] + 1).min(prev[j] + cost);
-            if curr[j + 1] < row_min {
-                row_min = curr[j + 1];
+    let a_len = a.chars().count();
+    let b_len = b.chars().count();
+    if a_len.abs_diff(b_len) > 1 {
+        return false;
+    }
+
+    if a_len == b_len {
+        let mut mismatches = 0usize;
+        for (ca, cb) in a.chars().zip(b.chars()) {
+            if ca != cb {
+                mismatches += 1;
+                if mismatches > 1 {
+                    return false;
+                }
             }
         }
-        if row_min > bound {
-            return bound + 1;
-        }
-        std::mem::swap(&mut prev, &mut curr);
+        return true;
     }
-    prev[b_len]
+
+    let (longer, shorter) = if a_len > b_len { (a, b) } else { (b, a) };
+    let mut long_it = longer.chars().peekable();
+    let mut short_it = shorter.chars().peekable();
+    let mut used_skip = false;
+
+    loop {
+        match (long_it.peek().copied(), short_it.peek().copied()) {
+            (None, None) => return true,
+            (Some(_), None) => return !used_skip,
+            (None, Some(_)) => return false,
+            (Some(lc), Some(sc)) if lc == sc => {
+                long_it.next();
+                short_it.next();
+            }
+            (Some(_), Some(_)) => {
+                if used_skip {
+                    return false;
+                }
+                used_skip = true;
+                long_it.next();
+            }
+        }
+    }
 }
 
 fn build_dictionary_prompt_limited<'a>(
