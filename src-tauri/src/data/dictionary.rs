@@ -55,11 +55,11 @@ fn fuzzy_token_match(entry: &db::DictionaryEntry, raw_tokens: &[String]) -> bool
         candidates.extend(tokenize_lower_alnum(mistake));
     }
     for candidate in candidates {
-        if candidate.len() < 4 {
+        if candidate.chars().count() < 4 {
             continue;
         }
         for raw in raw_tokens {
-            if raw.len() < 4 {
+            if raw.chars().count() < 4 {
                 continue;
             }
             if candidate == *raw {
@@ -80,20 +80,20 @@ fn edit_distance_bounded(a: &str, b: &str, bound: usize) -> usize {
     if a == b {
         return 0;
     }
-    let a_bytes = a.as_bytes();
-    let b_bytes = b.as_bytes();
-    let a_len = a_bytes.len();
-    let b_len = b_bytes.len();
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let a_len = a_chars.len();
+    let b_len = b_chars.len();
     if a_len.abs_diff(b_len) > bound {
         return bound + 1;
     }
 
     let mut prev: Vec<usize> = (0..=b_len).collect();
     let mut curr = vec![0usize; b_len + 1];
-    for (i, a_ch) in a_bytes.iter().enumerate() {
+    for (i, a_ch) in a_chars.iter().enumerate() {
         curr[0] = i + 1;
         let mut row_min = curr[0];
-        for (j, b_ch) in b_bytes.iter().enumerate() {
+        for (j, b_ch) in b_chars.iter().enumerate() {
             let cost = usize::from(a_ch != b_ch);
             curr[j + 1] = (curr[j] + 1).min(prev[j + 1] + 1).min(prev[j] + cost);
             if curr[j + 1] < row_min {

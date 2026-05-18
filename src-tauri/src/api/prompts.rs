@@ -210,8 +210,8 @@ fn get_system_prompt(
     let number_style = if tier == PromptTier::Short && !has_numeric_content {
         String::new()
     } else {
-        "NUMBER STYLE: Plain-language cardinal numbers below 10 must be digits (0-9). \
-        Cardinal numbers 10 or above must be words. \
+        "NUMBER STYLE: Plain-language cardinal numbers below 10 must be words. \
+        Cardinal numbers 10 or above must be digits. \
         Do not apply this rule inside preserved technical tokens.\n\
         \n\
         "

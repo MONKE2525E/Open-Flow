@@ -239,7 +239,7 @@ fn normalize_transcription_math_artifacts(raw: &str) -> String {
     if !lower.contains(" plus ") {
         return raw.to_string();
     }
-    if [" times ", " multiplied ", " multiply ", " divided ", " over "]
+    if [" times ", " multiplied ", " multiply ", " divided ", " over ", " x "]
         .iter()
         .any(|needle| lower.contains(needle))
     {
