@@ -3,13 +3,14 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
-use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use crate::api::{auto_learn, cleanup, transcription};
 use crate::core::{injection, window_context};
 use crate::data::{db, dictionary, snippets, store};
 use crate::media::audio;
 use crate::system::apps::AppMapping;
+use crate::system::text::is_number_word_token;
 use crate::DbHandle;
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 
 const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
@@ -235,72 +236,7 @@ fn preview_text(s: &str, limit: usize) -> String {
 }
 
 fn normalize_transcription_math_artifacts(raw: &str) -> String {
-    let lower = raw.to_lowercase();
-    if !lower.contains(" plus ") {
-        return raw.to_string();
-    }
-    if [" times ", " multiplied ", " multiply ", " divided ", " over ", " x "]
-        .iter()
-        .any(|needle| lower.contains(needle))
-    {
-        return raw.to_string();
-    }
-
-    let chars: Vec<char> = raw.chars().collect();
-    let Some(_) = repeated_digit_x_digit_chunk(&chars) else {
-        return raw.to_string();
-    };
-    fold_digit_x_digit_chunks_from_chars(&chars)
-}
-
-fn fold_digit_x_digit_chunks_from_chars(chars: &[char]) -> String {
-    let mut out = String::with_capacity(chars.len());
-    let mut i = 0usize;
-    while i < chars.len() {
-        if i + 2 < chars.len()
-            && chars[i].is_ascii_digit()
-            && (chars[i + 1] == 'x' || chars[i + 1] == 'X')
-            && chars[i + 2].is_ascii_digit()
-        {
-            out.push(chars[i]);
-            out.push(chars[i + 2]);
-            i += 3;
-            continue;
-        }
-        out.push(chars[i]);
-        i += 1;
-    }
-    out
-}
-
-fn repeated_digit_x_digit_chunk(chars: &[char]) -> Option<(char, char)> {
-    let mut first: Option<(char, char)> = None;
-    let mut count = 0usize;
-    let mut i = 0usize;
-    while i + 2 < chars.len() {
-        if chars[i].is_ascii_digit()
-            && (chars[i + 1] == 'x' || chars[i + 1] == 'X')
-            && chars[i + 2].is_ascii_digit()
-        {
-            let pair = (chars[i], chars[i + 2]);
-            if let Some(existing) = first {
-                if pair != existing {
-                    return None;
-                }
-            } else {
-                first = Some(pair);
-            }
-            count += 1;
-            i += 3;
-            continue;
-        }
-        i += 1;
-    }
-    if count >= 2 {
-        first
-    } else {
-        None
-    }
+    raw.to_string()
 }
 
 fn normalize_cleanup_cache_key(input: &str) -> String {
@@ -354,7 +290,7 @@ fn should_use_cleanup_cache(raw: &str) -> bool {
     let mut has_math_operator = false;
 
     for t in &tokens {
-        if t.chars().any(|c| c.is_ascii_digit()) || is_number_word_significant(t) {
+        if t.chars().any(|c| c.is_ascii_digit()) || is_number_word_token(t) {
             numeric_count += 1;
             continue;
         }
@@ -411,77 +347,6 @@ fn tokenize_cache_key_parts(input: &str) -> (Vec<String>, Vec<String>) {
     (tokens, separators)
 }
 
-fn is_number_word_significant(token: &str) -> bool {
-    matches!(
-        token,
-        "zero"
-            | "one"
-            | "two"
-            | "three"
-            | "four"
-            | "five"
-            | "six"
-            | "seven"
-            | "eight"
-            | "nine"
-            | "ten"
-            | "eleven"
-            | "twelve"
-            | "thirteen"
-            | "fourteen"
-            | "fifteen"
-            | "sixteen"
-            | "seventeen"
-            | "eighteen"
-            | "nineteen"
-            | "twenty"
-            | "thirty"
-            | "forty"
-            | "fifty"
-            | "sixty"
-            | "seventy"
-            | "eighty"
-            | "ninety"
-            | "hundred"
-            | "thousand"
-            | "million"
-            | "billion"
-            | "trillion"
-            | "first"
-            | "second"
-            | "third"
-            | "fourth"
-            | "fifth"
-            | "sixth"
-            | "seventh"
-            | "eighth"
-            | "ninth"
-            | "tenth"
-            | "eleventh"
-            | "twelfth"
-            | "thirteenth"
-            | "fourteenth"
-            | "fifteenth"
-            | "sixteenth"
-            | "seventeenth"
-            | "eighteenth"
-            | "nineteenth"
-            | "twentieth"
-            | "thirtieth"
-            | "fortieth"
-            | "fiftieth"
-            | "sixtieth"
-            | "seventieth"
-            | "eightieth"
-            | "ninetieth"
-            | "hundredth"
-            | "thousandth"
-            | "millionth"
-            | "billionth"
-            | "trillionth"
-    )
-}
-
 fn normalize_number_word_run(tokens: &[String], start: usize) -> Option<(String, usize)> {
     if start >= tokens.len() {
         return None;
@@ -493,7 +358,7 @@ fn normalize_number_word_run(tokens: &[String], start: usize) -> Option<(String,
         negative = true;
         i += 1;
     }
-    if i >= tokens.len() || !is_number_word_significant(&tokens[i]) {
+    if i >= tokens.len() || !is_number_word_token(&tokens[i]) {
         return None;
     }
 
@@ -551,19 +416,23 @@ fn parse_number_word_integer(tokens: &[String], mut i: usize) -> (i64, usize, bo
             continue;
         }
         if let Some(v) = unit_word_value(t) {
-            current += i64::from(v);
+            current = current.saturating_add(i64::from(v));
             seen_any = true;
             i += 1;
             continue;
         }
         if let Some(v) = teen_or_tens_word_value(t) {
-            current += i64::from(v);
+            current = current.saturating_add(i64::from(v));
             seen_any = true;
             i += 1;
             continue;
         }
         if t == "hundred" {
-            current = if current == 0 { 100 } else { current * 100 };
+            current = if current == 0 {
+                100
+            } else {
+                current.saturating_mul(100)
+            };
             seen_any = true;
             i += 1;
             continue;
@@ -577,7 +446,7 @@ fn parse_number_word_integer(tokens: &[String], mut i: usize) -> (i64, usize, bo
             continue;
         }
         if let Some(v) = ordinal_word_value(t) {
-            current += i64::from(v);
+            current = current.saturating_add(i64::from(v));
             seen_any = true;
             i += 1;
             continue;
@@ -585,7 +454,7 @@ fn parse_number_word_integer(tokens: &[String], mut i: usize) -> (i64, usize, bo
         break;
     }
 
-    (total + current, i, seen_any)
+    (total.saturating_add(current), i, seen_any)
 }
 
 fn unit_word_value(token: &str) -> Option<i32> {
@@ -850,7 +719,10 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     if crate::system::logger::is_verbose() {
         log::debug!("pipeline: final_text_full=\"{}\"", final_text);
     }
-    log::debug!("pipeline: cleanup stage_ms={}", stage_cleanup.elapsed().as_millis());
+    log::debug!(
+        "pipeline: cleanup stage_ms={}",
+        stage_cleanup.elapsed().as_millis()
+    );
 
     let db = app.state::<DbHandle>();
     let words = final_text.split_whitespace().count() as i64;
@@ -1019,7 +891,10 @@ async fn run_transcription(
             None
         }
         Err(Some(e)) => {
-            log::error!("pipeline: transcription failed error={}", trim_err(&e.to_string()));
+            log::error!(
+                "pipeline: transcription failed error={}",
+                trim_err(&e.to_string())
+            );
             show_error_pill(app, &trim_err(&e.to_string())).await;
             None
         }
@@ -1053,13 +928,19 @@ async fn run_cleanup_and_snippets(
     log::debug!(
         "pipeline: cleanup stage start raw_chars={} snippet_override_lines={} cleanup_enabled={}",
         raw.chars().count(),
-        snippet_instructions.lines().filter(|l| !l.trim().is_empty()).count(),
+        snippet_instructions
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .count(),
         cfg.cleanup_enabled
     );
     if crate::system::logger::is_verbose() {
         log::debug!("pipeline: cleanup raw_full=\"{}\"", raw);
         if !snippet_instructions.is_empty() {
-            log::debug!("pipeline: cleanup snippet_instructions_full=\"{}\"", snippet_instructions);
+            log::debug!(
+                "pipeline: cleanup snippet_instructions_full=\"{}\"",
+                snippet_instructions
+            );
         }
     }
 
@@ -1114,8 +995,10 @@ async fn run_cleanup_and_snippets(
                     new_hit_count,
                     new_expires_at
                 );
-                let overridden =
-                    snippets::apply_cleanup_instruction_overrides(&entry.clean_text, &snippet_instructions);
+                let overridden = snippets::apply_cleanup_instruction_overrides(
+                    &entry.clean_text,
+                    &snippet_instructions,
+                );
                 return Some((overridden, dict_entries));
             }
         }
@@ -1162,13 +1045,18 @@ async fn run_cleanup_and_snippets(
 
         match cleaned_res {
             Ok((cleaned, _)) if !cleaned.is_empty() => {
-                log::debug!("pipeline: cleanup provider success cleaned_chars={}", cleaned.chars().count());
+                log::debug!(
+                    "pipeline: cleanup provider success cleaned_chars={}",
+                    cleaned.chars().count()
+                );
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
                 if !cache_key.is_empty() {
                     let expires = sqlite_utc_plus(7);
                     match db::cleanup_cache_insert_new(&db, &cache_key, &cleaned, &expires) {
-                        Ok(_) => log::debug!("pipeline: cleanup cache insert ok expires_at={expires}"),
+                        Ok(_) => {
+                            log::debug!("pipeline: cleanup cache insert ok expires_at={expires}")
+                        }
                         Err(err) => log::warn!("pipeline: cleanup cache insert failed: {err}"),
                     }
                 }
@@ -1178,7 +1066,10 @@ async fn run_cleanup_and_snippets(
                 snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
             }
             Err(Some(e)) => {
-                log::error!("pipeline: cleanup failed error={}", trim_err(&e.to_string()));
+                log::error!(
+                    "pipeline: cleanup failed error={}",
+                    trim_err(&e.to_string())
+                );
                 show_error_pill(
                     app,
                     &format!("Cleanup failed: {}", trim_err(&e.to_string())),
@@ -1254,8 +1145,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        fold_digit_x_digit_chunks_from_chars, normalize_cleanup_cache_key,
-        normalize_transcription_math_artifacts,
+        normalize_cleanup_cache_key, normalize_transcription_math_artifacts,
         should_use_cleanup_cache,
     };
 
@@ -1335,23 +1225,28 @@ mod tests {
     }
 
     #[test]
-    fn transcription_normalizes_digit_x_digit_in_plus_queries() {
+    fn transcription_preserves_digit_x_digit_in_plus_queries() {
         let out = normalize_transcription_math_artifacts("What's 6x7 plus 6x7?");
-        assert_eq!(out, "What's 67 plus 67?");
+        assert_eq!(out, "What's 6x7 plus 6x7?");
     }
 
     #[test]
     fn transcription_does_not_touch_non_plus_digit_x_digit() {
         let out = normalize_transcription_math_artifacts("Calculate 6x7");
         assert_eq!(out, "Calculate 6x7");
-        let chars: Vec<char> = "6x7 and 3x4".chars().collect();
-        let folded = fold_digit_x_digit_chunks_from_chars(&chars);
-        assert_eq!(folded, "67 and 34");
     }
 
     #[test]
     fn transcription_does_not_fold_mixed_multiplication_chunks() {
         let out = normalize_transcription_math_artifacts("6x7 plus 3x4");
         assert_eq!(out, "6x7 plus 3x4");
+    }
+
+    #[test]
+    fn cache_key_handles_large_number_word_runs_without_overflow() {
+        let key = normalize_cleanup_cache_key(
+            "one hundred hundred hundred hundred hundred hundred hundred hundred hundred hundred",
+        );
+        assert!(key.starts_with("num"));
     }
 }
