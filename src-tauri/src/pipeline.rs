@@ -239,18 +239,51 @@ fn normalize_transcription_math_artifacts(raw: &str) -> String {
     raw.to_string()
 }
 
+#[cfg(test)]
 fn normalize_cleanup_cache_key(input: &str) -> String {
     let (tokens, separators) = tokenize_cache_key_parts(input);
+    normalize_cleanup_cache_key_parts(&tokens, &separators)
+}
+
+fn normalize_cleanup_cache_key_parts(tokens: &[String], separators: &[String]) -> String {
     let mut out = String::new();
     let mut i = 0;
 
     while i < tokens.len() {
         let token = &tokens[i];
+        if matches!(token.as_str(), "minus" | "negative")
+            && i + 1 < tokens.len()
+            && tokens[i + 1].chars().any(|c| c.is_ascii_digit())
+        {
+            let mut normalized = normalize_digit_token(&tokens[i + 1]);
+            let mut j = i + 2;
+            while j < tokens.len() && tokens[j].chars().any(|c| c.is_ascii_digit()) {
+                let sep = separators.get(j).map(|s| s.trim()).unwrap_or("");
+                if sep == "." {
+                    normalized.push('.');
+                    normalized.push_str(&normalize_digit_token(&tokens[j]));
+                    j += 1;
+                    continue;
+                }
+                if sep == ":" {
+                    normalized.push_str(&normalize_digit_token(&tokens[j]));
+                    j += 1;
+                    continue;
+                }
+                break;
+            }
+            out.push_str("num-");
+            out.push_str(&normalized);
+            i = j;
+            continue;
+        }
+
         if token.chars().any(|c| c.is_ascii_digit()) {
             let mut normalized = normalize_digit_token(token);
+            let negative = has_numeric_minus_prefix(tokens, separators, i);
             let mut j = i + 1;
             while j < tokens.len() && tokens[j].chars().any(|c| c.is_ascii_digit()) {
-                let sep = separators.get(j - 1).map(|s| s.trim()).unwrap_or("");
+                let sep = separators.get(j).map(|s| s.trim()).unwrap_or("");
                 if sep == "." {
                     normalized.push('.');
                     normalized.push_str(&normalize_digit_token(&tokens[j]));
@@ -265,12 +298,15 @@ fn normalize_cleanup_cache_key(input: &str) -> String {
                 break;
             }
             out.push_str("num");
+            if negative {
+                out.push('-');
+            }
             out.push_str(&normalized);
             i = j;
             continue;
         }
 
-        if let Some((normalized, next_idx)) = normalize_number_word_run(&tokens, i) {
+        if let Some((normalized, next_idx)) = normalize_number_word_run(tokens, i) {
             out.push_str("num");
             out.push_str(&normalized);
             i = next_idx;
@@ -284,12 +320,17 @@ fn normalize_cleanup_cache_key(input: &str) -> String {
     out
 }
 
+#[cfg(test)]
 fn should_use_cleanup_cache(raw: &str) -> bool {
-    let tokens = tokenize_cache_key_input(raw);
+    let (tokens, _) = tokenize_cache_key_parts(raw);
+    should_use_cleanup_cache_tokens(&tokens)
+}
+
+fn should_use_cleanup_cache_tokens(tokens: &[String]) -> bool {
     let mut numeric_count = 0usize;
     let mut has_math_operator = false;
 
-    for t in &tokens {
+    for t in tokens {
         if t.chars().any(|c| c.is_ascii_digit()) || is_number_word_token(t) {
             numeric_count += 1;
             continue;
@@ -305,6 +346,20 @@ fn should_use_cleanup_cache(raw: &str) -> bool {
     !(has_math_operator && numeric_count >= 2)
 }
 
+fn has_numeric_minus_prefix(tokens: &[String], separators: &[String], idx: usize) -> bool {
+    let Some(sep) = separators.get(idx) else {
+        return false;
+    };
+    if !sep.trim_end().ends_with('-') {
+        return false;
+    }
+    if idx == 0 {
+        return true;
+    }
+    let prev = tokens[idx - 1].as_str();
+    !(prev.chars().any(|c| c.is_ascii_digit()) || is_number_word_token(prev))
+}
+
 fn normalize_digit_token(token: &str) -> String {
     let digits: String = token.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.is_empty() {
@@ -312,11 +367,6 @@ fn normalize_digit_token(token: &str) -> String {
     } else {
         digits
     }
-}
-
-fn tokenize_cache_key_input(input: &str) -> Vec<String> {
-    let (tokens, _) = tokenize_cache_key_parts(input);
-    tokens
 }
 
 fn tokenize_cache_key_parts(input: &str) -> (Vec<String>, Vec<String>) {
@@ -327,7 +377,7 @@ fn tokenize_cache_key_parts(input: &str) -> (Vec<String>, Vec<String>) {
 
     for ch in input.chars() {
         if ch.is_alphanumeric() {
-            if buf.is_empty() && !tokens.is_empty() {
+            if buf.is_empty() {
                 separators.push(std::mem::take(&mut sep_buf));
             }
             buf.extend(ch.to_lowercase());
@@ -965,9 +1015,10 @@ async fn run_cleanup_and_snippets(
         && pure_expansion.is_none()
         && cfg.cleanup_intensity != "none"
     {
-        let allow_cache = should_use_cleanup_cache(raw);
+        let (cache_tokens, cache_separators) = tokenize_cache_key_parts(raw);
+        let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens);
         let cache_key = if allow_cache {
-            normalize_cleanup_cache_key(raw)
+            normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators)
         } else {
             String::new()
         };
@@ -1203,6 +1254,20 @@ mod tests {
         let a = normalize_cleanup_cache_key("version 2.5");
         let b = normalize_cleanup_cache_key("version 25");
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_distinguishes_negative_and_positive_digits() {
+        let a = normalize_cleanup_cache_key("temperature is -5");
+        let b = normalize_cleanup_cache_key("temperature is 5");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_matches_negative_digit_and_word_forms() {
+        let a = normalize_cleanup_cache_key("temperature is -5");
+        let b = normalize_cleanup_cache_key("temperature is minus five");
+        assert_eq!(a, b);
     }
 
     #[test]
