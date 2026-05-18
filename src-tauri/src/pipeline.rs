@@ -570,7 +570,7 @@ fn parse_number_word_integer(tokens: &[String], mut i: usize) -> (i64, usize, bo
         }
         if let Some(scale) = large_scale_word_value(t) {
             let part = if current == 0 { 1 } else { current };
-            total += part * scale;
+            total = total.saturating_add(part.saturating_mul(scale));
             current = 0;
             seen_any = true;
             i += 1;
