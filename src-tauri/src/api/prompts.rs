@@ -1,3 +1,5 @@
+use crate::system::text::tokenize_lower_alnum;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PromptTier {
     Short,
@@ -18,22 +20,6 @@ fn tier_from_input(input_text: &str) -> PromptTier {
     } else {
         PromptTier::Detailed
     }
-}
-
-fn tokenize_lower_alnum(input: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut buf = String::new();
-    for ch in input.chars() {
-        if ch.is_alphanumeric() {
-            buf.extend(ch.to_lowercase());
-        } else if !buf.is_empty() {
-            tokens.push(std::mem::take(&mut buf));
-        }
-    }
-    if !buf.is_empty() {
-        tokens.push(buf);
-    }
-    tokens
 }
 
 fn input_has_numeric_content(input_text: &str) -> bool {
@@ -79,7 +65,8 @@ pub fn get_system_prompt_with_extras(
     let override_lines: String = extra_rules
         .lines()
         .filter(|l| !l.trim().is_empty())
-        .map(to_imperative)
+        .enumerate()
+        .map(|(i, line)| format!("{}. {}", i + 1, to_imperative(line)))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -143,13 +130,13 @@ fn intensity_rules(intensity: &str, tier: PromptTier, has_overrides: bool) -> St
         }
         ("light", _) => "CLEANUP: Remove filler words, false starts, and immediate word repeats only. Keep all real content.".to_string(),
         ("high", PromptTier::Short) => {
-            "CLEANUP: Rewrite to shortest clear version. Remove filler, hedges, repetition, and circular phrasing.".to_string()
+            "CLEANUP: Rewrite aggressively to a short clear result. Remove filler, hedges, repeated ideas, false starts, and circular phrasing.".to_string()
         }
         ("high", PromptTier::Medium) => {
-            "CLEANUP: Rewrite to concise meaning. Target about half the words. Remove filler, hedges, repetition, and restatements.".to_string()
+            "CLEANUP: Rewrite to concise meaning. Target roughly 30-50% of input words. Remove filler words (um, uh, like, you know), hedges (I think, maybe, probably), repeated ideas, false starts, and circular phrasing.".to_string()
         }
         ("high", PromptTier::Detailed) => {
-            "CLEANUP: Rewrite aggressively. Keep only core meaning. Remove filler, hedges, repetition, false starts, and circular phrasing. Output should be much shorter than input.".to_string()
+            "CLEANUP: Rewrite aggressively and keep only core meaning. Target roughly 30-50% of input words. Mandatory cuts: filler words, hedges, repeated ideas, false starts, and circular phrasing. Merge/reorder sentences when it improves clarity.".to_string()
         }
         (_, PromptTier::Short) => {
             "CLEANUP: Remove filler and repetition; keep intent; produce a shorter, clearer sentence.".to_string()
@@ -268,7 +255,7 @@ mod tests {
     fn short_tier_is_used_below_50_words() {
         let input = repeated_words(12);
         let prompt = get_system_prompt_with_extras("casual", "medium", "", None, &input);
-        assert!(!prompt.contains("PROMPT TIER: SHORT"));
+        assert!(prompt.contains("produce a shorter, clearer sentence"));
     }
 
     #[test]
@@ -314,13 +301,12 @@ mod tests {
     }
 
     #[test]
-    fn short_overrides_are_not_numbered() {
+    fn overrides_are_numbered() {
         let input = "small input text".to_string();
         let prompt =
             get_system_prompt_with_extras("casual", "medium", "no period\nall caps", None, &input);
-        assert!(!prompt.contains("1. MUST"));
+        assert!(prompt.contains("1. MUST no period"));
+        assert!(prompt.contains("2. MUST all caps"));
         assert!(!prompt.contains("=================================================="));
-        assert!(prompt.contains("MUST no period"));
-        assert!(prompt.contains("MUST all caps"));
     }
 }

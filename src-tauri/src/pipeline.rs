@@ -235,13 +235,28 @@ fn preview_text(s: &str, limit: usize) -> String {
 }
 
 fn normalize_transcription_math_artifacts(raw: &str) -> String {
-    let mut out = raw.to_string();
-    // Whisper sometimes emits "6x7" for spoken "sixty seven".
-    // For additive math utterances, treat repeated digit-x-digit chunks as a 2-digit number.
-    if out.to_lowercase().contains(" plus ") {
-        out = fold_digit_x_digit_chunks(&out);
+    let lower = raw.to_lowercase();
+    if !lower.contains(" plus ") {
+        return raw.to_string();
     }
-    out
+    if [" times ", " multiplied ", " multiply ", " divided ", " over "]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        return raw.to_string();
+    }
+
+    let chunks = digit_x_digit_chunks(raw);
+    if chunks.len() < 2 {
+        return raw.to_string();
+    }
+    let Some(first) = chunks.first() else {
+        return raw.to_string();
+    };
+    if !chunks.iter().all(|c| c == first) {
+        return raw.to_string();
+    }
+    fold_digit_x_digit_chunks(raw)
 }
 
 fn fold_digit_x_digit_chunks(input: &str) -> String {
@@ -263,6 +278,24 @@ fn fold_digit_x_digit_chunks(input: &str) -> String {
         i += 1;
     }
     out
+}
+
+fn digit_x_digit_chunks(input: &str) -> Vec<String> {
+    let chars: Vec<char> = input.chars().collect();
+    let mut chunks = Vec::new();
+    let mut i = 0usize;
+    while i + 2 < chars.len() {
+        if chars[i].is_ascii_digit()
+            && (chars[i + 1] == 'x' || chars[i + 1] == 'X')
+            && chars[i + 2].is_ascii_digit()
+        {
+            chunks.push(format!("{}x{}", chars[i], chars[i + 2]));
+            i += 3;
+            continue;
+        }
+        i += 1;
+    }
+    chunks
 }
 
 fn normalize_cleanup_cache_key(input: &str) -> String {
@@ -290,18 +323,10 @@ fn normalize_cleanup_cache_key(input: &str) -> String {
                 }
                 break;
             }
-            if j == i + 1 {
-                // Single numeric token; nothing else to fold in.
-                out.push_str("num");
-                out.push_str(&normalized);
-                i = j;
-                continue;
-            } else {
-                out.push_str("num");
-                out.push_str(&normalized);
-                i = j;
-                continue;
-            }
+            out.push_str("num");
+            out.push_str(&normalized);
+            i = j;
+            continue;
         }
 
         if let Some((normalized, next_idx)) = normalize_number_word_run(&tokens, i) {
@@ -1315,5 +1340,11 @@ mod tests {
         assert_eq!(out, "Calculate 6x7");
         let folded = fold_digit_x_digit_chunks("6x7 and 3x4");
         assert_eq!(folded, "67 and 34");
+    }
+
+    #[test]
+    fn transcription_does_not_fold_mixed_multiplication_chunks() {
+        let out = normalize_transcription_math_artifacts("6x7 plus 3x4");
+        assert_eq!(out, "6x7 plus 3x4");
     }
 }

@@ -86,10 +86,7 @@ fn redact_after_token_ci(input: &str, token: &str) -> String {
     let mut cursor = 0usize;
     let mut remaining = input.to_string();
 
-    loop {
-        let Some(found_idx) = find_ascii_case_insensitive_from(&remaining, token, cursor) else {
-            break;
-        };
+    while let Some(found_idx) = find_ascii_case_insensitive_from(&remaining, token, cursor) {
         let idx = found_idx + token.len();
         let end_rel = remaining[idx..]
             .find(|ch: char| ch.is_whitespace() || ch == ',' || ch == ';' || ch == '"')
@@ -106,10 +103,7 @@ fn redact_json_key_ci(input: &str, key: &str) -> String {
     let mut cursor = 0usize;
     let mut remaining = input.to_string();
 
-    loop {
-        let Some(found_idx) = find_ascii_case_insensitive_from(&remaining, &pattern, cursor) else {
-            break;
-        };
+    while let Some(found_idx) = find_ascii_case_insensitive_from(&remaining, &pattern, cursor) {
         let start = found_idx + pattern.len();
         let mut value_start = start;
         while value_start < remaining.len() && remaining.as_bytes()[value_start].is_ascii_whitespace() {
