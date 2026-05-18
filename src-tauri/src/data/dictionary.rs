@@ -1,4 +1,5 @@
 use crate::data::db;
+use crate::system::text::tokenize_lower_alnum;
 
 const MAX_PROMPT_ENTRIES: usize = 48;
 const MAX_PROMPT_CHARS: usize = 5_000;
@@ -14,7 +15,7 @@ pub fn build_relevant_dictionary_prompt_from(
     }
 
     let raw_lower = raw_text.to_lowercase();
-    let raw_tokens = tokenize_lower_alnum_words(raw_text);
+    let raw_tokens = tokenize_lower_alnum(raw_text);
     let mut selected: Vec<&db::DictionaryEntry> = entries
         .iter()
         .filter(|entry| entry_matches_raw(entry, &raw_lower, &raw_tokens))
@@ -48,26 +49,10 @@ fn contains_nonempty(haystack: &str, needle: &str) -> bool {
     !needle.trim().is_empty() && haystack.contains(needle)
 }
 
-fn tokenize_lower_alnum_words(text: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut buf = String::new();
-    for ch in text.chars() {
-        if ch.is_alphanumeric() {
-            buf.extend(ch.to_lowercase());
-        } else if !buf.is_empty() {
-            tokens.push(std::mem::take(&mut buf));
-        }
-    }
-    if !buf.is_empty() {
-        tokens.push(buf);
-    }
-    tokens
-}
-
 fn fuzzy_token_match(entry: &db::DictionaryEntry, raw_tokens: &[String]) -> bool {
-    let mut candidates = tokenize_lower_alnum_words(&entry.term);
+    let mut candidates = tokenize_lower_alnum(&entry.term);
     if let Some(mistake) = &entry.mistake {
-        candidates.extend(tokenize_lower_alnum_words(mistake));
+        candidates.extend(tokenize_lower_alnum(mistake));
     }
     for candidate in candidates {
         if candidate.len() < 4 {
@@ -95,20 +80,20 @@ fn edit_distance_bounded(a: &str, b: &str, bound: usize) -> usize {
     if a == b {
         return 0;
     }
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
-    let a_len = a_chars.len();
-    let b_len = b_chars.len();
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let a_len = a_bytes.len();
+    let b_len = b_bytes.len();
     if a_len.abs_diff(b_len) > bound {
         return bound + 1;
     }
 
     let mut prev: Vec<usize> = (0..=b_len).collect();
     let mut curr = vec![0usize; b_len + 1];
-    for (i, a_ch) in a_chars.iter().enumerate() {
+    for (i, a_ch) in a_bytes.iter().enumerate() {
         curr[0] = i + 1;
         let mut row_min = curr[0];
-        for (j, b_ch) in b_chars.iter().enumerate() {
+        for (j, b_ch) in b_bytes.iter().enumerate() {
             let cost = usize::from(a_ch != b_ch);
             curr[j + 1] = (curr[j] + 1).min(prev[j + 1] + 1).min(prev[j] + cost);
             if curr[j + 1] < row_min {
