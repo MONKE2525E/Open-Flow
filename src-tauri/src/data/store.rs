@@ -1,3 +1,5 @@
+use tauri_plugin_store::StoreExt;
+
 /// API key names in the store — never expose values to the frontend after write.
 pub const KEY_GROQ: &str = "api_key_groq";
 pub const KEY_OPENAI: &str = "api_key_openai";
@@ -179,5 +181,33 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             .get(CONTEXTUAL_CAPS)
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
+    }
+}
+
+pub struct AudioConfig {
+    pub device: Option<String>,
+    pub noise_reduction: bool,
+}
+
+pub fn load_audio_config(app: &tauri::AppHandle) -> AudioConfig {
+    let settings = match app.store("settings.json") {
+        Ok(store) => Some(store),
+        Err(e) => {
+            log::warn!("Failed to load settings.json store for audio config: {:?}", e);
+            None
+        }
+    };
+    let device = settings
+        .as_deref()
+        .and_then(|s| s.get(MICROPHONE_DEVICE))
+        .and_then(|v| v.as_str().map(String::from));
+    let noise_reduction = settings
+        .as_deref()
+        .and_then(|s| s.get(NOISE_REDUCTION))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    AudioConfig {
+        device,
+        noise_reduction,
     }
 }

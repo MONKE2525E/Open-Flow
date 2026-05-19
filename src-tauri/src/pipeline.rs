@@ -127,15 +127,9 @@ pub fn start_recording_session(
     handless: bool,
 ) {
     let settings = app.store("settings.json").ok();
-    let device = settings
-        .as_deref()
-        .and_then(|s| s.get(store::MICROPHONE_DEVICE))
-        .and_then(|v| v.as_str().map(String::from));
-    let noise_reduction = settings
-        .as_deref()
-        .and_then(|s| s.get(store::NOISE_REDUCTION))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let audio_config = store::load_audio_config(app);
+    let device = audio_config.device;
+    let noise_reduction = audio_config.noise_reduction;
     let mute_audio = settings
         .as_deref()
         .and_then(|s| s.get(store::MUTE_AUDIO))

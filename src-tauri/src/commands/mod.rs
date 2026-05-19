@@ -294,22 +294,9 @@ pub async fn start_calibration_monitoring(
         return Err("Already recording".to_string());
     }
 
-    let settings = match app.store("settings.json") {
-        Ok(store) => Some(store),
-        Err(e) => {
-            log::warn!("Failed to load settings.json store: {:?}", e);
-            None
-        }
-    };
-    let device = settings
-        .as_deref()
-        .and_then(|s| s.get(store::MICROPHONE_DEVICE))
-        .and_then(|v| v.as_str().map(String::from));
-    let noise_reduction = settings
-        .as_deref()
-        .and_then(|s| s.get(store::NOISE_REDUCTION))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let audio_config = store::load_audio_config(&app);
+    let device = audio_config.device;
+    let noise_reduction = audio_config.noise_reduction;
 
     let mic_gain = 1.0;
 
