@@ -1,5 +1,7 @@
 import { writable } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { saveSetting } from './settings';
 
 // Named constants for calibration calculations
 export const TARGET_CALIBRATION_FACTOR = 2.25;
@@ -41,7 +43,6 @@ export async function startCalibration() {
   calibratedGain.set(null);
   micLevel.set(0);
 
-  const { listen } = await import('@tauri-apps/api/event');
   calibrationUnlisten = await listen<number>('audio-level', (ev) => {
     const level = ev.payload ?? 0;
     micLevel.set(level);
@@ -77,7 +78,6 @@ export async function stopCalibration() {
   const finalGain = Math.max(MIN_CALIBRATION_GAIN, Math.min(MAX_CALIBRATION_GAIN, Math.round(rawGain * 10) / 10));
   calibratedGain.set(finalGain);
 
-  const { saveSetting } = await import('./settings');
   try {
     await saveSetting('mic_gain', finalGain);
   } catch (e) {

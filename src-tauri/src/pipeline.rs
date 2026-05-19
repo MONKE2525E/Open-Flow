@@ -188,25 +188,25 @@ pub fn spawn_level_emitter(
         // "recording" state event before we flood the IPC with 16ms updates.
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
 
-        loop {
-            if !active.load(Ordering::Relaxed) {
-                break;
-            }
-            let level_val = f32::from_bits(level.load(Ordering::Relaxed));
+        let emit_level = |level_val: f32| {
             if emit_globally {
                 let _ = app.emit("audio-level", level_val);
             } else if let Some(pill) = app.get_webview_window("pill") {
                 pill.emit("audio-level", level_val).ok();
             }
+        };
+
+        loop {
+            if !active.load(Ordering::Relaxed) {
+                break;
+            }
+            let level_val = f32::from_bits(level.load(Ordering::Relaxed));
+            emit_level(level_val);
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
         // Emit final reset to ensure level goes to 0 regardless of timing
-        if emit_globally {
-            let _ = app.emit("audio-level", 0.0);
-        } else if let Some(pill) = app.get_webview_window("pill") {
-            pill.emit("audio-level", 0.0).ok();
-        }
+        emit_level(0.0);
     });
 }
 
