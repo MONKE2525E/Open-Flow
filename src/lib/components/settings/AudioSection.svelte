@@ -245,6 +245,9 @@
     flex-direction: column;
     gap: 2px;
   }
+  .mic-menu::-webkit-scrollbar-thumb {
+    border: 3px solid var(--bg-elev);
+  }
   .mic-item {
     width: 100%;
     text-align: left;

@@ -187,6 +187,8 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
 pub struct AudioConfig {
     pub device: Option<String>,
     pub noise_reduction: bool,
+    pub mic_gain: f32,
+    pub mute_audio: bool,
 }
 
 pub fn load_audio_config(app: &tauri::AppHandle) -> AudioConfig {
@@ -206,8 +208,23 @@ pub fn load_audio_config(app: &tauri::AppHandle) -> AudioConfig {
         .and_then(|s| s.get(NOISE_REDUCTION))
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let mic_gain = settings
+        .as_deref()
+        .and_then(|s| s.get(MIC_GAIN))
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .unwrap_or(3.5)
+        .clamp(1.0, 8.0);
+    let mute_audio = settings
+        .as_deref()
+        .and_then(|s| s.get(MUTE_AUDIO))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     AudioConfig {
         device,
         noise_reduction,
+        mic_gain,
+        mute_audio,
     }
 }

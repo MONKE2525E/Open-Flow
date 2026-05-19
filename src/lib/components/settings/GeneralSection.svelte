@@ -508,6 +508,10 @@
     overflow-y: auto;
     z-index: 10;
   }
+  .mic-menu::-webkit-scrollbar-thumb,
+  .language-menu::-webkit-scrollbar-thumb {
+    border: 3px solid var(--bg-elev);
+  }
   .language-menu { min-width: 220px; max-height: 260px; }
   .mic-item, .language-item {
     display: block;

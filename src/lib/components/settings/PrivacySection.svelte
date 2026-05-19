@@ -211,6 +211,9 @@
     overflow-y: auto;
     z-index: 10;
   }
+  .mic-menu::-webkit-scrollbar-thumb {
+    border: 3px solid var(--bg-elev);
+  }
   .mic-item {
     display: block;
     width: 100%;

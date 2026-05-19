@@ -126,22 +126,11 @@ pub fn start_recording_session(
     pill_state: &str,
     handless: bool,
 ) {
-    let settings = app.store("settings.json").ok();
     let audio_config = store::load_audio_config(app);
     let device = audio_config.device;
     let noise_reduction = audio_config.noise_reduction;
-    let mute_audio = settings
-        .as_deref()
-        .and_then(|s| s.get(store::MUTE_AUDIO))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let mic_gain = settings
-        .as_deref()
-        .and_then(|s| s.get(store::MIC_GAIN))
-        .and_then(|v| v.as_f64())
-        .map(|v| v as f32)
-        .unwrap_or(3.5)
-        .clamp(1.0, 8.0);
+    let mute_audio = audio_config.mute_audio;
+    let mic_gain = audio_config.mic_gain;
 
     if mute_audio {
         std::thread::spawn(crate::system::volume::mute);
