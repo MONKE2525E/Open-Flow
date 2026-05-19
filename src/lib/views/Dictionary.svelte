@@ -51,8 +51,9 @@
   const TERM_LIMIT    = 50;
   const MISTAKE_LIMIT = 50;
 
-  const clampTerm = (value: string): string => value.trim().slice(0, TERM_LIMIT);
-  const clampMistake = (value: string): string => value.trim().slice(0, MISTAKE_LIMIT);
+  const clampTerm = (value: string): string => [...value.trim()].slice(0, TERM_LIMIT).join('');
+  const clampMistake = (value: string): string =>
+    [...value.trim()].slice(0, MISTAKE_LIMIT).join('');
 
   const sortLabels: { key: SortKey; label: string }[] = [
     { key: 'newest',         label: 'Newest'         },
