@@ -126,13 +126,48 @@ pub fn start_recording_session(
     pill_state: &str,
     handless: bool,
 ) {
-    let audio_config = store::load_audio_config(app);
+    if let Err(e) = start_recording_session_ex(
+        app,
+        state,
+        pill_state,
+        handless,
+        None,
+        true,
+        false,
+    ) {
+        log::error!("start recording: {e}");
+    }
+}
+
+/// Generalized recording session function supporting calibration overrides.
+pub fn start_recording_session_ex(
+    app: &AppHandle,
+    state: &SharedState,
+    pill_state: &str,
+    handless: bool,
+    gain_override: Option<f32>,
+    show_recording_pill: bool,
+    emit_globally: bool,
+) -> Result<(), String> {
+    let settings = app.store("settings.json");
+    let audio_config = match settings {
+        Ok(ref store) => store::load_audio_config(store),
+        Err(e) => {
+            log::warn!("Failed to load settings.json store for audio config: {:?}", e);
+            store::AudioConfig {
+                device: None,
+                noise_reduction: true,
+                mic_gain: 3.5,
+                mute_audio: false,
+            }
+        }
+    };
     let device = audio_config.device;
     let noise_reduction = audio_config.noise_reduction;
     let mute_audio = audio_config.mute_audio;
-    let mic_gain = audio_config.mic_gain;
+    let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
 
-    if mute_audio {
+    if mute_audio && gain_override.is_none() {
         std::thread::spawn(crate::system::volume::mute);
     }
 
@@ -143,18 +178,18 @@ pub fn start_recording_session(
             {
                 let mut st = match lock_state(state) {
                     Ok(st) => st,
-                    Err(e) => {
-                        log::error!("recording state: {e}");
-                        return;
-                    }
+                    Err(e) => return Err(e.to_string()),
                 };
                 st.session = Some(session);
                 st.handless = handless;
             }
-            show_pill(app, pill_state);
-            spawn_level_emitter(app.clone(), level_arc, active_arc, false);
+            if show_recording_pill {
+                show_pill(app, pill_state);
+            }
+            spawn_level_emitter(app.clone(), level_arc, active_arc, emit_globally);
+            Ok(())
         }
-        Err(e) => log::error!("start recording: {e}"),
+        Err(e) => Err(e.to_string()),
     }
 }
 

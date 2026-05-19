@@ -294,26 +294,15 @@ pub async fn start_calibration_monitoring(
         return Err("Already recording".to_string());
     }
 
-    let audio_config = store::load_audio_config(&app);
-    let device = audio_config.device;
-    let noise_reduction = audio_config.noise_reduction;
-
-    let mic_gain = 1.0;
-
-    match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
-        Ok(session) => {
-            let level_arc = session.level.clone();
-            let active_arc = session.active.clone();
-            {
-                let mut st = lock_state(&state)?;
-                st.session = Some(session);
-                st.handless = false;
-            }
-            pipeline::spawn_level_emitter(app, level_arc, active_arc, true);
-            Ok(())
-        }
-        Err(e) => Err(e.to_string()),
-    }
+    pipeline::start_recording_session_ex(
+        &app,
+        &state,
+        "calibration",
+        false,
+        Some(1.0),
+        false,
+        true,
+    )
 }
 
 #[tauri::command]

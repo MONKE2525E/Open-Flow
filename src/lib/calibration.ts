@@ -13,6 +13,9 @@ export const isCalibrating = writable(false);
 export const calibrationCountdown = writable(3);
 export const micLevel = writable(0);
 export const calibratedGain = writable<number | null>(null);
+export const speechDetected = writable<boolean | null>(null);
+
+export const SPEECH_DETECTION_THRESHOLD = 0.07;
 
 let calibrationMaxLevel = MIN_CALIBRATION_LEVEL;
 let calibrationTimer: ReturnType<typeof setInterval> | null = null;
@@ -42,6 +45,7 @@ export async function startCalibration() {
   calibrationMaxLevel = MIN_CALIBRATION_LEVEL;
   calibrationCountdown.set(3);
   calibratedGain.set(null);
+  speechDetected.set(null);
   micLevel.set(0);
 
   const sessionId = Math.random().toString(36).substring(2) + '-' + Date.now();
@@ -91,6 +95,7 @@ export async function stopCalibration() {
   const rawGain = TARGET_CALIBRATION_FACTOR / Math.max(MIN_CALIBRATION_LEVEL, calibrationMaxLevel);
   const finalGain = Math.max(MIN_CALIBRATION_GAIN, Math.min(MAX_CALIBRATION_GAIN, Math.round(rawGain * 10) / 10));
   calibratedGain.set(finalGain);
+  speechDetected.set(calibrationMaxLevel >= SPEECH_DETECTION_THRESHOLD);
 
   try {
     await saveSetting('mic_gain', finalGain);
@@ -106,4 +111,5 @@ export async function cancelCalibration() {
   isCalibrating.set(false);
   micLevel.set(0);
   calibratedGain.set(null);
+  speechDetected.set(null);
 }

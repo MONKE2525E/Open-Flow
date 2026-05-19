@@ -13,7 +13,8 @@
     calibratedGain,
     micLevel,
     startCalibration,
-    cancelCalibration
+    cancelCalibration,
+    speechDetected
   } from '../../calibration';
 
   let noiseReduction = $state(true);
@@ -172,6 +173,16 @@
   <div>
     <div class="label">Auto calibration</div>
     <div class="desc">Speak naturally to automatically set the ideal microphone gain</div>
+    {#if $speechDetected === false}
+      <div class="gain-tip" style="margin-top: 10px;" transition:slide={{ duration: 200 }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" x2="12" y1="8" y2="12"/>
+          <line x1="12" x2="12" y1="16" y2="16"/>
+        </svg>
+        No speech was detected during calibration. Please check your microphone input.
+      </div>
+    {/if}
   </div>
   
   <div class="cal-control">

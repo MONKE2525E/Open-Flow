@@ -1,4 +1,3 @@
-use tauri_plugin_store::StoreExt;
 
 /// API key names in the store — never expose values to the frontend after write.
 pub const KEY_GROQ: &str = "api_key_groq";
@@ -191,33 +190,22 @@ pub struct AudioConfig {
     pub mute_audio: bool,
 }
 
-pub fn load_audio_config(app: &tauri::AppHandle) -> AudioConfig {
-    let settings = match app.store("settings.json") {
-        Ok(store) => Some(store),
-        Err(e) => {
-            log::warn!("Failed to load settings.json store for audio config: {:?}", e);
-            None
-        }
-    };
-    let device = settings
-        .as_deref()
-        .and_then(|s| s.get(MICROPHONE_DEVICE))
+pub fn load_audio_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> AudioConfig {
+    let device = store
+        .get(MICROPHONE_DEVICE)
         .and_then(|v| v.as_str().map(String::from));
-    let noise_reduction = settings
-        .as_deref()
-        .and_then(|s| s.get(NOISE_REDUCTION))
+    let noise_reduction = store
+        .get(NOISE_REDUCTION)
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    let mic_gain = settings
-        .as_deref()
-        .and_then(|s| s.get(MIC_GAIN))
+    let mic_gain = store
+        .get(MIC_GAIN)
         .and_then(|v| v.as_f64())
         .map(|v| v as f32)
         .unwrap_or(3.5)
         .clamp(1.0, 8.0);
-    let mute_audio = settings
-        .as_deref()
-        .and_then(|s| s.get(MUTE_AUDIO))
+    let mute_audio = store
+        .get(MUTE_AUDIO)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 

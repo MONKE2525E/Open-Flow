@@ -47,7 +47,8 @@
     calibratedGain,
     micLevel,
     startCalibration,
-    cancelCalibration
+    cancelCalibration,
+    speechDetected
   } from '../calibration';
 
   onDestroy(() => {
@@ -566,17 +567,31 @@
             </div>
           {:else if $calibratedGain !== null}
             <div class="cal-result-state">
-              <div class="cal-success-icon">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                  <polyline points="22 4 12 14.01 9 11.01"/>
-                </svg>
-              </div>
-              <h3 class="cal-result-title">Calibration Complete!</h3>
-              <p class="cal-result-desc">
-                We've adjusted your microphone gain to <strong>{$calibratedGain.toFixed(1)}×</strong>.
-                Your voice levels are now perfectly optimized for the voice model.
-              </p>
+              {#if $speechDetected === false}
+                <div class="cal-warning-icon">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" x2="12" y1="8" y2="12"/>
+                    <line x1="12" x2="12" y1="16" y2="16"/>
+                  </svg>
+                </div>
+                <h3 class="cal-result-title">Silence Detected</h3>
+                <p class="cal-result-desc">
+                  No speech was detected. Make sure your microphone is selected, unmuted, and that you spoke during the countdown. We've defaulted the gain to <strong>{$calibratedGain.toFixed(1)}×</strong>.
+                </p>
+              {:else}
+                <div class="cal-success-icon">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                  </svg>
+                </div>
+                <h3 class="cal-result-title">Calibration Complete!</h3>
+                <p class="cal-result-desc">
+                  We've adjusted your microphone gain to <strong>{$calibratedGain.toFixed(1)}×</strong>.
+                  Your voice levels are now perfectly optimized for the voice model.
+                </p>
+              {/if}
               
               <div class="cal-actions">
                 <button class="btn-ghost" onclick={startCalibration}>Recalibrate</button>
@@ -912,6 +927,18 @@
     border-radius: 50%;
     background: var(--accent-soft);
     color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+  }
+
+  .cal-warning-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--warning-bg);
+    color: var(--warning);
     display: flex;
     align-items: center;
     justify-content: center;
