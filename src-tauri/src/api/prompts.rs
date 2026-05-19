@@ -176,6 +176,12 @@ fn tone_rules(profile: &str) -> &'static str {
 }
 
 fn profanity_policy(profile: &str, intensity: &str) -> String {
+    if profile == "formal" {
+        return "PROFANITY POLICY (FORMAL): Replace most profanity with milder professional wording while preserving meaning and emphasis. Do not use asterisk-style censorship.\n\
+        PROFANITY CONFLICT RULE: For FORMAL tone, ignore profanity-retention defaults tied to cleanup intensity."
+            .to_string();
+    }
+
     let intensity_line = match intensity {
         "none" => "PROFANITY BASELINE (VERBATIM): Preserve profanity exactly as spoken by default. Do not sanitize, euphemize, or censor it.",
         "light" => "PROFANITY BASELINE (LIGHT): Preserve profanity exactly as spoken by default. Do not sanitize, euphemize, or censor it.",
@@ -184,9 +190,6 @@ fn profanity_policy(profile: &str, intensity: &str) -> String {
     };
 
     let tone_line = match profile {
-        "formal" => {
-            "TONE PROFANITY (FORMAL): Replace most profanity with milder professional wording while preserving meaning and emphasis. Do not use asterisk-style censorship."
-        }
         "very_casual" => {
             "TONE PROFANITY (VERY CASUAL): Retain swear words and natural intensity from the speaker."
         }
@@ -195,9 +198,7 @@ fn profanity_policy(profile: &str, intensity: &str) -> String {
 
     format!(
         "{intensity_line}\n\
-        {tone_line}\n\
-        PROFANITY PRECEDENCE: If profanity instructions conflict, FORMAL tone rules override intensity baseline rules.\n\
-        EXAMPLE: Keep \"holy shit\" as profanity by default; do not auto-sanitize it to \"holy moly\" unless FORMAL tone is active."
+        {tone_line}"
     )
 }
 
@@ -356,8 +357,9 @@ mod tests {
     fn formal_tone_filters_most_profanity_with_mild_rewording() {
         let input = "holy shit this is wild".to_string();
         let prompt = get_system_prompt_with_extras("formal", "medium", "", None, &input);
-        assert!(prompt.contains("TONE PROFANITY (FORMAL): Replace most profanity with milder professional wording while preserving meaning and emphasis."));
+        assert!(prompt.contains("PROFANITY POLICY (FORMAL): Replace most profanity with milder professional wording while preserving meaning and emphasis."));
         assert!(prompt.contains("Do not use asterisk-style censorship."));
+        assert!(!prompt.contains("PROFANITY BASELINE"));
     }
 
     #[test]
@@ -376,12 +378,13 @@ mod tests {
     }
 
     #[test]
-    fn formal_profanity_rule_overrides_intensity_rule() {
+    fn formal_profanity_rules_are_conflict_free_with_direct_intensity() {
         let input = "holy shit this is wild".to_string();
-        let prompt = get_system_prompt_with_extras("formal", "none", "", None, &input);
+        let prompt = get_system_prompt_with_extras("formal", "high", "", None, &input);
         assert!(prompt.contains(
-            "PROFANITY PRECEDENCE: If profanity instructions conflict, FORMAL tone rules override intensity baseline rules."
+            "PROFANITY CONFLICT RULE: For FORMAL tone, ignore profanity-retention defaults tied to cleanup intensity."
         ));
+        assert!(!prompt.contains("PROFANITY BASELINE (DIRECT)"));
     }
 
     #[test]
