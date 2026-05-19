@@ -52,6 +52,10 @@ body {
   background: transparent;
 }
 
+.scroll-styled:hover {
+  scrollbar-color: color-mix(in srgb, var(--ink-faint) 42%, transparent) transparent;
+}
+
 .scroll-styled:hover::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--ink-faint) 42%, transparent);
 }
