@@ -380,7 +380,7 @@ mod tests {
         assert!(prompt.contains(
             "This overrides intensity profanity defaults."
         ));
-        assert!(!prompt.contains("PROFANITY BASELINE (DIRECT)"));
+        assert!(!prompt.contains("Keep profanity as spoken."));
     }
 
     #[test]
