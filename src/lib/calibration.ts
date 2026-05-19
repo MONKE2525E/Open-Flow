@@ -48,7 +48,7 @@ export async function startCalibration() {
   speechDetected.set(null);
   micLevel.set(0);
 
-  const sessionId = Math.random().toString(36).substring(2) + '-' + Date.now();
+  const sessionId = crypto.randomUUID();
   currentCalibrationSession = sessionId;
 
   const unlisten = await listen<number>('audio-level', (ev) => {

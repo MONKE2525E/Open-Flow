@@ -154,12 +154,7 @@ pub fn start_recording_session_ex(
         Ok(ref store) => store::load_audio_config(store),
         Err(e) => {
             log::warn!("Failed to load settings.json store for audio config: {:?}", e);
-            store::AudioConfig {
-                device: None,
-                noise_reduction: true,
-                mic_gain: 3.5,
-                mute_audio: false,
-            }
+            store::AudioConfig::default()
         }
     };
     let device = audio_config.device;

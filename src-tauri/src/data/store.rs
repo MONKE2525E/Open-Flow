@@ -183,11 +183,26 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
     }
 }
 
+pub const DEFAULT_MIC_GAIN: f32 = 3.5;
+pub const MIN_MIC_GAIN: f32 = 1.0;
+pub const MAX_MIC_GAIN: f32 = 8.0;
+
 pub struct AudioConfig {
     pub device: Option<String>,
     pub noise_reduction: bool,
     pub mic_gain: f32,
     pub mute_audio: bool,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            device: None,
+            noise_reduction: true,
+            mic_gain: DEFAULT_MIC_GAIN,
+            mute_audio: false,
+        }
+    }
 }
 
 pub fn load_audio_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> AudioConfig {
@@ -202,8 +217,8 @@ pub fn load_audio_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Audio
         .get(MIC_GAIN)
         .and_then(|v| v.as_f64())
         .map(|v| v as f32)
-        .unwrap_or(3.5)
-        .clamp(1.0, 8.0);
+        .unwrap_or(DEFAULT_MIC_GAIN)
+        .clamp(MIN_MIC_GAIN, MAX_MIC_GAIN);
     let mute_audio = store
         .get(MUTE_AUDIO)
         .and_then(|v| v.as_bool())
