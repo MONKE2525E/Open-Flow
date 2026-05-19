@@ -461,7 +461,14 @@ pub fn log_auto_learn_event(
         "INSERT INTO auto_learn_events
          (event_type, reason_code, app_context, mistake_hash, correction_hash, confidence)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![event_type, reason_code, app_context, mistake_hash, correction_hash, confidence],
+        params![
+            event_type,
+            reason_code,
+            app_context,
+            mistake_hash,
+            correction_hash,
+            confidence
+        ],
     )?;
     Ok(())
 }
@@ -705,7 +712,12 @@ pub fn cleanup_cache_get_active(db: &Db, key: &str) -> Result<Option<CleanupCach
     }))
 }
 
-pub fn cleanup_cache_insert_new(db: &Db, key: &str, clean_text: &str, expires_at: &str) -> Result<()> {
+pub fn cleanup_cache_insert_new(
+    db: &Db,
+    key: &str,
+    clean_text: &str,
+    expires_at: &str,
+) -> Result<()> {
     let conn = lock_conn(db)?;
     conn.execute(
         "INSERT OR REPLACE INTO cleanup_cache
@@ -767,13 +779,9 @@ mod tests {
         let db = test_db();
 
         insert_dictionary_entry(&db, "Kubernetes", Some("manual typo")).expect("manual insert");
-        let promoted = insert_dictionary_entry_auto_learned(
-            &db,
-            "Kubernetes",
-            Some("Koobernetes"),
-            "high",
-        )
-            .expect("auto insert");
+        let promoted =
+            insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Koobernetes"), "high")
+                .expect("auto insert");
 
         assert!(!promoted);
         let entries = query_dictionary(&db).expect("dictionary");
@@ -788,23 +796,27 @@ mod tests {
     fn auto_learn_updates_only_exact_existing_pair() {
         let db = test_db();
 
-        assert!(
-            insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Koobernetes"), "high")
-                .expect("first insert")
-        );
-        assert!(
-            insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Koobernetes"), "high")
-                .expect("same pair")
-        );
-        assert!(
-            !insert_dictionary_entry_auto_learned(
-                &db,
-                "Kubernetes",
-                Some("Kubernetties"),
-                "low",
-            )
-                .expect("different pair")
-        );
+        assert!(insert_dictionary_entry_auto_learned(
+            &db,
+            "Kubernetes",
+            Some("Koobernetes"),
+            "high"
+        )
+        .expect("first insert"));
+        assert!(insert_dictionary_entry_auto_learned(
+            &db,
+            "Kubernetes",
+            Some("Koobernetes"),
+            "high"
+        )
+        .expect("same pair"));
+        assert!(!insert_dictionary_entry_auto_learned(
+            &db,
+            "Kubernetes",
+            Some("Kubernetties"),
+            "low",
+        )
+        .expect("different pair"));
 
         let entries = query_dictionary(&db).expect("dictionary");
         assert_eq!(entries.len(), 1);
@@ -834,7 +846,9 @@ mod tests {
         cleanup_cache_insert_new(&db, "live", "y", "2999-01-01 00:00:00").expect("insert live");
 
         assert_eq!(cleanup_cache_prune_expired(&db).expect("prune"), 1);
-        assert!(cleanup_cache_get_active(&db, "old").expect("query old").is_none());
+        assert!(cleanup_cache_get_active(&db, "old")
+            .expect("query old")
+            .is_none());
         assert!(cleanup_cache_get_active(&db, "live")
             .expect("query live")
             .is_some());

@@ -301,7 +301,8 @@ fn get_running_processes() -> Vec<InstalledApp> {
                     let end = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
                     let exe = String::from_utf16_lossy(&raw[..end]).to_lowercase();
                     if !exe.is_empty() && exe != "system idle process" && !exe.starts_with('[') {
-                        let name = friendly_app_name(&exe, exe.strip_suffix(".exe").unwrap_or(&exe));
+                        let name =
+                            friendly_app_name(&exe, exe.strip_suffix(".exe").unwrap_or(&exe));
                         let app = InstalledApp { name, exe };
                         if is_user_facing_app(&app) {
                             apps.push(app);
