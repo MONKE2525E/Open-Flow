@@ -83,7 +83,7 @@
     clearingCleanupCache = true;
     try {
       await invoke<number>('clear_cleanup_cache');
-      const status = await invoke<{ entry_count: number; is_space_constrained: boolean; free_bytes: number }>('get_cleanup_cache_status');
+      const status = await invoke<{ entry_count: number; is_space_constrained: boolean; free_bytes: number } | null>('get_cleanup_cache_status');
       cleanupCacheEntries = status?.entry_count ?? 0;
       cleanupCacheSpaceConstrained = status?.is_space_constrained ?? false;
       cleanupCacheFreeBytes = status?.free_bytes ?? 0;
