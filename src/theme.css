@@ -41,6 +41,7 @@
   --line-soft: #efeae3;
   --line-strong: var(--arm-300);
 
+  /* Light defaults; dark overrides below in :root[data-theme="dark"]. */
   --accent: var(--jap-400);
   --accent-ink: var(--jap-700);
   --accent-soft: var(--jap-100);
@@ -146,12 +147,4 @@
   --pill-bg: #0d0a08;
   --pill-fg: #ffffff;
   --pill-bar: #ffffff;
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
-  --accent: var(--jap-400);
-  --accent-soft: var(--jap-100);
-  --accent-ink: var(--jap-700);
-  --on-accent: #ffffff;
 }
