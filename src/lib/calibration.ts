@@ -17,10 +17,9 @@ export const calibratedGain = writable<number | null>(null);
 let calibrationMaxLevel = MIN_CALIBRATION_LEVEL;
 let calibrationTimer: ReturnType<typeof setInterval> | null = null;
 let calibrationUnlisten: (() => void) | null = null;
-let currentCalibrationSession = 0;
+let currentCalibrationSession = '';
 
 async function cleanupCalibrationResources() {
-  currentCalibrationSession = 0;
   if (calibrationTimer) {
     clearInterval(calibrationTimer);
     calibrationTimer = null;
@@ -45,7 +44,7 @@ export async function startCalibration() {
   calibratedGain.set(null);
   micLevel.set(0);
 
-  const sessionId = Date.now();
+  const sessionId = Math.random().toString(36).substring(2) + '-' + Date.now();
   currentCalibrationSession = sessionId;
 
   const unlisten = await listen<number>('audio-level', (ev) => {
@@ -83,6 +82,7 @@ export async function startCalibration() {
 }
 
 export async function stopCalibration() {
+  currentCalibrationSession = '';
   await cleanupCalibrationResources();
 
   isCalibrating.set(false);
@@ -100,6 +100,7 @@ export async function stopCalibration() {
 }
 
 export async function cancelCalibration() {
+  currentCalibrationSession = '';
   await cleanupCalibrationResources();
 
   isCalibrating.set(false);
