@@ -164,6 +164,32 @@ fn tone_rules(profile: &str) -> &'static str {
     }
 }
 
+fn profanity_policy(profile: &str, intensity: &str) -> String {
+    let intensity_line = match intensity {
+        "none" => "PROFANITY BASELINE (VERBATIM): Preserve profanity exactly as spoken by default. Do not sanitize, euphemize, or censor it.",
+        "light" => "PROFANITY BASELINE (LIGHT): Preserve profanity exactly as spoken by default. Do not sanitize, euphemize, or censor it.",
+        "high" => "PROFANITY BASELINE (DIRECT): Preserve profanity exactly as spoken by default. Do not sanitize, euphemize, or censor it.",
+        _ => "PROFANITY BASELINE (MEDIUM): Preserve profanity exactly as spoken by default. Do not sanitize, euphemize, or censor it.",
+    };
+
+    let tone_line = match profile {
+        "formal" => {
+            "TONE PROFANITY (FORMAL): Replace most profanity with milder professional wording while preserving meaning and emphasis. Do not use asterisk-style censorship."
+        }
+        "very_casual" => {
+            "TONE PROFANITY (VERY CASUAL): Retain swear words and natural intensity from the speaker."
+        }
+        _ => "TONE PROFANITY (CASUAL): Retain swear words and natural intensity from the speaker.",
+    };
+
+    format!(
+        "{intensity_line}\n\
+        {tone_line}\n\
+        PROFANITY PRECEDENCE: If profanity instructions conflict, FORMAL tone rules override intensity baseline rules.\n\
+        EXAMPLE: Keep \"holy shit\" as profanity by default; do not auto-sanitize it to \"holy moly\" unless FORMAL tone is active."
+    )
+}
+
 fn context_section(app_context: Option<&str>, tier: PromptTier) -> String {
     let Some(ctx) = app_context else {
         return String::new();
@@ -199,6 +225,7 @@ fn get_system_prompt(
     let context = context_section(app_context, tier);
     let cleanup = intensity_rules(intensity, tier, has_snippet_overrides);
     let tone = tone_rules(profile);
+    let profanity = profanity_policy(profile, intensity);
     let number_style = if tier == PromptTier::Short && !has_numeric_content {
         String::new()
     } else {
@@ -224,6 +251,7 @@ fn get_system_prompt(
         {context}\
         {cleanup}\n\
         {tone}\n\
+        {profanity}\n\
         \n\
         {number_style}\
         FORMATTING COMMANDS: If speech includes literal commands like 'new paragraph', 'new line', \
@@ -300,5 +328,48 @@ mod tests {
         assert!(prompt.contains("1. MUST no period"));
         assert!(prompt.contains("2. MUST all caps"));
         assert!(!prompt.contains("=================================================="));
+    }
+
+    #[test]
+    fn non_formal_intensities_keep_profanity() {
+        let input = "holy shit this is wild".to_string();
+        for intensity in ["none", "light", "medium", "high"] {
+            let prompt = get_system_prompt_with_extras("casual", intensity, "", None, &input);
+            assert!(prompt.contains("PROFANITY BASELINE"));
+            assert!(prompt.contains("Preserve profanity exactly as spoken by default"));
+            assert!(prompt.contains("Do not sanitize, euphemize, or censor it."));
+        }
+    }
+
+    #[test]
+    fn formal_tone_filters_most_profanity_with_mild_rewording() {
+        let input = "holy shit this is wild".to_string();
+        let prompt = get_system_prompt_with_extras("formal", "medium", "", None, &input);
+        assert!(prompt.contains("TONE PROFANITY (FORMAL): Replace most profanity with milder professional wording while preserving meaning and emphasis."));
+        assert!(prompt.contains("Do not use asterisk-style censorship."));
+    }
+
+    #[test]
+    fn casual_and_very_casual_retain_swear_words() {
+        let input = "holy shit this is wild".to_string();
+        let casual_prompt = get_system_prompt_with_extras("casual", "medium", "", None, &input);
+        let very_casual_prompt =
+            get_system_prompt_with_extras("very_casual", "medium", "", None, &input);
+
+        assert!(casual_prompt.contains(
+            "TONE PROFANITY (CASUAL): Retain swear words and natural intensity from the speaker."
+        ));
+        assert!(very_casual_prompt.contains(
+            "TONE PROFANITY (VERY CASUAL): Retain swear words and natural intensity from the speaker."
+        ));
+    }
+
+    #[test]
+    fn formal_profanity_rule_overrides_intensity_rule() {
+        let input = "holy shit this is wild".to_string();
+        let prompt = get_system_prompt_with_extras("formal", "none", "", None, &input);
+        assert!(prompt.contains(
+            "PROFANITY PRECEDENCE: If profanity instructions conflict, FORMAL tone rules override intensity baseline rules."
+        ));
     }
 }
