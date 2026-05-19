@@ -32,7 +32,7 @@ const TIMEOUT = 10_000;
     if (!(await appDiv.isVisible())) errors.push('.app root element not found');
 
     // Screenshot for visual inspection
-    await page.screenshot({ path: 'G:\\Open Flow\\screenshot.png', fullPage: true });
+    await page.screenshot({ path: 'screenshot.png', fullPage: true });
     console.log('Screenshot saved to screenshot.png');
 
     // Fail if any JS errors occurred during load or interaction

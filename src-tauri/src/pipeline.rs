@@ -195,6 +195,7 @@ pub fn spawn_level_emitter(
             if let Some(pill) = app.get_webview_window("pill") {
                 pill.emit("audio-level", level_val).ok();
             }
+            let _ = app.emit("audio-level", level_val);
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
@@ -202,6 +203,7 @@ pub fn spawn_level_emitter(
         if let Some(pill) = app.get_webview_window("pill") {
             pill.emit("audio-level", 0.0).ok();
         }
+        let _ = app.emit("audio-level", 0.0);
     });
 }
 

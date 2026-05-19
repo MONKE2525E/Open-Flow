@@ -286,6 +286,59 @@ pub async fn start_input_recording(
 }
 
 #[tauri::command]
+pub async fn start_calibration_monitoring(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    if lock_state(&state)?.session.is_some() {
+        return Err("Already recording".to_string());
+    }
+
+    let settings = app.store("settings.json").ok();
+    let device = settings
+        .as_deref()
+        .and_then(|s| s.get(store::MICROPHONE_DEVICE))
+        .and_then(|v| v.as_str().map(String::from));
+    let noise_reduction = settings
+        .as_deref()
+        .and_then(|s| s.get(store::NOISE_REDUCTION))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let mic_gain = 1.0;
+
+    match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
+        Ok(session) => {
+            let level_arc = session.level.clone();
+            let active_arc = session.active.clone();
+            {
+                let mut st = lock_state(&state)?;
+                st.session = Some(session);
+                st.handless = false;
+            }
+            pipeline::spawn_level_emitter(app, level_arc, active_arc);
+            Ok(())
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn stop_calibration_monitoring(
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    let session = {
+        let mut st = lock_state(&state)?;
+        st.handless = false;
+        st.session.take()
+    };
+    if let Some(s) = session {
+        let _ = s.stop();
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn stop_and_transcribe_input(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,

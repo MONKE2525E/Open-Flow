@@ -13,7 +13,7 @@ export const MOTION_PX = {
 } as const;
 
 export const NAV_ORDER = ['home', 'dictionary', 'snippets', 'style'] as const;
-export const SETTINGS_SECTION_ORDER = ['general', 'apps', 'keys', 'models', 'privacy', 'advanced', 'about', 'developer'] as const;
+export const SETTINGS_SECTION_ORDER = ['general', 'apps', 'keys', 'models', 'privacy', 'microphone', 'about', 'developer'] as const;
 export const STYLE_TAB_ORDER = ['cleanup', 'personal', 'apps'] as const;
 
 export function directionFromOrder(current: string, next: string, order: readonly string[]): 1 | -1 {

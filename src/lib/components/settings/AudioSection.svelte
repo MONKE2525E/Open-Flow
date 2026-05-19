@@ -1,22 +1,41 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { slide } from 'svelte/transition';
+  import { slide, fly, fade } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
+  import { onDestroy } from 'svelte';
   import Toggle from '../Toggle.svelte';
   import { saveSetting } from '../../settings';
+  import { MOTION_MS, MOTION_PX, motionMs, motionPx, animateWidth } from '../../motion';
 
   let noiseReduction = $state(true);
   let micGain = $state(3.5);
+  let microphones = $state<string[]>([]);
+  let selectedMic = $state('');
+  let micDropdownOpen = $state(false);
+
+  // Calibration states
+  let isCalibrating = $state(false);
+  let calibrationCountdown = $state(3);
+  let calibratedGain = $state<number | null>(null);
+  let micLevel = $state(0);
+  let calibrationMaxLevel = 0;
+  let calibrationTimer: ReturnType<typeof setInterval> | null = null;
+  let calibrationUnlisten: (() => void) | null = null;
 
   async function loadSettings() {
     try {
-      const [nr, savedGain] = await Promise.all([
+      const [nr, savedGain, mics, curMic] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
         invoke<number | null>('get_setting', { key: 'mic_gain' }),
+        invoke<string[]>('get_microphones'),
+        invoke<string | null>('get_setting', { key: 'microphone_device' }),
       ]);
       noiseReduction = nr ?? true;
       if (savedGain !== null && savedGain !== undefined) {
         micGain = Math.max(1, Math.min(8, savedGain));
       }
+      microphones = mics ?? [];
+      selectedMic = curMic ?? '';
     } catch (err) {
       console.error('AudioSection load failed:', err);
     }
@@ -40,10 +59,156 @@
     }
   }
 
+  async function saveMic(name: string) {
+    selectedMic = name;
+    micDropdownOpen = false;
+    try {
+      await saveSetting('microphone_device', name || null);
+    } catch (err) {
+      console.error('saveMic failed:', err);
+    }
+  }
+
+  function micLabel(name: string) {
+    return name;
+  }
+
+  async function startCalibration() {
+    isCalibrating = true;
+    calibrationMaxLevel = 0.04;
+    calibrationCountdown = 3;
+    calibratedGain = null;
+    micLevel = 0;
+
+    const { listen } = await import('@tauri-apps/api/event');
+    calibrationUnlisten = await listen<number>('audio-level', (ev) => {
+      const level = ev.payload ?? 0;
+      micLevel = level;
+      if (level > calibrationMaxLevel) {
+        calibrationMaxLevel = level;
+      }
+    });
+
+    try {
+      await invoke('start_calibration_monitoring');
+    } catch (e) {
+      console.error('Failed to start calibration monitoring:', e);
+    }
+
+    calibrationTimer = setInterval(() => {
+      calibrationCountdown--;
+      if (calibrationCountdown <= 0) {
+        stopCalibration();
+      }
+    }, 1000);
+  }
+
+  async function stopCalibration() {
+    if (calibrationTimer) {
+      clearInterval(calibrationTimer);
+      calibrationTimer = null;
+    }
+    if (calibrationUnlisten) {
+      calibrationUnlisten();
+      calibrationUnlisten = null;
+    }
+    try {
+      await invoke('stop_calibration_monitoring');
+    } catch (e) {
+      console.error('Failed to stop calibration monitoring:', e);
+    }
+
+    isCalibrating = false;
+    micLevel = 0;
+
+    const rawGain = 2.25 / Math.max(0.04, calibrationMaxLevel);
+    calibratedGain = Math.max(1.0, Math.min(8.0, Math.round(rawGain * 10) / 10));
+    micGain = calibratedGain;
+
+    try {
+      await saveSetting('mic_gain', calibratedGain);
+    } catch (e) {
+      console.error('Failed to save mic gain setting:', e);
+    }
+  }
+
+  async function cancelCalibration() {
+    if (calibrationTimer) {
+      clearInterval(calibrationTimer);
+      calibrationTimer = null;
+    }
+    if (calibrationUnlisten) {
+      calibrationUnlisten();
+      calibrationUnlisten = null;
+    }
+    try {
+      await invoke('stop_calibration_monitoring');
+    } catch (e) {
+      console.error('Failed to stop calibration monitoring:', e);
+    }
+    isCalibrating = false;
+    micLevel = 0;
+    calibratedGain = null;
+  }
+
+  function closeMicDropdown(e: MouseEvent) {
+    if (!(e.target as HTMLElement).closest('.mic-dropdown')) {
+      micDropdownOpen = false;
+    }
+  }
+
+  onDestroy(() => {
+    if (calibrationTimer) clearInterval(calibrationTimer);
+    if (calibrationUnlisten) calibrationUnlisten();
+    invoke('stop_calibration_monitoring').catch(() => {});
+  });
+
   loadSettings();
 </script>
 
-<h2 class="settings-h">Advanced</h2>
+<svelte:window onclick={closeMicDropdown} />
+
+<h2 class="settings-h">Microphone</h2>
+
+<div class="setting-row">
+  <div>
+    <div class="label">Input device</div>
+    <div class="desc">Choose which microphone Open Flow should record from</div>
+  </div>
+  <div class="mic-dropdown">
+    <button
+      class="btn-ghost mic-btn"
+      use:animateWidth={{ text: selectedMic ? micLabel(selectedMic) : 'Default Device', max: 180 }}
+      onclick={() => (micDropdownOpen = !micDropdownOpen)}
+    >
+      <span class="mic-btn-label">{selectedMic ? micLabel(selectedMic) : 'Default Device'}</span>
+      <svg class:open={micDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m6 9 6 6 6-6"/>
+      </svg>
+    </button>
+    {#if micDropdownOpen}
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div
+        class="mic-menu scroll-styled"
+        role="presentation"
+        onclick={(e) => e.stopPropagation()}
+        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+      >
+        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>Default Device</button>
+        {#each microphones as m}
+          <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>
+            {micLabel(m)}
+          </button>
+        {/each}
+        {#if microphones.length === 0}
+          <div class="mic-empty">No devices found</div>
+        {/if}
+      </div>
+    {/if}
+  </div>
+</div>
+
 <div class="setting-row gain-row">
   <div class="gain-header">
     <div>
@@ -75,12 +240,194 @@
     </div>
   {/if}
 </div>
+
 <div class="setting-row">
   <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
   <Toggle checked={noiseReduction} onchange={handleNoiseReduction} />
 </div>
 
+<div class="setting-row cal-row">
+  <div>
+    <div class="label">Auto calibration</div>
+    <div class="desc">Speak naturally to automatically set the ideal microphone gain</div>
+  </div>
+  
+  <div class="cal-control">
+    {#if !isCalibrating}
+      <button class="btn-ghost cal-btn" onclick={startCalibration}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" x2="12" y1="19" y2="22"/>
+        </svg>
+        <span>Auto Calibrate</span>
+      </button>
+    {:else}
+      <div class="cal-active-panel">
+        <span class="cal-timer">{calibrationCountdown}s</span>
+        <span class="cal-phrase-hint">Speak: "Open Flow is fast"</span>
+        <div class="cal-level-bar">
+          <div class="cal-level-fill" style="width: {(micLevel * 100).toFixed(0)}%"></div>
+        </div>
+        <button class="cal-cancel-icon-btn" onclick={cancelCalibration} aria-label="Cancel calibration">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+    {/if}
+  </div>
+</div>
+
 <style>
+  .mic-dropdown {
+    position: relative;
+  }
+  .mic-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--r-md);
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .mic-btn svg {
+    transition: transform 0.2s;
+  }
+  .mic-btn svg.open {
+    transform: rotate(180deg);
+  }
+  .mic-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    width: 220px;
+    max-height: 240px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-md);
+    box-shadow: 0 4px 16px var(--shadow-md);
+    z-index: 10;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .mic-item {
+    width: 100%;
+    text-align: left;
+    padding: 6px 10px;
+    border-radius: var(--r-sm);
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mic-item:hover {
+    background: var(--paper-2);
+    color: var(--ink);
+  }
+  .mic-item.active {
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font-weight: 500;
+  }
+  .mic-empty {
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--ink-mute);
+    text-align: center;
+  }
+
+  /* Calibration row styles */
+  .cal-row {
+    align-items: center;
+  }
+  .cal-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 14px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    background: transparent;
+  }
+  .cal-btn:hover {
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+  }
+  .cal-active-panel {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 4px 12px;
+    height: 32px;
+  }
+  .cal-timer {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--accent);
+    font-size: 13px;
+  }
+  .cal-phrase-hint {
+    font-size: 12px;
+    color: var(--ink-soft);
+    font-style: italic;
+  }
+  .cal-level-bar {
+    width: 80px;
+    height: 6px;
+    background: var(--line-strong);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .cal-level-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+    transition: width 0.05s ease-out;
+  }
+
+  .cal-cancel-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    color: var(--ink-mute);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    padding: 0;
+    margin-left: 4px;
+    flex-shrink: 0;
+  }
+  .cal-cancel-icon-btn:hover {
+    color: var(--ink-strong);
+    background: var(--paper-3);
+  }
+
   .gain-row { flex-direction: column; align-items: stretch; gap: 0; }
   .gain-header { display: flex; align-items: center; justify-content: space-between; width: 100%; }
   .gain-value {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { setupComplete } from '../stores';
   import { animateWidth } from '../motion';
   import { saveSetting, type CleanupIntensity, type ToneId } from '../settings';
@@ -26,7 +26,99 @@
 
   // ── Step state ──────────────────────────────────────────────────────────────
   let step = 0;
-  const TOTAL_STEPS = 7; // steps 1–7 show progress dots (0 = intro)
+  const TOTAL_STEPS = 8; // steps 1–8 show progress dots (0 = intro)
+
+  // ── Microphone Calibration states ──────────────────────────────────────────
+  let isCalibrating = false;
+  let calibrationMaxLevel = 0;
+  let calibrationCountdown = 3;
+  let calibrationTimer: ReturnType<typeof setInterval> | null = null;
+  let calibratedGain: number | null = null;
+  let micLevel = 0;
+  let calibrationUnlisten: (() => void) | null = null;
+
+  async function startCalibration() {
+    isCalibrating = true;
+    calibrationMaxLevel = 0.04;
+    calibrationCountdown = 3;
+    calibratedGain = null;
+    micLevel = 0;
+
+    const { listen } = await import('@tauri-apps/api/event');
+    calibrationUnlisten = await listen<number>('audio-level', (ev) => {
+      const level = ev.payload ?? 0;
+      micLevel = level;
+      if (level > calibrationMaxLevel) {
+        calibrationMaxLevel = level;
+      }
+    });
+
+    try {
+      await invoke('start_calibration_monitoring');
+    } catch (e) {
+      console.error('Failed to start calibration monitoring:', e);
+    }
+
+    calibrationTimer = setInterval(() => {
+      calibrationCountdown--;
+      if (calibrationCountdown <= 0) {
+        stopCalibration();
+      }
+    }, 1000);
+  }
+
+  async function stopCalibration() {
+    if (calibrationTimer) {
+      clearInterval(calibrationTimer);
+      calibrationTimer = null;
+    }
+    if (calibrationUnlisten) {
+      calibrationUnlisten();
+      calibrationUnlisten = null;
+    }
+    try {
+      await invoke('stop_calibration_monitoring');
+    } catch (e) {
+      console.error('Failed to stop calibration monitoring:', e);
+    }
+
+    isCalibrating = false;
+    micLevel = 0;
+
+    const rawGain = 2.25 / Math.max(0.04, calibrationMaxLevel);
+    calibratedGain = Math.max(1.0, Math.min(8.0, Math.round(rawGain * 10) / 10));
+
+    try {
+      await saveSetting('mic_gain', calibratedGain);
+    } catch (e) {
+      console.error('Failed to save mic gain setting:', e);
+    }
+  }
+
+  async function cancelCalibration() {
+    if (calibrationTimer) {
+      clearInterval(calibrationTimer);
+      calibrationTimer = null;
+    }
+    if (calibrationUnlisten) {
+      calibrationUnlisten();
+      calibrationUnlisten = null;
+    }
+    try {
+      await invoke('stop_calibration_monitoring');
+    } catch (e) {
+      console.error('Failed to stop calibration monitoring:', e);
+    }
+    isCalibrating = false;
+    micLevel = 0;
+    calibratedGain = null;
+  }
+
+  onDestroy(() => {
+    if (calibrationTimer) clearInterval(calibrationTimer);
+    if (calibrationUnlisten) calibrationUnlisten();
+    invoke('stop_calibration_monitoring').catch(() => {});
+  });
 
   let direction: 'forward' | 'back' = 'forward';
   let animating = false;
@@ -182,13 +274,13 @@
   // ── Navigation ────────────────────────────────────────────────────────────────
   async function goNext() {
     if (animating) return;
-    if (step === 7) { await finish(); return; }
+    if (step === 8) { await finish(); return; }
     direction = 'forward';
     animating = true;
     visible = false;
     await delay(220);
     step++;
-    if (step === 6) setTimeout(() => { quickSettingsReady = true; }, 60);
+    if (step === 7) setTimeout(() => { quickSettingsReady = true; }, 60);
     visible = true;
     await delay(220);
     animating = false;
@@ -196,13 +288,13 @@
 
   async function goBack() {
     if (animating || step === 0) return;
-    if (step === 6 || step === 7) quickSettingsReady = false;
+    if (step === 7 || step === 8) quickSettingsReady = false;
     direction = 'back';
     animating = true;
     visible = false;
     await delay(220);
     step--;
-    if (step === 6) setTimeout(() => { quickSettingsReady = true; }, 60);
+    if (step === 7) setTimeout(() => { quickSettingsReady = true; }, 60);
     visible = true;
     await delay(220);
     animating = false;
@@ -270,7 +362,7 @@
 
   // ── Done animation ────────────────────────────────────────────────────────────
   let checkAnimating = false;
-  $: if (step === 7) { setTimeout(() => { checkAnimating = true; }, 200); }
+  $: if (step === 8) { setTimeout(() => { checkAnimating = true; }, 200); }
 </script>
 
 <svelte:window onclick={closeDropdowns} />
@@ -294,8 +386,8 @@
     </div>
   </div>
 
-  <!-- Progress dots (steps 1–6) -->
-  {#if step > 0 && step < 7}
+  <!-- Progress dots (steps 1–7) -->
+  {#if step > 0 && step < 8}
     <div class="progress">
       {#each Array(TOTAL_STEPS) as _, i}
         <button
@@ -595,8 +687,76 @@
         </div>
       </div>
 
-    <!-- ── Step 6: Quick Settings ──────────────────────────── -->
+    <!-- ── Step 6: Microphone Calibration ────────────────── -->
     {:else if step === 6}
+      <div class="step">
+        <div class="step-header">
+          <h2>Optimize your microphone</h2>
+          <p class="step-sub">We will adjust the gain so the AI can transcribe your voice clearly.</p>
+        </div>
+
+        <div class="calibration-box">
+          {#if !isCalibrating && calibratedGain === null}
+            <div class="cal-start-state">
+              <div class="cal-mic-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" x2="12" y1="19" y2="22"/>
+                </svg>
+              </div>
+              <p class="cal-instruction">Click below, then speak naturally for 3 seconds.</p>
+              <button class="btn-primary btn-lg" onclick={startCalibration}>Start Calibration</button>
+            </div>
+          {:else if isCalibrating}
+            <div class="cal-active-state">
+              <div class="cal-timer-ring">
+                <span class="cal-countdown">{calibrationCountdown}s</span>
+              </div>
+              <p class="cal-prompt">Read this phrase aloud:</p>
+              <blockquote class="cal-phrase">"Open Flow makes dictation easy."</blockquote>
+              
+              <!-- Live Level Visualizer -->
+              <div class="cal-meter-container">
+                <div class="cal-meter-track">
+                  <div class="cal-meter-fill" style="width: {(micLevel * 100).toFixed(0)}%"></div>
+                </div>
+              </div>
+              <button class="btn-ghost cal-cancel-btn" onclick={cancelCalibration}>
+                Cancel
+              </button>
+            </div>
+          {:else if calibratedGain !== null}
+            <div class="cal-result-state">
+              <div class="cal-success-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                  <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+              </div>
+              <h3 class="cal-result-title">Calibration Complete!</h3>
+              <p class="cal-result-desc">
+                We've adjusted your microphone gain to <strong>{calibratedGain.toFixed(1)}×</strong>.
+                Your voice levels are now perfectly optimized for the voice model.
+              </p>
+              
+              <div class="cal-actions">
+                <button class="btn-ghost" onclick={startCalibration}>Recalibrate</button>
+              </div>
+            </div>
+          {/if}
+        </div>
+
+        <div class="step-footer">
+          <button class="btn-skip" onclick={skip} disabled={isCalibrating}>Skip calibration</button>
+          <button class="btn-primary" onclick={goNext} disabled={isCalibrating}>
+            {calibratedGain !== null ? 'Continue' : 'Skip Calibration'}
+          </button>
+        </div>
+      </div>
+
+    <!-- ── Step 7: Quick Settings ──────────────────────────── -->
+    {:else if step === 7}
       <div class="step qs-step">
         <div class="step-header">
           <h2>A few things worth knowing about</h2>
@@ -698,7 +858,7 @@
               <div class="qs-toggle-row">
                 <div>
                   <div class="qs-toggle-label">Auto-retry on quota errors</div>
-                  <div class="qs-toggle-desc">Switch to another provider if the primary hits its limit</div>
+                  <div class="qs-toggle-desc">Silence other audio during dictation</div>
                 </div>
                 <div class="qs-toggle" class:on={quickPrefs.apiFallback} role="switch" aria-checked={quickPrefs.apiFallback} tabindex="0"
                   onclick={() => { quickPrefs = { ...quickPrefs, apiFallback: !quickPrefs.apiFallback }; }}
@@ -755,8 +915,8 @@
         </div>
       </div>
 
-    <!-- ── Step 7: Done ───────────────────────────────────── -->
-    {:else if step === 7}
+    <!-- ── Step 8: Done ───────────────────────────────────── -->
+    {:else if step === 8}
       <div class="step done-step">
         <div class="done-check-wrap">
           <svg class="done-check" class:animate={checkAnimating} width="64" height="64" viewBox="0 0 64 64" fill="none">
@@ -816,6 +976,166 @@
 </div>
 
 <style>
+  /* ── Calibration Step ──────────────────────────────────────────────── */
+  .calibration-box {
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 32px 24px;
+    min-height: 220px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    width: 100%;
+  }
+
+  .cal-start-state, .cal-active-state, .cal-result-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+  }
+
+  .cal-mic-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+  }
+
+  .cal-instruction {
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  .cal-timer-ring {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    border: 3px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: pulseCal 1.5s infinite;
+  }
+
+  @keyframes pulseCal {
+    0%, 100% { border-color: var(--accent); transform: scale(1); }
+    50% { border-color: color-mix(in srgb, var(--accent) 50%, transparent); transform: scale(1.03); }
+  }
+
+  .cal-countdown {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent-ink);
+    font-family: var(--mono);
+  }
+
+  .cal-prompt {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    margin: 0;
+  }
+
+  .cal-phrase {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+    font-style: italic;
+    color: var(--ink-strong);
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  .cal-meter-container {
+    width: 100%;
+    max-width: 280px;
+    margin-top: 8px;
+  }
+
+  .cal-meter-track {
+    width: 100%;
+    height: 6px;
+    background: var(--line-strong);
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .cal-meter-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 70%, white 30%) 100%);
+    border-radius: 999px;
+    transition: width 0.05s ease-out;
+  }
+
+  .cal-success-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+  }
+
+  .cal-result-title {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--ink-strong);
+    margin: 0;
+  }
+
+  .cal-result-desc {
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.5;
+    margin: 0;
+    max-width: 360px;
+  }
+
+  .cal-result-desc strong {
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 13.5px;
+  }
+
+  .cal-actions {
+    margin-top: 8px;
+  }
+
+  .cal-cancel-btn {
+    margin-top: 4px;
+    padding: 6px 16px;
+    border-radius: var(--r-md);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    transition: all 0.15s ease;
+  }
+  .cal-cancel-btn:hover {
+    color: var(--ink-strong);
+    background: var(--paper-3);
+  }
+
   /* ── Overlay ───────────────────────────────────────────────────────── */
   .setup-overlay {
     position: fixed;
