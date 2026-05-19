@@ -51,9 +51,10 @@
   const TERM_LIMIT    = 50;
   const MISTAKE_LIMIT = 50;
 
-  const clampTerm = (value: string): string => [...value.trim()].slice(0, TERM_LIMIT).join('');
-  const clampMistake = (value: string): string =>
-    [...value.trim()].slice(0, MISTAKE_LIMIT).join('');
+  const clamp = (value: string, limit: number): string => [...value.trim()].slice(0, limit).join('');
+  const countCodePoints = (value: string): number => [...value.trim()].length;
+  const clampTerm = (value: string): string => clamp(value, TERM_LIMIT);
+  const clampMistake = (value: string): string => clamp(value, MISTAKE_LIMIT);
 
   const sortLabels: { key: SortKey; label: string }[] = [
     { key: 'newest',         label: 'Newest'         },
@@ -108,17 +109,26 @@
   }
 
   function openEdit(e: DictionaryEntry) {
-    draftTerm    = clampTerm(e.term);
-    draftMistake = clampMistake(e.mistake ?? '');
+    draftTerm    = e.term;
+    draftMistake = e.mistake ?? '';
     modal = { mode: 'edit', entry: e };
   }
 
   function closeModal() { modal = null; saveError = ''; }
 
   async function saveModal() {
-    const term    = clampTerm(draftTerm);
-    const mistake = clampMistake(draftMistake) || null;
+    const term = draftTerm.trim();
+    const mistakeValue = draftMistake.trim();
+    const mistake = mistakeValue || null;
     if (!term) return;
+    if (countCodePoints(term) > TERM_LIMIT) {
+      saveError = `Term must be ${TERM_LIMIT} characters or fewer.`;
+      return;
+    }
+    if (mistake && countCodePoints(mistake) > MISTAKE_LIMIT) {
+      saveError = `"Often mistranscribed as" must be ${MISTAKE_LIMIT} characters or fewer.`;
+      return;
+    }
     saving = true; saveError = '';
     try {
       const editedId = modal?.mode === 'edit' ? modal.entry?.id : undefined;
