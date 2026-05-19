@@ -147,3 +147,11 @@
   --pill-fg: #ffffff;
   --pill-bar: #ffffff;
 }
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --accent: var(--jap-400);
+  --accent-soft: var(--jap-100);
+  --accent-ink: var(--jap-700);
+  --on-accent: #ffffff;
+}
