@@ -1078,7 +1078,8 @@ async fn run_cleanup_and_snippets(
         let (cache_tokens, cache_separators) = tokenize_cache_key_parts(raw);
         let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens);
         let cache_key = if allow_cache {
-            normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators)
+            let base_cache_key = normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators);
+            style_scoped_cleanup_cache_key(&base_cache_key, profile, &cfg.cleanup_intensity)
         } else {
             String::new()
         };
@@ -1212,6 +1213,13 @@ fn should_run_cleanup_llm(
         && (cleanup_intensity != "none" || profile == "formal")
 }
 
+fn style_scoped_cleanup_cache_key(base_key: &str, profile: &str, cleanup_intensity: &str) -> String {
+    if base_key.is_empty() {
+        return String::new();
+    }
+    format!("{base_key}|profile:{profile}|intensity:{cleanup_intensity}")
+}
+
 use std::future::Future;
 use std::pin::Pin;
 
@@ -1270,7 +1278,7 @@ where
 mod tests {
     use super::{
         normalize_cleanup_cache_key, normalize_transcription_math_artifacts,
-        should_run_cleanup_llm, should_use_cleanup_cache,
+        should_run_cleanup_llm, should_use_cleanup_cache, style_scoped_cleanup_cache_key,
     };
 
     #[test]
@@ -1423,5 +1431,19 @@ mod tests {
     #[test]
     fn cleanup_llm_skips_for_non_formal_when_none_intensity() {
         assert!(!should_run_cleanup_llm(true, true, true, "none", "casual"));
+    }
+
+    #[test]
+    fn style_scoped_cache_key_changes_with_profile_and_intensity() {
+        let casual_medium = style_scoped_cleanup_cache_key("abc123", "casual", "medium");
+        let formal_medium = style_scoped_cleanup_cache_key("abc123", "formal", "medium");
+        let casual_high = style_scoped_cleanup_cache_key("abc123", "casual", "high");
+        assert_ne!(casual_medium, formal_medium);
+        assert_ne!(casual_medium, casual_high);
+    }
+
+    #[test]
+    fn style_scoped_cache_key_preserves_empty_base_key() {
+        assert_eq!(style_scoped_cleanup_cache_key("", "casual", "medium"), "");
     }
 }
