@@ -49,7 +49,10 @@ pub fn snapshot() -> Vec<String> {
 
 pub fn set_verbose(enabled: bool) {
     VERBOSE_MODE.store(enabled, Ordering::Relaxed);
-    log::info!("dev verbose logging {}", if enabled { "enabled" } else { "disabled" });
+    log::info!(
+        "dev verbose logging {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
 }
 
 pub fn is_verbose() -> bool {
@@ -61,7 +64,8 @@ pub fn export_to_downloads(app: &AppHandle) -> Result<String, String> {
         .path()
         .download_dir()
         .map_err(|e| format!("Failed to resolve Downloads directory: {e}"))?;
-    std::fs::create_dir_all(&downloads).map_err(|e| format!("Failed to create Downloads path: {e}"))?;
+    std::fs::create_dir_all(&downloads)
+        .map_err(|e| format!("Failed to create Downloads path: {e}"))?;
 
     let ts = Local::now().format("%Y%m%d-%H%M%S");
     let file_name = format!("open-flow-logs-{ts}.txt");
@@ -106,7 +110,9 @@ fn redact_json_key_ci(input: &str, key: &str) -> String {
     while let Some(found_idx) = find_ascii_case_insensitive_from(&remaining, &pattern, cursor) {
         let start = found_idx + pattern.len();
         let mut value_start = start;
-        while value_start < remaining.len() && remaining.as_bytes()[value_start].is_ascii_whitespace() {
+        while value_start < remaining.len()
+            && remaining.as_bytes()[value_start].is_ascii_whitespace()
+        {
             value_start += 1;
         }
         if value_start < remaining.len() && remaining.as_bytes()[value_start] == b'"' {

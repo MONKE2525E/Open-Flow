@@ -48,8 +48,17 @@
   });
   let sortIndicatorStyle = $state('opacity:0;');
 
-  const TERM_LIMIT    = 120;
-  const MISTAKE_LIMIT = 120;
+  const TERM_LIMIT    = 50;
+  const MISTAKE_LIMIT = 50;
+
+  const clamp = (value: string, limit: number): string => {
+    const trimmed = value.trim();
+    if (trimmed.length <= limit) return trimmed;
+    return [...trimmed].slice(0, limit).join('');
+  };
+  const countCodePoints = (value: string): number => [...value].length;
+  const clampTerm = (value: string): string => clamp(value, TERM_LIMIT);
+  const clampMistake = (value: string): string => clamp(value, MISTAKE_LIMIT);
 
   const sortLabels: { key: SortKey; label: string }[] = [
     { key: 'newest',         label: 'Newest'         },
@@ -112,9 +121,18 @@
   function closeModal() { modal = null; saveError = ''; }
 
   async function saveModal() {
-    const term    = draftTerm.trim();
-    const mistake = draftMistake.trim() || null;
+    const term = draftTerm.trim();
+    const mistakeValue = draftMistake.trim();
+    const mistake = mistakeValue || null;
     if (!term) return;
+    if (countCodePoints(term) > TERM_LIMIT) {
+      saveError = `Term must be ${TERM_LIMIT} characters or fewer.`;
+      return;
+    }
+    if (mistake && countCodePoints(mistake) > MISTAKE_LIMIT) {
+      saveError = `"Often mistranscribed as" must be ${MISTAKE_LIMIT} characters or fewer.`;
+      return;
+    }
     saving = true; saveError = '';
     try {
       const editedId = modal?.mode === 'edit' ? modal.entry?.id : undefined;
@@ -401,7 +419,7 @@
           autocomplete="off"
           spellcheck="false"
         />
-        <MicInputButton onResult={(t) => draftTerm = t} />
+        <MicInputButton onResult={(t) => draftTerm = clampTerm(t)} />
       </div>
       <p class="field-hint">The exact word or phrase you want the AI to use.</p>
 
@@ -419,7 +437,7 @@
           autocomplete="off"
           spellcheck="false"
         />
-        <MicInputButton onResult={(t) => draftMistake = t} />
+        <MicInputButton onResult={(t) => draftMistake = clampMistake(t)} />
       </div>
       <p class="field-hint">What the transcription model typically writes instead. Skip if the term just needs to be in the AI's awareness.</p>
     </div>

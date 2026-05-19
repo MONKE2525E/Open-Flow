@@ -124,7 +124,10 @@ async fn transcribe_whisper(
     let resp = resp.error_for_status().context("Transcription API error")?;
 
     let body: WhisperResponse = resp.json().await?;
-    log::debug!("transcription: whisper parsed chars={}", body.text.trim().chars().count());
+    log::debug!(
+        "transcription: whisper parsed chars={}",
+        body.text.trim().chars().count()
+    );
     Ok(body.text.trim().to_owned())
 }
 
@@ -232,7 +235,10 @@ async fn transcribe_gemini_with_prompt(
         .unwrap_or("")
         .trim()
         .to_owned();
-    log::debug!("transcription: gemini parsed chars={}", text.chars().count());
+    log::debug!(
+        "transcription: gemini parsed chars={}",
+        text.chars().count()
+    );
 
     Ok(text)
 }

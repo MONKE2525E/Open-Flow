@@ -43,3 +43,4 @@ tests/smoke/*.wav
 
 # AI Agent workspace
 .claude/
+.loop_state.json

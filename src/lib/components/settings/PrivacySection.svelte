@@ -6,6 +6,11 @@
   import { animateWidth } from '../../motion';
 
   const historyOptions = ['7 days', '30 days', '90 days', 'Forever'];
+  type CleanupCacheStatus = {
+    entry_count: number;
+    is_space_constrained: boolean;
+    free_bytes: number;
+  } | null;
 
   let historyRetention = $state('30 days');
   let historyDropdownOpen = $state(false);
@@ -31,16 +36,16 @@
         invoke<string | null>('get_setting', { key: 'history_retention' }),
         invoke<boolean | null>('get_setting', { key: 'app_context_hint' }),
         invoke<boolean | null>('get_setting', { key: 'auto_learn_enabled' }),
-        invoke<{ entry_count: number; is_space_constrained: boolean; free_bytes: number }>('get_cleanup_cache_status'),
+        invoke<CleanupCacheStatus>('get_cleanup_cache_status'),
         invoke<typeof autoLearnSummary>('get_auto_learn_status_summary'),
         invoke<typeof recentAutoLearn>('get_recent_auto_learn_activity', { limit: 5 }),
       ]);
       if (retention) historyRetention = retention;
       appContextHint = hint ?? false;
       autoLearn = learn ?? false;
-      cleanupCacheEntries = cacheStatus.entry_count ?? 0;
-      cleanupCacheSpaceConstrained = cacheStatus.is_space_constrained ?? false;
-      cleanupCacheFreeBytes = cacheStatus.free_bytes ?? 0;
+      cleanupCacheEntries = cacheStatus?.entry_count ?? 0;
+      cleanupCacheSpaceConstrained = cacheStatus?.is_space_constrained ?? false;
+      cleanupCacheFreeBytes = cacheStatus?.free_bytes ?? 0;
       autoLearnSummary = summary ?? autoLearnSummary;
       recentAutoLearn = recent ?? [];
     } catch (err) {
@@ -83,10 +88,10 @@
     clearingCleanupCache = true;
     try {
       await invoke<number>('clear_cleanup_cache');
-      const status = await invoke<{ entry_count: number; is_space_constrained: boolean; free_bytes: number }>('get_cleanup_cache_status');
-      cleanupCacheEntries = status.entry_count ?? 0;
-      cleanupCacheSpaceConstrained = status.is_space_constrained ?? false;
-      cleanupCacheFreeBytes = status.free_bytes ?? 0;
+      const status = await invoke<CleanupCacheStatus>('get_cleanup_cache_status');
+      cleanupCacheEntries = status?.entry_count ?? 0;
+      cleanupCacheSpaceConstrained = status?.is_space_constrained ?? false;
+      cleanupCacheFreeBytes = status?.free_bytes ?? 0;
     } catch (err) {
       console.error('clearCleanupCache failed:', err);
     } finally {

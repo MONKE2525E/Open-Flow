@@ -19,13 +19,8 @@ pub async fn cleanup(
     snippet_instructions: &str,
     app_context: Option<&str>,
 ) -> Result<String> {
-    let prompt = get_system_prompt_with_extras(
-        profile,
-        intensity,
-        snippet_instructions,
-        app_context,
-        text,
-    );
+    let prompt =
+        get_system_prompt_with_extras(profile, intensity, snippet_instructions, app_context, text);
     log::debug!(
         "cleanup: start provider={:?} profile={} intensity={} input_chars={} prompt_chars={} snippet_rule_lines={} app_context={}",
         provider,
@@ -160,7 +155,10 @@ async fn openai_compat(
         .first()
         .map(|c| c.message.content.trim().to_owned())
         .ok_or_else(|| anyhow::anyhow!("No choices in OpenAI response"))?;
-    log::debug!("cleanup: openai_compat parsed chars={}", output.chars().count());
+    log::debug!(
+        "cleanup: openai_compat parsed chars={}",
+        output.chars().count()
+    );
     if crate::system::logger::is_verbose() {
         log::debug!("cleanup: openai_compat output_full=\"{}\"", output);
     }
@@ -248,7 +246,8 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
         .context("Google Cleanup API error")?;
 
     let data: GeminiResp = resp.json().await?;
-    let output = data.candidates
+    let output = data
+        .candidates
         .unwrap_or_default()
         .into_iter()
         .next()

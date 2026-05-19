@@ -411,7 +411,7 @@
       <div class="input-row input-row--top">
         <textarea
           id="expansion-input"
-          class="field-input"
+          class="field-input scrollbar-standard"
           placeholder="e.g. hello@example.com"
           bind:value={draftExpansion}
           use:autoGrow
@@ -432,7 +432,7 @@
       </label>
       <textarea
         id="instructions-input"
-        class="field-input instructions-input"
+        class="field-input instructions-input scrollbar-standard"
         placeholder="e.g. Don't add a period at the end of this phrase."
         bind:value={draftInstructions}
         use:autoGrow
@@ -910,6 +910,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    --field-input-max-height: 220px;
   }
 
   .modal-footer {
@@ -979,6 +980,9 @@
   }
   .input-row .field-input { flex: 1; width: auto; min-width: 0; }
   .field-input:focus { border-color: var(--arm-400); }
+  .field-input.scrollbar-standard {
+    max-height: var(--field-input-max-height);
+  }
 
   .field-hint {
     font-size: 11px;
