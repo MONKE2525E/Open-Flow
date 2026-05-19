@@ -51,7 +51,11 @@
   const TERM_LIMIT    = 50;
   const MISTAKE_LIMIT = 50;
 
-  const clamp = (value: string, limit: number): string => [...value.trim()].slice(0, limit).join('');
+  const clamp = (value: string, limit: number): string => {
+    const trimmed = value.trim();
+    if (trimmed.length <= limit) return trimmed;
+    return [...trimmed].slice(0, limit).join('');
+  };
   const countCodePoints = (value: string): number => [...value].length;
   const clampTerm = (value: string): string => clamp(value, TERM_LIMIT);
   const clampMistake = (value: string): string => clamp(value, MISTAKE_LIMIT);
