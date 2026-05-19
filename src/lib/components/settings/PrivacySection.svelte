@@ -38,9 +38,9 @@
       if (retention) historyRetention = retention;
       appContextHint = hint ?? false;
       autoLearn = learn ?? false;
-      cleanupCacheEntries = cacheStatus.entry_count ?? 0;
-      cleanupCacheSpaceConstrained = cacheStatus.is_space_constrained ?? false;
-      cleanupCacheFreeBytes = cacheStatus.free_bytes ?? 0;
+      cleanupCacheEntries = cacheStatus?.entry_count ?? 0;
+      cleanupCacheSpaceConstrained = cacheStatus?.is_space_constrained ?? false;
+      cleanupCacheFreeBytes = cacheStatus?.free_bytes ?? 0;
       autoLearnSummary = summary ?? autoLearnSummary;
       recentAutoLearn = recent ?? [];
     } catch (err) {
@@ -84,9 +84,9 @@
     try {
       await invoke<number>('clear_cleanup_cache');
       const status = await invoke<{ entry_count: number; is_space_constrained: boolean; free_bytes: number }>('get_cleanup_cache_status');
-      cleanupCacheEntries = status.entry_count ?? 0;
-      cleanupCacheSpaceConstrained = status.is_space_constrained ?? false;
-      cleanupCacheFreeBytes = status.free_bytes ?? 0;
+      cleanupCacheEntries = status?.entry_count ?? 0;
+      cleanupCacheSpaceConstrained = status?.is_space_constrained ?? false;
+      cleanupCacheFreeBytes = status?.free_bytes ?? 0;
     } catch (err) {
       console.error('clearCleanupCache failed:', err);
     } finally {
