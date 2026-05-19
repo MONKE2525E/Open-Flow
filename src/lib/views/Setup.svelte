@@ -490,7 +490,10 @@
             <button
               class="appearance-mode-card"
               class:selected={selectedAppearance === mode.id}
-              onclick={() => { selectedAppearance = mode.id; }}
+              onclick={() => {
+                selectedAppearance = mode.id;
+                appearanceMode.set(mode.id);
+              }}
             >
               <div class="appearance-mode-title-row">
                 <span class="appearance-mode-name">{mode.name}</span>
@@ -703,7 +706,7 @@
           </div>
           <div class="summary-item">
             <span class="summary-label">Theme</span>
-            <span class="summary-val">{appearanceModes.find((mode) => mode.id === selectedAppearance)?.name}</span>
+            <span class="summary-val">{appearanceModes.find((mode) => mode.id === selectedAppearance)?.name ?? 'System'}</span>
           </div>
         </div>
         <button class="btn-primary btn-lg" onclick={finish}>Start dictating</button>
