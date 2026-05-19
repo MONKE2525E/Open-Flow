@@ -17,8 +17,10 @@ export const calibratedGain = writable<number | null>(null);
 let calibrationMaxLevel = MIN_CALIBRATION_LEVEL;
 let calibrationTimer: ReturnType<typeof setInterval> | null = null;
 let calibrationUnlisten: (() => void) | null = null;
+let currentCalibrationSession = 0;
 
 async function cleanupCalibrationResources() {
+  currentCalibrationSession = 0;
   if (calibrationTimer) {
     clearInterval(calibrationTimer);
     calibrationTimer = null;
@@ -43,8 +45,10 @@ export async function startCalibration() {
   calibratedGain.set(null);
   micLevel.set(0);
 
+  const sessionId = ++currentCalibrationSession;
+
   const unlisten = await listen<number>('audio-level', (ev) => {
-    if (!get(isCalibrating)) return;
+    if (sessionId !== currentCalibrationSession || !get(isCalibrating)) return;
     const level = ev.payload ?? 0;
     micLevel.set(level);
     if (level > calibrationMaxLevel) {
@@ -52,7 +56,7 @@ export async function startCalibration() {
     }
   });
 
-  if (get(isCalibrating)) {
+  if (sessionId === currentCalibrationSession && get(isCalibrating)) {
     calibrationUnlisten = unlisten;
   } else {
     unlisten();

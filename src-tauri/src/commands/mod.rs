@@ -294,7 +294,13 @@ pub async fn start_calibration_monitoring(
         return Err("Already recording".to_string());
     }
 
-    let settings = app.store("settings.json").ok();
+    let settings = match app.store("settings.json") {
+        Ok(store) => Some(store),
+        Err(e) => {
+            log::warn!("Failed to load settings.json store: {:?}", e);
+            None
+        }
+    };
     let device = settings
         .as_deref()
         .and_then(|s| s.get(store::MICROPHONE_DEVICE))
