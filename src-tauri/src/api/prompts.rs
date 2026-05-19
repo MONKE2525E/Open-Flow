@@ -355,7 +355,7 @@ mod tests {
         let prompt = get_system_prompt_with_extras("formal", "medium", "", None, &input);
         assert!(prompt.contains("PROFANITY (FORMAL): Soften most profanity to professional wording, preserving meaning and emphasis."));
         assert!(prompt.contains("No asterisk censorship."));
-        assert!(!prompt.contains("PROFANITY BASELINE"));
+        assert!(!prompt.contains("Keep profanity as spoken."));
     }
 
     #[test]
