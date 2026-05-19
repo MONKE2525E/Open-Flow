@@ -1,11 +1,5 @@
 # Roadmap: Transcription Utility
 
-
-## 1
-. Local Ollama Integration (Future)
-- **Goal**: Fallback for offline use/privacy.
-- **Implementation**: Bridge to `localhost:11434`.
-
 ---
 
 # Far Future & Monetization (The Funding Plan)
