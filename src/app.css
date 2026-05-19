@@ -28,6 +28,7 @@ body {
 
 .scrollbar-standard {
   scrollbar-color: color-mix(in srgb, var(--ink-faint) 42%, transparent) transparent;
+  overflow-y: auto;
 }
 
 .scrollbar-standard:hover {

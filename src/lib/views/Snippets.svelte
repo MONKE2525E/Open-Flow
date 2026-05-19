@@ -910,6 +910,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    --field-input-max-height: 220px;
   }
 
   .modal-footer {
@@ -980,8 +981,7 @@
   .input-row .field-input { flex: 1; width: auto; min-width: 0; }
   .field-input:focus { border-color: var(--arm-400); }
   .field-input.scrollbar-standard {
-    overflow-y: auto;
-    max-height: 220px;
+    max-height: var(--field-input-max-height);
   }
 
   .field-hint {
