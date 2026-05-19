@@ -41,6 +41,7 @@
   --line-soft: #efeae3;
   --line-strong: var(--arm-300);
 
+  /* Light defaults; dark overrides below in :root[data-theme="dark"]. */
   --accent: var(--jap-400);
   --accent-ink: var(--jap-700);
   --accent-soft: var(--jap-100);
