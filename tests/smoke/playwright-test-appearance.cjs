@@ -1,4 +1,4 @@
-// Smoke test: appearance mode persistence and theme application.
+// Smoke test: appearance mode persistence and live theme application.
 const { chromium } = require('playwright');
 const { tauriMock } = require('./_tauri-mock.cjs');
 
@@ -54,6 +54,9 @@ const TIMEOUT = 8_000;
       await btn.click();
       await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: 3_000 });
     }
+
+    await page.reload({ waitUntil: 'networkidle', timeout: TIMEOUT });
+    await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: 3_000 });
 
     if (errors.length > 0) {
       console.error('\nFAIL - errors:');

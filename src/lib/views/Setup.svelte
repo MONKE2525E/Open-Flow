@@ -1,9 +1,8 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
-  import { setupComplete } from '../stores';
-  import { animateWidth } from '../motion';
-  import { saveSetting, type CleanupIntensity, type ToneId } from '../settings';
+  import { appearanceMode, setupComplete } from '../stores';
+  import { saveSetting, type AppearanceMode, type CleanupIntensity, type ToneId } from '../settings';
   import {
     getTranscriptionLanguageLabel,
     transcriptionLanguages,
@@ -15,6 +14,18 @@
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       win = getCurrentWindow();
+    } catch {}
+    try {
+      const [savedAppearance, savedLanguage] = await Promise.all([
+        invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
+        invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
+      ]);
+      if (savedAppearance === 'system' || savedAppearance === 'light' || savedAppearance === 'dark') {
+        selectedAppearance = savedAppearance;
+      }
+      if (savedLanguage && transcriptionLanguages.some((option) => option.code === savedLanguage)) {
+        selectedLanguage = savedLanguage;
+      }
     } catch {}
     setTimeout(() => { introReady = true; }, 60);
   });
@@ -36,7 +47,8 @@
   let quickPrefs = { cleanup: true, noise: true, caps: true, autoLearn: false, autostart: false, muteAudio: false, apiFallback: false };
   let quickSettingsReady = false;
   let selectedLanguage = 'en' as TranscriptionLanguageCode;
-  let languageDropdownOpen = false;
+  const onboardingLanguageSet = new Set<TranscriptionLanguageCode>(['en', 'es', 'fr', 'de', 'pt', 'zh']);
+  const onboardingLanguages = transcriptionLanguages.filter((option) => onboardingLanguageSet.has(option.code));
 
   // ── Provider ─────────────────────────────────────────────────────────────────
   let selectedProvider: 'groq' | 'openai' | 'google' = 'groq';
@@ -107,77 +119,17 @@
     { id: 'very_casual', name: 'Very Casual', desc: 'All lowercase, almost no punctuation. Like a quick text typed without thinking.' },
   ];
 
-  // ── App mappings ──────────────────────────────────────────────────────────────
-  interface InstalledApp { name: string; exe: string; }
-  interface AppMapping { exe: string; profile: string; name: string; }
-
-  let installedApps: InstalledApp[] = [];
-  let mappings: AppMapping[] = [];
-  let appSearch = '';
-  let appsLoaded = false;
-  let openDropdownExe = '';   // which app's profile dropdown is open
-
-  const profileOptions = [
-    { id: 'casual',      label: 'Casual'      },
-    { id: 'formal',      label: 'Formal'      },
-    { id: 'very_casual', label: 'Very Casual' },
+  // ── Appearance ──────────────────────────────────────────────────────────────
+  let selectedAppearance: AppearanceMode = 'system';
+  const appearanceModes: { id: AppearanceMode; name: string; desc: string }[] = [
+    { id: 'system', name: 'System', desc: 'Match your Windows theme automatically.' },
+    { id: 'dark', name: 'Dark', desc: 'Lower glare for night work and dark desktops.' },
+    { id: 'light', name: 'Light', desc: 'Brighter surfaces with higher daylight contrast.' },
   ];
-
-  function toggleProfileDropdown(exe: string, e: MouseEvent) {
-    e.stopPropagation();
-    openDropdownExe = openDropdownExe === exe ? '' : exe;
-  }
-
-  function pickProfile(exe: string, profile: string) {
-    updateMappingProfile(exe, profile);
-    openDropdownExe = '';
-  }
-
-  function closeDropdowns() {
-    openDropdownExe = '';
-    languageDropdownOpen = false;
-  }
-
-  function toggleLanguageDropdown(e: MouseEvent) {
-    e.stopPropagation();
-    languageDropdownOpen = !languageDropdownOpen;
-  }
 
   function pickLanguage(code: TranscriptionLanguageCode) {
     selectedLanguage = code;
-    languageDropdownOpen = false;
   }
-
-  $: filteredApps = appSearch
-    ? installedApps.filter(a =>
-        a.name.toLowerCase().includes(appSearch.toLowerCase()) ||
-        a.exe.toLowerCase().includes(appSearch.toLowerCase())
-      ).slice(0, 50)
-    : installedApps.slice(0, 50);
-
-  $: mappingExes = new Set(mappings.map(m => m.exe));
-
-  function toggleMapping(app: InstalledApp) {
-    if (mappingExes.has(app.exe)) {
-      mappings = mappings.filter(m => m.exe !== app.exe);
-    } else {
-      mappings = [...mappings, { exe: app.exe, profile: 'casual', name: app.name }];
-    }
-  }
-
-  function updateMappingProfile(exe: string, profile: string) {
-    mappings = mappings.map(m => m.exe === exe ? { ...m, profile } : m);
-  }
-
-  async function loadInstalledApps() {
-    if (appsLoaded) return;
-    try {
-      installedApps = await invoke<InstalledApp[]>('get_installed_apps');
-      appsLoaded = true;
-    } catch {}
-  }
-
-  $: if (step === 5) loadInstalledApps();
 
   // ── Navigation ────────────────────────────────────────────────────────────────
   async function goNext() {
@@ -244,9 +196,7 @@
       await saveSetting('transcription_provider', selectedProvider);
       await saveSetting('transcription_language', selectedLanguage);
       await saveSetting('cleanup_provider', selectedProvider);
-      if (mappings.length > 0) {
-        await invoke('save_app_mappings', { mappings });
-      }
+      await saveSetting('appearance_mode', selectedAppearance);
       await saveSetting('cleanup_enabled', quickPrefs.cleanup);
       await saveSetting('noise_reduction', quickPrefs.noise);
       await saveSetting('contextual_caps_enabled', quickPrefs.caps);
@@ -256,6 +206,7 @@
       if (quickPrefs.autostart) await invoke('set_autostart', { enabled: true });
       await saveSetting('setup_complete', true);
     } catch {}
+    appearanceMode.set(selectedAppearance);
     setupComplete.set(true);
   }
 
@@ -272,8 +223,6 @@
   let checkAnimating = false;
   $: if (step === 7) { setTimeout(() => { checkAnimating = true; }, 200); }
 </script>
-
-<svelte:window onclick={closeDropdowns} />
 
 <!-- Full-screen overlay -->
 <div class="setup-overlay">
@@ -528,74 +477,36 @@
         </div>
       </div>
 
-    <!-- ── Step 5: App Mappings ───────────────────────────── -->
+    <!-- ── Step 5: Appearance ───────────────────────────── -->
     {:else if step === 5}
-      <div class="step">
+      <div class="step appearance-step">
         <div class="step-header">
-          <h2>Map apps to styles <span class="optional-badge">Optional</span></h2>
-          <p class="step-sub">Select apps that should use a different tone or cleanup level. You can add more anytime from the Style page.</p>
+          <h2>Choose your appearance</h2>
+          <p class="step-sub">Choose your default theme mode. You can change this later in Settings.</p>
         </div>
 
-        <div class="app-search-wrap">
-          <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input class="app-search" type="text" bind:value={appSearch} placeholder="Search installed apps…" />
-        </div>
-
-        {#if !appsLoaded}
-          <p class="apps-loading">Loading installed apps…</p>
-        {:else if filteredApps.length === 0}
-          <p class="apps-loading">No apps found.</p>
-        {:else}
-          <div class="apps-list scroll-styled">
-            {#each filteredApps as app}
-              {@const mapped = mappings.find(m => m.exe === app.exe)}
-              <div class="app-row" class:mapped={!!mapped}>
-                <button class="app-toggle" onclick={() => toggleMapping(app)}>
-                  <div class="app-toggle-check" class:checked={!!mapped}>
-                    {#if mapped}
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                    {/if}
-                  </div>
-                  <span class="app-name">{app.name}</span>
-                  <span class="app-exe">{app.exe}</span>
-                </button>
-                {#if mapped}
-                  <div class="profile-drop-wrap">
-                    <button
-                      class="profile-drop-btn"
-                      use:animateWidth={{ text: profileOptions.find(o => o.id === mapped.profile)?.label ?? 'Casual' }}
-                      onclick={(e) => toggleProfileDropdown(app.exe, e)}
-                    >
-                      {profileOptions.find(o => o.id === mapped.profile)?.label ?? 'Casual'}
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>
-                    {#if openDropdownExe === app.exe}
-                      <div class="profile-drop-list scroll-styled">
-                        {#each profileOptions as opt}
-                          <button
-                            class="profile-drop-item"
-                            class:active={mapped.profile === opt.id}
-                            onclick={() => pickProfile(app.exe, opt.id)}
-                          >{opt.label}</button>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                {/if}
+        <div class="appearance-mode-grid">
+          {#each appearanceModes as mode}
+            <button
+              class="appearance-mode-card"
+              class:selected={selectedAppearance === mode.id}
+              onclick={() => { selectedAppearance = mode.id; }}
+            >
+              <div class="appearance-mode-title-row">
+                <span class="appearance-mode-name">{mode.name}</span>
+                <span class="appearance-mode-radio" class:checked={selectedAppearance === mode.id}></span>
               </div>
-            {/each}
-          </div>
-        {/if}
+              <p class="appearance-mode-desc">{mode.desc}</p>
+            </button>
+          {/each}
+        </div>
 
         <div class="step-footer">
-          <button class="btn-skip" onclick={skip}>I'll set this up later</button>
-          <button class="btn-primary" onclick={goNext}>
-            {mappings.length > 0 ? `Save ${mappings.length} mapping${mappings.length !== 1 ? 's' : ''} & Next` : 'Next'}
-          </button>
+          <button class="btn-skip" onclick={skip}>Skip for now</button>
+          <button class="btn-primary" onclick={goNext}>Next</button>
         </div>
       </div>
 
-    <!-- ── Step 6: Quick Settings ──────────────────────────── -->
     {:else if step === 6}
       <div class="step qs-step">
         <div class="step-header">
@@ -722,30 +633,19 @@
                 <p class="qs-card-sub">Language expected in your dictation</p>
               </div>
             </div>
-            <div class="setup-language-wrap">
-              <button class="setup-language-btn" onclick={toggleLanguageDropdown}>
-                <span>{getTranscriptionLanguageLabel(selectedLanguage)}</span>
-                <span class="setup-language-code">{selectedLanguage}</span>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="m6 9 6 6 6-6"/>
-                </svg>
-              </button>
-              {#if languageDropdownOpen}
-                <div class="setup-language-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
-                  {#each transcriptionLanguages as language}
-                    <button
-                      class="setup-language-item"
-                      class:active={selectedLanguage === language.code}
-                      onclick={() => pickLanguage(language.code)}
-                    >
-                      <span>{language.label}</span>
-                      <span>{language.code}</span>
-                    </button>
-                  {/each}
-                </div>
-              {/if}
+            <div class="setup-language-chip-grid">
+              {#each onboardingLanguages as language}
+                <button
+                  class="setup-language-chip"
+                  class:active={selectedLanguage === language.code}
+                  onclick={() => pickLanguage(language.code)}
+                >
+                  <span>{language.label}</span>
+                  <span>{language.code}</span>
+                </button>
+              {/each}
             </div>
-            <p class="setup-language-note">This guides transcription only. It does not translate the app.</p>
+            <p class="setup-language-note">More languages are available in Settings > General.</p>
           </div>
         </div>
 
@@ -801,12 +701,10 @@
             <span class="summary-label">Language</span>
             <span class="summary-val">{getTranscriptionLanguageLabel(selectedLanguage)}</span>
           </div>
-          {#if mappings.length > 0}
-            <div class="summary-item">
-              <span class="summary-label">App mappings</span>
-              <span class="summary-val">{mappings.length} app{mappings.length !== 1 ? 's' : ''}</span>
-            </div>
-          {/if}
+          <div class="summary-item">
+            <span class="summary-label">Theme</span>
+            <span class="summary-val">{appearanceModes.find((mode) => mode.id === selectedAppearance)?.name}</span>
+          </div>
         </div>
         <button class="btn-primary btn-lg" onclick={finish}>Start dictating</button>
         <p class="done-note">Everything can be changed in Settings or the Style page.</p>
@@ -1461,166 +1359,81 @@
 
   .tone-check.visible { opacity: 1; transform: scale(1); }
 
-  /* ── App mappings ──────────────────────────────────────────────────── */
-  .optional-badge {
-    font-family: var(--sans);
-    font-size: 11px;
-    font-weight: 500;
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    border-radius: 20px;
-    padding: 1px 9px;
-    color: var(--ink-faint);
-    vertical-align: middle;
-    margin-left: 8px;
+  /* ── Appearance ──────────────────────────────────────────────────── */
+  .appearance-step {
+    max-width: 640px;
+    gap: 16px;
   }
 
-  .app-search-wrap {
-    display: flex;
-    align-items: center;
+  .appearance-mode-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
+  }
+
+  .appearance-mode-card {
     background: var(--bg-elev);
-    border: 1.5px solid var(--line-strong);
-    border-radius: var(--r-sm);
-    padding: 8px 12px;
-    transition: border-color 0.15s;
-  }
-
-  .app-search-wrap:focus-within { border-color: var(--accent); }
-
-  .search-icon { color: var(--ink-faint); flex-shrink: 0; }
-
-  .app-search {
-    flex: 1;
-    border: none;
-    background: transparent;
-    font-family: var(--sans);
-    font-size: 13px;
-    color: var(--ink);
-    outline: none;
-  }
-
-  .app-search::placeholder { color: var(--ink-faint); }
-
-  .apps-loading {
-    font-size: 12.5px;
-    color: var(--ink-faint);
-    text-align: center;
-    margin: 8px 0;
-  }
-
-  .apps-list {
-    max-height: 220px;
-    overflow-y: auto;
-    border: 1px solid var(--line);
+    border: 1.5px solid var(--line);
     border-radius: var(--r-md);
-    background: var(--bg-elev);
-  }
-
-  .app-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0 12px 0 0;
-    border-bottom: 1px solid var(--line-soft);
-    transition: background 0.12s;
-  }
-
-  .app-row:last-child { border-bottom: none; }
-  .app-row.mapped { background: var(--accent-soft); }
-
-  .app-toggle {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    background: transparent;
-    border: none;
-    cursor: pointer;
+    padding: 12px;
     text-align: left;
+    cursor: pointer;
+    display: grid;
+    gap: 6px;
+    transition: border-color 0.15s, background 0.15s;
   }
 
-  .app-toggle-check {
-    width: 16px;
-    height: 16px;
-    border-radius: 4px;
-    border: 1.5px solid var(--line-strong);
-    flex-shrink: 0;
+  .appearance-mode-card:hover { border-color: var(--line-strong); }
+  .appearance-mode-card.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .appearance-mode-title-row {
     display: flex;
     align-items: center;
-    justify-content: center;
-    transition: background 0.12s, border-color 0.12s;
-    color: var(--on-accent);
+    justify-content: space-between;
+    gap: 8px;
   }
 
-  .app-toggle-check.checked {
-    background: var(--accent);
-    border-color: var(--accent);
+  .appearance-mode-name {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-strong);
   }
 
-  .app-name { font-size: 13px; color: var(--ink-soft); flex: 1; }
-  .app-exe { font-size: 11px; color: var(--ink-faint); font-family: var(--mono); }
+  .appearance-mode-desc {
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--ink-mute);
+    line-height: 1.35;
+  }
 
-  .profile-drop-wrap {
+  .appearance-mode-radio {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--line-strong);
     position: relative;
     flex-shrink: 0;
   }
 
-  .profile-drop-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: transparent;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    padding: 5px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .profile-drop-btn:hover { background: var(--paper); }
-
-  .profile-drop-list {
+  .appearance-mode-radio.checked { border-color: var(--accent); }
+  .appearance-mode-radio.checked::after {
+    content: '';
     position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
-    min-width: 130px;
-    max-height: 200px;
-    overflow-y: auto;
-    z-index: 10;
+    inset: 2px;
+    border-radius: 50%;
+    background: var(--accent);
   }
 
-  .profile-drop-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 8px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  @media (max-width: 960px) {
+    .appearance-mode-grid {
+      grid-template-columns: 1fr;
+    }
   }
-
-  .profile-drop-item:last-child { border-bottom: none; }
-  .profile-drop-item:hover { background: var(--paper); }
-  .profile-drop-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
-
-  /* ── Done step ─────────────────────────────────────────────────────── */
+  /* Done step */
   .done-step {
     align-items: center;
     text-align: center;
@@ -1807,80 +1620,40 @@
   .qs-toggle.on { background: var(--accent); }
   .qs-toggle.on::after { left: 16px; }
 
-  .setup-language-wrap {
-    position: relative;
-  }
-
-  .setup-language-btn {
-    width: 100%;
-    display: flex;
-    align-items: center;
+  .setup-language-chip-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
-    background: var(--paper);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    padding: 10px 12px;
-    color: var(--ink-strong);
-    font-family: var(--sans);
-    font-size: 13px;
-    cursor: pointer;
   }
 
-  .setup-language-btn span:first-child {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-align: left;
-  }
-
-  .setup-language-code {
-    color: var(--ink-faint);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    text-transform: uppercase;
-  }
-
-  .setup-language-menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    z-index: 20;
+  .setup-language-chip {
     width: 100%;
-    min-width: 220px;
-    max-height: 220px;
-    overflow-y: auto;
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
-  }
-
-  .setup-language-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    width: 100%;
-    padding: 8px 10px;
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid var(--line);
+    gap: 10px;
+    border: 1px solid var(--line-strong);
+    background: var(--paper);
+    border-radius: 8px;
+    padding: 7px 9px;
     color: var(--ink-strong);
-    cursor: pointer;
     font-family: var(--sans);
     font-size: 12px;
     text-align: left;
   }
 
-  .setup-language-item:last-child { border-bottom: 0; }
-  .setup-language-item:hover { background: var(--paper); }
-  .setup-language-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
-  .setup-language-item span:last-child {
+  .setup-language-chip span:last-child {
     color: var(--ink-faint);
     font-family: var(--mono);
     font-size: 10.5px;
     text-transform: uppercase;
+  }
+
+  .setup-language-chip.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--ink);
+    font-weight: 500;
   }
 
   .setup-language-note {

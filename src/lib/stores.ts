@@ -4,7 +4,6 @@ import { invoke } from '@tauri-apps/api/core';
 export const currentPage = writable<'home' | 'dictionary' | 'snippets' | 'style'>('home');
 export const settingsOpen = writable(false);
 export const devModeEnabled = writable(false);
-export const accentColor = writable<'terracotta' | 'moss' | 'slate' | 'ink'>('terracotta');
 export const appearanceMode = writable<'system' | 'light' | 'dark'>('system');
 export const pillState = writable<'idle' | 'recording' | 'processing' | 'handsfree'>('idle');
 
