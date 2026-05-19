@@ -411,7 +411,7 @@
       <div class="input-row input-row--top">
         <textarea
           id="expansion-input"
-          class="field-input"
+          class="field-input scrollbar-standard"
           placeholder="e.g. hello@example.com"
           bind:value={draftExpansion}
           use:autoGrow
@@ -432,7 +432,7 @@
       </label>
       <textarea
         id="instructions-input"
-        class="field-input instructions-input"
+        class="field-input instructions-input scrollbar-standard"
         placeholder="e.g. Don't add a period at the end of this phrase."
         bind:value={draftInstructions}
         use:autoGrow

@@ -1,7 +1,5 @@
 # Roadmap: Transcription Utility
 
-## 1.
-
 ---
 
 # Far Future & Monetization (The Funding Plan)
