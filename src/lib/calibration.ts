@@ -16,7 +16,25 @@ let calibrationMaxLevel = MIN_CALIBRATION_LEVEL;
 let calibrationTimer: ReturnType<typeof setInterval> | null = null;
 let calibrationUnlisten: (() => void) | null = null;
 
+async function cleanupCalibrationResources() {
+  if (calibrationTimer) {
+    clearInterval(calibrationTimer);
+    calibrationTimer = null;
+  }
+  if (calibrationUnlisten) {
+    calibrationUnlisten();
+    calibrationUnlisten = null;
+  }
+  try {
+    await invoke('stop_calibration_monitoring');
+  } catch (e) {
+    // Suppress warning if not active or failing silently
+  }
+}
+
 export async function startCalibration() {
+  await cleanupCalibrationResources();
+
   isCalibrating.set(true);
   calibrationMaxLevel = MIN_CALIBRATION_LEVEL;
   calibrationCountdown.set(3);
@@ -50,19 +68,7 @@ export async function startCalibration() {
 }
 
 export async function stopCalibration() {
-  if (calibrationTimer) {
-    clearInterval(calibrationTimer);
-    calibrationTimer = null;
-  }
-  if (calibrationUnlisten) {
-    calibrationUnlisten();
-    calibrationUnlisten = null;
-  }
-  try {
-    await invoke('stop_calibration_monitoring');
-  } catch (e) {
-    console.error('Failed to stop calibration monitoring:', e);
-  }
+  await cleanupCalibrationResources();
 
   isCalibrating.set(false);
   micLevel.set(0);
@@ -80,19 +86,7 @@ export async function stopCalibration() {
 }
 
 export async function cancelCalibration() {
-  if (calibrationTimer) {
-    clearInterval(calibrationTimer);
-    calibrationTimer = null;
-  }
-  if (calibrationUnlisten) {
-    calibrationUnlisten();
-    calibrationUnlisten = null;
-  }
-  try {
-    await invoke('stop_calibration_monitoring');
-  } catch (e) {
-    console.error('Failed to stop calibration monitoring:', e);
-  }
+  await cleanupCalibrationResources();
 
   isCalibrating.set(false);
   micLevel.set(0);
