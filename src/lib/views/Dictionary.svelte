@@ -48,8 +48,11 @@
   });
   let sortIndicatorStyle = $state('opacity:0;');
 
-  const TERM_LIMIT    = 120;
-  const MISTAKE_LIMIT = 120;
+  const TERM_LIMIT    = 50;
+  const MISTAKE_LIMIT = 50;
+
+  const clampTerm = (value: string): string => value.slice(0, TERM_LIMIT);
+  const clampMistake = (value: string): string => value.slice(0, MISTAKE_LIMIT);
 
   const sortLabels: { key: SortKey; label: string }[] = [
     { key: 'newest',         label: 'Newest'         },
@@ -104,16 +107,16 @@
   }
 
   function openEdit(e: DictionaryEntry) {
-    draftTerm    = e.term;
-    draftMistake = e.mistake ?? '';
+    draftTerm    = clampTerm(e.term);
+    draftMistake = clampMistake(e.mistake ?? '');
     modal = { mode: 'edit', entry: e };
   }
 
   function closeModal() { modal = null; saveError = ''; }
 
   async function saveModal() {
-    const term    = draftTerm.trim();
-    const mistake = draftMistake.trim() || null;
+    const term    = clampTerm(draftTerm).trim();
+    const mistake = clampMistake(draftMistake).trim() || null;
     if (!term) return;
     saving = true; saveError = '';
     try {
@@ -401,7 +404,7 @@
           autocomplete="off"
           spellcheck="false"
         />
-        <MicInputButton onResult={(t) => draftTerm = t} />
+        <MicInputButton onResult={(t) => draftTerm = clampTerm(t)} />
       </div>
       <p class="field-hint">The exact word or phrase you want the AI to use.</p>
 
@@ -419,7 +422,7 @@
           autocomplete="off"
           spellcheck="false"
         />
-        <MicInputButton onResult={(t) => draftMistake = t} />
+        <MicInputButton onResult={(t) => draftMistake = clampMistake(t)} />
       </div>
       <p class="field-hint">What the transcription model typically writes instead. Skip if the term just needs to be in the AI's awareness.</p>
     </div>
