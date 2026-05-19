@@ -75,10 +75,6 @@
     }
   }
 
-  function micLabel(name: string) {
-    return name;
-  }
-
   function closeMicDropdown(e: MouseEvent) {
     if (!(e.target as HTMLElement).closest('.mic-dropdown')) {
       micDropdownOpen = false;
@@ -104,10 +100,10 @@
   <div class="mic-dropdown">
     <button
       class="btn-ghost mic-btn"
-      use:animateWidth={{ text: selectedMic ? micLabel(selectedMic) : 'Default Device', max: 180 }}
+      use:animateWidth={{ text: selectedMic || 'Default Device', max: 180 }}
       onclick={() => (micDropdownOpen = !micDropdownOpen)}
     >
-      <span class="mic-btn-label">{selectedMic ? micLabel(selectedMic) : 'Default Device'}</span>
+      <span class="mic-btn-label">{selectedMic || 'Default Device'}</span>
       <svg class:open={micDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="m6 9 6 6 6-6"/>
       </svg>
@@ -124,7 +120,7 @@
         <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>Default Device</button>
         {#each microphones as m}
           <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>
-            {micLabel(m)}
+            {m}
           </button>
         {/each}
         {#if microphones.length === 0}

@@ -494,7 +494,7 @@
     color: var(--ink-faint);
     text-transform: uppercase;
   }
-  .mic-menu, .language-menu {
+  .language-menu {
     position: absolute;
     right: 0;
     top: calc(100% + 4px);
@@ -502,19 +502,19 @@
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
     box-shadow: var(--shadow-popover);
-    min-width: 200px;
+    min-width: 220px;
     max-width: 280px;
-    max-height: 200px;
+    max-height: 260px;
     overflow-y: auto;
     z-index: 10;
   }
-  .mic-menu::-webkit-scrollbar-thumb,
   .language-menu::-webkit-scrollbar-thumb {
     border: 3px solid var(--bg-elev);
   }
-  .language-menu { min-width: 220px; max-height: 260px; }
-  .mic-item, .language-item {
-    display: block;
+  .language-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
     width: 100%;
     text-align: left;
     padding: 8px 12px;
@@ -529,17 +529,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .language-item { display: flex; justify-content: space-between; gap: 12px; }
   .language-item span:last-child {
     color: var(--ink-faint);
     font-family: var(--mono);
     font-size: 10.5px;
     text-transform: uppercase;
   }
-  .mic-item:last-child, .language-item:last-child { border-bottom: none; }
-  .mic-item:hover, .language-item:hover { background: var(--paper); }
-  .mic-item.active, .language-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
-  .mic-empty { padding: 10px 12px; font-size: 12px; color: var(--ink-mute); font-style: italic; }
+  .language-item:last-child { border-bottom: none; }
+  .language-item:hover { background: var(--paper); }
+  .language-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
   .appearance-segment {
     position: relative;
     display: inline-flex;
