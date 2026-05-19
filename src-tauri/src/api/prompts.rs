@@ -112,10 +112,21 @@ fn role_line(intensity: &str) -> &'static str {
     }
 }
 
-fn intensity_rules(intensity: &str, tier: PromptTier, has_overrides: bool) -> String {
+fn intensity_rules(
+    intensity: &str,
+    tier: PromptTier,
+    has_overrides: bool,
+    profile: &str,
+) -> String {
     let base = match (intensity, tier) {
         ("none", _) => {
-            "CLEANUP: Return input unchanged, character-for-character.".to_string()
+            if profile == "formal" {
+                "CLEANUP: Keep wording and structure unchanged by default. \
+                You may only change wording where needed to apply FORMAL profanity policy replacements."
+                    .to_string()
+            } else {
+                "CLEANUP: Return input unchanged, character-for-character.".to_string()
+            }
         }
         ("light", PromptTier::Short) => {
             "CLEANUP: Remove filler words (um, uh, like, you know) and immediate repeats only.".to_string()
@@ -223,7 +234,7 @@ fn get_system_prompt(
     has_numeric_content: bool,
 ) -> String {
     let context = context_section(app_context, tier);
-    let cleanup = intensity_rules(intensity, tier, has_snippet_overrides);
+    let cleanup = intensity_rules(intensity, tier, has_snippet_overrides, profile);
     let tone = tone_rules(profile);
     let profanity = profanity_policy(profile, intensity);
     let number_style = if tier == PromptTier::Short && !has_numeric_content {
@@ -371,5 +382,13 @@ mod tests {
         assert!(prompt.contains(
             "PROFANITY PRECEDENCE: If profanity instructions conflict, FORMAL tone rules override intensity baseline rules."
         ));
+    }
+
+    #[test]
+    fn formal_with_none_intensity_allows_only_profanity_rewording_changes() {
+        let input = "holy shit this is wild".to_string();
+        let prompt = get_system_prompt_with_extras("formal", "none", "", None, &input);
+        assert!(prompt.contains("You may only change wording where needed to apply FORMAL profanity policy replacements."));
+        assert!(!prompt.contains("Return input unchanged, character-for-character."));
     }
 }

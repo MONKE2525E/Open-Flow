@@ -1068,11 +1068,13 @@ async fn run_cleanup_and_snippets(
     );
 
     let c_key = cfg.key_for(&cfg.cleanup_provider).to_owned();
-    let final_text = if cfg.cleanup_enabled
-        && !c_key.is_empty()
-        && pure_expansion.is_none()
-        && cfg.cleanup_intensity != "none"
-    {
+    let final_text = if should_run_cleanup_llm(
+        cfg.cleanup_enabled,
+        !c_key.is_empty(),
+        pure_expansion.is_none(),
+        &cfg.cleanup_intensity,
+        profile,
+    ) {
         let (cache_tokens, cache_separators) = tokenize_cache_key_parts(raw);
         let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens);
         let cache_key = if allow_cache {
@@ -1197,6 +1199,19 @@ async fn run_cleanup_and_snippets(
     Some((final_text, dict_entries))
 }
 
+fn should_run_cleanup_llm(
+    cleanup_enabled: bool,
+    has_cleanup_key: bool,
+    no_pure_expansion: bool,
+    cleanup_intensity: &str,
+    profile: &str,
+) -> bool {
+    cleanup_enabled
+        && has_cleanup_key
+        && no_pure_expansion
+        && (cleanup_intensity != "none" || profile == "formal")
+}
+
 use std::future::Future;
 use std::pin::Pin;
 
@@ -1255,7 +1270,7 @@ where
 mod tests {
     use super::{
         normalize_cleanup_cache_key, normalize_transcription_math_artifacts,
-        should_use_cleanup_cache,
+        should_run_cleanup_llm, should_use_cleanup_cache,
     };
 
     #[test]
@@ -1398,5 +1413,15 @@ mod tests {
             "one hundred hundred hundred hundred hundred hundred hundred hundred hundred hundred",
         );
         assert!(key.starts_with("num"));
+    }
+
+    #[test]
+    fn cleanup_llm_runs_for_formal_even_when_none_intensity() {
+        assert!(should_run_cleanup_llm(true, true, true, "none", "formal"));
+    }
+
+    #[test]
+    fn cleanup_llm_skips_for_non_formal_when_none_intensity() {
+        assert!(!should_run_cleanup_llm(true, true, true, "none", "casual"));
     }
 }
