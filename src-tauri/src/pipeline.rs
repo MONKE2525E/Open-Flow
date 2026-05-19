@@ -236,7 +236,38 @@ fn preview_text(s: &str, limit: usize) -> String {
 }
 
 fn normalize_transcription_math_artifacts(raw: &str) -> String {
-    raw.to_string()
+    let chars: Vec<char> = raw.chars().collect();
+    let mut out = String::with_capacity(chars.len());
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        if chars[i].is_ascii_digit() {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < chars.len() && matches!(chars[j], 'x' | 'X') {
+                let mut k = j + 1;
+                while k < chars.len() && chars[k].is_whitespace() {
+                    k += 1;
+                }
+                if k < chars.len() && chars[k].is_ascii_digit() {
+                    let had_spacing = j > i + 1 || k > j + 1;
+                    if had_spacing {
+                        out.push(chars[i]);
+                        out.push('x');
+                        out.push(chars[k]);
+                        i = k + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -270,6 +301,11 @@ fn normalize_cleanup_cache_key_parts(tokens: &[String], separators: &[String]) -
                     j += 1;
                     continue;
                 }
+                if can_merge_thousands_group(sep, &normalized, &tokens[j]) {
+                    normalized.push_str(&normalize_digit_token(&tokens[j]));
+                    j += 1;
+                    continue;
+                }
                 break;
             }
             out.push_str("num-");
@@ -291,6 +327,11 @@ fn normalize_cleanup_cache_key_parts(tokens: &[String], separators: &[String]) -
                     continue;
                 }
                 if sep == ":" {
+                    normalized.push_str(&normalize_digit_token(&tokens[j]));
+                    j += 1;
+                    continue;
+                }
+                if can_merge_thousands_group(sep, &normalized, &tokens[j]) {
                     normalized.push_str(&normalize_digit_token(&tokens[j]));
                     j += 1;
                     continue;
@@ -344,6 +385,13 @@ fn should_use_cleanup_cache_tokens(tokens: &[String]) -> bool {
     }
 
     !(has_math_operator && numeric_count >= 2)
+}
+
+fn can_merge_thousands_group(sep: &str, normalized: &str, next_token: &str) -> bool {
+    sep == ","
+        && !normalized.contains('.')
+        && next_token.chars().all(|c| c.is_ascii_digit())
+        && next_token.len() == 3
 }
 
 fn has_numeric_minus_prefix(tokens: &[String], separators: &[String], idx: usize) -> bool {
@@ -458,22 +506,29 @@ fn parse_number_word_integer(tokens: &[String], mut i: usize) -> (i64, usize, bo
     let mut total: i64 = 0;
     let mut current: i64 = 0;
     let mut seen_any = false;
+    let mut allow_and = false;
 
     while i < tokens.len() {
         let t = tokens[i].as_str();
         if t == "and" {
-            i += 1;
-            continue;
+            if allow_and {
+                allow_and = false;
+                i += 1;
+                continue;
+            }
+            break;
         }
         if let Some(v) = unit_word_value(t) {
             current = current.saturating_add(i64::from(v));
             seen_any = true;
+            allow_and = false;
             i += 1;
             continue;
         }
         if let Some(v) = teen_or_tens_word_value(t) {
             current = current.saturating_add(i64::from(v));
             seen_any = true;
+            allow_and = false;
             i += 1;
             continue;
         }
@@ -484,6 +539,7 @@ fn parse_number_word_integer(tokens: &[String], mut i: usize) -> (i64, usize, bo
                 current.saturating_mul(100)
             };
             seen_any = true;
+            allow_and = true;
             i += 1;
             continue;
         }
@@ -492,12 +548,14 @@ fn parse_number_word_integer(tokens: &[String], mut i: usize) -> (i64, usize, bo
             total = total.saturating_add(part.saturating_mul(scale));
             current = 0;
             seen_any = true;
+            allow_and = true;
             i += 1;
             continue;
         }
         if let Some(v) = ordinal_word_value(t) {
             current = current.saturating_add(i64::from(v));
             seen_any = true;
+            allow_and = false;
             i += 1;
             continue;
         }
@@ -1278,6 +1336,27 @@ mod tests {
     }
 
     #[test]
+    fn cache_key_merges_thousands_separators_without_spaces() {
+        let a = normalize_cleanup_cache_key("population is 1,000,000");
+        let b = normalize_cleanup_cache_key("population is 1000000");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cache_key_does_not_collapse_one_and_two_to_three() {
+        let a = normalize_cleanup_cache_key("one and two");
+        let b = normalize_cleanup_cache_key("three");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_keeps_hundred_and_form_equivalent() {
+        let a = normalize_cleanup_cache_key("one hundred and two");
+        let b = normalize_cleanup_cache_key("102");
+        assert_eq!(a, b);
+    }
+
+    #[test]
     fn cleanup_cache_bypasses_math_like_queries() {
         assert!(!should_use_cleanup_cache("What's 67 plus 67?"));
         assert!(!should_use_cleanup_cache("what is six times seven"));
@@ -1299,6 +1378,12 @@ mod tests {
     fn transcription_does_not_touch_non_plus_digit_x_digit() {
         let out = normalize_transcription_math_artifacts("Calculate 6x7");
         assert_eq!(out, "Calculate 6x7");
+    }
+
+    #[test]
+    fn transcription_compacts_spaced_digit_x_digit_chunks() {
+        let out = normalize_transcription_math_artifacts("What is 6 x 7 plus 6 x 7?");
+        assert_eq!(out, "What is 6x7 plus 6x7?");
     }
 
     #[test]
