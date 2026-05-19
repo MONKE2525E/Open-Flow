@@ -45,7 +45,8 @@ export async function startCalibration() {
   calibratedGain.set(null);
   micLevel.set(0);
 
-  const sessionId = ++currentCalibrationSession;
+  const sessionId = Date.now();
+  currentCalibrationSession = sessionId;
 
   const unlisten = await listen<number>('audio-level', (ev) => {
     if (sessionId !== currentCalibrationSession || !get(isCalibrating)) return;
