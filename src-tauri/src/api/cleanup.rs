@@ -19,8 +19,13 @@ pub async fn cleanup(
     snippet_instructions: &str,
     app_context: Option<&str>,
 ) -> Result<String> {
-    let prompt =
-        get_system_prompt_with_extras(profile, intensity, snippet_instructions, app_context);
+    let prompt = get_system_prompt_with_extras(
+        profile,
+        intensity,
+        snippet_instructions,
+        app_context,
+        text,
+    );
     log::debug!(
         "cleanup: start provider={:?} profile={} intensity={} input_chars={} prompt_chars={} snippet_rule_lines={} app_context={}",
         provider,
