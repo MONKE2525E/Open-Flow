@@ -1,9 +1,9 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { saveSetting } from './settings';
 
-// Named constants for calibration calculations
+// TARGET_CALIBRATION_FACTOR is set to 2.25 as specified by the system design to optimize input levels for the downstream transcription model.
 export const TARGET_CALIBRATION_FACTOR = 2.25;
 export const MIN_CALIBRATION_LEVEL = 0.04;
 export const MAX_CALIBRATION_GAIN = 8.0;
@@ -43,7 +43,8 @@ export async function startCalibration() {
   calibratedGain.set(null);
   micLevel.set(0);
 
-  calibrationUnlisten = await listen<number>('audio-level', (ev) => {
+  const unlisten = await listen<number>('audio-level', (ev) => {
+    if (!get(isCalibrating)) return;
     const level = ev.payload ?? 0;
     micLevel.set(level);
     if (level > calibrationMaxLevel) {
@@ -51,10 +52,18 @@ export async function startCalibration() {
     }
   });
 
+  if (get(isCalibrating)) {
+    calibrationUnlisten = unlisten;
+  } else {
+    unlisten();
+  }
+
   try {
     await invoke('start_calibration_monitoring');
   } catch (e) {
     console.error('Failed to start calibration monitoring:', e);
+    cancelCalibration();
+    return;
   }
 
   calibrationTimer = setInterval(() => {
