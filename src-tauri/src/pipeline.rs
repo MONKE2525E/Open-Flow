@@ -3,13 +3,14 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
-use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use crate::api::{auto_learn, cleanup, transcription};
 use crate::core::{injection, window_context};
 use crate::data::{db, dictionary, snippets, store};
 use crate::media::audio;
 use crate::system::apps::AppMapping;
+use crate::system::text::is_number_word_token;
 use crate::DbHandle;
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 
 const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
@@ -234,12 +235,391 @@ fn preview_text(s: &str, limit: usize) -> String {
     }
 }
 
+fn normalize_transcription_math_artifacts(raw: &str) -> String {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut out = String::with_capacity(chars.len());
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        if chars[i].is_ascii_digit() {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < chars.len() && matches!(chars[j], 'x' | 'X') {
+                let mut k = j + 1;
+                while k < chars.len() && chars[k].is_whitespace() {
+                    k += 1;
+                }
+                if k < chars.len() && chars[k].is_ascii_digit() {
+                    let had_spacing = j > i + 1 || k > j + 1;
+                    if had_spacing {
+                        out.push(chars[i]);
+                        out.push('x');
+                        out.push(chars[k]);
+                        i = k + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    out
+}
+
+#[cfg(test)]
 fn normalize_cleanup_cache_key(input: &str) -> String {
-    input
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
-        .collect()
+    let (tokens, separators) = tokenize_cache_key_parts(input);
+    normalize_cleanup_cache_key_parts(&tokens, &separators)
+}
+
+fn normalize_cleanup_cache_key_parts(tokens: &[String], separators: &[String]) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+
+    while i < tokens.len() {
+        let token = &tokens[i];
+        if matches!(token.as_str(), "minus" | "negative")
+            && i + 1 < tokens.len()
+            && tokens[i + 1].chars().any(|c| c.is_ascii_digit())
+        {
+            let mut normalized = normalize_digit_token(&tokens[i + 1]);
+            let mut j = i + 2;
+            while j < tokens.len() && tokens[j].chars().any(|c| c.is_ascii_digit()) {
+                let sep = separators.get(j).map(|s| s.trim()).unwrap_or("");
+                if sep == "." {
+                    normalized.push('.');
+                    normalized.push_str(&normalize_digit_token(&tokens[j]));
+                    j += 1;
+                    continue;
+                }
+                if sep == ":" {
+                    normalized.push_str(&normalize_digit_token(&tokens[j]));
+                    j += 1;
+                    continue;
+                }
+                if can_merge_thousands_group(sep, &normalized, &tokens[j]) {
+                    normalized.push_str(&normalize_digit_token(&tokens[j]));
+                    j += 1;
+                    continue;
+                }
+                break;
+            }
+            out.push_str("num-");
+            out.push_str(&normalized);
+            i = j;
+            continue;
+        }
+
+        if token.chars().any(|c| c.is_ascii_digit()) {
+            let mut normalized = normalize_digit_token(token);
+            let negative = has_numeric_minus_prefix(tokens, separators, i);
+            let mut j = i + 1;
+            while j < tokens.len() && tokens[j].chars().any(|c| c.is_ascii_digit()) {
+                let sep = separators.get(j).map(|s| s.trim()).unwrap_or("");
+                if sep == "." {
+                    normalized.push('.');
+                    normalized.push_str(&normalize_digit_token(&tokens[j]));
+                    j += 1;
+                    continue;
+                }
+                if sep == ":" {
+                    normalized.push_str(&normalize_digit_token(&tokens[j]));
+                    j += 1;
+                    continue;
+                }
+                if can_merge_thousands_group(sep, &normalized, &tokens[j]) {
+                    normalized.push_str(&normalize_digit_token(&tokens[j]));
+                    j += 1;
+                    continue;
+                }
+                break;
+            }
+            out.push_str("num");
+            if negative {
+                out.push('-');
+            }
+            out.push_str(&normalized);
+            i = j;
+            continue;
+        }
+
+        if let Some((normalized, next_idx)) = normalize_number_word_run(tokens, i) {
+            out.push_str("num");
+            out.push_str(&normalized);
+            i = next_idx;
+            continue;
+        }
+
+        out.push_str(token);
+        i += 1;
+    }
+
+    out
+}
+
+#[cfg(test)]
+fn should_use_cleanup_cache(raw: &str) -> bool {
+    let (tokens, _) = tokenize_cache_key_parts(raw);
+    should_use_cleanup_cache_tokens(&tokens)
+}
+
+fn should_use_cleanup_cache_tokens(tokens: &[String]) -> bool {
+    let mut numeric_count = 0usize;
+    let mut has_math_operator = false;
+
+    for t in tokens {
+        if t.chars().any(|c| c.is_ascii_digit()) || is_number_word_token(t) {
+            numeric_count += 1;
+            continue;
+        }
+        if matches!(
+            t.as_str(),
+            "plus" | "minus" | "times" | "multiplied" | "multiply" | "divided" | "over" | "x"
+        ) {
+            has_math_operator = true;
+        }
+    }
+
+    !(has_math_operator && numeric_count >= 2)
+}
+
+fn can_merge_thousands_group(sep: &str, normalized: &str, next_token: &str) -> bool {
+    sep == ","
+        && !normalized.contains('.')
+        && next_token.chars().all(|c| c.is_ascii_digit())
+        && next_token.len() == 3
+}
+
+fn has_numeric_minus_prefix(tokens: &[String], separators: &[String], idx: usize) -> bool {
+    let Some(sep) = separators.get(idx) else {
+        return false;
+    };
+    if !sep.trim_end().ends_with('-') {
+        return false;
+    }
+    if idx == 0 {
+        return true;
+    }
+    let prev = tokens[idx - 1].as_str();
+    !(prev.chars().any(|c| c.is_ascii_digit()) || is_number_word_token(prev))
+}
+
+fn normalize_digit_token(token: &str) -> String {
+    let digits: String = token.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        "0".to_string()
+    } else {
+        digits
+    }
+}
+
+fn tokenize_cache_key_parts(input: &str) -> (Vec<String>, Vec<String>) {
+    let mut tokens = Vec::new();
+    let mut separators = Vec::new();
+    let mut buf = String::new();
+    let mut sep_buf = String::new();
+
+    for ch in input.chars() {
+        if ch.is_alphanumeric() {
+            if buf.is_empty() {
+                separators.push(std::mem::take(&mut sep_buf));
+            }
+            buf.extend(ch.to_lowercase());
+            continue;
+        }
+
+        if !buf.is_empty() {
+            tokens.push(std::mem::take(&mut buf));
+        }
+        sep_buf.push(ch);
+    }
+
+    if !buf.is_empty() {
+        tokens.push(buf);
+    }
+
+    (tokens, separators)
+}
+
+fn normalize_number_word_run(tokens: &[String], start: usize) -> Option<(String, usize)> {
+    if start >= tokens.len() {
+        return None;
+    }
+
+    let mut i = start;
+    let mut negative = false;
+    if matches!(tokens[i].as_str(), "minus" | "negative") {
+        negative = true;
+        i += 1;
+    }
+    if i >= tokens.len() || !is_number_word_token(&tokens[i]) {
+        return None;
+    }
+
+    let (int_value, mut next, seen_any) = parse_number_word_integer(tokens, i);
+    if !seen_any {
+        return None;
+    }
+
+    let mut normalized = if negative {
+        format!("-{int_value}")
+    } else {
+        int_value.to_string()
+    };
+
+    if next < tokens.len() && tokens[next] == "point" {
+        next += 1;
+        let mut frac = String::new();
+        while next < tokens.len() {
+            let t = tokens[next].as_str();
+            if t.chars().all(|c| c.is_ascii_digit()) {
+                frac.push_str(t);
+                next += 1;
+                continue;
+            }
+            if t == "oh" {
+                frac.push('0');
+                next += 1;
+                continue;
+            }
+            if let Some(d) = unit_word_value(t) {
+                frac.push(char::from(b'0' + d as u8));
+                next += 1;
+                continue;
+            }
+            break;
+        }
+        if !frac.is_empty() {
+            normalized.push('.');
+            normalized.push_str(&frac);
+        }
+    }
+
+    Some((normalized, next))
+}
+
+fn parse_number_word_integer(tokens: &[String], mut i: usize) -> (i64, usize, bool) {
+    let mut total: i64 = 0;
+    let mut current: i64 = 0;
+    let mut seen_any = false;
+    let mut allow_and = false;
+
+    while i < tokens.len() {
+        let t = tokens[i].as_str();
+        if t == "and" {
+            if allow_and {
+                allow_and = false;
+                i += 1;
+                continue;
+            }
+            break;
+        }
+        if let Some(v) = unit_word_value(t) {
+            current = current.saturating_add(i64::from(v));
+            seen_any = true;
+            allow_and = false;
+            i += 1;
+            continue;
+        }
+        if let Some(v) = teen_or_tens_word_value(t) {
+            current = current.saturating_add(i64::from(v));
+            seen_any = true;
+            allow_and = false;
+            i += 1;
+            continue;
+        }
+        if t == "hundred" {
+            current = if current == 0 {
+                100
+            } else {
+                current.saturating_mul(100)
+            };
+            seen_any = true;
+            allow_and = true;
+            i += 1;
+            continue;
+        }
+        if let Some(scale) = large_scale_word_value(t) {
+            let part = if current == 0 { 1 } else { current };
+            total = total.saturating_add(part.saturating_mul(scale));
+            current = 0;
+            seen_any = true;
+            allow_and = true;
+            i += 1;
+            continue;
+        }
+        if let Some(v) = ordinal_word_value(t) {
+            current = current.saturating_add(i64::from(v));
+            seen_any = true;
+            allow_and = false;
+            i += 1;
+            continue;
+        }
+        break;
+    }
+
+    (total.saturating_add(current), i, seen_any)
+}
+
+fn unit_word_value(token: &str) -> Option<i32> {
+    match token {
+        "zero" => Some(0),
+        "one" | "first" => Some(1),
+        "two" | "second" => Some(2),
+        "three" | "third" => Some(3),
+        "four" | "fourth" => Some(4),
+        "five" | "fifth" => Some(5),
+        "six" | "sixth" => Some(6),
+        "seven" | "seventh" => Some(7),
+        "eight" | "eighth" => Some(8),
+        "nine" | "ninth" => Some(9),
+        _ => None,
+    }
+}
+
+fn teen_or_tens_word_value(token: &str) -> Option<i32> {
+    match token {
+        "ten" | "tenth" => Some(10),
+        "eleven" | "eleventh" => Some(11),
+        "twelve" | "twelfth" => Some(12),
+        "thirteen" | "thirteenth" => Some(13),
+        "fourteen" | "fourteenth" => Some(14),
+        "fifteen" | "fifteenth" => Some(15),
+        "sixteen" | "sixteenth" => Some(16),
+        "seventeen" | "seventeenth" => Some(17),
+        "eighteen" | "eighteenth" => Some(18),
+        "nineteen" | "nineteenth" => Some(19),
+        "twenty" | "twentieth" => Some(20),
+        "thirty" | "thirtieth" => Some(30),
+        "forty" | "fortieth" => Some(40),
+        "fifty" | "fiftieth" => Some(50),
+        "sixty" | "sixtieth" => Some(60),
+        "seventy" | "seventieth" => Some(70),
+        "eighty" | "eightieth" => Some(80),
+        "ninety" | "ninetieth" => Some(90),
+        _ => None,
+    }
+}
+
+fn large_scale_word_value(token: &str) -> Option<i64> {
+    match token {
+        "thousand" | "thousandth" => Some(1_000),
+        "million" | "millionth" => Some(1_000_000),
+        "billion" | "billionth" => Some(1_000_000_000),
+        "trillion" | "trillionth" => Some(1_000_000_000_000),
+        _ => None,
+    }
+}
+
+fn ordinal_word_value(token: &str) -> Option<i32> {
+    match token {
+        "hundredth" => Some(100),
+        _ => None,
+    }
 }
 
 fn parse_sqlite_utc(s: &str) -> Option<DateTime<Utc>> {
@@ -418,6 +798,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     let Some((raw, api_used)) = run_transcription(&app, &wav, &cfg).await else {
         return;
     };
+    let raw = normalize_transcription_math_artifacts(&raw);
     log::debug!(
         "pipeline: transcription ok provider={} raw_chars={} raw_preview=\"{}\"",
         api_used,
@@ -446,7 +827,10 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     if crate::system::logger::is_verbose() {
         log::debug!("pipeline: final_text_full=\"{}\"", final_text);
     }
-    log::debug!("pipeline: cleanup stage_ms={}", stage_cleanup.elapsed().as_millis());
+    log::debug!(
+        "pipeline: cleanup stage_ms={}",
+        stage_cleanup.elapsed().as_millis()
+    );
 
     let db = app.state::<DbHandle>();
     let words = final_text.split_whitespace().count() as i64;
@@ -615,7 +999,10 @@ async fn run_transcription(
             None
         }
         Err(Some(e)) => {
-            log::error!("pipeline: transcription failed error={}", trim_err(&e.to_string()));
+            log::error!(
+                "pipeline: transcription failed error={}",
+                trim_err(&e.to_string())
+            );
             show_error_pill(app, &trim_err(&e.to_string())).await;
             None
         }
@@ -649,13 +1036,19 @@ async fn run_cleanup_and_snippets(
     log::debug!(
         "pipeline: cleanup stage start raw_chars={} snippet_override_lines={} cleanup_enabled={}",
         raw.chars().count(),
-        snippet_instructions.lines().filter(|l| !l.trim().is_empty()).count(),
+        snippet_instructions
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .count(),
         cfg.cleanup_enabled
     );
     if crate::system::logger::is_verbose() {
         log::debug!("pipeline: cleanup raw_full=\"{}\"", raw);
         if !snippet_instructions.is_empty() {
-            log::debug!("pipeline: cleanup snippet_instructions_full=\"{}\"", snippet_instructions);
+            log::debug!(
+                "pipeline: cleanup snippet_instructions_full=\"{}\"",
+                snippet_instructions
+            );
         }
     }
 
@@ -680,7 +1073,13 @@ async fn run_cleanup_and_snippets(
         && pure_expansion.is_none()
         && cfg.cleanup_intensity != "none"
     {
-        let cache_key = normalize_cleanup_cache_key(raw);
+        let (cache_tokens, cache_separators) = tokenize_cache_key_parts(raw);
+        let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens);
+        let cache_key = if allow_cache {
+            normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators)
+        } else {
+            String::new()
+        };
         if !cache_key.is_empty() {
             if let Ok(Some(entry)) = db::cleanup_cache_get_active(&db, &cache_key) {
                 log::debug!(
@@ -705,12 +1104,18 @@ async fn run_cleanup_and_snippets(
                     new_hit_count,
                     new_expires_at
                 );
-                let overridden =
-                    snippets::apply_cleanup_instruction_overrides(&entry.clean_text, &snippet_instructions);
+                let overridden = snippets::apply_cleanup_instruction_overrides(
+                    &entry.clean_text,
+                    &snippet_instructions,
+                );
                 return Some((overridden, dict_entries));
             }
         }
-        log::debug!("pipeline: cleanup cache miss key_len={}", cache_key.len());
+        log::debug!(
+            "pipeline: cleanup cache {} key_len={}",
+            if allow_cache { "miss" } else { "bypass" },
+            cache_key.len()
+        );
         let dict_instructions =
             dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
         let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str()]
@@ -749,13 +1154,18 @@ async fn run_cleanup_and_snippets(
 
         match cleaned_res {
             Ok((cleaned, _)) if !cleaned.is_empty() => {
-                log::debug!("pipeline: cleanup provider success cleaned_chars={}", cleaned.chars().count());
+                log::debug!(
+                    "pipeline: cleanup provider success cleaned_chars={}",
+                    cleaned.chars().count()
+                );
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
                 if !cache_key.is_empty() {
                     let expires = sqlite_utc_plus(7);
                     match db::cleanup_cache_insert_new(&db, &cache_key, &cleaned, &expires) {
-                        Ok(_) => log::debug!("pipeline: cleanup cache insert ok expires_at={expires}"),
+                        Ok(_) => {
+                            log::debug!("pipeline: cleanup cache insert ok expires_at={expires}")
+                        }
                         Err(err) => log::warn!("pipeline: cleanup cache insert failed: {err}"),
                     }
                 }
@@ -765,7 +1175,10 @@ async fn run_cleanup_and_snippets(
                 snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
             }
             Err(Some(e)) => {
-                log::error!("pipeline: cleanup failed error={}", trim_err(&e.to_string()));
+                log::error!(
+                    "pipeline: cleanup failed error={}",
+                    trim_err(&e.to_string())
+                );
                 show_error_pill(
                     app,
                     &format!("Cleanup failed: {}", trim_err(&e.to_string())),
@@ -836,4 +1249,154 @@ where
         }
     }
     Err(last_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        normalize_cleanup_cache_key, normalize_transcription_math_artifacts,
+        should_use_cleanup_cache,
+    };
+
+    #[test]
+    fn cache_key_normalizes_digit_vs_word_numbers() {
+        let a = normalize_cleanup_cache_key("I have 12 apples");
+        let b = normalize_cleanup_cache_key("I have twelve apples");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cache_key_normalizes_decimal_digit_vs_word_form() {
+        let a = normalize_cleanup_cache_key("version 2.5");
+        let b = normalize_cleanup_cache_key("version two point five");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cache_key_normalizes_time_and_date_like_forms() {
+        let a = normalize_cleanup_cache_key("meet at 10:30 on 20260517");
+        let b = normalize_cleanup_cache_key("meet at 1030 on 20260517");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cache_key_keeps_non_numeric_text_distinct() {
+        let a = normalize_cleanup_cache_key("model x");
+        let b = normalize_cleanup_cache_key("model y");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_still_ignores_case_and_punctuation() {
+        let a = normalize_cleanup_cache_key("Hello, WORLD!");
+        let b = normalize_cleanup_cache_key("hello world");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cache_key_matches_digit_and_word_same_number() {
+        let a = normalize_cleanup_cache_key("What's 45 plus 45?");
+        let b = normalize_cleanup_cache_key("What's forty five plus forty five?");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cache_key_distinguishes_different_numeric_values() {
+        let a = normalize_cleanup_cache_key("What's 45 plus 45?");
+        let b = normalize_cleanup_cache_key("What's 6 plus 6?");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_distinguishes_decimal_from_whole_number() {
+        let a = normalize_cleanup_cache_key("version 2.5");
+        let b = normalize_cleanup_cache_key("version 25");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_distinguishes_negative_and_positive_digits() {
+        let a = normalize_cleanup_cache_key("temperature is -5");
+        let b = normalize_cleanup_cache_key("temperature is 5");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_matches_negative_digit_and_word_forms() {
+        let a = normalize_cleanup_cache_key("temperature is -5");
+        let b = normalize_cleanup_cache_key("temperature is minus five");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cache_key_does_not_merge_comma_separated_digits() {
+        let a = normalize_cleanup_cache_key("What's 4, 5 plus 4, 5?");
+        let b = normalize_cleanup_cache_key("What's 45 plus 45?");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_merges_thousands_separators_without_spaces() {
+        let a = normalize_cleanup_cache_key("population is 1,000,000");
+        let b = normalize_cleanup_cache_key("population is 1000000");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cache_key_does_not_collapse_one_and_two_to_three() {
+        let a = normalize_cleanup_cache_key("one and two");
+        let b = normalize_cleanup_cache_key("three");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_keeps_hundred_and_form_equivalent() {
+        let a = normalize_cleanup_cache_key("one hundred and two");
+        let b = normalize_cleanup_cache_key("102");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cleanup_cache_bypasses_math_like_queries() {
+        assert!(!should_use_cleanup_cache("What's 67 plus 67?"));
+        assert!(!should_use_cleanup_cache("what is six times seven"));
+    }
+
+    #[test]
+    fn cleanup_cache_keeps_non_math_numeric_queries() {
+        assert!(should_use_cleanup_cache("version 2.5 release notes"));
+        assert!(should_use_cleanup_cache("meeting on 2026-05-17 at 10:30"));
+    }
+
+    #[test]
+    fn transcription_preserves_digit_x_digit_in_plus_queries() {
+        let out = normalize_transcription_math_artifacts("What's 6x7 plus 6x7?");
+        assert_eq!(out, "What's 6x7 plus 6x7?");
+    }
+
+    #[test]
+    fn transcription_does_not_touch_non_plus_digit_x_digit() {
+        let out = normalize_transcription_math_artifacts("Calculate 6x7");
+        assert_eq!(out, "Calculate 6x7");
+    }
+
+    #[test]
+    fn transcription_compacts_spaced_digit_x_digit_chunks() {
+        let out = normalize_transcription_math_artifacts("What is 6 x 7 plus 6 x 7?");
+        assert_eq!(out, "What is 6x7 plus 6x7?");
+    }
+
+    #[test]
+    fn transcription_does_not_fold_mixed_multiplication_chunks() {
+        let out = normalize_transcription_math_artifacts("6x7 plus 3x4");
+        assert_eq!(out, "6x7 plus 3x4");
+    }
+
+    #[test]
+    fn cache_key_handles_large_number_word_runs_without_overflow() {
+        let key = normalize_cleanup_cache_key(
+            "one hundred hundred hundred hundred hundred hundred hundred hundred hundred hundred",
+        );
+        assert!(key.starts_with("num"));
+    }
 }

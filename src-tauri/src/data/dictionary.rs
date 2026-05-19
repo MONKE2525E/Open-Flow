@@ -1,8 +1,10 @@
 use crate::data::db;
+use crate::system::text::tokenize_lower_alnum;
 
 const MAX_PROMPT_ENTRIES: usize = 48;
 const MAX_PROMPT_CHARS: usize = 5_000;
 const FALLBACK_RECENT_ENTRIES: usize = 16;
+const MIN_MATCHED_PROMPT_ENTRIES: usize = 8;
 
 pub fn build_relevant_dictionary_prompt_from(
     entries: &[db::DictionaryEntry],
@@ -13,28 +15,121 @@ pub fn build_relevant_dictionary_prompt_from(
     }
 
     let raw_lower = raw_text.to_lowercase();
+    let raw_tokens = tokenize_lower_alnum(raw_text);
+    let raw_match_tokens: Vec<&str> = raw_tokens
+        .iter()
+        .map(String::as_str)
+        .filter(|token| token.chars().count() >= 4)
+        .collect();
     let mut selected: Vec<&db::DictionaryEntry> = entries
         .iter()
-        .filter(|entry| entry_matches_raw(entry, &raw_lower))
+        .filter(|entry| entry_matches_raw(entry, &raw_lower, &raw_match_tokens))
         .collect();
 
-    if selected.is_empty() {
-        selected.extend(entries.iter().take(FALLBACK_RECENT_ENTRIES));
+    if selected.len() < MIN_MATCHED_PROMPT_ENTRIES {
+        for entry in entries.iter().take(FALLBACK_RECENT_ENTRIES) {
+            if selected.iter().any(|picked| picked.id == entry.id) {
+                continue;
+            }
+            selected.push(entry);
+            if selected.len() >= MIN_MATCHED_PROMPT_ENTRIES {
+                break;
+            }
+        }
     }
 
     build_dictionary_prompt_limited(selected.into_iter())
 }
 
-fn entry_matches_raw(entry: &db::DictionaryEntry, raw_lower: &str) -> bool {
+fn entry_matches_raw(entry: &db::DictionaryEntry, raw_lower: &str, raw_tokens: &[&str]) -> bool {
     contains_nonempty(raw_lower, &entry.term.to_lowercase())
         || entry
             .mistake
             .as_ref()
             .is_some_and(|mistake| contains_nonempty(raw_lower, &mistake.to_lowercase()))
+        || fuzzy_token_match(entry, raw_tokens)
 }
 
 fn contains_nonempty(haystack: &str, needle: &str) -> bool {
     !needle.trim().is_empty() && haystack.contains(needle)
+}
+
+fn fuzzy_token_match(entry: &db::DictionaryEntry, raw_tokens: &[&str]) -> bool {
+    matches_source_tokens(&entry.term, raw_tokens)
+        || entry
+            .mistake
+            .as_ref()
+            .is_some_and(|mistake| matches_source_tokens(mistake, raw_tokens))
+}
+
+fn matches_source_tokens(source: &str, raw_tokens: &[&str]) -> bool {
+    for token in source
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+    {
+        let candidate = token.to_lowercase();
+        if candidate.chars().count() < 4 {
+            continue;
+        }
+        for raw in raw_tokens {
+            if candidate == *raw || candidate.starts_with(raw) || raw.starts_with(&candidate) {
+                return true;
+            }
+            if edit_distance_leq_one(&candidate, raw) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn edit_distance_leq_one(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+
+    let a_len = a.chars().count();
+    let b_len = b.chars().count();
+    if a_len.abs_diff(b_len) > 1 {
+        return false;
+    }
+
+    if a_len == b_len {
+        let mut mismatches = 0usize;
+        for (ca, cb) in a.chars().zip(b.chars()) {
+            if ca != cb {
+                mismatches += 1;
+                if mismatches > 1 {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    let (longer, shorter) = if a_len > b_len { (a, b) } else { (b, a) };
+    let mut long_it = longer.chars().peekable();
+    let mut short_it = shorter.chars().peekable();
+    let mut used_skip = false;
+
+    loop {
+        match (long_it.peek().copied(), short_it.peek().copied()) {
+            (None, None) => return true,
+            (Some(_), None) => return !used_skip,
+            (None, Some(_)) => return false,
+            (Some(lc), Some(sc)) if lc == sc => {
+                long_it.next();
+                short_it.next();
+            }
+            (Some(_), Some(_)) => {
+                if used_skip {
+                    return false;
+                }
+                used_skip = true;
+                long_it.next();
+            }
+        }
+    }
 }
 
 fn build_dictionary_prompt_limited<'a>(
@@ -176,7 +271,6 @@ mod tests {
         );
 
         assert!(prompt.contains("Open Flow"));
-        assert!(!prompt.contains("UnrelatedTerm"));
     }
 
     #[test]
@@ -190,6 +284,17 @@ mod tests {
 
         assert!(prompt.contains("RecentTerm"));
         assert!(prompt.contains("AnotherTerm"));
+    }
+
+    #[test]
+    fn relevant_prompt_includes_close_spelling_match() {
+        let entries = vec![
+            entry(1, "unifi", Some("unified")),
+            entry(2, "Open Flow", Some("open floor")),
+        ];
+        let prompt =
+            build_relevant_dictionary_prompt_from(&entries, "home assistant and unify setup");
+        assert!(prompt.contains("unifi"));
     }
 
     #[test]
