@@ -205,8 +205,8 @@ pub fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
 #[cfg(target_os = "windows")]
 fn free_bytes_for_path(path: &std::path::Path) -> Result<u64, String> {
     use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
     use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 
     let mut free_bytes_available: u64 = 0;
     let mut total_bytes: u64 = 0;

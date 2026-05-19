@@ -653,8 +653,14 @@ fn record_candidate(
         return false;
     }
 
-    if !db::upsert_auto_learn_candidate(db, &mistake, &correction, confidence, PAIR_COOLDOWN_MINUTES)
-        .unwrap_or(false)
+    if !db::upsert_auto_learn_candidate(
+        db,
+        &mistake,
+        &correction,
+        confidence,
+        PAIR_COOLDOWN_MINUTES,
+    )
+    .unwrap_or(false)
     {
         let _ = db::log_auto_learn_event(
             db,
@@ -834,15 +840,7 @@ pub fn read_focused_text() -> Option<String> {
 
 pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, app: AppHandle) {
     if injected_text.split_whitespace().count() < 2 {
-        let _ = db::log_auto_learn_event(
-            &db,
-            "monitor",
-            "too_short",
-            &app_context,
-            "",
-            "",
-            0.0,
-        );
+        let _ = db::log_auto_learn_event(&db, "monitor", "too_short", &app_context, "", "", 0.0);
         return;
     }
     let key = monitor_key(&injected_text, &app_context);
@@ -851,26 +849,11 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
         Err(_) => false,
     };
     if !inserted {
-        let _ = db::log_auto_learn_event(
-            &db,
-            "monitor",
-            "duplicate_skip",
-            &app_context,
-            "",
-            "",
-            0.0,
-        );
+        let _ =
+            db::log_auto_learn_event(&db, "monitor", "duplicate_skip", &app_context, "", "", 0.0);
         return;
     }
-    let _ = db::log_auto_learn_event(
-        &db,
-        "monitor",
-        "started",
-        &app_context,
-        "",
-        "",
-        0.0,
-    );
+    let _ = db::log_auto_learn_event(&db, "monitor", "started", &app_context, "", "", 0.0);
 
     tauri::async_runtime::spawn(async move {
         let _monitor_guard = MonitorKeyGuard::new(key);
@@ -900,15 +883,8 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
 
         let Some(baseline_text) = baseline_text else {
             log::debug!("auto-learn: could not anchor injected text in focused control");
-            let _ = db::log_auto_learn_event(
-                &db,
-                "anchor",
-                "anchor_miss",
-                &app_context,
-                "",
-                "",
-                0.0,
-            );
+            let _ =
+                db::log_auto_learn_event(&db, "anchor", "anchor_miss", &app_context, "", "", 0.0);
             return;
         };
         let _ = db::log_auto_learn_event(&db, "anchor", "anchor_ok", &app_context, "", "", 0.0);

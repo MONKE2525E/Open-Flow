@@ -79,6 +79,12 @@ When executing tasks, refer to the guidelines in the `Agent-Skills/` directory:
 - **Updating version**: See [`Agent-Skills/Updating_version.md`](Agent-Skills/Updating_version.md) for the required files to modify when bumping the application version.
 - **Smoke Tests**: See [`Agent-Skills/SmokeTest.md`](Agent-Skills/SmokeTest.md) for testing procedures.
 
+## CI/CD & Review
+
+- **PR checks workflow** (`.github/workflows/pr-checks.yml`) runs: `npm run check && npm run lint && npm run test:rust`
+- **Dependency review** (`.github/workflows/dependency-review.yml`) gates new dependencies for supply-chain risk
+- **Copilot review instructions** (`.github/copilot-instructions.md`) contain guidance on Rust Windows integration, frontend patterns, and smoke-test contracts — read these before major changes
+
 ## Project Structure
 
 ```
@@ -94,7 +100,7 @@ src/                        # Svelte 5 frontend
     components/layout/      # TitleBar, Sidebar, DictationPill
     components/             # Shared: Toggle, Dropdown, MicInputButton
     components/settings/    # Settings sections: General, Models, ApiKeys, AppMappings, Privacy, Advanced, About
-    views/                  # Home, Dictionary, Snippets, Settings, Style pages
+    views/                  # Home (main flow), Dictionary, Snippets, Settings, Setup (first-run API key entry), Style pages
 src-tauri/
   src/
     main.rs                 # Tauri setup, command registration
@@ -118,6 +124,10 @@ src-tauri/
       audio.rs              # CPAL mic capture → WAV, RMS level streaming
     system/
       apps.rs               # Registry scan for installed apps + process dedup
+      logger.rs             # Logging utilities
+      memory.rs             # Memory monitoring
+      text.rs               # Text utilities
+      volume.rs             # Volume detection
   Cargo.toml
   tauri.conf.json           # 2 windows: main (1100×720) + pill (220×60 always-on-top)
 tests/
@@ -190,6 +200,13 @@ Built-in profiles: `casual`, `formal`, `email`, `excited`, `very_casual`. Profil
 
 Store keys (API keys, settings) are defined as constants in `src-tauri/src/data/store.rs` — always use the constant, never a raw string literal. When adding a new setting, update both `store.rs` (Rust constant + validation) and `src/lib/settings.ts` (frontend `SettingsValueMap` type entry).
 
+## Settings & Configuration
+
+- **Frontend settings registry** lives in `src/lib/settings.ts` as the `SettingsValueMap` TypeScript type. Add new setting entries here.
+- **Backend validation & constants** live in `src-tauri/src/data/store.rs`. All store keys are constants; never use raw string literals.
+- **Type mirrors**: `transcriptionLanguages.ts` (frontend) mirrors the backend's supported language validation in `store.rs` — keep them synchronized.
+- **API keys** are stored securely via `tauri-plugin-store`, never in SQLite or logs. Commands that check key presence return a boolean status only, never the key itself.
+
 ## Prompt Assembly (`prompts.rs`)
 
 `get_system_prompt_with_extras()` builds the final system prompt by appending "FINAL OUTPUT OVERRIDES" at the end — this gives snippet instructions precedence over the base profile prompt when they conflict. User instructions are normalized to MUST/MUST NOT imperatives before insertion.
@@ -249,8 +266,13 @@ The foreground window HWND is captured at the very start of `run_pipeline()`, be
 ### Error handling convention
 Use `anyhow::Result` throughout Rust. Pipeline errors call `show_error_pill()` which logs, emits `open-flow:error` to the frontend (caught as a toast in `App.svelte`), and returns without crashing. Match this pattern for any new error path in the pipeline.
 
-### Version sync
-Version must be updated in exactly three files simultaneously: `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`. The frontend reads the version dynamically via `@tauri-apps/api/app` `getVersion()` — no hardcoded version strings in Svelte files.
+### Version sync — **CRITICAL: all three files must be updated together**
+Version must be updated in exactly three files simultaneously, or the build will break:
+1. `package.json` (JSON version field)
+2. `src-tauri/tauri.conf.json` (Tauri app version)
+3. `src-tauri/Cargo.toml` (Rust package version)
+
+The frontend reads the version dynamically via `@tauri-apps/api/app` `getVersion()` — no hardcoded version strings in Svelte files. See [`Agent-Skills/Updating_version.md`](Agent-Skills/Updating_version.md) for the exact procedure.
 
 ### Smoke test contracts
 Files in `tests/smoke/` are a frozen contract — **never edit them**. Fix the app code to satisfy the tests, not the reverse. CSS classes that tests assert by exact name:

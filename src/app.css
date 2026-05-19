@@ -4,7 +4,31 @@ body {
   font-feature-settings: 'ss01', 'cv11';
 }
 
-/* Hover-reveal floating-pill scrollbar — add this class to any overflow container.
+/* Global scrollbar baseline so any overflow container matches the app theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ink-faint) 42%, transparent) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink-faint) 42%, transparent);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ink-faint) 62%, transparent);
+}
+
+/* Hover-reveal floating-pill scrollbar; add this class to any overflow container.
    Override the thumb border-color locally to match the element's own background. */
 .scroll-styled::-webkit-scrollbar { width: 10px; }
 .scroll-styled::-webkit-scrollbar-track { background: transparent; }
