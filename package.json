@@ -9,11 +9,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "lint": "npm run check && set \"PATH=%USERPROFILE%\\.cargo\\bin;%PATH%\" && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
-    "test:rust": "set \"PATH=%USERPROFILE%\\.cargo\\bin;%PATH%\" && cargo test --manifest-path src-tauri/Cargo.toml",
+    "lint": "npm run check && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:smoke": "node tests/smoke/test.cjs && node tests/smoke/test-app.cjs && node tests/smoke/playwright-test-ui.cjs && node tests/smoke/playwright-test-fixes.cjs",
     "test:smoke:state": "node tests/smoke/playwright-test-state.cjs",
-    "tauri": "set \"PATH=%USERPROFILE%\\.cargo\\bin;%PATH%\" && tauri"
+    "tauri": "tauri"
   },
   "keywords": [],
   "author": "",

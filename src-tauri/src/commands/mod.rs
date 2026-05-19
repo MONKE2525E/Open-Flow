@@ -316,7 +316,7 @@ pub async fn start_calibration_monitoring(
                 st.session = Some(session);
                 st.handless = false;
             }
-            pipeline::spawn_level_emitter(app, level_arc, active_arc);
+            pipeline::spawn_level_emitter(app, level_arc, active_arc, true);
             Ok(())
         }
         Err(e) => Err(e.to_string()),

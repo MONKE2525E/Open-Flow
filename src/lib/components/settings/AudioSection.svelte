@@ -7,20 +7,26 @@
   import { saveSetting } from '../../settings';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx, animateWidth } from '../../motion';
 
+  import {
+    isCalibrating,
+    calibrationCountdown,
+    calibratedGain,
+    micLevel,
+    startCalibration,
+    cancelCalibration
+  } from '../../calibration';
+
   let noiseReduction = $state(true);
   let micGain = $state(3.5);
   let microphones = $state<string[]>([]);
   let selectedMic = $state('');
   let micDropdownOpen = $state(false);
 
-  // Calibration states
-  let isCalibrating = $state(false);
-  let calibrationCountdown = $state(3);
-  let calibratedGain = $state<number | null>(null);
-  let micLevel = $state(0);
-  let calibrationMaxLevel = 0;
-  let calibrationTimer: ReturnType<typeof setInterval> | null = null;
-  let calibrationUnlisten: (() => void) | null = null;
+  $effect(() => {
+    if ($calibratedGain !== null) {
+      micGain = $calibratedGain;
+    }
+  });
 
   async function loadSettings() {
     try {
@@ -73,84 +79,6 @@
     return name;
   }
 
-  async function startCalibration() {
-    isCalibrating = true;
-    calibrationMaxLevel = 0.04;
-    calibrationCountdown = 3;
-    calibratedGain = null;
-    micLevel = 0;
-
-    const { listen } = await import('@tauri-apps/api/event');
-    calibrationUnlisten = await listen<number>('audio-level', (ev) => {
-      const level = ev.payload ?? 0;
-      micLevel = level;
-      if (level > calibrationMaxLevel) {
-        calibrationMaxLevel = level;
-      }
-    });
-
-    try {
-      await invoke('start_calibration_monitoring');
-    } catch (e) {
-      console.error('Failed to start calibration monitoring:', e);
-    }
-
-    calibrationTimer = setInterval(() => {
-      calibrationCountdown--;
-      if (calibrationCountdown <= 0) {
-        stopCalibration();
-      }
-    }, 1000);
-  }
-
-  async function stopCalibration() {
-    if (calibrationTimer) {
-      clearInterval(calibrationTimer);
-      calibrationTimer = null;
-    }
-    if (calibrationUnlisten) {
-      calibrationUnlisten();
-      calibrationUnlisten = null;
-    }
-    try {
-      await invoke('stop_calibration_monitoring');
-    } catch (e) {
-      console.error('Failed to stop calibration monitoring:', e);
-    }
-
-    isCalibrating = false;
-    micLevel = 0;
-
-    const rawGain = 2.25 / Math.max(0.04, calibrationMaxLevel);
-    calibratedGain = Math.max(1.0, Math.min(8.0, Math.round(rawGain * 10) / 10));
-    micGain = calibratedGain;
-
-    try {
-      await saveSetting('mic_gain', calibratedGain);
-    } catch (e) {
-      console.error('Failed to save mic gain setting:', e);
-    }
-  }
-
-  async function cancelCalibration() {
-    if (calibrationTimer) {
-      clearInterval(calibrationTimer);
-      calibrationTimer = null;
-    }
-    if (calibrationUnlisten) {
-      calibrationUnlisten();
-      calibrationUnlisten = null;
-    }
-    try {
-      await invoke('stop_calibration_monitoring');
-    } catch (e) {
-      console.error('Failed to stop calibration monitoring:', e);
-    }
-    isCalibrating = false;
-    micLevel = 0;
-    calibratedGain = null;
-  }
-
   function closeMicDropdown(e: MouseEvent) {
     if (!(e.target as HTMLElement).closest('.mic-dropdown')) {
       micDropdownOpen = false;
@@ -158,9 +86,7 @@
   }
 
   onDestroy(() => {
-    if (calibrationTimer) clearInterval(calibrationTimer);
-    if (calibrationUnlisten) calibrationUnlisten();
-    invoke('stop_calibration_monitoring').catch(() => {});
+    cancelCalibration();
   });
 
   loadSettings();
@@ -253,7 +179,7 @@
   </div>
   
   <div class="cal-control">
-    {#if !isCalibrating}
+    {#if !$isCalibrating}
       <button class="btn-ghost cal-btn" onclick={startCalibration}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
@@ -264,10 +190,10 @@
       </button>
     {:else}
       <div class="cal-active-panel">
-        <span class="cal-timer">{calibrationCountdown}s</span>
+        <span class="cal-timer">{$calibrationCountdown}s</span>
         <span class="cal-phrase-hint">Speak: "Open Flow is fast"</span>
         <div class="cal-level-bar">
-          <div class="cal-level-fill" style="width: {(micLevel * 100).toFixed(0)}%"></div>
+          <div class="cal-level-fill" style="width: {($micLevel * 100).toFixed(0)}%"></div>
         </div>
         <button class="cal-cancel-icon-btn" onclick={cancelCalibration} aria-label="Cancel calibration">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

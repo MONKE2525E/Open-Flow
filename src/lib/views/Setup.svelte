@@ -28,96 +28,18 @@
   let step = 0;
   const TOTAL_STEPS = 8; // steps 1–8 show progress dots (0 = intro)
 
-  // ── Microphone Calibration states ──────────────────────────────────────────
-  let isCalibrating = false;
-  let calibrationMaxLevel = 0;
-  let calibrationCountdown = 3;
-  let calibrationTimer: ReturnType<typeof setInterval> | null = null;
-  let calibratedGain: number | null = null;
-  let micLevel = 0;
-  let calibrationUnlisten: (() => void) | null = null;
-
-  async function startCalibration() {
-    isCalibrating = true;
-    calibrationMaxLevel = 0.04;
-    calibrationCountdown = 3;
-    calibratedGain = null;
-    micLevel = 0;
-
-    const { listen } = await import('@tauri-apps/api/event');
-    calibrationUnlisten = await listen<number>('audio-level', (ev) => {
-      const level = ev.payload ?? 0;
-      micLevel = level;
-      if (level > calibrationMaxLevel) {
-        calibrationMaxLevel = level;
-      }
-    });
-
-    try {
-      await invoke('start_calibration_monitoring');
-    } catch (e) {
-      console.error('Failed to start calibration monitoring:', e);
-    }
-
-    calibrationTimer = setInterval(() => {
-      calibrationCountdown--;
-      if (calibrationCountdown <= 0) {
-        stopCalibration();
-      }
-    }, 1000);
-  }
-
-  async function stopCalibration() {
-    if (calibrationTimer) {
-      clearInterval(calibrationTimer);
-      calibrationTimer = null;
-    }
-    if (calibrationUnlisten) {
-      calibrationUnlisten();
-      calibrationUnlisten = null;
-    }
-    try {
-      await invoke('stop_calibration_monitoring');
-    } catch (e) {
-      console.error('Failed to stop calibration monitoring:', e);
-    }
-
-    isCalibrating = false;
-    micLevel = 0;
-
-    const rawGain = 2.25 / Math.max(0.04, calibrationMaxLevel);
-    calibratedGain = Math.max(1.0, Math.min(8.0, Math.round(rawGain * 10) / 10));
-
-    try {
-      await saveSetting('mic_gain', calibratedGain);
-    } catch (e) {
-      console.error('Failed to save mic gain setting:', e);
-    }
-  }
-
-  async function cancelCalibration() {
-    if (calibrationTimer) {
-      clearInterval(calibrationTimer);
-      calibrationTimer = null;
-    }
-    if (calibrationUnlisten) {
-      calibrationUnlisten();
-      calibrationUnlisten = null;
-    }
-    try {
-      await invoke('stop_calibration_monitoring');
-    } catch (e) {
-      console.error('Failed to stop calibration monitoring:', e);
-    }
-    isCalibrating = false;
-    micLevel = 0;
-    calibratedGain = null;
-  }
+  // ── Microphone Calibration ──────────────────────────────────────────────────
+  import {
+    isCalibrating,
+    calibrationCountdown,
+    calibratedGain,
+    micLevel,
+    startCalibration,
+    cancelCalibration
+  } from '../calibration';
 
   onDestroy(() => {
-    if (calibrationTimer) clearInterval(calibrationTimer);
-    if (calibrationUnlisten) calibrationUnlisten();
-    invoke('stop_calibration_monitoring').catch(() => {});
+    cancelCalibration();
   });
 
   let direction: 'forward' | 'back' = 'forward';
@@ -696,7 +618,7 @@
         </div>
 
         <div class="calibration-box">
-          {#if !isCalibrating && calibratedGain === null}
+          {#if !$isCalibrating && $calibratedGain === null}
             <div class="cal-start-state">
               <div class="cal-mic-icon">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -708,10 +630,10 @@
               <p class="cal-instruction">Click below, then speak naturally for 3 seconds.</p>
               <button class="btn-primary btn-lg" onclick={startCalibration}>Start Calibration</button>
             </div>
-          {:else if isCalibrating}
+          {:else if $isCalibrating}
             <div class="cal-active-state">
               <div class="cal-timer-ring">
-                <span class="cal-countdown">{calibrationCountdown}s</span>
+                <span class="cal-countdown">{$calibrationCountdown}s</span>
               </div>
               <p class="cal-prompt">Read this phrase aloud:</p>
               <blockquote class="cal-phrase">"Open Flow makes dictation easy."</blockquote>
@@ -719,14 +641,14 @@
               <!-- Live Level Visualizer -->
               <div class="cal-meter-container">
                 <div class="cal-meter-track">
-                  <div class="cal-meter-fill" style="width: {(micLevel * 100).toFixed(0)}%"></div>
+                  <div class="cal-meter-fill" style="width: {($micLevel * 100).toFixed(0)}%"></div>
                 </div>
               </div>
               <button class="btn-ghost cal-cancel-btn" onclick={cancelCalibration}>
                 Cancel
               </button>
             </div>
-          {:else if calibratedGain !== null}
+          {:else if $calibratedGain !== null}
             <div class="cal-result-state">
               <div class="cal-success-icon">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -736,7 +658,7 @@
               </div>
               <h3 class="cal-result-title">Calibration Complete!</h3>
               <p class="cal-result-desc">
-                We've adjusted your microphone gain to <strong>{calibratedGain.toFixed(1)}×</strong>.
+                We've adjusted your microphone gain to <strong>{$calibratedGain.toFixed(1)}×</strong>.
                 Your voice levels are now perfectly optimized for the voice model.
               </p>
               
@@ -748,9 +670,9 @@
         </div>
 
         <div class="step-footer">
-          <button class="btn-skip" onclick={skip} disabled={isCalibrating}>Skip calibration</button>
-          <button class="btn-primary" onclick={goNext} disabled={isCalibrating}>
-            {calibratedGain !== null ? 'Continue' : 'Skip Calibration'}
+          <button class="btn-skip" onclick={skip} disabled={$isCalibrating}>Skip calibration</button>
+          <button class="btn-primary" onclick={goNext} disabled={$isCalibrating}>
+            {$calibratedGain !== null ? 'Continue' : 'Skip Calibration'}
           </button>
         </div>
       </div>
@@ -858,7 +780,7 @@
               <div class="qs-toggle-row">
                 <div>
                   <div class="qs-toggle-label">Auto-retry on quota errors</div>
-                  <div class="qs-toggle-desc">Silence other audio during dictation</div>
+                  <div class="qs-toggle-desc">Switch to another provider if the primary hits its limit</div>
                 </div>
                 <div class="qs-toggle" class:on={quickPrefs.apiFallback} role="switch" aria-checked={quickPrefs.apiFallback} tabindex="0"
                   onclick={() => { quickPrefs = { ...quickPrefs, apiFallback: !quickPrefs.apiFallback }; }}

@@ -169,7 +169,7 @@ pub fn start_recording_session(
                 st.handless = handless;
             }
             show_pill(app, pill_state);
-            spawn_level_emitter(app.clone(), level_arc, active_arc);
+            spawn_level_emitter(app.clone(), level_arc, active_arc, false);
         }
         Err(e) => log::error!("start recording: {e}"),
     }
@@ -181,6 +181,7 @@ pub fn spawn_level_emitter(
     app: AppHandle,
     level: Arc<std::sync::atomic::AtomicU32>,
     active: Arc<std::sync::atomic::AtomicBool>,
+    emit_globally: bool,
 ) {
     tauri::async_runtime::spawn(async move {
         // Give WebView2 a brief head start to wake up and process the
@@ -195,7 +196,9 @@ pub fn spawn_level_emitter(
             if let Some(pill) = app.get_webview_window("pill") {
                 pill.emit("audio-level", level_val).ok();
             }
-            let _ = app.emit("audio-level", level_val);
+            if emit_globally {
+                let _ = app.emit("audio-level", level_val);
+            }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
@@ -203,7 +206,9 @@ pub fn spawn_level_emitter(
         if let Some(pill) = app.get_webview_window("pill") {
             pill.emit("audio-level", 0.0).ok();
         }
-        let _ = app.emit("audio-level", 0.0);
+        if emit_globally {
+            let _ = app.emit("audio-level", 0.0);
+        }
     });
 }
 
