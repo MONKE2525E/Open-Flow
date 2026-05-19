@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentPage, settingsOpen, accentColor, appearanceMode, setupComplete } from './lib/stores';
+  import { currentPage, settingsOpen, appearanceMode, setupComplete } from './lib/stores';
   import TitleBar from './lib/components/layout/TitleBar.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
@@ -16,21 +16,6 @@
 
   type EffectiveTheme = 'light' | 'dark';
 
-  const accentMap: Record<EffectiveTheme, Record<string, [string, string, string]>> = {
-    light: {
-      terracotta: ['oklch(0.62 0.14 40)',  'oklch(0.94 0.03 40)',   'oklch(0.42 0.12 40)'],
-      moss:       ['oklch(0.55 0.1 145)',  'oklch(0.94 0.03 145)',  'oklch(0.4 0.1 145)' ],
-      slate:      ['oklch(0.45 0.04 250)', 'oklch(0.94 0.015 250)', 'oklch(0.35 0.05 250)'],
-      ink:        ['oklch(0.18 0.01 60)',  'oklch(0.92 0.005 70)',  'oklch(0.18 0.01 60)' ],
-    },
-    dark: {
-      terracotta: ['oklch(0.70 0.13 42)',  '#3a241d',              '#f0a987'],
-      moss:       ['oklch(0.72 0.10 145)', '#1f3022',              '#a7d99f'],
-      slate:      ['oklch(0.72 0.04 250)', '#202532',              '#b7c4e3'],
-      ink:        ['oklch(0.82 0.01 70)',  '#2a241d',              '#f2e6d5'],
-    },
-  };
-
   function systemTheme(): EffectiveTheme {
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
@@ -42,17 +27,10 @@
   function applyTheme() {
     const theme = effectiveTheme($appearanceMode);
     document.documentElement.dataset.theme = theme;
-
-    const accents = accentMap[theme];
-    const [a, b, c] = accents[$accentColor] ?? accents.terracotta;
-    document.documentElement.style.setProperty('--accent', a);
-    document.documentElement.style.setProperty('--accent-soft', b);
-    document.documentElement.style.setProperty('--accent-ink', c);
   }
 
   $effect(() => {
     $appearanceMode;
-    $accentColor;
     if (typeof document !== 'undefined') applyTheme();
   });
 

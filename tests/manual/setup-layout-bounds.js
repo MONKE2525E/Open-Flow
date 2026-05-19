@@ -1,48 +1,122 @@
 import { chromium } from 'playwright';
 
+const TARGET_URL = 'http://localhost:1420';
+const VIEWPORTS = [
+  { width: 1100, height: 720, label: '1100x720' },
+  { width: 900, height: 600, label: '900x600' },
+];
+
+async function readLayoutState(page) {
+  return await page.evaluate(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const overlay = document.querySelector('.setup-overlay');
+    const wrap = document.querySelector('.step-wrap');
+    const step = document.querySelector('.step');
+    const footer = document.querySelector('.step-footer');
+    const heading = document.querySelector('.step-header h2, .done-title, .brand-name');
+
+    const rect = (el) => el ? el.getBoundingClientRect() : null;
+    const stepRect = rect(step);
+    const wrapRect = rect(wrap);
+    const footerRect = rect(footer);
+
+    const pageScroll =
+      html.scrollHeight !== html.clientHeight ||
+      body.scrollHeight !== body.clientHeight;
+
+    const inBounds = !!(
+      stepRect &&
+      wrapRect &&
+      stepRect.top >= wrapRect.top &&
+      stepRect.bottom <= wrapRect.bottom
+    );
+
+    const scrollableVisibleContainers = Array.from(
+      overlay?.querySelectorAll('*') ?? []
+    )
+      .filter((el) => {
+        const style = getComputedStyle(el);
+        const hasScrollableOverflow = style.overflowY === 'auto' || style.overflowY === 'scroll';
+        const visible = el.getClientRects().length > 0;
+        return hasScrollableOverflow && visible && el.scrollHeight > el.clientHeight;
+      })
+      .map((el) => ({
+        className: el.className,
+        overflowY: getComputedStyle(el).overflowY,
+        clientHeight: el.clientHeight,
+        scrollHeight: el.scrollHeight,
+      }));
+
+    return {
+      title: heading?.textContent?.trim() ?? 'unknown',
+      pageScroll,
+      inBounds,
+      footerBottom: footerRect?.bottom ?? null,
+      wrapBottom: wrapRect?.bottom ?? null,
+      scrollableVisibleContainers,
+    };
+  });
+}
+
+async function verifyViewport(browser, viewport) {
+  const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } });
+  const failures = [];
+
+  await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: 15000 });
+  await page.waitForTimeout(500);
+
+  for (let stepIndex = 0; stepIndex <= 8; stepIndex++) {
+    const state = await readLayoutState(page);
+    console.log(`[${viewport.label}] Step ${stepIndex}: ${state.title}`);
+
+    if (state.pageScroll) {
+      failures.push(`[${viewport.label}] "${state.title}" has page scroll (html/body mismatch).`);
+    }
+    if (!state.inBounds) {
+      failures.push(`[${viewport.label}] "${state.title}" content exceeds step container bounds.`);
+    }
+    if (state.scrollableVisibleContainers.length > 0) {
+      failures.push(
+        `[${viewport.label}] "${state.title}" has internal scrollable container(s): ${JSON.stringify(state.scrollableVisibleContainers)}`
+      );
+    }
+    if (state.footerBottom !== null && state.wrapBottom !== null && state.footerBottom > state.wrapBottom) {
+      failures.push(`[${viewport.label}] "${state.title}" footer extends below visible area.`);
+    }
+
+    const finalButton = page.locator('.step-wrap.visible .btn-primary:has-text("Start dictating")');
+    if (await finalButton.count()) break;
+
+    const nextButton = page.locator('.step-wrap.visible .btn-primary').first();
+    if (!(await nextButton.count())) break;
+    await nextButton.click();
+    await page.waitForTimeout(420);
+  }
+
+  await page.close();
+  return failures;
+}
+
 (async () => {
+  const browser = await chromium.launch({ headless: true });
+  const allFailures = [];
+
   try {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-    
-    await page.setViewportSize({ width: 900, height: 600 }); // min window size
-    
-    console.log(`Navigating to http://localhost:1420...`);
-    await page.goto('http://localhost:1420');
-    
-    await page.waitForTimeout(1000);
-    
-    for (let i = 0; i < 6; i++) {
-      try {
-        const btn = await page.locator('.step-wrap.visible .btn-primary').first();
-        await btn.waitFor({ state: 'visible', timeout: 5000 });
-        await btn.click();
-        await page.waitForTimeout(600);
-      } catch (e) {
-        console.log('Error clicking next:', e.message);
-      }
+    for (const viewport of VIEWPORTS) {
+      const failures = await verifyViewport(browser, viewport);
+      allFailures.push(...failures);
     }
-    
-    await page.waitForTimeout(1000);
-    
-    // Check if step 6 is visible
-    const setupOverlay = await page.locator('.setup-overlay').boundingBox();
-    const qsCardsBox = await page.locator('.qs-cards').boundingBox();
-    
-    console.log('Setup Overlay Box:', setupOverlay);
-    console.log('QS Cards Box:', qsCardsBox);
-    
-    if (qsCardsBox.y + qsCardsBox.height > setupOverlay.y + setupOverlay.height) {
-      console.log('FAILED: Content goes off the page.');
-      process.exit(1);
-    } else {
-      console.log('SUCCESS: Content fits cleanly within the page.');
-    }
-    
+  } finally {
     await browser.close();
-    process.exit(0);
-  } catch (e) {
-    console.error(e);
+  }
+
+  if (allFailures.length > 0) {
+    console.error('FAILED: setup onboarding layout checks');
+    allFailures.forEach((f) => console.error(`  - ${f}`));
     process.exit(1);
   }
+
+  console.log('PASS: setup onboarding has no scroll and stays in bounds at 1100x720 and 900x600');
+  process.exit(0);
 })();
