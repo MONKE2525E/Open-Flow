@@ -306,7 +306,7 @@
               </div>
               <div class="insp-expansion">
                 {selected.expansion.length > 200
-                  ? [...selected.expansion].slice(0, 200).join('').trimEnd() + '…'
+                  ? [...selected.expansion.slice(0, 400)].slice(0, 200).join('').trimEnd() + '…'
                   : selected.expansion}
               </div>
 
