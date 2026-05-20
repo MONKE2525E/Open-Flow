@@ -103,10 +103,10 @@ async function closeSettings(page) {
       console.log('  (skipped model persistence — fewer than 2 model rows found)');
     }
 
-    // ── Microphone toggle persistence ───────────────────────────────────────────
-    console.log('Testing Microphone toggle persistence...');
-    await page.locator('.settings-nav-item:has-text("Microphone")').click();
-    await page.locator('h2.settings-h:has-text("Microphone")').waitFor({ state: 'visible', timeout: 3_000 });
+    // ── Advanced toggle persistence ───────────────────────────────────────────
+    console.log('Testing Advanced toggle persistence...');
+    await page.locator('.settings-nav-item:has-text("Advanced")').click();
+    await page.locator('h2.settings-h:has-text("Advanced")').waitFor({ state: 'visible', timeout: 3_000 });
 
     const firstToggle = page.locator('.toggle').first();
     await firstToggle.waitFor({ state: 'visible', timeout: 2_000 });
@@ -115,7 +115,7 @@ async function closeSettings(page) {
     const stateAfterClick = await firstToggle.getAttribute('aria-checked');
 
     if (stateBefore === stateAfterClick) {
-      errors.push(`Microphone toggle did not change (stuck at "${stateBefore}")`);
+      errors.push(`Advanced toggle did not change (stuck at "${stateBefore}")`);
     } else {
       console.log(`  ✓ Toggle changed: ${stateBefore} → ${stateAfterClick}`);
 
@@ -123,8 +123,8 @@ async function closeSettings(page) {
       await page.waitForTimeout(300); // allow store write
       await closeSettings(page);
       await openSettings(page);
-      await page.locator('.settings-nav-item:has-text("Microphone")').click();
-      await page.locator('h2.settings-h:has-text("Microphone")').waitFor({ state: 'visible', timeout: 3_000 });
+      await page.locator('.settings-nav-item:has-text("Advanced")').click();
+      await page.locator('h2.settings-h:has-text("Advanced")').waitFor({ state: 'visible', timeout: 3_000 });
 
       const stateAfterReopen = await page.locator('.toggle').first().getAttribute('aria-checked');
       if (stateAfterReopen !== stateAfterClick) {

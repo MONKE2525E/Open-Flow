@@ -38,7 +38,7 @@
 
   // ── Step state ──────────────────────────────────────────────────────────────
   let step = 0;
-  const TOTAL_STEPS = 8; // steps 1–8 show progress dots (0 = intro)
+  const TOTAL_STEPS = 7; // steps 1–7 show progress dots (0 = intro, 8 = done)
 
   // ── Microphone Calibration ──────────────────────────────────────────────────
   import {

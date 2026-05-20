@@ -29,7 +29,7 @@
       { id: 'keys',     label: 'API Keys',     icon: 'key'      as keyof typeof icons },
       { id: 'models',   label: 'Models',       icon: 'command'  as keyof typeof icons },
       { id: 'privacy',  label: 'Privacy',      icon: 'lock'     as keyof typeof icons },
-      { id: 'microphone', label: 'Microphone',  icon: 'mic'      as keyof typeof icons },
+      { id: 'advanced', label: 'Advanced',  icon: 'mic'      as keyof typeof icons },
       ...($devModeEnabled ? [{ id: 'developer', label: 'Developer', icon: 'command' as keyof typeof icons }] : []),
     ]},
     { group: 'Account', items: [
@@ -115,7 +115,7 @@
               <ModelsSection />
             {:else if section === 'privacy'}
               <PrivacySection />
-            {:else if section === 'microphone'}
+            {:else if section === 'advanced'}
               <AudioSection />
             {:else if section === 'about'}
               <AboutSection {appVersion} />

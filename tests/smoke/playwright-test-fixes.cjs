@@ -34,14 +34,14 @@ async function assert(label, locator, errors) {
     await page.locator('.settings-modal').waitFor({ state: 'visible', timeout: 3_000 });
     console.log('Settings opened.');
 
-    // ── Microphone tab ─────────────────────────────────────────────────────────
-    console.log('Checking Microphone tab...');
-    await page.locator('.settings-nav-item:has-text("Microphone")').click();
-    await page.locator('h2.settings-h:has-text("Microphone")').waitFor({ state: 'visible', timeout: 3_000 });
+    // ── Advanced tab ─────────────────────────────────────────────────────────
+    console.log('Checking Advanced tab...');
+    await page.locator('.settings-nav-item:has-text("Advanced")').click();
+    await page.locator('h2.settings-h:has-text("Advanced")').waitFor({ state: 'visible', timeout: 3_000 });
 
-    // At least one toggle must exist in Microphone
+    // At least one toggle must exist in Advanced
     await assert(
-      '.toggle (aria switch) in Microphone',
+      '.toggle (aria switch) in Advanced',
       page.locator('.toggle[role="switch"]').first(),
       errors,
     );

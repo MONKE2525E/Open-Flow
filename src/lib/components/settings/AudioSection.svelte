@@ -91,7 +91,7 @@
 
 <svelte:window onclick={closeMicDropdown} />
 
-<h2 class="settings-h">Microphone</h2>
+<h2 class="settings-h">Advanced</h2>
 
 <div class="setting-row">
   <div>
