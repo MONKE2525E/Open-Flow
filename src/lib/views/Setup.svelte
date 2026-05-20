@@ -159,7 +159,7 @@
     visible = false;
     await delay(220);
     step++;
-    if (step === 7) setTimeout(() => { quickSettingsReady = true; }, 60);
+    if (step === 6) setTimeout(() => { quickSettingsReady = true; }, 60);
     visible = true;
     await delay(220);
     animating = false;
@@ -167,13 +167,13 @@
 
   async function goBack() {
     if (animating || step === 0) return;
-    if (step === 7 || step === 8) quickSettingsReady = false;
+    if (step === 6 || step === 8) quickSettingsReady = false;
     direction = 'back';
     animating = true;
     visible = false;
     await delay(220);
     step--;
-    if (step === 7) setTimeout(() => { quickSettingsReady = true; }, 60);
+    if (step === 6) setTimeout(() => { quickSettingsReady = true; }, 60);
     visible = true;
     await delay(220);
     animating = false;
@@ -530,7 +530,7 @@
       </div>
 
     <!-- ── Step 6: Microphone Calibration ────────────────── -->
-    {:else if step === 6}
+    {:else if step === 7}
       <div class="step">
         <div class="step-header">
           <h2>{setupCalibrationCopy.title}</h2>
@@ -611,8 +611,8 @@
         </div>
       </div>
 
-    <!-- ── Step 7: Quick Settings ──────────────────────────── -->
-    {:else if step === 7}
+    <!-- ── Step 6: Quick Settings ──────────────────────────── -->
+    {:else if step === 6}
       <div class="step qs-step">
         <div class="step-header">
           <h2>A few things worth knowing about</h2>
