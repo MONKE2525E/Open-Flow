@@ -1,6 +1,6 @@
 {
   "name": "open-flow",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Open Flow - An open-source AI dictation app for Windows",
   "main": "index.js",
   "type": "module",
