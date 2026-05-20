@@ -909,6 +909,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         auto_learn::start_cache_rejection_monitor(
             injected_text.clone(),
             cleanup_cache_key,
+            target_hwnd,
             db.inner().clone(),
             app.clone(),
         );
@@ -924,6 +925,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
             auto_learn::start_rejection_monitor(
                 injected_text.clone(),
                 applied_dict_ids,
+                target_hwnd,
                 db.inner().clone(),
                 app.clone(),
             );

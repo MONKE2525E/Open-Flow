@@ -1013,9 +1013,21 @@ fn apply_rejection(target: &RejectionTarget, db: &DbHandle, app: &AppHandle, pre
     }
 }
 
+#[cfg(windows)]
+fn is_target_window_focused(target_hwnd: usize) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    unsafe { GetForegroundWindow().0 as usize == target_hwnd }
+}
+
+#[cfg(not(windows))]
+fn is_target_window_focused(_target_hwnd: usize) -> bool {
+    true
+}
+
 fn run_rejection_monitor(
     injected_text: String,
     target: RejectionTarget,
+    target_hwnd: usize,
     db: DbHandle,
     app: AppHandle,
 ) {
@@ -1057,15 +1069,18 @@ fn run_rejection_monitor(
         let Some(baseline_text) = baseline else {
             // Text not found at capture time — either UIAutomation is unavailable,
             // or the user deleted the output before the 250ms baseline window.
-            // Distinguish: if the field is readable, the text is already gone → reject.
-            let field_readable = tokio::task::spawn_blocking(|| read_focused_text().is_some())
-                .await
-                .unwrap_or(false);
-            if field_readable {
+            // Only fire if the original window is still focused; a window switch
+            // in that 750ms window would cause a false positive otherwise.
+            let should_fire = tokio::task::spawn_blocking(move || {
+                read_focused_text().is_some() && is_target_window_focused(target_hwnd)
+            })
+            .await
+            .unwrap_or(false);
+            if should_fire {
                 log::info!("{prefix}: text absent at baseline, firing rejection");
                 apply_rejection(&target, &db, &app, prefix);
             } else {
-                log::debug!("{prefix}: anchor miss (UIAutomation unavailable)");
+                log::debug!("{prefix}: anchor miss or window switched, skipping");
             }
             return;
         };
@@ -1102,9 +1117,19 @@ fn run_rejection_monitor(
             };
 
             if rejected {
-                log::info!("{prefix}: deletion detected, firing rejection");
-                apply_rejection(&target, &db, &app, prefix);
-                return;
+                // Guard against false positives from window switches: only fire
+                // if the original injection window is still in the foreground.
+                let still_focused = tokio::task::spawn_blocking(move || {
+                    is_target_window_focused(target_hwnd)
+                })
+                .await
+                .unwrap_or(false);
+                if still_focused {
+                    log::info!("{prefix}: deletion detected, firing rejection");
+                    apply_rejection(&target, &db, &app, prefix);
+                    return;
+                }
+                log::debug!("{prefix}: rejection signal but window switched, ignoring");
             }
         }
         log::debug!("{prefix}: window expired, no rejection detected");
@@ -1114,6 +1139,7 @@ fn run_rejection_monitor(
 pub fn start_rejection_monitor(
     injected_text: String,
     applied_entry_ids: Vec<i64>,
+    target_hwnd: usize,
     db: DbHandle,
     app: AppHandle,
 ) {
@@ -1123,6 +1149,7 @@ pub fn start_rejection_monitor(
     run_rejection_monitor(
         injected_text,
         RejectionTarget::DictEntries { ids: applied_entry_ids },
+        target_hwnd,
         db,
         app,
     );
@@ -1131,12 +1158,14 @@ pub fn start_rejection_monitor(
 pub fn start_cache_rejection_monitor(
     injected_text: String,
     cache_key: String,
+    target_hwnd: usize,
     db: DbHandle,
     app: AppHandle,
 ) {
     run_rejection_monitor(
         injected_text,
         RejectionTarget::CacheKey { key: cache_key },
+        target_hwnd,
         db,
         app,
     );
