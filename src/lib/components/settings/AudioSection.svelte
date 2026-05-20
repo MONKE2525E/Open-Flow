@@ -178,8 +178,8 @@
   <Toggle checked={noiseReduction} onchange={handleNoiseReduction} />
 </div>
 
-<div class="setting-row cal-row">
-  <div>
+<div class="setting-row cal-row" class:calibrating={$isCalibrating}>
+  <div class="cal-copy">
     <div class="label">Auto calibration</div>
     <div class="desc">Speak naturally to automatically set the ideal microphone gain</div>
     {#if $speechDetected === false}
@@ -193,10 +193,11 @@
       </div>
     {/if}
   </div>
-  
+
   <div class="cal-control">
     {#if !$isCalibrating}
-      <button class="btn-ghost cal-btn" onclick={startCalibration}>
+      <button class="btn-ghost cal-btn" onclick={startCalibration}
+        out:fade={{ duration: 80 }}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
           <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
@@ -205,7 +206,8 @@
         <span>{audioCopy.autoCalibrateButton}</span>
       </button>
     {:else}
-      <div class="cal-active-panel">
+      <div class="cal-active-panel"
+        in:fly={{ x: 8, duration: 180, delay: 100, easing: expoOut }}>
         <span class="cal-timer">{$calibrationCountdown}s</span>
         <span class="cal-phrase-hint">{audioCopy.speakingHint}</span>
         <div class="cal-level-bar">
@@ -305,10 +307,40 @@
   /* Calibration row styles */
   .cal-row {
     align-items: center;
+    transition: border-top-color 90ms ease;
+  }
+  .cal-row.calibrating {
+    border-top-color: transparent;
+  }
+  .cal-copy {
+    flex: 1;
+    min-width: 0;
+    max-height: 80px;
+    overflow: hidden;
+    transition:
+      flex-basis 260ms cubic-bezier(0.16, 1, 0.3, 1),
+      max-height 260ms cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 90ms ease;
+  }
+  .cal-row.calibrating .cal-copy {
+    flex-basis: 0;
+    max-height: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .cal-control {
+    flex-shrink: 0;
+    width: 136px;
+    overflow: hidden;
+    transition: width 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .cal-row.calibrating .cal-control {
+    width: min(440px, 100%);
   }
   .cal-btn {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
     height: 32px;
     padding: 0 14px;
@@ -318,12 +350,19 @@
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.15s ease;
+    width: 100%;
     background: transparent;
+    transition:
+      background 0.15s ease,
+      color 0.15s ease,
+      transform 0.1s ease;
   }
   .cal-btn:hover {
     background: var(--accent-soft);
     color: var(--accent-ink);
+  }
+  .cal-btn:active {
+    transform: scale(0.985);
   }
   .cal-active-panel {
     display: flex;
@@ -334,6 +373,7 @@
     border-radius: var(--r-md);
     padding: 4px 12px;
     height: 32px;
+    width: 100%;
   }
   .cal-timer {
     font-family: var(--mono);
@@ -345,6 +385,10 @@
     font-size: 12px;
     color: var(--ink-soft);
     font-style: italic;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .cal-level-bar {
     width: 80px;
@@ -352,14 +396,14 @@
     background: var(--line-strong);
     border-radius: 999px;
     overflow: hidden;
+    flex-shrink: 0;
   }
   .cal-level-fill {
     height: 100%;
     background: var(--accent);
     border-radius: 999px;
-    transition: width 0.05s ease-out;
+    transition: width 80ms ease-out;
   }
-
   .cal-cancel-icon-btn {
     display: flex;
     align-items: center;
@@ -371,14 +415,23 @@
     background: transparent;
     border: none;
     cursor: pointer;
-    transition: all 0.15s ease;
     padding: 0;
     margin-left: 4px;
     flex-shrink: 0;
+    transition:
+      color 0.15s ease,
+      background 0.15s ease;
   }
   .cal-cancel-icon-btn:hover {
     color: var(--ink-strong);
     background: var(--paper-3);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cal-row,
+    .cal-copy,
+    .cal-control,
+    .cal-level-fill,
+    .cal-btn { transition: none !important; }
   }
 
   .gain-row { flex-direction: column; align-items: stretch; gap: 0; }
