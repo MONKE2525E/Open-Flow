@@ -1,7 +1,9 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { appearanceMode, setupComplete } from '../stores';
+  import { animateWidth } from '../motion';
+  import { getSetupCalibrationCopy } from '../calibrationCopy';
   import { saveSetting, type AppearanceMode, type CleanupIntensity, type ToneId } from '../settings';
   import {
     getTranscriptionLanguageLabel,
@@ -37,7 +39,22 @@
 
   // ── Step state ──────────────────────────────────────────────────────────────
   let step = 0;
-  const TOTAL_STEPS = 7; // steps 1–7 show progress dots (0 = intro)
+  const TOTAL_STEPS = 7; // steps 1–7 show progress dots (0 = intro, 8 = done)
+
+  // ── Microphone Calibration ──────────────────────────────────────────────────
+  import {
+    isCalibrating,
+    calibrationCountdown,
+    calibratedGain,
+    micLevel,
+    startCalibration,
+    cancelCalibration,
+    speechDetected
+  } from '../calibration';
+
+  onDestroy(() => {
+    cancelCalibration();
+  });
 
   let direction: 'forward' | 'back' = 'forward';
   let animating = false;
@@ -47,6 +64,8 @@
   let quickPrefs = { cleanup: true, noise: true, caps: true, autoLearn: false, autostart: false, muteAudio: false, apiFallback: false };
   let quickSettingsReady = false;
   let selectedLanguage = 'en' as TranscriptionLanguageCode;
+  let setupCalibrationCopy = getSetupCalibrationCopy(selectedLanguage);
+  $: setupCalibrationCopy = getSetupCalibrationCopy(selectedLanguage);
   const onboardingLanguageSet = new Set<TranscriptionLanguageCode>(['en', 'es', 'fr', 'de', 'pt', 'zh']);
   const onboardingLanguages = transcriptionLanguages.filter((option) => onboardingLanguageSet.has(option.code));
 
@@ -134,7 +153,7 @@
   // ── Navigation ────────────────────────────────────────────────────────────────
   async function goNext() {
     if (animating) return;
-    if (step === 7) { await finish(); return; }
+    if (step === 8) { await finish(); return; }
     direction = 'forward';
     animating = true;
     visible = false;
@@ -148,7 +167,7 @@
 
   async function goBack() {
     if (animating || step === 0) return;
-    if (step === 6 || step === 7) quickSettingsReady = false;
+    if (step === 6 || step === 8) quickSettingsReady = false;
     direction = 'back';
     animating = true;
     visible = false;
@@ -221,7 +240,7 @@
 
   // ── Done animation ────────────────────────────────────────────────────────────
   let checkAnimating = false;
-  $: if (step === 7) { setTimeout(() => { checkAnimating = true; }, 200); }
+  $: if (step === 8) { setTimeout(() => { checkAnimating = true; }, 200); }
 </script>
 
 <!-- Full-screen overlay -->
@@ -243,8 +262,8 @@
     </div>
   </div>
 
-  <!-- Progress dots (steps 1–6) -->
-  {#if step > 0 && step < 7}
+  <!-- Progress dots (steps 1–7) -->
+  {#if step > 0 && step < 8}
     <div class="progress">
       {#each Array(TOTAL_STEPS) as _, i}
         <button
@@ -510,6 +529,89 @@
         </div>
       </div>
 
+    <!-- ── Step 6: Microphone Calibration ────────────────── -->
+    {:else if step === 7}
+      <div class="step">
+        <div class="step-header">
+          <h2>{setupCalibrationCopy.title}</h2>
+          <p class="step-sub">{setupCalibrationCopy.subtitle}</p>
+        </div>
+
+        <div class="calibration-box">
+          {#if !$isCalibrating && $calibratedGain === null}
+            <div class="cal-start-state">
+              <div class="cal-mic-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" x2="12" y1="19" y2="22"/>
+                </svg>
+              </div>
+              <p class="cal-instruction">{setupCalibrationCopy.startInstruction}</p>
+              <button class="btn-primary btn-lg" onclick={startCalibration}>{setupCalibrationCopy.startButton}</button>
+            </div>
+          {:else if $isCalibrating}
+            <div class="cal-active-state">
+              <div class="cal-timer-ring">
+                <span class="cal-countdown">{$calibrationCountdown}s</span>
+              </div>
+              <p class="cal-prompt">{setupCalibrationCopy.readPrompt}</p>
+              <blockquote class="cal-phrase">"{setupCalibrationCopy.readPhrase}"</blockquote>
+              
+              <!-- Live Level Visualizer -->
+              <div class="cal-meter-container">
+                <div class="cal-meter-track">
+                  <div class="cal-meter-fill" style="width: {($micLevel * 100).toFixed(0)}%"></div>
+                </div>
+              </div>
+              <button class="btn-ghost cal-cancel-btn" onclick={cancelCalibration}>
+                {setupCalibrationCopy.cancelButton}
+              </button>
+            </div>
+          {:else if $calibratedGain !== null}
+            <div class="cal-result-state">
+              {#if $speechDetected === false}
+                <div class="cal-warning-icon">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" x2="12" y1="8" y2="12"/>
+                    <line x1="12" x2="12" y1="16" y2="16"/>
+                  </svg>
+                </div>
+                <h3 class="cal-result-title">{setupCalibrationCopy.silenceTitle}</h3>
+                <p class="cal-result-desc">
+                  {setupCalibrationCopy.silenceDescription} <strong>{$calibratedGain.toFixed(1)}×</strong>.
+                </p>
+              {:else}
+                <div class="cal-success-icon">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                  </svg>
+                </div>
+                <h3 class="cal-result-title">{setupCalibrationCopy.successTitle}</h3>
+                <p class="cal-result-desc">
+                  {setupCalibrationCopy.successDescription} <strong>{$calibratedGain.toFixed(1)}×</strong>.
+                  {setupCalibrationCopy.successTail}
+                </p>
+              {/if}
+              
+              <div class="cal-actions">
+                <button class="btn-ghost" onclick={startCalibration}>{setupCalibrationCopy.recalibrateButton}</button>
+              </div>
+            </div>
+          {/if}
+        </div>
+
+        <div class="step-footer">
+          <button class="btn-skip" onclick={skip} disabled={$isCalibrating}>{setupCalibrationCopy.skipButton}</button>
+          <button class="btn-primary" onclick={goNext} disabled={$isCalibrating}>
+            {$calibratedGain !== null ? setupCalibrationCopy.continueButton : setupCalibrationCopy.skipCalibrationButton}
+          </button>
+        </div>
+      </div>
+
+    <!-- ── Step 6: Quick Settings ──────────────────────────── -->
     {:else if step === 6}
       <div class="step qs-step">
         <div class="step-header">
@@ -658,8 +760,8 @@
         </div>
       </div>
 
-    <!-- ── Step 7: Done ───────────────────────────────────── -->
-    {:else if step === 7}
+    <!-- ── Step 8: Done ───────────────────────────────────── -->
+    {:else if step === 8}
       <div class="step done-step">
         <div class="done-check-wrap">
           <svg class="done-check" class:animate={checkAnimating} width="64" height="64" viewBox="0 0 64 64" fill="none">
@@ -717,6 +819,178 @@
 </div>
 
 <style>
+  /* ── Calibration Step ──────────────────────────────────────────────── */
+  .calibration-box {
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 32px 24px;
+    min-height: 220px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    width: 100%;
+  }
+
+  .cal-start-state, .cal-active-state, .cal-result-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+  }
+
+  .cal-mic-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+  }
+
+  .cal-instruction {
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  .cal-timer-ring {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    border: 3px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: pulseCal 1.5s infinite;
+  }
+
+  @keyframes pulseCal {
+    0%, 100% { border-color: var(--accent); transform: scale(1); }
+    50% { border-color: color-mix(in srgb, var(--accent) 50%, transparent); transform: scale(1.03); }
+  }
+
+  .cal-countdown {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent-ink);
+    font-family: var(--mono);
+  }
+
+  .cal-prompt {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    margin: 0;
+  }
+
+  .cal-phrase {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+    font-style: italic;
+    color: var(--ink-strong);
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  .cal-meter-container {
+    width: 100%;
+    max-width: 280px;
+    margin-top: 8px;
+  }
+
+  .cal-meter-track {
+    width: 100%;
+    height: 6px;
+    background: var(--line-strong);
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .cal-meter-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 70%, white 30%) 100%);
+    border-radius: 999px;
+    transition: width 0.05s ease-out;
+  }
+
+  .cal-success-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+  }
+
+  .cal-warning-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--warning-bg);
+    color: var(--warning);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+  }
+
+  .cal-result-title {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--ink-strong);
+    margin: 0;
+  }
+
+  .cal-result-desc {
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.5;
+    margin: 0;
+    max-width: 360px;
+  }
+
+  .cal-result-desc strong {
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 13.5px;
+  }
+
+  .cal-actions {
+    margin-top: 8px;
+  }
+
+  .cal-cancel-btn {
+    margin-top: 4px;
+    padding: 6px 16px;
+    border-radius: var(--r-md);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    transition: all 0.15s ease;
+  }
+  .cal-cancel-btn:hover {
+    color: var(--ink-strong);
+    background: var(--paper-3);
+  }
+
   /* ── Overlay ───────────────────────────────────────────────────────── */
   .setup-overlay {
     position: fixed;
@@ -1666,3 +1940,5 @@
     line-height: 1.4;
   }
 </style>
+
+

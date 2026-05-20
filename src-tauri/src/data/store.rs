@@ -1,3 +1,4 @@
+
 /// API key names in the store — never expose values to the frontend after write.
 pub const KEY_GROQ: &str = "api_key_groq";
 pub const KEY_OPENAI: &str = "api_key_openai";
@@ -179,5 +180,54 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             .get(CONTEXTUAL_CAPS)
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
+    }
+}
+
+pub const DEFAULT_MIC_GAIN: f32 = 3.5;
+pub const MIN_MIC_GAIN: f32 = 1.0;
+pub const MAX_MIC_GAIN: f32 = 8.0;
+
+pub struct AudioConfig {
+    pub device: Option<String>,
+    pub noise_reduction: bool,
+    pub mic_gain: f32,
+    pub mute_audio: bool,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            device: None,
+            noise_reduction: true,
+            mic_gain: DEFAULT_MIC_GAIN,
+            mute_audio: false,
+        }
+    }
+}
+
+pub fn load_audio_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> AudioConfig {
+    let device = store
+        .get(MICROPHONE_DEVICE)
+        .and_then(|v| v.as_str().map(String::from));
+    let noise_reduction = store
+        .get(NOISE_REDUCTION)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let mic_gain = store
+        .get(MIC_GAIN)
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .unwrap_or(DEFAULT_MIC_GAIN)
+        .clamp(MIN_MIC_GAIN, MAX_MIC_GAIN);
+    let mute_audio = store
+        .get(MUTE_AUDIO)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    AudioConfig {
+        device,
+        noise_reduction,
+        mic_gain,
+        mute_audio,
     }
 }

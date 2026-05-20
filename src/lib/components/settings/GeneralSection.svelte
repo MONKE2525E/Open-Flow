@@ -13,9 +13,6 @@
     type TranscriptionLanguageCode,
   } from '../../transcriptionLanguages';
 
-  let microphones = $state<string[]>([]);
-  let selectedMic = $state('');
-  let micDropdownOpen = $state(false);
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   let languageDropdownOpen = $state(false);
   let languageTouched = false;
@@ -84,10 +81,8 @@
 
   async function loadSettings() {
     const results = await Promise.allSettled([
-      invoke<string[]>('get_microphones'),
       invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
       invoke<boolean | null>('get_setting', { key: 'autostart_enabled' }),
-      invoke<string | null>('get_setting', { key: 'microphone_device' }),
       invoke<string[] | null>('get_setting', { key: 'hotkey' }),
       invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
       invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
@@ -98,22 +93,20 @@
     const val = <T>(i: number, fallback: T): T =>
       results[i].status === 'fulfilled' ? (results[i] as PromiseFulfilledResult<T>).value ?? fallback : fallback;
 
-    microphones = val<string[]>(0, []);
-    muteAudio = val<boolean | null>(1, null) ?? false;
-    autostart = val<boolean | null>(2, null) ?? false;
-    selectedMic = val<string | null>(3, null) ?? '';
-    cleanup = val<boolean | null>(7, null) ?? true;
-    contextualCaps = val<boolean | null>(8, null) ?? true;
+    muteAudio = val<boolean | null>(0, null) ?? false;
+    autostart = val<boolean | null>(1, null) ?? false;
+    cleanup = val<boolean | null>(5, null) ?? true;
+    contextualCaps = val<boolean | null>(6, null) ?? true;
 
-    const hk = val<string[] | null>(4, null);
+    const hk = val<string[] | null>(2, null);
     if (hk && hk.length === 2) hotkey = hk;
 
-    const appearance = val<AppearanceMode | null>(5, null);
+    const appearance = val<AppearanceMode | null>(3, null);
     if (appearance === 'system' || appearance === 'light' || appearance === 'dark') {
       appearanceMode.set(appearance);
     }
 
-    const language = val<TranscriptionLanguageCode | null>(6, null);
+    const language = val<TranscriptionLanguageCode | null>(4, null);
     if (!languageTouched && language && transcriptionLanguages.some((option) => option.code === language)) {
       selectedLanguage = language;
     }
@@ -123,29 +116,9 @@
     });
   }
 
-  async function saveMic(name: string) {
-    selectedMic = name;
-    micDropdownOpen = false;
-    try {
-      await saveSetting('microphone_device', name || null);
-    } catch (err) {
-      console.error('saveMic failed:', err);
-    }
-  }
-
-  function closeMicDropdown(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest('.mic-dropdown')) micDropdownOpen = false;
-  }
-
   function closeLanguageDropdown(e: MouseEvent) {
     if (!(e.target as HTMLElement).closest('.language-dropdown')) languageDropdownOpen = false;
   }
-
-  $effect(() => {
-    if (micDropdownOpen) {
-      tick().then(() => window.addEventListener('click', closeMicDropdown, { once: true }));
-    }
-  });
 
   $effect(() => {
     if (languageDropdownOpen) {
@@ -226,10 +199,6 @@
       Space: 'Space',
     };
     return labels[code] ?? code.replace('Left', '').replace('Right', '').replace('Key', '').replace('Digit', '');
-  }
-
-  function micLabel(name: string) {
-    return name;
   }
 
   function startRecordingHotkey(e: MouseEvent | KeyboardEvent) {
@@ -337,41 +306,6 @@
   </button>
 </div>
 <div class="setting-row">
-  <div><div class="label">Microphone</div><div class="desc">Input device for capture</div></div>
-  <div class="mic-dropdown">
-    <button
-      class="btn-ghost mic-btn"
-      use:animateWidth={{ text: selectedMic ? micLabel(selectedMic) : 'Default Device', max: 180 }}
-      onclick={() => (micDropdownOpen = !micDropdownOpen)}
-    >
-      <span class="mic-btn-label">{selectedMic ? micLabel(selectedMic) : 'Default Device'}</span>
-      <svg class:open={micDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="m6 9 6 6 6-6"/>
-      </svg>
-    </button>
-    {#if micDropdownOpen}
-      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div
-        class="mic-menu scroll-styled"
-        role="presentation"
-        onclick={(e) => e.stopPropagation()}
-        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
-        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
-      >
-        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>Default Device</button>
-        {#each microphones as m}
-          <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>
-            {micLabel(m)}
-          </button>
-        {/each}
-        {#if microphones.length === 0}
-          <div class="mic-empty">No devices found</div>
-        {/if}
-      </div>
-    {/if}
-  </div>
-</div>
-<div class="setting-row">
   <div><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect</div></div>
   <div class="language-dropdown">
     <button
@@ -387,7 +321,7 @@
     </button>
     {#if languageDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="language-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
+      <div class="language-menu scroll-styled scroll-thumb-elev" role="presentation" onclick={(e) => e.stopPropagation()}>
         {#each transcriptionLanguages as language}
           <button
             class="language-item"
@@ -461,31 +395,7 @@
   .keybind-btn.success { background: color-mix(in srgb, var(--accent) 82%, white 18%); color: var(--on-accent); transform: scale(1.03); }
   .keybind-btn.error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); animation: none; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
-  .mic-dropdown, .language-dropdown { position: relative; flex-shrink: 0; }
-  .mic-btn, .language-btn { display: flex; align-items: center; gap: 6px; max-width: 180px; }
-  .mic-btn {
-    max-width: 180px;
-    display: grid;
-    grid-template-columns: minmax(0, auto) 10px;
-    column-gap: 8px;
-    justify-content: start;
-    align-items: center;
-    transition: background 0.12s, color 0.12s;
-  }
-  .mic-btn-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-    text-align: left;
-  }
-  .mic-btn svg {
-    transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
-    transform-origin: 50% 50%;
-    flex-shrink: 0;
-  }
-  .mic-btn svg.open { transform: rotate(180deg); }
+  .language-dropdown { position: relative; flex-shrink: 0; }
   .language-btn { max-width: 210px; }
   .language-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
   .language-code {
@@ -494,7 +404,7 @@
     color: var(--ink-faint);
     text-transform: uppercase;
   }
-  .mic-menu, .language-menu {
+  .language-menu {
     position: absolute;
     right: 0;
     top: calc(100% + 4px);
@@ -502,15 +412,16 @@
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
     box-shadow: var(--shadow-popover);
-    min-width: 200px;
+    min-width: 220px;
     max-width: 280px;
-    max-height: 200px;
+    max-height: 260px;
     overflow-y: auto;
     z-index: 10;
   }
-  .language-menu { min-width: 220px; max-height: 260px; }
-  .mic-item, .language-item {
-    display: block;
+  .language-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
     width: 100%;
     text-align: left;
     padding: 8px 12px;
@@ -525,17 +436,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .language-item { display: flex; justify-content: space-between; gap: 12px; }
   .language-item span:last-child {
     color: var(--ink-faint);
     font-family: var(--mono);
     font-size: 10.5px;
     text-transform: uppercase;
   }
-  .mic-item:last-child, .language-item:last-child { border-bottom: none; }
-  .mic-item:hover, .language-item:hover { background: var(--paper); }
-  .mic-item.active, .language-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
-  .mic-empty { padding: 10px 12px; font-size: 12px; color: var(--ink-mute); font-style: italic; }
+  .language-item:last-child { border-bottom: none; }
+  .language-item:hover { background: var(--paper); }
+  .language-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
   .appearance-segment {
     position: relative;
     display: inline-flex;

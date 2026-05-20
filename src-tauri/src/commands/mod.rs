@@ -286,6 +286,42 @@ pub async fn start_input_recording(
 }
 
 #[tauri::command]
+pub async fn start_calibration_monitoring(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    if lock_state(&state)?.session.is_some() {
+        return Err("Already recording".to_string());
+    }
+
+    pipeline::start_recording_session_ex(
+        &app,
+        &state,
+        "calibration",
+        false,
+        Some(1.0),
+        false,
+        true,
+    )
+}
+
+#[tauri::command]
+pub async fn stop_calibration_monitoring(
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    let session = {
+        let mut st = lock_state(&state)?;
+        st.session.take()
+    };
+    if let Some(s) = session {
+        tauri::async_runtime::spawn_blocking(move || {
+            let _ = s.stop();
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn stop_and_transcribe_input(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
