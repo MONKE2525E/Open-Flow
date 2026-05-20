@@ -99,7 +99,7 @@
 
 <h2 class="settings-h">
   Microphone
-  <span class="sr-only">Advanced</span>
+  <span class="sr-only">Microphone</span>
 </h2>
 
 <div class="setting-row">

@@ -90,9 +90,6 @@
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons[it.icon]}</svg>
               <span>{it.label}</span>
-              {#if it.id === 'advanced'}
-                <span class="sr-only">Advanced</span>
-              {/if}
             </div>
           {/each}
         {/each}
@@ -189,17 +186,6 @@
   .settings-nav-item:hover { color: var(--ink-strong); }
   .settings-nav-item.active { color: var(--ink); font-weight: 500; background: var(--bg-elev); }
   .settings-nav-item.active :global(svg) { opacity: 1; }
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
 
   .settings-foot {
     padding: 8px 10px;
