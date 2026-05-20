@@ -4,7 +4,7 @@
 - Github Repo: https://github.com/MONKE2525E/Open-Flow
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
 - docs/ROADMAP.md keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
-- currently working towards OpenFlow 0.9.0.
+- currently working towards OpenFlow 0.10.0.
 - Always add yourself as a co-author  in all commits you make e.g @Claude, @Codex, etc
 
 
