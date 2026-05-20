@@ -314,7 +314,9 @@ pub async fn stop_calibration_monitoring(
         st.session.take()
     };
     if let Some(s) = session {
-        let _ = s.stop();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _ = s.stop();
+        });
     }
     Ok(())
 }
