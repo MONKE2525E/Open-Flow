@@ -172,15 +172,15 @@ fn format_dictionary_entry(entry: &db::DictionaryEntry) -> String {
     }
 }
 
-pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> String {
-    let mut replaceable: Vec<(&str, &str)> = entries
+pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> (String, Vec<i64>) {
+    let mut replaceable: Vec<(i64, &str, &str)> = entries
         .iter()
-        .filter_map(|e| e.mistake.as_deref().map(|m| (m, e.term.as_str())))
+        .filter_map(|e| e.mistake.as_deref().map(|m| (e.id, m, e.term.as_str())))
         .collect();
-    replaceable.sort_by_key(|(mistake, _)| std::cmp::Reverse(mistake.len()));
+    replaceable.sort_by_key(|(_, mistake, _)| std::cmp::Reverse(mistake.len()));
 
     if replaceable.is_empty() {
-        return text.to_string();
+        return (text.to_string(), Vec::new());
     }
 
     fn is_word_char(ch: char) -> bool {
@@ -200,7 +200,8 @@ pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> 
     }
 
     let mut result = text.to_string();
-    for (mistake, term) in &replaceable {
+    let mut applied_ids: Vec<i64> = Vec::new();
+    for (id, mistake, term) in &replaceable {
         if mistake.is_empty() {
             continue;
         }
@@ -223,7 +224,7 @@ pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> 
                 i += 1;
             }
         } else {
-            for (start, matched) in result.match_indices(mistake) {
+            for (start, matched) in result.match_indices(*mistake) {
                 let end = start + matched.len();
                 if is_boundary(&result, start, end) {
                     positions.push(start);
@@ -233,11 +234,12 @@ pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> 
         if positions.is_empty() {
             continue;
         }
+        applied_ids.push(*id);
         for pos in positions.into_iter().rev() {
             result.replace_range(pos..pos + mistake.len(), term);
         }
     }
-    result
+    (result, applied_ids)
 }
 
 #[cfg(test)]
@@ -300,14 +302,16 @@ mod tests {
     #[test]
     fn substitutions_respect_word_boundaries() {
         let entries = vec![entry(1, "Kubernetes", Some("kube"))];
-        let out = apply_substitutions_from("kube kubelet", &entries);
+        let (out, applied) = apply_substitutions_from("kube kubelet", &entries);
         assert_eq!(out, "Kubernetes kubelet");
+        assert_eq!(applied, vec![1]);
     }
 
     #[test]
     fn substitutions_support_non_ascii_terms() {
         let entries = vec![entry(1, "cliche", Some("cliché"))];
-        let out = apply_substitutions_from("Use cliché in this line.", &entries);
+        let (out, applied) = apply_substitutions_from("Use cliché in this line.", &entries);
         assert_eq!(out, "Use cliche in this line.");
+        assert_eq!(applied, vec![1]);
     }
 }
