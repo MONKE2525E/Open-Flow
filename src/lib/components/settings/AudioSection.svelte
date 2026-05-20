@@ -6,6 +6,8 @@
   import Toggle from '../Toggle.svelte';
   import { saveSetting } from '../../settings';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx, animateWidth } from '../../motion';
+  import { getAudioCalibrationCopy } from '../../calibrationCopy';
+  import type { TranscriptionLanguageCode } from '../../transcriptionLanguages';
 
   import {
     isCalibrating,
@@ -21,7 +23,9 @@
   let micGain = $state(3.5);
   let microphones = $state<string[]>([]);
   let selectedMic = $state('');
+  let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   let micDropdownOpen = $state(false);
+  const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
 
   $effect(() => {
     if ($calibratedGain !== null) {
@@ -31,11 +35,12 @@
 
   async function loadSettings() {
     try {
-      const [nr, savedGain, mics, curMic] = await Promise.all([
+      const [nr, savedGain, mics, curMic, language] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
         invoke<number | null>('get_setting', { key: 'mic_gain' }),
         invoke<string[]>('get_microphones'),
         invoke<string | null>('get_setting', { key: 'microphone_device' }),
+        invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       ]);
       noiseReduction = nr ?? true;
       if (savedGain !== null && savedGain !== undefined) {
@@ -43,6 +48,7 @@
       }
       microphones = mics ?? [];
       selectedMic = curMic ?? '';
+      if (language) selectedLanguage = language;
     } catch (err) {
       console.error('AudioSection load failed:', err);
     }
@@ -95,8 +101,8 @@
 
 <div class="setting-row">
   <div>
-    <div class="label">Input device</div>
-    <div class="desc">Choose which microphone Open Flow should record from</div>
+    <div class="label">{audioCopy.inputDeviceLabel}</div>
+    <div class="desc">{audioCopy.inputDeviceDescription}</div>
   </div>
   <div class="mic-dropdown">
     <button
@@ -112,7 +118,7 @@
     {#if micDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
-        class="mic-menu scroll-styled"
+        class="mic-menu scroll-styled scroll-thumb-elev"
         role="presentation"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
@@ -180,7 +186,7 @@
           <line x1="12" x2="12" y1="8" y2="12"/>
           <line x1="12" x2="12" y1="16" y2="16"/>
         </svg>
-        No speech was detected during calibration. Please check your microphone input.
+        {audioCopy.noSpeechDetected}
       </div>
     {/if}
   </div>
@@ -193,12 +199,12 @@
           <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
           <line x1="12" x2="12" y1="19" y2="22"/>
         </svg>
-        <span>Auto Calibrate</span>
+        <span>{audioCopy.autoCalibrateButton}</span>
       </button>
     {:else}
       <div class="cal-active-panel">
         <span class="cal-timer">{$calibrationCountdown}s</span>
-        <span class="cal-phrase-hint">Speak: "Open Flow is fast"</span>
+        <span class="cal-phrase-hint">{audioCopy.speakingHint}</span>
         <div class="cal-level-bar">
           <div class="cal-level-fill" style="width: {($micLevel * 100).toFixed(0)}%"></div>
         </div>
@@ -251,9 +257,6 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-  }
-  .mic-menu::-webkit-scrollbar-thumb {
-    border: 3px solid var(--bg-elev);
   }
   .mic-item {
     width: 100%;

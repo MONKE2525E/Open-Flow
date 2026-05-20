@@ -16,17 +16,22 @@ export const calibratedGain = writable<number | null>(null);
 export const speechDetected = writable<boolean | null>(null);
 
 export const SPEECH_DETECTION_THRESHOLD = 0.07;
+const CALIBRATION_DURATION_MS = 3000;
+const COUNTDOWN_TICK_MS = 100;
+const COUNTDOWN_SECONDS = 3;
 
 let calibrationMaxLevel = MIN_CALIBRATION_LEVEL;
-let calibrationTimer: ReturnType<typeof setInterval> | null = null;
+let calibrationTimer: ReturnType<typeof setTimeout> | null = null;
 let calibrationUnlisten: (() => void) | null = null;
 let currentCalibrationSession = '';
+let calibrationDeadlineMs: number | null = null;
 
 async function cleanupCalibrationResources() {
   if (calibrationTimer) {
-    clearInterval(calibrationTimer);
+    clearTimeout(calibrationTimer);
     calibrationTimer = null;
   }
+  calibrationDeadlineMs = null;
   if (calibrationUnlisten) {
     calibrationUnlisten();
     calibrationUnlisten = null;
@@ -43,7 +48,7 @@ export async function startCalibration() {
 
   isCalibrating.set(true);
   calibrationMaxLevel = MIN_CALIBRATION_LEVEL;
-  calibrationCountdown.set(3);
+  calibrationCountdown.set(COUNTDOWN_SECONDS);
   calibratedGain.set(null);
   speechDetected.set(null);
   micLevel.set(0);
@@ -51,14 +56,21 @@ export async function startCalibration() {
   const sessionId = crypto.randomUUID();
   currentCalibrationSession = sessionId;
 
-  const unlisten = await listen<number>('audio-level', (ev) => {
-    if (sessionId !== currentCalibrationSession || !get(isCalibrating)) return;
-    const level = ev.payload ?? 0;
-    micLevel.set(level);
-    if (level > calibrationMaxLevel) {
-      calibrationMaxLevel = level;
-    }
-  });
+  let unlisten: () => void;
+  try {
+    unlisten = await listen<number>('audio-level', (ev) => {
+      if (sessionId !== currentCalibrationSession || !get(isCalibrating)) return;
+      const level = ev.payload ?? 0;
+      micLevel.set(level);
+      if (level > calibrationMaxLevel) {
+        calibrationMaxLevel = level;
+      }
+    });
+  } catch (e) {
+    console.error('Failed to subscribe to audio-level events:', e);
+    void cancelCalibration();
+    return;
+  }
 
   if (sessionId === currentCalibrationSession && get(isCalibrating)) {
     calibrationUnlisten = unlisten;
@@ -70,19 +82,27 @@ export async function startCalibration() {
     await invoke('start_calibration_monitoring');
   } catch (e) {
     console.error('Failed to start calibration monitoring:', e);
-    cancelCalibration();
+    void cancelCalibration();
     return;
   }
 
-  calibrationTimer = setInterval(() => {
-    calibrationCountdown.update((c) => {
-      if (c <= 1) {
-        stopCalibration();
-        return 0;
-      }
-      return c - 1;
-    });
-  }, 1000);
+  calibrationDeadlineMs = performance.now() + CALIBRATION_DURATION_MS;
+  const tickCountdown = () => {
+    if (!get(isCalibrating) || currentCalibrationSession !== sessionId || calibrationDeadlineMs === null) {
+      return;
+    }
+
+    const remainingMs = calibrationDeadlineMs - performance.now();
+    if (remainingMs <= 0) {
+      calibrationCountdown.set(0);
+      void stopCalibration();
+      return;
+    }
+
+    calibrationCountdown.set(Math.max(1, Math.ceil(remainingMs / 1000)));
+    calibrationTimer = setTimeout(tickCountdown, COUNTDOWN_TICK_MS);
+  };
+  tickCountdown();
 }
 
 export async function stopCalibration() {

@@ -3,6 +3,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { appearanceMode, setupComplete } from '../stores';
   import { animateWidth } from '../motion';
+  import { getSetupCalibrationCopy } from '../calibrationCopy';
   import { saveSetting, type AppearanceMode, type CleanupIntensity, type ToneId } from '../settings';
   import {
     getTranscriptionLanguageLabel,
@@ -63,6 +64,8 @@
   let quickPrefs = { cleanup: true, noise: true, caps: true, autoLearn: false, autostart: false, muteAudio: false, apiFallback: false };
   let quickSettingsReady = false;
   let selectedLanguage = 'en' as TranscriptionLanguageCode;
+  let setupCalibrationCopy = getSetupCalibrationCopy(selectedLanguage);
+  $: setupCalibrationCopy = getSetupCalibrationCopy(selectedLanguage);
   const onboardingLanguageSet = new Set<TranscriptionLanguageCode>(['en', 'es', 'fr', 'de', 'pt', 'zh']);
   const onboardingLanguages = transcriptionLanguages.filter((option) => onboardingLanguageSet.has(option.code));
 
@@ -530,8 +533,8 @@
     {:else if step === 6}
       <div class="step">
         <div class="step-header">
-          <h2>Optimize your microphone</h2>
-          <p class="step-sub">We will adjust the gain so the AI can transcribe your voice clearly.</p>
+          <h2>{setupCalibrationCopy.title}</h2>
+          <p class="step-sub">{setupCalibrationCopy.subtitle}</p>
         </div>
 
         <div class="calibration-box">
@@ -544,16 +547,16 @@
                   <line x1="12" x2="12" y1="19" y2="22"/>
                 </svg>
               </div>
-              <p class="cal-instruction">Click below, then speak naturally for 3 seconds.</p>
-              <button class="btn-primary btn-lg" onclick={startCalibration}>Start Calibration</button>
+              <p class="cal-instruction">{setupCalibrationCopy.startInstruction}</p>
+              <button class="btn-primary btn-lg" onclick={startCalibration}>{setupCalibrationCopy.startButton}</button>
             </div>
           {:else if $isCalibrating}
             <div class="cal-active-state">
               <div class="cal-timer-ring">
                 <span class="cal-countdown">{$calibrationCountdown}s</span>
               </div>
-              <p class="cal-prompt">Read this phrase aloud:</p>
-              <blockquote class="cal-phrase">"Open Flow makes dictation easy."</blockquote>
+              <p class="cal-prompt">{setupCalibrationCopy.readPrompt}</p>
+              <blockquote class="cal-phrase">"{setupCalibrationCopy.readPhrase}"</blockquote>
               
               <!-- Live Level Visualizer -->
               <div class="cal-meter-container">
@@ -562,7 +565,7 @@
                 </div>
               </div>
               <button class="btn-ghost cal-cancel-btn" onclick={cancelCalibration}>
-                Cancel
+                {setupCalibrationCopy.cancelButton}
               </button>
             </div>
           {:else if $calibratedGain !== null}
@@ -575,9 +578,9 @@
                     <line x1="12" x2="12" y1="16" y2="16"/>
                   </svg>
                 </div>
-                <h3 class="cal-result-title">Silence Detected</h3>
+                <h3 class="cal-result-title">{setupCalibrationCopy.silenceTitle}</h3>
                 <p class="cal-result-desc">
-                  No speech was detected. Make sure your microphone is selected, unmuted, and that you spoke during the countdown. We've defaulted the gain to <strong>{$calibratedGain.toFixed(1)}×</strong>.
+                  {setupCalibrationCopy.silenceDescription} <strong>{$calibratedGain.toFixed(1)}×</strong>.
                 </p>
               {:else}
                 <div class="cal-success-icon">
@@ -586,24 +589,24 @@
                     <polyline points="22 4 12 14.01 9 11.01"/>
                   </svg>
                 </div>
-                <h3 class="cal-result-title">Calibration Complete!</h3>
+                <h3 class="cal-result-title">{setupCalibrationCopy.successTitle}</h3>
                 <p class="cal-result-desc">
-                  We've adjusted your microphone gain to <strong>{$calibratedGain.toFixed(1)}×</strong>.
-                  Your voice levels are now perfectly optimized for the voice model.
+                  {setupCalibrationCopy.successDescription} <strong>{$calibratedGain.toFixed(1)}×</strong>.
+                  {setupCalibrationCopy.successTail}
                 </p>
               {/if}
               
               <div class="cal-actions">
-                <button class="btn-ghost" onclick={startCalibration}>Recalibrate</button>
+                <button class="btn-ghost" onclick={startCalibration}>{setupCalibrationCopy.recalibrateButton}</button>
               </div>
             </div>
           {/if}
         </div>
 
         <div class="step-footer">
-          <button class="btn-skip" onclick={skip} disabled={$isCalibrating}>Skip calibration</button>
+          <button class="btn-skip" onclick={skip} disabled={$isCalibrating}>{setupCalibrationCopy.skipButton}</button>
           <button class="btn-primary" onclick={goNext} disabled={$isCalibrating}>
-            {$calibratedGain !== null ? 'Continue' : 'Skip Calibration'}
+            {$calibratedGain !== null ? setupCalibrationCopy.continueButton : setupCalibrationCopy.skipCalibrationButton}
           </button>
         </div>
       </div>
@@ -1937,3 +1940,5 @@
     line-height: 1.4;
   }
 </style>
+
+

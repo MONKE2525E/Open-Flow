@@ -47,10 +47,16 @@ body {
    Override the thumb border-color locally to match the element's own background. */
 .scroll-styled {
   scrollbar-color: transparent transparent;
+  --scroll-thumb-border: transparent;
 }
 
 .scroll-styled::-webkit-scrollbar-thumb {
   background: transparent;
+  border: 3px solid var(--scroll-thumb-border);
+}
+
+.scroll-thumb-elev {
+  --scroll-thumb-border: var(--bg-elev);
 }
 
 .scroll-styled:hover {

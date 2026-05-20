@@ -128,7 +128,7 @@
     </button>
     {#if historyDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="mic-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
+      <div class="mic-menu scroll-styled scroll-thumb-elev" role="presentation" onclick={(e) => e.stopPropagation()}>
         {#each historyOptions as opt}
           <button class="mic-item" class:active={historyRetention === opt} onclick={() => saveHistoryRetention(opt)}>
             {opt}
@@ -210,9 +210,6 @@
     max-height: 200px;
     overflow-y: auto;
     z-index: 10;
-  }
-  .mic-menu::-webkit-scrollbar-thumb {
-    border: 3px solid var(--bg-elev);
   }
   .mic-item {
     display: block;

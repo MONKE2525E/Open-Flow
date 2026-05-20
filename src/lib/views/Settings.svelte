@@ -101,7 +101,7 @@
       <div class="settings-body">
         {#key section}
           <div
-            class="panel scroll-styled"
+            class="panel scroll-styled scroll-thumb-elev"
             in:fly={{ y: animDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.page + 120), easing: expoOut }}
             out:fly={{ y: -animDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.base + 100), easing: expoOut }}
           >
@@ -208,8 +208,6 @@
     overflow-y: auto;
     scrollbar-gutter: stable;
   }
-
-  .panel::-webkit-scrollbar-thumb { border: 3px solid var(--bg-elev); }
 
   /* Shared styles for all section components — scoped to .settings-body */
   .settings-body :global(.settings-h) {
