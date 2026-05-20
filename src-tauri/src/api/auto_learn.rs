@@ -9,6 +9,9 @@ const MONITOR_WINDOW_SECS: u64 = 60;
 const POLL_INTERVAL_SECS: u64 = 2;
 const BASELINE_CAPTURE_DELAY_MS: u64 = 250;
 const BASELINE_RETRY_DELAY_MS: u64 = 500;
+const REJECTION_WINDOW_SECS: u64 = 8;
+const REJECTION_POLL_MS: u64 = 500;
+const CACHE_REJECTION_WINDOW_SECS: u64 = 10;
 const PENDING_RETENTION_DAYS: i64 = 2;
 const PROMOTION_THRESHOLD: i64 = 2;
 const STABLE_TEXT_OBSERVATIONS_REQUIRED: usize = 2;
@@ -461,9 +464,29 @@ fn current_anchored_span<'a>(
     Some(&current[anchor.start..new_end])
 }
 
+fn find_last_anchor(haystack: &str, needle: &str) -> Option<TextAnchor> {
+    if needle.trim().is_empty() {
+        return None;
+    }
+    let start = haystack.rfind(needle)?;
+    Some(TextAnchor {
+        start,
+        end: start + needle.len(),
+    })
+}
+
 fn capture_baseline_text(injected_text: &str) -> Option<String> {
     let current_text = read_focused_text()?;
     if find_unique_anchor(&current_text, injected_text).is_some() {
+        Some(current_text)
+    } else {
+        None
+    }
+}
+
+fn capture_baseline_text_any(injected_text: &str) -> Option<String> {
+    let current_text = read_focused_text()?;
+    if current_text.contains(injected_text) {
         Some(current_text)
     } else {
         None
@@ -938,6 +961,222 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
             }
         }
         let _ = db::log_auto_learn_event(&db, "monitor", "timeout", &app_context, "", "", 0.0);
+    });
+}
+
+pub fn start_rejection_monitor(
+    injected_text: String,
+    applied_entry_ids: Vec<i64>,
+    db: DbHandle,
+    app: AppHandle,
+) {
+    if applied_entry_ids.is_empty() {
+        return;
+    }
+    let (key_hash, _) = pair_hash(&injected_text, "rejection");
+    let key = format!("rejection:{key_hash}");
+    let inserted = match active_monitors().lock() {
+        Ok(mut active) => active.insert(key.clone()),
+        Err(_) => false,
+    };
+    if !inserted {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        let _guard = MonitorKeyGuard::new(key);
+
+        tokio::time::sleep(std::time::Duration::from_millis(BASELINE_CAPTURE_DELAY_MS)).await;
+        let mut baseline = tokio::task::spawn_blocking({
+            let text = injected_text.clone();
+            move || capture_baseline_text_any(&text)
+        })
+        .await
+        .ok()
+        .flatten();
+
+        if baseline.is_none() {
+            tokio::time::sleep(std::time::Duration::from_millis(BASELINE_RETRY_DELAY_MS)).await;
+            baseline = tokio::task::spawn_blocking({
+                let text = injected_text.clone();
+                move || capture_baseline_text_any(&text)
+            })
+            .await
+            .ok()
+            .flatten();
+        }
+
+        let Some(baseline_text) = baseline else {
+            // Text not found at capture time — either UIAutomation is unavailable,
+            // or the user deleted the output before the 250ms baseline window.
+            // Distinguish: if the field is readable, the text is already gone → reject.
+            let field_readable =
+                tokio::task::spawn_blocking(|| read_focused_text().is_some())
+                    .await
+                    .unwrap_or(false);
+            if field_readable {
+                log::info!(
+                    "rejection-monitor: text absent at baseline, removing {} auto-learned dict entries",
+                    applied_entry_ids.len()
+                );
+                if let Err(e) = db::delete_auto_learned_entries_by_ids(&db, &applied_entry_ids) {
+                    log::warn!("rejection-monitor: delete failed: {e}");
+                } else {
+                    app.emit("open-flow:dictionary-entry-rejected", applied_entry_ids.len()).ok();
+                }
+            } else {
+                log::debug!("rejection-monitor: anchor miss (UIAutomation unavailable)");
+            }
+            return;
+        };
+        let Some(anchor) = find_last_anchor(&baseline_text, &injected_text) else {
+            log::debug!("rejection-monitor: anchor not found");
+            return;
+        };
+
+        let rejection_threshold = injected_text.len() / 10;
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(REJECTION_WINDOW_SECS);
+
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(REJECTION_POLL_MS)).await;
+
+            let current = match tokio::task::spawn_blocking(read_focused_text).await {
+                Ok(Some(t)) => t,
+                _ => continue,
+            };
+
+            let rejected = match current_anchored_span(&baseline_text, &current, anchor) {
+                Some(span) => span.len() <= rejection_threshold,
+                // Anchor tracking lost (edit too complex for prefix/suffix heuristic).
+                // Reject if the injected text is completely absent AND the document
+                // shrank — confirming deletion rather than a stale baseline.
+                None => {
+                    !current.contains(injected_text.as_str())
+                        && current.len() < baseline_text.len()
+                }
+            };
+
+            if rejected {
+                log::info!(
+                    "rejection-monitor: deletion detected, removing {} auto-learned dict entries",
+                    applied_entry_ids.len()
+                );
+                if let Err(e) = db::delete_auto_learned_entries_by_ids(&db, &applied_entry_ids) {
+                    log::warn!("rejection-monitor: delete failed: {e}");
+                } else {
+                    app.emit("open-flow:dictionary-entry-rejected", applied_entry_ids.len()).ok();
+                }
+                return;
+            }
+        }
+        log::debug!("rejection-monitor: window expired, no rejection detected");
+    });
+}
+
+pub fn start_cache_rejection_monitor(
+    injected_text: String,
+    cache_key: String,
+    db: DbHandle,
+    app: AppHandle,
+) {
+    let (key_hash, _) = pair_hash(&injected_text, "cache_rejection");
+    let key = format!("cache_rejection:{key_hash}");
+    let inserted = match active_monitors().lock() {
+        Ok(mut active) => active.insert(key.clone()),
+        Err(_) => false,
+    };
+    if !inserted {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        let _guard = MonitorKeyGuard::new(key);
+
+        tokio::time::sleep(std::time::Duration::from_millis(BASELINE_CAPTURE_DELAY_MS)).await;
+        let mut baseline = tokio::task::spawn_blocking({
+            let text = injected_text.clone();
+            move || capture_baseline_text_any(&text)
+        })
+        .await
+        .ok()
+        .flatten();
+
+        if baseline.is_none() {
+            tokio::time::sleep(std::time::Duration::from_millis(BASELINE_RETRY_DELAY_MS)).await;
+            baseline = tokio::task::spawn_blocking({
+                let text = injected_text.clone();
+                move || capture_baseline_text_any(&text)
+            })
+            .await
+            .ok()
+            .flatten();
+        }
+
+        let Some(baseline_text) = baseline else {
+            // Text not found at capture time — either UIAutomation is unavailable,
+            // or the user deleted the output before the 250ms baseline window.
+            // Distinguish: if the field is readable, the text is already gone → reject.
+            let field_readable =
+                tokio::task::spawn_blocking(|| read_focused_text().is_some())
+                    .await
+                    .unwrap_or(false);
+            if field_readable {
+                log::info!("cache-rejection-monitor: text absent at baseline, invalidating cache entry");
+                if let Err(e) = db::cleanup_cache_delete_by_key(&db, &cache_key) {
+                    log::warn!("cache-rejection-monitor: delete failed: {e}");
+                } else {
+                    app.emit("open-flow:cleanup-cache-invalidated", ()).ok();
+                }
+            } else {
+                log::debug!("cache-rejection-monitor: anchor miss (UIAutomation unavailable)");
+            }
+            return;
+        };
+        let Some(anchor) = find_last_anchor(&baseline_text, &injected_text) else {
+            log::debug!("cache-rejection-monitor: anchor not found");
+            return;
+        };
+
+        let rejection_threshold = injected_text.len() / 10;
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(CACHE_REJECTION_WINDOW_SECS);
+
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(REJECTION_POLL_MS)).await;
+
+            let current = match tokio::task::spawn_blocking(read_focused_text).await {
+                Ok(Some(t)) => t,
+                _ => continue,
+            };
+
+            let rejected = match current_anchored_span(&baseline_text, &current, anchor) {
+                Some(span) => span.len() <= rejection_threshold,
+                None => {
+                    !current.contains(injected_text.as_str())
+                        && current.len() < baseline_text.len()
+                }
+            };
+
+            if rejected {
+                log::info!("cache-rejection-monitor: deletion detected, invalidating cache entry");
+                if let Err(e) = db::cleanup_cache_delete_by_key(&db, &cache_key) {
+                    log::warn!("cache-rejection-monitor: delete failed: {e}");
+                } else {
+                    app.emit("open-flow:cleanup-cache-invalidated", ()).ok();
+                }
+                return;
+            }
+        }
+        log::debug!("cache-rejection-monitor: window expired, no rejection detected");
     });
 }
 

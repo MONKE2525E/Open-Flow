@@ -626,6 +626,38 @@ pub fn delete_dictionary_entry(db: &Db, id: i64) -> Result<()> {
     Ok(())
 }
 
+pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let conn = lock_conn(db)?;
+    for &id in ids {
+        let mut stmt = conn.prepare(
+            "SELECT term, mistake FROM dictionary WHERE id = ?1 AND auto_learned = 1 AND mistake IS NOT NULL",
+        )?;
+        let pairs: Vec<(String, String)> = stmt
+            .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        conn.execute(
+            "DELETE FROM dictionary WHERE id = ?1 AND auto_learned = 1",
+            params![id],
+        )?;
+
+        for (term, mistake) in pairs {
+            conn.execute(
+                "DELETE FROM pending_corrections WHERE wrong_word = ?1 AND correct_word = ?2",
+                params![mistake, term],
+            )?;
+            conn.execute(
+                "DELETE FROM auto_learn_candidates WHERE wrong_word = ?1 AND correct_word = ?2",
+                params![mistake, term],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 // ---------- snippets ----------
 
 pub fn insert_snippet(db: &Db, trigger: &str, expansion: &str, instructions: &str) -> Result<()> {
@@ -766,6 +798,12 @@ pub fn cleanup_cache_count(db: &Db) -> Result<i64> {
         .map_err(Into::into)
 }
 
+pub fn cleanup_cache_delete_by_key(db: &Db, key: &str) -> Result<()> {
+    let conn = lock_conn(db)?;
+    conn.execute("DELETE FROM cleanup_cache WHERE key = ?1", params![key])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -852,5 +890,145 @@ mod tests {
         assert!(cleanup_cache_get_active(&db, "live")
             .expect("query live")
             .is_some());
+    }
+
+    #[test]
+    fn cache_rejection_delete_removes_entry() {
+        let db = test_db();
+        cleanup_cache_insert_new(&db, "key1", "bad answer", "2999-01-01 00:00:00").expect("insert");
+
+        // Verify it's cached.
+        assert!(cleanup_cache_get_active(&db, "key1").expect("get").is_some());
+
+        // Simulate rejection monitor firing.
+        cleanup_cache_delete_by_key(&db, "key1").expect("delete");
+
+        // Entry must be gone — next dictation will hit the LLM.
+        assert!(cleanup_cache_get_active(&db, "key1").expect("get after").is_none());
+        assert_eq!(cleanup_cache_count(&db).expect("count"), 0);
+    }
+
+    #[test]
+    fn cache_rejection_leaves_other_keys_intact() {
+        let db = test_db();
+        cleanup_cache_insert_new(&db, "target", "bad", "2999-01-01 00:00:00").expect("target");
+        cleanup_cache_insert_new(&db, "bystander", "good", "2999-01-01 00:00:00")
+            .expect("bystander");
+
+        cleanup_cache_delete_by_key(&db, "target").expect("delete");
+
+        assert!(cleanup_cache_get_active(&db, "target").expect("target").is_none());
+        assert!(
+            cleanup_cache_get_active(&db, "bystander")
+                .expect("bystander")
+                .is_some(),
+            "unrelated entry must survive"
+        );
+    }
+
+    #[test]
+    fn cache_rejection_after_hit_removes_entry() {
+        let db = test_db();
+        cleanup_cache_insert_new(&db, "k", "stale text", "2999-01-01 00:00:00").expect("insert");
+
+        // Simulate a cache hit (the phrase was served from cache once).
+        cleanup_cache_touch_hit(&db, "k", 2, "2026-01-01 00:00:00", "2999-01-01 00:00:00")
+            .expect("touch");
+
+        let hit = cleanup_cache_get_active(&db, "k").expect("get").expect("exists");
+        assert_eq!(hit.hit_count, 2);
+
+        // User deletes output → rejection monitor fires.
+        cleanup_cache_delete_by_key(&db, "k").expect("delete");
+
+        assert!(cleanup_cache_get_active(&db, "k").expect("get after").is_none());
+    }
+
+    #[test]
+    fn dict_rejection_only_removes_auto_learned_entries() {
+        let db = test_db();
+
+        // Manual entry — must survive rejection.
+        insert_dictionary_entry(&db, "groq", Some("grog")).expect("manual");
+        let manual_id = query_dictionary(&db)
+            .expect("query")
+            .into_iter()
+            .find(|e| e.term == "groq")
+            .expect("find")
+            .id;
+
+        // Auto-learned entry — must be removed.
+        insert_dictionary_entry_auto_learned(&db, "Tauri", Some("Tari"), "high").expect("auto");
+        let auto_id = query_dictionary(&db)
+            .expect("query")
+            .into_iter()
+            .find(|e| e.term == "Tauri")
+            .expect("find")
+            .id;
+
+        delete_auto_learned_entries_by_ids(&db, &[manual_id, auto_id]).expect("reject");
+
+        let remaining: Vec<_> = query_dictionary(&db).expect("query after");
+        assert_eq!(remaining.len(), 1, "only manual entry survives");
+        assert_eq!(remaining[0].term, "groq");
+    }
+
+    #[test]
+    fn dict_rejection_cleans_up_pending_corrections() {
+        let db = test_db();
+
+        insert_dictionary_entry_auto_learned(&db, "Tauri", Some("Tari"), "low").expect("insert");
+        let id = query_dictionary(&db)
+            .expect("query")
+            .into_iter()
+            .next()
+            .expect("entry")
+            .id;
+
+        // Simulate pending correction records that led to the promotion.
+        insert_pending_correction(&db, "Tari", "Tauri").expect("pending 1");
+        insert_pending_correction(&db, "Tari", "Tauri").expect("pending 2");
+        assert_eq!(
+            count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count"),
+            2
+        );
+
+        // Rejection monitor fires.
+        delete_auto_learned_entries_by_ids(&db, &[id]).expect("reject");
+
+        // Dictionary entry gone.
+        assert_eq!(query_dictionary(&db).expect("query after").len(), 0);
+        // Pending corrections also purged — prevents immediate re-promotion.
+        assert_eq!(
+            count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count after"),
+            0
+        );
+    }
+
+    #[test]
+    fn cache_rejection_full_lifecycle() {
+        // End-to-end: insert → hit (cache serves stale) → reject → miss (LLM runs again).
+        let db = test_db();
+        let key = "chromium-is-a-web-browser-base";
+        let bad_answer = "bad cached answer";
+
+        // First dictation: LLM runs, result cached.
+        cleanup_cache_insert_new(&db, key, bad_answer, "2999-01-01 00:00:00").expect("insert");
+        assert_eq!(cleanup_cache_count(&db).expect("count"), 1);
+
+        // Second dictation: cache hit, stale answer served.
+        let entry = cleanup_cache_get_active(&db, key).expect("get").expect("hit");
+        assert_eq!(entry.clean_text, bad_answer);
+        cleanup_cache_touch_hit(&db, key, 2, "2026-01-01 00:00:00", "2999-01-01 00:00:00")
+            .expect("touch");
+
+        // User deletes output within 10s → monitor fires.
+        cleanup_cache_delete_by_key(&db, key).expect("delete");
+
+        // Third dictation: cache miss, LLM runs again with fresh context.
+        assert!(
+            cleanup_cache_get_active(&db, key).expect("get after").is_none(),
+            "cache must be empty after rejection so next dictation hits the LLM"
+        );
     }
 }

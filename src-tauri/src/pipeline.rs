@@ -831,7 +831,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         stage_transcribe.elapsed().as_millis()
     );
     let stage_cleanup = std::time::Instant::now();
-    let Some((final_text, dict_entries)) =
+    let Some((final_text, dict_entries, cleanup_cache_key)) =
         run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
     else {
         return;
@@ -865,8 +865,8 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
 
     let dict_stage = std::time::Instant::now();
     let final_before_dict = final_text.clone();
-    let final_text = dictionary::apply_substitutions_from(&final_text, &dict_entries);
-    let dict_changed = final_text != final_before_dict;
+    let (final_text, applied_dict_ids) = dictionary::apply_substitutions_from(&final_text, &dict_entries);
+    let dict_changed = !applied_dict_ids.is_empty();
     log::debug!(
         "pipeline: dictionary apply changed={} before_chars={} after_chars={} stage_ms={}",
         dict_changed,
@@ -904,8 +904,30 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         started_at.elapsed().as_millis()
     );
 
+    if !cleanup_cache_key.is_empty() {
+        log::debug!("pipeline: cache rejection monitor starting key_len={}", cleanup_cache_key.len());
+        auto_learn::start_cache_rejection_monitor(
+            injected_text.clone(),
+            cleanup_cache_key,
+            db.inner().clone(),
+            app.clone(),
+        );
+    }
+
     if cfg.auto_learn_enabled {
         log::debug!("pipeline: auto_learn monitor starting");
+        if !applied_dict_ids.is_empty() {
+            log::debug!(
+                "pipeline: rejection monitor starting applied_dict_ids={}",
+                applied_dict_ids.len()
+            );
+            auto_learn::start_rejection_monitor(
+                injected_text.clone(),
+                applied_dict_ids,
+                db.inner().clone(),
+                app.clone(),
+            );
+        }
         auto_learn::start_monitor(injected_text, process_name, db.inner().clone(), app.clone());
     }
 }
@@ -1040,7 +1062,7 @@ async fn run_cleanup_and_snippets(
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
-) -> Option<(String, Vec<db::DictionaryEntry>)> {
+) -> Option<(String, Vec<db::DictionaryEntry>, String)> {
     let db = app.state::<DbHandle>();
     let mut db_snippets = db::query_snippets(&db).unwrap_or_default();
     let dict_entries = db::query_dictionary(&db).unwrap_or_default();
@@ -1086,6 +1108,7 @@ async fn run_cleanup_and_snippets(
     );
 
     let c_key = cfg.key_for(&cfg.cleanup_provider).to_owned();
+    let mut used_cache_key = String::new();
     let final_text = if should_run_cleanup_llm(
         cfg.cleanup_enabled,
         !c_key.is_empty(),
@@ -1102,6 +1125,7 @@ async fn run_cleanup_and_snippets(
             String::new()
         };
         if !cache_key.is_empty() {
+            used_cache_key = cache_key.clone();
             if let Ok(Some(entry)) = db::cleanup_cache_get_active(&db, &cache_key) {
                 log::debug!(
                     "pipeline: cleanup cache hit key_len={} hit_count={}",
@@ -1129,7 +1153,7 @@ async fn run_cleanup_and_snippets(
                     &entry.clean_text,
                     &snippet_instructions,
                 );
-                return Some((overridden, dict_entries));
+                return Some((overridden, dict_entries, cache_key));
             }
         }
         log::debug!(
@@ -1215,7 +1239,7 @@ async fn run_cleanup_and_snippets(
         snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
     };
 
-    Some((final_text, dict_entries))
+    Some((final_text, dict_entries, used_cache_key))
 }
 
 fn should_run_cleanup_llm(
