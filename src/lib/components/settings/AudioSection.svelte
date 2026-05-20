@@ -95,7 +95,7 @@
   loadSettings();
 </script>
 
-<svelte:window onclick={closeMicDropdown} />
+<svelte:window onclick={closeMicDropdown} onkeydown={(e) => e.key === 'Escape' && (micDropdownOpen = false)} />
 
 <h2 class="settings-h">
   Microphone
@@ -264,6 +264,7 @@
     right: 0;
     width: 220px;
     max-height: 240px;
+    overflow-y: auto;
     background: var(--bg-elev);
     border: 1px solid var(--line-strong);
     border-radius: var(--r-md);
@@ -273,6 +274,14 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+  .mic-btn-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    text-align: left;
   }
   .mic-item {
     width: 100%;
