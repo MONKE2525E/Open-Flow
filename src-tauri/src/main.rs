@@ -147,6 +147,8 @@ fn main() {
             commands::get_microphones,
             commands::get_memory_mb,
             commands::start_input_recording,
+            commands::start_calibration_monitoring,
+            commands::stop_calibration_monitoring,
             commands::stop_and_transcribe_input,
             commands::stop_recording,
             commands::stop_handless_mode,

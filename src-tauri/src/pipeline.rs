@@ -126,30 +126,43 @@ pub fn start_recording_session(
     pill_state: &str,
     handless: bool,
 ) {
-    let settings = app.store("settings.json").ok();
-    let device = settings
-        .as_deref()
-        .and_then(|s| s.get(store::MICROPHONE_DEVICE))
-        .and_then(|v| v.as_str().map(String::from));
-    let noise_reduction = settings
-        .as_deref()
-        .and_then(|s| s.get(store::NOISE_REDUCTION))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    let mute_audio = settings
-        .as_deref()
-        .and_then(|s| s.get(store::MUTE_AUDIO))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let mic_gain = settings
-        .as_deref()
-        .and_then(|s| s.get(store::MIC_GAIN))
-        .and_then(|v| v.as_f64())
-        .map(|v| v as f32)
-        .unwrap_or(3.5)
-        .clamp(1.0, 8.0);
+    if let Err(e) = start_recording_session_ex(
+        app,
+        state,
+        pill_state,
+        handless,
+        None,
+        true,
+        false,
+    ) {
+        log::error!("start recording: {e}");
+    }
+}
 
-    if mute_audio {
+/// Generalized recording session function supporting calibration overrides.
+pub fn start_recording_session_ex(
+    app: &AppHandle,
+    state: &SharedState,
+    pill_state: &str,
+    handless: bool,
+    gain_override: Option<f32>,
+    show_recording_pill: bool,
+    emit_globally: bool,
+) -> Result<(), String> {
+    let settings = app.store("settings.json");
+    let audio_config = match settings {
+        Ok(ref store) => store::load_audio_config(store),
+        Err(e) => {
+            log::warn!("Failed to load settings.json store for audio config: {:?}", e);
+            store::AudioConfig::default()
+        }
+    };
+    let device = audio_config.device;
+    let noise_reduction = audio_config.noise_reduction;
+    let mute_audio = audio_config.mute_audio;
+    let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
+
+    if mute_audio && gain_override.is_none() {
         std::thread::spawn(crate::system::volume::mute);
     }
 
@@ -160,18 +173,18 @@ pub fn start_recording_session(
             {
                 let mut st = match lock_state(state) {
                     Ok(st) => st,
-                    Err(e) => {
-                        log::error!("recording state: {e}");
-                        return;
-                    }
+                    Err(e) => return Err(e.to_string()),
                 };
                 st.session = Some(session);
                 st.handless = handless;
             }
-            show_pill(app, pill_state);
-            spawn_level_emitter(app.clone(), level_arc, active_arc);
+            if show_recording_pill {
+                show_pill(app, pill_state);
+            }
+            spawn_level_emitter(app.clone(), level_arc, active_arc, emit_globally);
+            Ok(())
         }
-        Err(e) => log::error!("start recording: {e}"),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -181,27 +194,32 @@ pub fn spawn_level_emitter(
     app: AppHandle,
     level: Arc<std::sync::atomic::AtomicU32>,
     active: Arc<std::sync::atomic::AtomicBool>,
+    emit_globally: bool,
 ) {
     tauri::async_runtime::spawn(async move {
         // Give WebView2 a brief head start to wake up and process the
         // "recording" state event before we flood the IPC with 16ms updates.
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
 
+        let emit_level = |level_val: f32| {
+            if emit_globally {
+                let _ = app.emit("audio-level", level_val);
+            } else if let Some(pill) = app.get_webview_window("pill") {
+                pill.emit("audio-level", level_val).ok();
+            }
+        };
+
         loop {
             if !active.load(Ordering::Relaxed) {
                 break;
             }
             let level_val = f32::from_bits(level.load(Ordering::Relaxed));
-            if let Some(pill) = app.get_webview_window("pill") {
-                pill.emit("audio-level", level_val).ok();
-            }
+            emit_level(level_val);
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
         // Emit final reset to ensure level goes to 0 regardless of timing
-        if let Some(pill) = app.get_webview_window("pill") {
-            pill.emit("audio-level", 0.0).ok();
-        }
+        emit_level(0.0);
     });
 }
 
