@@ -16,6 +16,8 @@ type AudioCopy = {
   autoCalibrateButton: string;
   speakingHint: string;
   noSpeechDetected: string;
+  defaultDevice: string;
+  noDevicesFound: string;
 };
 
 type SetupCopy = {
@@ -44,6 +46,8 @@ const AUDIO_COPY: Record<BaseLanguage, AudioCopy> = {
     autoCalibrateButton: 'Auto Calibrate',
     speakingHint: 'Speak: "Open Flow is fast"',
     noSpeechDetected: 'No speech was detected during calibration. Please check your microphone input.',
+    defaultDevice: 'Default Device',
+    noDevicesFound: 'No devices found',
   },
   es: {
     inputDeviceLabel: 'Dispositivo de entrada',
@@ -51,13 +55,17 @@ const AUDIO_COPY: Record<BaseLanguage, AudioCopy> = {
     autoCalibrateButton: 'Calibración automática',
     speakingHint: 'Di: "Open Flow es rápido"',
     noSpeechDetected: 'No se detectó voz durante la calibración. Revisa la entrada del micrófono.',
+    defaultDevice: 'Dispositivo predeterminado',
+    noDevicesFound: 'No se encontraron dispositivos',
   },
   fr: {
     inputDeviceLabel: 'Périphérique d’entrée',
     inputDeviceDescription: 'Choisissez le micro que Open Flow doit utiliser',
     autoCalibrateButton: 'Calibrage auto',
-    speakingHint: 'Dites : "Open Flow est rapide"',
-    noSpeechDetected: "Aucune voix détectée pendant l'étalonnage. Vérifiez l'entrée micro.",
+    speakingHint: 'Dites : "Open Flow est rapide"',
+    noSpeechDetected: "Aucune voix détectée pendant l’étalonnage. Vérifiez l’entrée micro.",
+    defaultDevice: 'Périphérique par défaut',
+    noDevicesFound: 'Aucun périphérique trouvé',
   },
   de: {
     inputDeviceLabel: 'Eingabegerät',
@@ -65,6 +73,8 @@ const AUDIO_COPY: Record<BaseLanguage, AudioCopy> = {
     autoCalibrateButton: 'Auto-Kalibrierung',
     speakingHint: 'Sprich: "Open Flow ist schnell"',
     noSpeechDetected: 'Während der Kalibrierung wurde keine Sprache erkannt. Prüfe dein Mikrofon.',
+    defaultDevice: 'Standardgerät',
+    noDevicesFound: 'Keine Geräte gefunden',
   },
   pt: {
     inputDeviceLabel: 'Dispositivo de entrada',
@@ -72,6 +82,8 @@ const AUDIO_COPY: Record<BaseLanguage, AudioCopy> = {
     autoCalibrateButton: 'Calibração automática',
     speakingHint: 'Fale: "Open Flow é rápido"',
     noSpeechDetected: 'Nenhuma fala foi detectada durante a calibração. Verifique o microfone.',
+    defaultDevice: 'Dispositivo padrão',
+    noDevicesFound: 'Nenhum dispositivo encontrado',
   },
   zh: {
     inputDeviceLabel: '输入设备',
@@ -79,6 +91,8 @@ const AUDIO_COPY: Record<BaseLanguage, AudioCopy> = {
     autoCalibrateButton: '自动校准',
     speakingHint: '请说：“Open Flow 很快”',
     noSpeechDetected: '校准期间未检测到语音。请检查麦克风输入。',
+    defaultDevice: '默认设备',
+    noDevicesFound: '未找到设备',
   },
 };
 
@@ -121,19 +135,19 @@ const SETUP_COPY: Record<BaseLanguage, SetupCopy> = {
   },
   fr: {
     title: 'Optimisez votre microphone',
-    subtitle: "Nous allons ajuster le gain pour que l'IA transcrive clairement votre voix.",
+    subtitle: "Nous allons ajuster le gain pour que l’IA transcrive clairement votre voix.",
     startInstruction: 'Cliquez ci-dessous puis parlez naturellement pendant 3 secondes.',
-    startButton: "Démarrer l'étalonnage",
-    readPrompt: 'Lisez cette phrase à voix haute :',
+    startButton: "Démarrer l’étalonnage",
+    readPrompt: 'Lisez cette phrase à voix haute :',
     readPhrase: 'Open Flow facilite la dictée.',
     silenceTitle: 'Silence détecté',
     silenceDescription: "Aucune voix détectée. Vérifiez que le micro est sélectionné, activé et que vous avez parlé pendant le décompte. Le gain a été défini à",
-    successTitle: 'Étalonnage terminé !',
+    successTitle: 'Étalonnage terminé !',
     successDescription: 'Nous avons ajusté le gain du microphone à',
     successTail: 'Les niveaux de voix sont maintenant optimisés pour la transcription.',
-    skipButton: "Ignorer l'étalonnage",
+    skipButton: "Ignorer l’étalonnage",
     continueButton: 'Continuer',
-    skipCalibrationButton: "Ignorer l'étalonnage",
+    skipCalibrationButton: "Ignorer l’étalonnage",
     cancelButton: 'Annuler',
     recalibrateButton: 'Recalibrer',
   },
@@ -176,7 +190,7 @@ const SETUP_COPY: Record<BaseLanguage, SetupCopy> = {
   zh: {
     title: '优化你的麦克风',
     subtitle: '我们会调整增益，让 AI 更清晰地转写你的语音。',
-    startInstruction: '点击下方按钮，然后自然说话 3 秒。',
+    startInstruction: '点击下方按鈕，然后自然说话 3 秒。',
     startButton: '开始校准',
     readPrompt: '请大声朗读这句话：',
     readPhrase: 'Open Flow 让语音输入更轻松。',

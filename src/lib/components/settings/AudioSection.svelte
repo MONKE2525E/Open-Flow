@@ -110,10 +110,10 @@
   <div class="mic-dropdown">
     <button
       class="btn-ghost mic-btn"
-      use:animateWidth={{ text: selectedMic || 'Default Device', max: 180 }}
+      use:animateWidth={{ text: selectedMic || audioCopy.defaultDevice, max: 180 }}
       onclick={() => (micDropdownOpen = !micDropdownOpen)}
     >
-      <span class="mic-btn-label">{selectedMic || 'Default Device'}</span>
+      <span class="mic-btn-label">{selectedMic || audioCopy.defaultDevice}</span>
       <svg class:open={micDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="m6 9 6 6 6-6"/>
       </svg>
@@ -127,14 +127,14 @@
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
-        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>Default Device</button>
+        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{audioCopy.defaultDevice}</button>
         {#each microphones as m}
           <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>
             {m}
           </button>
         {/each}
         {#if microphones.length === 0}
-          <div class="mic-empty">No devices found</div>
+          <div class="mic-empty">{audioCopy.noDevicesFound}</div>
         {/if}
       </div>
     {/if}
