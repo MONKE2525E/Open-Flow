@@ -2,6 +2,8 @@
 
 This guide documents the canonical format for Open Flow GitHub release descriptions. The style shown here matches the 0.7.0-beta release exactly — that is the reference implementation. also, always put your markup output inside of a code box e.g ``markdown``.
 
+## ALWAYS PUT MARKDOWN IN A CODE BOX.
+
 
 ---
 
