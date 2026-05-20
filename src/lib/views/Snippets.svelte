@@ -304,7 +304,11 @@
                 <polyline points="2,9 5.5,13.5 9,9"/>
               </svg>
               </div>
-              <div class="insp-expansion">{selected.expansion}</div>
+              <div class="insp-expansion">
+                {selected.expansion.length > 200
+                  ? selected.expansion.slice(0, 200).trimEnd() + '…'
+                  : selected.expansion}
+              </div>
 
               {#if selected.instructions}
                 <div class="insp-instructions" in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}>
@@ -884,8 +888,11 @@
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
     width: min(500px, calc(100vw - 40px));
+    max-height: calc(100dvh - 80px);
     box-shadow: var(--shadow-elev);
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   .modal-header {
@@ -894,6 +901,7 @@
     justify-content: space-between;
     padding: 16px 20px 14px;
     border-bottom: 1px solid var(--line-soft);
+    flex-shrink: 0;
   }
 
   .modal-title {
@@ -911,6 +919,9 @@
     flex-direction: column;
     gap: 4px;
     --field-input-max-height: 220px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
   }
 
   .modal-footer {
@@ -919,6 +930,7 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+    flex-shrink: 0;
   }
 
   .footer-actions {
