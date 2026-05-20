@@ -828,6 +828,12 @@ pub fn read_focused_text() -> Option<String> {
             CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
         let element = automation.GetFocusedElement().ok()?;
 
+        // Track whether any pattern was readable (even if the field is empty).
+        // Only return None when UIAutomation cannot read the element at all —
+        // an accessible-but-empty field must return Some("") so callers can
+        // distinguish "field cleared" from "UIAutomation unavailable".
+        let mut accessible_empty: Option<String> = None;
+
         if let Ok(pattern) =
             element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
         {
@@ -836,6 +842,7 @@ pub fn read_focused_text() -> Option<String> {
                 if !s.is_empty() {
                     return Some(s);
                 }
+                accessible_empty = Some(s);
             }
         }
 
@@ -848,11 +855,12 @@ pub fn read_focused_text() -> Option<String> {
                     if !s.is_empty() {
                         return Some(s);
                     }
+                    accessible_empty = Some(s);
                 }
             }
         }
 
-        None
+        accessible_empty
     }
 }
 
