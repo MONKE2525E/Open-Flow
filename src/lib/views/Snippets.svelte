@@ -45,6 +45,14 @@
 
   const TRIGGER_LIMIT = 300;
 
+  const inspExpansion = $derived.by(() => {
+    if (!selected) return '';
+    const chars = [...selected.expansion.slice(0, 401)];
+    return chars.length > 200
+      ? chars.slice(0, 200).join('').trimEnd() + '…'
+      : selected.expansion;
+  });
+
   const filtered = $derived.by(() => {
     const q = search.toLowerCase();
     let list = q
@@ -304,11 +312,7 @@
                 <polyline points="2,9 5.5,13.5 9,9"/>
               </svg>
               </div>
-              <div class="insp-expansion">
-                {selected.expansion.length > 200
-                  ? [...selected.expansion.slice(0, 400)].slice(0, 200).join('').trimEnd() + '…'
-                  : selected.expansion}
-              </div>
+              <div class="insp-expansion">{inspExpansion}</div>
 
               {#if selected.instructions}
                 <div class="insp-instructions" in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}>
@@ -390,7 +394,7 @@
       </button>
     </div>
 
-    <div class="modal-body">
+    <div class="modal-body scrollbar-standard">
       <label class="field-label" for="trigger-input">
         Trigger
         <span class="char-count" class:over={draftTrigger.length > TRIGGER_LIMIT}>{draftTrigger.length}/{TRIGGER_LIMIT}</span>
