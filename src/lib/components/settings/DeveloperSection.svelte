@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
+  import Toggle from '../Toggle.svelte';
 
   let logs = $state<string[]>([]);
   let autoScroll = $state(true);
@@ -8,6 +9,7 @@
   let exporting = $state(false);
   let logViewport: HTMLDivElement | null = null;
   let verboseEnabled = $state(true);
+  let forceSetupOnLaunch = $state(false);
 
   async function loadRecentLogs() {
     try {
@@ -48,11 +50,34 @@
     }
   }
 
+  async function loadDevFlags() {
+    try {
+      const force = await invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' });
+      forceSetupOnLaunch = force ?? false;
+    } catch (err) {
+      console.error('Failed to load dev flags:', err);
+    }
+  }
+
+  async function handleForceSetupOnLaunch(value: boolean) {
+    forceSetupOnLaunch = value;
+    try {
+      await invoke('save_setting', {
+        key: 'force_setup_on_launch',
+        value,
+      });
+    } catch (err) {
+      forceSetupOnLaunch = !value;
+      console.error('Failed to save force_setup_on_launch:', err);
+    }
+  }
+
   onMount(() => {
     let active = true;
     let unlisten: (() => void) | null = null;
 
     loadRecentLogs();
+    loadDevFlags();
     (async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');
@@ -75,6 +100,13 @@
 
 <h2 class="settings-h">Developer</h2>
 <p class="panel-note">Session log stream from backend runtime. Dev mode resets after app restart.</p>
+<div class="setting-row">
+  <div>
+    <div class="label">Force Setup On Launch</div>
+    <div class="desc">Shows onboarding on startup without erasing saved settings.</div>
+  </div>
+  <Toggle checked={forceSetupOnLaunch} onchange={handleForceSetupOnLaunch} />
+</div>
 <div class="setting-row">
   <div>
     <div class="label">Real-time Logs</div>

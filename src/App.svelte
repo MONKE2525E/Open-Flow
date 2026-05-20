@@ -52,11 +52,12 @@
     (async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        const [done, appearance] = await Promise.all([
+        const [done, appearance, forceSetupOnLaunch] = await Promise.all([
           invoke<boolean | null>('get_setting', { key: 'setup_complete' }),
           invoke<'system' | 'light' | 'dark' | null>('get_setting', { key: 'appearance_mode' }),
+          invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' }),
         ]);
-        setupComplete.set(done === true);
+        setupComplete.set(forceSetupOnLaunch ? false : done === true);
         if (appearance === 'light' || appearance === 'dark' || appearance === 'system') {
           appearanceMode.set(appearance);
         }
