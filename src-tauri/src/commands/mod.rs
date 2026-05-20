@@ -311,7 +311,6 @@ pub async fn stop_calibration_monitoring(
 ) -> Result<(), String> {
     let session = {
         let mut st = lock_state(&state)?;
-        st.handless = false;
         st.session.take()
     };
     if let Some(s) = session {

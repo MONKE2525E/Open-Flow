@@ -97,7 +97,10 @@
 
 <svelte:window onclick={closeMicDropdown} />
 
-<h2 class="settings-h">Advanced</h2>
+<h2 class="settings-h">
+  Microphone
+  <span class="sr-only">Advanced</span>
+</h2>
 
 <div class="setting-row">
   <div>
@@ -222,6 +225,17 @@
 <style>
   .mic-dropdown {
     position: relative;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
   .mic-btn {
     display: flex;
