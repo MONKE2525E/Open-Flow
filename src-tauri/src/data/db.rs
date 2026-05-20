@@ -626,6 +626,9 @@ pub fn delete_dictionary_entry(db: &Db, id: i64) -> Result<()> {
     Ok(())
 }
 
+// Conservative batch size well below SQLite's SQLITE_MAX_VARIABLE_NUMBER (default 999).
+const SQL_BATCH_SIZE: usize = 500;
+
 pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
@@ -633,33 +636,36 @@ pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
     let mut conn = lock_conn(db)?;
     let tx = conn.transaction()?;
     {
-        let placeholders = vec!["?"; ids.len()].join(", ");
-
-        let select_sql = format!(
-            "SELECT term, mistake FROM dictionary \
-             WHERE id IN ({placeholders}) AND auto_learned = 1 AND mistake IS NOT NULL"
-        );
-        let pairs: Vec<(String, String)> = tx
-            .prepare(&select_sql)?
-            .query_map(rusqlite::params_from_iter(ids.iter()), |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-
-        let delete_dict_sql = format!(
-            "DELETE FROM dictionary WHERE id IN ({placeholders}) AND auto_learned = 1"
-        );
-        tx.execute(&delete_dict_sql, rusqlite::params_from_iter(ids.iter()))?;
-
         let mut del_pending_stmt = tx.prepare(
             "DELETE FROM pending_corrections WHERE wrong_word = ?1 AND correct_word = ?2",
         )?;
         let mut del_candidate_stmt = tx.prepare(
             "DELETE FROM auto_learn_candidates WHERE wrong_word = ?1 AND correct_word = ?2",
         )?;
-        for (term, mistake) in pairs {
-            del_pending_stmt.execute(params![mistake, term])?;
-            del_candidate_stmt.execute(params![mistake, term])?;
+
+        for chunk in ids.chunks(SQL_BATCH_SIZE) {
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+
+            let select_sql = format!(
+                "SELECT term, mistake FROM dictionary \
+                 WHERE id IN ({placeholders}) AND auto_learned = 1 AND mistake IS NOT NULL"
+            );
+            let pairs: Vec<(String, String)> = tx
+                .prepare(&select_sql)?
+                .query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+
+            let delete_dict_sql = format!(
+                "DELETE FROM dictionary WHERE id IN ({placeholders}) AND auto_learned = 1"
+            );
+            tx.execute(&delete_dict_sql, rusqlite::params_from_iter(chunk.iter()))?;
+
+            for (term, mistake) in pairs {
+                del_pending_stmt.execute(params![mistake, term])?;
+                del_candidate_stmt.execute(params![mistake, term])?;
+            }
         }
     }
     tx.commit()?;

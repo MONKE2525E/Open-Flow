@@ -1074,7 +1074,7 @@ fn run_rejection_monitor(
             return;
         };
 
-        let rejection_threshold = injected_text.len() / 10;
+        let rejection_threshold = injected_text.chars().count() / 10;
         let deadline =
             tokio::time::Instant::now() + std::time::Duration::from_secs(target.window_secs());
 
@@ -1091,7 +1091,7 @@ fn run_rejection_monitor(
             };
 
             let rejected = match current_anchored_span(&baseline_text, &current, anchor) {
-                Some(span) => span.len() <= rejection_threshold,
+                Some(span) => span.chars().count() <= rejection_threshold,
                 // Anchor tracking lost (edit too complex for prefix/suffix heuristic).
                 // Reject if the injected text is completely absent AND the document
                 // shrank — confirming deletion rather than a stale baseline.
