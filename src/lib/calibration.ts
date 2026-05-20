@@ -8,6 +8,7 @@ export const TARGET_CALIBRATION_FACTOR = 2.25;
 export const MIN_CALIBRATION_LEVEL = 0.04;
 export const MAX_CALIBRATION_GAIN = 8.0;
 export const MIN_CALIBRATION_GAIN = 1.0;
+export const DEFAULT_CALIBRATION_GAIN = 3.5;
 
 export const isCalibrating = writable(false);
 export const calibrationCountdown = writable(3);
@@ -112,10 +113,13 @@ export async function stopCalibration() {
   isCalibrating.set(false);
   micLevel.set(0);
 
-  const rawGain = TARGET_CALIBRATION_FACTOR / Math.max(MIN_CALIBRATION_LEVEL, calibrationMaxLevel);
-  const finalGain = Math.max(MIN_CALIBRATION_GAIN, Math.min(MAX_CALIBRATION_GAIN, Math.round(rawGain * 10) / 10));
+  const detected = calibrationMaxLevel >= SPEECH_DETECTION_THRESHOLD;
+  speechDetected.set(detected);
+
+  const finalGain = detected
+    ? Math.max(MIN_CALIBRATION_GAIN, Math.min(MAX_CALIBRATION_GAIN, Math.round((TARGET_CALIBRATION_FACTOR / calibrationMaxLevel) * 10) / 10))
+    : DEFAULT_CALIBRATION_GAIN;
   calibratedGain.set(finalGain);
-  speechDetected.set(calibrationMaxLevel >= SPEECH_DETECTION_THRESHOLD);
 
   try {
     await saveSetting('mic_gain', finalGain);
