@@ -633,29 +633,33 @@ pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
     let mut conn = lock_conn(db)?;
     let tx = conn.transaction()?;
     {
-        let mut select_stmt = tx.prepare(
-            "SELECT term, mistake FROM dictionary WHERE id = ?1 AND auto_learned = 1 AND mistake IS NOT NULL",
-        )?;
-        let mut del_dict_stmt =
-            tx.prepare("DELETE FROM dictionary WHERE id = ?1 AND auto_learned = 1")?;
+        let placeholders = vec!["?"; ids.len()].join(", ");
+
+        let select_sql = format!(
+            "SELECT term, mistake FROM dictionary \
+             WHERE id IN ({placeholders}) AND auto_learned = 1 AND mistake IS NOT NULL"
+        );
+        let pairs: Vec<(String, String)> = tx
+            .prepare(&select_sql)?
+            .query_map(rusqlite::params_from_iter(ids.iter()), |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let delete_dict_sql = format!(
+            "DELETE FROM dictionary WHERE id IN ({placeholders}) AND auto_learned = 1"
+        );
+        tx.execute(&delete_dict_sql, rusqlite::params_from_iter(ids.iter()))?;
+
         let mut del_pending_stmt = tx.prepare(
             "DELETE FROM pending_corrections WHERE wrong_word = ?1 AND correct_word = ?2",
         )?;
         let mut del_candidate_stmt = tx.prepare(
             "DELETE FROM auto_learn_candidates WHERE wrong_word = ?1 AND correct_word = ?2",
         )?;
-
-        for &id in ids {
-            let pairs: Vec<(String, String)> = select_stmt
-                .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?)))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-
-            del_dict_stmt.execute(params![id])?;
-
-            for (term, mistake) in pairs {
-                del_pending_stmt.execute(params![mistake, term])?;
-                del_candidate_stmt.execute(params![mistake, term])?;
-            }
+        for (term, mistake) in pairs {
+            del_pending_stmt.execute(params![mistake, term])?;
+            del_candidate_stmt.execute(params![mistake, term])?;
         }
     }
     tx.commit()?;
@@ -1034,5 +1038,20 @@ mod tests {
             cleanup_cache_get_active(&db, key).expect("get after").is_none(),
             "cache must be empty after rejection so next dictation hits the LLM"
         );
+    }
+
+    #[test]
+    fn dict_rejection_bulk_removes_multiple_entries() {
+        let db = test_db();
+        insert_dictionary_entry_auto_learned(&db, "groq", Some("grog"), "high").expect("1");
+        insert_dictionary_entry_auto_learned(&db, "Tauri", Some("Tari"), "high").expect("2");
+        let ids: Vec<i64> = query_dictionary(&db)
+            .expect("query")
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids.len(), 2);
+        delete_auto_learned_entries_by_ids(&db, &ids).expect("bulk delete");
+        assert_eq!(query_dictionary(&db).expect("after").len(), 0);
     }
 }
