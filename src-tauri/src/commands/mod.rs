@@ -43,6 +43,7 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::AUTO_LEARN_ENABLED
         | store::CONTEXTUAL_CAPS
         | store::SETUP_COMPLETE
+        | store::FORCE_SETUP_ON_LAUNCH
         | "autostart_enabled" => value.is_boolean(),
         store::MIC_GAIN => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
         store::APP_MAPPINGS => serde_json::from_value::<Vec<AppMapping>>(value.clone()).is_ok(),

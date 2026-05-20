@@ -28,6 +28,7 @@ type SettingsValueMap = {
   mute_audio: boolean;
   mic_gain: number;
   setup_complete: boolean;
+  force_setup_on_launch: boolean;
   app_context_hint: boolean;
   api_fallback_enabled: boolean;
   auto_learn_enabled: boolean;
