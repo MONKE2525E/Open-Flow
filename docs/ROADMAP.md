@@ -1,8 +1,15 @@
 # Roadmap: Transcription Utility
 
-## 1. Set up flow automatic mic gain calibration.
-- **Goal**: automatically calibrate the microphone gain by having the user say something in my normal speaking voice, and pick it up with a microphone in the already existing setup flow.
-- **Implementation**: record the user's max decibel level and try to get it within a specific range when they're normally talking. Integrate automatic microphone gain into its own page in the settings menu. Make sure there's a user-friendly skip button that has nice animations and is consistent with the rest of the UI.
+## Shipped in 0.10.0
+- Automatic microphone gain calibration (setup flow + Audio settings page)
+- Auto-learn dictionary reliability hardening and observability
+- Hidden developer mode with real-time verbose logs and Force Setup On Launch toggle
+- Numeric cleanup cache normalization
+- Profanity handling precedence fix across cleanup intensity and tone
+- Dictionary input clamping (50-char, code-point-safe)
+- Stale cache and dictionary pruning on quick output deletion
+- Full UI scrollbar consistency pass
+- Snippet inspector polish (scrollbar, modal height cap, truncation)
 
 
 # Far Future & Monetization (The Funding Plan)
