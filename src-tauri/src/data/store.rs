@@ -23,6 +23,7 @@ pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const API_FALLBACK_ENABLED: &str = "api_fallback_enabled";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
 pub const CONTEXTUAL_CAPS: &str = "contextual_caps_enabled";
+pub const AUTO_SPACING: &str = "auto_spacing_enabled";
 pub const APPEARANCE_MODE: &str = "appearance_mode";
 pub const FORCE_SETUP_ON_LAUNCH: &str = "force_setup_on_launch";
 
@@ -43,6 +44,7 @@ pub struct PipelineConfig {
     pub api_fallback_enabled: bool,
     pub auto_learn_enabled: bool,
     pub contextual_caps_enabled: bool,
+    pub auto_spacing_enabled: bool,
 }
 
 pub const TRANSCRIPTION_LANGUAGE_OPTIONS: &[(&str, &str)] = &[
@@ -179,6 +181,10 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             .unwrap_or(false),
         contextual_caps_enabled: store
             .get(CONTEXTUAL_CAPS)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        auto_spacing_enabled: store
+            .get(AUTO_SPACING)
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
     }

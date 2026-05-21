@@ -42,6 +42,7 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::API_FALLBACK_ENABLED
         | store::AUTO_LEARN_ENABLED
         | store::CONTEXTUAL_CAPS
+        | store::AUTO_SPACING
         | store::SETUP_COMPLETE
         | store::FORCE_SETUP_ON_LAUNCH
         | "autostart_enabled" => value.is_boolean(),
@@ -124,6 +125,7 @@ pub struct AllSettings {
     pub api_fallback_enabled: Option<bool>,
     pub auto_learn_enabled: Option<bool>,
     pub contextual_caps_enabled: Option<bool>,
+    pub auto_spacing_enabled: Option<bool>,
     pub mic_gain: Option<f64>,
     pub history_retention: Option<String>,
     pub microphone_device: Option<String>,
@@ -156,6 +158,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         api_fallback_enabled: bool_val(store::API_FALLBACK_ENABLED),
         auto_learn_enabled: bool_val(store::AUTO_LEARN_ENABLED),
         contextual_caps_enabled: bool_val(store::CONTEXTUAL_CAPS),
+        auto_spacing_enabled: bool_val(store::AUTO_SPACING),
         mic_gain: f64_val(store::MIC_GAIN),
         history_retention: str_val("history_retention"),
         microphone_device: str_val(store::MICROPHONE_DEVICE),

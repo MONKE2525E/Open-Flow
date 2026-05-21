@@ -1,4 +1,20 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+
+const VK_BACK: u32 = 0x08;    // Backspace
+const VK_CTRL: u32 = 0x11;    // VK_CONTROL (generic, used with modifier_held)
+const VK_ALT: u32 = 0x12;     // VK_MENU (generic, used with modifier_held)
+
+// Side-specific modifier VK codes that should never trigger a history update.
+// Generic codes (0x10/0x11/0x12) are omitted: the !is_injected guard already
+// filters all synthetic input where those codes appear, so only side-specific
+// codes reach this path from real physical key presses.
+static MODIFIER_VKS: &[u32] = &[
+    0xA0, 0xA1,       // VK_LSHIFT, VK_RSHIFT
+    0xA2, 0xA3,       // VK_LCONTROL, VK_RCONTROL
+    0xA4, 0xA5,       // VK_LMENU, VK_RMENU
+    0x5B, 0x5C,       // VK_LWIN, VK_RWIN
+    0x14, 0x90, 0x91, // VK_CAPITAL, VK_NUMLOCK, VK_SCROLL
+];
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -7,7 +23,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, HC_ACTION,
-    KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
+    WM_SYSKEYUP,
 };
 
 // Returns true if the given specific-side VK (or its mirror) is currently held.
@@ -289,6 +306,30 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 let is_menu_trigger = k1 == 164 || k1 == 165 || k1 == 18 || k1 == 91 || k1 == 92;
                 if is_menu_trigger {
                     return LRESULT(1);
+                }
+            }
+        }
+
+        // Update injection history for real user keystrokes only.
+        // Synthetic events (LLKHF_INJECTED) are skipped — this prevents our own
+        // Ctrl+V paste and any app-generated keyboard events from corrupting the
+        // context tracking that drives auto-spacing and contextual capitalisation.
+        let is_injected = (kb.flags.0 & LLKHF_INJECTED.0) != 0;
+if !is_injected && is_down {
+            if !MODIFIER_VKS.contains(&vk) {
+                if vk == VK_BACK {
+                    // Ctrl+Backspace and Alt+Backspace both delete a whole word —
+                    // unknown char count, so reset entirely. Plain Backspace pops
+                    // just the last character to keep context accurate.
+                    if unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) } {
+                        crate::core::injection::reset_injection_history();
+                    } else {
+                        crate::core::injection::backspace_injection_history();
+                    }
+                } else {
+                    // Any other key (Enter, character, arrow, Delete, etc.): the
+                    // cursor context is unknown — treat the next injection as fresh.
+                    crate::core::injection::reset_injection_history();
                 }
             }
         }

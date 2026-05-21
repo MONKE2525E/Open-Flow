@@ -1,3 +1,47 @@
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+// How long a previous injection stays relevant for spacing and capitalisation decisions.
+// The keyboard hook resets this early whenever the user types, so the timeout is mainly
+// a safety net for inactivity (e.g. the user idle for a minute then dictates again).
+const INJECTION_STALE: Duration = Duration::from_secs(60);
+
+// Maximum bytes stored for backspace-tracking. Covers any practical editing sequence
+// while keeping the per-injection allocation bounded.
+const HISTORY_TAIL: usize = 512;
+
+static LAST_INJECTION: OnceLock<Mutex<Option<(usize, String, Instant)>>> = OnceLock::new();
+
+fn last_injection() -> &'static Mutex<Option<(usize, String, Instant)>> {
+    LAST_INJECTION.get_or_init(|| Mutex::new(None))
+}
+
+/// Full reset — called on Enter, character keys, arrows, etc. The cursor context
+/// is unknown after such input, so the next injection starts fresh.
+pub fn reset_injection_history() {
+    if let Ok(mut guard) = last_injection().lock() {
+        *guard = None;
+    }
+}
+
+/// Called on Backspace. Pops the last character off the tracked text so the
+/// next injection still knows what's immediately before the cursor after the
+/// deletion. Clears the record entirely once the tracked text empties.
+pub fn backspace_injection_history() {
+    if let Ok(mut guard) = last_injection().lock() {
+        let empty = if let Some((_, ref mut text, ref mut time)) = *guard {
+            text.pop();
+            *time = Instant::now();
+            text.is_empty()
+        } else {
+            false
+        };
+        if empty {
+            *guard = None;
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 unsafe fn read_clipboard_unicode() -> Option<Vec<u16>> {
     use windows::Win32::System::DataExchange::{
@@ -57,13 +101,14 @@ pub async fn inject_text(
     text: &str,
     target_hwnd: usize,
     contextual_caps: bool,
+    auto_spacing: bool,
 ) -> anyhow::Result<String> {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::Input::KeyboardAndMouse::{
             SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-            KEYEVENTF_KEYUP, VK_C, VK_CONTROL, VK_LEFT, VK_LMENU, VK_RIGHT, VK_SHIFT, VK_V,
+            KEYEVENTF_KEYUP, VK_CONTROL, VK_LMENU, VK_V,
         };
         use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
 
@@ -94,49 +139,32 @@ pub async fn inject_text(
                 },
             };
 
-            // Look-back: peek at the character immediately before the cursor.
-            // If it's a non-sentence-ending character, the injection is mid-sentence
-            // and the first character should be lowercase.
-            let adjusted: String = if contextual_caps {
-                // Shift+Left selects one character to the left.
-                let sel = [
-                    ki(VK_SHIFT, 0),
-                    ki(VK_LEFT, 0),
-                    ki(VK_LEFT, KEYEVENTF_KEYUP.0),
-                    ki(VK_SHIFT, KEYEVENTF_KEYUP.0),
-                ];
-                SendInput(&sel, std::mem::size_of::<INPUT>() as i32);
-
-                // Ctrl+C copies the selection.
-                let copy = [
-                    ki(VK_CONTROL, 0),
-                    ki(VK_C, 0),
-                    ki(VK_C, KEYEVENTF_KEYUP.0),
-                    ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
-                ];
-                SendInput(&copy, std::mem::size_of::<INPUT>() as i32);
-                tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
-
-                // Read the peeked character from the clipboard.
-                let peeked: Option<char> = read_clipboard_unicode().and_then(|v| {
-                    if v.is_empty() || v[0] == 0 {
+            // Look up what we last injected into this window. The keyboard hook
+            // resets this whenever the user edits text, so by the time we reach
+            // here the history reflects the actual state of the cursor context.
+            let peeked: Option<char> = if contextual_caps || auto_spacing {
+                match last_injection().lock() {
+                    Ok(guard) => (*guard)
+                        .as_ref()
+                        .filter(|(hwnd, _, instant)| {
+                            *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE
+                        })
+                        .and_then(|(_, text, _)| text.chars().next_back()),
+                    Err(_) => {
+                        log::error!("injection history mutex poisoned");
                         None
-                    } else {
-                        char::from_u32(v[0] as u32)
                     }
-                });
+                }
+                // guard dropped here — Mutex not held across any await
+            } else {
+                None
+            };
 
-                // Right arrow collapses the selection and restores the cursor position.
-                let desel = [ki(VK_RIGHT, 0), ki(VK_RIGHT, KEYEVENTF_KEYUP.0)];
-                SendInput(&desel, std::mem::size_of::<INPUT>() as i32);
-
-                // Lowercase the first character of the injection when the cursor is
-                // mid-sentence (preceded by anything other than a sentence-ending mark).
-                let sentence_enders: &[char] = &['.', '!', '?', '\n', '\r'];
+            let sentence_enders: &[char] = &['.', '!', '?', '\n', '\r'];
+            let mut adjusted = if contextual_caps {
                 let should_lower = peeked
                     .map(|c| !sentence_enders.contains(&c))
                     .unwrap_or(false);
-
                 if should_lower {
                     let mut chars = text.chars();
                     match chars.next() {
@@ -149,6 +177,14 @@ pub async fn inject_text(
             } else {
                 text.to_owned()
             };
+
+            if auto_spacing {
+                if let Some(c) = peeked {
+                    if !c.is_whitespace() && !adjusted.starts_with(char::is_whitespace) {
+                        adjusted = format!(" {adjusted}");
+                    }
+                }
+            }
 
             let text_to_inject = adjusted.as_str();
 
@@ -208,7 +244,25 @@ pub async fn inject_text(
                 let _ = write_clipboard_unicode(&saved_wide);
             }
 
-            Ok(text_to_inject.to_string())
+            // Record a tail of the injected text so the keyboard hook can pop
+            // characters off it on Backspace, keeping the context accurate after
+            // editing. Only the last HISTORY_TAIL bytes are kept to bound memory use.
+            if target_hwnd != 0 && !adjusted.is_empty() {
+                if let Ok(mut guard) = last_injection().lock() {
+                    let tail = if adjusted.len() > HISTORY_TAIL {
+                        let mut start = adjusted.len() - HISTORY_TAIL;
+                        while !adjusted.is_char_boundary(start) {
+                            start += 1;
+                        }
+                        adjusted[start..].to_owned()
+                    } else {
+                        adjusted.clone()
+                    };
+                    *guard = Some((target_hwnd, tail, Instant::now()));
+                }
+            }
+
+            Ok(adjusted)
         }
     }
 

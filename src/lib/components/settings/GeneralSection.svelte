@@ -20,6 +20,7 @@
   let autostart = $state(false);
   let cleanup = $state(true);
   let contextualCaps = $state(true);
+  let autoSpacing = $state(true);
   let hotkey = $state(['ControlLeft', 'MetaLeft']);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
@@ -88,6 +89,7 @@
       invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
+      invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
     ]);
 
     const val = <T>(i: number, fallback: T): T =>
@@ -97,6 +99,7 @@
     autostart = val<boolean | null>(1, null) ?? false;
     cleanup = val<boolean | null>(5, null) ?? true;
     contextualCaps = val<boolean | null>(6, null) ?? true;
+    autoSpacing = val<boolean | null>(7, null) ?? true;
 
     const hk = val<string[] | null>(2, null);
     if (hk && hk.length === 2) hotkey = hk;
@@ -174,6 +177,16 @@
     } catch (err) {
       contextualCaps = !value;
       console.error('save contextual_caps_enabled failed:', err);
+    }
+  }
+
+  async function handleAutoSpacing(value: boolean) {
+    autoSpacing = value;
+    try {
+      await saveSetting('auto_spacing_enabled', value);
+    } catch (err) {
+      autoSpacing = !value;
+      console.error('save auto_spacing_enabled failed:', err);
     }
   }
 
@@ -368,6 +381,10 @@
 <div class="setting-row">
   <div><div class="label">Contextual capitalization</div><div class="desc">Lowercases the first word when injecting mid-sentence</div></div>
   <Toggle checked={contextualCaps} onchange={handleContextualCaps} />
+</div>
+<div class="setting-row">
+  <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
+  <Toggle checked={autoSpacing} onchange={handleAutoSpacing} />
 </div>
 
 <style>
