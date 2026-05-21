@@ -300,20 +300,22 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         // context tracking that drives auto-spacing and contextual capitalisation.
         let is_injected = (kb.flags.0 & LLKHF_INJECTED.0) != 0;
         if !is_injected && is_down && !is_key1 && !is_key2 {
+            const VK_BACK: u32 = 0x08;
+            const VK_CONTROL: u32 = 0x11;
             const MODIFIER_VKS: &[u32] = &[
-                16, 17, 18,           // generic Shift / Ctrl / Alt
-                160, 161,             // LShift, RShift
-                162, 163,             // LCtrl, RCtrl
-                164, 165,             // LAlt, RAlt
-                91, 92,               // LWin, RWin
-                20, 144, 145,         // CapsLock, NumLock, ScrollLock
+                0x10, 0x11, 0x12,     // VK_SHIFT, VK_CONTROL, VK_MENU
+                0xA0, 0xA1,           // VK_LSHIFT, VK_RSHIFT
+                0xA2, 0xA3,           // VK_LCONTROL, VK_RCONTROL
+                0xA4, 0xA5,           // VK_LMENU, VK_RMENU
+                0x5B, 0x5C,           // VK_LWIN, VK_RWIN
+                0x14, 0x90, 0x91,     // VK_CAPITAL, VK_NUMLOCK, VK_SCROLL
             ];
             if !MODIFIER_VKS.contains(&vk) {
-                if vk == 8 {
+                if vk == VK_BACK {
                     // Ctrl+Backspace deletes a whole word — we can't know how many
                     // characters were removed, so reset entirely. Plain Backspace
                     // pops just the last character to keep context accurate.
-                    if unsafe { modifier_held(17) } {
+                    if unsafe { modifier_held(VK_CONTROL) } {
                         crate::core::injection::reset_injection_history();
                     } else {
                         crate::core::injection::backspace_injection_history();
