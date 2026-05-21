@@ -241,13 +241,13 @@ pub async fn inject_text(
 
             // Record the full injected text so the keyboard hook can pop characters
             // off it on Backspace, keeping the context accurate after editing.
-            if target_hwnd != 0 && !text_to_inject.is_empty() {
+            if target_hwnd != 0 && !adjusted.is_empty() {
                 if let Ok(mut guard) = last_injection().lock() {
-                    *guard = Some((target_hwnd, text_to_inject.to_string(), Instant::now()));
+                    *guard = Some((target_hwnd, adjusted.clone(), Instant::now()));
                 }
             }
 
-            Ok(text_to_inject.to_string())
+            Ok(adjusted)
         }
     }
 
