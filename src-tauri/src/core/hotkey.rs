@@ -1,4 +1,19 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+
+const VK_BACK: u32 = 0x08;    // Backspace
+const VK_CTRL: u32 = 0x11;    // VK_CONTROL (generic, used with modifier_held)
+
+// Side-specific modifier VK codes that should never trigger a history update.
+// Generic codes (0x10/0x11/0x12) are omitted: the !is_injected guard already
+// filters all synthetic input where those codes appear, so only side-specific
+// codes reach this path from real physical key presses.
+static MODIFIER_VKS: &[u32] = &[
+    0xA0, 0xA1,       // VK_LSHIFT, VK_RSHIFT
+    0xA2, 0xA3,       // VK_LCONTROL, VK_RCONTROL
+    0xA4, 0xA5,       // VK_LMENU, VK_RMENU
+    0x5B, 0x5C,       // VK_LWIN, VK_RWIN
+    0x14, 0x90, 0x91, // VK_CAPITAL, VK_NUMLOCK, VK_SCROLL
+];
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -300,22 +315,12 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         // context tracking that drives auto-spacing and contextual capitalisation.
         let is_injected = (kb.flags.0 & LLKHF_INJECTED.0) != 0;
         if !is_injected && is_down && !is_key1 && !is_key2 {
-            const VK_BACK: u32 = 0x08;
-            const VK_CONTROL: u32 = 0x11;
-            const MODIFIER_VKS: &[u32] = &[
-                0x10, 0x11, 0x12,     // VK_SHIFT, VK_CONTROL, VK_MENU
-                0xA0, 0xA1,           // VK_LSHIFT, VK_RSHIFT
-                0xA2, 0xA3,           // VK_LCONTROL, VK_RCONTROL
-                0xA4, 0xA5,           // VK_LMENU, VK_RMENU
-                0x5B, 0x5C,           // VK_LWIN, VK_RWIN
-                0x14, 0x90, 0x91,     // VK_CAPITAL, VK_NUMLOCK, VK_SCROLL
-            ];
             if !MODIFIER_VKS.contains(&vk) {
                 if vk == VK_BACK {
                     // Ctrl+Backspace deletes a whole word — we can't know how many
                     // characters were removed, so reset entirely. Plain Backspace
                     // pops just the last character to keep context accurate.
-                    if unsafe { modifier_held(VK_CONTROL) } {
+                    if unsafe { modifier_held(VK_CTRL) } {
                         crate::core::injection::reset_injection_history();
                     } else {
                         crate::core::injection::backspace_injection_history();
