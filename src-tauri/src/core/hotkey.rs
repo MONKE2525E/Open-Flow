@@ -315,7 +315,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         // Ctrl+V paste and any app-generated keyboard events from corrupting the
         // context tracking that drives auto-spacing and contextual capitalisation.
         let is_injected = (kb.flags.0 & LLKHF_INJECTED.0) != 0;
-        if !is_injected && is_down && !is_key1 && !is_key2 {
+if !is_injected && is_down {
             if !MODIFIER_VKS.contains(&vk) {
                 if vk == VK_BACK {
                     // Ctrl+Backspace and Alt+Backspace both delete a whole word —
