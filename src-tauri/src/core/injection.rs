@@ -143,7 +143,6 @@ pub async fn inject_text(
             // resets this whenever the user edits text, so by the time we reach
             // here the history reflects the actual state of the cursor context.
             let peeked: Option<char> = if contextual_caps || auto_spacing {
-            let peeked: Option<char> = if contextual_caps || auto_spacing {
                 match last_injection().lock() {
                     Ok(guard) => (*guard)
                         .as_ref()
@@ -156,9 +155,7 @@ pub async fn inject_text(
                         None
                     }
                 }
-            } else {
-                None
-            };
+                // guard dropped here — Mutex not held across any await
             } else {
                 None
             };
