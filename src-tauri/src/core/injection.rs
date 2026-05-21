@@ -139,7 +139,9 @@ pub async fn inject_text(
             // resets this whenever the user edits text, so by the time we reach
             // here the history reflects the actual state of the cursor context.
             let peeked: Option<char> = if contextual_caps || auto_spacing {
-                let guard = last_injection().lock().unwrap();
+                let guard = last_injection()
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("injection history mutex poisoned"))?;
                 match *guard {
                     Some((hwnd, ref text, ref instant))
                         if hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE =>
@@ -173,8 +175,8 @@ pub async fn inject_text(
 
             if auto_spacing {
                 if let Some(c) = peeked {
-                    if !c.is_whitespace() {
-                        adjusted = format!(" {adjusted}");
+                    if !c.is_whitespace() && !adjusted.starts_with(char::is_whitespace) {
+                        adjusted.insert(0, ' ');
                     }
                 }
             }
