@@ -6,6 +6,10 @@ use std::time::{Duration, Instant};
 // a safety net for inactivity (e.g. the user idle for a minute then dictates again).
 const INJECTION_STALE: Duration = Duration::from_secs(60);
 
+// Maximum bytes stored for backspace-tracking. Covers any practical editing sequence
+// while keeping the per-injection allocation bounded.
+const HISTORY_TAIL: usize = 512;
+
 static LAST_INJECTION: OnceLock<Mutex<Option<(usize, String, Instant)>>> = OnceLock::new();
 
 fn last_injection() -> &'static Mutex<Option<(usize, String, Instant)>> {
@@ -237,11 +241,21 @@ pub async fn inject_text(
                 let _ = write_clipboard_unicode(&saved_wide);
             }
 
-            // Record the full injected text so the keyboard hook can pop characters
-            // off it on Backspace, keeping the context accurate after editing.
+            // Record a tail of the injected text so the keyboard hook can pop
+            // characters off it on Backspace, keeping the context accurate after
+            // editing. Only the last HISTORY_TAIL bytes are kept to bound memory use.
             if target_hwnd != 0 && !adjusted.is_empty() {
                 if let Ok(mut guard) = last_injection().lock() {
-                    *guard = Some((target_hwnd, adjusted.clone(), Instant::now()));
+                    let tail = if adjusted.len() > HISTORY_TAIL {
+                        let mut start = adjusted.len() - HISTORY_TAIL;
+                        while !adjusted.is_char_boundary(start) {
+                            start += 1;
+                        }
+                        adjusted[start..].to_owned()
+                    } else {
+                        adjusted.clone()
+                    };
+                    *guard = Some((target_hwnd, tail, Instant::now()));
                 }
             }
 
