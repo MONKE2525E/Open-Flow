@@ -142,14 +142,12 @@ pub async fn inject_text(
                 let guard = last_injection()
                     .lock()
                     .map_err(|_| anyhow::anyhow!("injection history mutex poisoned"))?;
-                match *guard {
-                    Some((hwnd, ref text, ref instant))
-                        if hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE =>
-                    {
-                        text.chars().next_back()
-                    }
-                    _ => None,
-                }
+                (*guard)
+                    .as_ref()
+                    .filter(|(hwnd, _, instant)| {
+                        *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE
+                    })
+                    .and_then(|(_, text, _)| text.chars().next_back())
                 // guard dropped here — Mutex not held across any await
             } else {
                 None
