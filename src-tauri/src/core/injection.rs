@@ -146,7 +146,7 @@ pub async fn inject_text(
                     Some((hwnd, ref text, ref instant))
                         if hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE =>
                     {
-                        text.chars().last()
+                        text.chars().next_back()
                     }
                     _ => None,
                 }
