@@ -7,13 +7,13 @@
   const transcriptionModels = [
     { id: 'groq/whisper-large-v3-turbo', provider: 'Groq',   name: 'whisper-large-v3-turbo', note: '~0.5s · free tier · recommended', recommended: true },
     { id: 'openai/gpt-4o-transcribe',    provider: 'OpenAI', name: 'gpt-4o-transcribe',       note: '~1s · best accuracy for accents & noise', recommended: false },
-    { id: 'google/gemini-2.5-flash',     provider: 'Google', name: 'gemini-2.5-flash',        note: '~3s · slow for transcription, not recommended', recommended: false },
+    { id: 'google/gemini-3.5-flash',     provider: 'Google', name: 'gemini-3.5-flash',        note: '~3s · slow for transcription, not recommended', recommended: false },
   ];
 
   const cleanupModels = [
     { id: 'groq/llama-3.3-70b-versatile', provider: 'Groq',   name: 'llama-3.3-70b-versatile', note: '~0.3s · free tier · recommended', recommended: true },
     { id: 'openai/gpt-4o-mini',           provider: 'OpenAI', name: 'gpt-4o-mini',              note: '~0.5s · best cost/quality balance', recommended: false },
-    { id: 'google/gemini-2.5-flash',      provider: 'Google', name: 'gemini-2.5-flash',          note: '~1s · fused with transcription when both Google', recommended: false },
+    { id: 'google/gemini-3.5-flash',      provider: 'Google', name: 'gemini-3.5-flash',          note: '~1s · fused with transcription when both Google', recommended: false },
   ];
 
   let transcriptionModel = $state('groq/whisper-large-v3-turbo');

@@ -137,7 +137,7 @@ async fn transcribe_gemini(wav: Bytes, api_key: &str, language: &str) -> Result<
         "Transcribe this audio exactly as spoken in {language_label}. \
          Return only the spoken words, no commentary, no formatting, no explanation."
     );
-    transcribe_gemini_with_prompt(wav, api_key, &prompt, false).await
+    transcribe_gemini_with_prompt(wav, api_key, &prompt, true).await
 }
 
 async fn transcribe_gemini_with_prompt(
@@ -180,7 +180,7 @@ async fn transcribe_gemini_with_prompt(
     };
 
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={api_key}"
     );
 
     let request_started = std::time::Instant::now();

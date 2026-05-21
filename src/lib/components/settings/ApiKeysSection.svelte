@@ -6,7 +6,7 @@
   const keyProviders: { id: 'groq' | 'openai' | 'google'; label: string; ph: string; models: string }[] = [
     { id: 'groq',   label: 'Groq',   ph: 'gsk_…',  models: 'whisper-large-v3-turbo · llama-3.3-70b' },
     { id: 'openai', label: 'OpenAI', ph: 'sk-…',   models: 'gpt-4o-transcribe · gpt-4o-mini' },
-    { id: 'google', label: 'Google', ph: 'AIza…',  models: 'Chirp 3 · gemini-2.5-flash' },
+    { id: 'google', label: 'Google', ph: 'AIza…',  models: 'Chirp 3 · gemini-3.5-flash' },
   ];
 
   let keyStatus = $state({ groq: false, openai: false, google: false });

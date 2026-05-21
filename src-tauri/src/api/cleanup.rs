@@ -221,7 +221,7 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
     };
 
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={api_key}"
     );
 
     let request_started = std::time::Instant::now();
