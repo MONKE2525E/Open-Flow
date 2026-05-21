@@ -310,9 +310,14 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             ];
             if !MODIFIER_VKS.contains(&vk) {
                 if vk == 8 {
-                    // Backspace: pop the last character off the tracked text so the
-                    // next injection still knows what's before the cursor.
-                    crate::core::injection::backspace_injection_history();
+                    // Ctrl+Backspace deletes a whole word — we can't know how many
+                    // characters were removed, so reset entirely. Plain Backspace
+                    // pops just the last character to keep context accurate.
+                    if unsafe { modifier_held(17) } {
+                        crate::core::injection::reset_injection_history();
+                    } else {
+                        crate::core::injection::backspace_injection_history();
+                    }
                 } else {
                     // Any other key (Enter, character, arrow, Delete, etc.): the
                     // cursor context is unknown — treat the next injection as fresh.
