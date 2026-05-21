@@ -7,7 +7,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, HC_ACTION,
-    KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
+    WM_SYSKEYUP,
 };
 
 // Returns true if the given specific-side VK (or its mirror) is currently held.
@@ -289,6 +290,33 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 let is_menu_trigger = k1 == 164 || k1 == 165 || k1 == 18 || k1 == 91 || k1 == 92;
                 if is_menu_trigger {
                     return LRESULT(1);
+                }
+            }
+        }
+
+        // Update injection history for real user keystrokes only.
+        // Synthetic events (LLKHF_INJECTED) are skipped — this prevents our own
+        // Ctrl+V paste and any app-generated keyboard events from corrupting the
+        // context tracking that drives auto-spacing and contextual capitalisation.
+        let is_injected = (kb.flags.0 & LLKHF_INJECTED.0) != 0;
+        if !is_injected && is_down && !is_key1 && !is_key2 {
+            const MODIFIER_VKS: &[u32] = &[
+                16, 17, 18,           // generic Shift / Ctrl / Alt
+                160, 161,             // LShift, RShift
+                162, 163,             // LCtrl, RCtrl
+                164, 165,             // LAlt, RAlt
+                91, 92,               // LWin, RWin
+                20, 144, 145,         // CapsLock, NumLock, ScrollLock
+            ];
+            if !MODIFIER_VKS.contains(&vk) {
+                if vk == 8 {
+                    // Backspace: pop the last character off the tracked text so the
+                    // next injection still knows what's before the cursor.
+                    crate::core::injection::backspace_injection_history();
+                } else {
+                    // Any other key (Enter, character, arrow, Delete, etc.): the
+                    // cursor context is unknown — treat the next injection as fresh.
+                    crate::core::injection::reset_injection_history();
                 }
             }
         }

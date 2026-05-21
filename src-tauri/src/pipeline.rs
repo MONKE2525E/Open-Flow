@@ -882,7 +882,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     hide_pill(&app);
     let inject_stage = std::time::Instant::now();
     let injected_text =
-        match injection::inject_text(&final_text, target_hwnd, cfg.contextual_caps_enabled).await {
+        match injection::inject_text(&final_text, target_hwnd, cfg.contextual_caps_enabled, cfg.auto_spacing_enabled).await {
             Ok(text) => text,
             Err(e) => {
                 log::error!("inject: {e}");
@@ -891,8 +891,9 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
             }
         };
     log::debug!(
-        "pipeline: injection done contextual_caps={} output_chars={} stage_ms={}",
+        "pipeline: injection done contextual_caps={} auto_spacing={} output_chars={} stage_ms={}",
         cfg.contextual_caps_enabled,
+        cfg.auto_spacing_enabled,
         injected_text.chars().count(),
         inject_stage.elapsed().as_millis()
     );
