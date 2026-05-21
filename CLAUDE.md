@@ -4,7 +4,7 @@
 - Github Repo: https://github.com/MONKE2525E/Open-Flow
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
 - docs/ROADMAP.md keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
-- currently working towards OpenFlow 0.10.0.
+- currently working towards OpenFlow 0.11.0.
 - Always add yourself as a co-author  in all commits you make e.g @Claude, @Codex, etc
 
 
@@ -177,7 +177,7 @@ WAL mode is enabled. Migrations use `execute_batch` wrapped in explicit `BEGIN/C
 |---|---|---|
 | Groq | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` |
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
-| Google | `gemini-2.5-flash` (inline audio) | `gemini-2.5-flash` |
+| Google | `gemini-3.5-flash` (inline audio) | `gemini-3.5-flash` |
 
 Groq is the recommended default — free tier, fast LPU inference. Google uses base64-encoded audio in the request body; Groq/OpenAI use multipart form upload. The cleanup API wraps transcription text in `<raw_dictation>` XML delimiters before sending. Google cleanup sets `thinking_budget: 0` to disable deep thinking.
 

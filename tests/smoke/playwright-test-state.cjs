@@ -38,12 +38,12 @@ async function closeSettings(page) {
     const expectedTranscription = [
       'whisper-large-v3-turbo',
       'gpt-4o-transcribe',
-      'gemini-2.5-flash',
+      'gemini-3.5-flash',
     ];
     const expectedCleanup = [
       'llama-3.3-70b-versatile',
       'gpt-4o-mini',
-      'gemini-2.5-flash',
+      'gemini-3.5-flash',
     ];
 
     for (const name of expectedTranscription) {
