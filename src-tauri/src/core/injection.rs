@@ -43,33 +43,84 @@ pub fn backspace_injection_history() {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn read_clipboard_unicode() -> Option<Vec<u16>> {
+struct SavedClipboard {
+    entries: Vec<(u32, Vec<u8>)>,
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn save_clipboard_all() -> SavedClipboard {
+    use windows::Win32::Foundation::HGLOBAL;
     use windows::Win32::System::DataExchange::{
-        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+        CloseClipboard, EnumClipboardFormats, GetClipboardData, OpenClipboard,
     };
-    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 
-    const CF_UNICODETEXT: u32 = 13;
+    let mut entries = Vec::new();
 
-    if IsClipboardFormatAvailable(CF_UNICODETEXT).is_ok() && OpenClipboard(None).is_ok() {
-        let saved = GetClipboardData(CF_UNICODETEXT).ok().and_then(|h| {
-            let ptr = GlobalLock(windows::Win32::Foundation::HGLOBAL(h.0)) as *const u16;
-            if ptr.is_null() {
-                return None;
-            }
-            let mut len = 0usize;
-            while *ptr.add(len) != 0 {
-                len += 1;
-            }
-            let v = std::slice::from_raw_parts(ptr, len + 1).to_vec();
-            let _ = GlobalUnlock(windows::Win32::Foundation::HGLOBAL(h.0));
-            Some(v)
-        });
-        CloseClipboard().ok();
-        saved
-    } else {
-        None
+    if OpenClipboard(None).is_err() {
+        return SavedClipboard { entries };
     }
+
+    let mut fmt = 0u32;
+    loop {
+        fmt = EnumClipboardFormats(fmt);
+        if fmt == 0 {
+            break;
+        }
+        // Skip GDI object formats — GetClipboardData returns an opaque GDI handle,
+        // not an HGLOBAL, so GlobalSize/GlobalLock are undefined on them.
+        // CF_BITMAP=2, CF_METAFILEPICT=3, CF_PALETTE=9, CF_ENHMETAFILE=14
+        if matches!(fmt, 2 | 3 | 9 | 14) {
+            continue;
+        }
+        if let Ok(h) = GetClipboardData(fmt) {
+            let hg = HGLOBAL(h.0);
+            let size = GlobalSize(hg);
+            if size > 0 {
+                let ptr = GlobalLock(hg) as *const u8;
+                if !ptr.is_null() {
+                    let data = std::slice::from_raw_parts(ptr, size).to_vec();
+                    let _ = GlobalUnlock(hg);
+                    entries.push((fmt, data));
+                }
+            }
+        }
+    }
+
+    CloseClipboard().ok();
+    SavedClipboard { entries }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+
+    if saved.entries.is_empty() {
+        return;
+    }
+
+    if OpenClipboard(None).is_err() {
+        return;
+    }
+
+    EmptyClipboard().ok();
+
+    for (fmt, data) in &saved.entries {
+        if let Ok(hg) = GlobalAlloc(GMEM_MOVEABLE, data.len()) {
+            let ptr = GlobalLock(hg) as *mut u8;
+            if !ptr.is_null() {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+                let _ = GlobalUnlock(hg);
+                let _ = SetClipboardData(*fmt, Some(HANDLE(hg.0)));
+            }
+        }
+    }
+
+    CloseClipboard().ok();
 }
 
 #[cfg(target_os = "windows")]
@@ -113,8 +164,9 @@ pub async fn inject_text(
         use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
 
         unsafe {
-            // Save existing clipboard
-            let saved: Option<Vec<u16>> = read_clipboard_unicode();
+            // Save all clipboard formats so non-text content (images, files, etc.)
+            // survives the injection and is restored afterward.
+            let saved = save_clipboard_all();
 
             // Restore focus to the window the user was dictating into.
             // The user may have switched windows during the transcription/cleanup
@@ -239,10 +291,8 @@ pub async fn inject_text(
             SendInput(&paste, std::mem::size_of::<INPUT>() as i32);
             tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
 
-            // Restore clipboard
-            if let Some(saved_wide) = saved {
-                let _ = write_clipboard_unicode(&saved_wide);
-            }
+            // Restore all previously saved clipboard formats.
+            restore_clipboard_all(&saved);
 
             // Record a tail of the injected text so the keyboard hook can pop
             // characters off it on Backspace, keeping the context accurate after
