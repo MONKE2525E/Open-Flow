@@ -143,16 +143,22 @@ pub async fn inject_text(
             // resets this whenever the user edits text, so by the time we reach
             // here the history reflects the actual state of the cursor context.
             let peeked: Option<char> = if contextual_caps || auto_spacing {
-                let guard = last_injection()
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("injection history mutex poisoned"))?;
-                (*guard)
-                    .as_ref()
-                    .filter(|(hwnd, _, instant)| {
-                        *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE
-                    })
-                    .and_then(|(_, text, _)| text.chars().next_back())
-                // guard dropped here — Mutex not held across any await
+            let peeked: Option<char> = if contextual_caps || auto_spacing {
+                match last_injection().lock() {
+                    Ok(guard) => (*guard)
+                        .as_ref()
+                        .filter(|(hwnd, _, instant)| {
+                            *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE
+                        })
+                        .and_then(|(_, text, _)| text.chars().next_back()),
+                    Err(_) => {
+                        log::error!("injection history mutex poisoned");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
             } else {
                 None
             };
