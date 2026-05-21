@@ -317,15 +317,16 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         if !is_injected && is_down && !is_key1 && !is_key2 {
             if !MODIFIER_VKS.contains(&vk) {
                 if vk == VK_BACK {
-                    // Ctrl+Backspace deletes a whole word — we can't know how many
-                    // characters were removed, so reset entirely. Plain Backspace
-                    // pops just the last character to keep context accurate.
-                    if unsafe { modifier_held(VK_CTRL) } {
+                    // Ctrl+Backspace (word delete) or Alt+Backspace (undo) can remove
+                    // an unknown number of characters, so reset history entirely.
+                    // Plain Backspace pops just one character to keep context accurate.
+                    if unsafe { modifier_held(VK_CTRL) || modifier_held(0x12) } { // 0x12 is VK_MENU (Alt)
                         crate::core::injection::reset_injection_history();
                     } else {
                         crate::core::injection::backspace_injection_history();
                     }
                 } else {
+
                     // Any other key (Enter, character, arrow, Delete, etc.): the
                     // cursor context is unknown — treat the next injection as fresh.
                     crate::core::injection::reset_injection_history();
