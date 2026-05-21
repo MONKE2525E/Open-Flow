@@ -44,3 +44,18 @@ tests/smoke/*.wav
 # AI Agent workspace
 .claude/
 .loop_state.json
+
+# Guardrail: never track nested worktree folders if someone creates them in-repo
+agent-worktrees/
+
+
+# Local reusable worktree slots
+worktrees/
+
+# Multi-agent workflow docs (local-only)
+Agent-Skills/Multi_Agent_Parallel.md
+Agent-Skills/templates/
+# In-repo reusable worktree slots
+worktrees/worktree-1/
+worktrees/worktree-2/
+worktrees/worktree-3/
