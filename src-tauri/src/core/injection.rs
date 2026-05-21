@@ -176,7 +176,7 @@ pub async fn inject_text(
             if auto_spacing {
                 if let Some(c) = peeked {
                     if !c.is_whitespace() && !adjusted.starts_with(char::is_whitespace) {
-                        adjusted.insert(0, ' ');
+                        adjusted = format!(" {adjusted}");
                     }
                 }
             }
