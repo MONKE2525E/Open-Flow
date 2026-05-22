@@ -41,7 +41,7 @@
 
 -
 
-> Check [`docs/ROADMAP.md`](../docs/ROADMAP.md) before opening feature PRs — work that overlaps with planned core changes may need to be redirected. See [`docs/CONTRIBUTING.md`](../docs/CONTRIBUTING.md).
+> Check [`docs/ROADMAP.md`](../docs/ROADMAP.md) before opening feature PRs — work that overlaps with planned core changes may need to be redirected. See [`CLAUDE.md`](../CLAUDE.md) for architecture and contribution guidance.
 
 ## Model Used
 
@@ -66,6 +66,6 @@
 - [ ] Tests added or updated where applicable
 - [ ] UI changes include before/after screenshots
 - [ ] No API keys, secrets, or personal data in code or logs
-- [ ] If version bumped: all three files updated together (`package.json`, `tauri.conf.json`, `Cargo.toml`)
+- [ ] If version bumped: all three files updated together (`package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`)
 - [ ] Relevant documentation updated to reflect changes
 - [ ] Risks documented above
