@@ -1,5 +1,11 @@
 # Roadmap: Transcription Utility
 
+## In Progress — 0.11.0
+
+- Models & Settings redesign: simple/advanced mode toggle, live model chain preview, provider key validation UI
+- Cleanup model selection persistence fix
+- Bug fixes: quota retryability, slash in model IDs, prefix routing
+
 ## Shipped in 0.10.0
 - Automatic microphone gain calibration (setup flow + Audio settings page)
 - Auto-learn dictionary reliability hardening and observability
