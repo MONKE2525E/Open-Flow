@@ -70,6 +70,7 @@ import atexit
 import concurrent.futures
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -435,9 +436,36 @@ def _kill_port_owner(port: int) -> bool:
     )
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True)
-        return "killed" in (r.stdout or "")
     except FileNotFoundError:
         return False
+    return "killed" in (r.stdout or "")
+
+
+def _cleanup_test_artifacts() -> int:
+    """Delete screenshot artifacts produced by smoke tests. Returns removed count."""
+    removed = 0
+    roots = [ROOT, SMOKE_DIR]
+    file_patterns = ["screenshot*.png", "tmp-*.png"]
+    dir_names = {"tmp-screenshots"}
+
+    for root in roots:
+        for pattern in file_patterns:
+            for p in root.glob(pattern):
+                if p.is_file():
+                    try:
+                        p.unlink()
+                        removed += 1
+                    except OSError:
+                        pass
+        for name in dir_names:
+            d = root / name
+            if d.is_dir():
+                try:
+                    shutil.rmtree(d)
+                    removed += 1
+                except OSError:
+                    pass
+    return removed
 
 # ═══ TEST EXECUTION ═══════════════════════════════════════════════════════════
 
@@ -757,6 +785,8 @@ def main() -> int:
                     help="Max worker threads for --parallel (default: 4)")
     ap.add_argument("--fresh-server", action="store_true",
                     help="Kill any existing listener on the test port before starting server")
+    ap.add_argument("--keep-artifacts", action="store_true",
+                    help="Keep screenshots and temp screenshot folders after run")
     args = ap.parse_args()
 
     suites = list(SUITE_ORDER) if args.suite == "all" else [
@@ -821,6 +851,10 @@ def main() -> int:
     finally:
         if needs_server and not args.no_server:
             server.stop()
+        if not args.keep_artifacts:
+            removed = _cleanup_test_artifacts()
+            if removed > 0:
+                print(dim(f"  cleaned {removed} test artifact(s)"))
 
     if len(summaries) > 1:
         _print_loop_table(summaries)
