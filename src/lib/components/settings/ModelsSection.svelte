@@ -298,11 +298,11 @@
 
   function activeProviderLabel(type: TaskType): string {
     const parsed = splitModelId(taskDefault(type));
-    return parsed ? parsed.provider.charAt(0).toUpperCase() + parsed.provider.slice(1) : '—';
+    return parsed ? parsed.provider.charAt(0).toUpperCase() + parsed.provider.slice(1) : 'None';
   }
 
   function activeModelLabel(type: TaskType): string {
-    return splitModelId(taskDefault(type))?.model ?? taskDefault(type);
+    return splitModelId(taskDefault(type))?.model ?? 'None';
   }
 
   migrateAndLoad().catch((err) => console.error('load models failed', err));
@@ -1032,3 +1032,4 @@
     }
   }
 </style>
+
