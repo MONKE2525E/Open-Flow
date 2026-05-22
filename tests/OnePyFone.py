@@ -352,21 +352,24 @@ class ServerManager:
 
         # On Windows use shell=True so "npm run tauri dev" works as documented.
         # CREATE_NEW_PROCESS_GROUP lets taskkill /T kill the entire tree later.
-        if sys.platform == "win32":
-            cmd_str = "npm run tauri dev" if mode == "tauri" else "npm run dev"
-            self._proc = subprocess.Popen(
-                cmd_str, shell=True, cwd=ROOT,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-            )
-        else:
-            import os as _os
-            cmd_list = ["npm", "run", "tauri", "dev"] if mode == "tauri" else ["npm", "run", "dev"]
-            self._proc = subprocess.Popen(
-                cmd_list, cwd=ROOT,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                preexec_fn=_os.setsid,
-            )
+        try:
+            if sys.platform == "win32":
+                cmd_str = "npm run tauri dev" if mode == "tauri" else "npm run dev"
+                self._proc = subprocess.Popen(
+                    cmd_str, shell=True, cwd=ROOT,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                )
+            else:
+                import os as _os
+                cmd_list = ["npm", "run", "tauri", "dev"] if mode == "tauri" else ["npm", "run", "dev"]
+                self._proc = subprocess.Popen(
+                    cmd_list, cwd=ROOT,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    preexec_fn=_os.setsid,
+                )
+        except FileNotFoundError:
+            return False
 
         self._port = port
         if self._wait_for_http(port, timeout=180):
