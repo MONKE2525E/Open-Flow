@@ -340,6 +340,7 @@ pub async fn stop_recording(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
+    crate::core::hotkey::set_handless_active(false);
     let session = {
         let mut st = lock_state(&state)?;
         st.handless = false;

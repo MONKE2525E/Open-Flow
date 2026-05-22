@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 const VK_BACK: u32 = 0x08;    // Backspace
+const VK_ESCAPE: u32 = 0x1B;  // Escape
 const VK_CTRL: u32 = 0x11;    // VK_CONTROL (generic, used with modifier_held)
 const VK_ALT: u32 = 0x12;     // VK_MENU (generic, used with modifier_held)
 
@@ -108,6 +109,10 @@ pub fn reset_chord_state() {
     CHORD_FIRST_DOWN_MS.store(0, Ordering::SeqCst);
 }
 
+pub fn set_handless_active(v: bool) {
+    HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
+}
+
 pub fn map_code_to_vk(code: &str) -> u32 {
     match code {
         "ShiftLeft" => 160,
@@ -181,6 +186,10 @@ static HANDLESS_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync
 static CANCEL_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 
 static CHORD_DOWN: AtomicBool = AtomicBool::new(false);
+static HANDLESS_ACTIVE: AtomicBool = AtomicBool::new(false);
+static ESCAPE_CANCELLED: AtomicBool = AtomicBool::new(false);
+static ESCAPE_KEY_DOWN: AtomicBool = AtomicBool::new(false);
+static ESCAPE_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 static KEY1_WAS_CHORD: AtomicBool = AtomicBool::new(false);
 // Set whenever key2 is captured as part of our chord. Guarantees key2-up is
 // suppressed even if key1 goes up first and clears CHORD_DOWN before key2 does.
@@ -245,6 +254,9 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             // and triggers the Start menu / Win shortcuts.
             let key2_was_chord = KEY2_WAS_CHORD.swap(false, Ordering::SeqCst);
             if CHORD_DOWN.swap(false, Ordering::SeqCst) {
+                if ESCAPE_CANCELLED.swap(false, Ordering::SeqCst) {
+                    return LRESULT(1);
+                }
                 let now = GetTickCount64();
                 let t0 = CHORD_FIRST_DOWN_MS.load(Ordering::SeqCst);
                 let held_ms = now.saturating_sub(t0);
@@ -298,8 +310,10 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             }
 
             if CHORD_DOWN.swap(false, Ordering::SeqCst) {
-                if let Some(cb) = RELEASE_CB.get() {
-                    cb();
+                if !ESCAPE_CANCELLED.swap(false, Ordering::SeqCst) {
+                    if let Some(cb) = RELEASE_CB.get() {
+                        cb();
+                    }
                 }
             }
             if KEY1_WAS_CHORD.swap(false, Ordering::SeqCst) {
@@ -307,6 +321,22 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 if is_menu_trigger {
                     return LRESULT(1);
                 }
+            }
+        }
+
+        if vk == VK_ESCAPE {
+            if is_down && (CHORD_DOWN.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst)) {
+                if CHORD_DOWN.load(Ordering::SeqCst) {
+                    ESCAPE_CANCELLED.store(true, Ordering::SeqCst);
+                }
+                ESCAPE_KEY_DOWN.store(true, Ordering::SeqCst);
+                if let Some(cb) = ESCAPE_CB.get() {
+                    cb();
+                }
+                return LRESULT(1);
+            }
+            if is_up && ESCAPE_KEY_DOWN.swap(false, Ordering::SeqCst) {
+                return LRESULT(1);
             }
         }
 
@@ -338,22 +368,25 @@ if !is_injected && is_down {
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-pub fn start<P, R, H, C>(
+pub fn start<P, R, H, C, E>(
     on_press: P,
     on_release: R,
     on_handless: H,
     on_cancel: C,
+    on_escape: E,
 ) -> Result<std::thread::JoinHandle<()>, String>
 where
     P: Fn() + Send + Sync + 'static,
     R: Fn() + Send + Sync + 'static,
     H: Fn() + Send + Sync + 'static,
     C: Fn() + Send + Sync + 'static,
+    E: Fn() + Send + Sync + 'static,
 {
     let _ = PRESS_CB.set(Box::new(on_press));
     let _ = RELEASE_CB.set(Box::new(on_release));
     let _ = HANDLESS_CB.set(Box::new(on_handless));
     let _ = CANCEL_CB.set(Box::new(on_cancel));
+    let _ = ESCAPE_CB.set(Box::new(on_escape));
 
     // Verify the hook can be installed before spawning the thread so the caller
     // gets a synchronous error instead of a silent panic on a background thread.
