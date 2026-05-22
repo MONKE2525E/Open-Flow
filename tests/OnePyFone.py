@@ -247,7 +247,6 @@ class RustTestSuite(PythonTest):
     def run(self) -> TestResult:
         t0 = time.monotonic()
         try:
-        try:
             r = subprocess.run(
                 ["cargo", "test", "--manifest-path", str(CARGO_TOML)],
                 capture_output=True, text=True, cwd=ROOT, timeout=self.timeout_s,
