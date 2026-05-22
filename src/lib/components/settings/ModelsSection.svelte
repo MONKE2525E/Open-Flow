@@ -25,14 +25,41 @@
   let transcriptionIndicatorStyle = $state('opacity:0;');
   let cleanupIndicatorStyle = $state('opacity:0;');
 
+  // Migrate model IDs that were renamed between releases.
+  const MODEL_MIGRATIONS: Record<string, string> = {
+    'google/gemini-2.5-flash': 'google/gemini-3.5-flash',
+  };
+
+  function resolveModelId(stored: string, validIds: string[]): string {
+    if (validIds.includes(stored)) return stored;
+    const migrated = MODEL_MIGRATIONS[stored];
+    if (migrated && validIds.includes(migrated)) return migrated;
+    return validIds[0];
+  }
+
   async function loadModels() {
     try {
       const [tModel, cModel] = await Promise.all([
         invoke<string | null>('get_setting', { key: 'transcription_model' }),
         invoke<string | null>('get_setting', { key: 'cleanup_model' }),
       ]);
-      if (tModel) transcriptionModel = tModel;
-      if (cModel) cleanupModel = cModel;
+
+      if (tModel) {
+        const resolved = resolveModelId(tModel, transcriptionModels.map(m => m.id));
+        transcriptionModel = resolved;
+        if (resolved !== tModel) {
+          await saveSetting('transcription_model', resolved);
+          await saveSetting('transcription_provider', resolved.split('/')[0] as ProviderId);
+        }
+      }
+      if (cModel) {
+        const resolved = resolveModelId(cModel, cleanupModels.map(m => m.id));
+        cleanupModel = resolved;
+        if (resolved !== cModel) {
+          await saveSetting('cleanup_model', resolved);
+          await saveSetting('cleanup_provider', resolved.split('/')[0] as ProviderId);
+        }
+      }
     } catch (err) {
       console.error('loadModels failed:', err);
     }
