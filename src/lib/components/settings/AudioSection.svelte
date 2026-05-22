@@ -5,7 +5,7 @@
   import { onDestroy } from 'svelte';
   import Toggle from '../Toggle.svelte';
   import { saveSetting } from '../../settings';
-  import { MOTION_MS, MOTION_PX, motionMs, motionPx, animateWidth } from '../../motion';
+  import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import { getAudioCalibrationCopy } from '../../calibrationCopy';
   import type { TranscriptionLanguageCode } from '../../transcriptionLanguages';
 
@@ -21,10 +21,7 @@
 
   let noiseReduction = $state(true);
   let micGain = $state(3.5);
-  let microphones = $state<string[]>([]);
-  let selectedMic = $state('');
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
-  let micDropdownOpen = $state(false);
   const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
 
   $effect(() => {
@@ -35,19 +32,15 @@
 
   async function loadSettings() {
     try {
-      const [nr, savedGain, mics, curMic, language] = await Promise.all([
+      const [nr, savedGain, language] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
         invoke<number | null>('get_setting', { key: 'mic_gain' }),
-        invoke<string[]>('get_microphones'),
-        invoke<string | null>('get_setting', { key: 'microphone_device' }),
         invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       ]);
       noiseReduction = nr ?? true;
       if (savedGain !== null && savedGain !== undefined) {
         micGain = Math.max(1, Math.min(8, savedGain));
       }
-      microphones = mics ?? [];
-      selectedMic = curMic ?? '';
       if (language) selectedLanguage = language;
     } catch (err) {
       console.error('AudioSection load failed:', err);
@@ -72,22 +65,6 @@
     }
   }
 
-  async function saveMic(name: string) {
-    selectedMic = name;
-    micDropdownOpen = false;
-    try {
-      await saveSetting('microphone_device', name || null);
-    } catch (err) {
-      console.error('saveMic failed:', err);
-    }
-  }
-
-  function closeMicDropdown(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest('.mic-dropdown')) {
-      micDropdownOpen = false;
-    }
-  }
-
   onDestroy(() => {
     cancelCalibration();
   });
@@ -95,51 +72,7 @@
   loadSettings();
 </script>
 
-<svelte:window onclick={closeMicDropdown} onkeydown={(e) => e.key === 'Escape' && (micDropdownOpen = false)} />
-
-<h2 class="settings-h">
-  Microphone
-  <span class="sr-only">Microphone</span>
-</h2>
-
-<div class="setting-row">
-  <div>
-    <div class="label">{audioCopy.inputDeviceLabel}</div>
-    <div class="desc">{audioCopy.inputDeviceDescription}</div>
-  </div>
-  <div class="mic-dropdown">
-    <button
-      class="btn-ghost mic-btn"
-      use:animateWidth={{ text: selectedMic || audioCopy.defaultDevice, max: 180 }}
-      onclick={() => (micDropdownOpen = !micDropdownOpen)}
-    >
-      <span class="mic-btn-label">{selectedMic || audioCopy.defaultDevice}</span>
-      <svg class:open={micDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="m6 9 6 6 6-6"/>
-      </svg>
-    </button>
-    {#if micDropdownOpen}
-      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div
-        class="mic-menu scroll-styled scroll-thumb-elev"
-        role="presentation"
-        onclick={(e) => e.stopPropagation()}
-        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
-        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
-      >
-        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{audioCopy.defaultDevice}</button>
-        {#each microphones as m}
-          <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>
-            {m}
-          </button>
-        {/each}
-        {#if microphones.length === 0}
-          <div class="mic-empty">{audioCopy.noDevicesFound}</div>
-        {/if}
-      </div>
-    {/if}
-  </div>
-</div>
+<h2 class="settings-h">Advanced</h2>
 
 <div class="setting-row gain-row">
   <div class="gain-header">
@@ -225,93 +158,6 @@
 </div>
 
 <style>
-  .mic-dropdown {
-    position: relative;
-  }
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-  .mic-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: var(--r-md);
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    color: var(--ink);
-    font-size: 13px;
-    font-weight: 500;
-  }
-  .mic-btn svg {
-    transition: transform 0.2s;
-  }
-  .mic-btn svg.open {
-    transform: rotate(180deg);
-  }
-  .mic-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
-    width: 220px;
-    max-height: 240px;
-    overflow-y: auto;
-    background: var(--bg-elev);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--r-md);
-    box-shadow: 0 4px 16px var(--shadow-md);
-    z-index: 10;
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .mic-btn-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-    text-align: left;
-  }
-  .mic-item {
-    width: 100%;
-    text-align: left;
-    padding: 6px 10px;
-    border-radius: var(--r-sm);
-    font-size: 12.5px;
-    color: var(--ink-soft);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .mic-item:hover {
-    background: var(--paper-2);
-    color: var(--ink);
-  }
-  .mic-item.active {
-    background: var(--accent-soft);
-    color: var(--accent-ink);
-    font-weight: 500;
-  }
-  .mic-empty {
-    padding: 8px 10px;
-    font-size: 12px;
-    color: var(--ink-mute);
-    text-align: center;
-  }
 
   /* Calibration row styles */
   .cal-row {
