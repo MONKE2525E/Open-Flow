@@ -93,7 +93,7 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
 
 #[cfg(target_os = "windows")]
 unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
-    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Foundation::{GlobalFree, HANDLE};
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
@@ -112,10 +112,14 @@ unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
     for (fmt, data) in &saved.entries {
         if let Ok(hg) = GlobalAlloc(GMEM_MOVEABLE, data.len()) {
             let ptr = GlobalLock(hg) as *mut u8;
-            if !ptr.is_null() {
-                std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
-                let _ = GlobalUnlock(hg);
-                let _ = SetClipboardData(*fmt, Some(HANDLE(hg.0)));
+            if ptr.is_null() {
+                let _ = GlobalFree(Some(hg));
+                continue;
+            }
+            std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+            let _ = GlobalUnlock(hg);
+            if SetClipboardData(*fmt, Some(HANDLE(hg.0))).is_err() {
+                let _ = GlobalFree(Some(hg));
             }
         }
     }

@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 const VK_BACK: u32 = 0x08;    // Backspace
+const VK_ESCAPE: u32 = 0x1B;  // Escape
 const VK_CTRL: u32 = 0x11;    // VK_CONTROL (generic, used with modifier_held)
 const VK_ALT: u32 = 0x12;     // VK_MENU (generic, used with modifier_held)
 
@@ -322,7 +323,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             }
         }
 
-        if vk == 27 && is_down {
+        if vk == VK_ESCAPE && is_down {
             if CHORD_DOWN.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst) {
                 if CHORD_DOWN.load(Ordering::SeqCst) {
                     ESCAPE_CANCELLED.store(true, Ordering::SeqCst);
