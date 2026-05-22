@@ -15,7 +15,10 @@ pub fn is_quota_error(e: &anyhow::Error) -> bool {
 }
 
 pub fn validate_model_for_url(model: &str) -> anyhow::Result<()> {
-    if model.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '.' | '_')) {
+    if model.contains("..") {
+        anyhow::bail!("Invalid model identifier (path traversal): {model}");
+    }
+    if model.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '.' | '_' | '/')) {
         Ok(())
     } else {
         anyhow::bail!("Invalid model identifier for API URL: {model}")
@@ -24,7 +27,7 @@ pub fn validate_model_for_url(model: &str) -> anyhow::Result<()> {
 
 pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
     if is_quota_error(e) {
-        return false;
+        return true;
     }
 
     for cause in e.chain() {

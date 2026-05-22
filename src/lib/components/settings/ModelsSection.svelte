@@ -235,11 +235,11 @@
   function addCustomToList(type: TaskType, section: ProviderSection) {
     let custom = customDrafts[type][section.id].trim();
     if (!custom) return;
-    for (const p of ['groq', 'openai', 'google'] as ProviderId[]) {
-      if (custom.toLowerCase().startsWith(`${p}/`)) {
-        custom = custom.slice(p.length + 1).trim();
-        break;
-      }
+    const ownPrefix = `${section.storeProvider}/`;
+    if (custom.toLowerCase().startsWith(ownPrefix)) {
+      custom = custom.slice(ownPrefix.length).trim();
+    } else if (custom.includes('/')) {
+      return;
     }
     if (!custom) return;
     ensureModelsContainSelection(type, section.storeProvider, custom);

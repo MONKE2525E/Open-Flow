@@ -22,10 +22,11 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         let Some(obj) = v.as_object() else {
             return false;
         };
-        obj.values().all(|val| {
-            val.as_array()
-                .is_some_and(|arr| arr.iter().all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty())))
-        })
+        obj.keys().all(|k| store::PROVIDERS.contains(&k.as_str()))
+            && obj.values().all(|val| {
+                val.as_array()
+                    .is_some_and(|arr| arr.iter().all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty())))
+            })
     };
     let is_non_empty_string_array = |v: &serde_json::Value| {
         v.as_array().is_some_and(|arr| {
