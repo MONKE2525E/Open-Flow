@@ -425,8 +425,11 @@ def _kill_port_owner(port: int) -> bool:
         "if ($p) { Stop-Process -Id $p -Force; Write-Output 'killed'; } "
         "} catch {}"
     )
-    r = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True)
-    return "killed" in (r.stdout or "")
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True)
+        return "killed" in (r.stdout or "")
+    except FileNotFoundError:
+        return False
 
 # ═══ TEST EXECUTION ═══════════════════════════════════════════════════════════
 
