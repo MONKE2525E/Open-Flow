@@ -23,12 +23,12 @@
     transcription: {
       groq: { premium: 'whisper-large-v3', standard: 'whisper-large-v3-turbo' },
       openai: { premium: 'gpt-4o-transcribe', standard: 'gpt-4o-mini-transcribe' },
-      google: { premium: 'gemini-1.5-flash', standard: 'gemini-1.5-flash' },
+      google: { premium: 'gemini-3.5-flash', standard: 'gemini-2.5-flash' },
     },
     cleanup: {
       groq: { premium: 'llama-3.3-70b-versatile', standard: 'llama-3.1-8b-instant' },
       openai: { premium: 'gpt-4o', standard: 'gpt-4o-mini' },
-      google: { premium: 'gemini-1.5-flash', standard: 'gemini-1.5-flash' },
+      google: { premium: 'gemini-3.5-flash', standard: 'gemini-2.5-flash' },
     },
   };
 
@@ -252,6 +252,40 @@
     persistAll().catch((err) => console.error('persist fallback remove failed', err));
   }
 
+  function toggleModelSelection(type: TaskType, provider: ProviderId, modelName: string) {
+    const id = modelId(provider, modelName);
+    const currentState = selectionState(type, provider, modelName);
+
+    ensureModelsContainSelection(type, provider, modelName);
+
+    if (currentState === 'active') {
+      const fallbacks = taskFallbacks(type);
+      if (fallbacks.length > 0) {
+        const [nextActive, ...remaining] = fallbacks;
+        setTaskDefault(type, nextActive);
+        setTaskFallbacks(type, remaining);
+      } else {
+        setTaskDefault(type, '');
+      }
+      persistAll().catch((err) => console.error('persist model toggle failed', err));
+      return;
+    }
+
+    if (currentState === 'fallback') {
+      setTaskFallbacks(type, taskFallbacks(type).filter((m) => m !== id));
+      persistAll().catch((err) => console.error('persist model toggle failed', err));
+      return;
+    }
+
+    if (!splitModelId(taskDefault(type))) {
+      setTaskDefault(type, id);
+    } else {
+      setTaskFallbacks(type, [...taskFallbacks(type), id]);
+    }
+
+    persistAll().catch((err) => console.error('persist model toggle failed', err));
+  }
+
   function missingKeyWarning(type: TaskType): string {
     const ids = [taskDefault(type), ...taskFallbacks(type)];
     const missing = ids
@@ -313,16 +347,19 @@
                 {#each ['premium', 'standard'] as rawTier}
                   {@const tier = rawTier as 'premium' | 'standard'}
                   {@const mName = recommendedModels[type][section.id][tier]}
-                  {@const isActive = taskDefault(type) === modelId(section.storeProvider, mName)}
+                  {@const state = selectionState(type, section.storeProvider, mName)}
+                  {@const isActive = state === 'active'}
+                  {@const isFallback = state === 'fallback'}
                   <button
                     class="simple-row"
                     class:simple-active={isActive}
-                    onclick={() => activateModel(type, section.storeProvider, mName, false)}
+                    class:simple-fallback={isFallback}
+                    onclick={() => toggleModelSelection(type, section.storeProvider, mName)}
                   >
-                    <span class="simple-dot" class:dot-active={isActive}></span>
+                    <span class="simple-dot" class:dot-active={isActive} class:dot-fallback={isFallback}></span>
                     <span class="simple-name">{mName}</span>
-                    <span class="simple-badge {tier === 'premium' ? 'badge-accuracy' : 'badge-efficiency'}">
-                      {tier === 'premium' ? 'Accuracy' : 'Efficiency'}
+                    <span class="simple-badge {isFallback ? 'badge-fallback' : (tier === 'premium' ? 'badge-accuracy' : 'badge-efficiency')}">
+                      {isActive ? 'Active' : (isFallback ? `F${taskFallbacks(type).indexOf(modelId(section.storeProvider, mName)) + 1}` : (tier === 'premium' ? 'Accuracy' : 'Efficiency'))}
                     </span>
                   </button>
                 {/each}
@@ -377,10 +414,10 @@
                       class="model-row"
                       class:row-active={state === 'active'}
                       class:row-fallback={state === 'fallback'}
-                      onclick={() => activateModel(type, section.storeProvider, mName, false)}
+                      onclick={() => toggleModelSelection(type, section.storeProvider, mName)}
                       role="button"
                       tabindex="0"
-                      onkeydown={(e) => e.key === 'Enter' && activateModel(type, section.storeProvider, mName, false)}
+                      onkeydown={(e) => e.key === 'Enter' && toggleModelSelection(type, section.storeProvider, mName)}
                     >
                       <div class="row-info">
                         <span class="row-tier">{tier === 'premium' ? 'Premium' : 'Standard'}</span>
@@ -391,10 +428,7 @@
                       {:else if state === 'fallback'}
                         <span class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, mName)) + 1}</span>
                       {:else}
-                        <button
-                          class="row-action-btn"
-                          onclick={(e) => { e.stopPropagation(); activateModel(type, section.storeProvider, mName, true); }}
-                        >Add Fallback</button>
+                        <span class="state-pill muted">Off</span>
                       {/if}
                     </div>
                   {/each}
@@ -405,10 +439,10 @@
                       class="model-row custom-model-row"
                       class:row-active={state === 'active'}
                       class:row-fallback={state === 'fallback'}
-                      onclick={() => activateModel(type, section.storeProvider, custom, false)}
+                      onclick={() => toggleModelSelection(type, section.storeProvider, custom)}
                       role="button"
                       tabindex="0"
-                      onkeydown={(e) => e.key === 'Enter' && activateModel(type, section.storeProvider, custom, false)}
+                      onkeydown={(e) => e.key === 'Enter' && toggleModelSelection(type, section.storeProvider, custom)}
                     >
                       <div class="row-info">
                         <span class="row-tier">Custom</span>
@@ -419,10 +453,7 @@
                       {:else if state === 'fallback'}
                         <span class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, custom)) + 1}</span>
                       {:else}
-                        <button
-                          class="row-action-btn"
-                          onclick={(e) => { e.stopPropagation(); activateModel(type, section.storeProvider, custom, true); }}
-                        >Add Fallback</button>
+                        <span class="state-pill muted">Off</span>
                       {/if}
                     </div>
                   {/each}
@@ -630,6 +661,11 @@
     border-color: color-mix(in srgb, var(--accent) 22%, var(--line));
   }
 
+  .simple-row.simple-fallback {
+    background: color-mix(in srgb, var(--accent-soft) 32%, var(--bg-elev));
+    border-color: color-mix(in srgb, var(--accent) 16%, var(--line));
+  }
+
   .simple-dot {
     width: 8px;
     height: 8px;
@@ -643,6 +679,11 @@
     background: var(--accent);
     border-color: var(--accent);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 80%, transparent);
+  }
+
+  .simple-dot.dot-fallback {
+    background: color-mix(in srgb, var(--accent) 55%, var(--bg-elev));
+    border-color: color-mix(in srgb, var(--accent) 70%, var(--line-strong));
   }
 
   .simple-name {
@@ -678,6 +719,12 @@
     color: var(--ink-faint);
     background: transparent;
     border: 1px solid var(--line);
+  }
+
+  .badge-fallback {
+    color: color-mix(in srgb, var(--accent-ink) 75%, var(--ink));
+    background: color-mix(in srgb, var(--accent-soft) 45%, var(--bg-elev));
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line-strong));
   }
 
   /* ── Warning ─────────────────────────────── */
@@ -859,7 +906,7 @@
   }
 
   .model-row.row-fallback {
-    background: color-mix(in srgb, var(--paper) 45%, var(--bg-elev));
+    background: color-mix(in srgb, var(--accent-soft) 30%, var(--bg-elev));
   }
 
   .row-info {
@@ -912,29 +959,14 @@
   }
 
   .state-pill.fallback {
-    color: var(--ink-soft);
-    background: color-mix(in srgb, var(--paper) 65%, var(--bg-elev));
+    color: color-mix(in srgb, var(--accent-ink) 75%, var(--ink));
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--line-strong));
+    background: color-mix(in srgb, var(--accent-soft) 45%, var(--bg-elev));
   }
 
-  .row-action-btn {
-    font-size: 10px;
-    font-family: var(--sans);
-    font-weight: 500;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    background: transparent;
+  .state-pill.muted {
     color: var(--ink-mute);
-    padding: 3px 7px;
-    cursor: pointer;
-    flex-shrink: 0;
-    white-space: nowrap;
-    transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
-  }
-
-  .row-action-btn:hover {
-    color: var(--ink);
-    border-color: var(--ink-mute);
-    background: color-mix(in srgb, var(--paper) 40%, var(--bg-elev));
+    background: color-mix(in srgb, var(--paper) 55%, var(--bg-elev));
   }
 
   /* ── Custom input row ────────────────────── */

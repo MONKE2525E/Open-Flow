@@ -66,7 +66,7 @@ pub const PROVIDERS: [&str; 3] = [GROQ, OPENAI, GOOGLE];
 pub fn default_transcription_model_for(provider: &str) -> &'static str {
     match provider {
         OPENAI => "gpt-4o-transcribe",
-        GOOGLE => "gemini-1.5-flash",
+        GOOGLE => "gemini-3.5-flash",
         _ => "whisper-large-v3-turbo",
     }
 }
@@ -74,7 +74,7 @@ pub fn default_transcription_model_for(provider: &str) -> &'static str {
 pub fn default_cleanup_model_for(provider: &str) -> &'static str {
     match provider {
         OPENAI => "gpt-4o-mini",
-        GOOGLE => "gemini-1.5-flash",
+        GOOGLE => "gemini-3.5-flash",
         _ => "llama-3.3-70b-versatile",
     }
 }

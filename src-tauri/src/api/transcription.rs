@@ -28,7 +28,7 @@ pub async fn transcribe_and_cleanup_gemini(
          transcription output.\n\n{profile_prompt}\n\nReturn ONLY the final cleaned text, \
          no commentary, no quotes, no explanation."
     );
-    transcribe_gemini_with_prompt(wav, api_key, &instruction, true, "gemini-1.5-flash").await
+    transcribe_gemini_with_prompt(wav, api_key, &instruction, true, "gemini-3.5-flash").await
 }
 
 pub async fn transcribe(
