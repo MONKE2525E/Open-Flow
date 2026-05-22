@@ -121,10 +121,8 @@
       selectedLanguage = language;
     }
 
-    const mics = results[8].status === 'fulfilled' ? (results[8] as PromiseFulfilledResult<string[]>).value : [];
-    microphones = mics ?? [];
-    const curMic = results[9].status === 'fulfilled' ? (results[9] as PromiseFulfilledResult<string | null>).value : null;
-    selectedMic = curMic ?? '';
+    microphones = val<string[]>(8, []);
+    selectedMic = val<string | null>(9, null) ?? '';
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);

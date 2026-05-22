@@ -457,7 +457,7 @@ def _run_one(entry: TestEntry) -> TestResult:
     return _exec_python(entry) if entry.py_test is not None else _exec_node(entry)
 
 
-def run_with_retry(entry: TestEntry, idx: int, total: int) -> TestResult:
+def run_with_retry(entry: TestEntry, idx: int, total: int, show_elapsed: bool = True) -> TestResult:
     """Run a test, retrying on failure up to entry.retry times."""
     result = TestResult(False)
     for attempt in range(1, entry.retry + 2):
@@ -472,13 +472,16 @@ def run_with_retry(entry: TestEntry, idx: int, total: int) -> TestResult:
 
         with _PRINT_LOCK:
             _show_running(entry.desc, idx, total)
-        heartbeat_t = threading.Thread(target=_heartbeat, daemon=True)
-        heartbeat_t.start()
+        heartbeat_t = None
+        if show_elapsed:
+            heartbeat_t = threading.Thread(target=_heartbeat, daemon=True)
+            heartbeat_t.start()
         try:
             result = _run_one(entry)
         finally:
             stop_heartbeat.set()
-            heartbeat_t.join(timeout=0.2)
+            if heartbeat_t is not None:
+                heartbeat_t.join(timeout=0.2)
         result.attempts = attempt
         if result.passed or attempt > entry.retry:
             return result
@@ -652,7 +655,7 @@ def _run_sequential(entries: List[TestEntry], verbose: bool, start_idx: int, tot
     n_fail = 0
     for offset, entry in enumerate(entries):
         idx = start_idx + offset
-        result = run_with_retry(entry, idx, total)
+        result = run_with_retry(entry, idx, total, show_elapsed=True)
         with _PRINT_LOCK:
             _print_result_line(entry.desc, result, verbose, idx, total)
         if not result.passed:
@@ -669,7 +672,7 @@ def _run_parallel(entries: List[TestEntry], verbose: bool, start_idx: int, total
     indexed = [(start_idx + i, e) for i, e in enumerate(entries)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         future_map = {
-            pool.submit(run_with_retry, entry, idx, total): (idx, entry.desc)
+            pool.submit(run_with_retry, entry, idx, total, False): (idx, entry.desc)
             for idx, entry in indexed
         }
         for future in concurrent.futures.as_completed(future_map):
