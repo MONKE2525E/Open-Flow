@@ -23,12 +23,12 @@
     transcription: {
       groq: { premium: 'whisper-large-v3', standard: 'whisper-large-v3-turbo' },
       openai: { premium: 'gpt-4o-transcribe', standard: 'gpt-4o-mini-transcribe' },
-      google: { premium: 'gemini-3.5-flash', standard: 'gemini-2.5-flash' },
+      google: { premium: 'gemini-1.5-flash', standard: 'gemini-1.5-flash' },
     },
     cleanup: {
       groq: { premium: 'llama-3.3-70b-versatile', standard: 'llama-3.1-8b-instant' },
-      openai: { premium: 'gpt-4.1', standard: 'gpt-4o-mini' },
-      google: { premium: 'gemini-3.5-flash', standard: 'gemini-2.5-flash' },
+      openai: { premium: 'gpt-4o', standard: 'gpt-4o-mini' },
+      google: { premium: 'gemini-1.5-flash', standard: 'gemini-1.5-flash' },
     },
   };
 
