@@ -1,6 +1,5 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { tick } from 'svelte';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
@@ -129,15 +128,18 @@
     });
   }
 
-  function closeMicDropdown(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest('.mic-dropdown')) micDropdownOpen = false;
+  function handleWindowClick(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    if (micDropdownOpen && !target.closest('.mic-dropdown')) micDropdownOpen = false;
+    if (languageDropdownOpen && !target.closest('.language-dropdown')) languageDropdownOpen = false;
   }
 
-  $effect(() => {
-    if (micDropdownOpen) {
-      tick().then(() => window.addEventListener('click', closeMicDropdown, { once: true }));
+  function handleWindowKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      micDropdownOpen = false;
+      languageDropdownOpen = false;
     }
-  });
+  }
 
   async function saveMic(name: string) {
     selectedMic = name;
@@ -148,16 +150,6 @@
       console.error('saveMic failed:', err);
     }
   }
-
-  function closeLanguageDropdown(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest('.language-dropdown')) languageDropdownOpen = false;
-  }
-
-  $effect(() => {
-    if (languageDropdownOpen) {
-      tick().then(() => window.addEventListener('click', closeLanguageDropdown, { once: true }));
-    }
-  });
 
   async function saveLanguage(code: TranscriptionLanguageCode) {
     languageTouched = true;
@@ -328,6 +320,7 @@
 
   loadSettings();
 </script>
+<svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
 
 <h2 class="settings-h">General</h2>
 <div class="setting-row">
@@ -397,7 +390,13 @@
     </button>
     {#if micDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="mic-menu scroll-styled scroll-thumb-elev" role="presentation" onclick={(e) => e.stopPropagation()}>
+      <div
+        class="mic-menu scroll-styled scroll-thumb-elev"
+        role="presentation"
+        onclick={(e) => e.stopPropagation()}
+        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+      >
         <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{audioCopy.defaultDevice}</button>
         {#each microphones as m}
           <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>{m}</button>
