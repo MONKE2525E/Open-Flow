@@ -181,6 +181,7 @@ async fn transcribe_gemini_with_prompt(
         },
     };
 
+    super::validate_model_for_url(model)?;
     let url =
         format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}");
 

@@ -162,6 +162,17 @@ impl PipelineConfig {
     }
 }
 
+pub fn parse_model_id(id: &str) -> Option<(String, String)> {
+    let mut parts = id.splitn(2, '/');
+    let provider = parts.next()?.trim().to_lowercase();
+    let model = parts.next()?.trim().to_string();
+    if PROVIDERS.contains(&provider.as_str()) && !model.is_empty() {
+        Some((provider, model))
+    } else {
+        None
+    }
+}
+
 pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> PipelineConfig {
     let str_val = |key: &str| -> String {
         store
@@ -194,16 +205,6 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             .filter_map(|v| v.as_str().map(str::trim).map(String::from))
             .filter(|v| !v.is_empty())
             .collect()
-    };
-    let parse_model_id = |id: &str| -> Option<(String, String)> {
-        let mut parts = id.splitn(2, '/');
-        let provider = parts.next()?.trim().to_lowercase();
-        let model = parts.next()?.trim().to_string();
-        if PROVIDERS.contains(&provider.as_str()) && !model.is_empty() {
-            Some((provider, model))
-        } else {
-            None
-        }
     };
     let transcription_provider = str_or(TRANSCRIPTION_PROVIDER, GROQ);
     let cleanup_provider = str_or(CLEANUP_PROVIDER, GROQ);

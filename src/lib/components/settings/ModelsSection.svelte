@@ -182,8 +182,14 @@
     transcriptionModelsByProvider = mergeMap(tMapRaw);
     cleanupModelsByProvider = mergeMap(cMapRaw);
 
-    const legacyT = String((all as Record<string, unknown>).transcription_model ?? 'groq/whisper-large-v3-turbo');
-    const legacyC = String((all as Record<string, unknown>).cleanup_model ?? 'groq/llama-3.3-70b-versatile');
+    const rawLegacyT = String((all as Record<string, unknown>).transcription_model ?? '');
+    const rawLegacyC = String((all as Record<string, unknown>).cleanup_model ?? '');
+    const legacyT = rawLegacyT
+      ? (rawLegacyT.includes('/') ? rawLegacyT : `groq/${rawLegacyT}`)
+      : 'groq/whisper-large-v3-turbo';
+    const legacyC = rawLegacyC
+      ? (rawLegacyC.includes('/') ? rawLegacyC : `groq/${rawLegacyC}`)
+      : 'groq/llama-3.3-70b-versatile';
 
     transcriptionDefaultModel = tDefaultRaw && splitModelId(tDefaultRaw) ? tDefaultRaw : legacyT;
     cleanupDefaultModel = cDefaultRaw && splitModelId(cDefaultRaw) ? cDefaultRaw : legacyC;
@@ -192,8 +198,22 @@
     if (Array.isArray(cFallbackRaw)) cleanupFallbackModels = cFallbackRaw.filter((m) => !!splitModelId(m));
     if (typeof advancedRaw === 'boolean') advancedModelUi = advancedRaw;
 
+    const preT = transcriptionDefaultModel;
+    const preC = cleanupDefaultModel;
+    const preTFb = transcriptionFallbackModels.length;
+    const preCFb = cleanupFallbackModels.length;
+    const needsMigration = !tDefaultRaw || !splitModelId(tDefaultRaw) || !cDefaultRaw || !splitModelId(cDefaultRaw);
+
     ensureDefaultAndFallbacks();
-    await persistAll();
+
+    const changed =
+      needsMigration ||
+      transcriptionDefaultModel !== preT ||
+      cleanupDefaultModel !== preC ||
+      transcriptionFallbackModels.length !== preTFb ||
+      cleanupFallbackModels.length !== preCFb;
+
+    if (changed) await persistAll();
   }
 
   function activateModel(type: TaskType, provider: ProviderId, modelName: string, addAsFallback: boolean) {
@@ -213,7 +233,14 @@
   }
 
   function addCustomToList(type: TaskType, section: ProviderSection) {
-    const custom = customDrafts[type][section.id].trim();
+    let custom = customDrafts[type][section.id].trim();
+    if (!custom) return;
+    for (const p of ['groq', 'openai', 'google'] as ProviderId[]) {
+      if (custom.toLowerCase().startsWith(`${p}/`)) {
+        custom = custom.slice(p.length + 1).trim();
+        break;
+      }
+    }
     if (!custom) return;
     ensureModelsContainSelection(type, section.storeProvider, custom);
     customDrafts = { ...customDrafts, [type]: { ...customDrafts[type], [section.id]: '' } };

@@ -309,11 +309,9 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);
             }
 
-            if CHORD_DOWN.swap(false, Ordering::SeqCst) {
-                if !ESCAPE_CANCELLED.swap(false, Ordering::SeqCst) {
-                    if let Some(cb) = RELEASE_CB.get() {
-                        cb();
-                    }
+            if CHORD_DOWN.swap(false, Ordering::SeqCst) && !ESCAPE_CANCELLED.swap(false, Ordering::SeqCst) {
+                if let Some(cb) = RELEASE_CB.get() {
+                    cb();
                 }
             }
             if KEY1_WAS_CHORD.swap(false, Ordering::SeqCst) {
@@ -345,22 +343,20 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         // Ctrl+V paste and any app-generated keyboard events from corrupting the
         // context tracking that drives auto-spacing and contextual capitalisation.
         let is_injected = (kb.flags.0 & LLKHF_INJECTED.0) != 0;
-if !is_injected && is_down {
-            if !MODIFIER_VKS.contains(&vk) {
-                if vk == VK_BACK {
-                    // Ctrl+Backspace and Alt+Backspace both delete a whole word —
-                    // unknown char count, so reset entirely. Plain Backspace pops
-                    // just the last character to keep context accurate.
-                    if unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) } {
-                        crate::core::injection::reset_injection_history();
-                    } else {
-                        crate::core::injection::backspace_injection_history();
-                    }
-                } else {
-                    // Any other key (Enter, character, arrow, Delete, etc.): the
-                    // cursor context is unknown — treat the next injection as fresh.
+        if !is_injected && is_down && !MODIFIER_VKS.contains(&vk) {
+            if vk == VK_BACK {
+                // Ctrl+Backspace and Alt+Backspace both delete a whole word —
+                // unknown char count, so reset entirely. Plain Backspace pops
+                // just the last character to keep context accurate.
+                if unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) } {
                     crate::core::injection::reset_injection_history();
+                } else {
+                    crate::core::injection::backspace_injection_history();
                 }
+            } else {
+                // Any other key (Enter, character, arrow, Delete, etc.): the
+                // cursor context is unknown — treat the next injection as fresh.
+                crate::core::injection::reset_injection_history();
             }
         }
     }

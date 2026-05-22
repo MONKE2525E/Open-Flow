@@ -10,6 +10,7 @@ pub enum CleanupProvider {
     Google,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn cleanup(
     text: &str,
     provider: CleanupProvider,
@@ -221,6 +222,7 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str, model: &str) ->
         },
     };
 
+    super::validate_model_for_url(model)?;
     let url =
         format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}");
 

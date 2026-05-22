@@ -42,6 +42,7 @@ function tauriMock() {
     mic_gain:                3.5,
     microphone_device:       '',
     appearance_mode:         'system',
+    advanced_model_ui:       true,
     ...storedMem,
   };
 

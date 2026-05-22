@@ -14,9 +14,17 @@ pub fn is_quota_error(e: &anyhow::Error) -> bool {
     e.to_string().starts_with("QUOTA_EXCEEDED:")
 }
 
+pub fn validate_model_for_url(model: &str) -> anyhow::Result<()> {
+    if model.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '.' | '_')) {
+        Ok(())
+    } else {
+        anyhow::bail!("Invalid model identifier for API URL: {model}")
+    }
+}
+
 pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
     if is_quota_error(e) {
-        return true;
+        return false;
     }
 
     for cause in e.chain() {

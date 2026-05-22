@@ -225,26 +225,18 @@ pub fn spawn_level_emitter(
 
 // ---------- pipeline ----------
 
-fn parse_model_id(id: &str) -> Option<(String, String)> {
-    let mut parts = id.splitn(2, '/');
-    let provider = parts.next()?.trim().to_lowercase();
-    let model = parts.next()?.trim().to_string();
-    if [store::GROQ, store::OPENAI, store::GOOGLE].contains(&provider.as_str()) && !model.is_empty() {
-        Some((provider, model))
-    } else {
-        None
-    }
-}
 
 fn transcription_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String)> {
     let mut chain = Vec::<(String, String)>::new();
-    if let Some((provider, model)) = parse_model_id(&cfg.transcription_default_model) {
+    if let Some((provider, model)) = store::parse_model_id(&cfg.transcription_default_model) {
         chain.push((provider, model));
     }
-    for id in &cfg.transcription_fallback_models {
-        if let Some((provider, model)) = parse_model_id(id) {
-            if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
-                chain.push((provider, model));
+    if cfg.api_fallback_enabled {
+        for id in &cfg.transcription_fallback_models {
+            if let Some((provider, model)) = store::parse_model_id(id) {
+                if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
+                    chain.push((provider, model));
+                }
             }
         }
     }
@@ -253,13 +245,15 @@ fn transcription_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String
 
 fn cleanup_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String)> {
     let mut chain = Vec::<(String, String)>::new();
-    if let Some((provider, model)) = parse_model_id(&cfg.cleanup_default_model) {
+    if let Some((provider, model)) = store::parse_model_id(&cfg.cleanup_default_model) {
         chain.push((provider, model));
     }
-    for id in &cfg.cleanup_fallback_models {
-        if let Some((provider, model)) = parse_model_id(id) {
-            if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
-                chain.push((provider, model));
+    if cfg.api_fallback_enabled {
+        for id in &cfg.cleanup_fallback_models {
+            if let Some((provider, model)) = store::parse_model_id(id) {
+                if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
+                    chain.push((provider, model));
+                }
             }
         }
     }
@@ -785,6 +779,11 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         }
     };
     let cfg = store::load_pipeline_config(&settings_store);
+
+    if !has_transcription_key_in_chain(&cfg) {
+        hide_pill(&app);
+        anyhow::bail!("No API key configured for any model in the transcription chain");
+    }
 
     let mut transcribed: Option<String> = None;
     let mut last_err: Option<anyhow::Error> = None;
