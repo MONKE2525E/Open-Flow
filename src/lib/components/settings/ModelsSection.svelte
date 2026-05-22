@@ -235,14 +235,18 @@
   function addCustomToList(type: TaskType, section: ProviderSection) {
     let custom = customDrafts[type][section.id].trim();
     if (!custom) return;
+    let targetProvider: ProviderId = section.storeProvider;
     const ownPrefix = `${section.storeProvider}/`;
     if (custom.toLowerCase().startsWith(ownPrefix)) {
       custom = custom.slice(ownPrefix.length).trim();
     } else if (custom.includes('/')) {
-      return;
+      const parsed = splitModelId(custom);
+      if (!parsed) return;
+      targetProvider = parsed.provider;
+      custom = parsed.model;
     }
     if (!custom) return;
-    ensureModelsContainSelection(type, section.storeProvider, custom);
+    ensureModelsContainSelection(type, targetProvider, custom);
     customDrafts = { ...customDrafts, [type]: { ...customDrafts[type], [section.id]: '' } };
     persistAll().catch((err) => console.error('persist custom failed', err));
   }
