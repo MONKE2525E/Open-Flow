@@ -57,7 +57,11 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
 
     let mut entries = Vec::new();
 
-    if OpenClipboard(None).is_err() {
+    let opened = (0..3).any(|i| {
+        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(50)); }
+        OpenClipboard(None).is_ok()
+    });
+    if !opened {
         return SavedClipboard { entries };
     }
 
@@ -103,7 +107,11 @@ unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
         return;
     }
 
-    if OpenClipboard(None).is_err() {
+    let opened = (0..3).any(|i| {
+        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(50)); }
+        OpenClipboard(None).is_ok()
+    });
+    if !opened {
         return;
     }
 

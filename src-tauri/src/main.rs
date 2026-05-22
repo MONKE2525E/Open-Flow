@@ -515,14 +515,15 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
 
                 HotkeyEvent::EscapeCancel => {
                     core::hotkey::set_handless_active(false);
-                    let had_session = {
+                    let session = {
                         let Some(mut st) = lock_app_state(&state_hk) else {
                             continue;
                         };
                         st.handless = false;
-                        st.session.take().is_some()
+                        st.session.take()
                     };
-                    if had_session {
+                    if let Some(s) = session {
+                        std::thread::spawn(move || { let _ = s.stop(); });
                         std::thread::spawn(crate::system::volume::unmute);
                     }
                     hide_pill(&app_hk);

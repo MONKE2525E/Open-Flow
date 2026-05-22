@@ -188,6 +188,7 @@ static CANCEL_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::
 static CHORD_DOWN: AtomicBool = AtomicBool::new(false);
 static HANDLESS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ESCAPE_CANCELLED: AtomicBool = AtomicBool::new(false);
+static ESCAPE_KEY_DOWN: AtomicBool = AtomicBool::new(false);
 static ESCAPE_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 static KEY1_WAS_CHORD: AtomicBool = AtomicBool::new(false);
 // Set whenever key2 is captured as part of our chord. Guarantees key2-up is
@@ -323,14 +324,18 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             }
         }
 
-        if vk == VK_ESCAPE && is_down {
-            if CHORD_DOWN.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst) {
+        if vk == VK_ESCAPE {
+            if is_down && (CHORD_DOWN.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst)) {
                 if CHORD_DOWN.load(Ordering::SeqCst) {
                     ESCAPE_CANCELLED.store(true, Ordering::SeqCst);
                 }
+                ESCAPE_KEY_DOWN.store(true, Ordering::SeqCst);
                 if let Some(cb) = ESCAPE_CB.get() {
                     cb();
                 }
+                return LRESULT(1);
+            }
+            if is_up && ESCAPE_KEY_DOWN.swap(false, Ordering::SeqCst) {
                 return LRESULT(1);
             }
         }
