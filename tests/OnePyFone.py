@@ -182,9 +182,12 @@ class EnvCheck(PythonTest):
         t0     = time.monotonic()
         issues = []
 
-        r_node = subprocess.run(["node", "--version"], capture_output=True, text=True)
-        if r_node.returncode != 0:
-            issues.append("node not found — install Node.js 18+")
+        try:
+            r_node = subprocess.run(["node", "--version"], capture_output=True, text=True)
+            if r_node.returncode != 0:
+                issues.append("node not found — install Node.js 18+")
+        except FileNotFoundError:
+            issues.append("node executable not found in PATH")
 
         if not (ROOT / "node_modules").is_dir():
             issues.append("node_modules missing — run: npm install")
