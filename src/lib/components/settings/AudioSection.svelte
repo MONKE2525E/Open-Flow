@@ -5,7 +5,6 @@
   import { onDestroy } from 'svelte';
   import Toggle from '../Toggle.svelte';
   import { saveSetting } from '../../settings';
-  import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import { getAudioCalibrationCopy } from '../../calibrationCopy';
   import type { TranscriptionLanguageCode } from '../../transcriptionLanguages';
 
