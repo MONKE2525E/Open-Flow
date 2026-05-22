@@ -55,6 +55,17 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
     };
     use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 
+    // GDI object formats — GetClipboardData returns an opaque GDI handle for these,
+    // not an HGLOBAL, so GlobalSize/GlobalLock are undefined on them.
+    const CF_BITMAP: u32 = 2;
+    const CF_METAFILEPICT: u32 = 3;
+    const CF_PALETTE: u32 = 9;
+    const CF_ENHMETAFILE: u32 = 14;
+
+    // Per-format cap: skip anything larger than 32 MB to stay within the 200 MB
+    // RAM budget. Typical screenshots are 2–8 MB as CF_DIB; 32 MB is generous.
+    const MAX_FORMAT_BYTES: usize = 32 * 1024 * 1024;
+
     let mut entries = Vec::new();
 
     let opened = (0..3).any(|i| {
@@ -71,16 +82,13 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
         if fmt == 0 {
             break;
         }
-        // Skip GDI object formats — GetClipboardData returns an opaque GDI handle,
-        // not an HGLOBAL, so GlobalSize/GlobalLock are undefined on them.
-        // CF_BITMAP=2, CF_METAFILEPICT=3, CF_PALETTE=9, CF_ENHMETAFILE=14
-        if matches!(fmt, 2 | 3 | 9 | 14) {
+        if matches!(fmt, CF_BITMAP | CF_METAFILEPICT | CF_PALETTE | CF_ENHMETAFILE) {
             continue;
         }
         if let Ok(h) = GetClipboardData(fmt) {
             let hg = HGLOBAL(h.0);
             let size = GlobalSize(hg);
-            if size > 0 {
+            if size > 0 && size <= MAX_FORMAT_BYTES {
                 let ptr = GlobalLock(hg) as *const u8;
                 if !ptr.is_null() {
                     let data = std::slice::from_raw_parts(ptr, size).to_vec();
