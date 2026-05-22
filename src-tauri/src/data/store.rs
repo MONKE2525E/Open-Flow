@@ -9,6 +9,12 @@ pub const TRANSCRIPTION_LANGUAGE: &str = "transcription_language";
 pub const CLEANUP_PROVIDER: &str = "cleanup_provider";
 pub const TRANSCRIPTION_MODEL: &str = "transcription_model";
 pub const CLEANUP_MODEL: &str = "cleanup_model";
+pub const TRANSCRIPTION_MODELS_BY_PROVIDER: &str = "transcription_models_by_provider";
+pub const CLEANUP_MODELS_BY_PROVIDER: &str = "cleanup_models_by_provider";
+pub const TRANSCRIPTION_DEFAULT_MODEL: &str = "transcription_default_model";
+pub const CLEANUP_DEFAULT_MODEL: &str = "cleanup_default_model";
+pub const TRANSCRIPTION_FALLBACK_MODELS: &str = "transcription_fallback_models";
+pub const CLEANUP_FALLBACK_MODELS: &str = "cleanup_fallback_models";
 pub const CLEANUP_ENABLED: &str = "cleanup_enabled";
 pub const HOTKEY: &str = "hotkey";
 pub const MICROPHONE_DEVICE: &str = "microphone_device";
@@ -26,6 +32,7 @@ pub const CONTEXTUAL_CAPS: &str = "contextual_caps_enabled";
 pub const AUTO_SPACING: &str = "auto_spacing_enabled";
 pub const APPEARANCE_MODE: &str = "appearance_mode";
 pub const FORCE_SETUP_ON_LAUNCH: &str = "force_setup_on_launch";
+pub const ADVANCED_MODEL_UI: &str = "advanced_model_ui";
 
 // ---------- pipeline config ----------
 
@@ -34,6 +41,10 @@ pub struct PipelineConfig {
     pub transcription_provider: String,
     pub transcription_language: String,
     pub cleanup_provider: String,
+    pub transcription_default_model: String,
+    pub cleanup_default_model: String,
+    pub transcription_fallback_models: Vec<String>,
+    pub cleanup_fallback_models: Vec<String>,
     pub cleanup_enabled: bool,
     pub key_groq: String,
     pub key_openai: String,
@@ -45,6 +56,27 @@ pub struct PipelineConfig {
     pub auto_learn_enabled: bool,
     pub contextual_caps_enabled: bool,
     pub auto_spacing_enabled: bool,
+}
+
+pub const GROQ: &str = "groq";
+pub const OPENAI: &str = "openai";
+pub const GOOGLE: &str = "google";
+pub const PROVIDERS: [&str; 3] = [GROQ, OPENAI, GOOGLE];
+
+pub fn default_transcription_model_for(provider: &str) -> &'static str {
+    match provider {
+        OPENAI => "gpt-4o-transcribe",
+        GOOGLE => "gemini-3.5-flash",
+        _ => "whisper-large-v3-turbo",
+    }
+}
+
+pub fn default_cleanup_model_for(provider: &str) -> &'static str {
+    match provider {
+        OPENAI => "gpt-4o-mini",
+        GOOGLE => "gemini-3.5-flash",
+        _ => "llama-3.3-70b-versatile",
+    }
 }
 
 pub const TRANSCRIPTION_LANGUAGE_OPTIONS: &[(&str, &str)] = &[
@@ -153,11 +185,129 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             default.into()
         }
     };
+    let parse_models_by_provider = |key: &str| -> std::collections::HashMap<String, Vec<String>> {
+        let mut out = std::collections::HashMap::<String, Vec<String>>::new();
+        let Some(value) = store.get(key) else {
+            return out;
+        };
+        let Some(obj) = value.as_object() else {
+            return out;
+        };
+        for provider in PROVIDERS {
+            let list = obj
+                .get(provider)
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if !list.is_empty() {
+                out.insert(provider.to_string(), list);
+            }
+        }
+        out
+    };
+    let parse_string_array = |key: &str| -> Vec<String> {
+        store
+            .get(key)
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|v| v.as_str().map(str::trim).map(String::from))
+            .filter(|v| !v.is_empty())
+            .collect()
+    };
+    let parse_model_id = |id: &str| -> Option<(String, String)> {
+        let mut parts = id.splitn(2, '/');
+        let provider = parts.next()?.trim().to_lowercase();
+        let model = parts.next()?.trim().to_string();
+        if PROVIDERS.contains(&provider.as_str()) && !model.is_empty() {
+            Some((provider, model))
+        } else {
+            None
+        }
+    };
+    let ensure_provider_has_default = |models: &mut std::collections::HashMap<String, Vec<String>>,
+                                       provider: &str,
+                                       model: &str| {
+        let entry = models.entry(provider.to_string()).or_default();
+        if !entry.iter().any(|m| m == model) {
+            entry.insert(0, model.to_string());
+        }
+    };
+
+    let transcription_provider = str_or(TRANSCRIPTION_PROVIDER, GROQ);
+    let cleanup_provider = str_or(CLEANUP_PROVIDER, GROQ);
+    let legacy_transcription_model =
+        str_or(TRANSCRIPTION_MODEL, &format!("{}/{}", GROQ, default_transcription_model_for(GROQ)));
+    let legacy_cleanup_model =
+        str_or(CLEANUP_MODEL, &format!("{}/{}", GROQ, default_cleanup_model_for(GROQ)));
+
+    let mut transcription_models = parse_models_by_provider(TRANSCRIPTION_MODELS_BY_PROVIDER);
+    let mut cleanup_models = parse_models_by_provider(CLEANUP_MODELS_BY_PROVIDER);
+
+    let transcription_default_from_new = str_val(TRANSCRIPTION_DEFAULT_MODEL);
+    let cleanup_default_from_new = str_val(CLEANUP_DEFAULT_MODEL);
+
+    let transcription_default_model = if let Some((provider, model)) =
+        parse_model_id(&transcription_default_from_new)
+    {
+        ensure_provider_has_default(&mut transcription_models, &provider, &model);
+        format!("{provider}/{model}")
+    } else if let Some((provider, model)) = parse_model_id(&legacy_transcription_model) {
+        ensure_provider_has_default(&mut transcription_models, &provider, &model);
+        format!("{provider}/{model}")
+    } else {
+        let model = default_transcription_model_for(&transcription_provider).to_string();
+        ensure_provider_has_default(&mut transcription_models, &transcription_provider, &model);
+        format!("{}/{}", transcription_provider, model)
+    };
+
+    let cleanup_default_model =
+        if let Some((provider, model)) = parse_model_id(&cleanup_default_from_new) {
+            ensure_provider_has_default(&mut cleanup_models, &provider, &model);
+            format!("{provider}/{model}")
+        } else if let Some((provider, model)) = parse_model_id(&legacy_cleanup_model) {
+            ensure_provider_has_default(&mut cleanup_models, &provider, &model);
+            format!("{provider}/{model}")
+        } else {
+            let model = default_cleanup_model_for(&cleanup_provider).to_string();
+            ensure_provider_has_default(&mut cleanup_models, &cleanup_provider, &model);
+            format!("{}/{}", cleanup_provider, model)
+        };
+
+    for provider in PROVIDERS {
+        if !transcription_models.contains_key(provider) {
+            transcription_models.insert(
+                provider.to_string(),
+                vec![default_transcription_model_for(provider).to_string()],
+            );
+        }
+        if !cleanup_models.contains_key(provider) {
+            cleanup_models.insert(
+                provider.to_string(),
+                vec![default_cleanup_model_for(provider).to_string()],
+            );
+        }
+    }
+
+    let transcription_fallback_models = parse_string_array(TRANSCRIPTION_FALLBACK_MODELS);
+    let cleanup_fallback_models = parse_string_array(CLEANUP_FALLBACK_MODELS);
 
     PipelineConfig {
-        transcription_provider: str_or(TRANSCRIPTION_PROVIDER, "groq"),
+        transcription_provider,
         transcription_language: language_or_default(TRANSCRIPTION_LANGUAGE, "en"),
-        cleanup_provider: str_or(CLEANUP_PROVIDER, "groq"),
+        cleanup_provider,
+        transcription_default_model,
+        cleanup_default_model,
+        transcription_fallback_models,
+        cleanup_fallback_models,
         cleanup_enabled: store
             .get(CLEANUP_ENABLED)
             .and_then(|v| v.as_bool())

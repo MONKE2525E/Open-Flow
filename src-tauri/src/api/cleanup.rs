@@ -14,6 +14,7 @@ pub async fn cleanup(
     text: &str,
     provider: CleanupProvider,
     api_key: &str,
+    model: &str,
     profile: &str,
     intensity: &str,
     snippet_instructions: &str,
@@ -47,7 +48,7 @@ pub async fn cleanup(
                 text,
                 api_key,
                 "https://api.groq.com/openai/v1/chat/completions",
-                "llama-3.3-70b-versatile",
+                model,
                 &prompt,
             )
             .await
@@ -57,12 +58,12 @@ pub async fn cleanup(
                 text,
                 api_key,
                 "https://api.openai.com/v1/chat/completions",
-                "gpt-4o-mini",
+                model,
                 &prompt,
             )
             .await
         }
-        CleanupProvider::Google => google_cleanup(text, api_key, &prompt).await,
+        CleanupProvider::Google => google_cleanup(text, api_key, &prompt, model).await,
     }
 }
 
@@ -165,7 +166,7 @@ async fn openai_compat(
     Ok(output)
 }
 
-async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<String> {
+async fn google_cleanup(text: &str, api_key: &str, prompt: &str, model: &str) -> Result<String> {
     use super::gemini_types::GeminiResp;
 
     #[derive(Serialize)]
@@ -220,9 +221,8 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str) -> Result<Strin
         },
     };
 
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={api_key}"
-    );
+    let url =
+        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}");
 
     let request_started = std::time::Instant::now();
     let resp = super::client::get().post(&url).json(&req).send().await?;

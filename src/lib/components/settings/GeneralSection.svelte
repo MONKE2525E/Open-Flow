@@ -25,6 +25,7 @@
   let cleanup = $state(true);
   let contextualCaps = $state(true);
   let autoSpacing = $state(true);
+  let advancedModelUi = $state(false);
   let hotkey = $state(['ControlLeft', 'MetaLeft']);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
@@ -94,6 +95,7 @@
       invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
+      invoke<boolean | null>('get_setting', { key: 'advanced_model_ui' }),
       invoke<string[]>('get_microphones'),
       invoke<string | null>('get_setting', { key: 'microphone_device' }),
     ]);
@@ -106,6 +108,7 @@
     cleanup = val<boolean | null>(5, null) ?? true;
     contextualCaps = val<boolean | null>(6, null) ?? true;
     autoSpacing = val<boolean | null>(7, null) ?? true;
+    advancedModelUi = val<boolean | null>(8, null) ?? false;
 
     const hk = val<string[] | null>(2, null);
     if (hk && hk.length === 2) hotkey = hk;
@@ -120,8 +123,8 @@
       selectedLanguage = language;
     }
 
-    microphones = val<string[]>(8, []);
-    selectedMic = val<string | null>(9, null) ?? '';
+    microphones = val<string[]>(9, []);
+    selectedMic = val<string | null>(10, null) ?? '';
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
@@ -209,6 +212,16 @@
     } catch (err) {
       autoSpacing = !value;
       console.error('save auto_spacing_enabled failed:', err);
+    }
+  }
+
+  async function handleAdvancedModelUi(value: boolean) {
+    advancedModelUi = value;
+    try {
+      await saveSetting('advanced_model_ui', value);
+    } catch (err) {
+      advancedModelUi = !value;
+      console.error('save advanced_model_ui failed:', err);
     }
   }
 
@@ -444,6 +457,10 @@
 <div class="setting-row">
   <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
   <Toggle checked={autoSpacing} onchange={handleAutoSpacing} />
+</div>
+<div class="setting-row">
+  <div><div class="label">Advanced model settings</div><div class="desc">Show fallback chains, custom model IDs, and per-provider controls in the Models section</div></div>
+  <Toggle checked={advancedModelUi} onchange={handleAdvancedModelUi} />
 </div>
 
 <style>

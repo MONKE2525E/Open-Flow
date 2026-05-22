@@ -234,6 +234,59 @@ fn fallback_providers(primary: &str) -> &'static [&'static str] {
     }
 }
 
+fn parse_model_id(id: &str) -> Option<(String, String)> {
+    let mut parts = id.splitn(2, '/');
+    let provider = parts.next()?.trim().to_lowercase();
+    let model = parts.next()?.trim().to_string();
+    if [store::GROQ, store::OPENAI, store::GOOGLE].contains(&provider.as_str()) && !model.is_empty() {
+        Some((provider, model))
+    } else {
+        None
+    }
+}
+
+fn transcription_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String)> {
+    let mut chain = Vec::<(String, String)>::new();
+    if let Some((provider, model)) = parse_model_id(&cfg.transcription_default_model) {
+        chain.push((provider, model));
+    }
+    for id in &cfg.transcription_fallback_models {
+        if let Some((provider, model)) = parse_model_id(id) {
+            if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
+                chain.push((provider, model));
+            }
+        }
+    }
+    chain
+}
+
+fn cleanup_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String)> {
+    let mut chain = Vec::<(String, String)>::new();
+    if let Some((provider, model)) = parse_model_id(&cfg.cleanup_default_model) {
+        chain.push((provider, model));
+    }
+    for id in &cfg.cleanup_fallback_models {
+        if let Some((provider, model)) = parse_model_id(id) {
+            if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
+                chain.push((provider, model));
+            }
+        }
+    }
+    chain
+}
+
+fn has_transcription_key_in_chain(cfg: &store::PipelineConfig) -> bool {
+    transcription_model_chain(cfg)
+        .iter()
+        .any(|(provider, _)| !cfg.key_for(provider).is_empty())
+}
+
+fn has_cleanup_key_in_chain(cfg: &store::PipelineConfig) -> bool {
+    cleanup_model_chain(cfg)
+        .iter()
+        .any(|(provider, _)| !cfg.key_for(provider).is_empty())
+}
+
 fn trim_err(s: &str) -> String {
     let s = s.trim();
     if s.chars().count() > 120 {
@@ -752,7 +805,8 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         let w = wav.clone();
         let provider = transcription_provider_from_str(provider_id);
         let language = cfg.transcription_language.clone();
-        Box::pin(async move { transcription::transcribe(w, provider, &key, &language).await })
+        let model = store::default_transcription_model_for(provider_id).to_string();
+        Box::pin(async move { transcription::transcribe(w, provider, &key, &language, &model).await })
     })
     .await;
 
@@ -798,9 +852,11 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         return;
     };
     log::debug!(
-        "pipeline: config t_provider={} c_provider={} cleanup_enabled={} intensity={} fallback={} app_context_hint={} profile={}",
+        "pipeline: config t_provider={} c_provider={} t_model={} c_model={} cleanup_enabled={} intensity={} fallback={} app_context_hint={} profile={}",
         cfg.transcription_provider,
         cfg.cleanup_provider,
+        cfg.transcription_default_model,
+        cfg.cleanup_default_model,
         cfg.cleanup_enabled,
         cfg.cleanup_intensity,
         cfg.api_fallback_enabled,
@@ -988,10 +1044,10 @@ async fn open_config_and_context(
         }
     };
     let cfg = store::load_pipeline_config(&settings_store);
-    if cfg.key_for(&cfg.transcription_provider).is_empty() {
+    if !has_transcription_key_in_chain(&cfg) {
         show_error_pill(
             app,
-            &format!("No API key saved for {}", cfg.transcription_provider),
+            "No API key saved for selected transcription model chain",
         )
         .await;
         return None;
@@ -1012,50 +1068,54 @@ async fn run_transcription(
 ) -> Option<(String, String)> {
     let wav = wav.clone();
     log::debug!(
-        "pipeline: transcription stage start provider={} language={} bytes={}",
+        "pipeline: transcription stage start provider={} model={} language={} bytes={}",
         cfg.transcription_provider,
+        cfg.transcription_default_model,
         cfg.transcription_language,
         wav.len()
     );
-    match try_providers(&[&cfg.transcription_provider], cfg, |provider_id, key| {
-        let w = wav.clone();
-        let provider = transcription_provider_from_str(provider_id);
+
+    let mut last_err: Option<anyhow::Error> = None;
+    for (provider_id, model) in transcription_model_chain(cfg) {
+        let key = cfg.key_for(&provider_id).to_owned();
+        if key.is_empty() {
+            continue;
+        }
+        let provider = transcription_provider_from_str(&provider_id);
         let language = cfg.transcription_language.clone();
-        Box::pin(async move { transcription::transcribe(w, provider, &key, &language).await })
-    })
-    .await
-    {
-        Ok((raw, t_provider)) if !raw.is_empty() => {
-            log::debug!(
-                "pipeline: transcription provider success={} chars={}",
-                t_provider,
-                raw.chars().count()
-            );
-            Some((raw, format!("{t_provider}/transcription")))
-        }
-        Ok(_) => {
-            show_error_pill(
-                app,
-                "Nothing transcribed — please try speaking more clearly",
-            )
-            .await;
-            None
-        }
-        Err(Some(e)) => {
-            log::error!(
-                "pipeline: transcription failed error={}",
-                trim_err(&e.to_string())
-            );
-            show_error_pill(app, &trim_err(&e.to_string())).await;
-            None
-        }
-        Err(None) => {
-            show_error_pill(app, "Transcription failed").await;
-            None
+        match transcription::transcribe(wav.clone(), provider, &key, &language, &model).await {
+            Ok(raw) if !raw.is_empty() => {
+                log::debug!(
+                    "pipeline: transcription provider success={} model={} chars={}",
+                    provider_id,
+                    model,
+                    raw.chars().count()
+                );
+                return Some((raw, format!("{provider_id}/{model}/transcription")));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                if crate::api::is_retryable_provider_error(&e) {
+                    last_err = Some(e);
+                    continue;
+                }
+                last_err = Some(e);
+                break;
+            }
         }
     }
-}
 
+    if let Some(e) = last_err {
+        log::error!(
+            "pipeline: transcription failed error={}",
+            trim_err(&e.to_string())
+        );
+        show_error_pill(app, &trim_err(&e.to_string())).await;
+    } else {
+        show_error_pill(app, "Nothing transcribed - please try speaking more clearly").await;
+    }
+    None
+}
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
 // instruction override application. Returns (final_text_before_dict, dict_entries)
 // so the caller can apply dictionary substitutions after saving to DB.
@@ -1110,11 +1170,10 @@ async fn run_cleanup_and_snippets(
         expanded.chars().count()
     );
 
-    let c_key = cfg.key_for(&cfg.cleanup_provider).to_owned();
     let mut used_cache_key = String::new();
     let final_text = if should_run_cleanup_llm(
         cfg.cleanup_enabled,
-        !c_key.is_empty(),
+        has_cleanup_key_in_chain(cfg),
         pure_expansion.is_none(),
         &cfg.cleanup_intensity,
         profile,
@@ -1178,34 +1237,50 @@ async fn run_cleanup_and_snippets(
             extra_rules.lines().filter(|l| !l.trim().is_empty()).count()
         );
 
-        let cleaned_res = try_providers(&[&cfg.cleanup_provider], cfg, |provider_id, key| {
-            let cp = cleanup_provider_from_str(provider_id);
-            let expanded_ref = expanded.clone();
-            let profile_ref = profile.to_owned();
-            let intensity_ref = cfg.cleanup_intensity.clone();
-            let rules_ref = extra_rules.clone();
-            let ctx_ref = app_context.map(|s| s.to_owned());
-            Box::pin(async move {
-                cleanup::cleanup(
-                    &expanded_ref,
-                    cp,
-                    &key,
-                    &profile_ref,
-                    &intensity_ref,
-                    &rules_ref,
-                    ctx_ref.as_deref(),
-                )
-                .await
-            })
-        })
-        .await;
+        let mut cleaned_res: Option<String> = None;
+        let mut last_cleanup_err: Option<anyhow::Error> = None;
+        for (provider_id, model) in cleanup_model_chain(cfg) {
+            let key = cfg.key_for(&provider_id).to_owned();
+            if key.is_empty() {
+                continue;
+            }
+            let cp = cleanup_provider_from_str(&provider_id);
+            match cleanup::cleanup(
+                &expanded,
+                cp,
+                &key,
+                &model,
+                profile,
+                &cfg.cleanup_intensity,
+                &extra_rules,
+                app_context,
+            )
+            .await
+            {
+                Ok(cleaned) if !cleaned.is_empty() => {
+                    log::debug!(
+                        "pipeline: cleanup provider success={} model={} cleaned_chars={}",
+                        provider_id,
+                        model,
+                        cleaned.chars().count()
+                    );
+                    cleaned_res = Some(cleaned);
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    if crate::api::is_retryable_provider_error(&e) {
+                        last_cleanup_err = Some(e);
+                        continue;
+                    }
+                    last_cleanup_err = Some(e);
+                    break;
+                }
+            }
+        }
 
         match cleaned_res {
-            Ok((cleaned, _)) if !cleaned.is_empty() => {
-                log::debug!(
-                    "pipeline: cleanup provider success cleaned_chars={}",
-                    cleaned.chars().count()
-                );
+            Some(cleaned) => {
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
                 if !cache_key.is_empty() {
@@ -1219,10 +1294,8 @@ async fn run_cleanup_and_snippets(
                 }
                 overridden
             }
-            Ok(_) => {
-                snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
-            }
-            Err(Some(e)) => {
+            None if last_cleanup_err.is_some() => {
+                let e = last_cleanup_err.expect("checked is_some");
                 log::error!(
                     "pipeline: cleanup failed error={}",
                     trim_err(&e.to_string())
@@ -1234,9 +1307,7 @@ async fn run_cleanup_and_snippets(
                 .await;
                 return None;
             }
-            Err(None) => {
-                snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
-            }
+            None => snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions),
         }
     } else {
         snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
@@ -1492,3 +1563,5 @@ mod tests {
         assert_eq!(style_scoped_cleanup_cache_key("", "casual", "medium"), "");
     }
 }
+
+

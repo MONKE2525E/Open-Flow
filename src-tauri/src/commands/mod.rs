@@ -18,6 +18,26 @@ fn lock_state<'a>(
 }
 
 fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> {
+    let is_model_map = |v: &serde_json::Value| {
+        let Some(obj) = v.as_object() else {
+            return false;
+        };
+        for provider in [store::GROQ, store::OPENAI, store::GOOGLE] {
+            let Some(arr) = obj.get(provider).and_then(|x| x.as_array()) else {
+                return false;
+            };
+            if !arr.iter().all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty())) {
+                return false;
+            }
+        }
+        true
+    };
+    let is_non_empty_string_array = |v: &serde_json::Value| {
+        v.as_array().is_some_and(|arr| {
+            arr.iter()
+                .all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty()))
+        })
+    };
     let valid = match key {
         store::TRANSCRIPTION_PROVIDER | store::CLEANUP_PROVIDER => value
             .as_str()
@@ -27,11 +47,19 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
             .is_some_and(store::is_supported_transcription_language),
         store::TRANSCRIPTION_MODEL
         | store::CLEANUP_MODEL
+        | store::TRANSCRIPTION_DEFAULT_MODEL
+        | store::CLEANUP_DEFAULT_MODEL
         | store::DEFAULT_TONE
         | store::CLEANUP_INTENSITY
         | store::MICROPHONE_DEVICE
         | "history_retention"
         | "update_dismissed_version" => value.is_string() || value.is_null(),
+        store::TRANSCRIPTION_MODELS_BY_PROVIDER | store::CLEANUP_MODELS_BY_PROVIDER => {
+            is_model_map(value)
+        }
+        store::TRANSCRIPTION_FALLBACK_MODELS | store::CLEANUP_FALLBACK_MODELS => {
+            is_non_empty_string_array(value)
+        }
         store::APPEARANCE_MODE => value
             .as_str()
             .is_some_and(|v| matches!(v, "system" | "light" | "dark")),
@@ -45,6 +73,7 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::AUTO_SPACING
         | store::SETUP_COMPLETE
         | store::FORCE_SETUP_ON_LAUNCH
+        | store::ADVANCED_MODEL_UI
         | "autostart_enabled" => value.is_boolean(),
         store::MIC_GAIN => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
         store::APP_MAPPINGS => serde_json::from_value::<Vec<AppMapping>>(value.clone()).is_ok(),
