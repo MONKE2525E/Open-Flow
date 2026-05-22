@@ -216,24 +216,26 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
     let transcription_default_from_new = str_val(TRANSCRIPTION_DEFAULT_MODEL);
     let cleanup_default_from_new = str_val(CLEANUP_DEFAULT_MODEL);
 
-    let transcription_default_model = if let Some((provider, model)) =
-        parse_model_id(&transcription_default_from_new)
-    {
-        format!("{provider}/{model}")
-    } else if let Some((provider, model)) = parse_model_id(&legacy_transcription_model) {
-        format!("{provider}/{model}")
-    } else {
-        format!("{}/{}", transcription_provider, default_transcription_model_for(&transcription_provider))
+    let resolve_default = |new_val: &str, legacy_val: &str, provider: &str, default_fn: fn(&str) -> &'static str| {
+        parse_model_id(new_val)
+            .or_else(|| parse_model_id(legacy_val))
+            .map(|(p, m)| format!("{p}/{m}"))
+            .unwrap_or_else(|| format!("{provider}/{}", default_fn(provider)))
     };
 
-    let cleanup_default_model =
-        if let Some((provider, model)) = parse_model_id(&cleanup_default_from_new) {
-            format!("{provider}/{model}")
-        } else if let Some((provider, model)) = parse_model_id(&legacy_cleanup_model) {
-            format!("{provider}/{model}")
-        } else {
-            format!("{}/{}", cleanup_provider, default_cleanup_model_for(&cleanup_provider))
-        };
+    let transcription_default_model = resolve_default(
+        &transcription_default_from_new,
+        &legacy_transcription_model,
+        &transcription_provider,
+        default_transcription_model_for,
+    );
+
+    let cleanup_default_model = resolve_default(
+        &cleanup_default_from_new,
+        &legacy_cleanup_model,
+        &cleanup_provider,
+        default_cleanup_model_for,
+    );
 
     let transcription_fallback_models = parse_string_array(TRANSCRIPTION_FALLBACK_MODELS);
     let cleanup_fallback_models = parse_string_array(CLEANUP_FALLBACK_MODELS);
