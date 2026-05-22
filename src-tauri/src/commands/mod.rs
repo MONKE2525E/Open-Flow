@@ -22,15 +22,10 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         let Some(obj) = v.as_object() else {
             return false;
         };
-        for provider in [store::GROQ, store::OPENAI, store::GOOGLE] {
-            let Some(arr) = obj.get(provider).and_then(|x| x.as_array()) else {
-                return false;
-            };
-            if !arr.iter().all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty())) {
-                return false;
-            }
-        }
-        true
+        obj.values().all(|val| {
+            val.as_array()
+                .is_some_and(|arr| arr.iter().all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty())))
+        })
     };
     let is_non_empty_string_array = |v: &serde_json::Value| {
         v.as_array().is_some_and(|arr| {

@@ -225,15 +225,6 @@ pub fn spawn_level_emitter(
 
 // ---------- pipeline ----------
 
-fn fallback_providers(primary: &str) -> &'static [&'static str] {
-    match primary {
-        "groq" => &["openai", "google"],
-        "openai" => &["groq", "google"],
-        "google" => &["groq", "openai"],
-        _ => &["openai", "google"],
-    }
-}
-
 fn parse_model_id(id: &str) -> Option<(String, String)> {
     let mut parts = id.splitn(2, '/');
     let provider = parts.next()?.trim().to_lowercase();
@@ -795,28 +786,38 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     };
     let cfg = store::load_pipeline_config(&settings_store);
 
-    let t_key = cfg.key_for(&cfg.transcription_provider).to_owned();
-    if t_key.is_empty() {
-        hide_pill(&app);
-        anyhow::bail!("No API key saved for {}", cfg.transcription_provider);
-    }
-
-    let result = try_providers(&[&cfg.transcription_provider], &cfg, |provider_id, key| {
-        let w = wav.clone();
-        let provider = transcription_provider_from_str(provider_id);
+    let mut transcribed: Option<String> = None;
+    let mut last_err: Option<anyhow::Error> = None;
+    for (provider_id, model) in transcription_model_chain(&cfg) {
+        let key = cfg.key_for(&provider_id).to_owned();
+        if key.is_empty() {
+            continue;
+        }
+        let provider = transcription_provider_from_str(&provider_id);
         let language = cfg.transcription_language.clone();
-        let model = store::default_transcription_model_for(provider_id).to_string();
-        Box::pin(async move { transcription::transcribe(w, provider, &key, &language, &model).await })
-    })
-    .await;
+        match transcription::transcribe(wav.clone(), provider, &key, &language, &model).await {
+            Ok(text) if !text.is_empty() => {
+                transcribed = Some(text);
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                if crate::api::is_retryable_provider_error(&e) {
+                    last_err = Some(e);
+                    continue;
+                }
+                last_err = Some(e);
+                break;
+            }
+        }
+    }
 
     hide_pill(&app);
 
-    match result {
-        Ok((text, _)) if !text.is_empty() => Ok(text),
-        Ok(_) => anyhow::bail!("Nothing transcribed"),
-        Err(Some(e)) => Err(e),
-        Err(None) => anyhow::bail!("Transcription failed"),
+    match transcribed {
+        Some(text) => Ok(text),
+        None => Err(last_err
+            .unwrap_or_else(|| anyhow::anyhow!("Transcription failed: no model in chain produced output"))),
     }
 }
 
@@ -1336,59 +1337,6 @@ fn style_scoped_cleanup_cache_key(base_key: &str, profile: &str, cleanup_intensi
     format!("{base_key}|profile:{profile}|intensity:{cleanup_intensity}")
 }
 
-use std::future::Future;
-use std::pin::Pin;
-
-async fn try_providers<F>(
-    providers: &[&str],
-    cfg: &store::PipelineConfig,
-    mut call: F,
-) -> Result<(String, String), Option<anyhow::Error>>
-where
-    F: FnMut(&str, String) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send>>,
-{
-    let mut to_try = vec![providers[0]];
-    if cfg.api_fallback_enabled {
-        for fb in fallback_providers(providers[0]) {
-            if !cfg.key_for(fb).is_empty() {
-                to_try.push(fb);
-            }
-        }
-    }
-
-    let mut last_err = None;
-    log::debug!("pipeline: provider chain={}", to_try.join("->"));
-    for (idx, provider_id) in to_try.iter().enumerate() {
-        let provider_id = *provider_id;
-        log::debug!(
-            "pipeline: provider attempt {}/{} id={}",
-            idx + 1,
-            to_try.len(),
-            provider_id
-        );
-        let key = cfg.key_for(provider_id).to_owned();
-        if key.is_empty() {
-            log::debug!("pipeline: provider {} skipped (missing key)", provider_id);
-            continue;
-        }
-
-        match call(provider_id, key).await {
-            Ok(result) => {
-                log::debug!("pipeline: provider {} succeeded", provider_id);
-                return Ok((result, provider_id.to_string()));
-            }
-            Err(e) => {
-                if cfg.api_fallback_enabled && crate::api::is_retryable_provider_error(&e) {
-                    log::warn!("retryable provider error on {provider_id}, trying fallback: {e}");
-                    last_err = Some(e);
-                } else {
-                    return Err(Some(e));
-                }
-            }
-        }
-    }
-    Err(last_err)
-}
 
 #[cfg(test)]
 mod tests {

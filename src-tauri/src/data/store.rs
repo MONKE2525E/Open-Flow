@@ -185,34 +185,6 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             default.into()
         }
     };
-    let parse_models_by_provider = |key: &str| -> std::collections::HashMap<String, Vec<String>> {
-        let mut out = std::collections::HashMap::<String, Vec<String>>::new();
-        let Some(value) = store.get(key) else {
-            return out;
-        };
-        let Some(obj) = value.as_object() else {
-            return out;
-        };
-        for provider in PROVIDERS {
-            let list = obj
-                .get(provider)
-                .and_then(|v| v.as_array())
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_str())
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(String::from)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            if !list.is_empty() {
-                out.insert(provider.to_string(), list);
-            }
-        }
-        out
-    };
     let parse_string_array = |key: &str| -> Vec<String> {
         store
             .get(key)
@@ -233,15 +205,6 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             None
         }
     };
-    let ensure_provider_has_default = |models: &mut std::collections::HashMap<String, Vec<String>>,
-                                       provider: &str,
-                                       model: &str| {
-        let entry = models.entry(provider.to_string()).or_default();
-        if !entry.iter().any(|m| m == model) {
-            entry.insert(0, model.to_string());
-        }
-    };
-
     let transcription_provider = str_or(TRANSCRIPTION_PROVIDER, GROQ);
     let cleanup_provider = str_or(CLEANUP_PROVIDER, GROQ);
     let legacy_transcription_model =
@@ -249,53 +212,27 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
     let legacy_cleanup_model =
         str_or(CLEANUP_MODEL, &format!("{}/{}", GROQ, default_cleanup_model_for(GROQ)));
 
-    let mut transcription_models = parse_models_by_provider(TRANSCRIPTION_MODELS_BY_PROVIDER);
-    let mut cleanup_models = parse_models_by_provider(CLEANUP_MODELS_BY_PROVIDER);
-
     let transcription_default_from_new = str_val(TRANSCRIPTION_DEFAULT_MODEL);
     let cleanup_default_from_new = str_val(CLEANUP_DEFAULT_MODEL);
 
     let transcription_default_model = if let Some((provider, model)) =
         parse_model_id(&transcription_default_from_new)
     {
-        ensure_provider_has_default(&mut transcription_models, &provider, &model);
         format!("{provider}/{model}")
     } else if let Some((provider, model)) = parse_model_id(&legacy_transcription_model) {
-        ensure_provider_has_default(&mut transcription_models, &provider, &model);
         format!("{provider}/{model}")
     } else {
-        let model = default_transcription_model_for(&transcription_provider).to_string();
-        ensure_provider_has_default(&mut transcription_models, &transcription_provider, &model);
-        format!("{}/{}", transcription_provider, model)
+        format!("{}/{}", transcription_provider, default_transcription_model_for(&transcription_provider))
     };
 
     let cleanup_default_model =
         if let Some((provider, model)) = parse_model_id(&cleanup_default_from_new) {
-            ensure_provider_has_default(&mut cleanup_models, &provider, &model);
             format!("{provider}/{model}")
         } else if let Some((provider, model)) = parse_model_id(&legacy_cleanup_model) {
-            ensure_provider_has_default(&mut cleanup_models, &provider, &model);
             format!("{provider}/{model}")
         } else {
-            let model = default_cleanup_model_for(&cleanup_provider).to_string();
-            ensure_provider_has_default(&mut cleanup_models, &cleanup_provider, &model);
-            format!("{}/{}", cleanup_provider, model)
+            format!("{}/{}", cleanup_provider, default_cleanup_model_for(&cleanup_provider))
         };
-
-    for provider in PROVIDERS {
-        if !transcription_models.contains_key(provider) {
-            transcription_models.insert(
-                provider.to_string(),
-                vec![default_transcription_model_for(provider).to_string()],
-            );
-        }
-        if !cleanup_models.contains_key(provider) {
-            cleanup_models.insert(
-                provider.to_string(),
-                vec![default_cleanup_model_for(provider).to_string()],
-            );
-        }
-    }
 
     let transcription_fallback_models = parse_string_array(TRANSCRIPTION_FALLBACK_MODELS);
     let cleanup_fallback_models = parse_string_array(CLEANUP_FALLBACK_MODELS);
