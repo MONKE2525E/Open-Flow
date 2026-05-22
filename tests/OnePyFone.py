@@ -195,9 +195,12 @@ class EnvCheck(PythonTest):
         if not (ROOT / "node_modules" / "playwright").is_dir():
             issues.append("playwright package missing — run: npm install")
 
-        r_cargo = subprocess.run(["cargo", "--version"], capture_output=True, text=True)
-        if r_cargo.returncode != 0:
-            issues.append("cargo not found — install Rust toolchain from rustup.rs")
+        try:
+            r_cargo = subprocess.run(["cargo", "--version"], capture_output=True, text=True)
+            if r_cargo.returncode != 0:
+                issues.append("cargo not found — install Rust toolchain from rustup.rs")
+        except FileNotFoundError:
+            issues.append("cargo executable not found in PATH")
 
         if not AUDIO_WAV.exists():
             issues.append(f"smoke_test.wav missing at {AUDIO_WAV}")
