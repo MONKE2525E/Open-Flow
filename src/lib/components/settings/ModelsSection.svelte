@@ -303,9 +303,9 @@
           <div class="warn-banner">{missingKeyWarning(type)}</div>
         {/if}
 
-        {#if !advancedModelUi}
-          <!-- ── Simple picker ── -->
-          <div class="simple-picker">
+        {#if advancedModelUi}
+          <!-- ── Advanced picker ── -->
+          <div class="chain-bar">
             {#each providerSections as section (section.id)}
               {@const hasKey = apiKeyStatus[section.storeProvider]}
               <div class="simple-group" class:no-key={!hasKey}>
@@ -330,8 +330,8 @@
             {/each}
           </div>
         {:else}
-          <!-- ── Advanced picker ── -->
-          <div class="chain-bar">
+          <!-- ── Simple picker ── -->
+          <div class="simple-picker">
             <div class="chain-row-item">
               <span class="chain-label">Active</span>
               <span class="chain-chip active-chip">{taskDefault(type)}</span>
