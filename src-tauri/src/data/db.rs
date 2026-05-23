@@ -1,4 +1,4 @@
-﻿use anyhow::Result;
+use anyhow::Result;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard};
