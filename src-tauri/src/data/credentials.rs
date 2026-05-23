@@ -67,7 +67,21 @@ pub fn migrate_from_store(store: &Store<Wry>) {
         if plaintext.is_empty() {
             continue;
         }
-        if !has(provider) {
+
+        // Distinguish "entry is absent" from "read error" so a transient system
+        // failure never causes us to overwrite an existing key or delete plaintext.
+        let user = user_for(provider).unwrap();
+        let missing = match Entry::new(SERVICE, user).and_then(|e| e.get_password()) {
+            Ok(_) => false,
+            Err(KeyringError::NoEntry) => true,
+            Err(e) => {
+                log::error!("Migration: could not read {provider} from Credential Manager: {e}");
+                any_failed = true;
+                continue;
+            }
+        };
+
+        if missing {
             if let Err(e) = set(provider, &plaintext) {
                 log::error!("Migration: could not write {provider} key to Credential Manager: {e}");
                 // Leave plaintext copy intact — better than losing the key.
