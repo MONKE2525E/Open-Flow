@@ -12,6 +12,17 @@
     label: string;
     storeProvider: ProviderId;
   };
+  type AllSettingsPayload = {
+    transcription_model?: string | null;
+    cleanup_model?: string | null;
+    transcription_models_by_provider?: unknown;
+    cleanup_models_by_provider?: unknown;
+    transcription_default_model?: string | null;
+    cleanup_default_model?: string | null;
+    transcription_fallback_models?: string[] | null;
+    cleanup_fallback_models?: string[] | null;
+    advanced_model_ui?: boolean | null;
+  };
 
   const providerSections: ProviderSection[] = [
     { id: 'groq', label: 'Groq', storeProvider: 'groq' },
@@ -151,20 +162,20 @@
   }
 
   async function migrateAndLoad() {
-    const [all, keyStatus, tMapRaw, cMapRaw, tDefaultRaw, cDefaultRaw, tFallbackRaw, cFallbackRaw, advancedRaw] =
+    const [all, keyStatus] =
       await Promise.all([
-        invoke<Record<string, unknown>>('get_all_settings'),
+        invoke<AllSettingsPayload>('get_all_settings'),
         invoke<typeof apiKeyStatus>('get_api_key_status'),
-        invoke<unknown>('get_setting', { key: 'transcription_models_by_provider' }),
-        invoke<unknown>('get_setting', { key: 'cleanup_models_by_provider' }),
-        invoke<string | null>('get_setting', { key: 'transcription_default_model' }),
-        invoke<string | null>('get_setting', { key: 'cleanup_default_model' }),
-        invoke<string[] | null>('get_setting', { key: 'transcription_fallback_models' }),
-        invoke<string[] | null>('get_setting', { key: 'cleanup_fallback_models' }),
-        invoke<boolean | null>('get_setting', { key: 'advanced_model_ui' }),
       ]);
 
     apiKeyStatus = keyStatus;
+    const tMapRaw = all.transcription_models_by_provider;
+    const cMapRaw = all.cleanup_models_by_provider;
+    const tDefaultRaw = all.transcription_default_model ?? null;
+    const cDefaultRaw = all.cleanup_default_model ?? null;
+    const tFallbackRaw = all.transcription_fallback_models ?? null;
+    const cFallbackRaw = all.cleanup_fallback_models ?? null;
+    const advancedRaw = all.advanced_model_ui ?? null;
 
     const mergeMap = (raw: unknown): ProviderModelMap => {
       const base = emptyMap();
@@ -182,8 +193,8 @@
     transcriptionModelsByProvider = mergeMap(tMapRaw);
     cleanupModelsByProvider = mergeMap(cMapRaw);
 
-    const rawLegacyT = String((all as Record<string, unknown>).transcription_model ?? '');
-    const rawLegacyC = String((all as Record<string, unknown>).cleanup_model ?? '');
+    const rawLegacyT = String(all.transcription_model ?? '');
+    const rawLegacyC = String(all.cleanup_model ?? '');
     const legacyT = rawLegacyT
       ? (rawLegacyT.includes('/') ? rawLegacyT : `groq/${rawLegacyT}`)
       : 'groq/whisper-large-v3-turbo';

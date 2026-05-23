@@ -142,6 +142,13 @@ pub struct AllSettings {
     pub transcription_model: Option<String>,
     pub transcription_language: Option<String>,
     pub cleanup_model: Option<String>,
+    pub transcription_models_by_provider: Option<serde_json::Value>,
+    pub cleanup_models_by_provider: Option<serde_json::Value>,
+    pub transcription_default_model: Option<String>,
+    pub cleanup_default_model: Option<String>,
+    pub transcription_fallback_models: Option<Vec<String>>,
+    pub cleanup_fallback_models: Option<Vec<String>>,
+    pub advanced_model_ui: Option<bool>,
     pub cleanup_enabled: Option<bool>,
     pub noise_reduction: Option<bool>,
     pub mute_audio: Option<bool>,
@@ -171,10 +178,27 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
     let bool_val = |key: &str| s.get(key).and_then(|v| v.as_bool());
     let str_val = |key: &str| s.get(key).and_then(|v| v.as_str().map(String::from));
     let f64_val = |key: &str| s.get(key).and_then(|v| v.as_f64());
+    let json_val = |key: &str| s.get(key);
+    let str_array_val = |key: &str| {
+        s.get(key).and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+        })
+    };
     Ok(AllSettings {
         transcription_model: str_val(store::TRANSCRIPTION_MODEL),
         transcription_language: str_val(store::TRANSCRIPTION_LANGUAGE),
         cleanup_model: str_val(store::CLEANUP_MODEL),
+        transcription_models_by_provider: json_val(store::TRANSCRIPTION_MODELS_BY_PROVIDER),
+        cleanup_models_by_provider: json_val(store::CLEANUP_MODELS_BY_PROVIDER),
+        transcription_default_model: str_val(store::TRANSCRIPTION_DEFAULT_MODEL),
+        cleanup_default_model: str_val(store::CLEANUP_DEFAULT_MODEL),
+        transcription_fallback_models: str_array_val(store::TRANSCRIPTION_FALLBACK_MODELS),
+        cleanup_fallback_models: str_array_val(store::CLEANUP_FALLBACK_MODELS),
+        advanced_model_ui: bool_val(store::ADVANCED_MODEL_UI),
         cleanup_enabled: bool_val(store::CLEANUP_ENABLED),
         noise_reduction: bool_val(store::NOISE_REDUCTION),
         mute_audio: bool_val(store::MUTE_AUDIO),
