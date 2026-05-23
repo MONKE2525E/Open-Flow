@@ -32,6 +32,7 @@ pub const AUTO_SPACING: &str = "auto_spacing_enabled";
 pub const APPEARANCE_MODE: &str = "appearance_mode";
 pub const FORCE_SETUP_ON_LAUNCH: &str = "force_setup_on_launch";
 pub const ADVANCED_MODEL_UI: &str = "advanced_model_ui";
+pub const CREDENTIALS_MIGRATED: &str = "credentials_migrated_v1";
 
 // ---------- pipeline config ----------
 
@@ -250,9 +251,9 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             .get(CLEANUP_ENABLED)
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
-        key_groq: str_val(KEY_GROQ),
-        key_openai: str_val(KEY_OPENAI),
-        key_google: str_val(KEY_GOOGLE),
+        key_groq: crate::data::credentials::get(GROQ),
+        key_openai: crate::data::credentials::get(OPENAI),
+        key_google: crate::data::credentials::get(GOOGLE),
         default_tone: str_or(DEFAULT_TONE, "casual"),
         cleanup_intensity: str_or(CLEANUP_INTENSITY, "medium"),
         app_context_hint: store
