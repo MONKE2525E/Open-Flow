@@ -6,7 +6,7 @@
   import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
-  import { dictionary, fetchDictionary, type DictionaryEntry } from '../stores';
+  import { currentPage, dictionary, fetchDictionary, type DictionaryEntry } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
 
   type SortKey = 'newest' | 'oldest' | 'alpha' | 'most_corrected';
@@ -449,6 +449,14 @@
     <div class="modal-footer">
       {#if saveError}
         <p class="save-error">{saveError}</p>
+      {/if}
+      {#if countCodePoints(draftTerm) >= TERM_LIMIT}
+        <button
+          class="snippet-nudge"
+          onclick={() => { closeModal(); currentPage.set('snippets'); }}
+          in:fly={{ y: 5, duration: 220, easing: expoOut }}
+          out:fade={{ duration: 100 }}
+        >Maybe this would be better as a snippet.</button>
       {/if}
       <div class="footer-actions">
         <button class="btn-ghost" onclick={closeModal}>Cancel</button>
@@ -1006,6 +1014,25 @@
 
   .char-count { font-size: 10.5px; color: var(--ink-mute); font-weight: 400; margin-left: auto; }
   .char-count.over { color: var(--danger); }
+
+  .snippet-nudge {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--accent-ink);
+    font-family: var(--sans);
+    cursor: pointer;
+    text-align: left;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-color: color-mix(in oklab, var(--accent-ink) 40%, transparent);
+    transition: text-decoration-color 0.15s, color 0.15s;
+  }
+  .snippet-nudge:hover {
+    text-decoration-color: var(--accent-ink);
+  }
 
   .save-error {
     font-size: 11.5px;
