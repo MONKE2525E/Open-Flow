@@ -54,7 +54,6 @@ Open Flow handles the entire pipeline from your microphone to your active applic
 - **Snippets:** Create custom abbreviations and auto-expand them during dictation.
 - **Snippet Cleanup Instructions:** Add per-snippet cleanup rules like all caps, no ending period, or always ending with an exclamation mark.
 - **Personal Dictionary:** Teach Open Flow names, brands, and jargon so the cleanup model preserves the exact spelling you want.
-- **Accent Themes:** Choose your aesthetic: Terracotta (default), Moss, Slate, or Ink.
 
 ### Privacy & Offline
 - **Local Transcription History:** Every dictation is saved locally in SQLite on your machine, including raw/cleaned text, model used, word count, and duration.
