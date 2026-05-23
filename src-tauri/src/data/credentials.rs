@@ -74,6 +74,12 @@ pub fn get(provider: &str) -> String {
         let mut p_cred: *mut CREDENTIALW = ptr::null_mut();
         match CredReadW(PCWSTR(target_wide.as_ptr()), CRED_TYPE_GENERIC, None, &mut p_cred) {
             Ok(()) => {
+                if p_cred.is_null() {
+                    log::error!(
+                        "Credential Manager read returned success with null pointer for {provider}"
+                    );
+                    return String::new();
+                }
                 let cred = &*p_cred;
                 let pw = if cred.CredentialBlobSize == 0 {
                     String::new()
