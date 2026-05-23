@@ -406,7 +406,10 @@
     </div>
 
     <div class="modal-body">
-      <label class="field-label" for="dict-term">Term</label>
+      <label class="field-label" for="dict-term">
+        Term
+        <span class="char-count" class:over={countCodePoints(draftTerm) > TERM_LIMIT}>{countCodePoints(draftTerm)}/{TERM_LIMIT}</span>
+      </label>
       <div class="input-row">
         <input
           id="dict-term"
@@ -425,6 +428,7 @@
 
       <label class="field-label" for="dict-mistake">
         Often mistranscribed as <span class="field-optional">optional</span>
+        <span class="char-count" class:over={countCodePoints(draftMistake) > MISTAKE_LIMIT}>{countCodePoints(draftMistake)}/{MISTAKE_LIMIT}</span>
       </label>
       <div class="input-row">
         <input
@@ -999,6 +1003,9 @@
   .field-input:focus { border-color: var(--arm-400); }
 
   .field-hint { font-size: 11px; color: var(--ink-mute); margin: 4px 0 0; }
+
+  .char-count { font-size: 10.5px; color: var(--ink-mute); font-weight: 400; margin-left: auto; }
+  .char-count.over { color: var(--danger); }
 
   .save-error {
     font-size: 11.5px;
