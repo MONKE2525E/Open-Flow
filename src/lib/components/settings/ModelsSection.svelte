@@ -210,8 +210,8 @@
       ? (rawLegacyC.includes('/') ? rawLegacyC : `groq/${rawLegacyC}`)
       : 'groq/llama-3.3-70b-versatile';
 
-    transcriptionDefaultModel = tDefaultRaw && splitModelId(tDefaultRaw) ? tDefaultRaw : legacyT;
-    cleanupDefaultModel = cDefaultRaw && splitModelId(cDefaultRaw) ? cDefaultRaw : legacyC;
+    transcriptionDefaultModel = tDefaultRaw !== null ? tDefaultRaw : legacyT;
+    cleanupDefaultModel = cDefaultRaw !== null ? cDefaultRaw : legacyC;
 
     if (Array.isArray(tFallbackRaw)) transcriptionFallbackModels = tFallbackRaw.filter((m) => !!splitModelId(m));
     if (Array.isArray(cFallbackRaw)) cleanupFallbackModels = cFallbackRaw.filter((m) => !!splitModelId(m));
@@ -393,7 +393,7 @@
                 role="button"
                 tabindex="0"
                 onclick={() => toggleModelSelection(type, section.storeProvider, mName)}
-                onkeydown={(e) => e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ') && toggleModelSelection(type, section.storeProvider, mName)}
+                onkeydown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { if (e.key === ' ') e.preventDefault(); toggleModelSelection(type, section.storeProvider, mName); } }}
               >
                 <span class="simple-dot" class:dot-active={isActive} class:dot-fallback={isFallback}></span>
                 <span class="simple-name model-name">{mName}</span>
@@ -424,7 +424,7 @@
                 role="button"
                 tabindex="0"
                 onclick={() => toggleModelSelection(type, section.storeProvider, custom)}
-                onkeydown={(e) => e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ') && toggleModelSelection(type, section.storeProvider, custom)}
+                onkeydown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { if (e.key === ' ') e.preventDefault(); toggleModelSelection(type, section.storeProvider, custom); } }}
               >
                 <button
                   class="remove-dot"
