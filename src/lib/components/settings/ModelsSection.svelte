@@ -235,22 +235,6 @@
     if (changed) await persistAll();
   }
 
-  function activateModel(type: TaskType, provider: ProviderId, modelName: string, addAsFallback: boolean) {
-    const id = modelId(provider, modelName);
-    ensureModelsContainSelection(type, provider, modelName);
-
-    if (addAsFallback) {
-      if (id !== taskDefault(type) && !taskFallbacks(type).includes(id)) {
-        setTaskFallbacks(type, [...taskFallbacks(type), id]);
-      }
-    } else {
-      setTaskDefault(type, id);
-      setTaskFallbacks(type, taskFallbacks(type).filter((m) => m !== id));
-    }
-
-    persistAll().catch((err) => console.error('persist model failed', err));
-  }
-
   function addCustomToList(type: TaskType, section: ProviderSection) {
     let custom = customDrafts[type][section.id].trim();
     if (!custom) return;
@@ -418,15 +402,10 @@
                 {:else if isFallback}
                   <span transition:pillScale class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, mName)) + 1}</span>
                 {:else}
-                  <button
-                    transition:pillScale
-                    class="state-pill tier-pill"
-                    type="button"
-                    onclick={(e) => { e.stopPropagation(); activateModel(type, section.storeProvider, mName, true); }}
-                  >
+                  <span transition:pillScale class="state-pill tier-pill">
                     <span class="tier-label">{tier === 'premium' ? 'Accurate' : 'Efficient'}</span>
                     <span class="fallback-label" aria-hidden="true">Add fallback</span>
-                  </button>
+                  </span>
                 {/if}
               </div>
             {/each}
@@ -461,12 +440,7 @@
                 {:else if isFallback}
                   <span transition:pillScale class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, custom)) + 1}</span>
                 {:else}
-                  <button
-                    transition:pillScale
-                    class="state-pill muted"
-                    type="button"
-                    onclick={(e) => { e.stopPropagation(); activateModel(type, section.storeProvider, custom, true); }}
-                  >Add fallback</button>
+                  <span transition:pillScale class="state-pill muted">Add fallback</span>
                 {/if}
               </div>
             {/each}
