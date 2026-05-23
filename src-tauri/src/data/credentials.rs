@@ -81,14 +81,18 @@ pub fn get(provider: &str) -> String {
                     );
                     return String::new();
                 }
-                let cred = &*p_cred;
-                let pw = if cred.CredentialBlobSize == 0 {
+
+                let blob_size = (*p_cred).CredentialBlobSize as usize;
+                let blob_ptr = (*p_cred).CredentialBlob;
+                let pw = if blob_size == 0 {
+                    String::new()
+                } else if blob_ptr.is_null() {
+                    log::error!(
+                        "Credential Manager read returned non-zero blob size with null blob pointer for {provider}"
+                    );
                     String::new()
                 } else {
-                    let blob = std::slice::from_raw_parts(
-                        cred.CredentialBlob,
-                        cred.CredentialBlobSize as usize,
-                    );
+                    let blob = std::slice::from_raw_parts(blob_ptr, blob_size);
                     // Decode UTF-16-LE back to a Rust String
                     let utf16: Vec<u16> = blob
                         .chunks_exact(2)
