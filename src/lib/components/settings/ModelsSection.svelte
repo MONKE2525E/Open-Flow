@@ -1,7 +1,17 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { fly } from 'svelte/transition';
+  import { fly, slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
+
+  function pillScale(node: Element, { duration = 180 }: { duration?: number } = {}) {
+    const w = (node as HTMLElement).getBoundingClientRect().width;
+    return {
+      duration,
+      easing: cubicOut,
+      css: (t: number) => `max-width: ${w * t}px; opacity: ${t}; overflow: hidden;`,
+    };
+  }
+  import Toggle from '../Toggle.svelte';
   import { saveSetting, type ProviderId, type ProviderModelMap } from '../../settings';
 
   type TaskType = 'transcription' | 'cleanup';
@@ -21,7 +31,6 @@
     cleanup_default_model?: string | null;
     transcription_fallback_models?: string[] | null;
     cleanup_fallback_models?: string[] | null;
-    advanced_model_ui?: boolean | null;
   };
 
   const providerSections: ProviderSection[] = [
@@ -162,11 +171,11 @@
   }
 
   async function migrateAndLoad() {
-    const [all, keyStatus] =
-      await Promise.all([
-        invoke<AllSettingsPayload>('get_all_settings'),
-        invoke<typeof apiKeyStatus>('get_api_key_status'),
-      ]);
+    const [all, keyStatus, advancedRaw] = await Promise.all([
+      invoke<AllSettingsPayload>('get_all_settings'),
+      invoke<typeof apiKeyStatus>('get_api_key_status'),
+      invoke<boolean | null>('get_setting', { key: 'advanced_model_ui' }),
+    ]);
 
     apiKeyStatus = keyStatus;
     const tMapRaw = all.transcription_models_by_provider;
@@ -175,7 +184,6 @@
     const cDefaultRaw = all.cleanup_default_model ?? null;
     const tFallbackRaw = all.transcription_fallback_models ?? null;
     const cFallbackRaw = all.cleanup_fallback_models ?? null;
-    const advancedRaw = all.advanced_model_ui ?? null;
 
     const mergeMap = (raw: unknown): ProviderModelMap => {
       const base = emptyMap();
@@ -262,20 +270,37 @@
     persistAll().catch((err) => console.error('persist custom failed', err));
   }
 
-  function removeFallback(type: TaskType, id: string) {
-    setTaskFallbacks(type, taskFallbacks(type).filter((m) => m !== id));
-    persistAll().catch((err) => console.error('persist fallback remove failed', err));
+  function removeCustomModel(type: TaskType, provider: ProviderId, modelName: string) {
+    const id = modelId(provider, modelName);
+
+    // Remove from fallbacks if present
+    if (taskFallbacks(type).includes(id)) {
+      setTaskFallbacks(type, taskFallbacks(type).filter((m) => m !== id));
+    }
+
+    // If it's the active model, promote first fallback or default to a recommended model
+    if (taskDefault(type) === id) {
+      const fallbacks = taskFallbacks(type);
+      if (fallbacks.length > 0) {
+        const [nextActive, ...remaining] = fallbacks;
+        setTaskDefault(type, nextActive);
+        setTaskFallbacks(type, remaining);
+      } else {
+        const provId = provider as UiProviderId;
+        setTaskDefault(type, modelId(provider, recommendedModels[type][provId].standard));
+      }
+    }
+
+    // Remove from models_by_provider
+    const map = taskMap(type);
+    setTaskMap(type, { ...map, [provider]: map[provider].filter((m) => m !== modelName) });
+
+    persistAll().catch((err) => console.error('persist remove custom failed', err));
   }
 
   function toggleModelSelection(type: TaskType, provider: ProviderId, modelName: string) {
     const id = modelId(provider, modelName);
     ensureModelsContainSelection(type, provider, modelName);
-    if (!advancedModelUi) {
-      setTaskDefault(type, id);
-      setTaskFallbacks(type, []);
-      persistAll().catch((err) => console.error('persist model toggle failed', err));
-      return;
-    }
     const currentState = selectionState(type, provider, modelName);
 
     if (currentState === 'active') {
@@ -285,22 +310,16 @@
         setTaskDefault(type, nextActive);
         setTaskFallbacks(type, remaining);
       } else {
-        return;
+        setTaskDefault(type, '');
       }
-      persistAll().catch((err) => console.error('persist model toggle failed', err));
-      return;
-    }
-
-    if (currentState === 'fallback') {
+    } else if (currentState === 'fallback') {
       setTaskFallbacks(type, taskFallbacks(type).filter((m) => m !== id));
-      persistAll().catch((err) => console.error('persist model toggle failed', err));
-      return;
-    }
-
-    if (!splitModelId(taskDefault(type))) {
-      setTaskDefault(type, id);
     } else {
-      setTaskFallbacks(type, [...taskFallbacks(type), id]);
+      if (!splitModelId(taskDefault(type))) {
+        setTaskDefault(type, id);
+      } else {
+        setTaskFallbacks(type, [...taskFallbacks(type), id]);
+      }
     }
 
     persistAll().catch((err) => console.error('persist model toggle failed', err));
@@ -325,6 +344,16 @@
     return splitModelId(taskDefault(type))?.model ?? 'None';
   }
 
+  async function handleAdvancedModelUi(value: boolean) {
+    advancedModelUi = value;
+    try {
+      await saveSetting('advanced_model_ui', value);
+    } catch (err) {
+      advancedModelUi = !value;
+      console.error('save advanced_model_ui failed:', err);
+    }
+  }
+
   migrateAndLoad().catch((err) => console.error('load models failed', err));
 </script>
 
@@ -343,7 +372,7 @@
         <div class="summary-row">
           <span class="summary-item provider-chip">{activeProviderLabel(type)}</span>
           <span class="summary-item model-chip">{activeModelLabel(type)}</span>
-          {#if advancedModelUi}
+          {#if fallbackCount > 0}
             <span class="summary-item fallback-chip">{fallbackCount} fallback{fallbackCount !== 1 ? 's' : ''}</span>
           {/if}
         </div>
@@ -357,181 +386,130 @@
           <div class="warn-banner">{missingKeyWarning(type)}</div>
         {/if}
 
-        {#if !advancedModelUi}
-          <!-- ── Simple picker ── -->
-          <div class="chain-bar">
-            {#each providerSections as section (section.id)}
-              {@const hasKey = apiKeyStatus[section.storeProvider]}
-              <div class="simple-group" class:no-key={!hasKey}>
-                <span class="simple-provider">{section.label}</span>
-                {#each ['premium', 'standard'] as rawTier}
-                  {@const tier = rawTier as 'premium' | 'standard'}
-                  {@const mName = recommendedModels[type][section.id][tier]}
-                  {@const state = selectionState(type, section.storeProvider, mName)}
-                  {@const isActive = state === 'active'}
-                  {@const isFallback = state === 'fallback'}
+        <div class="model-container">
+        {#each providerSections as section (section.id)}
+          {@const hasKey = apiKeyStatus[section.storeProvider]}
+          {@const customModels = (taskMap(type)[section.storeProvider] ?? []).filter(
+            (m) => m !== recommendedModels[type][section.id].premium && m !== recommendedModels[type][section.id].standard
+          )}
+          <div class="simple-group" class:no-key={!hasKey}>
+            <span class="simple-provider">{section.label}</span>
+
+            {#each ['premium', 'standard'] as rawTier}
+              {@const tier = rawTier as 'premium' | 'standard'}
+              {@const mName = recommendedModels[type][section.id][tier]}
+              {@const state = selectionState(type, section.storeProvider, mName)}
+              {@const isActive = state === 'active'}
+              {@const isFallback = state === 'fallback'}
+              <div
+                class="simple-row model-row"
+                class:simple-active={isActive}
+                class:simple-fallback={isFallback}
+                class:chain-row={isFallback}
+                role="button"
+                tabindex="0"
+                onclick={() => toggleModelSelection(type, section.storeProvider, mName)}
+                onkeydown={(e) => e.key === 'Enter' && toggleModelSelection(type, section.storeProvider, mName)}
+              >
+                <span class="simple-dot" class:dot-active={isActive} class:dot-fallback={isFallback}></span>
+                <span class="simple-name model-name">{mName}</span>
+                {#if isActive}
+                  <span transition:pillScale class="state-pill active">Active</span>
+                {:else if isFallback}
+                  <span transition:pillScale class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, mName)) + 1}</span>
+                {:else}
                   <button
-                    class="simple-row"
-                    class:simple-active={isActive}
-                    class:simple-fallback={isFallback}
-                    onclick={() => toggleModelSelection(type, section.storeProvider, mName)}
+                    transition:pillScale
+                    class="state-pill tier-pill"
+                    type="button"
+                    onclick={(e) => { e.stopPropagation(); activateModel(type, section.storeProvider, mName, true); }}
                   >
-                    <span class="simple-dot" class:dot-active={isActive} class:dot-fallback={isFallback}></span>
-                    <span class="simple-name">{mName}</span>
-                    <span class="simple-badge {isFallback ? 'badge-fallback' : (tier === 'premium' ? 'badge-accuracy' : 'badge-efficiency')}">
-                      {isActive ? 'Active' : (isFallback ? `F${taskFallbacks(type).indexOf(modelId(section.storeProvider, mName)) + 1}` : (tier === 'premium' ? 'Accuracy' : 'Efficiency'))}
-                    </span>
+                    <span class="tier-label">{tier === 'premium' ? 'Accurate' : 'Efficient'}</span>
+                    <span class="fallback-label" aria-hidden="true">Add fallback</span>
                   </button>
-                {/each}
+                {/if}
               </div>
             {/each}
-          </div>
-        {:else}
-          <!-- ── Advanced picker ── -->
-          <div class="simple-picker">
-            <div class="chain-row-item">
-              <span class="chain-label">Active</span>
-              <span class="chain-chip active-chip">{taskDefault(type)}</span>
-            </div>
-            {#each taskFallbacks(type) as id, i (id)}
-              <div class="chain-row-item">
-                <span class="chain-label">F{i + 1}</span>
-                <span class="chain-row">
-                  <span class="chain-id">{id}</span>
+
+            {#each customModels.filter((m) => advancedModelUi || selectionState(type, section.storeProvider, m) !== 'none') as custom (custom)}
+              {@const state = selectionState(type, section.storeProvider, custom)}
+              {@const isActive = state === 'active'}
+              {@const isFallback = state === 'fallback'}
+              <div
+                in:fly={{ y: 5, duration: 200, easing: cubicOut }}
+                out:fly={{ y: -5, duration: 150, easing: cubicOut }}
+                class="simple-row model-row"
+                class:simple-active={isActive}
+                class:simple-fallback={isFallback}
+                class:chain-row={isFallback}
+                role="button"
+                tabindex="0"
+                onclick={() => toggleModelSelection(type, section.storeProvider, custom)}
+                onkeydown={(e) => e.key === 'Enter' && toggleModelSelection(type, section.storeProvider, custom)}
+              >
+                <button
+                  class="remove-dot"
+                  class:dot-active={isActive}
+                  class:dot-fallback={isFallback}
+                  type="button"
+                  aria-label="Remove {custom}"
+                  onclick={(e) => { e.stopPropagation(); removeCustomModel(type, section.storeProvider, custom); }}
+                ></button>
+                <span class="simple-name model-name">{custom}</span>
+                {#if isActive}
+                  <span transition:pillScale class="state-pill active">Active</span>
+                {:else if isFallback}
+                  <span transition:pillScale class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, custom)) + 1}</span>
+                {:else}
                   <button
-                    class="chain-remove"
-                    onclick={() => removeFallback(type, id)}
-                    aria-label="Remove fallback"
-                  >×</button>
-                </span>
+                    transition:pillScale
+                    class="state-pill muted"
+                    type="button"
+                    onclick={(e) => { e.stopPropagation(); activateModel(type, section.storeProvider, custom, true); }}
+                  >Add fallback</button>
+                {/if}
               </div>
             {/each}
-            {#if taskFallbacks(type).length === 0}
-              <div class="chain-row-item">
-                <span class="chain-label">F1</span>
-                <span class="chain-empty">No fallbacks configured</span>
+
+            {#if advancedModelUi}
+              <div class="custom-row" transition:slide={{ duration: 240, easing: cubicOut }}>
+                <input
+                  class="model-input"
+                  placeholder="custom model…"
+                  value={customDrafts[type][section.id]}
+                  oninput={(e) => {
+                    const v = (e.currentTarget as HTMLInputElement).value;
+                    customDrafts = { ...customDrafts, [type]: { ...customDrafts[type], [section.id]: v } };
+                  }}
+                  onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); addCustomToList(type, section); } }}
+                />
+                <button
+                  class="custom-add-btn"
+                  onclick={() => addCustomToList(type, section)}
+                  disabled={!customDrafts[type][section.id].trim()}
+                >Add</button>
               </div>
             {/if}
           </div>
-
-          <div class="provider-grid">
-            {#each providerSections as section (section.id)}
-              {@const hasKey = apiKeyStatus[section.storeProvider]}
-              <div class="provider-card" class:no-key={!hasKey}>
-                <div class="prov-head">
-                  <span class="prov-name">{section.label}</span>
-                  {#if !hasKey}
-                    <span class="prov-badge">No key</span>
-                  {/if}
-                </div>
-
-                <div class="model-list">
-                  {#each ['premium', 'standard'] as rawTier}
-                    {@const tier = rawTier as 'premium' | 'standard'}
-                    {@const mName = recommendedModels[type][section.id][tier]}
-                    {@const state = selectionState(type, section.storeProvider, mName)}
-                    <div
-                      class="model-row"
-                      class:row-active={state === 'active'}
-                      class:row-fallback={state === 'fallback'}
-                      onclick={() => toggleModelSelection(type, section.storeProvider, mName)}
-                      role="button"
-                      tabindex="0"
-                      onkeydown={(e) => e.key === 'Enter' && toggleModelSelection(type, section.storeProvider, mName)}
-                    >
-                      <div class="row-info">
-                        <span class="row-tier">{tier === 'premium' ? 'Premium' : 'Standard'}</span>
-                        <span class="model-name">{mName}</span>
-                      </div>
-                      {#if state === 'active'}
-                        <span class="state-pill active">Active</span>
-                      {:else if state === 'fallback'}
-                        <span class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, mName)) + 1}</span>
-                      {:else}
-                        <button
-                          class="state-pill muted"
-                          type="button"
-                          onclick={(e) => {
-                            e.stopPropagation();
-                            activateModel(type, section.storeProvider, mName, true);
-                          }}
-                        >Add fallback</button>
-                      {/if}
-                    </div>
-                  {/each}
-
-                  {#each (taskMap(type)[section.storeProvider] ?? []).filter(m => m !== recommendedModels[type][section.id].premium && m !== recommendedModels[type][section.id].standard) as custom (custom)}
-                    {@const state = selectionState(type, section.storeProvider, custom)}
-                    <div
-                      class="model-row custom-model-row"
-                      class:row-active={state === 'active'}
-                      class:row-fallback={state === 'fallback'}
-                      onclick={() => toggleModelSelection(type, section.storeProvider, custom)}
-                      role="button"
-                      tabindex="0"
-                      onkeydown={(e) => e.key === 'Enter' && toggleModelSelection(type, section.storeProvider, custom)}
-                    >
-                      <div class="row-info">
-                        <span class="row-tier">Custom</span>
-                        <span class="model-name">{custom}</span>
-                      </div>
-                      {#if state === 'active'}
-                        <span class="state-pill active">Active</span>
-                      {:else if state === 'fallback'}
-                        <span class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, custom)) + 1}</span>
-                      {:else}
-                        <button
-                          class="state-pill muted"
-                          type="button"
-                          onclick={(e) => {
-                            e.stopPropagation();
-                            activateModel(type, section.storeProvider, custom, true);
-                          }}
-                        >Add fallback</button>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-
-                <div class="custom-row">
-                  <input
-                    class="model-input"
-                    placeholder="custom model…"
-                    value={customDrafts[type][section.id]}
-                    oninput={(e) => {
-                      const v = (e.currentTarget as HTMLInputElement).value;
-                      customDrafts = { ...customDrafts, [type]: { ...customDrafts[type], [section.id]: v } };
-                    }}
-                    onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); addCustomToList(type, section); } }}
-                  />
-                  <button
-                    class="custom-add-btn"
-                    onclick={() => addCustomToList(type, section)}
-                    disabled={!customDrafts[type][section.id].trim()}
-                  >Add</button>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {/if}
+        {/each}
+        </div>
       </div>
     {/if}
   </div>
 {/each}
 
+<div class="advanced-toggle-row">
+  <div class="adv-text">
+    <span class="adv-label">Custom models</span>
+    <span class="adv-desc">Add custom model names per provider</span>
+  </div>
+  <Toggle checked={advancedModelUi} onchange={handleAdvancedModelUi} />
+</div>
+
 <style>
   /* ── Task tile ───────────────────────────── */
   .task-tile {
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    background: var(--bg-elev);
-    margin-bottom: 10px;
-    overflow: hidden;
-    transition: border-color 200ms ease;
-  }
-
-  .task-tile.task-open {
-    border-color: var(--line-strong);
+    border-top: 1px solid var(--line);
   }
 
   /* ── Tile header ─────────────────────────── */
@@ -540,7 +518,7 @@
     border: none;
     outline: none;
     background: transparent;
-    padding: 13px 16px;
+    padding: 13px 10px 13px 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -552,9 +530,8 @@
   }
 
   .tile-head:hover {
-    background: color-mix(in srgb, var(--paper) 30%, var(--bg-elev));
+    background: color-mix(in srgb, var(--paper) 30%, transparent);
   }
-
 
   .head-left {
     display: flex;
@@ -620,25 +597,28 @@
 
   /* ── Tile body ───────────────────────────── */
   .tile-inner {
-    border-top: 1px solid var(--line);
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    background: color-mix(in srgb, var(--paper) 20%, var(--bg-elev));
-  }
-
-  /* ── Simple picker ──────────────────────── */
-  .simple-picker {
+    padding: 0 0 14px;
     display: flex;
     flex-direction: column;
   }
 
+  .tile-inner .warn-banner {
+    margin: 10px 0 8px;
+  }
+
+  /* ── Model container ─────────────────────── */
+  .model-container {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  /* ── Provider groups ─────────────────────── */
   .simple-group {
     display: flex;
     flex-direction: column;
     gap: 1px;
-    padding: 12px 0;
+    padding: 12px 6px;
     transition: opacity 200ms ease;
     position: relative;
   }
@@ -649,8 +629,8 @@
     content: '';
     position: absolute;
     top: 0;
-    left: 6%;
-    right: 6%;
+    left: 5%;
+    right: 5%;
     height: 1px;
     background: linear-gradient(
       to right,
@@ -683,7 +663,7 @@
     cursor: pointer;
     text-align: left;
     width: 100%;
-    transition: background 140ms ease, border-color 140ms ease;
+    transition: background 380ms ease, border-color 300ms ease;
   }
 
   .simple-row:hover:not(.simple-active) {
@@ -696,8 +676,8 @@
   }
 
   .simple-row.simple-fallback {
-    background: color-mix(in srgb, var(--accent-soft) 32%, var(--bg-elev));
-    border-color: color-mix(in srgb, var(--accent) 16%, var(--line));
+    background: color-mix(in srgb, var(--accent-soft) 28%, var(--bg-elev));
+    border-color: color-mix(in srgb, var(--accent) 14%, var(--line));
   }
 
   .simple-dot {
@@ -706,7 +686,7 @@
     border-radius: 50%;
     border: 1.5px solid var(--ink-faint);
     flex-shrink: 0;
-    transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+    transition: background 300ms ease, border-color 280ms ease, box-shadow 420ms ease;
   }
 
   .simple-dot.dot-active {
@@ -716,14 +696,71 @@
   }
 
   .simple-dot.dot-fallback {
-    background: color-mix(in srgb, var(--accent) 55%, var(--bg-elev));
-    border-color: color-mix(in srgb, var(--accent) 70%, var(--line-strong));
+    background: color-mix(in srgb, var(--accent) 45%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 60%, var(--line-strong));
+  }
+
+  /* ── Remove dot (custom models only) ────── */
+  .remove-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1.5px solid var(--ink-faint);
+    flex-shrink: 0;
+    cursor: pointer;
+    padding: 0;
+    background: transparent;
+    position: relative;
+    transition: border-color 280ms ease, background 300ms ease, box-shadow 420ms ease;
+  }
+
+  .remove-dot.dot-active {
+    background: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 80%, transparent);
+  }
+
+  .remove-dot.dot-fallback {
+    background: color-mix(in srgb, var(--accent) 45%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 60%, var(--line-strong));
+  }
+
+  .remove-dot::before,
+  .remove-dot::after {
+    content: '';
+    position: absolute;
+    width: 5px;
+    height: 1.5px;
+    background: transparent;
+    top: 50%;
+    left: 50%;
+    border-radius: 1px;
+    transition: background 140ms ease;
+  }
+
+  .remove-dot::before { transform: translate(-50%, -50%) rotate(45deg); }
+  .remove-dot::after  { transform: translate(-50%, -50%) rotate(-45deg); }
+
+  .remove-dot:hover {
+    background: color-mix(in srgb, var(--danger) 14%, var(--bg-elev));
+    border-color: var(--danger);
+    box-shadow: none;
+  }
+
+  .remove-dot:hover::before,
+  .remove-dot:hover::after {
+    background: var(--danger);
   }
 
   .simple-name {
     font-family: var(--mono);
     font-size: 12px;
     color: var(--ink-soft);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .simple-active .simple-name {
@@ -731,34 +768,86 @@
     font-weight: 500;
   }
 
-  .simple-badge {
+
+  /* ── State pills ─────────────────────────── */
+  .state-pill {
     font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-radius: 999px;
+    padding: 2px 7px;
+    border: 1px solid var(--line-strong);
+    flex-shrink: 0;
+    white-space: nowrap;
     font-family: var(--sans);
     font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    padding: 2px 6px;
-    border-radius: 4px;
-    margin-left: auto;
-    flex-shrink: 0;
+    transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
+    transform-origin: center;
   }
 
-  .badge-accuracy {
+  .state-pill.active {
+    color: var(--accent-ink);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+    background: color-mix(in srgb, var(--accent-soft) 75%, var(--bg-elev));
+  }
+
+  .state-pill.fallback {
+    color: color-mix(in srgb, var(--accent-ink) 65%, var(--ink-mute));
+    border-color: color-mix(in srgb, var(--accent) 28%, var(--line-strong));
+    background: color-mix(in srgb, var(--accent-soft) 38%, var(--bg-elev));
+  }
+
+  .state-pill.muted {
     color: var(--ink-mute);
-    background: color-mix(in srgb, var(--paper) 55%, var(--bg-elev));
-    border: 1px solid var(--line-strong);
+    background: transparent;
+    border-color: var(--line);
+    cursor: pointer;
   }
 
-  .badge-efficiency {
+  .state-pill.muted:hover {
+    color: var(--ink-soft);
+    border-color: var(--line-strong);
+    background: color-mix(in srgb, var(--paper) 50%, var(--bg-elev));
+  }
+
+  /* ── Tier pill (Accurate/Efficient → Add fallback on hover) ── */
+  .tier-pill {
+    display: grid;
+    place-items: center;
+    cursor: pointer;
     color: var(--ink-faint);
     background: transparent;
-    border: 1px solid var(--line);
+    border-color: var(--line);
+    overflow: hidden;
+    transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
   }
 
-  .badge-fallback {
-    color: color-mix(in srgb, var(--accent-ink) 75%, var(--ink));
-    background: color-mix(in srgb, var(--accent-soft) 45%, var(--bg-elev));
-    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line-strong));
+  .simple-row:hover .tier-pill {
+    color: var(--ink-soft);
+    border-color: var(--line-strong);
+    background: color-mix(in srgb, var(--paper) 50%, var(--bg-elev));
+  }
+
+  .tier-label,
+  .fallback-label {
+    grid-area: 1 / 1;
+    white-space: nowrap;
+    transition: opacity 180ms ease, transform 180ms ease;
+  }
+
+  .fallback-label {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  .simple-row:hover .tier-label {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  .simple-row:hover .fallback-label {
+    opacity: 1;
+    transform: translateY(0);
   }
 
   /* ── Warning ─────────────────────────────── */
@@ -771,245 +860,13 @@
     padding: 8px 10px;
   }
 
-  /* ── Fallback chain ──────────────────────── */
-  .chain-bar {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .chain-row-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 7px 12px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .chain-row-item:last-child {
-    border-bottom: none;
-  }
-
-  .chain-label {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--ink-mute);
-    font-family: var(--sans);
-    font-weight: 500;
-    flex-shrink: 0;
-    width: 28px;
-  }
-
-  .chain-chip {
-    font-size: 11px;
-    font-family: var(--mono);
-    padding: 2px 8px;
-    border-radius: 999px;
-    white-space: nowrap;
-  }
-
-  .active-chip {
-    background: color-mix(in srgb, var(--accent-soft) 85%, var(--bg-elev));
-    border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
-    color: var(--accent-ink);
-  }
-
-  .chain-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .chain-id {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--ink-soft);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .chain-remove {
-    border: none;
-    background: none;
-    color: var(--ink-mute);
-    cursor: pointer;
-    font-size: 14px;
-    line-height: 1;
-    padding: 2px 4px;
-    border-radius: 4px;
-    flex-shrink: 0;
-    transition: color 130ms ease, background 130ms ease;
-  }
-
-  .chain-remove:hover {
-    color: var(--danger);
-    background: color-mix(in srgb, var(--danger-bg) 60%, transparent);
-  }
-
-  .chain-empty {
-    font-size: 11px;
-    color: var(--ink-mute);
-    font-style: italic;
-    font-family: var(--sans);
-  }
-
-  /* ── Provider grid ───────────────────────── */
-  .provider-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-  }
-
-  /* ── Provider card ───────────────────────── */
-  .provider-card {
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    background: var(--bg-elev);
-    overflow: hidden;
-    transition: opacity 200ms ease;
-  }
-
-  .provider-card.no-key {
-    opacity: 0.6;
-  }
-
-  .prov-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 9px 11px 8px;
-    border-bottom: 1px solid var(--line);
-    background: color-mix(in srgb, var(--paper) 30%, var(--bg-elev));
-  }
-
-  .prov-name {
-    font-family: var(--serif);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--ink-strong);
-  }
-
-  .prov-badge {
-    font-size: 9px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-mute);
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    padding: 1px 5px;
-  }
-
-  /* ── Model rows ──────────────────────────── */
-  .model-list {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .model-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 10px;
-    gap: 8px;
-    cursor: pointer;
-    border-bottom: 1px solid var(--line);
-    transition: background 150ms ease;
-    min-width: 0;
-  }
-
-  .model-row:last-child {
-    border-bottom: none;
-  }
-
-  .model-row:hover:not(.row-active) {
-    background: color-mix(in srgb, var(--paper) 40%, var(--bg-elev));
-  }
-
-  .model-row.row-active {
-    background: color-mix(in srgb, var(--accent-soft) 55%, var(--bg-elev));
-  }
-
-  .model-row.row-fallback {
-    background: color-mix(in srgb, var(--accent-soft) 30%, var(--bg-elev));
-  }
-
-  .row-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .row-tier {
-    font-size: 9px;
-    color: var(--ink-mute);
-    font-family: var(--sans);
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    line-height: 1;
-  }
-
-  .model-name {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--ink-soft);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .row-active .model-name {
-    color: var(--accent-ink);
-  }
-
-  .state-pill {
-    font-size: 9px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    border-radius: 999px;
-    padding: 2px 6px;
-    border: 1px solid var(--line-strong);
-    flex-shrink: 0;
-    white-space: nowrap;
-    transition: all 160ms ease;
-  }
-
-  .state-pill.active {
-    color: var(--accent-ink);
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
-    background: color-mix(in srgb, var(--accent-soft) 75%, var(--bg-elev));
-  }
-
-  .state-pill.fallback {
-    color: color-mix(in srgb, var(--accent-ink) 75%, var(--ink));
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--line-strong));
-    background: color-mix(in srgb, var(--accent-soft) 45%, var(--bg-elev));
-  }
-
-  .state-pill.muted {
-    color: var(--ink-mute);
-    background: color-mix(in srgb, var(--paper) 55%, var(--bg-elev));
-  }
-
   /* ── Custom input row ────────────────────── */
   .custom-row {
     display: flex;
     gap: 5px;
-    padding: 7px 8px;
+    padding: 6px 8px 2px;
+    margin-top: 4px;
     border-top: 1px solid var(--line);
-    background: color-mix(in srgb, var(--paper) 15%, var(--bg-elev));
   }
 
   .model-input {
@@ -1060,10 +917,33 @@
     cursor: default;
   }
 
-  @media (max-width: 860px) {
-    .provider-grid {
-      grid-template-columns: 1fr;
-    }
+  /* ── Advanced toggle row ─────────────────── */
+  .advanced-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 13px 0;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .adv-text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .adv-label {
+    font-size: 13px;
+    font-family: var(--sans);
+    font-weight: 500;
+    color: var(--ink-soft);
+  }
+
+  .adv-desc {
+    font-size: 11px;
+    font-family: var(--sans);
+    color: var(--ink-mute);
   }
 </style>
-
