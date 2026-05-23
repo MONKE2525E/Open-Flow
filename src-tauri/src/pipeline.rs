@@ -1122,7 +1122,6 @@ async fn run_cleanup_and_snippets(
     app_context: Option<&str>,
 ) -> Option<(String, Vec<db::DictionaryEntry>, String)> {
     let db = app.state::<DbHandle>();
-    let _ = db::cleanup_cache_prune_expired(&db);
     let mut db_snippets = db::query_snippets(&db).unwrap_or_default();
     let dict_entries = db::query_dictionary(&db).unwrap_or_default();
     log::debug!(
