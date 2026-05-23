@@ -245,11 +245,7 @@ pub async fn inject_text(
                         .filter(|(hwnd, _, instant)| {
                             *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE
                         })
-                        .map(|(_, text, _)| {
-                            let chars: Vec<char> = text.chars().collect();
-                            let n = chars.len();
-                            chars[n.saturating_sub(3)..].iter().collect()
-                        })
+                        .map(|(_, text, _)| text.clone())
                         .unwrap_or_default(),
                     Err(_) => {
                         log::error!("injection history mutex poisoned");
