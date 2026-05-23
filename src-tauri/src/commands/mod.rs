@@ -37,7 +37,7 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
     let valid = match key {
         store::TRANSCRIPTION_PROVIDER | store::CLEANUP_PROVIDER => value
             .as_str()
-            .is_some_and(|v| matches!(v, "groq" | "openai" | "google")),
+            .is_some_and(|v| store::PROVIDERS.contains(&v)),
         store::TRANSCRIPTION_LANGUAGE => value
             .as_str()
             .is_some_and(store::is_supported_transcription_language),
@@ -94,11 +94,11 @@ pub async fn save_api_key(_app: AppHandle, provider: String, key: String) -> Res
 
 #[tauri::command]
 pub async fn get_api_key_status(_app: AppHandle) -> Result<serde_json::Value, String> {
-    use crate::data::credentials;
+    use crate::data::{credentials, store};
     Ok(serde_json::json!({
-        "groq":   credentials::has("groq"),
-        "openai": credentials::has("openai"),
-        "google": credentials::has("google"),
+        "groq":   credentials::has(store::GROQ),
+        "openai": credentials::has(store::OPENAI),
+        "google": credentials::has(store::GOOGLE),
     }))
 }
 

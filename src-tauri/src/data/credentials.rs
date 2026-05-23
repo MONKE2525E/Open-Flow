@@ -13,10 +13,11 @@ const SERVICE: &str = "open-flow";
 const HRESULT_NOT_FOUND: i32 = 0x80070490_u32 as i32;
 
 fn user_for(provider: &str) -> Option<&'static str> {
+    use crate::data::store;
     match provider {
-        "groq" => Some("api_key_groq"),
-        "openai" => Some("api_key_openai"),
-        "google" => Some("api_key_google"),
+        store::GROQ => Some(store::KEY_GROQ),
+        store::OPENAI => Some(store::KEY_OPENAI),
+        store::GOOGLE => Some(store::KEY_GOOGLE),
         _ => None,
     }
 }
@@ -109,7 +110,20 @@ pub fn get(provider: &str) -> String {
 }
 
 pub fn has(provider: &str) -> bool {
-    !get(provider).is_empty()
+    let user = match user_for(provider) {
+        Some(u) => u,
+        None => return false,
+    };
+    let target = format!("{user}.{SERVICE}");
+    let target_wide = wide_null(&target);
+    unsafe {
+        let mut p_cred: *mut CREDENTIALW = ptr::null_mut();
+        let ok = CredReadW(PCWSTR(target_wide.as_ptr()), CRED_TYPE_GENERIC, None, &mut p_cred).is_ok();
+        if ok && !p_cred.is_null() {
+            CredFree(p_cred as *const _);
+        }
+        ok
+    }
 }
 
 /// One-shot migration: moves any plaintext API keys from settings.json into
@@ -125,9 +139,9 @@ pub fn migrate_from_store(store: &Store<Wry>) {
 
     let mut any_failed = false;
     for (provider, store_key) in [
-        ("groq", crate::data::store::KEY_GROQ),
-        ("openai", crate::data::store::KEY_OPENAI),
-        ("google", crate::data::store::KEY_GOOGLE),
+        (crate::data::store::GROQ, crate::data::store::KEY_GROQ),
+        (crate::data::store::OPENAI, crate::data::store::KEY_OPENAI),
+        (crate::data::store::GOOGLE, crate::data::store::KEY_GOOGLE),
     ] {
         let plaintext = store
             .get(store_key)
