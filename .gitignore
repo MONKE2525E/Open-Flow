@@ -40,6 +40,7 @@ desktop.ini
 
 # Test files - audio clip provided separately, not committed
 tests/smoke/*.wav
+tests/__pycache__/
 
 # AI Agent workspace
 .claude/
