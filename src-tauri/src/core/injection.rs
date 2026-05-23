@@ -42,6 +42,28 @@ pub fn backspace_injection_history() {
     }
 }
 
+/// Called on a printable character keypress. If the foreground window matches
+/// the injection record, appends `ch` to the tracked tail and refreshes the
+/// timestamp. Otherwise clears the record — the cursor context is unknown.
+pub fn append_or_reset_injection_history(hwnd: usize, ch: char) {
+    if let Ok(mut guard) = last_injection().lock() {
+        let keep = if let Some((stored_hwnd, ref mut text, ref mut time)) = *guard {
+            if stored_hwnd == hwnd {
+                text.push(ch);
+                if text.len() > HISTORY_TAIL {
+                    let excess = text.len() - HISTORY_TAIL;
+                    let mut trim_at = excess;
+                    while !text.is_char_boundary(trim_at) { trim_at += 1; }
+                    *text = text[trim_at..].to_owned();
+                }
+                *time = Instant::now();
+                true
+            } else { false }
+        } else { false };
+        if !keep { *guard = None; }
+    }
+}
+
 #[cfg(target_os = "windows")]
 struct SavedClipboard {
     entries: Vec<(u32, Vec<u8>)>,
@@ -168,6 +190,7 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
     }
 }
 
+
 pub async fn inject_text(
     text: &str,
     target_hwnd: usize,
@@ -211,47 +234,59 @@ pub async fn inject_text(
                 },
             };
 
-            // Look up what we last injected into this window. The keyboard hook
-            // resets this whenever the user edits text, so by the time we reach
-            // here the history reflects the actual state of the cursor context.
-            let peeked: Option<char> = if contextual_caps || auto_spacing {
+            // Retrieve up to 3 characters immediately before the cursor from the
+            // injection history tail. History is cleared whenever the user types,
+            // moves the cursor, or switches windows — so when it's absent the context
+            // is genuinely unknown and we default to capitalising (safe for new fields).
+            let context: String = if contextual_caps || auto_spacing {
                 match last_injection().lock() {
                     Ok(guard) => (*guard)
                         .as_ref()
                         .filter(|(hwnd, _, instant)| {
                             *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE
                         })
-                        .and_then(|(_, text, _)| text.chars().next_back()),
+                        .map(|(_, text, _)| text.clone())
+                        .unwrap_or_default(),
                     Err(_) => {
                         log::error!("injection history mutex poisoned");
-                        None
+                        String::new()
                     }
                 }
-                // guard dropped here — Mutex not held across any await
             } else {
-                None
+                String::new()
             };
 
+            // Strip trailing whitespace from context to find the last meaningful char.
+            // "Hello. " → trimmed = "Hello." → last = '.' → capitalize (new sentence).
+            // "Hello"   → trimmed = "Hello"  → last = 'o' → lowercase (mid-sentence).
+            // ""        → no prior context              → capitalize (new/empty field).
             let sentence_enders: &[char] = &['.', '!', '?', '\n', '\r'];
+            let trimmed_ctx = context.trim_end_matches(|c: char| c.is_whitespace() && !sentence_enders.contains(&c));
+            let should_capitalize = trimmed_ctx.is_empty()
+                || trimmed_ctx
+                    .chars()
+                    .next_back()
+                    .map(|c| sentence_enders.contains(&c))
+                    .unwrap_or(true);
+
             let mut adjusted = if contextual_caps {
-                let should_lower = peeked
-                    .map(|c| !sentence_enders.contains(&c))
-                    .unwrap_or(false);
-                if should_lower {
+                if should_capitalize {
+                    text.to_owned()
+                } else {
                     let mut chars = text.chars();
                     match chars.next() {
                         Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
                         None => text.to_owned(),
                     }
-                } else {
-                    text.to_owned()
                 }
             } else {
                 text.to_owned()
             };
 
+            // Add a space only when the cursor sits immediately after a non-whitespace
+            // character. Empty context (new field) or trailing whitespace → no space.
             if auto_spacing {
-                if let Some(c) = peeked {
+                if let Some(c) = context.chars().next_back() {
                     if !c.is_whitespace() && !adjusted.starts_with(char::is_whitespace) {
                         adjusted = format!(" {adjusted}");
                     }

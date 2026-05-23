@@ -23,9 +23,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOD_SHIFT, MOD_WIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, HC_ACTION,
-    KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
-    WM_SYSKEYUP,
+    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, SetWindowsHookExW,
+    TranslateMessage, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL,
+    WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 // Returns true if the given specific-side VK (or its mirror) is currently held.
@@ -51,6 +51,40 @@ fn vk_matches(vk: u32, key: u32) -> bool {
         164 | 165 => vk == 164 || vk == 165,
         91 | 92 => vk == 91 || vk == 92,
         _ => vk == key,
+    }
+}
+
+fn is_cursor_movement_key(vk: u32) -> bool {
+    matches!(vk,
+        0x21..=0x28 | // PgUp, PgDn, End, Home, Left, Up, Right, Down
+        0x2D |        // Insert
+        0x2E          // Delete (forward)
+    )
+}
+
+/// Maps a VK code to the character it produces (US QWERTY layout).
+/// Letters are always returned lowercase — case doesn't affect sentence-ender
+/// or whitespace checks downstream. Returns None for keys with no stable
+/// printable character (numpad, function keys, etc.); those reset history.
+fn vk_to_char(vk: u32, shift: bool) -> Option<char> {
+    match vk {
+        0x0D => Some('\n'),
+        0x20 => Some(' '),
+        0x30..=0x39 => char::from_digit(vk - 0x30, 10),
+        0x60..=0x69 => char::from_digit(vk - 0x60, 10),
+        0x41..=0x5A => Some((b'a' + (vk as u8 - 0x41)) as char),
+        0xBA => Some(if shift { ':' } else { ';' }),
+        0xBB => Some(if shift { '+' } else { '=' }),
+        0xBC => Some(if shift { '<' } else { ',' }),
+        0xBD => Some(if shift { '_' } else { '-' }),
+        0xBE => Some(if shift { '>' } else { '.' }),
+        0xBF => Some(if shift { '?' } else { '/' }),
+        0xC0 => Some(if shift { '~' } else { '`' }),
+        0xDB => Some(if shift { '{' } else { '[' }),
+        0xDC => Some(if shift { '|' } else { '\\' }),
+        0xDD => Some(if shift { '}' } else { ']' }),
+        0xDE => Some(if shift { '"' } else { '\'' }),
+        _ => None,
     }
 }
 
@@ -353,10 +387,19 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 } else {
                     crate::core::injection::backspace_injection_history();
                 }
-            } else {
-                // Any other key (Enter, character, arrow, Delete, etc.): the
-                // cursor context is unknown — treat the next injection as fresh.
+            } else if is_cursor_movement_key(vk) {
                 crate::core::injection::reset_injection_history();
+            } else if unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) } {
+                // Keyboard shortcut (Ctrl+Z, Ctrl+A, etc.) — context unknown.
+                crate::core::injection::reset_injection_history();
+            } else {
+                let shift = unsafe { modifier_held(0xA0) }; // VK_LSHIFT → checks VK_SHIFT
+                if let Some(ch) = vk_to_char(vk, shift) {
+                    let hwnd = unsafe { GetForegroundWindow().0 as usize };
+                    crate::core::injection::append_or_reset_injection_history(hwnd, ch);
+                } else {
+                    crate::core::injection::reset_injection_history();
+                }
             }
         }
     }
