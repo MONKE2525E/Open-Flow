@@ -408,7 +408,7 @@
     <div class="modal-body">
       <label class="field-label" for="dict-term">
         Term
-        <span class="char-count" class:over={countCodePoints(draftTerm) > TERM_LIMIT}>{countCodePoints(draftTerm)}/{TERM_LIMIT}</span>
+        <span class="char-count" class:over={countCodePoints(draftTerm) >= TERM_LIMIT}>{countCodePoints(draftTerm)}/{TERM_LIMIT}</span>
       </label>
       <div class="input-row">
         <input
@@ -428,7 +428,7 @@
 
       <label class="field-label" for="dict-mistake">
         Often mistranscribed as <span class="field-optional">optional</span>
-        <span class="char-count" class:over={countCodePoints(draftMistake) > MISTAKE_LIMIT}>{countCodePoints(draftMistake)}/{MISTAKE_LIMIT}</span>
+        <span class="char-count" class:over={countCodePoints(draftMistake) >= MISTAKE_LIMIT}>{countCodePoints(draftMistake)}/{MISTAKE_LIMIT}</span>
       </label>
       <div class="input-row">
         <input
@@ -450,7 +450,7 @@
       {#if saveError}
         <p class="save-error">{saveError}</p>
       {/if}
-      {#if countCodePoints(draftTerm) >= TERM_LIMIT}
+      {#if draftTerm.length >= TERM_LIMIT}
         <button
           class="snippet-nudge"
           onclick={() => { closeModal(); currentPage.set('snippets'); }}
