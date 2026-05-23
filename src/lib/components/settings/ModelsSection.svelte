@@ -258,9 +258,14 @@
 
   function toggleModelSelection(type: TaskType, provider: ProviderId, modelName: string) {
     const id = modelId(provider, modelName);
-    const currentState = selectionState(type, provider, modelName);
-
     ensureModelsContainSelection(type, provider, modelName);
+    if (!advancedModelUi) {
+      setTaskDefault(type, id);
+      setTaskFallbacks(type, []);
+      persistAll().catch((err) => console.error('persist model toggle failed', err));
+      return;
+    }
+    const currentState = selectionState(type, provider, modelName);
 
     if (currentState === 'active') {
       const fallbacks = taskFallbacks(type);
@@ -342,7 +347,7 @@
         {/if}
 
         {#if !advancedModelUi}
-          <!-- ── Advanced picker ── -->
+          <!-- ── Simple picker ── -->
           <div class="chain-bar">
             {#each providerSections as section (section.id)}
               {@const hasKey = apiKeyStatus[section.storeProvider]}
@@ -371,7 +376,7 @@
             {/each}
           </div>
         {:else}
-          <!-- ── Simple picker ── -->
+          <!-- ── Advanced picker ── -->
           <div class="simple-picker">
             <div class="chain-row-item">
               <span class="chain-label">Active</span>
