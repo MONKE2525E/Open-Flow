@@ -231,12 +231,10 @@ fn transcription_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String
     if let Some((provider, model)) = store::parse_model_id(&cfg.transcription_default_model) {
         chain.push((provider, model));
     }
-    if cfg.api_fallback_enabled {
-        for id in &cfg.transcription_fallback_models {
-            if let Some((provider, model)) = store::parse_model_id(id) {
-                if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
-                    chain.push((provider, model));
-                }
+    for id in &cfg.transcription_fallback_models {
+        if let Some((provider, model)) = store::parse_model_id(id) {
+            if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
+                chain.push((provider, model));
             }
         }
     }
@@ -248,12 +246,10 @@ fn cleanup_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String)> {
     if let Some((provider, model)) = store::parse_model_id(&cfg.cleanup_default_model) {
         chain.push((provider, model));
     }
-    if cfg.api_fallback_enabled {
-        for id in &cfg.cleanup_fallback_models {
-            if let Some((provider, model)) = store::parse_model_id(id) {
-                if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
-                    chain.push((provider, model));
-                }
+    for id in &cfg.cleanup_fallback_models {
+        if let Some((provider, model)) = store::parse_model_id(id) {
+            if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
+                chain.push((provider, model));
             }
         }
     }
@@ -852,14 +848,13 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         return;
     };
     log::debug!(
-        "pipeline: config t_provider={} c_provider={} t_model={} c_model={} cleanup_enabled={} intensity={} fallback={} app_context_hint={} profile={}",
+        "pipeline: config t_provider={} c_provider={} t_model={} c_model={} cleanup_enabled={} intensity={} app_context_hint={} profile={}",
         cfg.transcription_provider,
         cfg.cleanup_provider,
         cfg.transcription_default_model,
         cfg.cleanup_default_model,
         cfg.cleanup_enabled,
         cfg.cleanup_intensity,
-        cfg.api_fallback_enabled,
         cfg.app_context_hint,
         profile
     );

@@ -183,7 +183,7 @@ Groq is the recommended default — free tier, fast LPU inference. Google uses b
 
 The `transcription_language` setting (ISO 639-1 code, default `en`) is passed to Groq/OpenAI as a `language` form field, and to Gemini as a natural-language label in the prompt (resolved via `transcription_language_label()` in `store.rs`). The supported language list lives in `src/lib/transcriptionLanguages.ts` (frontend) and is validated by `is_supported_transcription_language()` (Rust).
 
-**API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to a secondary provider when `api_fallback_enabled` is true. Fallback chains: groq→[openai, google], openai→[groq, google], google→[groq, openai]. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately.
+**API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to any configured fallback models. Fallback models are configured per task (transcription/cleanup) in the Models settings tab and stored as `transcription_fallback_models` / `cleanup_fallback_models` arrays. Fallback is implicit — if fallback models are configured, they are always tried in order. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately.
 
 ## Global Hotkey Behavior
 

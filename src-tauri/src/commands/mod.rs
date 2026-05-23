@@ -63,7 +63,6 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::NOISE_REDUCTION
         | store::MUTE_AUDIO
         | store::APP_CONTEXT_HINT
-        | store::API_FALLBACK_ENABLED
         | store::AUTO_LEARN_ENABLED
         | store::CONTEXTUAL_CAPS
         | store::AUTO_SPACING
@@ -154,7 +153,6 @@ pub struct AllSettings {
     pub mute_audio: Option<bool>,
     pub autostart_enabled: Option<bool>,
     pub app_context_hint: Option<bool>,
-    pub api_fallback_enabled: Option<bool>,
     pub auto_learn_enabled: Option<bool>,
     pub contextual_caps_enabled: Option<bool>,
     pub auto_spacing_enabled: Option<bool>,
@@ -204,7 +202,6 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         mute_audio: bool_val(store::MUTE_AUDIO),
         autostart_enabled: bool_val("autostart_enabled"),
         app_context_hint: bool_val(store::APP_CONTEXT_HINT),
-        api_fallback_enabled: bool_val(store::API_FALLBACK_ENABLED),
         auto_learn_enabled: bool_val(store::AUTO_LEARN_ENABLED),
         contextual_caps_enabled: bool_val(store::CONTEXTUAL_CAPS),
         auto_spacing_enabled: bool_val(store::AUTO_SPACING),

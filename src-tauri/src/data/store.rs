@@ -26,7 +26,6 @@ pub const MUTE_AUDIO: &str = "mute_audio";
 pub const MIC_GAIN: &str = "mic_gain";
 pub const SETUP_COMPLETE: &str = "setup_complete";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
-pub const API_FALLBACK_ENABLED: &str = "api_fallback_enabled";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
 pub const CONTEXTUAL_CAPS: &str = "contextual_caps_enabled";
 pub const AUTO_SPACING: &str = "auto_spacing_enabled";
@@ -52,7 +51,6 @@ pub struct PipelineConfig {
     pub default_tone: String,
     pub cleanup_intensity: String,
     pub app_context_hint: bool,
-    pub api_fallback_enabled: bool,
     pub auto_learn_enabled: bool,
     pub contextual_caps_enabled: bool,
     pub auto_spacing_enabled: bool,
@@ -259,10 +257,6 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
         cleanup_intensity: str_or(CLEANUP_INTENSITY, "medium"),
         app_context_hint: store
             .get(APP_CONTEXT_HINT)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        api_fallback_enabled: store
-            .get(API_FALLBACK_ENABLED)
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         auto_learn_enabled: store

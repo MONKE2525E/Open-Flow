@@ -37,7 +37,6 @@ type SettingsValueMap = {
   setup_complete: boolean;
   force_setup_on_launch: boolean;
   app_context_hint: boolean;
-  api_fallback_enabled: boolean;
   auto_learn_enabled: boolean;
   contextual_caps_enabled: boolean;
   auto_spacing_enabled: boolean;
