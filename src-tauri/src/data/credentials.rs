@@ -15,9 +15,18 @@ fn user_for(provider: &str) -> Option<&'static str> {
 
 pub fn set(provider: &str, key: &str) -> Result<(), String> {
     let user = user_for(provider).ok_or_else(|| format!("Unknown provider: {provider}"))?;
-    Entry::new(SERVICE, user)
-        .and_then(|e| e.set_password(key))
-        .map_err(|e| format!("Credential Manager write failed for {provider}: {e}"))
+    let entry = Entry::new(SERVICE, user)
+        .map_err(|e| format!("Credential Manager access failed for {provider}: {e}"))?;
+    if key.is_empty() {
+        match entry.delete_credential() {
+            Ok(_) | Err(KeyringError::NoEntry) => Ok(()),
+            Err(e) => Err(format!("Credential Manager delete failed for {provider}: {e}")),
+        }
+    } else {
+        entry
+            .set_password(key)
+            .map_err(|e| format!("Credential Manager write failed for {provider}: {e}"))
+    }
 }
 
 pub fn get(provider: &str) -> String {
@@ -70,7 +79,7 @@ pub fn migrate_from_store(store: &Store<Wry>) {
 
         // Distinguish "entry is absent" from "read error" so a transient system
         // failure never causes us to overwrite an existing key or delete plaintext.
-        let user = user_for(provider).unwrap();
+        let user = user_for(provider).expect("provider list mismatch");
         let missing = match Entry::new(SERVICE, user).and_then(|e| e.get_password()) {
             Ok(_) => false,
             Err(KeyringError::NoEntry) => true,
