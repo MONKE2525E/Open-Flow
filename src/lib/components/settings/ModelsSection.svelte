@@ -409,7 +409,7 @@
                 role="button"
                 tabindex="0"
                 onclick={() => toggleModelSelection(type, section.storeProvider, mName)}
-                onkeydown={(e) => e.target === e.currentTarget && e.key === 'Enter' && toggleModelSelection(type, section.storeProvider, mName)}
+                onkeydown={(e) => e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ') && toggleModelSelection(type, section.storeProvider, mName)}
               >
                 <span class="simple-dot" class:dot-active={isActive} class:dot-fallback={isFallback}></span>
                 <span class="simple-name model-name">{mName}</span>
@@ -445,7 +445,7 @@
                 role="button"
                 tabindex="0"
                 onclick={() => toggleModelSelection(type, section.storeProvider, custom)}
-                onkeydown={(e) => e.target === e.currentTarget && e.key === 'Enter' && toggleModelSelection(type, section.storeProvider, custom)}
+                onkeydown={(e) => e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ') && toggleModelSelection(type, section.storeProvider, custom)}
               >
                 <button
                   class="remove-dot"
