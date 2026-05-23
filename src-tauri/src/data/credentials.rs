@@ -27,7 +27,7 @@ fn wide_null(s: &str) -> Vec<u16> {
 
 pub fn set(provider: &str, key: &str) -> Result<(), String> {
     let user = user_for(provider).ok_or_else(|| format!("Unknown provider: {provider}"))?;
-    let target = format!("{SERVICE}/{user}");
+    let target = format!("{user}.{SERVICE}");
     let mut target_wide = wide_null(&target);
 
     if key.is_empty() {
@@ -67,7 +67,7 @@ pub fn get(provider: &str) -> String {
             return String::new();
         }
     };
-    let target = format!("{SERVICE}/{user}");
+    let target = format!("{user}.{SERVICE}");
     let target_wide = wide_null(&target);
 
     unsafe {
