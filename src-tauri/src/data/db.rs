@@ -125,7 +125,7 @@ pub fn open(path: &str) -> Result<Db> {
         // explicit ROLLBACK. If the migration fails mid-way, sqlite3_exec aborts but
         // leaves the BEGIN open. Without the ROLLBACK cleanup, every subsequent INSERT
         // would execute inside that ghost transaction and be silently discarded on
-        // connection close â€” causing all user data to vanish on restart.
+        // connection close — causing all user data to vanish on restart.
         let _ = conn.execute_batch(
             "ALTER TABLE snippets ADD COLUMN instructions TEXT NOT NULL DEFAULT '';",
         );
