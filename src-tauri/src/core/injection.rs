@@ -168,6 +168,43 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
     }
 }
 
+#[cfg(target_os = "windows")]
+unsafe fn read_clipboard_unicode_str() -> String {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, OpenClipboard,
+    };
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+
+    const CF_UNICODETEXT: u32 = 13;
+
+    let opened = (0..3).any(|i| {
+        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(20)); }
+        OpenClipboard(None).is_ok()
+    });
+    if !opened {
+        return String::new();
+    }
+
+    let result = (|| {
+        let h = GetClipboardData(CF_UNICODETEXT).ok()?;
+        let hg = HGLOBAL(h.0);
+        let size = GlobalSize(hg);
+        if size < 2 { return None; }
+        let ptr = GlobalLock(hg) as *const u16;
+        if ptr.is_null() { return None; }
+        let word_count = size / 2;
+        let slice = std::slice::from_raw_parts(ptr, word_count);
+        let end = slice.iter().position(|&w| w == 0).unwrap_or(word_count);
+        let s = String::from_utf16_lossy(&slice[..end]);
+        let _ = GlobalUnlock(hg);
+        Some(s)
+    })();
+
+    CloseClipboard().ok();
+    result.unwrap_or_default()
+}
+
 pub async fn inject_text(
     text: &str,
     target_hwnd: usize,
@@ -177,9 +214,10 @@ pub async fn inject_text(
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::Foundation::HWND;
+        use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard};
         use windows::Win32::UI::Input::KeyboardAndMouse::{
             SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-            KEYEVENTF_KEYUP, VK_CONTROL, VK_LMENU, VK_V,
+            KEYEVENTF_KEYUP, VK_C, VK_CONTROL, VK_LEFT, VK_LMENU, VK_RIGHT, VK_SHIFT, VK_V,
         };
         use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
 
@@ -211,47 +249,121 @@ pub async fn inject_text(
                 },
             };
 
-            // Look up what we last injected into this window. The keyboard hook
-            // resets this whenever the user edits text, so by the time we reach
-            // here the history reflects the actual state of the cursor context.
-            let peeked: Option<char> = if contextual_caps || auto_spacing {
-                match last_injection().lock() {
+            // Retrieve up to 3 characters immediately before the cursor.
+            // Primary source is the injection history (fast, no extra I/O).
+            // When history is absent — fresh field or the user typed manually —
+            // we peek via Shift+Left×3 + Ctrl+C, read the clipboard, then restore
+            // the cursor. Synthetic SendInput events carry LLKHF_INJECTED so the
+            // keyboard hook skips them and history tracking is unaffected.
+            let context: String = if contextual_caps || auto_spacing {
+                let from_history: Option<String> = match last_injection().lock() {
                     Ok(guard) => (*guard)
                         .as_ref()
                         .filter(|(hwnd, _, instant)| {
                             *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE
                         })
-                        .and_then(|(_, text, _)| text.chars().next_back()),
+                        .map(|(_, text, _)| {
+                            let chars: Vec<char> = text.chars().collect();
+                            let n = chars.len();
+                            chars[n.saturating_sub(3)..].iter().collect()
+                        }),
                     Err(_) => {
                         log::error!("injection history mutex poisoned");
                         None
                     }
-                }
+                };
                 // guard dropped here — Mutex not held across any await
+
+                match from_history {
+                    Some(ctx) => ctx,
+                    None => {
+                        // Empty the clipboard so we can detect whether Ctrl+C updates it.
+                        {
+                            let opened = (0..3).any(|i| {
+                                if i > 0 {
+                                    std::thread::sleep(std::time::Duration::from_millis(20));
+                                }
+                                OpenClipboard(None).is_ok()
+                            });
+                            if opened {
+                                EmptyClipboard().ok();
+                                CloseClipboard().ok();
+                            }
+                        }
+
+                        // Shift+Left×3 selects up to 3 chars before cursor; Ctrl+C copies them.
+                        let select_copy = [
+                            ki(VK_SHIFT, 0),
+                            ki(VK_LEFT, 0), ki(VK_LEFT, KEYEVENTF_KEYUP.0),
+                            ki(VK_LEFT, 0), ki(VK_LEFT, KEYEVENTF_KEYUP.0),
+                            ki(VK_LEFT, 0), ki(VK_LEFT, KEYEVENTF_KEYUP.0),
+                            ki(VK_SHIFT, KEYEVENTF_KEYUP.0),
+                            ki(VK_CONTROL, 0),
+                            ki(VK_C, 0), ki(VK_C, KEYEVENTF_KEYUP.0),
+                            ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
+                        ];
+                        SendInput(&select_copy, std::mem::size_of::<INPUT>() as i32);
+
+                        tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
+
+                        let peeked_str = read_clipboard_unicode_str();
+
+                        // Restore cursor: Left collapses selection to start (original_pos −
+                        // chars_selected), then Right×n walks back to original_pos. When 0 chars
+                        // were selected (cursor at position 0) Left is a no-op and Right×0 is
+                        // skipped, so the cursor stays in place.
+                        let chars_selected = peeked_str.chars().count().min(3);
+                        SendInput(
+                            &[ki(VK_LEFT, 0), ki(VK_LEFT, KEYEVENTF_KEYUP.0)],
+                            std::mem::size_of::<INPUT>() as i32,
+                        );
+                        for _ in 0..chars_selected {
+                            SendInput(
+                                &[ki(VK_RIGHT, 0), ki(VK_RIGHT, KEYEVENTF_KEYUP.0)],
+                                std::mem::size_of::<INPUT>() as i32,
+                            );
+                        }
+
+                        tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
+
+                        peeked_str
+                    }
+                }
             } else {
-                None
+                String::new()
             };
 
+            // Strip trailing whitespace from context to find the last meaningful char.
+            // "Hello. " → trimmed = "Hello." → last = '.' → capitalize (new sentence).
+            // "Hello"   → trimmed = "Hello"  → last = 'o' → lowercase (mid-sentence).
+            // ""        → no prior context              → capitalize (new/empty field).
             let sentence_enders: &[char] = &['.', '!', '?', '\n', '\r'];
+            let trimmed_ctx = context.trim_end_matches(|c: char| c.is_whitespace());
+            let should_capitalize = trimmed_ctx.is_empty()
+                || trimmed_ctx
+                    .chars()
+                    .next_back()
+                    .map(|c| sentence_enders.contains(&c))
+                    .unwrap_or(true);
+
             let mut adjusted = if contextual_caps {
-                let should_lower = peeked
-                    .map(|c| !sentence_enders.contains(&c))
-                    .unwrap_or(false);
-                if should_lower {
+                if should_capitalize {
+                    text.to_owned()
+                } else {
                     let mut chars = text.chars();
                     match chars.next() {
                         Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
                         None => text.to_owned(),
                     }
-                } else {
-                    text.to_owned()
                 }
             } else {
                 text.to_owned()
             };
 
+            // Add a space only when the cursor sits immediately after a non-whitespace
+            // character. Empty context (new field) or trailing whitespace → no space.
             if auto_spacing {
-                if let Some(c) = peeked {
+                if let Some(c) = context.chars().next_back() {
                     if !c.is_whitespace() && !adjusted.starts_with(char::is_whitespace) {
                         adjusted = format!(" {adjusted}");
                     }
