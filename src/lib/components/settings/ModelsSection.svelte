@@ -365,7 +365,7 @@
     </button>
 
     {#if opened}
-      <div class="tile-inner" in:fly={{ y: 8, duration: 220, easing: cubicOut }}>
+      <div class="tile-inner" transition:slide={{ duration: 220, easing: cubicOut }}>
         {#if missingKeyWarning(type)}
           <div class="warn-banner">{missingKeyWarning(type)}</div>
         {/if}
