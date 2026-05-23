@@ -265,7 +265,7 @@ pub async fn inject_text(
             // "Hello"   → trimmed = "Hello"  → last = 'o' → lowercase (mid-sentence).
             // ""        → no prior context              → capitalize (new/empty field).
             let sentence_enders: &[char] = &['.', '!', '?', '\n', '\r'];
-            let trimmed_ctx = context.trim_end_matches(|c: char| c.is_whitespace());
+            let trimmed_ctx = context.trim_end_matches(|c: char| c.is_whitespace() && !sentence_enders.contains(&c));
             let should_capitalize = trimmed_ctx.is_empty()
                 || trimmed_ctx
                     .chars()
