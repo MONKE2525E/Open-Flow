@@ -42,6 +42,28 @@ pub fn backspace_injection_history() {
     }
 }
 
+/// Called on a printable character keypress. If the foreground window matches
+/// the injection record, appends `ch` to the tracked tail and refreshes the
+/// timestamp. Otherwise clears the record — the cursor context is unknown.
+pub fn append_or_reset_injection_history(hwnd: usize, ch: char) {
+    if let Ok(mut guard) = last_injection().lock() {
+        let keep = if let Some((stored_hwnd, ref mut text, ref mut time)) = *guard {
+            if stored_hwnd == hwnd {
+                text.push(ch);
+                if text.len() > HISTORY_TAIL {
+                    let excess = text.len() - HISTORY_TAIL;
+                    let mut trim_at = excess;
+                    while !text.is_char_boundary(trim_at) { trim_at += 1; }
+                    *text = text[trim_at..].to_owned();
+                }
+                *time = Instant::now();
+                true
+            } else { false }
+        } else { false };
+        if !keep { *guard = None; }
+    }
+}
+
 #[cfg(target_os = "windows")]
 struct SavedClipboard {
     entries: Vec<(u32, Vec<u8>)>,
