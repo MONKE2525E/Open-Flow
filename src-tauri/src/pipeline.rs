@@ -1122,6 +1122,7 @@ async fn run_cleanup_and_snippets(
     app_context: Option<&str>,
 ) -> Option<(String, Vec<db::DictionaryEntry>, String)> {
     let db = app.state::<DbHandle>();
+    let _ = db::cleanup_cache_prune_expired(&db);
     let mut db_snippets = db::query_snippets(&db).unwrap_or_default();
     let dict_entries = db::query_dictionary(&db).unwrap_or_default();
     log::debug!(
@@ -1173,8 +1174,10 @@ async fn run_cleanup_and_snippets(
         &cfg.cleanup_intensity,
         profile,
     ) {
+        let has_snippets = !snippet_instructions.is_empty();
         let (cache_tokens, cache_separators) = tokenize_cache_key_parts(raw);
-        let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens);
+        let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens)
+            && (raw.chars().count() <= 200 || has_snippets);
         let cache_key = if allow_cache {
             let base_cache_key = normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators);
             style_scoped_cleanup_cache_key(&base_cache_key, profile, &cfg.cleanup_intensity)
@@ -1280,7 +1283,7 @@ async fn run_cleanup_and_snippets(
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
                 if !cache_key.is_empty() {
                     let expires = sqlite_utc_plus(7);
-                    match db::cleanup_cache_insert_new(&db, &cache_key, &cleaned, &expires) {
+                    match db::cleanup_cache_insert_new(&db, &cache_key, &cleaned, &expires, has_snippets) {
                         Ok(_) => {
                             log::debug!("pipeline: cleanup cache insert ok expires_at={expires}")
                         }
