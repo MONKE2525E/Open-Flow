@@ -88,25 +88,17 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
 // ---------- API keys ----------
 
 #[tauri::command]
-pub async fn save_api_key(app: AppHandle, provider: String, key: String) -> Result<(), String> {
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    let k = match provider.as_str() {
-        "groq" => store::KEY_GROQ,
-        "openai" => store::KEY_OPENAI,
-        "google" => store::KEY_GOOGLE,
-        _ => return Err(format!("Unknown provider: {provider}")),
-    };
-    store.set(k, serde_json::json!(key));
-    store.save().map_err(|e| e.to_string())
+pub async fn save_api_key(_app: AppHandle, provider: String, key: String) -> Result<(), String> {
+    crate::data::credentials::set(&provider, &key)
 }
 
 #[tauri::command]
-pub async fn get_api_key_status(app: AppHandle) -> Result<serde_json::Value, String> {
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
+pub async fn get_api_key_status(_app: AppHandle) -> Result<serde_json::Value, String> {
+    use crate::data::credentials;
     Ok(serde_json::json!({
-        "groq":   store.get(store::KEY_GROQ).is_some(),
-        "openai": store.get(store::KEY_OPENAI).is_some(),
-        "google": store.get(store::KEY_GOOGLE).is_some(),
+        "groq":   credentials::has("groq"),
+        "openai": credentials::has("openai"),
+        "google": credentials::has("google"),
     }))
 }
 
