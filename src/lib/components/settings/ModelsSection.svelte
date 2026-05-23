@@ -269,7 +269,7 @@
         setTaskDefault(type, nextActive);
         setTaskFallbacks(type, remaining);
       } else {
-        setTaskDefault(type, '');
+        return;
       }
       persistAll().catch((err) => console.error('persist model toggle failed', err));
       return;
@@ -341,7 +341,7 @@
           <div class="warn-banner">{missingKeyWarning(type)}</div>
         {/if}
 
-        {#if advancedModelUi}
+        {#if !advancedModelUi}
           <!-- ── Advanced picker ── -->
           <div class="chain-bar">
             {#each providerSections as section (section.id)}
@@ -432,7 +432,14 @@
                       {:else if state === 'fallback'}
                         <span class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, mName)) + 1}</span>
                       {:else}
-                        <span class="state-pill muted">Off</span>
+                        <button
+                          class="state-pill muted"
+                          type="button"
+                          onclick={(e) => {
+                            e.stopPropagation();
+                            activateModel(type, section.storeProvider, mName, true);
+                          }}
+                        >Add fallback</button>
                       {/if}
                     </div>
                   {/each}
@@ -457,7 +464,14 @@
                       {:else if state === 'fallback'}
                         <span class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, custom)) + 1}</span>
                       {:else}
-                        <span class="state-pill muted">Off</span>
+                        <button
+                          class="state-pill muted"
+                          type="button"
+                          onclick={(e) => {
+                            e.stopPropagation();
+                            activateModel(type, section.storeProvider, custom, true);
+                          }}
+                        >Add fallback</button>
                       {/if}
                     </div>
                   {/each}
