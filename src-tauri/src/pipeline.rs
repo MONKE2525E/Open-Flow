@@ -1018,9 +1018,14 @@ async fn stop_and_validate_audio(
             return None;
         }
     };
-    if duration_ms < MIN_RECORDING_MS || rms < MIN_RECORDING_RMS {
+    if duration_ms < MIN_RECORDING_MS {
         log::debug!("pipeline: rejected — duration={duration_ms}ms rms={rms:.4}");
-        hide_pill(app);
+        show_error_pill(app, "Recording too short").await;
+        return None;
+    }
+    if rms < MIN_RECORDING_RMS {
+        log::debug!("pipeline: rejected — duration={duration_ms}ms rms={rms:.4}");
+        show_error_pill(app, "Audio too quiet — check your mic").await;
         return None;
     }
     Some((bytes::Bytes::from(wav), duration_ms))
