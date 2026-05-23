@@ -99,7 +99,8 @@ CREATE TABLE IF NOT EXISTS cleanup_cache (
   hit_count   INTEGER NOT NULL DEFAULT 0,
   created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
   last_hit_at DATETIME NOT NULL DEFAULT (datetime('now')),
-  expires_at  DATETIME NOT NULL
+  expires_at  DATETIME NOT NULL,
+  is_snippet  INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at
   ON cleanup_cache(expires_at);
@@ -239,6 +240,23 @@ pub fn open(path: &str) -> Result<Db> {
         }
         conn.execute_batch("COMMIT;")?;
     }
+    if user_version < 5 {
+        conn.execute_batch("BEGIN;")?;
+        if let Err(err) = (|| -> Result<()> {
+            ensure_table_column(
+                &conn,
+                "cleanup_cache",
+                "is_snippet",
+                "ALTER TABLE cleanup_cache ADD COLUMN is_snippet INTEGER NOT NULL DEFAULT 0;",
+            )?;
+            conn.execute_batch("PRAGMA user_version = 5;")?;
+            Ok(())
+        })() {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err);
+        }
+        conn.execute_batch("COMMIT;")?;
+    }
 
     Ok(Arc::new(Mutex::new(conn)))
 }
@@ -278,6 +296,7 @@ pub struct CleanupCacheEntry {
     pub created_at: String,
     pub last_hit_at: String,
     pub expires_at: String,
+    pub is_snippet: bool,
 }
 
 // ---------- queries ----------
@@ -739,7 +758,7 @@ pub fn increment_snippet_use(db: &Db, id: i64) -> Result<()> {
 pub fn cleanup_cache_get_active(db: &Db, key: &str) -> Result<Option<CleanupCacheEntry>> {
     let conn = lock_conn(db)?;
     let mut stmt = conn.prepare(
-        "SELECT key, clean_text, hit_count, created_at, last_hit_at, expires_at
+        "SELECT key, clean_text, hit_count, created_at, last_hit_at, expires_at, is_snippet
          FROM cleanup_cache
          WHERE key = ?1 AND expires_at > datetime('now')
          LIMIT 1",
@@ -755,6 +774,7 @@ pub fn cleanup_cache_get_active(db: &Db, key: &str) -> Result<Option<CleanupCach
         created_at: row.get(3)?,
         last_hit_at: row.get(4)?,
         expires_at: row.get(5)?,
+        is_snippet: row.get::<_, i64>(6)? != 0,
     }))
 }
 
@@ -763,13 +783,14 @@ pub fn cleanup_cache_insert_new(
     key: &str,
     clean_text: &str,
     expires_at: &str,
+    is_snippet: bool,
 ) -> Result<()> {
     let conn = lock_conn(db)?;
     conn.execute(
         "INSERT OR REPLACE INTO cleanup_cache
-         (key, clean_text, hit_count, created_at, last_hit_at, expires_at)
-         VALUES (?1, ?2, 1, datetime('now'), datetime('now'), ?3)",
-        params![key, clean_text, expires_at],
+         (key, clean_text, hit_count, created_at, last_hit_at, expires_at, is_snippet)
+         VALUES (?1, ?2, 1, datetime('now'), datetime('now'), ?3, ?4)",
+        params![key, clean_text, expires_at, is_snippet as i64],
     )?;
     Ok(())
 }
@@ -794,7 +815,9 @@ pub fn cleanup_cache_touch_hit(
 pub fn cleanup_cache_prune_expired(db: &Db) -> Result<usize> {
     let conn = lock_conn(db)?;
     let changed = conn.execute(
-        "DELETE FROM cleanup_cache WHERE expires_at <= datetime('now')",
+        "DELETE FROM cleanup_cache
+         WHERE expires_at <= datetime('now')
+            OR (last_hit_at <= datetime('now', '-2 days') AND is_snippet = 0)",
         [],
     )?;
     Ok(changed)
@@ -879,7 +902,8 @@ mod tests {
     #[test]
     fn cleanup_cache_insert_get_and_clear() {
         let db = test_db();
-        cleanup_cache_insert_new(&db, "abc", "hello", "2999-01-01 00:00:00").expect("insert");
+        cleanup_cache_insert_new(&db, "abc", "hello", "2999-01-01 00:00:00", false)
+            .expect("insert");
         let hit = cleanup_cache_get_active(&db, "abc")
             .expect("query")
             .expect("exists");
@@ -894,8 +918,10 @@ mod tests {
     #[test]
     fn cleanup_cache_prunes_expired_only() {
         let db = test_db();
-        cleanup_cache_insert_new(&db, "old", "x", "2000-01-01 00:00:00").expect("insert old");
-        cleanup_cache_insert_new(&db, "live", "y", "2999-01-01 00:00:00").expect("insert live");
+        cleanup_cache_insert_new(&db, "old", "x", "2000-01-01 00:00:00", false)
+            .expect("insert old");
+        cleanup_cache_insert_new(&db, "live", "y", "2999-01-01 00:00:00", false)
+            .expect("insert live");
 
         assert_eq!(cleanup_cache_prune_expired(&db).expect("prune"), 1);
         assert!(cleanup_cache_get_active(&db, "old")
@@ -909,7 +935,8 @@ mod tests {
     #[test]
     fn cache_rejection_delete_removes_entry() {
         let db = test_db();
-        cleanup_cache_insert_new(&db, "key1", "bad answer", "2999-01-01 00:00:00").expect("insert");
+        cleanup_cache_insert_new(&db, "key1", "bad answer", "2999-01-01 00:00:00", false)
+            .expect("insert");
 
         // Verify it's cached.
         assert!(cleanup_cache_get_active(&db, "key1").expect("get").is_some());
@@ -917,7 +944,7 @@ mod tests {
         // Simulate rejection monitor firing.
         cleanup_cache_delete_by_key(&db, "key1").expect("delete");
 
-        // Entry must be gone — next dictation will hit the LLM.
+        // Entry must be gone â€” next dictation will hit the LLM.
         assert!(cleanup_cache_get_active(&db, "key1").expect("get after").is_none());
         assert_eq!(cleanup_cache_count(&db).expect("count"), 0);
     }
@@ -925,8 +952,9 @@ mod tests {
     #[test]
     fn cache_rejection_leaves_other_keys_intact() {
         let db = test_db();
-        cleanup_cache_insert_new(&db, "target", "bad", "2999-01-01 00:00:00").expect("target");
-        cleanup_cache_insert_new(&db, "bystander", "good", "2999-01-01 00:00:00")
+        cleanup_cache_insert_new(&db, "target", "bad", "2999-01-01 00:00:00", false)
+            .expect("target");
+        cleanup_cache_insert_new(&db, "bystander", "good", "2999-01-01 00:00:00", false)
             .expect("bystander");
 
         cleanup_cache_delete_by_key(&db, "target").expect("delete");
@@ -943,7 +971,8 @@ mod tests {
     #[test]
     fn cache_rejection_after_hit_removes_entry() {
         let db = test_db();
-        cleanup_cache_insert_new(&db, "k", "stale text", "2999-01-01 00:00:00").expect("insert");
+        cleanup_cache_insert_new(&db, "k", "stale text", "2999-01-01 00:00:00", false)
+            .expect("insert");
 
         // Simulate a cache hit (the phrase was served from cache once).
         cleanup_cache_touch_hit(&db, "k", 2, "2026-01-01 00:00:00", "2999-01-01 00:00:00")
@@ -952,7 +981,7 @@ mod tests {
         let hit = cleanup_cache_get_active(&db, "k").expect("get").expect("exists");
         assert_eq!(hit.hit_count, 2);
 
-        // User deletes output → rejection monitor fires.
+        // User deletes output â†’ rejection monitor fires.
         cleanup_cache_delete_by_key(&db, "k").expect("delete");
 
         assert!(cleanup_cache_get_active(&db, "k").expect("get after").is_none());
@@ -962,7 +991,7 @@ mod tests {
     fn dict_rejection_only_removes_auto_learned_entries() {
         let db = test_db();
 
-        // Manual entry — must survive rejection.
+        // Manual entry â€” must survive rejection.
         insert_dictionary_entry(&db, "groq", Some("grog")).expect("manual");
         let manual_id = query_dictionary(&db)
             .expect("query")
@@ -971,7 +1000,7 @@ mod tests {
             .expect("find")
             .id;
 
-        // Auto-learned entry — must be removed.
+        // Auto-learned entry â€” must be removed.
         insert_dictionary_entry_auto_learned(&db, "Tauri", Some("Tari"), "high").expect("auto");
         let auto_id = query_dictionary(&db)
             .expect("query")
@@ -1012,7 +1041,7 @@ mod tests {
 
         // Dictionary entry gone.
         assert_eq!(query_dictionary(&db).expect("query after").len(), 0);
-        // Pending corrections also purged — prevents immediate re-promotion.
+        // Pending corrections also purged â€” prevents immediate re-promotion.
         assert_eq!(
             count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count after"),
             0
@@ -1021,13 +1050,14 @@ mod tests {
 
     #[test]
     fn cache_rejection_full_lifecycle() {
-        // End-to-end: insert → hit (cache serves stale) → reject → miss (LLM runs again).
+        // End-to-end: insert â†’ hit (cache serves stale) â†’ reject â†’ miss (LLM runs again).
         let db = test_db();
         let key = "chromium-is-a-web-browser-base";
         let bad_answer = "bad cached answer";
 
         // First dictation: LLM runs, result cached.
-        cleanup_cache_insert_new(&db, key, bad_answer, "2999-01-01 00:00:00").expect("insert");
+        cleanup_cache_insert_new(&db, key, bad_answer, "2999-01-01 00:00:00", false)
+            .expect("insert");
         assert_eq!(cleanup_cache_count(&db).expect("count"), 1);
 
         // Second dictation: cache hit, stale answer served.
@@ -1036,7 +1066,7 @@ mod tests {
         cleanup_cache_touch_hit(&db, key, 2, "2026-01-01 00:00:00", "2999-01-01 00:00:00")
             .expect("touch");
 
-        // User deletes output within 10s → monitor fires.
+        // User deletes output within 10s â†’ monitor fires.
         cleanup_cache_delete_by_key(&db, key).expect("delete");
 
         // Third dictation: cache miss, LLM runs again with fresh context.
