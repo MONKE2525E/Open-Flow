@@ -275,8 +275,18 @@ pub async fn inject_text(
                 // guard dropped here — Mutex not held across any await
 
                 match from_history {
-                    Some(ctx) => ctx,
+                    Some(ctx) => {
+                        log::debug!(
+                            "inject: context_source=history hwnd={target_hwnd} context={ctx:?}"
+                        );
+                        ctx
+                    }
                     None => {
+                        // SetForegroundWindow already waited 150 ms; give the target window
+                        // another 50 ms to fully absorb keyboard focus before we send
+                        // Shift+Left / Ctrl+C. WebView2 and some other apps need > 150 ms.
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
                         // Empty the clipboard so we can detect whether Ctrl+C updates it.
                         {
                             let opened = (0..3).any(|i| {
@@ -308,21 +318,21 @@ pub async fn inject_text(
 
                         let peeked_str = read_clipboard_unicode_str();
 
-                        // Restore cursor: Left collapses selection to start (original_pos −
-                        // chars_selected), then Right×n walks back to original_pos. When 0 chars
-                        // were selected (cursor at position 0) Left is a no-op and Right×0 is
-                        // skipped, so the cursor stays in place.
-                        let chars_selected = peeked_str.chars().count().min(3);
+                        log::debug!(
+                            "inject: context_source=peek hwnd={target_hwnd} \
+                             peeked={peeked_str:?} context_len={}",
+                            peeked_str.len()
+                        );
+
+                        // VK_RIGHT collapses any backward Shift+Left selection to its right
+                        // end, which is the original cursor position — regardless of how many
+                        // chars were selected (0–3). If no selection was active (cursor at
+                        // field start), it moves right by 1, but context will be empty there
+                        // so the slight drift is harmless.
                         SendInput(
-                            &[ki(VK_LEFT, 0), ki(VK_LEFT, KEYEVENTF_KEYUP.0)],
+                            &[ki(VK_RIGHT, 0), ki(VK_RIGHT, KEYEVENTF_KEYUP.0)],
                             std::mem::size_of::<INPUT>() as i32,
                         );
-                        for _ in 0..chars_selected {
-                            SendInput(
-                                &[ki(VK_RIGHT, 0), ki(VK_RIGHT, KEYEVENTF_KEYUP.0)],
-                                std::mem::size_of::<INPUT>() as i32,
-                            );
-                        }
 
                         tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
 
