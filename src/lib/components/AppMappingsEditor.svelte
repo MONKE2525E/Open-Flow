@@ -232,7 +232,7 @@
             </button>
           {/each}
         </div>
-      {:else if appPickerOpen && appSearch}
+      {:else if appPickerOpen && appSearch.trim()}
         <div class="app-picker-menu app-picker-empty" role="presentation">
           <span>No matching apps found. Press Enter to map custom executable: <b>{appSearch.trim().toLowerCase().replace(/\.exe$/i, '')}.exe</b></span>
         </div>
