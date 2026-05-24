@@ -1130,7 +1130,6 @@ fn run_rejection_monitor(
                 None => {
                     !current.contains(injected_text.as_str())
                         && current.chars().count() < baseline_char_count
-                        && current.len() < baseline_text.len()
                 }
             };
 
