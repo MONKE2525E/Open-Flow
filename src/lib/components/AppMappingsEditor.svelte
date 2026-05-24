@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
-  import { fly, slide } from 'svelte/transition';
+  import { fly, fade, slide } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
   import {
@@ -13,7 +13,7 @@
     type AppMapping,
     type InstalledApp,
   } from '../appMappings';
-  import { animateWidth } from '../motion';
+  import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
 
   let {
     showHeading = true,
@@ -223,7 +223,13 @@
         onkeydown={(e) => e.key === 'Enter' && addMapping()}
       />
       {#if appPickerOpen && filteredApps.length > 0}
-        <div class="app-picker-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <div
+          class="app-picker-menu scroll-styled"
+          role="presentation"
+          onclick={(e) => e.stopPropagation()}
+          in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+          out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+        >
           {#each filteredApps as app}
             <button class="app-picker-item" onclick={() => pickApp(app)}>
               <span class="app-picker-name">{cleanAppName(app.name || app.exe)}</span>
@@ -245,12 +251,18 @@
         onclick={() => (profileDropdownOpen = !profileDropdownOpen)}
       >
         <span>{getProfileLabel(addProfile)}</span>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg class:open={profileDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="m6 9 6 6 6-6"/>
         </svg>
       </button>
       {#if profileDropdownOpen}
-        <div class="profile-drop-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <div
+          class="profile-drop-menu scroll-styled"
+          role="presentation"
+          onclick={(e) => e.stopPropagation()}
+          in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+          out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+        >
           {#each profileOptions as profile}
             <button
               class="profile-drop-item"
@@ -499,6 +511,8 @@
   }
 
   .profile-drop-btn:hover { background: var(--control-hover); }
+  .profile-drop-btn svg { transition: transform 0.2s; }
+  .profile-drop-btn svg.open { transform: rotate(180deg); }
 
   .profile-drop-btn span {
     overflow: hidden;

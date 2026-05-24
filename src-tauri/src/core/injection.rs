@@ -6,6 +6,14 @@ use std::time::{Duration, Instant};
 // a safety net for inactivity (e.g. the user idle for a minute then dictates again).
 const INJECTION_STALE: Duration = Duration::from_secs(60);
 
+// Timing constants for clipboard and keyboard injection steps.
+const FOCUS_SETTLE_MS: u64 = 150;       // settle after SetForegroundWindow before reading context
+const CLIPBOARD_OPEN_RETRY_MS: u64 = 50; // delay between OpenClipboard retry attempts
+const CLIPBOARD_WRITE_RETRY_MS: u64 = 50; // delay between write_clipboard_unicode retry attempts
+const CLIPBOARD_SETTLE_MS: u64 = 50;    // settle after clipboard write before clearing modifiers
+const MODIFIER_RELEASE_MS: u64 = 30;    // gap between modifier-state clear and Ctrl+V to avoid pump race
+const POST_PASTE_MS: u64 = 80;          // settle after Ctrl+V before restoring clipboard
+
 // Maximum bytes stored for backspace-tracking. Covers any practical editing sequence
 // while keeping the per-injection allocation bounded.
 const HISTORY_TAIL: usize = 512;
@@ -91,7 +99,7 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
     let mut entries = Vec::new();
 
     let opened = (0..3).any(|i| {
-        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(50)); }
+        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS)); }
         OpenClipboard(None).is_ok()
     });
     if !opened {
@@ -138,7 +146,7 @@ unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
     }
 
     let opened = (0..3).any(|i| {
-        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(50)); }
+        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS)); }
         OpenClipboard(None).is_ok()
     });
     if !opened {
@@ -218,7 +226,7 @@ pub async fn inject_text(
             // permission, so SetForegroundWindow succeeds from here.
             if target_hwnd != 0 {
                 let _ = SetForegroundWindow(HWND(target_hwnd as *mut core::ffi::c_void));
-                tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(FOCUS_SETTLE_MS)).await;
             }
 
             let ki = |vk, flags: u32| INPUT {
@@ -307,7 +315,7 @@ pub async fn inject_text(
                     break;
                 }
                 if attempt < 2 {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_WRITE_RETRY_MS)).await;
                 }
             }
             if !clipboard_written {
@@ -316,7 +324,7 @@ pub async fn inject_text(
                 ));
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_SETTLE_MS)).await;
 
             // Step 1 — clear any dangling Alt the target app may have from the
             // recording gesture.  Ctrl-down is sent first so that the Alt-up is
@@ -334,7 +342,7 @@ pub async fn inject_text(
             // inject Ctrl+V.  Without this pause, some apps (browsers, IDEs) end
             // up processing V without Ctrl because the Alt-up and V-down land in
             // the same message-pump cycle.
-            tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(MODIFIER_RELEASE_MS)).await;
 
             // Step 3 — clean Ctrl+V with no dangling modifiers.
             let paste = [
@@ -344,7 +352,7 @@ pub async fn inject_text(
                 ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
             ];
             SendInput(&paste, std::mem::size_of::<INPUT>() as i32);
-            tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(POST_PASTE_MS)).await;
 
             // Restore all previously saved clipboard formats.
             restore_clipboard_all(&saved);

@@ -135,6 +135,7 @@ fn main() {
             commands::save_hotkey,
             commands::check_hotkey,
             commands::save_api_key,
+            commands::clear_api_key,
             commands::get_api_key_status,
             commands::save_setting,
             commands::get_setting,

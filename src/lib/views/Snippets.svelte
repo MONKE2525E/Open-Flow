@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { fly, fade } from 'svelte/transition';
-  import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
   import { snippets, fetchSnippets, type Snippet } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
@@ -23,6 +22,8 @@
   }
 
   let search    = $state('');
+  let debouncedSearch = $state('');
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let sort      = $state<SortKey>('newest');
   let selected  = $state<Snippet | null>(null);
   let modal     = $state<{ mode: 'add' | 'edit'; snippet?: Snippet } | null>(null);
@@ -53,8 +54,14 @@
       : selected.expansion;
   });
 
+  $effect(() => {
+    const raw = search;
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => { debouncedSearch = raw; }, 120);
+  });
+
   const filtered = $derived.by(() => {
-    const q = search.toLowerCase();
+    const q = debouncedSearch.toLowerCase();
     let list = q
       ? $snippets.filter(s =>
           s.trigger.toLowerCase().includes(q) || s.expansion.toLowerCase().includes(q)
@@ -269,9 +276,6 @@
                 class:is-selected={selected?.id === s.id}
                 role="button"
                 tabindex="0"
-                in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}
-                out:fade={{ duration: motionMs(MOTION_MS.fast) }}
-                animate:flip={{ duration: motionMs(MOTION_MS.base), easing: expoOut }}
                 onclick={() => selectRow(s)}
                 onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRow(s); } }}
               >

@@ -93,6 +93,11 @@ pub async fn save_api_key(_app: AppHandle, provider: String, key: String) -> Res
 }
 
 #[tauri::command]
+pub async fn clear_api_key(_app: AppHandle, provider: String) -> Result<(), String> {
+    crate::data::credentials::set(&provider, "")
+}
+
+#[tauri::command]
 pub async fn get_api_key_status(_app: AppHandle) -> Result<serde_json::Value, String> {
     use crate::data::{credentials, store};
     Ok(serde_json::json!({
@@ -233,15 +238,19 @@ pub async fn hide_main(app: AppHandle) -> Result<(), String> {
 // ---------- history / stats ----------
 
 #[tauri::command]
-pub fn get_recent(app: AppHandle) -> Result<Vec<db::RecentEntry>, String> {
-    let db = app.state::<DbHandle>();
-    db::query_recent(&db).map_err(|e| e.to_string())
+pub async fn get_recent(app: AppHandle) -> Result<Vec<db::RecentEntry>, String> {
+    let db = app.state::<DbHandle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || db::query_recent(&db).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
-    let db = app.state::<DbHandle>();
-    db::query_stats(&db).map_err(|e| e.to_string())
+pub async fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
+    let db = app.state::<DbHandle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || db::query_stats(&db).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -413,8 +422,10 @@ pub async fn stop_handless_mode(
 // ---------- app mappings ----------
 
 #[tauri::command]
-pub fn get_installed_apps() -> Vec<InstalledApp> {
-    crate::system::apps::list_installed_apps()
+pub async fn get_installed_apps() -> Vec<InstalledApp> {
+    tauri::async_runtime::spawn_blocking(crate::system::apps::list_installed_apps)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -438,9 +449,11 @@ pub async fn save_app_mappings(app: AppHandle, mappings: Vec<AppMapping>) -> Res
 // ---------- snippets ----------
 
 #[tauri::command]
-pub fn get_snippets(app: AppHandle) -> Result<Vec<db::Snippet>, String> {
-    let db = app.state::<DbHandle>();
-    db::query_snippets(&db).map_err(|e| e.to_string())
+pub async fn get_snippets(app: AppHandle) -> Result<Vec<db::Snippet>, String> {
+    let db = app.state::<DbHandle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || db::query_snippets(&db).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -475,9 +488,11 @@ pub fn remove_snippet(app: AppHandle, id: i64) -> Result<(), String> {
 // ---------- dictionary ----------
 
 #[tauri::command]
-pub fn get_dictionary(app: AppHandle) -> Result<Vec<db::DictionaryEntry>, String> {
-    let db = app.state::<DbHandle>();
-    db::query_dictionary(&db).map_err(|e| e.to_string())
+pub async fn get_dictionary(app: AppHandle) -> Result<Vec<db::DictionaryEntry>, String> {
+    let db = app.state::<DbHandle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || db::query_dictionary(&db).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

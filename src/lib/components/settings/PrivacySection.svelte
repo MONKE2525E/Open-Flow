@@ -1,9 +1,11 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { tick } from 'svelte';
+  import { fly, fade } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
   import { saveSetting, type HistoryRetention } from '../../settings';
-  import { animateWidth } from '../../motion';
+  import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
 
   const historyOptions = ['7 days', '30 days', '90 days', 'Forever'];
   type CleanupCacheStatus = {
@@ -122,13 +124,19 @@
       onclick={() => (historyDropdownOpen = !historyDropdownOpen)}
     >
       <span>{historyRetention}</span>
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <svg class:open={historyDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="m6 9 6 6 6-6"/>
       </svg>
     </button>
     {#if historyDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="mic-menu scroll-styled scroll-thumb-elev" role="presentation" onclick={(e) => e.stopPropagation()}>
+      <div
+        class="mic-menu scroll-styled scroll-thumb-elev"
+        role="presentation"
+        onclick={(e) => e.stopPropagation()}
+        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+      >
         {#each historyOptions as opt}
           <button class="mic-item" class:active={historyRetention === opt} onclick={() => saveHistoryRetention(opt)}>
             {opt}
@@ -197,6 +205,8 @@
   .history-dropdown { position: relative; flex-shrink: 0; }
   .mic-btn { display: flex; align-items: center; gap: 6px; max-width: 180px; }
   .mic-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+  .mic-btn svg { transition: transform 0.2s; }
+  .mic-btn svg.open { transform: rotate(180deg); }
   .mic-menu {
     position: absolute;
     right: 0;

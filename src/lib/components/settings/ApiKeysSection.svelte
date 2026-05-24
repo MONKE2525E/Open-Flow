@@ -30,6 +30,16 @@
     }
   }
 
+  async function clearKey(provider: 'groq' | 'openai' | 'google') {
+    try {
+      await invoke('clear_api_key', { provider });
+      keyStatus = { ...keyStatus, [provider]: false };
+      draftKeys = { ...draftKeys, [provider]: '' };
+    } catch (e) {
+      console.error('clear_api_key failed', e);
+    }
+  }
+
   loadKeyStatus();
 </script>
 
@@ -61,6 +71,9 @@
         onclick={() => saveKey(item.id)}
         disabled={!draftKeys[item.id].trim()}
       >Save</button>
+      {#if keyStatus[item.id]}
+        <button class="btn-ghost btn-clear" onclick={() => clearKey(item.id)}>Clear</button>
+      {/if}
     </div>
   </div>
 {/each}
@@ -69,6 +82,8 @@
   .key-row { align-items: flex-start; gap: 12px; }
   .key-left { flex: 1; min-width: 0; }
   .key-right { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+  .btn-clear { color: var(--danger); border-color: var(--danger-line); }
+  .btn-clear:hover { background: var(--danger-bg); color: var(--danger); }
   .key-saved {
     font-family: var(--mono);
     font-size: 10px;
