@@ -911,11 +911,21 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         });
     }
     let stage_transcribe = std::time::Instant::now();
-    let Some((raw, api_used)) = run_transcription(&app, &wav, &cfg).await else {
+    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
+        run_transcription_and_cleanup(
+            &app,
+            &wav,
+            &cfg,
+            &profile,
+            app_context.as_deref(),
+            None,
+            None,
+        )
+        .await
+    else {
         emit_pipeline_failed(&app);
         return;
     };
-    let raw = normalize_transcription_math_artifacts(&raw);
     log::debug!(
         "pipeline: transcription ok provider={} raw_chars={} raw_preview=\"{}\"",
         api_used,
@@ -930,12 +940,6 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         stage_transcribe.elapsed().as_millis()
     );
     let stage_cleanup = std::time::Instant::now();
-    let Some((final_text, dict_entries, cleanup_cache_key)) =
-        run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
-    else {
-        emit_pipeline_failed(&app);
-        return;
-    };
     log::debug!(
         "pipeline: cleanup/snippets ok final_chars={} final_preview=\"{}\" dict_entries={}",
         final_text.chars().count(),
@@ -1183,6 +1187,34 @@ async fn run_transcription(
         .await;
     }
     None
+}
+
+async fn run_transcription_and_cleanup(
+    app: &AppHandle,
+    wav: &bytes::Bytes,
+    cfg: &store::PipelineConfig,
+    profile: &str,
+    app_context: Option<&str>,
+    transcribe_fail_pill: Option<&str>,
+    cleanup_fail_pill: Option<&str>,
+) -> Option<(String, String, String, Vec<db::DictionaryEntry>, String)> {
+    let Some((raw, api_used)) = run_transcription(app, wav, cfg).await else {
+        if let Some(msg) = transcribe_fail_pill {
+            show_error_pill(app, msg).await;
+        }
+        return None;
+    };
+    let raw = normalize_transcription_math_artifacts(&raw);
+
+    let Some((final_text, dict_entries, cleanup_cache_key)) =
+        run_cleanup_and_snippets(app, &raw, cfg, profile, app_context).await
+    else {
+        if let Some(msg) = cleanup_fail_pill {
+            show_error_pill(app, msg).await;
+        }
+        return None;
+    };
+    Some((raw, api_used, final_text, dict_entries, cleanup_cache_key))
 }
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
 // instruction override application. Returns (final_text_before_dict, dict_entries)
@@ -1629,23 +1661,19 @@ pub async fn retry_transcription_impl(
         anyhow::bail!("No API key configured");
     }
 
-    let Some((raw, api_used)) = run_transcription(app, &capture.wav, &cfg).await else {
-        show_error_pill(app, "Retry transcription failed").await;
-        anyhow::bail!("Transcription failed");
-    };
-    let raw = normalize_transcription_math_artifacts(&raw);
-
-    let Some((final_text, dict_entries, cleanup_cache_key)) = run_cleanup_and_snippets(
-        app,
-        &raw,
-        &cfg,
-        &capture.profile,
-        capture.app_context.as_deref(),
-    )
-    .await
+    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
+        run_transcription_and_cleanup(
+            app,
+            &capture.wav,
+            &cfg,
+            &capture.profile,
+            capture.app_context.as_deref(),
+            None,
+            None,
+        )
+        .await
     else {
-        show_error_pill(app, "Retry cleanup failed").await;
-        anyhow::bail!("Cleanup failed");
+        anyhow::bail!("Retry processing failed");
     };
     let (final_text, applied_dict_ids) =
         dictionary::apply_substitutions_from(&final_text, &dict_entries);
