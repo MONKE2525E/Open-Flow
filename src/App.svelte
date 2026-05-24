@@ -94,9 +94,8 @@
     pingConnectivity();
     let connectivityTimer = setInterval(pingConnectivity, 20_000);
     const handleVisibility = () => {
-      if (document.hidden) {
-        clearInterval(connectivityTimer);
-      } else {
+      clearInterval(connectivityTimer);
+      if (!document.hidden) {
         pingConnectivity();
         connectivityTimer = setInterval(pingConnectivity, 20_000);
       }
