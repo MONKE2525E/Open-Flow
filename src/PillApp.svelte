@@ -29,7 +29,7 @@
   let targetNoiseArr: number[] = Array.from({ length: BARS }, () => Math.random());
   let currentNoiseArr: number[] = [...targetNoiseArr];
   let lastNoiseT = 0;
-  let rafId: number;
+  let rafId = 0;
   const PEAK_FLOOR = 0.07;
   let adaptivePeak = PEAK_FLOOR;
 
@@ -88,6 +88,13 @@
     rafId = requestAnimationFrame(animateBars);
   }
 
+  function startRaf() {
+    if (rafId === 0) { lastAnimTime = 0; rafId = requestAnimationFrame(animateBars); }
+  }
+  function stopRaf() {
+    if (rafId !== 0) { cancelAnimationFrame(rafId); rafId = 0; barHeights = Array(BARS).fill(3); }
+  }
+
   function goIdle() {
     if (dying) return;
     dying = true;
@@ -101,7 +108,6 @@
   }
 
   onMount(() => {
-    rafId = requestAnimationFrame(animateBars);
     const unlisteners: Array<() => void> = [];
 
     (async () => {
@@ -112,6 +118,7 @@
         if (hfTimer !== null) { clearTimeout(hfTimer); hfTimer = null; }
 
         if (incoming === 'idle' && (state === 'recording' || state === 'handsfree')) {
+          stopRaf();
           goIdle();
           return;
         }
@@ -124,6 +131,11 @@
         }
         prevState = state;
         state = incoming;
+        if (state === 'recording' || state === 'handsfree') {
+          startRaf();
+        } else {
+          stopRaf();
+        }
         if (state !== 'recording' && state !== 'handsfree') smoothed = 0;
       }));
 

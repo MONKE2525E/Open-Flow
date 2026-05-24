@@ -104,7 +104,7 @@ impl StableTextGate {
 }
 
 fn is_spelling_correction(a: &str, b: &str) -> bool {
-    let max_len = a.len().max(b.len());
+    let max_len = a.chars().count().max(b.chars().count());
     if max_len == 0 {
         return false;
     }
