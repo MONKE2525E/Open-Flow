@@ -300,7 +300,11 @@
               {#each group.rows as r (r.id)}
                 <div class="day-row" in:fly={{ y: -10, duration: 400, easing: expoOut }} animate:flip={{ duration: 400, easing: expoOut }}>
                   <div class="day-time">{fmtTime(r.created_at)}</div>
-                  <div class="day-text">{r.clean_text}</div>
+                  {#if r.clean_text}
+                    <div class="day-text">{r.clean_text}</div>
+                  {:else}
+                    <div class="day-text error-msg">Transcription failed — check API keys or quota.</div>
+                  {/if}
                   <button
                     class="copy-btn"
                     class:copied={copiedId === r.id}

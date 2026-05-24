@@ -23,6 +23,7 @@
   }
 
   let search    = $state('');
+  let debouncedSearch = $state('');
   let sort      = $state<SortKey>('newest');
   let selected  = $state<Snippet | null>(null);
   let modal     = $state<{ mode: 'add' | 'edit'; snippet?: Snippet } | null>(null);
@@ -53,8 +54,13 @@
       : selected.expansion;
   });
 
+  $effect(() => {
+    const timer = window.setTimeout(() => { debouncedSearch = search; }, 120);
+    return () => window.clearTimeout(timer);
+  });
+
   const filtered = $derived.by(() => {
-    const q = search.toLowerCase();
+    const q = debouncedSearch.toLowerCase();
     let list = q
       ? $snippets.filter(s =>
           s.trigger.toLowerCase().includes(q) || s.expansion.toLowerCase().includes(q)

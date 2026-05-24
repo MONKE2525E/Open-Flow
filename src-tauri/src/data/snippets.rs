@@ -58,7 +58,21 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
         let mut search_from = 0;
         while let Some(pos) = haystack[search_from..].find(&needle) {
             let abs = search_from + pos;
-            positions.push(abs);
+            let before_ok = abs == 0
+                || !haystack[..abs]
+                    .chars()
+                    .last()
+                    .map(|c| c.is_alphanumeric() || c == '_')
+                    .unwrap_or(false);
+            let after_ok = abs + needle.len() >= haystack.len()
+                || !haystack[abs + needle.len()..]
+                    .chars()
+                    .next()
+                    .map(|c| c.is_alphanumeric() || c == '_')
+                    .unwrap_or(false);
+            if before_ok && after_ok {
+                positions.push(abs);
+            }
             search_from = abs + needle.len();
         }
 
