@@ -301,23 +301,6 @@ pub struct CleanupCacheEntry {
 
 // ---------- queries ----------
 
-pub fn insert_transcription(
-    db: &Db,
-    raw: &str,
-    clean: &str,
-    words: i64,
-    duration_ms: i64,
-    api_used: &str,
-) -> Result<()> {
-    let conn = lock_conn(db)?;
-    conn.execute(
-        "INSERT INTO transcriptions (raw_text, clean_text, words, duration_ms, api_used) \
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![raw, clean, words, duration_ms, api_used],
-    )?;
-    Ok(())
-}
-
 pub fn insert_transcription_returning(
     db: &Db,
     raw: &str,
@@ -1129,3 +1112,4 @@ mod tests {
         assert_eq!(query_dictionary(&db).expect("after").len(), 0);
     }
 }
+

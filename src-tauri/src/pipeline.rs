@@ -14,6 +14,7 @@ use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 
 const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
+const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
 
 fn transcription_provider_from_str(s: &str) -> transcription::Provider {
     match s {
@@ -854,12 +855,10 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
 pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     let started_at = std::time::Instant::now();
     let Some((session, target_hwnd)) = take_pipeline_session(&state) else {
-        log::debug!("pipeline: no session — recording never started or was already consumed");
+        log::debug!("pipeline: no session - recording never started or was already consumed");
         return;
     };
 
-    // Capture process name before any await points — foreground window may
-    // change to a different app during async transcription/cleanup.
     let process_name = window_context::get_active_process_name()
         .unwrap_or_else(|| "unknown".into())
         .to_lowercase();
@@ -877,9 +876,9 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         wav.len(),
         stage_audio.elapsed().as_millis()
     );
+
     let stage_config = std::time::Instant::now();
-    let Some((cfg, profile, app_context)) = open_config_and_context(&app, &process_name).await
-    else {
+    let Some((cfg, profile, app_context)) = open_config_and_context(&app, &process_name).await else {
         return;
     };
     log::debug!(
@@ -898,11 +897,12 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         app_context.as_deref().unwrap_or("none"),
         stage_config.elapsed().as_millis()
     );
-    // Store a context-rich retry payload so retry uses the original target/process context.
+
+    let retry_captured_at = std::time::Instant::now();
     if let Ok(mut st) = lock_state(&state) {
         st.retry_capture = Some(RetryCapture {
             wav: wav.clone(),
-            captured_at: std::time::Instant::now(),
+            captured_at: retry_captured_at,
             duration_ms,
             target_hwnd,
             process_name: process_name.clone(),
@@ -910,18 +910,10 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
             app_context: app_context.clone(),
         });
     }
+
     let stage_transcribe = std::time::Instant::now();
     let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
-        run_transcription_and_cleanup(
-            &app,
-            &wav,
-            &cfg,
-            &profile,
-            app_context.as_deref(),
-            None,
-            None,
-        )
-        .await
+        run_transcription_and_cleanup(&app, &wav, &cfg, &profile, app_context.as_deref()).await
     else {
         emit_pipeline_failed(&app);
         return;
@@ -939,6 +931,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         "pipeline: transcription stage_ms={}",
         stage_transcribe.elapsed().as_millis()
     );
+
     let stage_cleanup = std::time::Instant::now();
     log::debug!(
         "pipeline: cleanup/snippets ok final_chars={} final_preview=\"{}\" dict_entries={}",
@@ -954,106 +947,36 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         stage_cleanup.elapsed().as_millis()
     );
 
-    let db = app.state::<DbHandle>();
     let words = raw.split_whitespace().count() as i64;
-    if let Err(e) =
-        db::insert_transcription(&db, &raw, &final_text, words, duration_ms as i64, &api_used)
-    {
-        show_error_pill(
-            &app,
-            &format!("Failed to save transcription: {}", trim_err(&e.to_string())),
-        )
-        .await;
-        return;
-    }
-
-    // Pipeline succeeded — discard the stored retry audio
-    if let Ok(mut st) = lock_state(&state) {
-        st.retry_capture = None;
-    }
-
-    let dict_stage = std::time::Instant::now();
-    let final_before_dict = final_text.clone();
-    let (final_text, applied_dict_ids) =
-        dictionary::apply_substitutions_from(&final_text, &dict_entries);
-    let dict_changed = !applied_dict_ids.is_empty();
-    log::debug!(
-        "pipeline: dictionary apply changed={} before_chars={} after_chars={} stage_ms={}",
-        dict_changed,
-        final_before_dict.chars().count(),
-        final_text.chars().count(),
-        dict_stage.elapsed().as_millis()
-    );
-    if dict_changed && crate::system::logger::is_verbose() {
-        log::debug!("pipeline: dictionary before_full=\"{}\"", final_before_dict);
-        log::debug!("pipeline: dictionary after_full=\"{}\"", final_text);
-    }
-
-    hide_pill(&app);
-    let inject_stage = std::time::Instant::now();
-    let injected_text = match injection::inject_text(
-        &final_text,
-        target_hwnd,
-        cfg.contextual_caps_enabled,
-        cfg.auto_spacing_enabled,
+    if let Err(e) = finalize_pipeline_completion(
+        &app,
+        &state,
+        PipelineCompletionContext {
+            raw: &raw,
+            final_text_before_dict: &final_text,
+            dict_entries: &dict_entries,
+            duration_ms,
+            api_used: &api_used,
+            target_hwnd,
+            cfg: &cfg,
+            process_name,
+            cleanup_cache_key,
+            captured_at: retry_captured_at,
+        },
     )
     .await
     {
-        Ok(text) => text,
-        Err(e) => {
-            log::error!("inject: {e}");
-            show_error_pill(&app, "Failed to paste — text saved to history").await;
-            final_text.clone()
-        }
-    };
-    log::debug!(
-        "pipeline: injection done contextual_caps={} auto_spacing={} output_chars={} stage_ms={}",
-        cfg.contextual_caps_enabled,
-        cfg.auto_spacing_enabled,
-        injected_text.chars().count(),
-        inject_stage.elapsed().as_millis()
-    );
-    app.emit("open-flow:transcribed", &injected_text).ok();
+        log::error!("pipeline finalize failed: {e}");
+        return;
+    }
+
     log::info!(
         "pipeline: completed words={} duration_ms={} elapsed_ms={}",
         words,
         duration_ms,
         started_at.elapsed().as_millis()
     );
-
-    if !cleanup_cache_key.is_empty() {
-        log::debug!(
-            "pipeline: cache rejection monitor starting key_len={}",
-            cleanup_cache_key.len()
-        );
-        auto_learn::start_cache_rejection_monitor(
-            injected_text.clone(),
-            cleanup_cache_key,
-            target_hwnd,
-            db.inner().clone(),
-            app.clone(),
-        );
-    }
-
-    if cfg.auto_learn_enabled {
-        log::debug!("pipeline: auto_learn monitor starting");
-        if !applied_dict_ids.is_empty() {
-            log::debug!(
-                "pipeline: rejection monitor starting applied_dict_ids={}",
-                applied_dict_ids.len()
-            );
-            auto_learn::start_rejection_monitor(
-                injected_text.clone(),
-                applied_dict_ids,
-                target_hwnd,
-                db.inner().clone(),
-                app.clone(),
-            );
-        }
-        auto_learn::start_monitor(injected_text, process_name, db.inner().clone(), app.clone());
-    }
 }
-
 fn take_pipeline_session(state: &SharedState) -> Option<(audio::RecordingSession, usize)> {
     let mut st = match lock_state(state) {
         Ok(st) => st,
@@ -1195,25 +1118,12 @@ async fn run_transcription_and_cleanup(
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
-    transcribe_fail_pill: Option<&str>,
-    cleanup_fail_pill: Option<&str>,
 ) -> Option<(String, String, String, Vec<db::DictionaryEntry>, String)> {
-    let Some((raw, api_used)) = run_transcription(app, wav, cfg).await else {
-        if let Some(msg) = transcribe_fail_pill {
-            show_error_pill(app, msg).await;
-        }
-        return None;
-    };
+    let (raw, api_used) = run_transcription(app, wav, cfg).await?;
     let raw = normalize_transcription_math_artifacts(&raw);
 
-    let Some((final_text, dict_entries, cleanup_cache_key)) =
-        run_cleanup_and_snippets(app, &raw, cfg, profile, app_context).await
-    else {
-        if let Some(msg) = cleanup_fail_pill {
-            show_error_pill(app, msg).await;
-        }
-        return None;
-    };
+    let (final_text, dict_entries, cleanup_cache_key) =
+        run_cleanup_and_snippets(app, &raw, cfg, profile, app_context).await?;
     Some((raw, api_used, final_text, dict_entries, cleanup_cache_key))
 }
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
@@ -1633,7 +1543,7 @@ pub async fn retry_transcription_impl(
         let mut st = lock_state(state)?;
         match &st.retry_capture {
             Some(retry) => {
-                if retry.captured_at.elapsed() > std::time::Duration::from_secs(600) {
+                if retry.captured_at.elapsed() > RETRY_WINDOW {
                     st.retry_capture = None;
                     retry_expired = true;
                     None
@@ -1668,25 +1578,74 @@ pub async fn retry_transcription_impl(
             &cfg,
             &capture.profile,
             capture.app_context.as_deref(),
-            None,
-            None,
         )
         .await
     else {
         anyhow::bail!("Retry processing failed");
     };
-    let (final_text, applied_dict_ids) =
-        dictionary::apply_substitutions_from(&final_text, &dict_entries);
+
+    finalize_pipeline_completion(
+        app,
+        state,
+        PipelineCompletionContext {
+            raw: &raw,
+            final_text_before_dict: &final_text,
+            dict_entries: &dict_entries,
+            duration_ms: capture.duration_ms,
+            api_used: &api_used,
+            target_hwnd: capture.target_hwnd,
+            cfg: &cfg,
+            process_name: capture.process_name,
+            cleanup_cache_key,
+            captured_at: capture.captured_at,
+        },
+    )
+    .await
+}
+
+struct PipelineCompletionContext<'a> {
+    raw: &'a str,
+    final_text_before_dict: &'a str,
+    dict_entries: &'a [db::DictionaryEntry],
+    duration_ms: u64,
+    api_used: &'a str,
+    target_hwnd: usize,
+    cfg: &'a store::PipelineConfig,
+    process_name: String,
+    cleanup_cache_key: String,
+    captured_at: std::time::Instant,
+}
+
+async fn finalize_pipeline_completion(
+    app: &AppHandle,
+    state: &SharedState,
+    ctx: PipelineCompletionContext<'_>,
+) -> anyhow::Result<db::RecentEntry> {
+    let dict_stage = std::time::Instant::now();
+    let (final_text_substituted, applied_dict_ids) =
+        dictionary::apply_substitutions_from(ctx.final_text_before_dict, ctx.dict_entries);
+    let dict_changed = !applied_dict_ids.is_empty();
+    log::debug!(
+        "pipeline: dictionary apply changed={} before_chars={} after_chars={} stage_ms={}",
+        dict_changed,
+        ctx.final_text_before_dict.chars().count(),
+        final_text_substituted.chars().count(),
+        dict_stage.elapsed().as_millis()
+    );
+    if dict_changed && crate::system::logger::is_verbose() {
+        log::debug!("pipeline: dictionary before_full=\"{}\"", ctx.final_text_before_dict);
+        log::debug!("pipeline: dictionary after_full=\"{}\"", final_text_substituted);
+    }
 
     let db = app.state::<DbHandle>();
-    let words = raw.split_whitespace().count() as i64;
+    let words = ctx.raw.split_whitespace().count() as i64;
     let entry = match db::insert_transcription_returning(
         &db,
-        &raw,
-        &final_text,
+        ctx.raw,
+        ctx.final_text_before_dict,
         words,
-        capture.duration_ms as i64,
-        &api_used,
+        ctx.duration_ms as i64,
+        ctx.api_used,
     ) {
         Ok(entry) => entry,
         Err(e) => {
@@ -1699,54 +1658,60 @@ pub async fn retry_transcription_impl(
         }
     };
 
+    if let Ok(mut st) = lock_state(state) {
+        if st.retry_capture.as_ref().map(|v| v.captured_at) == Some(ctx.captured_at) {
+            st.retry_capture = None;
+        }
+    }
+
+    hide_pill(app);
+    let inject_stage = std::time::Instant::now();
     let injected_text = match injection::inject_text(
-        &final_text,
-        capture.target_hwnd,
-        cfg.contextual_caps_enabled,
-        cfg.auto_spacing_enabled,
+        &final_text_substituted,
+        ctx.target_hwnd,
+        ctx.cfg.contextual_caps_enabled,
+        ctx.cfg.auto_spacing_enabled,
     )
     .await
     {
         Ok(text) => text,
         Err(e) => {
-            log::error!("retry inject: {e}");
+            log::error!("inject: {e}");
             show_error_pill(app, "Failed to paste - text saved to history").await;
-            final_text.clone()
+            final_text_substituted.clone()
         }
     };
-
-    if let Ok(mut st) = lock_state(state) {
-        st.retry_capture = None;
-    }
-    hide_pill(app);
+    log::debug!(
+        "pipeline: injection done contextual_caps={} auto_spacing={} output_chars={} stage_ms={}",
+        ctx.cfg.contextual_caps_enabled,
+        ctx.cfg.auto_spacing_enabled,
+        injected_text.chars().count(),
+        inject_stage.elapsed().as_millis()
+    );
     app.emit("open-flow:transcribed", &injected_text).ok();
 
-    if !cleanup_cache_key.is_empty() {
+    if !ctx.cleanup_cache_key.is_empty() {
         auto_learn::start_cache_rejection_monitor(
             injected_text.clone(),
-            cleanup_cache_key,
-            capture.target_hwnd,
+            ctx.cleanup_cache_key,
+            ctx.target_hwnd,
             db.inner().clone(),
             app.clone(),
         );
     }
-    if cfg.auto_learn_enabled {
+    if ctx.cfg.auto_learn_enabled {
         if !applied_dict_ids.is_empty() {
             auto_learn::start_rejection_monitor(
                 injected_text.clone(),
                 applied_dict_ids,
-                capture.target_hwnd,
+                ctx.target_hwnd,
                 db.inner().clone(),
                 app.clone(),
             );
         }
-        auto_learn::start_monitor(
-            injected_text,
-            capture.process_name,
-            db.inner().clone(),
-            app.clone(),
-        );
+        auto_learn::start_monitor(injected_text, ctx.process_name, db.inner().clone(), app.clone());
     }
 
     Ok(entry)
 }
+
