@@ -830,12 +830,8 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
             }
             Ok(_) => {}
             Err(e) => {
-                if crate::api::is_retryable_provider_error(&e) {
-                    last_err = Some(e);
-                    continue;
-                }
                 last_err = Some(e);
-                break;
+                continue;
             }
         }
     }
@@ -1086,12 +1082,8 @@ async fn run_transcription(
             }
             Ok(_) => {}
             Err(e) => {
-                if crate::api::is_retryable_provider_error(&e) {
-                    last_err = Some(e);
-                    continue;
-                }
                 last_err = Some(e);
-                break;
+                continue;
             }
         }
     }
@@ -1260,14 +1252,12 @@ async fn run_cleanup_and_snippets(
                     cleaned_res = Some(cleaned);
                     break;
                 }
-                Ok(_) => {}
+                Ok(_) => {
+                    last_cleanup_err = None;
+                }
                 Err(e) => {
-                    if crate::api::is_retryable_provider_error(&e) {
-                        last_cleanup_err = Some(e);
-                        continue;
-                    }
                     last_cleanup_err = Some(e);
-                    break;
+                    continue;
                 }
             }
         }
