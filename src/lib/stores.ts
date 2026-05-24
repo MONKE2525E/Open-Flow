@@ -35,7 +35,7 @@ export async function fetchSnippets(): Promise<void> {
   try {
     const data = await invoke<Snippet[]>('get_snippets');
     snippets.set(data);
-  } catch { /* dev mode — no backend */ }
+  } catch (err) { console.error('IPC fetchSnippets failed:', err); }
 }
 
 // Dictionary
@@ -56,7 +56,7 @@ export async function fetchDictionary(): Promise<void> {
   try {
     const data = await invoke<DictionaryEntry[]>('get_dictionary');
     dictionary.set(data);
-  } catch { /* dev mode — no backend */ }
+  } catch (err) { console.error('IPC fetchDictionary failed:', err); }
 }
 
 // Updates

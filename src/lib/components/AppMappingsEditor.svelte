@@ -88,12 +88,17 @@
     await saveMappings(mappings.filter((mapping) => normalizeExe(mapping.exe) !== normalizeExe(exe)));
   }
 
+  function customExeFromSearch(s: string): string {
+    return normalizeExe(s).replace(/\.exe$/, '') + '.exe';
+  }
+
   async function addMapping() {
-    if (!addExe) return;
+    const rawExe = addExe || (appSearch.trim() ? customExeFromSearch(appSearch) : '');
+    if (!rawExe) return;
     const entry = normalizeMapping({
-      exe: addExe,
+      exe: rawExe,
       profile: addProfile,
-      name: addName || appSearch || addExe,
+      name: addName || appSearch || rawExe,
     });
     await saveMappings([...mappings.filter((mapping) => mapping.exe !== entry.exe), entry]);
     addExe = '';
@@ -231,6 +236,10 @@
             </button>
           {/each}
         </div>
+      {:else if appPickerOpen && appSearch.trim()}
+        <div class="app-picker-menu app-picker-empty" role="presentation">
+          <span>No matching apps found. Press Enter to map custom executable: <b>{customExeFromSearch(appSearch)}</b></span>
+        </div>
       {/if}
     </div>
     <div class="profile-drop-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
@@ -269,7 +278,7 @@
         </div>
       {/if}
     </div>
-    <button class="btn-ghost add-btn" onclick={addMapping} disabled={!addExe}>Add</button>
+    <button class="btn-primary add-btn" onclick={addMapping} disabled={!addExe && !appSearch.trim()}>Add</button>
   </div>
   {#if addExe}
     <div class="add-preview">
@@ -287,21 +296,6 @@
     margin: 0 0 16px;
     line-height: 1.5;
   }
-
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-size: 12px;
-    color: var(--ink-strong);
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .btn-ghost:hover { background: var(--control-hover); }
-  .btn-ghost:disabled { opacity: 0.4; cursor: default; }
 
   .mapping-list {
     border: 1px solid var(--line);
@@ -443,6 +437,13 @@
     max-height: 180px;
     overflow-y: auto;
     z-index: 20;
+  }
+
+  .app-picker-empty {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--ink-mute);
+    line-height: 1.5;
   }
 
   .app-picker-item {

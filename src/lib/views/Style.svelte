@@ -221,7 +221,7 @@
   }
 
   .tab .pill {
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 9px;
     background: transparent;
     color: var(--ink-mute);
