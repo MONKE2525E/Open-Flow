@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { TranscriptionLanguageCode } from './transcriptionLanguages';
 
 export type ProviderId = 'groq' | 'openai' | 'google';
+export type ProviderModelMap = Record<ProviderId, string[]>;
 export type ToneId = 'casual' | 'formal' | 'very_casual';
 export type CleanupIntensity = 'none' | 'light' | 'medium' | 'high';
 export type HistoryRetention = '7 days' | '30 days' | '90 days' | 'Forever';
@@ -20,6 +21,12 @@ type SettingsValueMap = {
   cleanup_provider: ProviderId;
   transcription_model: string;
   cleanup_model: string;
+  transcription_models_by_provider: ProviderModelMap;
+  cleanup_models_by_provider: ProviderModelMap;
+  transcription_default_model: string;
+  cleanup_default_model: string;
+  transcription_fallback_models: string[];
+  cleanup_fallback_models: string[];
   cleanup_enabled: boolean;
   default_tone: ToneId;
   cleanup_intensity: CleanupIntensity;
@@ -30,13 +37,14 @@ type SettingsValueMap = {
   setup_complete: boolean;
   force_setup_on_launch: boolean;
   app_context_hint: boolean;
-  api_fallback_enabled: boolean;
   auto_learn_enabled: boolean;
   contextual_caps_enabled: boolean;
+  auto_spacing_enabled: boolean;
   history_retention: HistoryRetention;
   microphone_device: string | null;
   update_dismissed_version: string | null;
   appearance_mode: AppearanceMode;
+  advanced_model_ui: boolean;
 };
 
 export type SettingKey = keyof SettingsValueMap;

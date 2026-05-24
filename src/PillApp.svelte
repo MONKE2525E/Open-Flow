@@ -7,6 +7,8 @@
   let showHfButtons = false;
   let hfTimer: ReturnType<typeof setTimeout> | null = null;
   let prevState: PillState = 'idle';
+  let dying = false;
+  let dyingTimer: ReturnType<typeof setTimeout> | null = null;
 
   const BARS = 12;
 
@@ -86,6 +88,18 @@
     rafId = requestAnimationFrame(animateBars);
   }
 
+  function goIdle() {
+    if (dying) return;
+    dying = true;
+    dyingTimer = setTimeout(() => {
+      dying = false;
+      dyingTimer = null;
+      prevState = state;
+      state = 'idle';
+      smoothed = 0;
+    }, 200);
+  }
+
   onMount(() => {
     rafId = requestAnimationFrame(animateBars);
     const unlisteners: Array<() => void> = [];
@@ -96,6 +110,14 @@
       unlisteners.push(await listen<string>('pill-state', (ev) => {
         const incoming = (ev.payload as PillState) || 'idle';
         if (hfTimer !== null) { clearTimeout(hfTimer); hfTimer = null; }
+
+        if (incoming === 'idle' && (state === 'recording' || state === 'handsfree')) {
+          goIdle();
+          return;
+        }
+
+        if (dyingTimer !== null) { clearTimeout(dyingTimer); dyingTimer = null; dying = false; }
+
         if (incoming === 'handsfree') {
           showHfButtons = false;
           hfTimer = setTimeout(() => { showHfButtons = true; hfTimer = null; }, 150);
@@ -130,14 +152,14 @@
 
   async function cancelHandless() {
     const { invoke } = await import('@tauri-apps/api/core');
+    goIdle();
     await invoke('stop_recording').catch(() => {});
-    state = 'idle';
   }
 </script>
 
 <div class="wrap">
   {#if state === 'recording'}
-    <div class="pill recording">
+    <div class="pill recording" class:dying={dying}>
       {#each barHeights as h, i (i)}
         <div class="bar" style="height: {h}px"></div>
       {/each}
@@ -155,7 +177,7 @@
     </div>
 
   {:else if state === 'handsfree'}
-    <div class="pill handsfree" class:hf-expanded={showHfButtons} class:no-anim={prevState === 'recording'}>
+    <div class="pill handsfree" class:dying={dying} class:hf-expanded={showHfButtons && !dying} class:no-anim={prevState === 'recording'}>
       {#if showHfButtons}
         <button class="hf-btn cancel" onclick={cancelHandless} aria-label="Cancel">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
@@ -210,6 +232,17 @@
   @keyframes pillIn {
     from { transform: translateY(8px) scale(0.92); opacity: 0; }
     to   { transform: translateY(0) scale(1); opacity: 1; }
+  }
+
+  @keyframes pillOut {
+    from { transform: translateY(0) scale(1); opacity: 1; }
+    to   { transform: translateY(6px) scale(0.88); opacity: 0; }
+  }
+
+  .pill.recording.dying,
+  .pill.handsfree.dying {
+    animation: pillOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
+    pointer-events: none;
   }
 
   /* Skip entry animation for seamless continuations from recording */

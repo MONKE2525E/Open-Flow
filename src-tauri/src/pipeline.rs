@@ -10,10 +10,11 @@ use crate::media::audio;
 use crate::system::apps::AppMapping;
 use crate::system::text::is_number_word_token;
 use crate::DbHandle;
-use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 
 const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
+const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
 
 fn transcription_provider_from_str(s: &str) -> transcription::Provider {
     match s {
@@ -37,14 +38,34 @@ pub struct AppState {
     pub session: Option<audio::RecordingSession>,
     pub handless: bool,
     pub target_hwnd: usize,
+    pub retry_capture: Option<RetryCapture>,
 }
 
 pub type SharedState = Arc<Mutex<AppState>>;
+
+#[derive(Clone)]
+pub struct RetryCapture {
+    pub wav: bytes::Bytes,
+    pub captured_at: std::time::Instant,
+    pub duration_ms: u64,
+    pub target_hwnd: usize,
+    pub process_name: String,
+    pub profile: String,
+    pub app_context: Option<String>,
+}
 
 fn lock_state(state: &SharedState) -> anyhow::Result<MutexGuard<'_, AppState>> {
     state
         .lock()
         .map_err(|_| anyhow::anyhow!("Recording state lock was poisoned"))
+}
+
+fn emit_pipeline_failed(app: &AppHandle) {
+    app.emit(
+        "open-flow:pipeline-failed",
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+    )
+    .ok();
 }
 
 // ---------- pill helpers ----------
@@ -126,15 +147,8 @@ pub fn start_recording_session(
     pill_state: &str,
     handless: bool,
 ) {
-    if let Err(e) = start_recording_session_ex(
-        app,
-        state,
-        pill_state,
-        handless,
-        None,
-        true,
-        false,
-    ) {
+    if let Err(e) = start_recording_session_ex(app, state, pill_state, handless, None, true, false)
+    {
         log::error!("start recording: {e}");
     }
 }
@@ -153,7 +167,10 @@ pub fn start_recording_session_ex(
     let audio_config = match settings {
         Ok(ref store) => store::load_audio_config(store),
         Err(e) => {
-            log::warn!("Failed to load settings.json store for audio config: {:?}", e);
+            log::warn!(
+                "Failed to load settings.json store for audio config: {:?}",
+                e
+            );
             store::AudioConfig::default()
         }
     };
@@ -225,13 +242,46 @@ pub fn spawn_level_emitter(
 
 // ---------- pipeline ----------
 
-fn fallback_providers(primary: &str) -> &'static [&'static str] {
-    match primary {
-        "groq" => &["openai", "google"],
-        "openai" => &["groq", "google"],
-        "google" => &["groq", "openai"],
-        _ => &["openai", "google"],
+fn transcription_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String)> {
+    let mut chain = Vec::<(String, String)>::new();
+    if let Some((provider, model)) = store::parse_model_id(&cfg.transcription_default_model) {
+        chain.push((provider, model));
     }
+    for id in &cfg.transcription_fallback_models {
+        if let Some((provider, model)) = store::parse_model_id(id) {
+            if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
+                chain.push((provider, model));
+            }
+        }
+    }
+    chain
+}
+
+fn cleanup_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String)> {
+    let mut chain = Vec::<(String, String)>::new();
+    if let Some((provider, model)) = store::parse_model_id(&cfg.cleanup_default_model) {
+        chain.push((provider, model));
+    }
+    for id in &cfg.cleanup_fallback_models {
+        if let Some((provider, model)) = store::parse_model_id(id) {
+            if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
+                chain.push((provider, model));
+            }
+        }
+    }
+    chain
+}
+
+fn has_transcription_key_in_chain(cfg: &store::PipelineConfig) -> bool {
+    transcription_model_chain(cfg)
+        .iter()
+        .any(|(provider, _)| !cfg.key_for(provider).is_empty())
+}
+
+fn has_cleanup_key_in_chain(cfg: &store::PipelineConfig) -> bool {
+    cleanup_model_chain(cfg)
+        .iter()
+        .any(|(provider, _)| !cfg.key_for(provider).is_empty())
 }
 
 fn trim_err(s: &str) -> String {
@@ -696,6 +746,25 @@ async fn show_error_pill(app: &AppHandle, msg: &str) {
     hide_pill(app);
 }
 
+/// Shows the pill in error state for a quality-gate rejection without
+/// focusing the main window or blocking the pipeline task.
+fn reject_with_pill(app: &AppHandle, msg: &str) {
+    app.emit("open-flow:error", msg).ok();
+    show_pill(app, "error");
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+        // Only hide if no new recording session has started in the meantime
+        if let Some(state) = app.try_state::<SharedState>() {
+            if let Ok(st) = lock_state(&state) {
+                if st.session.is_none() {
+                    hide_pill(&app);
+                }
+            }
+        }
+    });
+}
+
 fn resolve_profile(
     store: Option<&tauri_plugin_store::Store<tauri::Wry>>,
     process_name: &str,
@@ -742,39 +811,54 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     };
     let cfg = store::load_pipeline_config(&settings_store);
 
-    let t_key = cfg.key_for(&cfg.transcription_provider).to_owned();
-    if t_key.is_empty() {
+    if !has_transcription_key_in_chain(&cfg) {
         hide_pill(&app);
-        anyhow::bail!("No API key saved for {}", cfg.transcription_provider);
+        anyhow::bail!("No API key configured for any model in the transcription chain");
     }
 
-    let result = try_providers(&[&cfg.transcription_provider], &cfg, |provider_id, key| {
-        let w = wav.clone();
-        let provider = transcription_provider_from_str(provider_id);
+    let mut transcribed: Option<String> = None;
+    let mut last_err: Option<anyhow::Error> = None;
+    for (provider_id, model) in transcription_model_chain(&cfg) {
+        let key = cfg.key_for(&provider_id).to_owned();
+        if key.is_empty() {
+            continue;
+        }
+        let provider = transcription_provider_from_str(&provider_id);
         let language = cfg.transcription_language.clone();
-        Box::pin(async move { transcription::transcribe(w, provider, &key, &language).await })
-    })
-    .await;
+        match transcription::transcribe(wav.clone(), provider, &key, &language, &model).await {
+            Ok(text) if !text.is_empty() => {
+                transcribed = Some(text);
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                if crate::api::is_retryable_provider_error(&e) {
+                    last_err = Some(e);
+                    continue;
+                }
+                last_err = Some(e);
+                break;
+            }
+        }
+    }
 
     hide_pill(&app);
 
-    match result {
-        Ok((text, _)) if !text.is_empty() => Ok(text),
-        Ok(_) => anyhow::bail!("Nothing transcribed"),
-        Err(Some(e)) => Err(e),
-        Err(None) => anyhow::bail!("Transcription failed"),
+    match transcribed {
+        Some(text) => Ok(text),
+        None => Err(last_err.unwrap_or_else(|| {
+            anyhow::anyhow!("Transcription failed: no model in chain produced output")
+        })),
     }
 }
 
 pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     let started_at = std::time::Instant::now();
     let Some((session, target_hwnd)) = take_pipeline_session(&state) else {
-        log::debug!("pipeline: no session — recording never started or was already consumed");
+        log::debug!("pipeline: no session - recording never started or was already consumed");
         return;
     };
 
-    // Capture process name before any await points — foreground window may
-    // change to a different app during async transcription/cleanup.
     let process_name = window_context::get_active_process_name()
         .unwrap_or_else(|| "unknown".into())
         .to_lowercase();
@@ -792,18 +876,19 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         wav.len(),
         stage_audio.elapsed().as_millis()
     );
+
     let stage_config = std::time::Instant::now();
-    let Some((cfg, profile, app_context)) = open_config_and_context(&app, &process_name).await
-    else {
+    let Some((cfg, profile, app_context)) = open_config_and_context(&app, &process_name).await else {
         return;
     };
     log::debug!(
-        "pipeline: config t_provider={} c_provider={} cleanup_enabled={} intensity={} fallback={} app_context_hint={} profile={}",
+        "pipeline: config t_provider={} c_provider={} t_model={} c_model={} cleanup_enabled={} intensity={} app_context_hint={} profile={}",
         cfg.transcription_provider,
         cfg.cleanup_provider,
+        cfg.transcription_default_model,
+        cfg.cleanup_default_model,
         cfg.cleanup_enabled,
         cfg.cleanup_intensity,
-        cfg.api_fallback_enabled,
         cfg.app_context_hint,
         profile
     );
@@ -812,11 +897,27 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         app_context.as_deref().unwrap_or("none"),
         stage_config.elapsed().as_millis()
     );
+
+    let retry_captured_at = std::time::Instant::now();
+    if let Ok(mut st) = lock_state(&state) {
+        st.retry_capture = Some(RetryCapture {
+            wav: wav.clone(),
+            captured_at: retry_captured_at,
+            duration_ms,
+            target_hwnd,
+            process_name: process_name.clone(),
+            profile: profile.clone(),
+            app_context: app_context.clone(),
+        });
+    }
+
     let stage_transcribe = std::time::Instant::now();
-    let Some((raw, api_used)) = run_transcription(&app, &wav, &cfg).await else {
+    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
+        run_transcription_and_cleanup(&app, &wav, &cfg, &profile, app_context.as_deref()).await
+    else {
+        emit_pipeline_failed(&app);
         return;
     };
-    let raw = normalize_transcription_math_artifacts(&raw);
     log::debug!(
         "pipeline: transcription ok provider={} raw_chars={} raw_preview=\"{}\"",
         api_used,
@@ -830,12 +931,8 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         "pipeline: transcription stage_ms={}",
         stage_transcribe.elapsed().as_millis()
     );
+
     let stage_cleanup = std::time::Instant::now();
-    let Some((final_text, dict_entries, cleanup_cache_key)) =
-        run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
-    else {
-        return;
-    };
     log::debug!(
         "pipeline: cleanup/snippets ok final_chars={} final_preview=\"{}\" dict_entries={}",
         final_text.chars().count(),
@@ -850,90 +947,35 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         stage_cleanup.elapsed().as_millis()
     );
 
-    let db = app.state::<DbHandle>();
-    let words = final_text.split_whitespace().count() as i64;
-    if let Err(e) =
-        db::insert_transcription(&db, &raw, &final_text, words, duration_ms as i64, &api_used)
+    let words = raw.split_whitespace().count() as i64;
+    if let Err(e) = finalize_pipeline_completion(
+        &app,
+        &state,
+        PipelineCompletionContext {
+            raw: &raw,
+            final_text_before_dict: &final_text,
+            dict_entries: &dict_entries,
+            duration_ms,
+            api_used: &api_used,
+            target_hwnd,
+            cfg: &cfg,
+            process_name,
+            cleanup_cache_key,
+            captured_at: retry_captured_at,
+        },
+    )
+    .await
     {
-        show_error_pill(
-            &app,
-            &format!("Failed to save transcription: {}", trim_err(&e.to_string())),
-        )
-        .await;
+        log::error!("pipeline finalize failed: {e}");
         return;
     }
-
-    let dict_stage = std::time::Instant::now();
-    let final_before_dict = final_text.clone();
-    let (final_text, applied_dict_ids) = dictionary::apply_substitutions_from(&final_text, &dict_entries);
-    let dict_changed = !applied_dict_ids.is_empty();
-    log::debug!(
-        "pipeline: dictionary apply changed={} before_chars={} after_chars={} stage_ms={}",
-        dict_changed,
-        final_before_dict.chars().count(),
-        final_text.chars().count(),
-        dict_stage.elapsed().as_millis()
-    );
-    if dict_changed && crate::system::logger::is_verbose() {
-        log::debug!("pipeline: dictionary before_full=\"{}\"", final_before_dict);
-        log::debug!("pipeline: dictionary after_full=\"{}\"", final_text);
-    }
-
-    hide_pill(&app);
-    let inject_stage = std::time::Instant::now();
-    let injected_text =
-        match injection::inject_text(&final_text, target_hwnd, cfg.contextual_caps_enabled).await {
-            Ok(text) => text,
-            Err(e) => {
-                log::error!("inject: {e}");
-                show_error_pill(&app, "Failed to paste — text saved to history").await;
-                final_text.clone()
-            }
-        };
-    log::debug!(
-        "pipeline: injection done contextual_caps={} output_chars={} stage_ms={}",
-        cfg.contextual_caps_enabled,
-        injected_text.chars().count(),
-        inject_stage.elapsed().as_millis()
-    );
-    app.emit("open-flow:transcribed", &injected_text).ok();
     log::info!(
         "pipeline: completed words={} duration_ms={} elapsed_ms={}",
         words,
         duration_ms,
         started_at.elapsed().as_millis()
     );
-
-    if !cleanup_cache_key.is_empty() {
-        log::debug!("pipeline: cache rejection monitor starting key_len={}", cleanup_cache_key.len());
-        auto_learn::start_cache_rejection_monitor(
-            injected_text.clone(),
-            cleanup_cache_key,
-            target_hwnd,
-            db.inner().clone(),
-            app.clone(),
-        );
-    }
-
-    if cfg.auto_learn_enabled {
-        log::debug!("pipeline: auto_learn monitor starting");
-        if !applied_dict_ids.is_empty() {
-            log::debug!(
-                "pipeline: rejection monitor starting applied_dict_ids={}",
-                applied_dict_ids.len()
-            );
-            auto_learn::start_rejection_monitor(
-                injected_text.clone(),
-                applied_dict_ids,
-                target_hwnd,
-                db.inner().clone(),
-                app.clone(),
-            );
-        }
-        auto_learn::start_monitor(injected_text, process_name, db.inner().clone(), app.clone());
-    }
 }
-
 fn take_pipeline_session(state: &SharedState) -> Option<(audio::RecordingSession, usize)> {
     let mut st = match lock_state(state) {
         Ok(st) => st,
@@ -967,8 +1009,13 @@ async fn stop_and_validate_audio(
         }
     };
     if duration_ms < MIN_RECORDING_MS || rms < MIN_RECORDING_RMS {
+        let msg = if duration_ms < MIN_RECORDING_MS {
+            "Recording too short"
+        } else {
+            "Audio too quiet — check your mic"
+        };
         log::debug!("pipeline: rejected — duration={duration_ms}ms rms={rms:.4}");
-        hide_pill(app);
+        reject_with_pill(app, msg);
         return None;
     }
     Some((bytes::Bytes::from(wav), duration_ms))
@@ -987,10 +1034,10 @@ async fn open_config_and_context(
         }
     };
     let cfg = store::load_pipeline_config(&settings_store);
-    if cfg.key_for(&cfg.transcription_provider).is_empty() {
+    if !has_transcription_key_in_chain(&cfg) {
         show_error_pill(
             app,
-            &format!("No API key saved for {}", cfg.transcription_provider),
+            "No API key saved for selected transcription model chain",
         )
         .await;
         return None;
@@ -1011,50 +1058,73 @@ async fn run_transcription(
 ) -> Option<(String, String)> {
     let wav = wav.clone();
     log::debug!(
-        "pipeline: transcription stage start provider={} language={} bytes={}",
+        "pipeline: transcription stage start provider={} model={} language={} bytes={}",
         cfg.transcription_provider,
+        cfg.transcription_default_model,
         cfg.transcription_language,
         wav.len()
     );
-    match try_providers(&[&cfg.transcription_provider], cfg, |provider_id, key| {
-        let w = wav.clone();
-        let provider = transcription_provider_from_str(provider_id);
+
+    let mut last_err: Option<anyhow::Error> = None;
+    for (provider_id, model) in transcription_model_chain(cfg) {
+        let key = cfg.key_for(&provider_id).to_owned();
+        if key.is_empty() {
+            continue;
+        }
+        let provider = transcription_provider_from_str(&provider_id);
         let language = cfg.transcription_language.clone();
-        Box::pin(async move { transcription::transcribe(w, provider, &key, &language).await })
-    })
-    .await
-    {
-        Ok((raw, t_provider)) if !raw.is_empty() => {
-            log::debug!(
-                "pipeline: transcription provider success={} chars={}",
-                t_provider,
-                raw.chars().count()
-            );
-            Some((raw, format!("{t_provider}/transcription")))
-        }
-        Ok(_) => {
-            show_error_pill(
-                app,
-                "Nothing transcribed — please try speaking more clearly",
-            )
-            .await;
-            None
-        }
-        Err(Some(e)) => {
-            log::error!(
-                "pipeline: transcription failed error={}",
-                trim_err(&e.to_string())
-            );
-            show_error_pill(app, &trim_err(&e.to_string())).await;
-            None
-        }
-        Err(None) => {
-            show_error_pill(app, "Transcription failed").await;
-            None
+        match transcription::transcribe(wav.clone(), provider, &key, &language, &model).await {
+            Ok(raw) if !raw.is_empty() => {
+                log::debug!(
+                    "pipeline: transcription provider success={} model={} chars={}",
+                    provider_id,
+                    model,
+                    raw.chars().count()
+                );
+                return Some((raw, format!("{provider_id}/{model}/transcription")));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                if crate::api::is_retryable_provider_error(&e) {
+                    last_err = Some(e);
+                    continue;
+                }
+                last_err = Some(e);
+                break;
+            }
         }
     }
+
+    if let Some(e) = last_err {
+        log::error!(
+            "pipeline: transcription failed error={}",
+            trim_err(&e.to_string())
+        );
+        show_error_pill(app, &trim_err(&e.to_string())).await;
+    } else {
+        show_error_pill(
+            app,
+            "Nothing transcribed - please try speaking more clearly",
+        )
+        .await;
+    }
+    None
 }
 
+async fn run_transcription_and_cleanup(
+    app: &AppHandle,
+    wav: &bytes::Bytes,
+    cfg: &store::PipelineConfig,
+    profile: &str,
+    app_context: Option<&str>,
+) -> Option<(String, String, String, Vec<db::DictionaryEntry>, String)> {
+    let (raw, api_used) = run_transcription(app, wav, cfg).await?;
+    let raw = normalize_transcription_math_artifacts(&raw);
+
+    let (final_text, dict_entries, cleanup_cache_key) =
+        run_cleanup_and_snippets(app, &raw, cfg, profile, app_context).await?;
+    Some((raw, api_used, final_text, dict_entries, cleanup_cache_key))
+}
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
 // instruction override application. Returns (final_text_before_dict, dict_entries)
 // so the caller can apply dictionary substitutions after saving to DB.
@@ -1109,19 +1179,21 @@ async fn run_cleanup_and_snippets(
         expanded.chars().count()
     );
 
-    let c_key = cfg.key_for(&cfg.cleanup_provider).to_owned();
     let mut used_cache_key = String::new();
     let final_text = if should_run_cleanup_llm(
         cfg.cleanup_enabled,
-        !c_key.is_empty(),
+        has_cleanup_key_in_chain(cfg),
         pure_expansion.is_none(),
         &cfg.cleanup_intensity,
         profile,
     ) {
+        let has_snippets = !snippet_instructions.is_empty();
         let (cache_tokens, cache_separators) = tokenize_cache_key_parts(raw);
-        let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens);
+        let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens)
+            && (raw.chars().count() <= 200 || has_snippets);
         let cache_key = if allow_cache {
-            let base_cache_key = normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators);
+            let base_cache_key =
+                normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators);
             style_scoped_cleanup_cache_key(&base_cache_key, profile, &cfg.cleanup_intensity)
         } else {
             String::new()
@@ -1177,39 +1249,63 @@ async fn run_cleanup_and_snippets(
             extra_rules.lines().filter(|l| !l.trim().is_empty()).count()
         );
 
-        let cleaned_res = try_providers(&[&cfg.cleanup_provider], cfg, |provider_id, key| {
-            let cp = cleanup_provider_from_str(provider_id);
-            let expanded_ref = expanded.clone();
-            let profile_ref = profile.to_owned();
-            let intensity_ref = cfg.cleanup_intensity.clone();
-            let rules_ref = extra_rules.clone();
-            let ctx_ref = app_context.map(|s| s.to_owned());
-            Box::pin(async move {
-                cleanup::cleanup(
-                    &expanded_ref,
-                    cp,
-                    &key,
-                    &profile_ref,
-                    &intensity_ref,
-                    &rules_ref,
-                    ctx_ref.as_deref(),
-                )
-                .await
-            })
-        })
-        .await;
+        let mut cleaned_res: Option<String> = None;
+        let mut last_cleanup_err: Option<anyhow::Error> = None;
+        for (provider_id, model) in cleanup_model_chain(cfg) {
+            let key = cfg.key_for(&provider_id).to_owned();
+            if key.is_empty() {
+                continue;
+            }
+            let cp = cleanup_provider_from_str(&provider_id);
+            match cleanup::cleanup(
+                &expanded,
+                cp,
+                &key,
+                &model,
+                profile,
+                &cfg.cleanup_intensity,
+                &extra_rules,
+                app_context,
+            )
+            .await
+            {
+                Ok(cleaned) if !cleaned.is_empty() => {
+                    log::debug!(
+                        "pipeline: cleanup provider success={} model={} cleaned_chars={}",
+                        provider_id,
+                        model,
+                        cleaned.chars().count()
+                    );
+                    cleaned_res = Some(cleaned);
+                    break;
+                }
+                Ok(_) => {
+                    last_cleanup_err = None;
+                }
+                Err(e) => {
+                    if crate::api::is_retryable_provider_error(&e) {
+                        last_cleanup_err = Some(e);
+                        continue;
+                    }
+                    last_cleanup_err = Some(e);
+                    break;
+                }
+            }
+        }
 
         match cleaned_res {
-            Ok((cleaned, _)) if !cleaned.is_empty() => {
-                log::debug!(
-                    "pipeline: cleanup provider success cleaned_chars={}",
-                    cleaned.chars().count()
-                );
+            Some(cleaned) => {
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
                 if !cache_key.is_empty() {
                     let expires = sqlite_utc_plus(7);
-                    match db::cleanup_cache_insert_new(&db, &cache_key, &cleaned, &expires) {
+                    match db::cleanup_cache_insert_new(
+                        &db,
+                        &cache_key,
+                        &cleaned,
+                        &expires,
+                        has_snippets,
+                    ) {
                         Ok(_) => {
                             log::debug!("pipeline: cleanup cache insert ok expires_at={expires}")
                         }
@@ -1218,10 +1314,8 @@ async fn run_cleanup_and_snippets(
                 }
                 overridden
             }
-            Ok(_) => {
-                snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
-            }
-            Err(Some(e)) => {
+            None if last_cleanup_err.is_some() => {
+                let e = last_cleanup_err.expect("checked is_some");
                 log::error!(
                     "pipeline: cleanup failed error={}",
                     trim_err(&e.to_string())
@@ -1233,9 +1327,7 @@ async fn run_cleanup_and_snippets(
                 .await;
                 return None;
             }
-            Err(None) => {
-                snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
-            }
+            None => snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions),
         }
     } else {
         snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
@@ -1257,65 +1349,15 @@ fn should_run_cleanup_llm(
         && (cleanup_intensity != "none" || profile == "formal")
 }
 
-fn style_scoped_cleanup_cache_key(base_key: &str, profile: &str, cleanup_intensity: &str) -> String {
+fn style_scoped_cleanup_cache_key(
+    base_key: &str,
+    profile: &str,
+    cleanup_intensity: &str,
+) -> String {
     if base_key.is_empty() {
         return String::new();
     }
     format!("{base_key}|profile:{profile}|intensity:{cleanup_intensity}")
-}
-
-use std::future::Future;
-use std::pin::Pin;
-
-async fn try_providers<F>(
-    providers: &[&str],
-    cfg: &store::PipelineConfig,
-    mut call: F,
-) -> Result<(String, String), Option<anyhow::Error>>
-where
-    F: FnMut(&str, String) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send>>,
-{
-    let mut to_try = vec![providers[0]];
-    if cfg.api_fallback_enabled {
-        for fb in fallback_providers(providers[0]) {
-            if !cfg.key_for(fb).is_empty() {
-                to_try.push(fb);
-            }
-        }
-    }
-
-    let mut last_err = None;
-    log::debug!("pipeline: provider chain={}", to_try.join("->"));
-    for (idx, provider_id) in to_try.iter().enumerate() {
-        let provider_id = *provider_id;
-        log::debug!(
-            "pipeline: provider attempt {}/{} id={}",
-            idx + 1,
-            to_try.len(),
-            provider_id
-        );
-        let key = cfg.key_for(provider_id).to_owned();
-        if key.is_empty() {
-            log::debug!("pipeline: provider {} skipped (missing key)", provider_id);
-            continue;
-        }
-
-        match call(provider_id, key).await {
-            Ok(result) => {
-                log::debug!("pipeline: provider {} succeeded", provider_id);
-                return Ok((result, provider_id.to_string()));
-            }
-            Err(e) => {
-                if cfg.api_fallback_enabled && crate::api::is_retryable_provider_error(&e) {
-                    log::warn!("retryable provider error on {provider_id}, trying fallback: {e}");
-                    last_err = Some(e);
-                } else {
-                    return Err(Some(e));
-                }
-            }
-        }
-    }
-    Err(last_err)
 }
 
 #[cfg(test)]
@@ -1491,3 +1533,186 @@ mod tests {
         assert_eq!(style_scoped_cleanup_cache_key("", "casual", "medium"), "");
     }
 }
+
+pub async fn retry_transcription_impl(
+    app: &AppHandle,
+    state: &SharedState,
+) -> anyhow::Result<db::RecentEntry> {
+    show_pill(app, "processing");
+    let mut retry_expired = false;
+    let capture = {
+        let mut st = lock_state(state)?;
+        match &st.retry_capture {
+            Some(retry) => {
+                if retry.captured_at.elapsed() > RETRY_WINDOW {
+                    st.retry_capture = None;
+                    retry_expired = true;
+                    None
+                } else {
+                    Some(retry.clone())
+                }
+            }
+            None => None,
+        }
+    };
+    if retry_expired {
+        show_error_pill(app, "Retry window expired").await;
+        anyhow::bail!("Retry window expired");
+    }
+    let Some(capture) = capture else {
+        hide_pill(app);
+        anyhow::bail!("No retry available");
+    };
+
+    let settings_store = app.store("settings.json")?;
+    let cfg = store::load_pipeline_config(&settings_store);
+
+    if !has_transcription_key_in_chain(&cfg) {
+        show_error_pill(app, "No API key configured").await;
+        anyhow::bail!("No API key configured");
+    }
+
+    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
+        run_transcription_and_cleanup(
+            app,
+            &capture.wav,
+            &cfg,
+            &capture.profile,
+            capture.app_context.as_deref(),
+        )
+        .await
+    else {
+        anyhow::bail!("Retry processing failed");
+    };
+
+    finalize_pipeline_completion(
+        app,
+        state,
+        PipelineCompletionContext {
+            raw: &raw,
+            final_text_before_dict: &final_text,
+            dict_entries: &dict_entries,
+            duration_ms: capture.duration_ms,
+            api_used: &api_used,
+            target_hwnd: capture.target_hwnd,
+            cfg: &cfg,
+            process_name: capture.process_name,
+            cleanup_cache_key,
+            captured_at: capture.captured_at,
+        },
+    )
+    .await
+}
+
+struct PipelineCompletionContext<'a> {
+    raw: &'a str,
+    final_text_before_dict: &'a str,
+    dict_entries: &'a [db::DictionaryEntry],
+    duration_ms: u64,
+    api_used: &'a str,
+    target_hwnd: usize,
+    cfg: &'a store::PipelineConfig,
+    process_name: String,
+    cleanup_cache_key: String,
+    captured_at: std::time::Instant,
+}
+
+async fn finalize_pipeline_completion(
+    app: &AppHandle,
+    state: &SharedState,
+    ctx: PipelineCompletionContext<'_>,
+) -> anyhow::Result<db::RecentEntry> {
+    let dict_stage = std::time::Instant::now();
+    let (final_text_substituted, applied_dict_ids) =
+        dictionary::apply_substitutions_from(ctx.final_text_before_dict, ctx.dict_entries);
+    let dict_changed = !applied_dict_ids.is_empty();
+    log::debug!(
+        "pipeline: dictionary apply changed={} before_chars={} after_chars={} stage_ms={}",
+        dict_changed,
+        ctx.final_text_before_dict.chars().count(),
+        final_text_substituted.chars().count(),
+        dict_stage.elapsed().as_millis()
+    );
+    if dict_changed && crate::system::logger::is_verbose() {
+        log::debug!("pipeline: dictionary before_full=\"{}\"", ctx.final_text_before_dict);
+        log::debug!("pipeline: dictionary after_full=\"{}\"", final_text_substituted);
+    }
+
+    let db = app.state::<DbHandle>();
+    let words = ctx.raw.split_whitespace().count() as i64;
+    let entry = match db::insert_transcription_returning(
+        &db,
+        ctx.raw,
+        ctx.final_text_before_dict,
+        words,
+        ctx.duration_ms as i64,
+        ctx.api_used,
+    ) {
+        Ok(entry) => entry,
+        Err(e) => {
+            show_error_pill(
+                app,
+                &format!("Failed to save transcription: {}", trim_err(&e.to_string())),
+            )
+            .await;
+            return Err(e);
+        }
+    };
+
+    if let Ok(mut st) = lock_state(state) {
+        if st.retry_capture.as_ref().map(|v| v.captured_at) == Some(ctx.captured_at) {
+            st.retry_capture = None;
+        }
+    }
+
+    hide_pill(app);
+    let inject_stage = std::time::Instant::now();
+    let injected_text = match injection::inject_text(
+        &final_text_substituted,
+        ctx.target_hwnd,
+        ctx.cfg.contextual_caps_enabled,
+        ctx.cfg.auto_spacing_enabled,
+    )
+    .await
+    {
+        Ok(text) => text,
+        Err(e) => {
+            log::error!("inject: {e}");
+            show_error_pill(app, "Failed to paste - text saved to history").await;
+            final_text_substituted.clone()
+        }
+    };
+    log::debug!(
+        "pipeline: injection done contextual_caps={} auto_spacing={} output_chars={} stage_ms={}",
+        ctx.cfg.contextual_caps_enabled,
+        ctx.cfg.auto_spacing_enabled,
+        injected_text.chars().count(),
+        inject_stage.elapsed().as_millis()
+    );
+    app.emit("open-flow:transcribed", &injected_text).ok();
+
+    if !ctx.cleanup_cache_key.is_empty() {
+        auto_learn::start_cache_rejection_monitor(
+            injected_text.clone(),
+            ctx.cleanup_cache_key,
+            ctx.target_hwnd,
+            db.inner().clone(),
+            app.clone(),
+        );
+    }
+    if ctx.cfg.auto_learn_enabled {
+        if !applied_dict_ids.is_empty() {
+            auto_learn::start_rejection_monitor(
+                injected_text.clone(),
+                applied_dict_ids,
+                ctx.target_hwnd,
+                db.inner().clone(),
+                app.clone(),
+            );
+        }
+        auto_learn::start_monitor(injected_text, ctx.process_name, db.inner().clone(), app.clone());
+    }
+
+    Ok(entry)
+}
+

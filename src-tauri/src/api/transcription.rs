@@ -28,7 +28,7 @@ pub async fn transcribe_and_cleanup_gemini(
          transcription output.\n\n{profile_prompt}\n\nReturn ONLY the final cleaned text, \
          no commentary, no quotes, no explanation."
     );
-    transcribe_gemini_with_prompt(wav, api_key, &instruction, true).await
+    transcribe_gemini_with_prompt(wav, api_key, &instruction, true, "gemini-3.5-flash").await
 }
 
 pub async fn transcribe(
@@ -36,6 +36,7 @@ pub async fn transcribe(
     provider: Provider,
     api_key: &str,
     language: &str,
+    model: &str,
 ) -> Result<String> {
     log::debug!(
         "transcription: start provider={:?} language={} wav_bytes={}",
@@ -49,7 +50,7 @@ pub async fn transcribe(
                 wav,
                 api_key,
                 "https://api.groq.com/openai/v1/audio/transcriptions",
-                "whisper-large-v3-turbo",
+                model,
                 language,
             )
             .await
@@ -60,13 +61,13 @@ pub async fn transcribe(
                 wav,
                 api_key,
                 "https://api.openai.com/v1/audio/transcriptions",
-                "gpt-4o-transcribe",
+                model,
                 language,
             )
             .await
         }
 
-        Provider::Google => transcribe_gemini(wav, api_key, language).await,
+        Provider::Google => transcribe_gemini(wav, api_key, language, model).await,
     }
 }
 
@@ -121,6 +122,9 @@ async fn transcribe_whisper(
     if resp.status().as_u16() == 429 {
         return Err(crate::api::quota_bail(model));
     }
+    if resp.status().as_u16() == 401 {
+        anyhow::bail!("API key rejected — please re-enter your key in Settings");
+    }
     let resp = resp.error_for_status().context("Transcription API error")?;
 
     let body: WhisperResponse = resp.json().await?;
@@ -131,13 +135,13 @@ async fn transcribe_whisper(
     Ok(body.text.trim().to_owned())
 }
 
-async fn transcribe_gemini(wav: Bytes, api_key: &str, language: &str) -> Result<String> {
+async fn transcribe_gemini(wav: Bytes, api_key: &str, language: &str, model: &str) -> Result<String> {
     let language_label = crate::data::store::transcription_language_label(language);
     let prompt = format!(
         "Transcribe this audio exactly as spoken in {language_label}. \
          Return only the spoken words, no commentary, no formatting, no explanation."
     );
-    transcribe_gemini_with_prompt(wav, api_key, &prompt, false).await
+    transcribe_gemini_with_prompt(wav, api_key, &prompt, true, model).await
 }
 
 async fn transcribe_gemini_with_prompt(
@@ -145,6 +149,7 @@ async fn transcribe_gemini_with_prompt(
     api_key: &str,
     prompt: &str,
     disable_thinking: bool,
+    model: &str,
 ) -> Result<String> {
     log::debug!(
         "transcription: gemini request disable_thinking={} wav_bytes={} prompt_chars={}",
@@ -179,9 +184,9 @@ async fn transcribe_gemini_with_prompt(
         },
     };
 
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-    );
+    super::validate_model_for_url(model)?;
+    let url =
+        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}");
 
     let request_started = std::time::Instant::now();
     let resp = super::client::get().post(&url).json(&body).send().await?;

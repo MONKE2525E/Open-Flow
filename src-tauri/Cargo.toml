@@ -1,6 +1,6 @@
 [package]
 name = "open-flow"
-version = "0.10.0"
+version = "0.11.0"
 description = "Open Flow — local-first AI dictation"
 authors = ["Open Flow Team"]
 edition = "2021"
@@ -50,6 +50,7 @@ windows = { version = "0.61", features = [
   "Win32_System_Com",
   "Win32_UI_Accessibility",
   "Win32_Storage_FileSystem",
+  "Win32_Security_Credentials",
 ] }
 
 [profile.release]

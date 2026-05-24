@@ -18,20 +18,44 @@ fn lock_state<'a>(
 }
 
 fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> {
+    let is_model_map = |v: &serde_json::Value| {
+        let Some(obj) = v.as_object() else {
+            return false;
+        };
+        obj.keys().all(|k| store::PROVIDERS.contains(&k.as_str()))
+            && obj.values().all(|val| {
+                val.as_array()
+                    .is_some_and(|arr| arr.iter().all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty())))
+            })
+    };
+    let is_non_empty_string_array = |v: &serde_json::Value| {
+        v.as_array().is_some_and(|arr| {
+            arr.iter()
+                .all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty()))
+        })
+    };
     let valid = match key {
         store::TRANSCRIPTION_PROVIDER | store::CLEANUP_PROVIDER => value
             .as_str()
-            .is_some_and(|v| matches!(v, "groq" | "openai" | "google")),
+            .is_some_and(|v| store::PROVIDERS.contains(&v)),
         store::TRANSCRIPTION_LANGUAGE => value
             .as_str()
             .is_some_and(store::is_supported_transcription_language),
         store::TRANSCRIPTION_MODEL
         | store::CLEANUP_MODEL
+        | store::TRANSCRIPTION_DEFAULT_MODEL
+        | store::CLEANUP_DEFAULT_MODEL
         | store::DEFAULT_TONE
         | store::CLEANUP_INTENSITY
         | store::MICROPHONE_DEVICE
         | "history_retention"
         | "update_dismissed_version" => value.is_string() || value.is_null(),
+        store::TRANSCRIPTION_MODELS_BY_PROVIDER | store::CLEANUP_MODELS_BY_PROVIDER => {
+            is_model_map(value)
+        }
+        store::TRANSCRIPTION_FALLBACK_MODELS | store::CLEANUP_FALLBACK_MODELS => {
+            is_non_empty_string_array(value)
+        }
         store::APPEARANCE_MODE => value
             .as_str()
             .is_some_and(|v| matches!(v, "system" | "light" | "dark")),
@@ -39,11 +63,12 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::NOISE_REDUCTION
         | store::MUTE_AUDIO
         | store::APP_CONTEXT_HINT
-        | store::API_FALLBACK_ENABLED
         | store::AUTO_LEARN_ENABLED
         | store::CONTEXTUAL_CAPS
+        | store::AUTO_SPACING
         | store::SETUP_COMPLETE
         | store::FORCE_SETUP_ON_LAUNCH
+        | store::ADVANCED_MODEL_UI
         | "autostart_enabled" => value.is_boolean(),
         store::MIC_GAIN => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
         store::APP_MAPPINGS => serde_json::from_value::<Vec<AppMapping>>(value.clone()).is_ok(),
@@ -63,25 +88,17 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
 // ---------- API keys ----------
 
 #[tauri::command]
-pub async fn save_api_key(app: AppHandle, provider: String, key: String) -> Result<(), String> {
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    let k = match provider.as_str() {
-        "groq" => store::KEY_GROQ,
-        "openai" => store::KEY_OPENAI,
-        "google" => store::KEY_GOOGLE,
-        _ => return Err(format!("Unknown provider: {provider}")),
-    };
-    store.set(k, serde_json::json!(key));
-    store.save().map_err(|e| e.to_string())
+pub async fn save_api_key(_app: AppHandle, provider: String, key: String) -> Result<(), String> {
+    crate::data::credentials::set(&provider, &key)
 }
 
 #[tauri::command]
-pub async fn get_api_key_status(app: AppHandle) -> Result<serde_json::Value, String> {
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
+pub async fn get_api_key_status(_app: AppHandle) -> Result<serde_json::Value, String> {
+    use crate::data::{credentials, store};
     Ok(serde_json::json!({
-        "groq":   store.get(store::KEY_GROQ).is_some(),
-        "openai": store.get(store::KEY_OPENAI).is_some(),
-        "google": store.get(store::KEY_GOOGLE).is_some(),
+        "groq":   credentials::has(store::GROQ),
+        "openai": credentials::has(store::OPENAI),
+        "google": credentials::has(store::GOOGLE),
     }))
 }
 
@@ -116,14 +133,21 @@ pub struct AllSettings {
     pub transcription_model: Option<String>,
     pub transcription_language: Option<String>,
     pub cleanup_model: Option<String>,
+    pub transcription_models_by_provider: Option<serde_json::Value>,
+    pub cleanup_models_by_provider: Option<serde_json::Value>,
+    pub transcription_default_model: Option<String>,
+    pub cleanup_default_model: Option<String>,
+    pub transcription_fallback_models: Option<Vec<String>>,
+    pub cleanup_fallback_models: Option<Vec<String>>,
+    pub advanced_model_ui: Option<bool>,
     pub cleanup_enabled: Option<bool>,
     pub noise_reduction: Option<bool>,
     pub mute_audio: Option<bool>,
     pub autostart_enabled: Option<bool>,
     pub app_context_hint: Option<bool>,
-    pub api_fallback_enabled: Option<bool>,
     pub auto_learn_enabled: Option<bool>,
     pub contextual_caps_enabled: Option<bool>,
+    pub auto_spacing_enabled: Option<bool>,
     pub mic_gain: Option<f64>,
     pub history_retention: Option<String>,
     pub microphone_device: Option<String>,
@@ -144,18 +168,35 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
     let bool_val = |key: &str| s.get(key).and_then(|v| v.as_bool());
     let str_val = |key: &str| s.get(key).and_then(|v| v.as_str().map(String::from));
     let f64_val = |key: &str| s.get(key).and_then(|v| v.as_f64());
+    let json_val = |key: &str| s.get(key);
+    let str_array_val = |key: &str| {
+        s.get(key).and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+        })
+    };
     Ok(AllSettings {
         transcription_model: str_val(store::TRANSCRIPTION_MODEL),
         transcription_language: str_val(store::TRANSCRIPTION_LANGUAGE),
         cleanup_model: str_val(store::CLEANUP_MODEL),
+        transcription_models_by_provider: json_val(store::TRANSCRIPTION_MODELS_BY_PROVIDER),
+        cleanup_models_by_provider: json_val(store::CLEANUP_MODELS_BY_PROVIDER),
+        transcription_default_model: str_val(store::TRANSCRIPTION_DEFAULT_MODEL),
+        cleanup_default_model: str_val(store::CLEANUP_DEFAULT_MODEL),
+        transcription_fallback_models: str_array_val(store::TRANSCRIPTION_FALLBACK_MODELS),
+        cleanup_fallback_models: str_array_val(store::CLEANUP_FALLBACK_MODELS),
+        advanced_model_ui: bool_val(store::ADVANCED_MODEL_UI),
         cleanup_enabled: bool_val(store::CLEANUP_ENABLED),
         noise_reduction: bool_val(store::NOISE_REDUCTION),
         mute_audio: bool_val(store::MUTE_AUDIO),
         autostart_enabled: bool_val("autostart_enabled"),
         app_context_hint: bool_val(store::APP_CONTEXT_HINT),
-        api_fallback_enabled: bool_val(store::API_FALLBACK_ENABLED),
         auto_learn_enabled: bool_val(store::AUTO_LEARN_ENABLED),
         contextual_caps_enabled: bool_val(store::CONTEXTUAL_CAPS),
+        auto_spacing_enabled: bool_val(store::AUTO_SPACING),
         mic_gain: f64_val(store::MIC_GAIN),
         history_retention: str_val("history_retention"),
         microphone_device: str_val(store::MICROPHONE_DEVICE),
@@ -201,6 +242,14 @@ pub fn get_recent(app: AppHandle) -> Result<Vec<db::RecentEntry>, String> {
 pub fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
     let db = app.state::<DbHandle>();
     db::query_stats(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn retry_transcription(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<db::RecentEntry, String> {
+    pipeline::retry_transcription_impl(&app, &state).await.map_err(|e| e.to_string())
 }
 
 #[cfg(target_os = "windows")]
@@ -337,6 +386,7 @@ pub async fn stop_recording(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
+    crate::core::hotkey::set_handless_active(false);
     let session = {
         let mut st = lock_state(&state)?;
         st.handless = false;

@@ -1,38 +1,20 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import Toggle from '../Toggle.svelte';
-  import { saveSetting } from '../../settings';
 
   const keyProviders: { id: 'groq' | 'openai' | 'google'; label: string; ph: string; models: string }[] = [
     { id: 'groq',   label: 'Groq',   ph: 'gsk_…',  models: 'whisper-large-v3-turbo · llama-3.3-70b' },
     { id: 'openai', label: 'OpenAI', ph: 'sk-…',   models: 'gpt-4o-transcribe · gpt-4o-mini' },
-    { id: 'google', label: 'Google', ph: 'AIza…',  models: 'Chirp 3 · gemini-2.5-flash' },
+    { id: 'google', label: 'Google', ph: 'AIza…',  models: 'Chirp 3 · gemini-3.5-flash' },
   ];
 
   let keyStatus = $state({ groq: false, openai: false, google: false });
   let draftKeys = $state({ groq: '', openai: '', google: '' });
-  let apiFallback = $state(false);
 
   async function loadKeyStatus() {
     try {
-      const [status, fallback] = await Promise.all([
-        invoke<typeof keyStatus>('get_api_key_status'),
-        invoke<boolean | null>('get_setting', { key: 'api_fallback_enabled' }),
-      ]);
-      keyStatus = status;
-      apiFallback = fallback ?? false;
+      keyStatus = await invoke<typeof keyStatus>('get_api_key_status');
     } catch (err) {
       console.error('get_api_key_status failed:', err);
-    }
-  }
-
-  async function handleApiFallback(value: boolean) {
-    apiFallback = value;
-    try {
-      await saveSetting('api_fallback_enabled', value);
-    } catch (err) {
-      apiFallback = !value;
-      console.error('save api_fallback_enabled failed:', err);
     }
   }
 
@@ -82,13 +64,6 @@
     </div>
   </div>
 {/each}
-<div class="setting-row">
-  <div>
-    <div class="label">API fallback</div>
-    <div class="desc">If your primary provider hits its quota, automatically retry with another configured API key</div>
-  </div>
-  <Toggle checked={apiFallback} onchange={handleApiFallback} />
-</div>
 
 <style>
   .key-row { align-items: flex-start; gap: 12px; }

@@ -6,7 +6,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { getVersion } from '@tauri-apps/api/app';
   import { icons } from '../icons';
-  import { updateInfo, isOnline, type UpdateInfo } from '../stores';
+  import { updateInfo, type UpdateInfo } from '../stores';
   import { saveSetting } from '../settings';
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
@@ -15,6 +15,10 @@
   let copiedId: number | null = null;
   let currentVersion = '';
   let installing = false;
+  let failedEntry: { created_at: string } | null = null;
+  let retrying = false;
+  let failedTimer: ReturnType<typeof setTimeout> | null = null;
+  let unlistenFailed: (() => void) | undefined;
 
   function getGreeting(): string {
     const now = new Date();
@@ -89,6 +93,20 @@
 
   const greeting = getGreeting();
 
+  async function retryTranscription() {
+    if (retrying) return;
+    retrying = true;
+    try {
+      await invoke('retry_transcription');
+      // success: open-flow:transcribed listener clears failedEntry and calls load()
+    } catch (err) {
+      console.error('Retry failed:', err);
+      // keep failedEntry so user can try again
+    } finally {
+      retrying = false;
+    }
+  }
+
   async function copyText(entry: Entry) {
     try {
       await navigator.clipboard.writeText(entry.clean_text);
@@ -101,15 +119,22 @@
   let stats: Stats = { total_words: 0, avg_wpm: 0, day_streak: 0 };
   let loading = true;
 
+  function parseTimestamp(value: string): Date {
+    if (value.includes('T')) {
+      return new Date(value.endsWith('Z') ? value : `${value}Z`);
+    }
+    return new Date(value.replace(' ', 'T') + 'Z');
+  }
+
   function fmtTime(iso: string) {
     try {
-      return new Date(iso + 'Z').toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return parseTimestamp(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     } catch { return iso; }
   }
 
   function fmtDate(iso: string) {
     try {
-      const d = new Date(iso + 'Z');
+      const d = parseTimestamp(iso);
       const today = new Date();
       const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
       if (d.toDateString() === today.toDateString()) return 'Today';
@@ -159,33 +184,10 @@
     updateInfo.set(null);
   }
 
-  async function pingConnectivity() {
-    try {
-      const online = await invoke<boolean>('check_connectivity');
-      isOnline.set(online);
-    } catch {
-      isOnline.set(false);
-    }
-  }
-
   onMount(() => {
     getVersion().then(v => currentVersion = v);
     load();
     let unlisten: (() => void) | undefined;
-
-    // Connectivity polling — HEAD to google.com every 20s
-    pingConnectivity();
-    let connectivityTimer = setInterval(pingConnectivity, 20_000);
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        clearInterval(connectivityTimer);
-      } else {
-        pingConnectivity();
-        connectivityTimer = setInterval(pingConnectivity, 20_000);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
 
     // Check for updates, skip banner if user dismissed this version
     invoke<UpdateInfo | null>('check_for_update').then(async (update) => {
@@ -198,15 +200,30 @@
       }
     }).catch(() => {});
 
-    // Refresh when a new transcription comes in
     import('@tauri-apps/api/event').then(({ listen }) => {
-      listen('open-flow:transcribed', load).then(u => unlisten = u).catch(() => {});
+      listen('open-flow:transcribed', () => {
+        failedEntry = null;
+        if (failedTimer) { clearTimeout(failedTimer); failedTimer = null; }
+        load();
+      }).then(u => unlisten = u).catch(() => {});
+
+      listen<string>('open-flow:pipeline-failed', (ev) => {
+        failedEntry = { created_at: ev.payload };
+        if (failedTimer) clearTimeout(failedTimer);
+        failedTimer = setTimeout(() => {
+          failedEntry = null;
+          failedTimer = null;
+        }, 10 * 60 * 1000);
+      }).then(u => unlistenFailed = u).catch(() => {});
     }).catch(() => {});
 
     return () => {
-      clearInterval(connectivityTimer);
-      document.removeEventListener('visibilitychange', handleVisibility);
       if (unlisten) unlisten();
+      if (unlistenFailed) unlistenFailed();
+      if (failedTimer) {
+        clearTimeout(failedTimer);
+        failedTimer = null;
+      }
     };
   });
 </script>
@@ -231,63 +248,79 @@
         </div>
       </div>
 
-      {#if $updateInfo || !$isOnline}
+      {#if $updateInfo}
         <div class="notice-wrap">
-          {#if $updateInfo}
-            <div class="update-banner" class:dimmed={!$isOnline}>
-              <span class="update-text">
-                Update available — v{currentVersion} → v{$updateInfo.version}
-              </span>
-              <div class="update-actions">
-                <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
-                <button class="update-btn" onclick={handleInstall} disabled={installing}>
-                  {installing ? 'Installing…' : 'Install & Restart'}
-                </button>
-              </div>
+          <div class="update-banner">
+            <span class="update-text">
+              Update available — v{currentVersion} → v{$updateInfo.version}
+            </span>
+            <div class="update-actions">
+              <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
+              <button class="update-btn" onclick={handleInstall} disabled={installing}>
+                {installing ? 'Installing…' : 'Install & Restart'}
+              </button>
             </div>
-          {/if}
-          {#if !$isOnline}
-            <div class="offline-badge" class:overlay={!!$updateInfo}>
-              <span class="offline-dot"></span>
-              No connection
-            </div>
-          {/if}
+          </div>
         </div>
       {/if}
 
       {#if loading}
         <div class="empty-state">Loading history…</div>
-      {:else if recents.length === 0}
-        <div class="empty-state">
-          No dictations yet. Hold <kbd>Ctrl</kbd> <kbd>Windows</kbd> to get started.
-        </div>
       {:else}
-        {#each grouped as group, gi (group.label)}
-          <div class="day-head" class:muted={gi > 0}>{group.label}</div>
+        {#if failedEntry}
+          <div class="day-head">Today</div>
           <div class="day-table">
-            {#each group.rows as r (r.id)}
-              <div class="day-row" in:fly={{ y: -10, duration: 400, easing: expoOut }} animate:flip={{ duration: 400, easing: expoOut }}>
-                <div class="day-time">{fmtTime(r.created_at)}</div>
-                <div class="day-text">{r.clean_text}</div>
-                <button
-                  class="copy-btn"
-                  class:copied={copiedId === r.id}
-                  onclick={() => copyText(r)}
-                  title="Copy to clipboard"
-                  aria-label="Copy"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    {#if copiedId === r.id}
-                      {@html icons.check}
-                    {:else}
-                      {@html icons.copy}
-                    {/if}
-                  </svg>
-                </button>
-              </div>
-            {/each}
+            <div
+              class="day-row"
+              transition:fly={{ y: -10, duration: 400, easing: expoOut }}
+            >
+              <div class="day-time">{fmtTime(failedEntry.created_at)}</div>
+              <div class="day-text error-msg">Looks like your last transcription failed.</div>
+              <button
+                class="retry-btn"
+                onclick={retryTranscription}
+                disabled={retrying}
+              >
+                {retrying ? '…' : 'Retry'}
+              </button>
+            </div>
           </div>
-        {/each}
+        {/if}
+
+        {#if recents.length === 0 && !failedEntry}
+          <div class="empty-state">
+            No dictations yet. Hold <kbd>Ctrl</kbd> <kbd>Windows</kbd> to get started.
+          </div>
+        {:else}
+          {#each grouped as group, gi (group.label)}
+            {#if !(failedEntry && group.label === 'Today')}
+              <div class="day-head" class:muted={gi > 0 || !!failedEntry}>{group.label}</div>
+            {/if}
+            <div class="day-table">
+              {#each group.rows as r (r.id)}
+                <div class="day-row" in:fly={{ y: -10, duration: 400, easing: expoOut }} animate:flip={{ duration: 400, easing: expoOut }}>
+                  <div class="day-time">{fmtTime(r.created_at)}</div>
+                  <div class="day-text">{r.clean_text}</div>
+                  <button
+                    class="copy-btn"
+                    class:copied={copiedId === r.id}
+                    onclick={() => copyText(r)}
+                    title="Copy to clipboard"
+                    aria-label="Copy"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      {#if copiedId === r.id}
+                        {@html icons.check}
+                      {:else}
+                        {@html icons.copy}
+                      {/if}
+                    </svg>
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {/each}
+        {/if}
       {/if}
     </div>
 
@@ -424,42 +457,6 @@
     color: var(--ink-strong);
   }
 
-  .update-banner.dimmed {
-    visibility: hidden;
-  }
-
-  .offline-badge {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    background: rgba(160, 50, 40, 0.07);
-    border: 1px solid rgba(160, 50, 40, 0.18);
-    border-radius: var(--r-lg);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--ink-mute);
-  }
-
-  .offline-badge.overlay {
-    position: absolute;
-    inset: 0;
-  }
-
-  .offline-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--danger);
-    flex-shrink: 0;
-    animation: dot-pulse 2s ease-in-out infinite;
-  }
-
-  @keyframes dot-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.35; }
-  }
-
   .update-text {
     flex: 1;
     font-family: var(--serif);
@@ -566,6 +563,34 @@
     color: var(--ink-strong);
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+
+  .error-msg {
+    color: var(--ink-mute);
+    font-style: italic;
+  }
+
+  .retry-btn {
+    all: unset;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent);
+    padding: 2px 8px;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    transition: background 0.12s, color 0.12s;
+    flex-shrink: 0;
+    white-space: nowrap;
+    line-height: 1.6;
+  }
+  .retry-btn:hover:not(:disabled) {
+    background: var(--accent);
+    color: var(--on-accent, #fff);
+  }
+  .retry-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .empty-state {
