@@ -736,7 +736,7 @@ fn reject_with_pill(app: &AppHandle, msg: &str) {
     app.emit("open-flow:error", msg).ok();
     show_pill(app, "error");
     let app = app.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         hide_pill(&app);
     });
