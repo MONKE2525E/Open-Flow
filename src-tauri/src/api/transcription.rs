@@ -122,6 +122,9 @@ async fn transcribe_whisper(
     if resp.status().as_u16() == 429 {
         return Err(crate::api::quota_bail(model));
     }
+    if resp.status().as_u16() == 401 {
+        anyhow::bail!("API key rejected — please re-enter your key in Settings");
+    }
     let resp = resp.error_for_status().context("Transcription API error")?;
 
     let body: WhisperResponse = resp.json().await?;

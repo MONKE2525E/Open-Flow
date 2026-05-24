@@ -149,6 +149,9 @@ async fn openai_compat(
     if resp.status().as_u16() == 429 {
         return Err(crate::api::quota_bail(model));
     }
+    if resp.status().as_u16() == 401 {
+        anyhow::bail!("API key rejected — please re-enter your key in Settings");
+    }
     let resp = resp.error_for_status().context("Cleanup API error")?;
 
     let data: ChatResp = resp.json().await?;
