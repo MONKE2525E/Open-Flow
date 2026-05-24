@@ -1,10 +1,9 @@
 use crate::data::db::{self, Db};
 use std::cmp::Reverse;
-use std::collections::HashSet;
 
 fn lowercase_with_source_map(input: &str) -> (String, Vec<usize>) {
-    let mut lowered = String::new();
-    let mut source_map = Vec::new();
+    let mut lowered = String::with_capacity(input.len());
+    let mut source_map = Vec::with_capacity(input.len());
 
     for (src_idx, ch) in input.char_indices() {
         for lower_ch in ch.to_lowercase() {
@@ -145,14 +144,9 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
         selected.push(m);
     }
 
-    let mut used_snippet_indices: HashSet<usize> = HashSet::new();
     for m in selected.iter().rev() {
         result.replace_range(m.start..m.end, &snippets[m.snippet_idx].expansion);
-        used_snippet_indices.insert(m.snippet_idx);
-    }
-
-    for snippet_idx in used_snippet_indices {
-        let _ = db::increment_snippet_use(db, snippets[snippet_idx].id);
+        let _ = db::increment_snippet_use(db, snippets[m.snippet_idx].id);
     }
 
     result
