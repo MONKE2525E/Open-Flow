@@ -1596,13 +1596,13 @@ pub async fn retry_transcription_impl(
     else {
         anyhow::bail!("Cleanup failed");
     };
-    let (final_text, _applied_dict_ids) =
-        dictionary::apply_substitutions_from(&final_text, &dict_entries);
 
     let db = app.state::<DbHandle>();
     let words = raw.split_whitespace().count() as i64;
     let entry =
         db::insert_transcription_returning(&db, &raw, &final_text, words, duration_ms as i64, &api_used)?;
+    let (final_text, _applied_dict_ids) =
+        dictionary::apply_substitutions_from(&final_text, &dict_entries);
 
     if let Ok(mut st) = lock_state(state) {
         st.retry_capture = None;
