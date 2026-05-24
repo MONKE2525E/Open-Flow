@@ -570,7 +570,7 @@
   }
 
   .error-msg {
-    color: var(--ink-mute);
+    color: var(--danger);
     font-style: italic;
   }
 
