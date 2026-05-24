@@ -1280,7 +1280,9 @@ async fn run_cleanup_and_snippets(
                     cleaned_res = Some(cleaned);
                     break;
                 }
-                Ok(_) => {}
+                Ok(_) => {
+                    last_cleanup_err = None;
+                }
                 Err(e) => {
                     last_cleanup_err = Some(e);
                     continue;
