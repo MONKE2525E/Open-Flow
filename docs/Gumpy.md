@@ -38,7 +38,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
     *   *Build Verification*: Run `npm run check` followed by `npm run lint` to confirm zero compilation or TypeScript errors.
     *   *State Test*: Run the Playwright test using `node tests/smoke/playwright-test-state.cjs` to verify that active page routing and modal states update correctly.
 
-#### Task 1.2: Unifying IPC Error Handling & Logging
+#### ✅ Task 1.2: Unifying IPC Error Handling & Logging
 *   **Context**: [stores.ts](file:///g:/Open%20Flow/src/lib/stores.ts#L34-L39) (`fetchSnippets`) and [stores.ts](file:///g:/Open%20Flow/src/lib/stores.ts#L55-L60) (`fetchDictionary`).
 *   **Problem Statement**: Key data-fetching functions swallow all errors inside their catch blocks (`catch { /* dev mode — no backend */ }`). This hides DB lock errors, IPC deserialization failures, and network bugs, leaving the UI empty without diagnostic feedback.
 *   **Actionable Implementation Steps**:
@@ -95,7 +95,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 *   **Verification & Test Plan**:
     *   *Keyboard Walkthrough*: Open the Settings modal and press the `Tab` key repeatedly. Verify that a clear outline highlight follows the active toggle elements and API key inputs.
 
-#### Task 3.3: Textarea Auto-Grow Svelte Action Recalculation
+#### ✅ Task 3.3: Textarea Auto-Grow Svelte Action Recalculation
 *   **Context**: [Snippets.svelte](file:///g:/Open%20Flow/src/lib/views/Snippets.svelte#L151-L156).
 *   **Problem Statement**: The `autoGrow` text layout action listens for native `'input'` DOM events to dynamically adjust textarea heights. However, when users dictate text into a snippet expansion using the `<MicInputButton>`, Svelte updates the value programmatically. Since this bypasses standard browser key input events, the textarea fails to resize, clipping long text.
 *   **Actionable Implementation Steps**:
@@ -297,7 +297,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 ### [PR Group 11: Backend - DB Migrations and IPC Async Execution]
 *   **Goal**: Ensure transaction-based database migrations and prevent blocking commands from stalling the async executor.
 
-#### Task 11.1: Transactional Migration Schemas
+#### ✅ Task 11.1: Transactional Migration Schemas
 *   **Context**: [db.rs](file:///g:/Open%20Flow/src-tauri/src/data/db.rs#L118-L259).
 *   **Problem Statement**: Schema updates run inline without transactions, swallowing execution errors and risking database corruption. Date values are also stored as formatted UTC strings prone to timezone drift.
 *   **Actionable Implementation Steps**:
