@@ -1283,8 +1283,12 @@ async fn run_cleanup_and_snippets(
                     last_cleanup_err = None;
                 }
                 Err(e) => {
+                    if crate::api::is_retryable_provider_error(&e) {
+                        last_cleanup_err = Some(e);
+                        continue;
+                    }
                     last_cleanup_err = Some(e);
-                    continue;
+                    break;
                 }
             }
         }

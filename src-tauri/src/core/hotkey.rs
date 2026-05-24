@@ -70,7 +70,9 @@ fn vk_to_char(vk: u32, shift: bool) -> Option<char> {
     match vk {
         0x0D => Some('\n'),
         0x20 => Some(' '),
-        0x30..=0x39 => char::from_digit(vk - 0x30, 10),
+        0x30..=0x39 => {
+            if shift && vk == 0x31 { Some('!') } else { char::from_digit(vk - 0x30, 10) }
+        }
         0x60..=0x69 => char::from_digit(vk - 0x60, 10),
         0x41..=0x5A => Some((b'a' + (vk as u8 - 0x41)) as char),
         0xBA => Some(if shift { ':' } else { ';' }),
@@ -84,6 +86,7 @@ fn vk_to_char(vk: u32, shift: bool) -> Option<char> {
         0xDC => Some(if shift { '|' } else { '\\' }),
         0xDD => Some(if shift { '}' } else { ']' }),
         0xDE => Some(if shift { '"' } else { '\'' }),
+        0x6E => Some('.'),
         _ => None,
     }
 }

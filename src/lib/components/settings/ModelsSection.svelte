@@ -294,7 +294,8 @@
         setTaskDefault(type, nextActive);
         setTaskFallbacks(type, remaining);
       } else {
-        setTaskDefault(type, '');
+        const provId = provider as UiProviderId;
+        setTaskDefault(type, modelId(provider, recommendedModels[type][provId].standard));
       }
     } else if (currentState === 'fallback') {
       setTaskFallbacks(type, taskFallbacks(type).filter((m) => m !== id));
