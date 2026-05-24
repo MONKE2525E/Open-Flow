@@ -20,7 +20,7 @@ Below is the initial health check and technical debt evaluation of the Open Flow
 
 ## 2. Refactoring PR Path (Focused PR Groups)
 
-We have organized the technical debt and usability audit into **10 focused Pull Request groups**. Each PR group contains actionable task chunks with context links, step-by-step implementation instructions, and verification plans.
+We have organized the technical debt and usability audit into **11 focused Pull Request groups**. Each PR group contains actionable task chunks with context links, step-by-step implementation instructions, and verification plans.
 
 ---
 

@@ -322,9 +322,13 @@ pub fn get_cleanup_cache_status(app: AppHandle) -> Result<CleanupCacheStatus, St
 
 #[tauri::command]
 pub async fn get_microphones() -> Vec<String> {
-    tokio::task::spawn_blocking(audio::list_input_devices)
-        .await
-        .unwrap_or_default()
+    match tokio::task::spawn_blocking(audio::list_input_devices).await {
+        Ok(devices) => devices,
+        Err(e) => {
+            log::error!("Task to get microphones panicked: {e}");
+            Vec::new()
+        }
+    }
 }
 
 // ---------- memory ----------
@@ -427,9 +431,13 @@ pub async fn stop_handless_mode(
 
 #[tauri::command]
 pub async fn get_installed_apps() -> Vec<InstalledApp> {
-    tokio::task::spawn_blocking(crate::system::apps::list_installed_apps)
-        .await
-        .unwrap_or_default()
+    match tokio::task::spawn_blocking(crate::system::apps::list_installed_apps).await {
+        Ok(apps) => apps,
+        Err(e) => {
+            log::error!("Task to get installed apps panicked: {e}");
+            Vec::new()
+        }
+    }
 }
 
 #[tauri::command]
