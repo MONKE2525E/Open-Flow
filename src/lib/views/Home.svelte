@@ -6,7 +6,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { getVersion } from '@tauri-apps/api/app';
   import { icons } from '../icons';
-  import { updateInfo, isOnline, type UpdateInfo } from '../stores';
+  import { updateInfo, type UpdateInfo } from '../stores';
   import { saveSetting } from '../settings';
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
@@ -159,33 +159,10 @@
     updateInfo.set(null);
   }
 
-  async function pingConnectivity() {
-    try {
-      const online = await invoke<boolean>('check_connectivity');
-      isOnline.set(online);
-    } catch {
-      isOnline.set(false);
-    }
-  }
-
   onMount(() => {
     getVersion().then(v => currentVersion = v);
     load();
     let unlisten: (() => void) | undefined;
-
-    // Connectivity polling — HEAD to google.com every 20s
-    pingConnectivity();
-    let connectivityTimer = setInterval(pingConnectivity, 20_000);
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        clearInterval(connectivityTimer);
-      } else {
-        pingConnectivity();
-        connectivityTimer = setInterval(pingConnectivity, 20_000);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
 
     // Check for updates, skip banner if user dismissed this version
     invoke<UpdateInfo | null>('check_for_update').then(async (update) => {
@@ -204,8 +181,6 @@
     }).catch(() => {});
 
     return () => {
-      clearInterval(connectivityTimer);
-      document.removeEventListener('visibilitychange', handleVisibility);
       if (unlisten) unlisten();
     };
   });

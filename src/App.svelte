@@ -10,6 +10,7 @@
   import Settings from './lib/views/Settings.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
+  import { invoke } from '@tauri-apps/api/core';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx } from './lib/motion';
@@ -46,12 +47,20 @@
     prevPage = next;
   });
 
+  async function pingConnectivity() {
+    try {
+      const online = await invoke<boolean>('check_connectivity');
+      isOnline.set(online);
+    } catch {
+      isOnline.set(false);
+    }
+  }
+
   onMount(() => {
     let cleanupFn: (() => void) | undefined;
 
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
         const [done, appearance, forceSetupOnLaunch] = await Promise.all([
           invoke<boolean | null>('get_setting', { key: 'setup_complete' }),
           invoke<'system' | 'light' | 'dark' | null>('get_setting', { key: 'appearance_mode' }),
@@ -82,9 +91,23 @@
     };
     media?.addEventListener?.('change', onSystemThemeChange);
 
+    pingConnectivity();
+    let connectivityTimer = setInterval(pingConnectivity, 20_000);
+    const handleVisibility = () => {
+      if (document.hidden) {
+        clearInterval(connectivityTimer);
+      } else {
+        pingConnectivity();
+        connectivityTimer = setInterval(pingConnectivity, 20_000);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
       if (cleanupFn) cleanupFn();
       media?.removeEventListener?.('change', onSystemThemeChange);
+      clearInterval(connectivityTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   });
 </script>
@@ -319,8 +342,10 @@
   .offline-toast {
     position: absolute;
     bottom: 18px;
-    left: 50%;
-    transform: translateX(-50%);
+    left: 0;
+    right: 0;
+    margin-inline: auto;
+    width: fit-content;
     background: var(--danger-bg);
     border: 1px solid var(--danger-line);
     border-radius: 8px;
