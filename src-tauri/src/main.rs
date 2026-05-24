@@ -53,7 +53,7 @@ fn main() {
         session: None,
         handless: false,
         target_hwnd: 0,
-        retry_wav: None,
+        retry_capture: None,
     }));
 
     let db_dir = std::env::var("APPDATA")

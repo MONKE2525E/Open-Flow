@@ -213,6 +213,10 @@
     return () => {
       if (unlisten) unlisten();
       if (unlistenFailed) unlistenFailed();
+      if (failedTimer) {
+        clearTimeout(failedTimer);
+        failedTimer = null;
+      }
     };
   });
 </script>
