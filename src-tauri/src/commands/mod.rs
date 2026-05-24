@@ -89,7 +89,9 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
 
 #[tauri::command]
 pub async fn save_api_key(_app: AppHandle, provider: String, key: String) -> Result<(), String> {
-    crate::data::credentials::set(&provider, &key)
+    tauri::async_runtime::spawn_blocking(move || crate::data::credentials::set(&provider, &key))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
