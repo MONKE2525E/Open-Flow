@@ -109,11 +109,12 @@
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
+    let mounted = true;
 
     (async () => {
       const { listen } = await import('@tauri-apps/api/event');
 
-      unlisteners.push(await listen<string>('pill-state', (ev) => {
+      const l1 = await listen<string>('pill-state', (ev) => {
         const incoming = (ev.payload as PillState) || 'idle';
         if (hfTimer !== null) { clearTimeout(hfTimer); hfTimer = null; }
 
@@ -137,19 +138,26 @@
           stopRaf();
         }
         if (state !== 'recording' && state !== 'handsfree') smoothed = 0;
-      }));
+      });
+      if (!mounted) { l1(); return; }
+      unlisteners.push(l1);
 
-      unlisteners.push(await listen<string>('open-flow:error', (ev) => {
+      const l2 = await listen<string>('open-flow:error', (ev) => {
         errorMsg = ev.payload ?? 'Failed';
-      }));
+      });
+      if (!mounted) { l2(); return; }
+      unlisteners.push(l2);
 
-      unlisteners.push(await listen<number>('audio-level', (ev) => {
+      const l3 = await listen<number>('audio-level', (ev) => {
         targetLevel = ev.payload ?? 0;
         lastLevelTime = performance.now();
-      }));
+      });
+      if (!mounted) { l3(); return; }
+      unlisteners.push(l3);
     })();
 
     return () => {
+      mounted = false;
       cancelAnimationFrame(rafId);
       unlisteners.forEach(u => u());
     };

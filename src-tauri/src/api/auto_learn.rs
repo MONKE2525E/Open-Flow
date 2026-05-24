@@ -277,14 +277,14 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
     if original.norm == corrected.norm {
         return false;
     }
-    if original.norm.len() < MIN_CANDIDATE_NORM_LEN || corrected.norm.len() < MIN_CANDIDATE_NORM_LEN
+    if original.norm.chars().count() < MIN_CANDIDATE_NORM_LEN || corrected.norm.chars().count() < MIN_CANDIDATE_NORM_LEN
     {
         return false;
     }
 
     let original_distinct = has_distinctive_features(&original.raw);
     let corrected_distinct = has_distinctive_features(&corrected.raw);
-    if original.norm.len().max(corrected.norm.len()) <= 3
+    if original.norm.chars().count().max(corrected.norm.chars().count()) <= 3
         && !original_distinct
         && !corrected_distinct
     {
@@ -308,7 +308,7 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
 
     is_spelling_correction(&original.norm, &corrected.norm)
         || ((original_distinct || corrected_distinct)
-            && original.norm.len().max(corrected.norm.len()) >= 4
+            && original.norm.chars().count().max(corrected.norm.chars().count()) >= 4
             && edit_distance(&original.norm, &corrected.norm) <= 3)
 }
 
@@ -340,7 +340,7 @@ fn candidate_confidence(
     replacements_len: usize,
 ) -> f64 {
     let distance = edit_distance(&original.norm, &corrected.norm) as f64;
-    let max_len = original.norm.len().max(corrected.norm.len()).max(1) as f64;
+    let max_len = original.norm.chars().count().max(corrected.norm.chars().count()).max(1) as f64;
     let ratio_score = 1.0 - (distance / max_len).min(1.0);
 
     let mut score = ratio_score * 0.55;
@@ -1112,7 +1112,7 @@ fn run_rejection_monitor(
                 // shrank — confirming deletion rather than a stale baseline.
                 None => {
                     !current.contains(injected_text.as_str())
-                        && current.len() < baseline_text.len()
+                        && current.chars().count() < baseline_text.chars().count()
                 }
             };
 
