@@ -902,7 +902,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     );
 
     let db = app.state::<DbHandle>();
-    let words = final_text.split_whitespace().count() as i64;
+    let words = raw.split_whitespace().count() as i64;
     if let Err(e) =
         db::insert_transcription(&db, &raw, &final_text, words, duration_ms as i64, &api_used)
     {
