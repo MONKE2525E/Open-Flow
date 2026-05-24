@@ -231,27 +231,19 @@
         </div>
       </div>
 
-      {#if $updateInfo || !$isOnline}
+      {#if $updateInfo}
         <div class="notice-wrap">
-          {#if $updateInfo}
-            <div class="update-banner" class:dimmed={!$isOnline}>
-              <span class="update-text">
-                Update available — v{currentVersion} → v{$updateInfo.version}
-              </span>
-              <div class="update-actions">
-                <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
-                <button class="update-btn" onclick={handleInstall} disabled={installing}>
-                  {installing ? 'Installing…' : 'Install & Restart'}
-                </button>
-              </div>
+          <div class="update-banner">
+            <span class="update-text">
+              Update available — v{currentVersion} → v{$updateInfo.version}
+            </span>
+            <div class="update-actions">
+              <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
+              <button class="update-btn" onclick={handleInstall} disabled={installing}>
+                {installing ? 'Installing…' : 'Install & Restart'}
+              </button>
             </div>
-          {/if}
-          {#if !$isOnline}
-            <div class="offline-badge" class:overlay={!!$updateInfo}>
-              <span class="offline-dot"></span>
-              No connection
-            </div>
-          {/if}
+          </div>
         </div>
       {/if}
 
@@ -422,42 +414,6 @@
     border-radius: var(--r-lg);
     font-size: 13px;
     color: var(--ink-strong);
-  }
-
-  .update-banner.dimmed {
-    visibility: hidden;
-  }
-
-  .offline-badge {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    background: rgba(160, 50, 40, 0.07);
-    border: 1px solid rgba(160, 50, 40, 0.18);
-    border-radius: var(--r-lg);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--ink-mute);
-  }
-
-  .offline-badge.overlay {
-    position: absolute;
-    inset: 0;
-  }
-
-  .offline-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--danger);
-    flex-shrink: 0;
-    animation: dot-pulse 2s ease-in-out infinite;
-  }
-
-  @keyframes dot-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.35; }
   }
 
   .update-text {
