@@ -277,14 +277,15 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
     if original.norm == corrected.norm {
         return false;
     }
-    if original.norm.chars().count() < MIN_CANDIDATE_NORM_LEN || corrected.norm.chars().count() < MIN_CANDIDATE_NORM_LEN
-    {
+    let a_len = original.norm.chars().count();
+    let b_len = corrected.norm.chars().count();
+    if a_len < MIN_CANDIDATE_NORM_LEN || b_len < MIN_CANDIDATE_NORM_LEN {
         return false;
     }
 
     let original_distinct = has_distinctive_features(&original.raw);
     let corrected_distinct = has_distinctive_features(&corrected.raw);
-    if original.norm.chars().count().max(corrected.norm.chars().count()) <= 3
+    if a_len.max(b_len) <= 3
         && !original_distinct
         && !corrected_distinct
     {
@@ -308,7 +309,7 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
 
     is_spelling_correction(&original.norm, &corrected.norm)
         || ((original_distinct || corrected_distinct)
-            && original.norm.chars().count().max(corrected.norm.chars().count()) >= 4
+            && a_len.max(b_len) >= 4
             && edit_distance(&original.norm, &corrected.norm) <= 3)
 }
 
