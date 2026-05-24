@@ -1106,7 +1106,6 @@ fn run_rejection_monitor(
         };
 
         let rejection_threshold = injected_text.chars().count() / 10;
-        let baseline_char_count = baseline_text.chars().count();
         let deadline =
             tokio::time::Instant::now() + std::time::Duration::from_secs(target.window_secs());
 
@@ -1129,7 +1128,7 @@ fn run_rejection_monitor(
                 // shrank — confirming deletion rather than a stale baseline.
                 None => {
                     !current.contains(injected_text.as_str())
-                        && current.chars().count() < baseline_char_count
+                        && current.len() < baseline_text.len()
                 }
             };
 
