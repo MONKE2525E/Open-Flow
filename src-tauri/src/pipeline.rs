@@ -42,6 +42,7 @@ pub struct AppState {
 
 pub type SharedState = Arc<Mutex<AppState>>;
 
+#[derive(Clone)]
 pub struct RetryCapture {
     pub wav: bytes::Bytes,
     pub captured_at: std::time::Instant,
@@ -1594,28 +1595,18 @@ pub async fn retry_transcription_impl(
     app: &AppHandle,
     state: &SharedState,
 ) -> anyhow::Result<db::RecentEntry> {
+    show_pill(app, "processing");
     let mut retry_expired = false;
     let capture = {
-        let st = lock_state(state)?;
+        let mut st = lock_state(state)?;
         match &st.retry_capture {
             Some(retry) => {
                 if retry.captured_at.elapsed() > std::time::Duration::from_secs(600) {
-                    drop(st);
-                    if let Ok(mut s) = lock_state(state) {
-                        s.retry_capture = None;
-                    }
+                    st.retry_capture = None;
                     retry_expired = true;
                     None
                 } else {
-                    Some(RetryCapture {
-                        wav: retry.wav.clone(),
-                        captured_at: retry.captured_at,
-                        duration_ms: retry.duration_ms,
-                        target_hwnd: retry.target_hwnd,
-                        process_name: retry.process_name.clone(),
-                        profile: retry.profile.clone(),
-                        app_context: retry.app_context.clone(),
-                    })
+                    Some(retry.clone())
                 }
             }
             None => None,
@@ -1626,6 +1617,7 @@ pub async fn retry_transcription_impl(
         anyhow::bail!("Retry window expired");
     }
     let Some(capture) = capture else {
+        hide_pill(app);
         anyhow::bail!("No retry available");
     };
 
@@ -1638,6 +1630,7 @@ pub async fn retry_transcription_impl(
     }
 
     let Some((raw, api_used)) = run_transcription(app, &capture.wav, &cfg).await else {
+        show_error_pill(app, "Retry transcription failed").await;
         anyhow::bail!("Transcription failed");
     };
     let raw = normalize_transcription_math_artifacts(&raw);
@@ -1651,6 +1644,7 @@ pub async fn retry_transcription_impl(
     )
     .await
     else {
+        show_error_pill(app, "Retry cleanup failed").await;
         anyhow::bail!("Cleanup failed");
     };
     let (final_text, applied_dict_ids) =
@@ -1658,14 +1652,24 @@ pub async fn retry_transcription_impl(
 
     let db = app.state::<DbHandle>();
     let words = raw.split_whitespace().count() as i64;
-    let entry = db::insert_transcription_returning(
+    let entry = match db::insert_transcription_returning(
         &db,
         &raw,
         &final_text,
         words,
         capture.duration_ms as i64,
         &api_used,
-    )?;
+    ) {
+        Ok(entry) => entry,
+        Err(e) => {
+            show_error_pill(
+                app,
+                &format!("Failed to save transcription: {}", trim_err(&e.to_string())),
+            )
+            .await;
+            return Err(e);
+        }
+    };
 
     let injected_text = match injection::inject_text(
         &final_text,
@@ -1678,6 +1682,7 @@ pub async fn retry_transcription_impl(
         Ok(text) => text,
         Err(e) => {
             log::error!("retry inject: {e}");
+            show_error_pill(app, "Failed to paste - text saved to history").await;
             final_text.clone()
         }
     };
@@ -1685,6 +1690,7 @@ pub async fn retry_transcription_impl(
     if let Ok(mut st) = lock_state(state) {
         st.retry_capture = None;
     }
+    hide_pill(app);
     app.emit("open-flow:transcribed", &injected_text).ok();
 
     if !cleanup_cache_key.is_empty() {

@@ -120,9 +120,7 @@
   let loading = true;
 
   function parseTimestamp(value: string): Date {
-    const direct = new Date(value);
-    if (!Number.isNaN(direct.getTime())) return direct;
-    return new Date(`${value}Z`);
+    return new Date(value.endsWith('Z') ? value : `${value}Z`);
   }
 
   function fmtTime(iso: string) {
@@ -219,6 +217,10 @@
     return () => {
       if (unlisten) unlisten();
       if (unlistenFailed) unlistenFailed();
+      if (failedTimer) {
+        clearTimeout(failedTimer);
+        failedTimer = null;
+      }
     };
   });
 </script>
