@@ -19,6 +19,14 @@ fn lowercase_with_source_map(input: &str) -> (String, Vec<usize>) {
     (lowered, source_map)
 }
 
+fn end_of_char_at(text: &str, start: usize) -> usize {
+    text[start..]
+        .chars()
+        .next()
+        .map(|ch| start + ch.len_utf8())
+        .unwrap_or(text.len())
+}
+
 /// If the entire transcription is just a snippet trigger (ignoring trailing punctuation
 /// added by the transcription model), return the expansion directly.
 ///
@@ -66,10 +74,10 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
     snippets.sort_by_key(|snippet| Reverse(snippet.trigger.len()));
 
     let mut result = text.to_string();
+    let (mut haystack, mut source_map) = lowercase_with_source_map(&result);
 
     for snippet in snippets.iter() {
         let needle = snippet.trigger.to_lowercase();
-        let (haystack, source_map) = lowercase_with_source_map(&result);
 
         // Find all non-overlapping occurrences (right-to-left to keep indices valid).
         let mut positions: Vec<(usize, usize)> = Vec::new();
@@ -91,11 +99,15 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
             if before_ok && after_ok {
                 let start = source_map[abs];
                 let end_lower = abs + needle.len();
-                let end = if end_lower >= haystack.len() {
+                let mut end = if end_lower >= haystack.len() {
                     result.len()
                 } else {
                     source_map[end_lower]
                 };
+                if end <= start {
+                    let last_src = source_map[end_lower.saturating_sub(1)];
+                    end = end_of_char_at(&result, last_src);
+                }
                 positions.push((start, end));
             }
             search_from = abs + needle.len();
@@ -110,6 +122,7 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
             result.replace_range(start..end, &snippet.expansion);
         }
 
+        (haystack, source_map) = lowercase_with_source_map(&result);
         let _ = db::increment_snippet_use(db, snippet.id);
     }
 
