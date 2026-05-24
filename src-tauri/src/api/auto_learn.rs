@@ -103,14 +103,6 @@ impl StableTextGate {
     }
 }
 
-fn is_spelling_correction(a: &str, b: &str) -> bool {
-    let max_len = a.len().max(b.len());
-    if max_len == 0 {
-        return false;
-    }
-    edit_distance(a, b) <= 2_usize.max(max_len / 2)
-}
-
 fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
@@ -277,14 +269,15 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
     if original.norm == corrected.norm {
         return false;
     }
-    if original.norm.len() < MIN_CANDIDATE_NORM_LEN || corrected.norm.len() < MIN_CANDIDATE_NORM_LEN
-    {
+    let a_len = original.norm.chars().count();
+    let b_len = corrected.norm.chars().count();
+    if a_len < MIN_CANDIDATE_NORM_LEN || b_len < MIN_CANDIDATE_NORM_LEN {
         return false;
     }
 
     let original_distinct = has_distinctive_features(&original.raw);
     let corrected_distinct = has_distinctive_features(&corrected.raw);
-    if original.norm.len().max(corrected.norm.len()) <= 3
+    if a_len.max(b_len) <= 3
         && !original_distinct
         && !corrected_distinct
     {
@@ -306,10 +299,10 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
         return false;
     }
 
-    is_spelling_correction(&original.norm, &corrected.norm)
-        || ((original_distinct || corrected_distinct)
-            && original.norm.len().max(corrected.norm.len()) >= 4
-            && edit_distance(&original.norm, &corrected.norm) <= 3)
+    let max_len = a_len.max(b_len);
+    let dist = edit_distance(&original.norm, &corrected.norm);
+    dist <= 2_usize.max(max_len / 2)
+        || ((original_distinct || corrected_distinct) && max_len >= 4 && dist <= 3)
 }
 
 fn pair_hash(left: &str, right: &str) -> (String, String) {
@@ -340,7 +333,7 @@ fn candidate_confidence(
     replacements_len: usize,
 ) -> f64 {
     let distance = edit_distance(&original.norm, &corrected.norm) as f64;
-    let max_len = original.norm.len().max(corrected.norm.len()).max(1) as f64;
+    let max_len = original.norm.chars().count().max(corrected.norm.chars().count()).max(1) as f64;
     let ratio_score = 1.0 - (distance / max_len).min(1.0);
 
     let mut score = ratio_score * 0.55;
@@ -1090,6 +1083,7 @@ fn run_rejection_monitor(
         };
 
         let rejection_threshold = injected_text.chars().count() / 10;
+        let baseline_char_count = baseline_text.chars().count();
         let deadline =
             tokio::time::Instant::now() + std::time::Duration::from_secs(target.window_secs());
 
@@ -1112,7 +1106,7 @@ fn run_rejection_monitor(
                 // shrank — confirming deletion rather than a stale baseline.
                 None => {
                     !current.contains(injected_text.as_str())
-                        && current.len() < baseline_text.len()
+                        && current.chars().count() < baseline_char_count
                 }
             };
 
