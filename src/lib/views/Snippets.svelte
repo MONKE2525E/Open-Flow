@@ -422,7 +422,6 @@
           placeholder="e.g. hello@example.com"
           bind:value={draftExpansion}
           bind:this={expansionTextareaEl}
-          use:autoGrow
           rows="3"
           spellcheck="false"
         ></textarea>

@@ -89,11 +89,12 @@
   }
 
   async function addMapping() {
-    if (!addExe) return;
+    const rawExe = addExe || (appSearch.trim() ? appSearch.trim().toLowerCase().replace(/\.exe$/i, '') + '.exe' : '');
+    if (!rawExe) return;
     const entry = normalizeMapping({
-      exe: addExe,
+      exe: rawExe,
       profile: addProfile,
-      name: addName || appSearch || addExe,
+      name: addName || appSearch || rawExe,
     });
     await saveMappings([...mappings.filter((mapping) => mapping.exe !== entry.exe), entry]);
     addExe = '';
@@ -233,7 +234,7 @@
         </div>
       {:else if appPickerOpen && appSearch}
         <div class="app-picker-menu app-picker-empty" role="presentation">
-          <span>No matching apps found. Press Enter to map custom executable: <b>{appSearch.toLowerCase().replace(/\.exe$/i, '')}.exe</b></span>
+          <span>No matching apps found. Press Enter to map custom executable: <b>{appSearch.trim().toLowerCase().replace(/\.exe$/i, '')}.exe</b></span>
         </div>
       {/if}
     </div>
