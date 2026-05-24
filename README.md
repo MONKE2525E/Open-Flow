@@ -71,7 +71,7 @@ Open Flow is provider-agnostic — pick whichever service you trust, use the che
 | :--- | :--- | :--- | :--- | :--- |
 | **Groq** | `whisper-large-v3-turbo`| `llama-3.3-70b-versatile` | ~1.0s | Free tier available ⭐ |
 | **OpenAI** | `gpt-4o-transcribe` | `gpt-4o-mini` | ~1.0s | ~$0.01–0.03 per request |
-| **Google** | `gemini-2.5-flash` | `gemini-2.5-flash` | ~3-5s | Free tier (limited quota) |
+| **Google** | `gemini-3.5-flash` | `gemini-3.5-flash` | ~3-5s | Free tier (limited quota) |
 
 **Security:** API keys are stored locally using OS-level encryption (`tauri-plugin-store`). They're never written to the database, synced to the cloud, or logged anywhere.
 

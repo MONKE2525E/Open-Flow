@@ -1,31 +1,168 @@
-#[cfg(target_os = "windows")]
-unsafe fn read_clipboard_unicode() -> Option<Vec<u16>> {
-    use windows::Win32::System::DataExchange::{
-        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
-    };
-    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-    const CF_UNICODETEXT: u32 = 13;
+// How long a previous injection stays relevant for spacing and capitalisation decisions.
+// The keyboard hook resets this early whenever the user types, so the timeout is mainly
+// a safety net for inactivity (e.g. the user idle for a minute then dictates again).
+const INJECTION_STALE: Duration = Duration::from_secs(60);
 
-    if IsClipboardFormatAvailable(CF_UNICODETEXT).is_ok() && OpenClipboard(None).is_ok() {
-        let saved = GetClipboardData(CF_UNICODETEXT).ok().and_then(|h| {
-            let ptr = GlobalLock(windows::Win32::Foundation::HGLOBAL(h.0)) as *const u16;
-            if ptr.is_null() {
-                return None;
-            }
-            let mut len = 0usize;
-            while *ptr.add(len) != 0 {
-                len += 1;
-            }
-            let v = std::slice::from_raw_parts(ptr, len + 1).to_vec();
-            let _ = GlobalUnlock(windows::Win32::Foundation::HGLOBAL(h.0));
-            Some(v)
-        });
-        CloseClipboard().ok();
-        saved
-    } else {
-        None
+// Maximum bytes stored for backspace-tracking. Covers any practical editing sequence
+// while keeping the per-injection allocation bounded.
+const HISTORY_TAIL: usize = 512;
+
+static LAST_INJECTION: OnceLock<Mutex<Option<(usize, String, Instant)>>> = OnceLock::new();
+
+fn last_injection() -> &'static Mutex<Option<(usize, String, Instant)>> {
+    LAST_INJECTION.get_or_init(|| Mutex::new(None))
+}
+
+/// Full reset — called on Enter, character keys, arrows, etc. The cursor context
+/// is unknown after such input, so the next injection starts fresh.
+pub fn reset_injection_history() {
+    if let Ok(mut guard) = last_injection().lock() {
+        *guard = None;
     }
+}
+
+/// Called on Backspace. Pops the last character off the tracked text so the
+/// next injection still knows what's immediately before the cursor after the
+/// deletion. Clears the record entirely once the tracked text empties.
+pub fn backspace_injection_history() {
+    if let Ok(mut guard) = last_injection().lock() {
+        let empty = if let Some((_, ref mut text, ref mut time)) = *guard {
+            text.pop();
+            *time = Instant::now();
+            text.is_empty()
+        } else {
+            false
+        };
+        if empty {
+            *guard = None;
+        }
+    }
+}
+
+/// Called on a printable character keypress. If the foreground window matches
+/// the injection record, appends `ch` to the tracked tail and refreshes the
+/// timestamp. Otherwise clears the record — the cursor context is unknown.
+pub fn append_or_reset_injection_history(hwnd: usize, ch: char) {
+    if let Ok(mut guard) = last_injection().lock() {
+        let keep = if let Some((stored_hwnd, ref mut text, ref mut time)) = *guard {
+            if stored_hwnd == hwnd {
+                text.push(ch);
+                if text.len() > HISTORY_TAIL {
+                    let excess = text.len() - HISTORY_TAIL;
+                    let mut trim_at = excess;
+                    while !text.is_char_boundary(trim_at) { trim_at += 1; }
+                    *text = text[trim_at..].to_owned();
+                }
+                *time = Instant::now();
+                true
+            } else { false }
+        } else { false };
+        if !keep { *guard = None; }
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct SavedClipboard {
+    entries: Vec<(u32, Vec<u8>)>,
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn save_clipboard_all() -> SavedClipboard {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EnumClipboardFormats, GetClipboardData, OpenClipboard,
+    };
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+
+    // GDI object formats — GetClipboardData returns an opaque GDI handle for these,
+    // not an HGLOBAL, so GlobalSize/GlobalLock are undefined on them.
+    const CF_BITMAP: u32 = 2;
+    const CF_METAFILEPICT: u32 = 3;
+    const CF_PALETTE: u32 = 9;
+    const CF_ENHMETAFILE: u32 = 14;
+
+    // Per-format cap: skip anything larger than 32 MB to stay within the 200 MB
+    // RAM budget. Typical screenshots are 2–8 MB as CF_DIB; 32 MB is generous.
+    const MAX_FORMAT_BYTES: usize = 32 * 1024 * 1024;
+
+    let mut entries = Vec::new();
+
+    let opened = (0..3).any(|i| {
+        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(50)); }
+        OpenClipboard(None).is_ok()
+    });
+    if !opened {
+        return SavedClipboard { entries };
+    }
+
+    let mut fmt = 0u32;
+    loop {
+        fmt = EnumClipboardFormats(fmt);
+        if fmt == 0 {
+            break;
+        }
+        if matches!(fmt, CF_BITMAP | CF_METAFILEPICT | CF_PALETTE | CF_ENHMETAFILE) {
+            continue;
+        }
+        if let Ok(h) = GetClipboardData(fmt) {
+            let hg = HGLOBAL(h.0);
+            let size = GlobalSize(hg);
+            if size > 0 && size <= MAX_FORMAT_BYTES {
+                let ptr = GlobalLock(hg) as *const u8;
+                if !ptr.is_null() {
+                    let data = std::slice::from_raw_parts(ptr, size).to_vec();
+                    let _ = GlobalUnlock(hg);
+                    entries.push((fmt, data));
+                }
+            }
+        }
+    }
+
+    CloseClipboard().ok();
+    SavedClipboard { entries }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
+    use windows::Win32::Foundation::{GlobalFree, HANDLE};
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+
+    if saved.entries.is_empty() {
+        return;
+    }
+
+    let opened = (0..3).any(|i| {
+        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(50)); }
+        OpenClipboard(None).is_ok()
+    });
+    if !opened {
+        return;
+    }
+
+    EmptyClipboard().ok();
+
+    for (fmt, data) in &saved.entries {
+        if let Ok(hg) = GlobalAlloc(GMEM_MOVEABLE, data.len()) {
+            let ptr = GlobalLock(hg) as *mut u8;
+            if ptr.is_null() {
+                let _ = GlobalFree(Some(hg));
+                continue;
+            }
+            std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+            let _ = GlobalUnlock(hg);
+            if SetClipboardData(*fmt, Some(HANDLE(hg.0))).is_err() {
+                let _ = GlobalFree(Some(hg));
+            }
+        }
+    }
+
+    CloseClipboard().ok();
 }
 
 #[cfg(target_os = "windows")]
@@ -53,23 +190,26 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
     }
 }
 
+
 pub async fn inject_text(
     text: &str,
     target_hwnd: usize,
     contextual_caps: bool,
+    auto_spacing: bool,
 ) -> anyhow::Result<String> {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::Input::KeyboardAndMouse::{
             SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-            KEYEVENTF_KEYUP, VK_C, VK_CONTROL, VK_LEFT, VK_LMENU, VK_RIGHT, VK_SHIFT, VK_V,
+            KEYEVENTF_KEYUP, VK_CONTROL, VK_LMENU, VK_V,
         };
         use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
 
         unsafe {
-            // Save existing clipboard
-            let saved: Option<Vec<u16>> = read_clipboard_unicode();
+            // Save all clipboard formats so non-text content (images, files, etc.)
+            // survives the injection and is restored afterward.
+            let saved = save_clipboard_all();
 
             // Restore focus to the window the user was dictating into.
             // The user may have switched windows during the transcription/cleanup
@@ -94,61 +234,64 @@ pub async fn inject_text(
                 },
             };
 
-            // Look-back: peek at the character immediately before the cursor.
-            // If it's a non-sentence-ending character, the injection is mid-sentence
-            // and the first character should be lowercase.
-            let adjusted: String = if contextual_caps {
-                // Shift+Left selects one character to the left.
-                let sel = [
-                    ki(VK_SHIFT, 0),
-                    ki(VK_LEFT, 0),
-                    ki(VK_LEFT, KEYEVENTF_KEYUP.0),
-                    ki(VK_SHIFT, KEYEVENTF_KEYUP.0),
-                ];
-                SendInput(&sel, std::mem::size_of::<INPUT>() as i32);
-
-                // Ctrl+C copies the selection.
-                let copy = [
-                    ki(VK_CONTROL, 0),
-                    ki(VK_C, 0),
-                    ki(VK_C, KEYEVENTF_KEYUP.0),
-                    ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
-                ];
-                SendInput(&copy, std::mem::size_of::<INPUT>() as i32);
-                tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
-
-                // Read the peeked character from the clipboard.
-                let peeked: Option<char> = read_clipboard_unicode().and_then(|v| {
-                    if v.is_empty() || v[0] == 0 {
-                        None
-                    } else {
-                        char::from_u32(v[0] as u32)
+            // Retrieve up to 3 characters immediately before the cursor from the
+            // injection history tail. History is cleared whenever the user types,
+            // moves the cursor, or switches windows — so when it's absent the context
+            // is genuinely unknown and we default to capitalising (safe for new fields).
+            let context: String = if contextual_caps || auto_spacing {
+                match last_injection().lock() {
+                    Ok(guard) => (*guard)
+                        .as_ref()
+                        .filter(|(hwnd, _, instant)| {
+                            *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE
+                        })
+                        .map(|(_, text, _)| text.clone())
+                        .unwrap_or_default(),
+                    Err(_) => {
+                        log::error!("injection history mutex poisoned");
+                        String::new()
                     }
-                });
+                }
+            } else {
+                String::new()
+            };
 
-                // Right arrow collapses the selection and restores the cursor position.
-                let desel = [ki(VK_RIGHT, 0), ki(VK_RIGHT, KEYEVENTF_KEYUP.0)];
-                SendInput(&desel, std::mem::size_of::<INPUT>() as i32);
+            // Strip trailing whitespace from context to find the last meaningful char.
+            // "Hello. " → trimmed = "Hello." → last = '.' → capitalize (new sentence).
+            // "Hello"   → trimmed = "Hello"  → last = 'o' → lowercase (mid-sentence).
+            // ""        → no prior context              → capitalize (new/empty field).
+            let sentence_enders: &[char] = &['.', '!', '?', '\n', '\r'];
+            let trimmed_ctx = context.trim_end_matches(|c: char| c.is_whitespace() && !sentence_enders.contains(&c));
+            let should_capitalize = trimmed_ctx.is_empty()
+                || trimmed_ctx
+                    .chars()
+                    .next_back()
+                    .map(|c| sentence_enders.contains(&c))
+                    .unwrap_or(true);
 
-                // Lowercase the first character of the injection when the cursor is
-                // mid-sentence (preceded by anything other than a sentence-ending mark).
-                let sentence_enders: &[char] = &['.', '!', '?', '\n', '\r'];
-                let should_lower = peeked
-                    .map(|c| !sentence_enders.contains(&c))
-                    .unwrap_or(false);
-
-                if should_lower {
+            let mut adjusted = if contextual_caps {
+                if should_capitalize {
+                    text.to_owned()
+                } else {
                     let mut chars = text.chars();
                     match chars.next() {
                         Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
                         None => text.to_owned(),
                     }
-                } else {
-                    text.to_owned()
                 }
             } else {
                 text.to_owned()
             };
+
+            // Add a space only when the cursor sits immediately after a non-whitespace
+            // character. Empty context (new field) or trailing whitespace → no space.
+            if auto_spacing {
+                if let Some(c) = context.chars().next_back() {
+                    if !c.is_whitespace() && !adjusted.starts_with(char::is_whitespace) {
+                        adjusted = format!(" {adjusted}");
+                    }
+                }
+            }
 
             let text_to_inject = adjusted.as_str();
 
@@ -203,12 +346,28 @@ pub async fn inject_text(
             SendInput(&paste, std::mem::size_of::<INPUT>() as i32);
             tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
 
-            // Restore clipboard
-            if let Some(saved_wide) = saved {
-                let _ = write_clipboard_unicode(&saved_wide);
+            // Restore all previously saved clipboard formats.
+            restore_clipboard_all(&saved);
+
+            // Record a tail of the injected text so the keyboard hook can pop
+            // characters off it on Backspace, keeping the context accurate after
+            // editing. Only the last HISTORY_TAIL bytes are kept to bound memory use.
+            if target_hwnd != 0 && !adjusted.is_empty() {
+                if let Ok(mut guard) = last_injection().lock() {
+                    let tail = if adjusted.len() > HISTORY_TAIL {
+                        let mut start = adjusted.len() - HISTORY_TAIL;
+                        while !adjusted.is_char_boundary(start) {
+                            start += 1;
+                        }
+                        adjusted[start..].to_owned()
+                    } else {
+                        adjusted.clone()
+                    };
+                    *guard = Some((target_hwnd, tail, Instant::now()));
+                }
             }
 
-            Ok(text_to_inject.to_string())
+            Ok(adjusted)
         }
     }
 

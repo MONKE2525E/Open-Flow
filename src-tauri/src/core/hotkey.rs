@@ -1,4 +1,21 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+
+const VK_BACK: u32 = 0x08;    // Backspace
+const VK_ESCAPE: u32 = 0x1B;  // Escape
+const VK_CTRL: u32 = 0x11;    // VK_CONTROL (generic, used with modifier_held)
+const VK_ALT: u32 = 0x12;     // VK_MENU (generic, used with modifier_held)
+
+// Side-specific modifier VK codes that should never trigger a history update.
+// Generic codes (0x10/0x11/0x12) are omitted: the !is_injected guard already
+// filters all synthetic input where those codes appear, so only side-specific
+// codes reach this path from real physical key presses.
+static MODIFIER_VKS: &[u32] = &[
+    0xA0, 0xA1,       // VK_LSHIFT, VK_RSHIFT
+    0xA2, 0xA3,       // VK_LCONTROL, VK_RCONTROL
+    0xA4, 0xA5,       // VK_LMENU, VK_RMENU
+    0x5B, 0x5C,       // VK_LWIN, VK_RWIN
+    0x14, 0x90, 0x91, // VK_CAPITAL, VK_NUMLOCK, VK_SCROLL
+];
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -6,8 +23,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOD_SHIFT, MOD_WIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, HC_ACTION,
-    KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, SetWindowsHookExW,
+    TranslateMessage, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL,
+    WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 // Returns true if the given specific-side VK (or its mirror) is currently held.
@@ -33,6 +51,43 @@ fn vk_matches(vk: u32, key: u32) -> bool {
         164 | 165 => vk == 164 || vk == 165,
         91 | 92 => vk == 91 || vk == 92,
         _ => vk == key,
+    }
+}
+
+fn is_cursor_movement_key(vk: u32) -> bool {
+    matches!(vk,
+        0x21..=0x28 | // PgUp, PgDn, End, Home, Left, Up, Right, Down
+        0x2D |        // Insert
+        0x2E          // Delete (forward)
+    )
+}
+
+/// Maps a VK code to the character it produces (US QWERTY layout).
+/// Letters are always returned lowercase — case doesn't affect sentence-ender
+/// or whitespace checks downstream. Returns None for keys with no stable
+/// printable character (numpad, function keys, etc.); those reset history.
+fn vk_to_char(vk: u32, shift: bool) -> Option<char> {
+    match vk {
+        0x0D => Some('\n'),
+        0x20 => Some(' '),
+        0x30..=0x39 => {
+            if shift && vk == 0x31 { Some('!') } else { char::from_digit(vk - 0x30, 10) }
+        }
+        0x60..=0x69 => char::from_digit(vk - 0x60, 10),
+        0x41..=0x5A => Some((b'a' + (vk as u8 - 0x41)) as char),
+        0xBA => Some(if shift { ':' } else { ';' }),
+        0xBB => Some(if shift { '+' } else { '=' }),
+        0xBC => Some(if shift { '<' } else { ',' }),
+        0xBD => Some(if shift { '_' } else { '-' }),
+        0xBE => Some(if shift { '>' } else { '.' }),
+        0xBF => Some(if shift { '?' } else { '/' }),
+        0xC0 => Some(if shift { '~' } else { '`' }),
+        0xDB => Some(if shift { '{' } else { '[' }),
+        0xDC => Some(if shift { '|' } else { '\\' }),
+        0xDD => Some(if shift { '}' } else { ']' }),
+        0xDE => Some(if shift { '"' } else { '\'' }),
+        0x6E => Some('.'),
+        _ => None,
     }
 }
 
@@ -89,6 +144,10 @@ pub fn reset_chord_state() {
     CHORD_PENDING.store(false, Ordering::SeqCst);
     CHORD_PENDING_END_MS.store(0, Ordering::SeqCst);
     CHORD_FIRST_DOWN_MS.store(0, Ordering::SeqCst);
+}
+
+pub fn set_handless_active(v: bool) {
+    HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
 }
 
 pub fn map_code_to_vk(code: &str) -> u32 {
@@ -164,6 +223,10 @@ static HANDLESS_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync
 static CANCEL_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 
 static CHORD_DOWN: AtomicBool = AtomicBool::new(false);
+static HANDLESS_ACTIVE: AtomicBool = AtomicBool::new(false);
+static ESCAPE_CANCELLED: AtomicBool = AtomicBool::new(false);
+static ESCAPE_KEY_DOWN: AtomicBool = AtomicBool::new(false);
+static ESCAPE_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 static KEY1_WAS_CHORD: AtomicBool = AtomicBool::new(false);
 // Set whenever key2 is captured as part of our chord. Guarantees key2-up is
 // suppressed even if key1 goes up first and clears CHORD_DOWN before key2 does.
@@ -228,6 +291,9 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             // and triggers the Start menu / Win shortcuts.
             let key2_was_chord = KEY2_WAS_CHORD.swap(false, Ordering::SeqCst);
             if CHORD_DOWN.swap(false, Ordering::SeqCst) {
+                if ESCAPE_CANCELLED.swap(false, Ordering::SeqCst) {
+                    return LRESULT(1);
+                }
                 let now = GetTickCount64();
                 let t0 = CHORD_FIRST_DOWN_MS.load(Ordering::SeqCst);
                 let held_ms = now.saturating_sub(t0);
@@ -280,7 +346,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);
             }
 
-            if CHORD_DOWN.swap(false, Ordering::SeqCst) {
+            if CHORD_DOWN.swap(false, Ordering::SeqCst) && !ESCAPE_CANCELLED.swap(false, Ordering::SeqCst) {
                 if let Some(cb) = RELEASE_CB.get() {
                     cb();
                 }
@@ -292,27 +358,77 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 }
             }
         }
+
+        if vk == VK_ESCAPE {
+            if is_down && (CHORD_DOWN.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst)) {
+                if CHORD_DOWN.load(Ordering::SeqCst) {
+                    ESCAPE_CANCELLED.store(true, Ordering::SeqCst);
+                }
+                ESCAPE_KEY_DOWN.store(true, Ordering::SeqCst);
+                if let Some(cb) = ESCAPE_CB.get() {
+                    cb();
+                }
+                return LRESULT(1);
+            }
+            if is_up && ESCAPE_KEY_DOWN.swap(false, Ordering::SeqCst) {
+                return LRESULT(1);
+            }
+        }
+
+        // Update injection history for real user keystrokes only.
+        // Synthetic events (LLKHF_INJECTED) are skipped — this prevents our own
+        // Ctrl+V paste and any app-generated keyboard events from corrupting the
+        // context tracking that drives auto-spacing and contextual capitalisation.
+        let is_injected = (kb.flags.0 & LLKHF_INJECTED.0) != 0;
+        if !is_injected && is_down && !MODIFIER_VKS.contains(&vk) {
+            if vk == VK_BACK {
+                // Ctrl+Backspace and Alt+Backspace both delete a whole word —
+                // unknown char count, so reset entirely. Plain Backspace pops
+                // just the last character to keep context accurate.
+                if unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) } {
+                    crate::core::injection::reset_injection_history();
+                } else {
+                    crate::core::injection::backspace_injection_history();
+                }
+            } else if is_cursor_movement_key(vk) {
+                crate::core::injection::reset_injection_history();
+            } else if unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) } {
+                // Keyboard shortcut (Ctrl+Z, Ctrl+A, etc.) — context unknown.
+                crate::core::injection::reset_injection_history();
+            } else {
+                let shift = unsafe { modifier_held(0xA0) }; // VK_LSHIFT → checks VK_SHIFT
+                if let Some(ch) = vk_to_char(vk, shift) {
+                    let hwnd = unsafe { GetForegroundWindow().0 as usize };
+                    crate::core::injection::append_or_reset_injection_history(hwnd, ch);
+                } else {
+                    crate::core::injection::reset_injection_history();
+                }
+            }
+        }
     }
 
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-pub fn start<P, R, H, C>(
+pub fn start<P, R, H, C, E>(
     on_press: P,
     on_release: R,
     on_handless: H,
     on_cancel: C,
+    on_escape: E,
 ) -> Result<std::thread::JoinHandle<()>, String>
 where
     P: Fn() + Send + Sync + 'static,
     R: Fn() + Send + Sync + 'static,
     H: Fn() + Send + Sync + 'static,
     C: Fn() + Send + Sync + 'static,
+    E: Fn() + Send + Sync + 'static,
 {
     let _ = PRESS_CB.set(Box::new(on_press));
     let _ = RELEASE_CB.set(Box::new(on_release));
     let _ = HANDLESS_CB.set(Box::new(on_handless));
     let _ = CANCEL_CB.set(Box::new(on_cancel));
+    let _ = ESCAPE_CB.set(Box::new(on_escape));
 
     // Verify the hook can be installed before spawning the thread so the caller
     // gets a synchronous error instead of a silent panic on a background thread.

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { tick } from 'svelte';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
@@ -12,14 +11,20 @@
     transcriptionLanguages,
     type TranscriptionLanguageCode,
   } from '../../transcriptionLanguages';
+  import { getAudioCalibrationCopy } from '../../calibrationCopy';
 
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   let languageDropdownOpen = $state(false);
   let languageTouched = false;
+  let microphones = $state<string[]>([]);
+  let selectedMic = $state('');
+  let micDropdownOpen = $state(false);
+  const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
   let muteAudio = $state(false);
   let autostart = $state(false);
   let cleanup = $state(true);
   let contextualCaps = $state(true);
+  let autoSpacing = $state(true);
   let hotkey = $state(['ControlLeft', 'MetaLeft']);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
@@ -88,6 +93,9 @@
       invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
+      invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
+      invoke<string[]>('get_microphones'),
+      invoke<string | null>('get_setting', { key: 'microphone_device' }),
     ]);
 
     const val = <T>(i: number, fallback: T): T =>
@@ -97,6 +105,7 @@
     autostart = val<boolean | null>(1, null) ?? false;
     cleanup = val<boolean | null>(5, null) ?? true;
     contextualCaps = val<boolean | null>(6, null) ?? true;
+    autoSpacing = val<boolean | null>(7, null) ?? true;
 
     const hk = val<string[] | null>(2, null);
     if (hk && hk.length === 2) hotkey = hk;
@@ -111,20 +120,36 @@
       selectedLanguage = language;
     }
 
+    microphones = val<string[]>(8, []);
+    selectedMic = val<string | null>(9, null) ?? '';
+
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
     });
   }
 
-  function closeLanguageDropdown(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest('.language-dropdown')) languageDropdownOpen = false;
+  function handleWindowClick(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    if (micDropdownOpen && !target.closest('.mic-dropdown')) micDropdownOpen = false;
+    if (languageDropdownOpen && !target.closest('.language-dropdown')) languageDropdownOpen = false;
   }
 
-  $effect(() => {
-    if (languageDropdownOpen) {
-      tick().then(() => window.addEventListener('click', closeLanguageDropdown, { once: true }));
+  function handleWindowKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      micDropdownOpen = false;
+      languageDropdownOpen = false;
     }
-  });
+  }
+
+  async function saveMic(name: string) {
+    selectedMic = name;
+    micDropdownOpen = false;
+    try {
+      await saveSetting('microphone_device', name || null);
+    } catch (err) {
+      console.error('saveMic failed:', err);
+    }
+  }
 
   async function saveLanguage(code: TranscriptionLanguageCode) {
     languageTouched = true;
@@ -176,6 +201,17 @@
       console.error('save contextual_caps_enabled failed:', err);
     }
   }
+
+  async function handleAutoSpacing(value: boolean) {
+    autoSpacing = value;
+    try {
+      await saveSetting('auto_spacing_enabled', value);
+    } catch (err) {
+      autoSpacing = !value;
+      console.error('save auto_spacing_enabled failed:', err);
+    }
+  }
+
 
   async function handleAppearance(mode: AppearanceMode) {
     const previous = $appearanceMode;
@@ -285,6 +321,7 @@
 
   loadSettings();
 </script>
+<svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
 
 <h2 class="settings-h">General</h2>
 <div class="setting-row">
@@ -337,6 +374,42 @@
   </div>
 </div>
 <div class="setting-row">
+  <div>
+    <div class="label">{audioCopy.inputDeviceLabel}</div>
+    <div class="desc">{audioCopy.inputDeviceDescription}</div>
+  </div>
+  <div class="mic-dropdown">
+    <button
+      class="btn-ghost mic-btn"
+      use:animateWidth={{ text: selectedMic || audioCopy.defaultDevice, max: 180 }}
+      onclick={() => (micDropdownOpen = !micDropdownOpen)}
+    >
+      <span class="mic-btn-label">{selectedMic || audioCopy.defaultDevice}</span>
+      <svg class:open={micDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m6 9 6 6 6-6"/>
+      </svg>
+    </button>
+    {#if micDropdownOpen}
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div
+        class="mic-menu scroll-styled scroll-thumb-elev"
+        role="presentation"
+        onclick={(e) => e.stopPropagation()}
+        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+      >
+        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{audioCopy.defaultDevice}</button>
+        {#each microphones as m}
+          <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>{m}</button>
+        {/each}
+        {#if microphones.length === 0}
+          <div class="mic-empty">{audioCopy.noDevicesFound}</div>
+        {/if}
+      </div>
+    {/if}
+  </div>
+</div>
+<div class="setting-row">
   <div><div class="label">Mute PC Audio</div><div class="desc">Mutes Windows volume while dictating to prevent audio interference</div></div>
   <Toggle checked={muteAudio} onchange={handleMuteAudio} />
 </div>
@@ -369,6 +442,10 @@
   <div><div class="label">Contextual capitalization</div><div class="desc">Lowercases the first word when injecting mid-sentence</div></div>
   <Toggle checked={contextualCaps} onchange={handleContextualCaps} />
 </div>
+<div class="setting-row">
+  <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
+  <Toggle checked={autoSpacing} onchange={handleAutoSpacing} />
+</div>
 
 <style>
   .keybind-btn {
@@ -395,6 +472,65 @@
   .keybind-btn.success { background: color-mix(in srgb, var(--accent) 82%, white 18%); color: var(--on-accent); transform: scale(1.03); }
   .keybind-btn.error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); animation: none; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+  .mic-dropdown { position: relative; flex-shrink: 0; }
+  .mic-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--r-md);
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 500;
+    max-width: 180px;
+  }
+  .mic-btn svg { transition: transform 0.2s; }
+  .mic-btn svg.open { transform: rotate(180deg); }
+  .mic-btn-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    text-align: left;
+  }
+  .mic-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    width: 220px;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--bg-elev);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-md);
+    box-shadow: 0 4px 16px var(--shadow-md);
+    z-index: 10;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .mic-item {
+    width: 100%;
+    text-align: left;
+    padding: 6px 10px;
+    border-radius: var(--r-sm);
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mic-item:hover { background: var(--paper-2); color: var(--ink); }
+  .mic-item.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
+  .mic-empty { padding: 8px 10px; font-size: 12px; color: var(--ink-mute); text-align: center; }
   .language-dropdown { position: relative; flex-shrink: 0; }
   .language-btn { max-width: 210px; }
   .language-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }

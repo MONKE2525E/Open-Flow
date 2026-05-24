@@ -53,6 +53,7 @@ fn main() {
         session: None,
         handless: false,
         target_hwnd: 0,
+        retry_capture: None,
     }));
 
     let db_dir = std::env::var("APPDATA")
@@ -80,6 +81,7 @@ fn main() {
                 tauri_plugin_store::StoreExt::store(app.handle(), "settings.json")
             {
                 let _ = store.reload();
+                crate::data::credentials::migrate_from_store(&store);
                 if let Some(val) = store.get("hotkey") {
                     if let Some(arr) = val.as_array() {
                         if arr.len() == 2 {
@@ -165,6 +167,7 @@ fn main() {
             commands::remove_dictionary_entry,
             commands::get_auto_learn_status_summary,
             commands::get_recent_auto_learn_activity,
+            commands::retry_transcription,
             commands::check_for_update,
             commands::install_update,
             commands::check_connectivity,
@@ -377,12 +380,14 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
         Release,
         HandlessToggle,
         Cancel,
+        EscapeCancel,
     }
 
     let (hotkey_tx, mut hotkey_rx) = tokio::sync::mpsc::channel::<HotkeyEvent>(8);
     let tx_press = hotkey_tx.clone();
     let tx_handless = hotkey_tx.clone();
     let tx_cancel = hotkey_tx.clone();
+    let tx_escape = hotkey_tx.clone();
     let tx_release = hotkey_tx;
 
     match core::hotkey::start(
@@ -397,6 +402,9 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
         },
         move || {
             let _ = tx_cancel.try_send(HotkeyEvent::Cancel);
+        },
+        move || {
+            let _ = tx_escape.try_send(HotkeyEvent::EscapeCancel);
         },
     ) {
         Ok(_handle) => { /* hook thread running */ }
@@ -460,6 +468,7 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         (st.handless, st.session.is_some())
                     };
                     if is_handless {
+                        core::hotkey::set_handless_active(false);
                         if let Some(mut st) = lock_app_state(&state_hk) {
                             st.handless = false;
                         }
@@ -473,6 +482,7 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             st.target_hwnd = hwnd;
                         }
                         start_recording_session(&app_hk, &state_hk, "handsfree", true);
+                        core::hotkey::set_handless_active(true);
                     }
                 }
 
@@ -484,6 +494,7 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         // Quick tap while in handsfree = stop. Clear chord state
                         // immediately so the still-open double-tap window can't
                         // re-trigger a fresh handsfree session.
+                        core::hotkey::set_handless_active(false);
                         core::hotkey::reset_chord_state();
                         if let Some(mut st) = lock_app_state(&state_hk) {
                             st.handless = false;
@@ -503,6 +514,24 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         }
                         hide_pill(&app_hk);
                     }
+                }
+
+                HotkeyEvent::EscapeCancel => {
+                    core::hotkey::set_handless_active(false);
+                    let session = {
+                        let Some(mut st) = lock_app_state(&state_hk) else {
+                            continue;
+                        };
+                        st.handless = false;
+                        st.session.take()
+                    };
+                    if let Some(s) = session {
+                        std::thread::spawn(move || {
+                            let _ = s.stop();
+                        });
+                        std::thread::spawn(crate::system::volume::unmute);
+                    }
+                    hide_pill(&app_hk);
                 }
             }
         }

@@ -4,8 +4,8 @@
 - Github Repo: https://github.com/MONKE2525E/Open-Flow
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
 - docs/ROADMAP.md keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
-- currently working towards OpenFlow 0.10.0.
-- Always add yourself as a co-author  in all commits you make e.g @Claude, @Codex, etc
+- currently working towards OpenFlow 0.11.0.
+- Always add yourself as a co-author  in all commits you make e.g @Claude, @Codex, etc but dont add a note at the bottom of the PR description
 
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -177,13 +177,13 @@ WAL mode is enabled. Migrations use `execute_batch` wrapped in explicit `BEGIN/C
 |---|---|---|
 | Groq | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` |
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
-| Google | `gemini-2.5-flash` (inline audio) | `gemini-2.5-flash` |
+| Google | `gemini-3.5-flash` (inline audio) | `gemini-3.5-flash` |
 
 Groq is the recommended default — free tier, fast LPU inference. Google uses base64-encoded audio in the request body; Groq/OpenAI use multipart form upload. The cleanup API wraps transcription text in `<raw_dictation>` XML delimiters before sending. Google cleanup sets `thinking_budget: 0` to disable deep thinking.
 
 The `transcription_language` setting (ISO 639-1 code, default `en`) is passed to Groq/OpenAI as a `language` form field, and to Gemini as a natural-language label in the prompt (resolved via `transcription_language_label()` in `store.rs`). The supported language list lives in `src/lib/transcriptionLanguages.ts` (frontend) and is validated by `is_supported_transcription_language()` (Rust).
 
-**API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to a secondary provider when `api_fallback_enabled` is true. Fallback chains: groq→[openai, google], openai→[groq, google], google→[groq, openai]. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately.
+**API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to any configured fallback models. Fallback models are configured per task (transcription/cleanup) in the Models settings tab and stored as `transcription_fallback_models` / `cleanup_fallback_models` arrays. Fallback is implicit — if fallback models are configured, they are always tried in order. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately.
 
 ## Global Hotkey Behavior
 

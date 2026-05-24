@@ -61,7 +61,7 @@
   let visible = true;
 
   // ── Quick Settings (step 6) ───────────────────────────────────────────────
-  let quickPrefs = { cleanup: true, noise: true, caps: true, autoLearn: false, autostart: false, muteAudio: false, apiFallback: false };
+  let quickPrefs = { cleanup: true, noise: true, caps: true, autoLearn: false, autostart: false, muteAudio: false };
   let quickSettingsReady = false;
   let selectedLanguage = 'en' as TranscriptionLanguageCode;
   let setupCalibrationCopy = getSetupCalibrationCopy(selectedLanguage);
@@ -221,7 +221,6 @@
       await saveSetting('contextual_caps_enabled', quickPrefs.caps);
       await saveSetting('auto_learn_enabled', quickPrefs.autoLearn);
       await saveSetting('mute_audio', quickPrefs.muteAudio);
-      await saveSetting('api_fallback_enabled', quickPrefs.apiFallback);
       if (quickPrefs.autostart) await invoke('set_autostart', { enabled: true });
       await saveSetting('setup_complete', true);
     } catch {}
@@ -709,16 +708,6 @@
                 <div class="qs-toggle" class:on={quickPrefs.muteAudio} role="switch" aria-checked={quickPrefs.muteAudio} tabindex="0"
                   onclick={() => { quickPrefs = { ...quickPrefs, muteAudio: !quickPrefs.muteAudio }; }}
                   onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, muteAudio: !quickPrefs.muteAudio })}
-                ></div>
-              </div>
-              <div class="qs-toggle-row">
-                <div>
-                  <div class="qs-toggle-label">Auto-retry on quota errors</div>
-                  <div class="qs-toggle-desc">Switch to another provider if the primary hits its limit</div>
-                </div>
-                <div class="qs-toggle" class:on={quickPrefs.apiFallback} role="switch" aria-checked={quickPrefs.apiFallback} tabindex="0"
-                  onclick={() => { quickPrefs = { ...quickPrefs, apiFallback: !quickPrefs.apiFallback }; }}
-                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, apiFallback: !quickPrefs.apiFallback })}
                 ></div>
               </div>
             </div>

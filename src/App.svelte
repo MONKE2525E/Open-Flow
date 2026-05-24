@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentPage, settingsOpen, appearanceMode, setupComplete } from './lib/stores';
+  import { currentPage, settingsOpen, appearanceMode, setupComplete, isOnline } from './lib/stores';
   import TitleBar from './lib/components/layout/TitleBar.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
@@ -10,6 +10,7 @@
   import Settings from './lib/views/Settings.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
+  import { invoke } from '@tauri-apps/api/core';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx } from './lib/motion';
@@ -46,12 +47,20 @@
     prevPage = next;
   });
 
+  async function pingConnectivity() {
+    try {
+      const online = await invoke<boolean>('check_connectivity');
+      isOnline.set(online);
+    } catch {
+      isOnline.set(false);
+    }
+  }
+
   onMount(() => {
     let cleanupFn: (() => void) | undefined;
 
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
         const [done, appearance, forceSetupOnLaunch] = await Promise.all([
           invoke<boolean | null>('get_setting', { key: 'setup_complete' }),
           invoke<'system' | 'light' | 'dark' | null>('get_setting', { key: 'appearance_mode' }),
@@ -82,9 +91,22 @@
     };
     media?.addEventListener?.('change', onSystemThemeChange);
 
+    pingConnectivity();
+    let connectivityTimer = setInterval(pingConnectivity, 20_000);
+    const handleVisibility = () => {
+      clearInterval(connectivityTimer);
+      if (!document.hidden) {
+        pingConnectivity();
+        connectivityTimer = setInterval(pingConnectivity, 20_000);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
       if (cleanupFn) cleanupFn();
       media?.removeEventListener?.('change', onSystemThemeChange);
+      clearInterval(connectivityTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   });
 </script>
@@ -124,12 +146,18 @@
   <DictationPill />
 
   {#if errorToast}
-    <div class="error-toast" role="alert">
+    <div class="error-toast" role="alert" style:bottom={!$isOnline ? '66px' : '18px'}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
         <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
       </svg>
       <span>{errorToast}</span>
       <button class="toast-close" onclick={() => { errorToast = ''; clearTimeout(toastTimer); }}>✕</button>
+    </div>
+  {/if}
+  {#if !$isOnline}
+    <div class="offline-toast" role="status" transition:fly={{ y: 6, duration: 180, easing: expoOut }}>
+      <span class="offline-dot"></span>
+      No internet connection
     </div>
   {/if}
 </div>
@@ -289,6 +317,7 @@
     z-index: 20;
     max-width: 480px;
     animation: toastIn 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+    transition: bottom 0.15s ease;
   }
 
   @keyframes toastIn {
@@ -308,4 +337,39 @@
     line-height: 1;
   }
   .toast-close:hover { opacity: 1; }
+
+  .offline-toast {
+    position: absolute;
+    bottom: 18px;
+    left: 0;
+    right: 0;
+    margin-inline: auto;
+    width: fit-content;
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-line);
+    border-radius: 8px;
+    padding: 9px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--danger);
+    box-shadow: var(--shadow-popover);
+    z-index: 20;
+    max-width: 480px;
+  }
+
+  .offline-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+    animation: dot-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes dot-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.35; }
+  }
 </style>
