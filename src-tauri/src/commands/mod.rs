@@ -244,6 +244,14 @@ pub fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
     db::query_stats(&db).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn retry_transcription(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<db::RecentEntry, String> {
+    pipeline::retry_transcription_impl(&app, &state).await.map_err(|e| e.to_string())
+}
+
 #[cfg(target_os = "windows")]
 fn free_bytes_for_path(path: &std::path::Path) -> Result<u64, String> {
     use std::os::windows::ffi::OsStrExt;

@@ -104,11 +104,17 @@ pub fn get(provider: &str) -> String {
                     String::from_utf16_lossy(&utf16)
                 };
                 CredFree(p_cred as *const _);
+                log::debug!(
+                    "credentials: read ok provider={provider} key_len={}",
+                    pw.len()
+                );
                 pw
             }
             Err(e) => {
                 if e.code().0 != HRESULT_NOT_FOUND {
                     log::error!("Credential Manager read failed for {provider}: {e}");
+                } else {
+                    log::debug!("credentials: read miss provider={provider} (not found)");
                 }
                 String::new()
             }
