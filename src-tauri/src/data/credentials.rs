@@ -139,6 +139,10 @@ pub fn has(provider: &str) -> bool {
     }
 }
 
+pub fn delete(provider: &str) -> Result<(), String> {
+    set(provider, "")
+}
+
 /// One-shot migration: moves any plaintext API keys from settings.json into
 /// Windows Credential Manager, then sets a flag so it never runs again.
 pub fn migrate_from_store(store: &Store<Wry>) {

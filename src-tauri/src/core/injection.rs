@@ -9,6 +9,9 @@ const INJECTION_STALE: Duration = Duration::from_secs(60);
 // Maximum bytes stored for backspace-tracking. Covers any practical editing sequence
 // while keeping the per-injection allocation bounded.
 const HISTORY_TAIL: usize = 512;
+const DELAY_FOREGROUND_MS: u64 = 150;
+const DELAY_MODIFIER_CLEAR_MS: u64 = 30;
+const DELAY_POST_PASTE_MS: u64 = 80;
 
 static LAST_INJECTION: OnceLock<Mutex<Option<(usize, String, Instant)>>> = OnceLock::new();
 
@@ -218,7 +221,7 @@ pub async fn inject_text(
             // permission, so SetForegroundWindow succeeds from here.
             if target_hwnd != 0 {
                 let _ = SetForegroundWindow(HWND(target_hwnd as *mut core::ffi::c_void));
-                tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(DELAY_FOREGROUND_MS)).await;
             }
 
             let ki = |vk, flags: u32| INPUT {
@@ -334,7 +337,7 @@ pub async fn inject_text(
             // inject Ctrl+V.  Without this pause, some apps (browsers, IDEs) end
             // up processing V without Ctrl because the Alt-up and V-down land in
             // the same message-pump cycle.
-            tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(DELAY_MODIFIER_CLEAR_MS)).await;
 
             // Step 3 — clean Ctrl+V with no dangling modifiers.
             let paste = [
@@ -344,7 +347,7 @@ pub async fn inject_text(
                 ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
             ];
             SendInput(&paste, std::mem::size_of::<INPUT>() as i32);
-            tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(DELAY_POST_PASTE_MS)).await;
 
             // Restore all previously saved clipboard formats.
             restore_clipboard_all(&saved);

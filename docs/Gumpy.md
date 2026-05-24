@@ -20,7 +20,7 @@ Below is the initial health check and technical debt evaluation of the Open Flow
 
 ## 2. Refactoring PR Path (Focused PR Groups)
 
-We have organized the technical debt and usability audit into **10 focused Pull Request groups**. Each PR group contains actionable task chunks with context links, step-by-step implementation instructions, and verification plans.
+We have organized the technical debt and usability audit into **11 focused Pull Request groups**. Each PR group contains actionable task chunks with context links, step-by-step implementation instructions, and verification plans.
 
 ---
 
@@ -53,7 +53,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 ### [PR Group 2: UI - Performance, Animations & Frame Loops]
 *   **Goal**: Eliminate CPU cycles wasted on background animation frames and process scans during idle states.
 
-#### ✅ Task 2.1: Conditional `requestAnimationFrame` Loop in Pill HUD
+#### Task 2.1: Conditional `requestAnimationFrame` Loop in Pill HUD
 *   **Context**: [PillApp.svelte](file:///g:/Open%20Flow/src/PillApp.svelte#L103-L144).
 *   **Problem Statement**: On mount, the floating pill window starts a `requestAnimationFrame` loop to animate audio visualizer bars. This loop runs continuously even when the app is in the `'idle'` state (transparent and click-through), consuming unnecessary CPU and GPU resources.
 *   **Actionable Implementation Steps**:
@@ -137,7 +137,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 *   **Verification & Test Plan**:
     *   *Theme Audit*: Toggle the app between light and dark modes. Hover over the Cancel buttons in the calibration and setup screens, verifying that they show a clean background highlight.
 
-#### Task 4.3: Correcting Monospace Font Typography
+#### ✅ Task 4.3: Correcting Monospace Font Typography
 *   **Context**: [Style.svelte](file:///g:/Open%20Flow/src/lib/views/Style.svelte#L223-L232) ("New" tab badge), [Sidebar.svelte](file:///g:/Open%20Flow/src/lib/components/layout/Sidebar.svelte#L193-L203) ("Soon" lock tag), and [Settings.svelte](file:///g:/Open%20Flow/src/lib/views/Settings.svelte#L165-L172) (navigation labels and footer text).
 *   **Problem Statement**: Status badges ("New", "Soon"), Settings headers, and footer credits are styled with `font-family: var(--mono);` (JetBrains Mono). This violates the design system principle that reserves monospace typography *exclusively* for technical tokens (filenames, keycodes, database records, etc.).
 *   **Actionable Implementation Steps**:
@@ -151,7 +151,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 ### [PR Group 5: UI - Settings, Dictionary & Snippets UX Enhancements]
 *   **Goal**: Polish input configurations, remove text clipping, and improve navigation flows.
 
-#### Task 5.1: Scrollable Expansion Text inside Snippets Inspector
+#### ✅ Task 5.1: Scrollable Expansion Text inside Snippets Inspector
 *   **Context**: [Snippets.svelte](file:///g:/Open%20Flow/src/lib/views/Snippets.svelte#L308-L315).
 *   **Problem Statement**: The Snippets inspector truncates the template expansion preview text to 200 characters. Users cannot view long snippets without opening the Edit modal.
 *   **Actionable Implementation Steps**:
@@ -169,7 +169,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 *   **Verification & Test Plan**:
     *   *Key Cycle*: Save an API key, verify it displays as "Saved". Click the clear button, and confirm the field clears and the key is removed from the settings file.
 
-#### Task 5.3: UI Feedback for Custom Models Accordions and Null Free-Space Fallbacks
+#### ✅ Task 5.3: UI Feedback for Custom Models Accordions and Null Free-Space Fallbacks
 *   **Context**: [ModelsSection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/ModelsSection.svelte) and [PrivacySection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/PrivacySection.svelte).
 *   **Problem Statement**: Toggling "Custom models" does not open the model panels, hiding where to input names. Additionally, if the cache API returns a null value, the UI displays `0.0 GB free`, incorrectly suggesting the disk is full.
 *   **Actionable Implementation Steps**:
@@ -193,7 +193,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 ### [PR Group 6: UI - App Mappings & Memory Indicator Optimization]
 *   **Goal**: Improve performance of local resource polling and align design actions.
 
-#### Task 6.1: Active Memory Badge Range Colors & App mapping Button Styles
+#### ✅ Task 6.1: Active Memory Badge Range Colors & App mapping Button Styles
 *   **Context**: [Sidebar.svelte](file:///g:/Open%20Flow/src/lib/components/layout/Sidebar.svelte#L278-L290), [AppMappingsEditor.svelte](file:///g:/Open%20Flow/src/lib/components/AppMappingsEditor.svelte#L266), and [AppMappingsEditor.svelte](file:///g:/Open%20Flow/src/lib/components/AppMappingsEditor.svelte#L225).
 *   **Problem Statement**: The memory indicator bar in the sidebar uses the primary terracotta/orange accent color at all times, making normal memory usage look like a critical warning. In addition, the App Mappings "Add" button uses a secondary style, and the UI lacks feedback when app searches return empty.
 *   **Actionable Implementation Steps**:
