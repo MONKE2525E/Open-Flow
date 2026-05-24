@@ -103,14 +103,6 @@ impl StableTextGate {
     }
 }
 
-fn is_spelling_correction(a: &str, b: &str) -> bool {
-    let max_len = a.chars().count().max(b.chars().count());
-    if max_len == 0 {
-        return false;
-    }
-    edit_distance(a, b) <= 2_usize.max(max_len / 2)
-}
-
 fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
@@ -307,10 +299,10 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
         return false;
     }
 
-    is_spelling_correction(&original.norm, &corrected.norm)
-        || ((original_distinct || corrected_distinct)
-            && a_len.max(b_len) >= 4
-            && edit_distance(&original.norm, &corrected.norm) <= 3)
+    let max_len = a_len.max(b_len);
+    let dist = edit_distance(&original.norm, &corrected.norm);
+    dist <= 2_usize.max(max_len / 2)
+        || ((original_distinct || corrected_distinct) && max_len >= 4 && dist <= 3)
 }
 
 fn pair_hash(left: &str, right: &str) -> (String, String) {
@@ -1091,6 +1083,7 @@ fn run_rejection_monitor(
         };
 
         let rejection_threshold = injected_text.chars().count() / 10;
+        let baseline_char_count = baseline_text.chars().count();
         let deadline =
             tokio::time::Instant::now() + std::time::Duration::from_secs(target.window_secs());
 
@@ -1113,7 +1106,7 @@ fn run_rejection_monitor(
                 // shrank — confirming deletion rather than a stale baseline.
                 None => {
                     !current.contains(injected_text.as_str())
-                        && current.chars().count() < baseline_text.chars().count()
+                        && current.chars().count() < baseline_char_count
                 }
             };
 
