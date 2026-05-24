@@ -961,7 +961,9 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
 
     // Pipeline succeeded — discard the stored retry audio
     if let Ok(mut st) = lock_state(&state) {
-        st.retry_capture = None;
+        if st.retry_capture.as_ref().map(|v| v.captured_at) == Some(captured_at) {
+            st.retry_capture = None;
+        }
     }
 
     let dict_stage = std::time::Instant::now();
