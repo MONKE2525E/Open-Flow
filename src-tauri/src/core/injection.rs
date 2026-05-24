@@ -78,7 +78,7 @@ struct SavedClipboard {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn save_clipboard_all() -> SavedClipboard {
+async unsafe fn save_clipboard_all() -> SavedClipboard {
     use windows::Win32::Foundation::HGLOBAL;
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EnumClipboardFormats, GetClipboardData, OpenClipboard,
@@ -98,10 +98,13 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
 
     let mut entries = Vec::new();
 
-    let opened = (0..3).any(|i| {
-        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS)); }
-        OpenClipboard(None).is_ok()
-    });
+    let mut opened = false;
+    for attempt in 0..3u32 {
+        if OpenClipboard(None).is_ok() { opened = true; break; }
+        if attempt < 2 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS)).await;
+        }
+    }
     if !opened {
         return SavedClipboard { entries };
     }
@@ -134,7 +137,7 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
+async unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
     use windows::Win32::Foundation::{GlobalFree, HANDLE};
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
@@ -145,10 +148,13 @@ unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
         return;
     }
 
-    let opened = (0..3).any(|i| {
-        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS)); }
-        OpenClipboard(None).is_ok()
-    });
+    let mut opened = false;
+    for attempt in 0..3u32 {
+        if OpenClipboard(None).is_ok() { opened = true; break; }
+        if attempt < 2 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS)).await;
+        }
+    }
     if !opened {
         return;
     }
@@ -217,7 +223,7 @@ pub async fn inject_text(
         unsafe {
             // Save all clipboard formats so non-text content (images, files, etc.)
             // survives the injection and is restored afterward.
-            let saved = save_clipboard_all();
+            let saved = save_clipboard_all().await;
 
             // Restore focus to the window the user was dictating into.
             // The user may have switched windows during the transcription/cleanup
@@ -355,7 +361,7 @@ pub async fn inject_text(
             tokio::time::sleep(tokio::time::Duration::from_millis(POST_PASTE_MS)).await;
 
             // Restore all previously saved clipboard formats.
-            restore_clipboard_all(&saved);
+            restore_clipboard_all(&saved).await;
 
             // Record a tail of the injected text so the keyboard hook can pop
             // characters off it on Backspace, keeping the context accurate after

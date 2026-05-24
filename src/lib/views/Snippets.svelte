@@ -23,7 +23,6 @@
 
   let search    = $state('');
   let debouncedSearch = $state('');
-  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let sort      = $state<SortKey>('newest');
   let selected  = $state<Snippet | null>(null);
   let modal     = $state<{ mode: 'add' | 'edit'; snippet?: Snippet } | null>(null);
@@ -56,8 +55,8 @@
 
   $effect(() => {
     const raw = search;
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => { debouncedSearch = raw; }, 120);
+    const timer = setTimeout(() => { debouncedSearch = raw; }, 120);
+    return () => clearTimeout(timer);
   });
 
   const filtered = $derived.by(() => {
