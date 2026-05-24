@@ -37,6 +37,7 @@ pub struct AppState {
     pub session: Option<audio::RecordingSession>,
     pub handless: bool,
     pub target_hwnd: usize,
+    pub retry_wav: Option<(bytes::Bytes, std::time::Instant)>,
 }
 
 pub type SharedState = Arc<Mutex<AppState>>;
@@ -856,6 +857,10 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     let Some((wav, duration_ms)) = stop_and_validate_audio(&app, session).await else {
         return;
     };
+    // Store audio for potential retry; overwritten on each new recording, cleared on success
+    if let Ok(mut st) = lock_state(&state) {
+        st.retry_wav = Some((wav.clone(), std::time::Instant::now()));
+    }
     log::debug!(
         "pipeline: audio accepted duration_ms={duration_ms} wav_bytes={} stage_ms={}",
         wav.len(),
@@ -884,6 +889,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     );
     let stage_transcribe = std::time::Instant::now();
     let Some((raw, api_used)) = run_transcription(&app, &wav, &cfg).await else {
+        app.emit("open-flow:pipeline-failed", Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()).ok();
         return;
     };
     let raw = normalize_transcription_math_artifacts(&raw);
@@ -904,6 +910,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     let Some((final_text, dict_entries, cleanup_cache_key)) =
         run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
     else {
+        app.emit("open-flow:pipeline-failed", Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()).ok();
         return;
     };
     log::debug!(
@@ -931,6 +938,11 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         )
         .await;
         return;
+    }
+
+    // Pipeline succeeded — discard the stored retry audio
+    if let Ok(mut st) = lock_state(&state) {
+        st.retry_wav = None;
     }
 
     let dict_stage = std::time::Instant::now();
@@ -1530,6 +1542,59 @@ mod tests {
     fn style_scoped_cache_key_preserves_empty_base_key() {
         assert_eq!(style_scoped_cleanup_cache_key("", "casual", "medium"), "");
     }
+}
+
+pub async fn retry_transcription_impl(
+    app: &AppHandle,
+    state: &SharedState,
+) -> anyhow::Result<db::RecentEntry> {
+    let wav = {
+        let st = lock_state(state)?;
+        match &st.retry_wav {
+            Some((wav, captured_at)) => {
+                if captured_at.elapsed() > std::time::Duration::from_secs(600) {
+                    drop(st);
+                    if let Ok(mut s) = lock_state(state) {
+                        s.retry_wav = None;
+                    }
+                    anyhow::bail!("Retry window expired");
+                }
+                wav.clone() // bytes::Bytes clone is O(1)
+            }
+            None => anyhow::bail!("No retry available"),
+        }
+    };
+
+    let settings_store = app.store("settings.json")?;
+    let cfg = store::load_pipeline_config(&settings_store);
+
+    if !has_transcription_key_in_chain(&cfg) {
+        anyhow::bail!("No API key configured");
+    }
+
+    let Some((raw, api_used)) = run_transcription(app, &wav, &cfg).await else {
+        anyhow::bail!("Transcription failed");
+    };
+    let raw = normalize_transcription_math_artifacts(&raw);
+
+    let profile = cfg.default_tone.clone();
+    let Some((final_text, _dict, _cache)) =
+        run_cleanup_and_snippets(app, &raw, &cfg, &profile, None).await
+    else {
+        anyhow::bail!("Cleanup failed");
+    };
+
+    let db = app.state::<DbHandle>();
+    let words = raw.split_whitespace().count() as i64;
+    let entry =
+        db::insert_transcription_returning(&db, &raw, &final_text, words, 0, &api_used)?;
+
+    if let Ok(mut st) = lock_state(state) {
+        st.retry_wav = None;
+    }
+    app.emit("open-flow:transcribed", &final_text).ok();
+
+    Ok(entry)
 }
 
 

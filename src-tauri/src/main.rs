@@ -53,6 +53,7 @@ fn main() {
         session: None,
         handless: false,
         target_hwnd: 0,
+        retry_wav: None,
     }));
 
     let db_dir = std::env::var("APPDATA")
@@ -166,6 +167,7 @@ fn main() {
             commands::remove_dictionary_entry,
             commands::get_auto_learn_status_summary,
             commands::get_recent_auto_learn_activity,
+            commands::retry_transcription,
             commands::check_for_update,
             commands::install_update,
             commands::check_connectivity,

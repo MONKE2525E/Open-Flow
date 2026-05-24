@@ -15,6 +15,10 @@
   let copiedId: number | null = null;
   let currentVersion = '';
   let installing = false;
+  let failedEntry: { created_at: string } | null = null;
+  let retrying = false;
+  let failedTimer: ReturnType<typeof setTimeout> | null = null;
+  let unlistenFailed: (() => void) | undefined;
 
   function getGreeting(): string {
     const now = new Date();
@@ -88,6 +92,20 @@
   }
 
   const greeting = getGreeting();
+
+  async function retryTranscription() {
+    if (retrying) return;
+    retrying = true;
+    try {
+      await invoke('retry_transcription');
+      // success: open-flow:transcribed listener clears failedEntry and calls load()
+    } catch (err) {
+      console.error('Retry failed:', err);
+      // keep failedEntry so user can try again
+    } finally {
+      retrying = false;
+    }
+  }
 
   async function copyText(entry: Entry) {
     try {
@@ -175,13 +193,26 @@
       }
     }).catch(() => {});
 
-    // Refresh when a new transcription comes in
     import('@tauri-apps/api/event').then(({ listen }) => {
-      listen('open-flow:transcribed', load).then(u => unlisten = u).catch(() => {});
+      listen('open-flow:transcribed', () => {
+        failedEntry = null;
+        if (failedTimer) { clearTimeout(failedTimer); failedTimer = null; }
+        load();
+      }).then(u => unlisten = u).catch(() => {});
+
+      listen<string>('open-flow:pipeline-failed', (ev) => {
+        failedEntry = { created_at: ev.payload };
+        if (failedTimer) clearTimeout(failedTimer);
+        failedTimer = setTimeout(() => {
+          failedEntry = null;
+          failedTimer = null;
+        }, 10 * 60 * 1000);
+      }).then(u => unlistenFailed = u).catch(() => {});
     }).catch(() => {});
 
     return () => {
       if (unlisten) unlisten();
+      if (unlistenFailed) unlistenFailed();
     };
   });
 </script>
@@ -224,37 +255,61 @@
 
       {#if loading}
         <div class="empty-state">Loading history…</div>
-      {:else if recents.length === 0}
-        <div class="empty-state">
-          No dictations yet. Hold <kbd>Ctrl</kbd> <kbd>Windows</kbd> to get started.
-        </div>
       {:else}
-        {#each grouped as group, gi (group.label)}
-          <div class="day-head" class:muted={gi > 0}>{group.label}</div>
+        {#if failedEntry}
+          <div class="day-head">Today</div>
           <div class="day-table">
-            {#each group.rows as r (r.id)}
-              <div class="day-row" in:fly={{ y: -10, duration: 400, easing: expoOut }} animate:flip={{ duration: 400, easing: expoOut }}>
-                <div class="day-time">{fmtTime(r.created_at)}</div>
-                <div class="day-text">{r.clean_text}</div>
-                <button
-                  class="copy-btn"
-                  class:copied={copiedId === r.id}
-                  onclick={() => copyText(r)}
-                  title="Copy to clipboard"
-                  aria-label="Copy"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    {#if copiedId === r.id}
-                      {@html icons.check}
-                    {:else}
-                      {@html icons.copy}
-                    {/if}
-                  </svg>
-                </button>
-              </div>
-            {/each}
+            <div
+              class="day-row"
+              transition:fly={{ y: -10, duration: 400, easing: expoOut }}
+            >
+              <div class="day-time">{fmtTime(failedEntry.created_at)}</div>
+              <div class="day-text error-msg">Looks like your last transcription failed.</div>
+              <button
+                class="retry-btn"
+                onclick={retryTranscription}
+                disabled={retrying}
+              >
+                {retrying ? '…' : 'Retry'}
+              </button>
+            </div>
           </div>
-        {/each}
+        {/if}
+
+        {#if recents.length === 0 && !failedEntry}
+          <div class="empty-state">
+            No dictations yet. Hold <kbd>Ctrl</kbd> <kbd>Windows</kbd> to get started.
+          </div>
+        {:else}
+          {#each grouped as group, gi (group.label)}
+            {#if !(failedEntry && group.label === 'Today')}
+              <div class="day-head" class:muted={gi > 0 || !!failedEntry}>{group.label}</div>
+            {/if}
+            <div class="day-table">
+              {#each group.rows as r (r.id)}
+                <div class="day-row" in:fly={{ y: -10, duration: 400, easing: expoOut }} animate:flip={{ duration: 400, easing: expoOut }}>
+                  <div class="day-time">{fmtTime(r.created_at)}</div>
+                  <div class="day-text">{r.clean_text}</div>
+                  <button
+                    class="copy-btn"
+                    class:copied={copiedId === r.id}
+                    onclick={() => copyText(r)}
+                    title="Copy to clipboard"
+                    aria-label="Copy"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      {#if copiedId === r.id}
+                        {@html icons.check}
+                      {:else}
+                        {@html icons.copy}
+                      {/if}
+                    </svg>
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {/each}
+        {/if}
       {/if}
     </div>
 
@@ -497,6 +552,34 @@
     color: var(--ink-strong);
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+
+  .error-msg {
+    color: var(--ink-mute);
+    font-style: italic;
+  }
+
+  .retry-btn {
+    all: unset;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent);
+    padding: 2px 8px;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    transition: background 0.12s, color 0.12s;
+    flex-shrink: 0;
+    white-space: nowrap;
+    line-height: 1.6;
+  }
+  .retry-btn:hover:not(:disabled) {
+    background: var(--accent);
+    color: var(--on-accent, #fff);
+  }
+  .retry-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .empty-state {
