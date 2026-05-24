@@ -1594,6 +1594,7 @@ pub async fn retry_transcription_impl(
     app: &AppHandle,
     state: &SharedState,
 ) -> anyhow::Result<db::RecentEntry> {
+    let mut retry_expired = false;
     let capture = {
         let st = lock_state(state)?;
         match &st.retry_capture {
@@ -1603,26 +1604,36 @@ pub async fn retry_transcription_impl(
                     if let Ok(mut s) = lock_state(state) {
                         s.retry_capture = None;
                     }
-                    anyhow::bail!("Retry window expired");
-                }
-                RetryCapture {
-                    wav: retry.wav.clone(),
-                    captured_at: retry.captured_at,
-                    duration_ms: retry.duration_ms,
-                    target_hwnd: retry.target_hwnd,
-                    process_name: retry.process_name.clone(),
-                    profile: retry.profile.clone(),
-                    app_context: retry.app_context.clone(),
+                    retry_expired = true;
+                    None
+                } else {
+                    Some(RetryCapture {
+                        wav: retry.wav.clone(),
+                        captured_at: retry.captured_at,
+                        duration_ms: retry.duration_ms,
+                        target_hwnd: retry.target_hwnd,
+                        process_name: retry.process_name.clone(),
+                        profile: retry.profile.clone(),
+                        app_context: retry.app_context.clone(),
+                    })
                 }
             }
-            None => anyhow::bail!("No retry available"),
+            None => None,
         }
+    };
+    if retry_expired {
+        show_error_pill(app, "Retry window expired").await;
+        anyhow::bail!("Retry window expired");
+    }
+    let Some(capture) = capture else {
+        anyhow::bail!("No retry available");
     };
 
     let settings_store = app.store("settings.json")?;
     let cfg = store::load_pipeline_config(&settings_store);
 
     if !has_transcription_key_in_chain(&cfg) {
+        show_error_pill(app, "No API key configured").await;
         anyhow::bail!("No API key configured");
     }
 
@@ -1631,7 +1642,7 @@ pub async fn retry_transcription_impl(
     };
     let raw = normalize_transcription_math_artifacts(&raw);
 
-    let Some((final_text, dict_entries, _cache)) = run_cleanup_and_snippets(
+    let Some((final_text, dict_entries, cleanup_cache_key)) = run_cleanup_and_snippets(
         app,
         &raw,
         &cfg,
@@ -1642,7 +1653,7 @@ pub async fn retry_transcription_impl(
     else {
         anyhow::bail!("Cleanup failed");
     };
-    let (final_text, _applied_dict_ids) =
+    let (final_text, applied_dict_ids) =
         dictionary::apply_substitutions_from(&final_text, &dict_entries);
 
     let db = app.state::<DbHandle>();
@@ -1675,6 +1686,33 @@ pub async fn retry_transcription_impl(
         st.retry_capture = None;
     }
     app.emit("open-flow:transcribed", &injected_text).ok();
+
+    if !cleanup_cache_key.is_empty() {
+        auto_learn::start_cache_rejection_monitor(
+            injected_text.clone(),
+            cleanup_cache_key,
+            capture.target_hwnd,
+            db.inner().clone(),
+            app.clone(),
+        );
+    }
+    if cfg.auto_learn_enabled {
+        if !applied_dict_ids.is_empty() {
+            auto_learn::start_rejection_monitor(
+                injected_text.clone(),
+                applied_dict_ids,
+                capture.target_hwnd,
+                db.inner().clone(),
+                app.clone(),
+            );
+        }
+        auto_learn::start_monitor(
+            injected_text,
+            capture.process_name,
+            db.inner().clone(),
+            app.clone(),
+        );
+    }
 
     Ok(entry)
 }
