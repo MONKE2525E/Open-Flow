@@ -119,15 +119,21 @@
   let stats: Stats = { total_words: 0, avg_wpm: 0, day_streak: 0 };
   let loading = true;
 
+  function parseTimestamp(value: string): Date {
+    const direct = new Date(value);
+    if (!Number.isNaN(direct.getTime())) return direct;
+    return new Date(`${value}Z`);
+  }
+
   function fmtTime(iso: string) {
     try {
-      return new Date(iso + 'Z').toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return parseTimestamp(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     } catch { return iso; }
   }
 
   function fmtDate(iso: string) {
     try {
-      const d = new Date(iso + 'Z');
+      const d = parseTimestamp(iso);
       const today = new Date();
       const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
       if (d.toDateString() === today.toDateString()) return 'Today';
