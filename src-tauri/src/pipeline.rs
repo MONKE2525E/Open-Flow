@@ -730,6 +730,18 @@ async fn show_error_pill(app: &AppHandle, msg: &str) {
     hide_pill(app);
 }
 
+/// Shows the pill in error state for a quality-gate rejection without
+/// focusing the main window or blocking the pipeline task.
+fn reject_with_pill(app: &AppHandle, msg: &str) {
+    app.emit("open-flow:error", msg).ok();
+    show_pill(app, "error");
+    let app = app.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        hide_pill(&app);
+    });
+}
+
 fn resolve_profile(
     store: Option<&tauri_plugin_store::Store<tauri::Wry>>,
     process_name: &str,
@@ -1018,14 +1030,14 @@ async fn stop_and_validate_audio(
             return None;
         }
     };
-    if duration_ms < MIN_RECORDING_MS {
+    if duration_ms < MIN_RECORDING_MS || rms < MIN_RECORDING_RMS {
+        let msg = if duration_ms < MIN_RECORDING_MS {
+            "Recording too short"
+        } else {
+            "Audio too quiet — check your mic"
+        };
         log::debug!("pipeline: rejected — duration={duration_ms}ms rms={rms:.4}");
-        show_error_pill(app, "Recording too short").await;
-        return None;
-    }
-    if rms < MIN_RECORDING_RMS {
-        log::debug!("pipeline: rejected — duration={duration_ms}ms rms={rms:.4}");
-        show_error_pill(app, "Audio too quiet — check your mic").await;
+        reject_with_pill(app, msg);
         return None;
     }
     Some((bytes::Bytes::from(wav), duration_ms))
