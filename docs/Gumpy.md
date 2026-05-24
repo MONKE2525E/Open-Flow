@@ -77,7 +77,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 ### [PR Group 3: UI - Accessibility, Focus & Programmatic Height Fixes]
 *   **Goal**: Align interactive inputs with layout focus designs and fix layout sizing bugs.
 
-#### Task 3.1: Stopping Dropdown Escape Event Bubbling
+#### ✅ Task 3.1: Stopping Dropdown Escape Event Bubbling
 *   **Context**: [GeneralSection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/GeneralSection.svelte#L137-L142) and [Settings.svelte](file:///g:/Open%20Flow/src/lib/views/Settings.svelte#L67).
 *   **Problem Statement**: The Settings modal closes when the user presses `Escape`. However, settings dropdown selectors (like Spoken Language or Microphone) do not capture and stop the `Escape` key event. Pressing `Escape` to close a dropdown propagates to the parent modal and closes the entire Settings sheet, losing unsaved form state.
 *   **Actionable Implementation Steps**:
@@ -86,7 +86,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 *   **Verification & Test Plan**:
     *   *Manual Action*: Open the Settings modal, expand the Spoken Language dropdown, and press `Escape`. Confirm that only the dropdown list closes, and the parent Settings modal remains open.
 
-#### Task 3.2: Toggles and API Key Fields Outline Indicators
+#### ✅ Task 3.2: Toggles and API Key Fields Outline Indicators
 *   **Context**: [Toggle.svelte](file:///g:/Open%20Flow/src/lib/components/Toggle.svelte#L8-L28) and [ApiKeysSection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/ApiKeysSection.svelte#L80-L90).
 *   **Problem Statement**: The toggle component and API key input fields are accessible via tab navigation but lack focus styles (`:focus` or `:focus-visible`). Keyboard users cannot see which setting toggle or input is currently selected.
 *   **Actionable Implementation Steps**:
@@ -104,7 +104,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 *   **Verification & Test Plan**:
     *   *Dictation Input*: Click the mic button in the Snippets Edit Modal and dictate a multi-sentence phrase. Verify that the textarea automatically scales its height to fit the expanded text.
 
-#### Task 3.4: Discoverable Clipboard Copy Button in History Card
+#### ✅ Task 3.4: Discoverable Clipboard Copy Button in History Card
 *   **Context**: [Home.svelte](file:///g:/Open%20Flow/src/lib/views/Home.svelte#L530).
 *   **Problem Statement**: The copy-to-clipboard button on dictation history entries is hidden (`opacity: 0; pointer-events: none;`) unless the user hovers over the card. This hides the feature from keyboard and mobile/tablet users.
 *   **Actionable Implementation Steps**:
