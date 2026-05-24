@@ -327,18 +327,21 @@ pub fn insert_transcription_returning(
     api_used: &str,
 ) -> Result<RecentEntry> {
     let conn = lock_conn(db)?;
-    conn.execute(
+    conn.query_row(
         "INSERT INTO transcriptions (raw_text, clean_text, words, duration_ms, api_used) \
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+         VALUES (?1, ?2, ?3, ?4, ?5) \
+         RETURNING id, clean_text, words, created_at",
         params![raw, clean, words, duration_ms, api_used],
-    )?;
-    let id = conn.last_insert_rowid();
-    let (clean_text, words_out, created_at) = conn.query_row(
-        "SELECT clean_text, words, created_at FROM transcriptions WHERE id = ?1",
-        params![id],
-        |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)),
-    )?;
-    Ok(RecentEntry { id, clean_text, words: words_out, created_at })
+        |r| {
+            Ok(RecentEntry {
+                id: r.get(0)?,
+                clean_text: r.get(1)?,
+                words: r.get(2)?,
+                created_at: r.get(3)?,
+            })
+        },
+    )
+    .map_err(Into::into)
 }
 
 pub fn query_recent(db: &Db) -> Result<Vec<RecentEntry>> {

@@ -14,6 +14,7 @@ use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 
 const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
+const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
 
 fn transcription_provider_from_str(s: &str) -> transcription::Provider {
     match s {
@@ -47,6 +48,7 @@ pub struct RetryCapture {
     pub captured_at: std::time::Instant,
     pub duration_ms: u64,
     pub process_name: String,
+    pub target_hwnd: usize,
 }
 
 fn lock_state(state: &SharedState) -> anyhow::Result<MutexGuard<'_, AppState>> {
@@ -293,6 +295,10 @@ fn preview_text(s: &str, limit: usize) -> String {
     } else {
         compact.to_string()
     }
+}
+
+fn utc_now_iso() -> String {
+    Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 fn normalize_transcription_math_artifacts(raw: &str) -> String {
@@ -871,6 +877,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
             captured_at: std::time::Instant::now(),
             duration_ms,
             process_name: process_name.clone(),
+            target_hwnd,
         });
     }
     log::debug!(
@@ -901,7 +908,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     );
     let stage_transcribe = std::time::Instant::now();
     let Some((raw, api_used)) = run_transcription(&app, &wav, &cfg).await else {
-        app.emit("open-flow:pipeline-failed", Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()).ok();
+        app.emit("open-flow:pipeline-failed", utc_now_iso()).ok();
         return;
     };
     let raw = normalize_transcription_math_artifacts(&raw);
@@ -922,7 +929,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     let Some((final_text, dict_entries, cleanup_cache_key)) =
         run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
     else {
-        app.emit("open-flow:pipeline-failed", Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()).ok();
+        app.emit("open-flow:pipeline-failed", utc_now_iso()).ok();
         return;
     };
     log::debug!(
@@ -1560,26 +1567,22 @@ pub async fn retry_transcription_impl(
     app: &AppHandle,
     state: &SharedState,
 ) -> anyhow::Result<db::RecentEntry> {
-    let (wav, duration_ms, process_name) = {
-        let st = lock_state(state)?;
-        match &st.retry_capture {
-            Some(retry) => {
-                let captured_at = retry.captured_at;
-                if captured_at.elapsed() > std::time::Duration::from_secs(600) {
-                    drop(st);
-                    if let Ok(mut s) = lock_state(state) {
-                        s.retry_capture = None;
-                    }
-                    anyhow::bail!("Retry window expired");
-                }
-                (
-                    retry.wav.clone(), // bytes::Bytes clone is O(1)
-                    retry.duration_ms,
-                    retry.process_name.clone(),
-                )
-            }
-            None => anyhow::bail!("No retry available"),
+    let (wav, duration_ms, process_name, target_hwnd, captured_at) = {
+        let mut st = lock_state(state)?;
+        let Some(retry) = st.retry_capture.as_ref() else {
+            anyhow::bail!("No retry available");
+        };
+        if retry.captured_at.elapsed() > RETRY_WINDOW {
+            st.retry_capture = None;
+            anyhow::bail!("Retry window expired");
         }
+        (
+            retry.wav.clone(), // bytes::Bytes clone is O(1)
+            retry.duration_ms,
+            retry.process_name.clone(),
+            retry.target_hwnd,
+            retry.captured_at,
+        )
     };
 
     let Some((cfg, profile, app_context)) = open_config_and_context(app, &process_name).await else {
@@ -1591,7 +1594,7 @@ pub async fn retry_transcription_impl(
     };
     let raw = normalize_transcription_math_artifacts(&raw);
 
-    let Some((final_text, dict_entries, _cache)) =
+    let Some((final_text, dict_entries, cleanup_cache_key)) =
         run_cleanup_and_snippets(app, &raw, &cfg, &profile, app_context.as_deref()).await
     else {
         anyhow::bail!("Cleanup failed");
@@ -1601,13 +1604,52 @@ pub async fn retry_transcription_impl(
     let words = raw.split_whitespace().count() as i64;
     let entry =
         db::insert_transcription_returning(&db, &raw, &final_text, words, duration_ms as i64, &api_used)?;
-    let (final_text, _applied_dict_ids) =
+    let (final_text, applied_dict_ids) =
         dictionary::apply_substitutions_from(&final_text, &dict_entries);
 
     if let Ok(mut st) = lock_state(state) {
-        st.retry_capture = None;
+        if st.retry_capture.as_ref().map(|v| v.captured_at) == Some(captured_at) {
+            st.retry_capture = None;
+        }
     }
-    app.emit("open-flow:transcribed", &final_text).ok();
+    let injected_text = match injection::inject_text(
+        &final_text,
+        target_hwnd,
+        cfg.contextual_caps_enabled,
+        cfg.auto_spacing_enabled,
+    )
+    .await
+    {
+        Ok(text) => text,
+        Err(e) => {
+            log::error!("inject: {e}");
+            show_error_pill(app, "Failed to paste - text saved to history").await;
+            final_text.clone()
+        }
+    };
+    app.emit("open-flow:transcribed", &injected_text).ok();
+
+    if !cleanup_cache_key.is_empty() {
+        auto_learn::start_cache_rejection_monitor(
+            injected_text.clone(),
+            cleanup_cache_key,
+            target_hwnd,
+            db.inner().clone(),
+            app.clone(),
+        );
+    }
+    if cfg.auto_learn_enabled {
+        if !applied_dict_ids.is_empty() {
+            auto_learn::start_rejection_monitor(
+                injected_text.clone(),
+                applied_dict_ids,
+                target_hwnd,
+                db.inner().clone(),
+                app.clone(),
+            );
+        }
+        auto_learn::start_monitor(injected_text, process_name, db.inner().clone(), app.clone());
+    }
 
     Ok(entry)
 }

@@ -121,13 +121,15 @@
 
   function fmtTime(iso: string) {
     try {
-      return new Date(iso + 'Z').toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const normalized = iso.includes('T') ? iso : `${iso}Z`;
+      return new Date(normalized).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     } catch { return iso; }
   }
 
   function fmtDate(iso: string) {
     try {
-      const d = new Date(iso + 'Z');
+      const normalized = iso.includes('T') ? iso : `${iso}Z`;
+      const d = new Date(normalized);
       const today = new Date();
       const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
       if (d.toDateString() === today.toDateString()) return 'Today';
