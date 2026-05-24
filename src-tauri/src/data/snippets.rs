@@ -1,6 +1,24 @@
 use crate::data::db::{self, Db};
 use std::cmp::Reverse;
 
+fn lowercase_with_source_map(input: &str) -> (String, Vec<usize>) {
+    let mut lowered = String::new();
+    let mut source_map = Vec::new();
+
+    for (src_idx, ch) in input.char_indices() {
+        for lower_ch in ch.to_lowercase() {
+            let mut buf = [0_u8; 4];
+            let encoded = lower_ch.encode_utf8(&mut buf);
+            lowered.push_str(encoded);
+            for _ in 0..encoded.len() {
+                source_map.push(src_idx);
+            }
+        }
+    }
+
+    (lowered, source_map)
+}
+
 /// If the entire transcription is just a snippet trigger (ignoring trailing punctuation
 /// added by the transcription model), return the expansion directly.
 ///
@@ -51,10 +69,10 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
 
     for snippet in snippets.iter() {
         let needle = snippet.trigger.to_lowercase();
-        let haystack = result.to_lowercase();
+        let (haystack, source_map) = lowercase_with_source_map(&result);
 
         // Find all non-overlapping occurrences (right-to-left to keep indices valid).
-        let mut positions: Vec<usize> = Vec::new();
+        let mut positions: Vec<(usize, usize)> = Vec::new();
         let mut search_from = 0;
         while let Some(pos) = haystack[search_from..].find(&needle) {
             let abs = search_from + pos;
@@ -71,7 +89,14 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
                     .map(|c| c.is_alphanumeric() || c == '_')
                     .unwrap_or(false);
             if before_ok && after_ok {
-                positions.push(abs);
+                let start = source_map[abs];
+                let end_lower = abs + needle.len();
+                let end = if end_lower >= haystack.len() {
+                    result.len()
+                } else {
+                    source_map[end_lower]
+                };
+                positions.push((start, end));
             }
             search_from = abs + needle.len();
         }
@@ -81,8 +106,8 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
         }
 
         // Replace right-to-left so earlier indices stay valid.
-        for pos in positions.into_iter().rev() {
-            result.replace_range(pos..pos + needle.len(), &snippet.expansion);
+        for (start, end) in positions.into_iter().rev() {
+            result.replace_range(start..end, &snippet.expansion);
         }
 
         let _ = db::increment_snippet_use(db, snippet.id);

@@ -94,7 +94,9 @@ pub async fn save_api_key(_app: AppHandle, provider: String, key: String) -> Res
 
 #[tauri::command]
 pub async fn delete_api_key(_app: AppHandle, provider: String) -> Result<(), String> {
-    crate::data::credentials::delete(&provider)
+    tokio::task::spawn_blocking(move || crate::data::credentials::delete(&provider))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

@@ -59,6 +59,14 @@ struct CandidateCorrection {
     confidence: f64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CorrectionMetrics {
+    a_len: usize,
+    b_len: usize,
+    max_len: usize,
+    distance: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TextAnchor {
     start: usize,
@@ -262,22 +270,37 @@ fn is_common_word(word: &str) -> bool {
     )
 }
 
-fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool {
+fn compute_correction_metrics(original: &WordToken, corrected: &WordToken) -> CorrectionMetrics {
+    let a_len = original.norm.chars().count();
+    let b_len = corrected.norm.chars().count();
+    let max_len = a_len.max(b_len);
+    let distance = edit_distance(&original.norm, &corrected.norm);
+    CorrectionMetrics {
+        a_len,
+        b_len,
+        max_len,
+        distance,
+    }
+}
+
+fn is_candidate_correction(
+    original: &WordToken,
+    corrected: &WordToken,
+    metrics: CorrectionMetrics,
+) -> bool {
     if original.norm.is_empty() || corrected.norm.is_empty() {
         return false;
     }
     if original.norm == corrected.norm {
         return false;
     }
-    let a_len = original.norm.chars().count();
-    let b_len = corrected.norm.chars().count();
-    if a_len < MIN_CANDIDATE_NORM_LEN || b_len < MIN_CANDIDATE_NORM_LEN {
+    if metrics.a_len < MIN_CANDIDATE_NORM_LEN || metrics.b_len < MIN_CANDIDATE_NORM_LEN {
         return false;
     }
 
     let original_distinct = has_distinctive_features(&original.raw);
     let corrected_distinct = has_distinctive_features(&corrected.raw);
-    if a_len.max(b_len) <= 3
+    if metrics.max_len <= 3
         && !original_distinct
         && !corrected_distinct
     {
@@ -299,10 +322,8 @@ fn is_candidate_correction(original: &WordToken, corrected: &WordToken) -> bool 
         return false;
     }
 
-    let max_len = a_len.max(b_len);
-    let dist = edit_distance(&original.norm, &corrected.norm);
-    dist <= 2_usize.max(max_len / 2)
-        || ((original_distinct || corrected_distinct) && max_len >= 4 && dist <= 3)
+    metrics.distance <= 2_usize.max(metrics.max_len / 2)
+        || ((original_distinct || corrected_distinct) && metrics.max_len >= 4 && metrics.distance <= 3)
 }
 
 fn pair_hash(left: &str, right: &str) -> (String, String) {
@@ -329,11 +350,12 @@ fn monitor_key(injected_text: &str, app_context: &str) -> String {
 fn candidate_confidence(
     original: &WordToken,
     corrected: &WordToken,
+    metrics: CorrectionMetrics,
     changed_ops: usize,
     replacements_len: usize,
 ) -> f64 {
-    let distance = edit_distance(&original.norm, &corrected.norm) as f64;
-    let max_len = original.norm.chars().count().max(corrected.norm.chars().count()).max(1) as f64;
+    let distance = metrics.distance as f64;
+    let max_len = metrics.max_len.max(1) as f64;
     let ratio_score = 1.0 - (distance / max_len).min(1.0);
 
     let mut score = ratio_score * 0.55;
@@ -591,11 +613,12 @@ fn detect_span_corrections(original_span: &str, current_span: &str) -> Vec<Candi
         .filter_map(|(old_idx, new_idx)| {
             let old = &original[old_idx];
             let new = &current[new_idx];
-            if is_candidate_correction(old, new) {
+            let metrics = compute_correction_metrics(old, new);
+            if is_candidate_correction(old, new, metrics) {
                 Some(CandidateCorrection {
                     mistake: old.raw.clone(),
                     correction: new.raw.clone(),
-                    confidence: candidate_confidence(old, new, changed_ops, replacements_len),
+                    confidence: candidate_confidence(old, new, metrics, changed_ops, replacements_len),
                 })
             } else {
                 log::debug!("auto-learn: rejected low-confidence candidate");
