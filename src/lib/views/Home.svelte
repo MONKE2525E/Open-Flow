@@ -6,7 +6,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { getVersion } from '@tauri-apps/api/app';
   import { icons } from '../icons';
-  import { updateInfo, isOnline, type UpdateInfo } from '../stores';
+  import { updateInfo, type UpdateInfo } from '../stores';
   import { saveSetting } from '../settings';
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
@@ -159,33 +159,10 @@
     updateInfo.set(null);
   }
 
-  async function pingConnectivity() {
-    try {
-      const online = await invoke<boolean>('check_connectivity');
-      isOnline.set(online);
-    } catch {
-      isOnline.set(false);
-    }
-  }
-
   onMount(() => {
     getVersion().then(v => currentVersion = v);
     load();
     let unlisten: (() => void) | undefined;
-
-    // Connectivity polling — HEAD to google.com every 20s
-    pingConnectivity();
-    let connectivityTimer = setInterval(pingConnectivity, 20_000);
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        clearInterval(connectivityTimer);
-      } else {
-        pingConnectivity();
-        connectivityTimer = setInterval(pingConnectivity, 20_000);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
 
     // Check for updates, skip banner if user dismissed this version
     invoke<UpdateInfo | null>('check_for_update').then(async (update) => {
@@ -204,8 +181,6 @@
     }).catch(() => {});
 
     return () => {
-      clearInterval(connectivityTimer);
-      document.removeEventListener('visibilitychange', handleVisibility);
       if (unlisten) unlisten();
     };
   });
@@ -231,27 +206,19 @@
         </div>
       </div>
 
-      {#if $updateInfo || !$isOnline}
+      {#if $updateInfo}
         <div class="notice-wrap">
-          {#if $updateInfo}
-            <div class="update-banner" class:dimmed={!$isOnline}>
-              <span class="update-text">
-                Update available — v{currentVersion} → v{$updateInfo.version}
-              </span>
-              <div class="update-actions">
-                <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
-                <button class="update-btn" onclick={handleInstall} disabled={installing}>
-                  {installing ? 'Installing…' : 'Install & Restart'}
-                </button>
-              </div>
+          <div class="update-banner">
+            <span class="update-text">
+              Update available — v{currentVersion} → v{$updateInfo.version}
+            </span>
+            <div class="update-actions">
+              <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
+              <button class="update-btn" onclick={handleInstall} disabled={installing}>
+                {installing ? 'Installing…' : 'Install & Restart'}
+              </button>
             </div>
-          {/if}
-          {#if !$isOnline}
-            <div class="offline-badge" class:overlay={!!$updateInfo}>
-              <span class="offline-dot"></span>
-              No connection
-            </div>
-          {/if}
+          </div>
         </div>
       {/if}
 
@@ -422,42 +389,6 @@
     border-radius: var(--r-lg);
     font-size: 13px;
     color: var(--ink-strong);
-  }
-
-  .update-banner.dimmed {
-    visibility: hidden;
-  }
-
-  .offline-badge {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    background: rgba(160, 50, 40, 0.07);
-    border: 1px solid rgba(160, 50, 40, 0.18);
-    border-radius: var(--r-lg);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--ink-mute);
-  }
-
-  .offline-badge.overlay {
-    position: absolute;
-    inset: 0;
-  }
-
-  .offline-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--danger);
-    flex-shrink: 0;
-    animation: dot-pulse 2s ease-in-out infinite;
-  }
-
-  @keyframes dot-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.35; }
   }
 
   .update-text {
