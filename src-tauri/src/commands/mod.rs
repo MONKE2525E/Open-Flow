@@ -457,32 +457,44 @@ pub async fn get_snippets(app: AppHandle) -> Result<Vec<db::Snippet>, String> {
 }
 
 #[tauri::command]
-pub fn create_snippet(
+pub async fn create_snippet(
     app: AppHandle,
     trigger: String,
     expansion: String,
     instructions: String,
 ) -> Result<(), String> {
-    let db = app.state::<DbHandle>();
-    db::insert_snippet(&db, &trigger, &expansion, &instructions).map_err(|e| e.to_string())
+    let db = app.state::<DbHandle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        db::insert_snippet(&db, &trigger, &expansion, &instructions).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn edit_snippet(
+pub async fn edit_snippet(
     app: AppHandle,
     id: i64,
     trigger: String,
     expansion: String,
     instructions: String,
 ) -> Result<(), String> {
-    let db = app.state::<DbHandle>();
-    db::update_snippet(&db, id, &trigger, &expansion, &instructions).map_err(|e| e.to_string())
+    let db = app.state::<DbHandle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        db::update_snippet(&db, id, &trigger, &expansion, &instructions).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn remove_snippet(app: AppHandle, id: i64) -> Result<(), String> {
-    let db = app.state::<DbHandle>();
-    db::delete_snippet(&db, id).map_err(|e| e.to_string())
+pub async fn remove_snippet(app: AppHandle, id: i64) -> Result<(), String> {
+    let db = app.state::<DbHandle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        db::delete_snippet(&db, id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ---------- dictionary ----------
@@ -496,30 +508,42 @@ pub async fn get_dictionary(app: AppHandle) -> Result<Vec<db::DictionaryEntry>, 
 }
 
 #[tauri::command]
-pub fn create_dictionary_entry(
+pub async fn create_dictionary_entry(
     app: AppHandle,
     term: String,
     mistake: Option<String>,
 ) -> Result<(), String> {
-    let db = app.state::<DbHandle>();
-    db::insert_dictionary_entry(&db, &term, mistake.as_deref()).map_err(|e| e.to_string())
+    let db = app.state::<DbHandle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        db::insert_dictionary_entry(&db, &term, mistake.as_deref()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn edit_dictionary_entry(
+pub async fn edit_dictionary_entry(
     app: AppHandle,
     id: i64,
     term: String,
     mistake: Option<String>,
 ) -> Result<(), String> {
-    let db = app.state::<DbHandle>();
-    db::update_dictionary_entry(&db, id, &term, mistake.as_deref()).map_err(|e| e.to_string())
+    let db = app.state::<DbHandle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        db::update_dictionary_entry(&db, id, &term, mistake.as_deref()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn remove_dictionary_entry(app: AppHandle, id: i64) -> Result<(), String> {
-    let db = app.state::<DbHandle>();
-    db::delete_dictionary_entry(&db, id).map_err(|e| e.to_string())
+pub async fn remove_dictionary_entry(app: AppHandle, id: i64) -> Result<(), String> {
+    let db = app.state::<DbHandle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        db::delete_dictionary_entry(&db, id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
