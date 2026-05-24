@@ -832,8 +832,12 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
             }
             Ok(_) => {}
             Err(e) => {
+                if crate::api::is_retryable_provider_error(&e) {
+                    last_err = Some(e);
+                    continue;
+                }
                 last_err = Some(e);
-                continue;
+                break;
             }
         }
     }
@@ -965,7 +969,6 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         log::error!("pipeline finalize failed: {e}");
         return;
     }
-
     log::info!(
         "pipeline: completed words={} duration_ms={} elapsed_ms={}",
         words,
@@ -1082,8 +1085,12 @@ async fn run_transcription(
             }
             Ok(_) => {}
             Err(e) => {
+                if crate::api::is_retryable_provider_error(&e) {
+                    last_err = Some(e);
+                    continue;
+                }
                 last_err = Some(e);
-                continue;
+                break;
             }
         }
     }

@@ -120,7 +120,10 @@
   let loading = true;
 
   function parseTimestamp(value: string): Date {
-    return new Date(value.endsWith('Z') ? value : `${value}Z`);
+    if (value.includes('T')) {
+      return new Date(value.endsWith('Z') ? value : `${value}Z`);
+    }
+    return new Date(value.replace(' ', 'T') + 'Z');
   }
 
   function fmtTime(iso: string) {
