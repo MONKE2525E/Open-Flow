@@ -526,7 +526,9 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         st.session.take()
                     };
                     if let Some(s) = session {
-                        std::thread::spawn(move || { let _ = s.stop(); });
+                        std::thread::spawn(move || {
+                            let _ = s.stop();
+                        });
                         std::thread::spawn(crate::system::volume::unmute);
                     }
                     hide_pill(&app_hk);

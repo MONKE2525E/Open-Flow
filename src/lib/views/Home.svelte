@@ -119,17 +119,22 @@
   let stats: Stats = { total_words: 0, avg_wpm: 0, day_streak: 0 };
   let loading = true;
 
+  function parseTimestamp(value: string): Date {
+    if (value.includes('T')) {
+      return new Date(value.endsWith('Z') ? value : `${value}Z`);
+    }
+    return new Date(value.replace(' ', 'T') + 'Z');
+  }
+
   function fmtTime(iso: string) {
     try {
-      const normalized = iso.includes('T') ? iso : `${iso}Z`;
-      return new Date(normalized).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return parseTimestamp(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     } catch { return iso; }
   }
 
   function fmtDate(iso: string) {
     try {
-      const normalized = iso.includes('T') ? iso : `${iso}Z`;
-      const d = new Date(normalized);
+      const d = parseTimestamp(iso);
       const today = new Date();
       const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
       if (d.toDateString() === today.toDateString()) return 'Today';

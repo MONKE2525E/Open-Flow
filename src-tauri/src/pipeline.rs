@@ -10,7 +10,7 @@ use crate::media::audio;
 use crate::system::apps::AppMapping;
 use crate::system::text::is_number_word_token;
 use crate::DbHandle;
-use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 
 const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
@@ -43,18 +43,29 @@ pub struct AppState {
 
 pub type SharedState = Arc<Mutex<AppState>>;
 
+#[derive(Clone)]
 pub struct RetryCapture {
     pub wav: bytes::Bytes,
     pub captured_at: std::time::Instant,
     pub duration_ms: u64,
-    pub process_name: String,
     pub target_hwnd: usize,
+    pub process_name: String,
+    pub profile: String,
+    pub app_context: Option<String>,
 }
 
 fn lock_state(state: &SharedState) -> anyhow::Result<MutexGuard<'_, AppState>> {
     state
         .lock()
         .map_err(|_| anyhow::anyhow!("Recording state lock was poisoned"))
+}
+
+fn emit_pipeline_failed(app: &AppHandle) {
+    app.emit(
+        "open-flow:pipeline-failed",
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+    )
+    .ok();
 }
 
 // ---------- pill helpers ----------
@@ -136,15 +147,8 @@ pub fn start_recording_session(
     pill_state: &str,
     handless: bool,
 ) {
-    if let Err(e) = start_recording_session_ex(
-        app,
-        state,
-        pill_state,
-        handless,
-        None,
-        true,
-        false,
-    ) {
+    if let Err(e) = start_recording_session_ex(app, state, pill_state, handless, None, true, false)
+    {
         log::error!("start recording: {e}");
     }
 }
@@ -163,7 +167,10 @@ pub fn start_recording_session_ex(
     let audio_config = match settings {
         Ok(ref store) => store::load_audio_config(store),
         Err(e) => {
-            log::warn!("Failed to load settings.json store for audio config: {:?}", e);
+            log::warn!(
+                "Failed to load settings.json store for audio config: {:?}",
+                e
+            );
             store::AudioConfig::default()
         }
     };
@@ -235,7 +242,6 @@ pub fn spawn_level_emitter(
 
 // ---------- pipeline ----------
 
-
 fn transcription_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String)> {
     let mut chain = Vec::<(String, String)>::new();
     if let Some((provider, model)) = store::parse_model_id(&cfg.transcription_default_model) {
@@ -295,10 +301,6 @@ fn preview_text(s: &str, limit: usize) -> String {
     } else {
         compact.to_string()
     }
-}
-
-fn utc_now_iso() -> String {
-    Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 fn normalize_transcription_math_artifacts(raw: &str) -> String {
@@ -844,20 +846,19 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
 
     match transcribed {
         Some(text) => Ok(text),
-        None => Err(last_err
-            .unwrap_or_else(|| anyhow::anyhow!("Transcription failed: no model in chain produced output"))),
+        None => Err(last_err.unwrap_or_else(|| {
+            anyhow::anyhow!("Transcription failed: no model in chain produced output")
+        })),
     }
 }
 
 pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     let started_at = std::time::Instant::now();
     let Some((session, target_hwnd)) = take_pipeline_session(&state) else {
-        log::debug!("pipeline: no session — recording never started or was already consumed");
+        log::debug!("pipeline: no session - recording never started or was already consumed");
         return;
     };
 
-    // Capture process name before any await points — foreground window may
-    // change to a different app during async transcription/cleanup.
     let process_name = window_context::get_active_process_name()
         .unwrap_or_else(|| "unknown".into())
         .to_lowercase();
@@ -870,25 +871,14 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     let Some((wav, duration_ms)) = stop_and_validate_audio(&app, session).await else {
         return;
     };
-    let retry_captured_at = std::time::Instant::now();
-    // Store audio for potential retry; overwritten on each new recording, cleared on success
-    if let Ok(mut st) = lock_state(&state) {
-        st.retry_capture = Some(RetryCapture {
-            wav: wav.clone(),
-            captured_at: retry_captured_at,
-            duration_ms,
-            process_name: process_name.clone(),
-            target_hwnd,
-        });
-    }
     log::debug!(
         "pipeline: audio accepted duration_ms={duration_ms} wav_bytes={} stage_ms={}",
         wav.len(),
         stage_audio.elapsed().as_millis()
     );
+
     let stage_config = std::time::Instant::now();
-    let Some((cfg, profile, app_context)) = open_config_and_context(&app, &process_name).await
-    else {
+    let Some((cfg, profile, app_context)) = open_config_and_context(&app, &process_name).await else {
         return;
     };
     log::debug!(
@@ -907,12 +897,27 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         app_context.as_deref().unwrap_or("none"),
         stage_config.elapsed().as_millis()
     );
+
+    let retry_captured_at = std::time::Instant::now();
+    if let Ok(mut st) = lock_state(&state) {
+        st.retry_capture = Some(RetryCapture {
+            wav: wav.clone(),
+            captured_at: retry_captured_at,
+            duration_ms,
+            target_hwnd,
+            process_name: process_name.clone(),
+            profile: profile.clone(),
+            app_context: app_context.clone(),
+        });
+    }
+
     let stage_transcribe = std::time::Instant::now();
-    let Some((raw, api_used)) = run_transcription(&app, &wav, &cfg).await else {
-        app.emit("open-flow:pipeline-failed", utc_now_iso()).ok();
+    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
+        run_transcription_and_cleanup(&app, &wav, &cfg, &profile, app_context.as_deref()).await
+    else {
+        emit_pipeline_failed(&app);
         return;
     };
-    let raw = normalize_transcription_math_artifacts(&raw);
     log::debug!(
         "pipeline: transcription ok provider={} raw_chars={} raw_preview=\"{}\"",
         api_used,
@@ -926,13 +931,8 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         "pipeline: transcription stage_ms={}",
         stage_transcribe.elapsed().as_millis()
     );
+
     let stage_cleanup = std::time::Instant::now();
-    let Some((final_text, dict_entries, cleanup_cache_key)) =
-        run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
-    else {
-        app.emit("open-flow:pipeline-failed", utc_now_iso()).ok();
-        return;
-    };
     log::debug!(
         "pipeline: cleanup/snippets ok final_chars={} final_preview=\"{}\" dict_entries={}",
         final_text.chars().count(),
@@ -976,7 +976,6 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         started_at.elapsed().as_millis()
     );
 }
-
 fn take_pipeline_session(state: &SharedState) -> Option<(audio::RecordingSession, usize)> {
     let mut st = match lock_state(state) {
         Ok(st) => st,
@@ -1103,9 +1102,28 @@ async fn run_transcription(
         );
         show_error_pill(app, &trim_err(&e.to_string())).await;
     } else {
-        show_error_pill(app, "Nothing transcribed - please try speaking more clearly").await;
+        show_error_pill(
+            app,
+            "Nothing transcribed - please try speaking more clearly",
+        )
+        .await;
     }
     None
+}
+
+async fn run_transcription_and_cleanup(
+    app: &AppHandle,
+    wav: &bytes::Bytes,
+    cfg: &store::PipelineConfig,
+    profile: &str,
+    app_context: Option<&str>,
+) -> Option<(String, String, String, Vec<db::DictionaryEntry>, String)> {
+    let (raw, api_used) = run_transcription(app, wav, cfg).await?;
+    let raw = normalize_transcription_math_artifacts(&raw);
+
+    let (final_text, dict_entries, cleanup_cache_key) =
+        run_cleanup_and_snippets(app, &raw, cfg, profile, app_context).await?;
+    Some((raw, api_used, final_text, dict_entries, cleanup_cache_key))
 }
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
 // instruction override application. Returns (final_text_before_dict, dict_entries)
@@ -1174,7 +1192,8 @@ async fn run_cleanup_and_snippets(
         let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens)
             && (raw.chars().count() <= 200 || has_snippets);
         let cache_key = if allow_cache {
-            let base_cache_key = normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators);
+            let base_cache_key =
+                normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators);
             style_scoped_cleanup_cache_key(&base_cache_key, profile, &cfg.cleanup_intensity)
         } else {
             String::new()
@@ -1276,7 +1295,13 @@ async fn run_cleanup_and_snippets(
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
                 if !cache_key.is_empty() {
                     let expires = sqlite_utc_plus(7);
-                    match db::cleanup_cache_insert_new(&db, &cache_key, &cleaned, &expires, has_snippets) {
+                    match db::cleanup_cache_insert_new(
+                        &db,
+                        &cache_key,
+                        &cleaned,
+                        &expires,
+                        has_snippets,
+                    ) {
                         Ok(_) => {
                             log::debug!("pipeline: cleanup cache insert ok expires_at={expires}")
                         }
@@ -1320,13 +1345,16 @@ fn should_run_cleanup_llm(
         && (cleanup_intensity != "none" || profile == "formal")
 }
 
-fn style_scoped_cleanup_cache_key(base_key: &str, profile: &str, cleanup_intensity: &str) -> String {
+fn style_scoped_cleanup_cache_key(
+    base_key: &str,
+    profile: &str,
+    cleanup_intensity: &str,
+) -> String {
     if base_key.is_empty() {
         return String::new();
     }
     format!("{base_key}|profile:{profile}|intensity:{cleanup_intensity}")
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1506,37 +1534,51 @@ pub async fn retry_transcription_impl(
     app: &AppHandle,
     state: &SharedState,
 ) -> anyhow::Result<db::RecentEntry> {
-    let (wav, duration_ms, process_name, target_hwnd, captured_at) = {
+    show_pill(app, "processing");
+    let mut retry_expired = false;
+    let capture = {
         let mut st = lock_state(state)?;
-        let Some(retry) = st.retry_capture.as_ref() else {
-            anyhow::bail!("No retry available");
-        };
-        if retry.captured_at.elapsed() > RETRY_WINDOW {
-            st.retry_capture = None;
-            anyhow::bail!("Retry window expired");
+        match &st.retry_capture {
+            Some(retry) => {
+                if retry.captured_at.elapsed() > RETRY_WINDOW {
+                    st.retry_capture = None;
+                    retry_expired = true;
+                    None
+                } else {
+                    Some(retry.clone())
+                }
+            }
+            None => None,
         }
-        (
-            retry.wav.clone(),
-            retry.duration_ms,
-            retry.process_name.clone(),
-            retry.target_hwnd,
-            retry.captured_at,
+    };
+    if retry_expired {
+        show_error_pill(app, "Retry window expired").await;
+        anyhow::bail!("Retry window expired");
+    }
+    let Some(capture) = capture else {
+        hide_pill(app);
+        anyhow::bail!("No retry available");
+    };
+
+    let settings_store = app.store("settings.json")?;
+    let cfg = store::load_pipeline_config(&settings_store);
+
+    if !has_transcription_key_in_chain(&cfg) {
+        show_error_pill(app, "No API key configured").await;
+        anyhow::bail!("No API key configured");
+    }
+
+    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
+        run_transcription_and_cleanup(
+            app,
+            &capture.wav,
+            &cfg,
+            &capture.profile,
+            capture.app_context.as_deref(),
         )
-    };
-
-    let Some((cfg, profile, app_context)) = open_config_and_context(app, &process_name).await else {
-        anyhow::bail!("Missing pipeline configuration");
-    };
-
-    let Some((raw, api_used)) = run_transcription(app, &wav, &cfg).await else {
-        anyhow::bail!("Transcription failed");
-    };
-    let raw = normalize_transcription_math_artifacts(&raw);
-
-    let Some((final_text, dict_entries, cleanup_cache_key)) =
-        run_cleanup_and_snippets(app, &raw, &cfg, &profile, app_context.as_deref()).await
+        .await
     else {
-        anyhow::bail!("Cleanup failed");
+        anyhow::bail!("Retry processing failed");
     };
 
     finalize_pipeline_completion(
@@ -1546,13 +1588,13 @@ pub async fn retry_transcription_impl(
             raw: &raw,
             final_text_before_dict: &final_text,
             dict_entries: &dict_entries,
-            duration_ms,
+            duration_ms: capture.duration_ms,
             api_used: &api_used,
-            target_hwnd,
+            target_hwnd: capture.target_hwnd,
             cfg: &cfg,
-            process_name,
+            process_name: capture.process_name,
             cleanup_cache_key,
-            captured_at,
+            captured_at: capture.captured_at,
         },
     )
     .await
@@ -1646,10 +1688,6 @@ async fn finalize_pipeline_completion(
     app.emit("open-flow:transcribed", &injected_text).ok();
 
     if !ctx.cleanup_cache_key.is_empty() {
-        log::debug!(
-            "pipeline: cache rejection monitor starting key_len={}",
-            ctx.cleanup_cache_key.len()
-        );
         auto_learn::start_cache_rejection_monitor(
             injected_text.clone(),
             ctx.cleanup_cache_key,
@@ -1659,12 +1697,7 @@ async fn finalize_pipeline_completion(
         );
     }
     if ctx.cfg.auto_learn_enabled {
-        log::debug!("pipeline: auto_learn monitor starting");
         if !applied_dict_ids.is_empty() {
-            log::debug!(
-                "pipeline: rejection monitor starting applied_dict_ids={}",
-                applied_dict_ids.len()
-            );
             auto_learn::start_rejection_monitor(
                 injected_text.clone(),
                 applied_dict_ids,
@@ -1678,6 +1711,4 @@ async fn finalize_pipeline_completion(
 
     Ok(entry)
 }
-
-
 

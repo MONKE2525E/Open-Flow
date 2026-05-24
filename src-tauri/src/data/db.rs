@@ -310,7 +310,7 @@ pub fn insert_transcription_returning(
     api_used: &str,
 ) -> Result<RecentEntry> {
     let conn = lock_conn(db)?;
-    conn.query_row(
+    Ok(conn.query_row(
         "INSERT INTO transcriptions (raw_text, clean_text, words, duration_ms, api_used) \
          VALUES (?1, ?2, ?3, ?4, ?5) \
          RETURNING id, clean_text, words, created_at",
@@ -323,8 +323,7 @@ pub fn insert_transcription_returning(
                 created_at: r.get(3)?,
             })
         },
-    )
-    .map_err(Into::into)
+    )?)
 }
 
 pub fn query_recent(db: &Db) -> Result<Vec<RecentEntry>> {
@@ -685,9 +684,8 @@ pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
 
-            let delete_dict_sql = format!(
-                "DELETE FROM dictionary WHERE id IN ({placeholders}) AND auto_learned = 1"
-            );
+            let delete_dict_sql =
+                format!("DELETE FROM dictionary WHERE id IN ({placeholders}) AND auto_learned = 1");
             tx.execute(&delete_dict_sql, rusqlite::params_from_iter(chunk.iter()))?;
 
             for (term, mistake) in pairs {
@@ -948,13 +946,17 @@ mod tests {
             .expect("insert");
 
         // Verify it's cached.
-        assert!(cleanup_cache_get_active(&db, "key1").expect("get").is_some());
+        assert!(cleanup_cache_get_active(&db, "key1")
+            .expect("get")
+            .is_some());
 
         // Simulate rejection monitor firing.
         cleanup_cache_delete_by_key(&db, "key1").expect("delete");
 
         // Entry must be gone â€” next dictation will hit the LLM.
-        assert!(cleanup_cache_get_active(&db, "key1").expect("get after").is_none());
+        assert!(cleanup_cache_get_active(&db, "key1")
+            .expect("get after")
+            .is_none());
         assert_eq!(cleanup_cache_count(&db).expect("count"), 0);
     }
 
@@ -968,7 +970,9 @@ mod tests {
 
         cleanup_cache_delete_by_key(&db, "target").expect("delete");
 
-        assert!(cleanup_cache_get_active(&db, "target").expect("target").is_none());
+        assert!(cleanup_cache_get_active(&db, "target")
+            .expect("target")
+            .is_none());
         assert!(
             cleanup_cache_get_active(&db, "bystander")
                 .expect("bystander")
@@ -987,13 +991,17 @@ mod tests {
         cleanup_cache_touch_hit(&db, "k", 2, "2026-01-01 00:00:00", "2999-01-01 00:00:00")
             .expect("touch");
 
-        let hit = cleanup_cache_get_active(&db, "k").expect("get").expect("exists");
+        let hit = cleanup_cache_get_active(&db, "k")
+            .expect("get")
+            .expect("exists");
         assert_eq!(hit.hit_count, 2);
 
         // User deletes output â†’ rejection monitor fires.
         cleanup_cache_delete_by_key(&db, "k").expect("delete");
 
-        assert!(cleanup_cache_get_active(&db, "k").expect("get after").is_none());
+        assert!(cleanup_cache_get_active(&db, "k")
+            .expect("get after")
+            .is_none());
     }
 
     #[test]
@@ -1070,7 +1078,9 @@ mod tests {
         assert_eq!(cleanup_cache_count(&db).expect("count"), 1);
 
         // Second dictation: cache hit, stale answer served.
-        let entry = cleanup_cache_get_active(&db, key).expect("get").expect("hit");
+        let entry = cleanup_cache_get_active(&db, key)
+            .expect("get")
+            .expect("hit");
         assert_eq!(entry.clean_text, bad_answer);
         cleanup_cache_touch_hit(&db, key, 2, "2026-01-01 00:00:00", "2999-01-01 00:00:00")
             .expect("touch");
@@ -1080,7 +1090,9 @@ mod tests {
 
         // Third dictation: cache miss, LLM runs again with fresh context.
         assert!(
-            cleanup_cache_get_active(&db, key).expect("get after").is_none(),
+            cleanup_cache_get_active(&db, key)
+                .expect("get after")
+                .is_none(),
             "cache must be empty after rejection so next dictation hits the LLM"
         );
     }
@@ -1100,3 +1112,4 @@ mod tests {
         assert_eq!(query_dictionary(&db).expect("after").len(), 0);
     }
 }
+
