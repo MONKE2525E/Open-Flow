@@ -18,7 +18,7 @@
   let autoLearn = $state(false);
   let cleanupCacheEntries = $state(0);
   let cleanupCacheSpaceConstrained = $state(false);
-  let cleanupCacheFreeBytes = $state(0);
+  let cleanupCacheFreeBytes = $state<number | null>(null);
   let clearingCleanupCache = $state(false);
   let autoLearnSummary = $state({
     monitors_started: 0,
@@ -45,7 +45,7 @@
       autoLearn = learn ?? false;
       cleanupCacheEntries = cacheStatus?.entry_count ?? 0;
       cleanupCacheSpaceConstrained = cacheStatus?.is_space_constrained ?? false;
-      cleanupCacheFreeBytes = cacheStatus?.free_bytes ?? 0;
+      cleanupCacheFreeBytes = cacheStatus?.free_bytes ?? null;
       autoLearnSummary = summary ?? autoLearnSummary;
       recentAutoLearn = recent ?? [];
     } catch (err) {
@@ -178,6 +178,8 @@
       {cleanupCacheEntries} cached phrase{cleanupCacheEntries === 1 ? '' : 's'}.
       {#if cleanupCacheSpaceConstrained}
         Low disk space (&lt;1 GB free). Clearing cache may help free space.
+      {:else if cleanupCacheFreeBytes === null}
+        Status unavailable.
       {:else}
         {(cleanupCacheFreeBytes / 1024 / 1024 / 1024).toFixed(1)} GB free.
       {/if}

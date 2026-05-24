@@ -88,4 +88,9 @@
     width: 200px;
     letter-spacing: 0.04em;
   }
+  .key-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+  }
 </style>

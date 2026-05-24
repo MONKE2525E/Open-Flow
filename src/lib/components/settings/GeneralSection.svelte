@@ -134,13 +134,6 @@
     if (languageDropdownOpen && !target.closest('.language-dropdown')) languageDropdownOpen = false;
   }
 
-  function handleWindowKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      micDropdownOpen = false;
-      languageDropdownOpen = false;
-    }
-  }
-
   async function saveMic(name: string) {
     selectedMic = name;
     micDropdownOpen = false;
@@ -321,7 +314,7 @@
 
   loadSettings();
 </script>
-<svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
+<svelte:window onclick={handleWindowClick} />
 
 <h2 class="settings-h">General</h2>
 <div class="setting-row">
@@ -344,7 +337,8 @@
 </div>
 <div class="setting-row">
   <div><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect</div></div>
-  <div class="language-dropdown">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="language-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && languageDropdownOpen) { languageDropdownOpen = false; e.stopPropagation(); } }}>
     <button
       class="btn-ghost language-btn"
       use:animateWidth={{ text: getTranscriptionLanguageLabel(selectedLanguage) }}
@@ -378,7 +372,8 @@
     <div class="label">{audioCopy.inputDeviceLabel}</div>
     <div class="desc">{audioCopy.inputDeviceDescription}</div>
   </div>
-  <div class="mic-dropdown">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="mic-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && micDropdownOpen) { micDropdownOpen = false; e.stopPropagation(); } }}>
     <button
       class="btn-ghost mic-btn"
       use:animateWidth={{ text: selectedMic || audioCopy.defaultDevice, max: 180 }}
