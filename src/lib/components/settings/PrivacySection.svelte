@@ -91,7 +91,7 @@
       const status = await invoke<CleanupCacheStatus>('get_cleanup_cache_status');
       cleanupCacheEntries = status?.entry_count ?? 0;
       cleanupCacheSpaceConstrained = status?.is_space_constrained ?? false;
-      cleanupCacheFreeBytes = status?.free_bytes ?? 0;
+      cleanupCacheFreeBytes = status?.free_bytes ?? null;
     } catch (err) {
       console.error('clearCleanupCache failed:', err);
     } finally {
