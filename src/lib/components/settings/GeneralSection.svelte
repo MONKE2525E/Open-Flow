@@ -536,6 +536,8 @@
   .mic-empty { padding: 8px 10px; font-size: 12px; color: var(--ink-mute); text-align: center; }
   .language-dropdown { position: relative; flex-shrink: 0; }
   .language-btn { max-width: 210px; }
+  .language-btn svg { transition: transform 0.2s; }
+  .language-btn svg.open { transform: rotate(180deg); }
   .language-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
   .language-code {
     font-family: var(--mono);
