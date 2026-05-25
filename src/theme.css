@@ -29,6 +29,7 @@
 
   --paper: var(--amber-50);
   --paper-2: var(--amber-100);
+  --paper-3: var(--amber-200);
   --bg-elev: #ffffff;
 
   --ink: var(--arm-950);
@@ -111,6 +112,7 @@
 
   --paper: #14110e;
   --paper-2: #1c1712;
+  --paper-3: var(--amber-200);
   --bg-elev: #211b16;
 
   --ink: #f7efe6;

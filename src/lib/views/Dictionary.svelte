@@ -32,6 +32,7 @@
   }
 
   let search        = $state('');
+  let debouncedSearch = $state('');
   let sort          = $state<SortKey>('newest');
   let selected      = $state<DictionaryEntry | null>(null);
   let modal         = $state<{ mode: 'add' | 'edit'; entry?: DictionaryEntry } | null>(null);
@@ -67,8 +68,13 @@
     { key: 'most_corrected', label: 'Most corrected' },
   ];
 
+  $effect(() => {
+    const timer = window.setTimeout(() => { debouncedSearch = search; }, 120);
+    return () => window.clearTimeout(timer);
+  });
+
   const filtered = $derived.by(() => {
-    const q = search.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
     let list = q
       ? $dictionary.filter(e =>
           e.term.toLowerCase().includes(q) ||

@@ -832,7 +832,15 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
             }
             Ok(_) => {}
             Err(e) => {
-                if crate::api::is_retryable_provider_error(&e) {
+                let retryable = crate::api::is_retryable_provider_error(&e);
+                log::warn!(
+                    "pipeline: transcription provider failed provider={} model={} retryable={} error={}",
+                    provider_id,
+                    model,
+                    retryable,
+                    trim_err(&e.to_string())
+                );
+                if retryable {
                     last_err = Some(e);
                     continue;
                 }
@@ -878,7 +886,8 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     );
 
     let stage_config = std::time::Instant::now();
-    let Some((cfg, profile, app_context)) = open_config_and_context(&app, &process_name).await else {
+    let Some((cfg, profile, app_context)) = open_config_and_context(&app, &process_name).await
+    else {
         return;
     };
     log::debug!(
@@ -1085,7 +1094,15 @@ async fn run_transcription(
             }
             Ok(_) => {}
             Err(e) => {
-                if crate::api::is_retryable_provider_error(&e) {
+                let retryable = crate::api::is_retryable_provider_error(&e);
+                log::warn!(
+                    "pipeline: transcription provider failed provider={} model={} retryable={} error={}",
+                    provider_id,
+                    model,
+                    retryable,
+                    trim_err(&e.to_string())
+                );
+                if retryable {
                     last_err = Some(e);
                     continue;
                 }
@@ -1096,11 +1113,15 @@ async fn run_transcription(
     }
 
     if let Some(e) = last_err {
+        let mut user_msg = trim_err(&e.to_string());
+        if let Some(parsed) = crate::api::parse_auth_401_error(&e.to_string()) {
+            user_msg = crate::api::auth_401_display_message(&parsed);
+        }
         log::error!(
             "pipeline: transcription failed error={}",
             trim_err(&e.to_string())
         );
-        show_error_pill(app, &trim_err(&e.to_string())).await;
+        show_error_pill(app, &user_msg).await;
     } else {
         show_error_pill(
             app,
@@ -1283,7 +1304,15 @@ async fn run_cleanup_and_snippets(
                     last_cleanup_err = None;
                 }
                 Err(e) => {
-                    if crate::api::is_retryable_provider_error(&e) {
+                    let retryable = crate::api::is_retryable_provider_error(&e);
+                    log::warn!(
+                        "pipeline: cleanup provider failed provider={} model={} retryable={} error={}",
+                        provider_id,
+                        model,
+                        retryable,
+                        trim_err(&e.to_string())
+                    );
+                    if retryable {
                         last_cleanup_err = Some(e);
                         continue;
                     }
@@ -1316,15 +1345,18 @@ async fn run_cleanup_and_snippets(
             }
             None if last_cleanup_err.is_some() => {
                 let e = last_cleanup_err.expect("checked is_some");
+                let mut user_msg = format!("Cleanup failed: {}", trim_err(&e.to_string()));
+                if let Some(parsed) = crate::api::parse_auth_401_error(&e.to_string()) {
+                    user_msg = format!(
+                        "Cleanup failed: {}",
+                        crate::api::auth_401_display_message(&parsed)
+                    );
+                }
                 log::error!(
                     "pipeline: cleanup failed error={}",
                     trim_err(&e.to_string())
                 );
-                show_error_pill(
-                    app,
-                    &format!("Cleanup failed: {}", trim_err(&e.to_string())),
-                )
-                .await;
+                show_error_pill(app, &user_msg).await;
                 return None;
             }
             None => snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions),
@@ -1634,28 +1666,47 @@ async fn finalize_pipeline_completion(
         dict_stage.elapsed().as_millis()
     );
     if dict_changed && crate::system::logger::is_verbose() {
-        log::debug!("pipeline: dictionary before_full=\"{}\"", ctx.final_text_before_dict);
-        log::debug!("pipeline: dictionary after_full=\"{}\"", final_text_substituted);
+        log::debug!(
+            "pipeline: dictionary before_full=\"{}\"",
+            ctx.final_text_before_dict
+        );
+        log::debug!(
+            "pipeline: dictionary after_full=\"{}\"",
+            final_text_substituted
+        );
     }
 
     let db = app.state::<DbHandle>();
     let words = ctx.raw.split_whitespace().count() as i64;
-    let entry = match db::insert_transcription_returning(
-        &db,
-        ctx.raw,
-        ctx.final_text_before_dict,
-        words,
-        ctx.duration_ms as i64,
-        ctx.api_used,
-    ) {
-        Ok(entry) => entry,
-        Err(e) => {
+    let db_for_insert = db.inner().clone();
+    let raw_for_insert = ctx.raw.to_string();
+    let clean_for_insert = ctx.final_text_before_dict.to_string();
+    let api_used_for_insert = ctx.api_used.to_string();
+    let duration_for_insert = ctx.duration_ms as i64;
+    let entry = match tokio::task::spawn_blocking(move || {
+        db::insert_transcription_returning(
+            &db_for_insert,
+            &raw_for_insert,
+            &clean_for_insert,
+            words,
+            duration_for_insert,
+            &api_used_for_insert,
+        )
+    })
+    .await
+    {
+        Ok(Ok(entry)) => entry,
+        Ok(Err(e)) => {
             show_error_pill(
                 app,
                 &format!("Failed to save transcription: {}", trim_err(&e.to_string())),
             )
             .await;
             return Err(e);
+        }
+        Err(e) => {
+            show_error_pill(app, "Failed to save transcription: background task crashed").await;
+            return Err(anyhow::anyhow!("insert_transcription task panicked: {e}"));
         }
     };
 
@@ -1710,9 +1761,13 @@ async fn finalize_pipeline_completion(
                 app.clone(),
             );
         }
-        auto_learn::start_monitor(injected_text, ctx.process_name, db.inner().clone(), app.clone());
+        auto_learn::start_monitor(
+            injected_text,
+            ctx.process_name,
+            db.inner().clone(),
+            app.clone(),
+        );
     }
 
     Ok(entry)
 }
-

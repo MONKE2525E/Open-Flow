@@ -23,6 +23,7 @@
   }
 
   let search    = $state('');
+  let debouncedSearch = $state('');
   let sort      = $state<SortKey>('newest');
   let selected  = $state<Snippet | null>(null);
   let modal     = $state<{ mode: 'add' | 'edit'; snippet?: Snippet } | null>(null);
@@ -34,6 +35,7 @@
   let draftInstructions  = $state('');
   let triggerInput   = $state<HTMLInputElement | null>(null);
   let inspectorDir = $state<1 | -1>(1);
+  let expansionTextareaEl = $state<HTMLTextAreaElement | null>(null);
   let sortWrapEl = $state<HTMLDivElement | null>(null);
   let sortButtonEls = $state<Record<SortKey, HTMLButtonElement | null>>({
     newest: null,
@@ -45,16 +47,12 @@
 
   const TRIGGER_LIMIT = 300;
 
-  const inspExpansion = $derived.by(() => {
-    if (!selected) return '';
-    const chars = [...selected.expansion.slice(0, 401)];
-    return chars.length > 200
-      ? chars.slice(0, 200).join('').trimEnd() + '…'
-      : selected.expansion;
+  $effect(() => {
+    const timer = window.setTimeout(() => { debouncedSearch = search; }, 120);
+    return () => window.clearTimeout(timer);
   });
-
   const filtered = $derived.by(() => {
-    const q = search.toLowerCase();
+    const q = debouncedSearch.toLowerCase();
     let list = q
       ? $snippets.filter(s =>
           s.trigger.toLowerCase().includes(q) || s.expansion.toLowerCase().includes(q)
@@ -157,6 +155,12 @@
 
   $effect(() => {
     if (modal && triggerInput) setTimeout(() => triggerInput?.focus(), 50);
+  });
+
+  $effect(() => {
+    void draftExpansion;
+    const el = expansionTextareaEl;
+    if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
   });
 
   const sortLabels: { key: SortKey; label: string }[] = [
@@ -312,7 +316,7 @@
                 <polyline points="2,9 5.5,13.5 9,9"/>
               </svg>
               </div>
-              <div class="insp-expansion">{inspExpansion}</div>
+              <div class="insp-expansion scroll-styled">{selected.expansion}</div>
 
               {#if selected.instructions}
                 <div class="insp-instructions" in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}>
@@ -422,7 +426,7 @@
           class="field-input scrollbar-standard"
           placeholder="e.g. hello@example.com"
           bind:value={draftExpansion}
-          use:autoGrow
+          bind:this={expansionTextareaEl}
           rows="3"
           spellcheck="false"
         ></textarea>
@@ -719,6 +723,8 @@
     line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-word;
+    max-height: 120px;
+    overflow-y: auto;
   }
 
   .insp-divider {
@@ -1111,3 +1117,4 @@
     word-break: break-word;
   }
 </style>
+

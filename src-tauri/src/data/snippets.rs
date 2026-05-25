@@ -1,5 +1,36 @@
 use crate::data::db::{self, Db};
 use std::cmp::Reverse;
+use std::collections::HashMap;
+
+fn lowercase_with_source_map(input: &str) -> (String, Vec<usize>) {
+    let mut lowered = String::with_capacity(input.len());
+    let mut source_map = Vec::with_capacity(input.len());
+
+    for (src_idx, ch) in input.char_indices() {
+        for lower_ch in ch.to_lowercase() {
+            let mut buf = [0_u8; 4];
+            let encoded = lower_ch.encode_utf8(&mut buf);
+            lowered.push_str(encoded);
+            for _ in 0..encoded.len() {
+                source_map.push(src_idx);
+            }
+        }
+    }
+
+    (lowered, source_map)
+}
+
+fn end_of_char_at(text: &str, start: usize) -> usize {
+    text[start..]
+        .chars()
+        .next()
+        .map(|ch| start + ch.len_utf8())
+        .unwrap_or(text.len())
+}
+
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_' || ch == '\'' || ch == '\u{2019}' || ch == '-'
+}
 
 /// If the entire transcription is just a snippet trigger (ignoring trailing punctuation
 /// added by the transcription model), return the expansion directly.
@@ -44,34 +75,93 @@ pub fn collect_snippet_instructions_from(text: &str, snippets: &[db::Snippet]) -
 }
 
 pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -> String {
+    #[derive(Clone)]
+    struct Match {
+        start: usize,
+        end: usize,
+        snippet_idx: usize,
+    }
+
     // Longest triggers first — prevents short prefix matches shadowing longer ones.
     snippets.sort_by_key(|snippet| Reverse(snippet.trigger.len()));
 
     let mut result = text.to_string();
+    let (haystack, source_map) = lowercase_with_source_map(&result);
+    let mut all_matches: Vec<Match> = Vec::new();
 
-    for snippet in snippets.iter() {
+    for (snippet_idx, snippet) in snippets.iter().enumerate() {
         let needle = snippet.trigger.to_lowercase();
-        let haystack = result.to_lowercase();
-
-        // Find all non-overlapping occurrences (right-to-left to keep indices valid).
-        let mut positions: Vec<usize> = Vec::new();
-        let mut search_from = 0;
-        while let Some(pos) = haystack[search_from..].find(&needle) {
-            let abs = search_from + pos;
-            positions.push(abs);
-            search_from = abs + needle.len();
-        }
-
-        if positions.is_empty() {
+        if needle.is_empty() {
             continue;
         }
 
-        // Replace right-to-left so earlier indices stay valid.
-        for pos in positions.into_iter().rev() {
-            result.replace_range(pos..pos + needle.len(), &snippet.expansion);
+        let mut search_from = 0;
+        while let Some(pos) = haystack[search_from..].find(&needle) {
+            let abs = search_from + pos;
+            let before_ok = abs == 0
+                || !haystack[..abs]
+                    .chars()
+                    .last()
+                    .map(is_word_char)
+                    .unwrap_or(false);
+            let after_ok = abs + needle.len() >= haystack.len()
+                || !haystack[abs + needle.len()..]
+                    .chars()
+                    .next()
+                    .map(is_word_char)
+                    .unwrap_or(false);
+            if before_ok && after_ok {
+                let start = source_map[abs];
+                let end_lower = abs + needle.len();
+                let mut end = if end_lower >= haystack.len() {
+                    result.len()
+                } else {
+                    source_map[end_lower]
+                };
+                if end <= start {
+                    let last_src = source_map[end_lower.saturating_sub(1)];
+                    end = end_of_char_at(&result, last_src);
+                }
+                all_matches.push(Match {
+                    start,
+                    end,
+                    snippet_idx,
+                });
+            }
+            search_from = abs + needle.len();
         }
+    }
 
-        let _ = db::increment_snippet_use(db, snippet.id);
+    all_matches.sort_by(|a, b| {
+        a.start
+            .cmp(&b.start)
+            .then_with(|| a.snippet_idx.cmp(&b.snippet_idx))
+            .then_with(|| b.end.cmp(&a.end))
+    });
+
+    let mut selected: Vec<Match> = Vec::new();
+    let mut last_end = 0usize;
+    for m in all_matches {
+        if m.start < last_end {
+            continue;
+        }
+        last_end = m.end;
+        selected.push(m);
+    }
+
+    for m in selected.iter().rev() {
+        result.replace_range(m.start..m.end, &snippets[m.snippet_idx].expansion);
+    }
+
+    let mut usage_counts: HashMap<i64, i64> = HashMap::new();
+    for m in selected {
+        let snippet_id = snippets[m.snippet_idx].id;
+        *usage_counts.entry(snippet_id).or_insert(0) += 1;
+    }
+    if !usage_counts.is_empty() {
+        let mut batched_counts: Vec<(i64, i64)> = usage_counts.into_iter().collect();
+        batched_counts.sort_by_key(|(id, _)| *id);
+        let _ = db::increment_snippet_use_counts(db, &batched_counts);
     }
 
     result
@@ -198,7 +288,8 @@ fn ensure_final_exclamation(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_cleanup_instruction_overrides;
+    use super::{apply_cleanup_instruction_overrides, expand_snippets_from};
+    use crate::data::db;
 
     #[test]
     fn uppercase_override_applies_to_entire_output() {
@@ -233,5 +324,37 @@ mod tests {
         );
 
         assert_eq!(output, "PLEASE SHIP THIS!");
+    }
+
+    #[test]
+    fn snippet_does_not_match_inside_apostrophe_word() {
+        let db = db::open(":memory:").expect("test db");
+        let mut snippets = vec![db::Snippet {
+            id: 1,
+            trigger: "cant".to_string(),
+            expansion: "cannot".to_string(),
+            instructions: String::new(),
+            use_count: 0,
+            created_at: String::new(),
+        }];
+
+        let out = expand_snippets_from("I can't do that", &mut snippets, &db);
+        assert_eq!(out, "I can't do that");
+    }
+
+    #[test]
+    fn snippet_does_not_match_inside_hyphenated_word() {
+        let db = db::open(":memory:").expect("test db");
+        let mut snippets = vec![db::Snippet {
+            id: 1,
+            trigger: "test".to_string(),
+            expansion: "exam".to_string(),
+            instructions: String::new(),
+            use_count: 0,
+            created_at: String::new(),
+        }];
+
+        let out = expand_snippets_from("pre-test run", &mut snippets, &db);
+        assert_eq!(out, "pre-test run");
     }
 }
