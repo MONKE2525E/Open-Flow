@@ -303,7 +303,7 @@
                   {#if r.clean_text}
                     <div class="day-text">{r.clean_text}</div>
                   {:else}
-                    <div class="day-text day-text--error">Transcription failed — check API key or quota</div>
+                    <div class="day-text error-msg">Transcription failed — check API keys or quota.</div>
                   {/if}
                   <button
                     class="copy-btn"
@@ -531,7 +531,7 @@
     cursor: default;
   }
   .day-row:hover { background: var(--control-active); }
-  .day-row:not(:hover) .copy-btn { opacity: 0; pointer-events: none; }
+  .day-row:not(:hover) .copy-btn:not(:focus-visible) { opacity: 0.2; }
 
   .copy-btn {
     all: unset;
@@ -548,7 +548,8 @@
     flex-shrink: 0;
     margin-top: 2px;
   }
-  .copy-btn:hover { opacity: 0.9; }
+  .copy-btn:hover,
+  .copy-btn:focus-visible { opacity: 1; }
   .copy-btn.copied { color: var(--jap-500, #d97757); opacity: 1; }
   .copy-btn svg { width: 10px; height: 10px; }
 
@@ -569,14 +570,8 @@
     overflow-wrap: anywhere;
   }
 
-  .day-text--error {
-    color: var(--danger, #c0392b);
-    font-style: italic;
-    opacity: 0.75;
-  }
-
   .error-msg {
-    color: var(--ink-mute);
+    color: var(--danger);
     font-style: italic;
   }
 

@@ -1,6 +1,32 @@
 use crate::data::db::{self, Db};
 use std::cmp::Reverse;
 
+fn lowercase_with_source_map(input: &str) -> (String, Vec<usize>) {
+    let mut lowered = String::with_capacity(input.len());
+    let mut source_map = Vec::with_capacity(input.len());
+
+    for (src_idx, ch) in input.char_indices() {
+        for lower_ch in ch.to_lowercase() {
+            let mut buf = [0_u8; 4];
+            let encoded = lower_ch.encode_utf8(&mut buf);
+            lowered.push_str(encoded);
+            for _ in 0..encoded.len() {
+                source_map.push(src_idx);
+            }
+        }
+    }
+
+    (lowered, source_map)
+}
+
+fn end_of_char_at(text: &str, start: usize) -> usize {
+    text[start..]
+        .chars()
+        .next()
+        .map(|ch| start + ch.len_utf8())
+        .unwrap_or(text.len())
+}
+
 /// If the entire transcription is just a snippet trigger (ignoring trailing punctuation
 /// added by the transcription model), return the expansion directly.
 ///
@@ -44,34 +70,83 @@ pub fn collect_snippet_instructions_from(text: &str, snippets: &[db::Snippet]) -
 }
 
 pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -> String {
+    #[derive(Clone)]
+    struct Match {
+        start: usize,
+        end: usize,
+        snippet_idx: usize,
+    }
+
     // Longest triggers first — prevents short prefix matches shadowing longer ones.
     snippets.sort_by_key(|snippet| Reverse(snippet.trigger.len()));
 
     let mut result = text.to_string();
+    let (haystack, source_map) = lowercase_with_source_map(&result);
+    let mut all_matches: Vec<Match> = Vec::new();
 
-    for snippet in snippets.iter() {
+    for (snippet_idx, snippet) in snippets.iter().enumerate() {
         let needle = snippet.trigger.to_lowercase();
-        let haystack = result.to_lowercase();
-
-        // Find all non-overlapping occurrences (right-to-left to keep indices valid).
-        let mut positions: Vec<usize> = Vec::new();
-        let mut search_from = 0;
-        while let Some(pos) = haystack[search_from..].find(&needle) {
-            let abs = search_from + pos;
-            positions.push(abs);
-            search_from = abs + needle.len();
-        }
-
-        if positions.is_empty() {
+        if needle.is_empty() {
             continue;
         }
 
-        // Replace right-to-left so earlier indices stay valid.
-        for pos in positions.into_iter().rev() {
-            result.replace_range(pos..pos + needle.len(), &snippet.expansion);
+        let mut search_from = 0;
+        while let Some(pos) = haystack[search_from..].find(&needle) {
+            let abs = search_from + pos;
+            let before_ok = abs == 0
+                || !haystack[..abs]
+                    .chars()
+                    .last()
+                    .map(|c| c.is_alphanumeric() || c == '_')
+                    .unwrap_or(false);
+            let after_ok = abs + needle.len() >= haystack.len()
+                || !haystack[abs + needle.len()..]
+                    .chars()
+                    .next()
+                    .map(|c| c.is_alphanumeric() || c == '_')
+                    .unwrap_or(false);
+            if before_ok && after_ok {
+                let start = source_map[abs];
+                let end_lower = abs + needle.len();
+                let mut end = if end_lower >= haystack.len() {
+                    result.len()
+                } else {
+                    source_map[end_lower]
+                };
+                if end <= start {
+                    let last_src = source_map[end_lower.saturating_sub(1)];
+                    end = end_of_char_at(&result, last_src);
+                }
+                all_matches.push(Match {
+                    start,
+                    end,
+                    snippet_idx,
+                });
+            }
+            search_from = abs + needle.len();
         }
+    }
 
-        let _ = db::increment_snippet_use(db, snippet.id);
+    all_matches.sort_by(|a, b| {
+        a.start
+            .cmp(&b.start)
+            .then_with(|| a.snippet_idx.cmp(&b.snippet_idx))
+            .then_with(|| b.end.cmp(&a.end))
+    });
+
+    let mut selected: Vec<Match> = Vec::new();
+    let mut last_end = 0usize;
+    for m in all_matches {
+        if m.start < last_end {
+            continue;
+        }
+        last_end = m.end;
+        selected.push(m);
+    }
+
+    for m in selected.iter().rev() {
+        result.replace_range(m.start..m.end, &snippets[m.snippet_idx].expansion);
+        let _ = db::increment_snippet_use(db, snippets[m.snippet_idx].id);
     }
 
     result

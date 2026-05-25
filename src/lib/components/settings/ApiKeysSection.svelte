@@ -32,11 +32,11 @@
 
   async function clearKey(provider: 'groq' | 'openai' | 'google') {
     try {
-      await invoke('clear_api_key', { provider });
+      await invoke('delete_api_key', { provider });
       keyStatus = { ...keyStatus, [provider]: false };
       draftKeys = { ...draftKeys, [provider]: '' };
     } catch (e) {
-      console.error('clear_api_key failed', e);
+      console.error('delete_api_key failed', e);
     }
   }
 
@@ -72,7 +72,10 @@
         disabled={!draftKeys[item.id].trim()}
       >Save</button>
       {#if keyStatus[item.id]}
-        <button class="btn-ghost btn-clear" onclick={() => clearKey(item.id)}>Clear</button>
+        <button
+          class="btn-ghost btn-clear"
+          onclick={() => clearKey(item.id)}
+        >Clear</button>
       {/if}
     </div>
   </div>
@@ -82,8 +85,6 @@
   .key-row { align-items: flex-start; gap: 12px; }
   .key-left { flex: 1; min-width: 0; }
   .key-right { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
-  .btn-clear { color: var(--danger); border-color: var(--danger-line); }
-  .btn-clear:hover { background: var(--danger-bg); color: var(--danger); }
   .key-saved {
     font-family: var(--mono);
     font-size: 10px;
@@ -102,5 +103,18 @@
     color: var(--ink-soft);
     width: 200px;
     letter-spacing: 0.04em;
+  }
+  .key-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+  .btn-clear {
+    color: var(--danger);
+    border-color: var(--danger-line);
+  }
+  .btn-clear:hover {
+    background: var(--danger-bg);
+    border-color: var(--danger-line);
   }
 </style>

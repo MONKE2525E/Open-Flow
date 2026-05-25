@@ -20,7 +20,7 @@ Below is the initial health check and technical debt evaluation of the Open Flow
 
 ## 2. Refactoring PR Path (Focused PR Groups)
 
-We have organized the technical debt and usability audit into **10 focused Pull Request groups**. Each PR group contains actionable task chunks with context links, step-by-step implementation instructions, and verification plans.
+We have organized the technical debt and usability audit into **11 focused Pull Request groups**. Each PR group contains actionable task chunks with context links, step-by-step implementation instructions, and verification plans.
 
 ---
 
@@ -53,7 +53,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 ### [PR Group 2: UI - Performance, Animations & Frame Loops]
 *   **Goal**: Eliminate CPU cycles wasted on background animation frames and process scans during idle states.
 
-#### ✅ Task 2.1: Conditional `requestAnimationFrame` Loop in Pill HUD
+#### Task 2.1: Conditional `requestAnimationFrame` Loop in Pill HUD
 *   **Context**: [PillApp.svelte](file:///g:/Open%20Flow/src/PillApp.svelte#L103-L144).
 *   **Problem Statement**: On mount, the floating pill window starts a `requestAnimationFrame` loop to animate audio visualizer bars. This loop runs continuously even when the app is in the `'idle'` state (transparent and click-through), consuming unnecessary CPU and GPU resources.
 *   **Actionable Implementation Steps**:
@@ -63,7 +63,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 *   **Verification & Test Plan**:
     *   *CPU Profile*: Launch the app in Tauri dev mode, open the frontend dev tools, select the Performance panel, and confirm that no frames are computed and script activity is 0% while the pill is in the `'idle'` state.
 
-#### ✅ Task 2.2: Svelte List Transition Optimizations
+#### Task 2.2: Svelte List Transition Optimizations
 *   **Context**: [Dictionary.svelte](file:///g:/Open%20Flow/src/lib/views/Dictionary.svelte) and [Snippets.svelte](file:///g:/Open%20Flow/src/lib/views/Snippets.svelte).
 *   **Problem Statement**: When lists grow to hundreds of items, applying `in:fly`, `out:fade`, and `animate:flip` transitions directly on wrapper `div` nodes within `{#each}` loops causes major layout stutters and input lag when filtering terms.
 *   **Actionable Implementation Steps**:
@@ -77,7 +77,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 ### [PR Group 3: UI - Accessibility, Focus & Programmatic Height Fixes]
 *   **Goal**: Align interactive inputs with layout focus designs and fix layout sizing bugs.
 
-#### Task 3.1: Stopping Dropdown Escape Event Bubbling
+#### ✅ Task 3.1: Stopping Dropdown Escape Event Bubbling
 *   **Context**: [GeneralSection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/GeneralSection.svelte#L137-L142) and [Settings.svelte](file:///g:/Open%20Flow/src/lib/views/Settings.svelte#L67).
 *   **Problem Statement**: The Settings modal closes when the user presses `Escape`. However, settings dropdown selectors (like Spoken Language or Microphone) do not capture and stop the `Escape` key event. Pressing `Escape` to close a dropdown propagates to the parent modal and closes the entire Settings sheet, losing unsaved form state.
 *   **Actionable Implementation Steps**:
@@ -86,7 +86,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 *   **Verification & Test Plan**:
     *   *Manual Action*: Open the Settings modal, expand the Spoken Language dropdown, and press `Escape`. Confirm that only the dropdown list closes, and the parent Settings modal remains open.
 
-#### Task 3.2: Toggles and API Key Fields Outline Indicators
+#### ✅ Task 3.2: Toggles and API Key Fields Outline Indicators
 *   **Context**: [Toggle.svelte](file:///g:/Open%20Flow/src/lib/components/Toggle.svelte#L8-L28) and [ApiKeysSection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/ApiKeysSection.svelte#L80-L90).
 *   **Problem Statement**: The toggle component and API key input fields are accessible via tab navigation but lack focus styles (`:focus` or `:focus-visible`). Keyboard users cannot see which setting toggle or input is currently selected.
 *   **Actionable Implementation Steps**:
@@ -104,7 +104,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 *   **Verification & Test Plan**:
     *   *Dictation Input*: Click the mic button in the Snippets Edit Modal and dictate a multi-sentence phrase. Verify that the textarea automatically scales its height to fit the expanded text.
 
-#### Task 3.4: Discoverable Clipboard Copy Button in History Card
+#### ✅ Task 3.4: Discoverable Clipboard Copy Button in History Card
 *   **Context**: [Home.svelte](file:///g:/Open%20Flow/src/lib/views/Home.svelte#L530).
 *   **Problem Statement**: The copy-to-clipboard button on dictation history entries is hidden (`opacity: 0; pointer-events: none;`) unless the user hovers over the card. This hides the feature from keyboard and mobile/tablet users.
 *   **Actionable Implementation Steps**:
@@ -118,7 +118,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 ### [PR Group 4: UI - Visual Polish, Spacing & Design System Alignment]
 *   **Goal**: Rectify typography mismatches, color variables, and transition discrepancies across panels.
 
-#### ✅ Task 4.1: Dropdown Overlay Mount/Unmount Transitions
+#### Task 4.1: Dropdown Overlay Mount/Unmount Transitions
 *   **Context**: [GeneralSection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/GeneralSection.svelte) (Language list), [PrivacySection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/PrivacySection.svelte) (History list), and [AppMappingsEditor.svelte](file:///g:/Open%20Flow/src/lib/components/AppMappingsEditor.svelte).
 *   **Problem Statement**: The Microphone dropdown features smooth Svelte transitions, but other dropdown menus mount instantly. This causes visual stuttering and inconsistent UI styling.
 *   **Actionable Implementation Steps**:
@@ -137,7 +137,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 *   **Verification & Test Plan**:
     *   *Theme Audit*: Toggle the app between light and dark modes. Hover over the Cancel buttons in the calibration and setup screens, verifying that they show a clean background highlight.
 
-#### Task 4.3: Correcting Monospace Font Typography
+#### ✅ Task 4.3: Correcting Monospace Font Typography
 *   **Context**: [Style.svelte](file:///g:/Open%20Flow/src/lib/views/Style.svelte#L223-L232) ("New" tab badge), [Sidebar.svelte](file:///g:/Open%20Flow/src/lib/components/layout/Sidebar.svelte#L193-L203) ("Soon" lock tag), and [Settings.svelte](file:///g:/Open%20Flow/src/lib/views/Settings.svelte#L165-L172) (navigation labels and footer text).
 *   **Problem Statement**: Status badges ("New", "Soon"), Settings headers, and footer credits are styled with `font-family: var(--mono);` (JetBrains Mono). This violates the design system principle that reserves monospace typography *exclusively* for technical tokens (filenames, keycodes, database records, etc.).
 *   **Actionable Implementation Steps**:
@@ -151,7 +151,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 ### [PR Group 5: UI - Settings, Dictionary & Snippets UX Enhancements]
 *   **Goal**: Polish input configurations, remove text clipping, and improve navigation flows.
 
-#### Task 5.1: Scrollable Expansion Text inside Snippets Inspector
+#### ✅ Task 5.1: Scrollable Expansion Text inside Snippets Inspector
 *   **Context**: [Snippets.svelte](file:///g:/Open%20Flow/src/lib/views/Snippets.svelte#L308-L315).
 *   **Problem Statement**: The Snippets inspector truncates the template expansion preview text to 200 characters. Users cannot view long snippets without opening the Edit modal.
 *   **Actionable Implementation Steps**:
@@ -169,7 +169,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 *   **Verification & Test Plan**:
     *   *Key Cycle*: Save an API key, verify it displays as "Saved". Click the clear button, and confirm the field clears and the key is removed from the settings file.
 
-#### Task 5.3: UI Feedback for Custom Models Accordions and Null Free-Space Fallbacks
+#### ✅ Task 5.3: UI Feedback for Custom Models Accordions and Null Free-Space Fallbacks
 *   **Context**: [ModelsSection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/ModelsSection.svelte) and [PrivacySection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/PrivacySection.svelte).
 *   **Problem Statement**: Toggling "Custom models" does not open the model panels, hiding where to input names. Additionally, if the cache API returns a null value, the UI displays `0.0 GB free`, incorrectly suggesting the disk is full.
 *   **Actionable Implementation Steps**:
@@ -193,7 +193,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 ### [PR Group 6: UI - App Mappings & Memory Indicator Optimization]
 *   **Goal**: Improve performance of local resource polling and align design actions.
 
-#### Task 6.1: Active Memory Badge Range Colors & App mapping Button Styles
+#### ✅ Task 6.1: Active Memory Badge Range Colors & App mapping Button Styles
 *   **Context**: [Sidebar.svelte](file:///g:/Open%20Flow/src/lib/components/layout/Sidebar.svelte#L278-L290), [AppMappingsEditor.svelte](file:///g:/Open%20Flow/src/lib/components/AppMappingsEditor.svelte#L266), and [AppMappingsEditor.svelte](file:///g:/Open%20Flow/src/lib/components/AppMappingsEditor.svelte#L225).
 *   **Problem Statement**: The memory indicator bar in the sidebar uses the primary terracotta/orange accent color at all times, making normal memory usage look like a critical warning. In addition, the App Mappings "Add" button uses a secondary style, and the UI lacks feedback when app searches return empty.
 *   **Actionable Implementation Steps**:
@@ -258,7 +258,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 *   **Verification & Test Plan**:
     *   *Unit Tests*: Run `npm run test:rust` to ensure compiling works. Add unit tests in `number_parser.rs` verifying specific mathematical conversion scenarios.
 
-#### ✅ Task 9.2: Parameterized Clipboard Timing and Word Boundary Snippets
+#### Task 9.2: Parameterized Clipboard Timing and Word Boundary Snippets
 *   **Context**: [injection.rs](file:///g:/Open%20Flow/src-tauri/src/core/injection.rs#L200-L370) and [snippets.rs](file:///g:/Open%20Flow/src-tauri/src/data/snippets.rs#L46-L78).
 *   **Problem Statement**: Clipboard injection relies on fragile thread sleeps that fail under system load. Also, snippet triggering performs naive substring replacement, corrupting matching parts of regular words.
 *   **Actionable Implementation Steps**:
@@ -306,7 +306,7 @@ We have organized the technical debt and usability audit into **10 focused Pull 
 *   **Verification & Test Plan**:
     *   *Failure Simulation*: Inject a mock SQL syntax error into a migration and confirm that database changes roll back cleanly and prevent startup.
 
-#### ✅ Task 11.2: Async Tauri Command Refactoring
+#### Task 11.2: Async Tauri Command Refactoring
 *   **Context**: [mod.rs](file:///g:/Open%20Flow/src-tauri/src/commands/mod.rs).
 *   **Problem Statement**: Tauri commands performing heavy blocking I/O (like process scans or DB queries) are declared as synchronous `pub fn` functions, blocking Tokio's main thread pool.
 *   **Actionable Implementation Steps**:

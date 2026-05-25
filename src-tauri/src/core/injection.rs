@@ -6,17 +6,12 @@ use std::time::{Duration, Instant};
 // a safety net for inactivity (e.g. the user idle for a minute then dictates again).
 const INJECTION_STALE: Duration = Duration::from_secs(60);
 
-// Timing constants for clipboard and keyboard injection steps.
-const FOCUS_SETTLE_MS: u64 = 150;       // settle after SetForegroundWindow before reading context
-const CLIPBOARD_OPEN_RETRY_MS: u64 = 50; // delay between OpenClipboard retry attempts
-const CLIPBOARD_WRITE_RETRY_MS: u64 = 50; // delay between write_clipboard_unicode retry attempts
-const CLIPBOARD_SETTLE_MS: u64 = 50;    // settle after clipboard write before clearing modifiers
-const MODIFIER_RELEASE_MS: u64 = 30;    // gap between modifier-state clear and Ctrl+V to avoid pump race
-const POST_PASTE_MS: u64 = 80;          // settle after Ctrl+V before restoring clipboard
-
 // Maximum bytes stored for backspace-tracking. Covers any practical editing sequence
 // while keeping the per-injection allocation bounded.
 const HISTORY_TAIL: usize = 512;
+const DELAY_FOREGROUND_MS: u64 = 150;
+const DELAY_MODIFIER_CLEAR_MS: u64 = 30;
+const DELAY_POST_PASTE_MS: u64 = 80;
 
 static LAST_INJECTION: OnceLock<Mutex<Option<(usize, String, Instant)>>> = OnceLock::new();
 
@@ -78,7 +73,7 @@ struct SavedClipboard {
 }
 
 #[cfg(target_os = "windows")]
-async unsafe fn save_clipboard_all() -> SavedClipboard {
+unsafe fn save_clipboard_all() -> SavedClipboard {
     use windows::Win32::Foundation::HGLOBAL;
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EnumClipboardFormats, GetClipboardData, OpenClipboard,
@@ -98,13 +93,10 @@ async unsafe fn save_clipboard_all() -> SavedClipboard {
 
     let mut entries = Vec::new();
 
-    let mut opened = false;
-    for attempt in 0..3u32 {
-        if OpenClipboard(None).is_ok() { opened = true; break; }
-        if attempt < 2 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS)).await;
-        }
-    }
+    let opened = (0..3).any(|i| {
+        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(50)); }
+        OpenClipboard(None).is_ok()
+    });
     if !opened {
         return SavedClipboard { entries };
     }
@@ -137,7 +129,7 @@ async unsafe fn save_clipboard_all() -> SavedClipboard {
 }
 
 #[cfg(target_os = "windows")]
-async unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
+unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
     use windows::Win32::Foundation::{GlobalFree, HANDLE};
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
@@ -148,13 +140,10 @@ async unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
         return;
     }
 
-    let mut opened = false;
-    for attempt in 0..3u32 {
-        if OpenClipboard(None).is_ok() { opened = true; break; }
-        if attempt < 2 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS)).await;
-        }
-    }
+    let opened = (0..3).any(|i| {
+        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(50)); }
+        OpenClipboard(None).is_ok()
+    });
     if !opened {
         return;
     }
@@ -223,7 +212,7 @@ pub async fn inject_text(
         unsafe {
             // Save all clipboard formats so non-text content (images, files, etc.)
             // survives the injection and is restored afterward.
-            let saved = save_clipboard_all().await;
+            let saved = save_clipboard_all();
 
             // Restore focus to the window the user was dictating into.
             // The user may have switched windows during the transcription/cleanup
@@ -232,7 +221,7 @@ pub async fn inject_text(
             // permission, so SetForegroundWindow succeeds from here.
             if target_hwnd != 0 {
                 let _ = SetForegroundWindow(HWND(target_hwnd as *mut core::ffi::c_void));
-                tokio::time::sleep(tokio::time::Duration::from_millis(FOCUS_SETTLE_MS)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(DELAY_FOREGROUND_MS)).await;
             }
 
             let ki = |vk, flags: u32| INPUT {
@@ -321,7 +310,7 @@ pub async fn inject_text(
                     break;
                 }
                 if attempt < 2 {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_WRITE_RETRY_MS)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                 }
             }
             if !clipboard_written {
@@ -330,7 +319,7 @@ pub async fn inject_text(
                 ));
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_SETTLE_MS)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
             // Step 1 — clear any dangling Alt the target app may have from the
             // recording gesture.  Ctrl-down is sent first so that the Alt-up is
@@ -348,7 +337,7 @@ pub async fn inject_text(
             // inject Ctrl+V.  Without this pause, some apps (browsers, IDEs) end
             // up processing V without Ctrl because the Alt-up and V-down land in
             // the same message-pump cycle.
-            tokio::time::sleep(tokio::time::Duration::from_millis(MODIFIER_RELEASE_MS)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(DELAY_MODIFIER_CLEAR_MS)).await;
 
             // Step 3 — clean Ctrl+V with no dangling modifiers.
             let paste = [
@@ -358,10 +347,10 @@ pub async fn inject_text(
                 ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
             ];
             SendInput(&paste, std::mem::size_of::<INPUT>() as i32);
-            tokio::time::sleep(tokio::time::Duration::from_millis(POST_PASTE_MS)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(DELAY_POST_PASTE_MS)).await;
 
             // Restore all previously saved clipboard formats.
-            restore_clipboard_all(&saved).await;
+            restore_clipboard_all(&saved);
 
             // Record a tail of the injected text so the keyboard hook can pop
             // characters off it on Backspace, keeping the context accurate after

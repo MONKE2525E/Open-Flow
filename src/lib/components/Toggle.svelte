@@ -47,4 +47,9 @@
   .toggle.on::after {
     left: 16px;
   }
+
+  .toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 </style>
