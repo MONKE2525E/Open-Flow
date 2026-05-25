@@ -273,9 +273,6 @@
                 class:is-selected={selected?.id === s.id}
                 role="button"
                 tabindex="0"
-                in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}
-                out:fade={{ duration: motionMs(MOTION_MS.fast) }}
-                animate:flip={{ duration: motionMs(MOTION_MS.base), easing: expoOut }}
                 onclick={() => selectRow(s)}
                 onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRow(s); } }}
               >

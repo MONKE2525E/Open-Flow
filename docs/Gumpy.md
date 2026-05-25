@@ -63,7 +63,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 *   **Verification & Test Plan**:
     *   *CPU Profile*: Launch the app in Tauri dev mode, open the frontend dev tools, select the Performance panel, and confirm that no frames are computed and script activity is 0% while the pill is in the `'idle'` state.
 
-#### Task 2.2: Svelte List Transition Optimizations
+#### ✅ Task 2.2: Svelte List Transition Optimizations
 *   **Context**: [Dictionary.svelte](file:///g:/Open%20Flow/src/lib/views/Dictionary.svelte) and [Snippets.svelte](file:///g:/Open%20Flow/src/lib/views/Snippets.svelte).
 *   **Problem Statement**: When lists grow to hundreds of items, applying `in:fly`, `out:fade`, and `animate:flip` transitions directly on wrapper `div` nodes within `{#each}` loops causes major layout stutters and input lag when filtering terms.
 *   **Actionable Implementation Steps**:
