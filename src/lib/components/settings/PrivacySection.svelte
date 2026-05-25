@@ -209,6 +209,8 @@
   .mic-btn svg { transition: transform 150ms; }
   .mic-btn svg.open { transform: rotate(180deg); }
   .mic-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+  .mic-btn svg { transition: transform 0.2s; }
+  .mic-btn svg.open { transform: rotate(180deg); }
   .mic-menu {
     position: absolute;
     right: 0;
