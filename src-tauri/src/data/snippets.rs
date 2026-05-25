@@ -1,5 +1,6 @@
 use crate::data::db::{self, Db};
 use std::cmp::Reverse;
+use std::collections::HashMap;
 
 fn lowercase_with_source_map(input: &str) -> (String, Vec<usize>) {
     let mut lowered = String::with_capacity(input.len());
@@ -146,7 +147,17 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
 
     for m in selected.iter().rev() {
         result.replace_range(m.start..m.end, &snippets[m.snippet_idx].expansion);
-        let _ = db::increment_snippet_use(db, snippets[m.snippet_idx].id);
+    }
+
+    let mut usage_counts: HashMap<i64, i64> = HashMap::new();
+    for m in selected {
+        let snippet_id = snippets[m.snippet_idx].id;
+        *usage_counts.entry(snippet_id).or_insert(0) += 1;
+    }
+    if !usage_counts.is_empty() {
+        let mut batched_counts: Vec<(i64, i64)> = usage_counts.into_iter().collect();
+        batched_counts.sort_by_key(|(id, _)| *id);
+        let _ = db::increment_snippet_use_counts(db, &batched_counts);
     }
 
     result
