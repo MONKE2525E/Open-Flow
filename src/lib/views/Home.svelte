@@ -531,7 +531,7 @@
     cursor: default;
   }
   .day-row:hover { background: var(--control-active); }
-  .day-row:not(:hover) .copy-btn:not(:focus-visible) { opacity: 0.2; }
+  .day-row:not(:hover) .copy-btn:not(:focus-visible):not(.copied) { opacity: 0.2; }
 
   .copy-btn {
     all: unset;
@@ -550,6 +550,10 @@
   }
   .copy-btn:hover,
   .copy-btn:focus-visible { opacity: 1; }
+  .copy-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .copy-btn.copied { color: var(--jap-500, #d97757); opacity: 1; }
   .copy-btn svg { width: 10px; height: 10px; }
 

@@ -1,6 +1,5 @@
 use crate::data::db::{self, Db};
 use std::cmp::Reverse;
-use std::collections::HashMap;
 
 fn lowercase_with_source_map(input: &str) -> (String, Vec<usize>) {
     let mut lowered = String::with_capacity(input.len());
@@ -26,10 +25,6 @@ fn end_of_char_at(text: &str, start: usize) -> usize {
         .next()
         .map(|ch| start + ch.len_utf8())
         .unwrap_or(text.len())
-}
-
-fn is_word_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_' || ch == '\'' || ch == '\u{2019}' || ch == '-'
 }
 
 /// If the entire transcription is just a snippet trigger (ignoring trailing punctuation
@@ -102,13 +97,13 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
                 || !haystack[..abs]
                     .chars()
                     .last()
-                    .map(is_word_char)
+                    .map(|c| c.is_alphanumeric() || c == '_')
                     .unwrap_or(false);
             let after_ok = abs + needle.len() >= haystack.len()
                 || !haystack[abs + needle.len()..]
                     .chars()
                     .next()
-                    .map(is_word_char)
+                    .map(|c| c.is_alphanumeric() || c == '_')
                     .unwrap_or(false);
             if before_ok && after_ok {
                 let start = source_map[abs];
@@ -151,17 +146,7 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
 
     for m in selected.iter().rev() {
         result.replace_range(m.start..m.end, &snippets[m.snippet_idx].expansion);
-    }
-
-    let mut usage_counts: HashMap<i64, i64> = HashMap::new();
-    for m in selected {
-        let snippet_id = snippets[m.snippet_idx].id;
-        *usage_counts.entry(snippet_id).or_insert(0) += 1;
-    }
-    if !usage_counts.is_empty() {
-        let mut batched_counts: Vec<(i64, i64)> = usage_counts.into_iter().collect();
-        batched_counts.sort_by_key(|(id, _)| *id);
-        let _ = db::increment_snippet_use_counts(db, &batched_counts);
+        let _ = db::increment_snippet_use(db, snippets[m.snippet_idx].id);
     }
 
     result
@@ -288,8 +273,7 @@ fn ensure_final_exclamation(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_cleanup_instruction_overrides, expand_snippets_from};
-    use crate::data::db;
+    use super::apply_cleanup_instruction_overrides;
 
     #[test]
     fn uppercase_override_applies_to_entire_output() {
@@ -324,37 +308,5 @@ mod tests {
         );
 
         assert_eq!(output, "PLEASE SHIP THIS!");
-    }
-
-    #[test]
-    fn snippet_does_not_match_inside_apostrophe_word() {
-        let db = db::open(":memory:").expect("test db");
-        let mut snippets = vec![db::Snippet {
-            id: 1,
-            trigger: "cant".to_string(),
-            expansion: "cannot".to_string(),
-            instructions: String::new(),
-            use_count: 0,
-            created_at: String::new(),
-        }];
-
-        let out = expand_snippets_from("I can't do that", &mut snippets, &db);
-        assert_eq!(out, "I can't do that");
-    }
-
-    #[test]
-    fn snippet_does_not_match_inside_hyphenated_word() {
-        let db = db::open(":memory:").expect("test db");
-        let mut snippets = vec![db::Snippet {
-            id: 1,
-            trigger: "test".to_string(),
-            expansion: "exam".to_string(),
-            instructions: String::new(),
-            use_count: 0,
-            created_at: String::new(),
-        }];
-
-        let out = expand_snippets_from("pre-test run", &mut snippets, &db);
-        assert_eq!(out, "pre-test run");
     }
 }

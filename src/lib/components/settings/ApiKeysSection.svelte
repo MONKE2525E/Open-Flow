@@ -73,8 +73,9 @@
       >Save</button>
       {#if keyStatus[item.id]}
         <button
-          class="btn-ghost btn-clear"
+          class="btn-ghost btn-danger-ghost"
           onclick={() => clearKey(item.id)}
+          aria-label={`Clear ${item.label} API key`}
         >Clear</button>
       {/if}
     </div>
@@ -109,12 +110,12 @@
     border-color: var(--accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
   }
-  .btn-clear {
+  .btn-danger-ghost {
+    border-color: var(--danger-line);
     color: var(--danger);
-    border-color: var(--danger-line);
   }
-  .btn-clear:hover {
+  .btn-danger-ghost:hover {
     background: var(--danger-bg);
-    border-color: var(--danger-line);
+    color: var(--danger);
   }
 </style>
