@@ -771,6 +771,9 @@ pub fn increment_snippet_use_counts(db: &Db, counts: &[(i64, i64)]) -> Result<()
         let mut stmt =
             tx.prepare("UPDATE snippets SET use_count = use_count + ?2 WHERE id = ?1")?;
         for &(id, count) in counts {
+            if count <= 0 {
+                continue;
+            }
             stmt.execute(params![id, count])?;
         }
     }
