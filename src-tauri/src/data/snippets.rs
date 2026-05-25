@@ -28,8 +28,8 @@ fn end_of_char_at(text: &str, start: usize) -> usize {
         .unwrap_or(text.len())
 }
 
-fn is_word_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_' || ch == '\'' || ch == '\u{2019}' || ch == '-'
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '\'' || c == '\u{2019}' || c == '-'
 }
 
 /// If the entire transcription is just a snippet trigger (ignoring trailing punctuation
@@ -149,14 +149,11 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
         selected.push(m);
     }
 
+    let mut usage_counts: HashMap<i64, i64> = HashMap::new();
     for m in selected.iter().rev() {
         result.replace_range(m.start..m.end, &snippets[m.snippet_idx].expansion);
-    }
-
-    let mut usage_counts: HashMap<i64, i64> = HashMap::new();
-    for m in selected {
-        let snippet_id = snippets[m.snippet_idx].id;
-        *usage_counts.entry(snippet_id).or_insert(0) += 1;
+        let id = snippets[m.snippet_idx].id;
+        *usage_counts.entry(id).or_insert(0) += 1;
     }
     if !usage_counts.is_empty() {
         let mut batched_counts: Vec<(i64, i64)> = usage_counts.into_iter().collect();
