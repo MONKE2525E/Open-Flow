@@ -300,11 +300,7 @@
               {#each group.rows as r (r.id)}
                 <div class="day-row" in:fly={{ y: -10, duration: 400, easing: expoOut }} animate:flip={{ duration: 400, easing: expoOut }}>
                   <div class="day-time">{fmtTime(r.created_at)}</div>
-                  {#if r.clean_text}
-                    <div class="day-text">{r.clean_text}</div>
-                  {:else}
-                    <div class="day-text error-msg">Transcription failed — check API keys or quota.</div>
-                  {/if}
+                  <div class="day-text">{r.clean_text}</div>
                   <button
                     class="copy-btn"
                     class:copied={copiedId === r.id}
@@ -531,7 +527,7 @@
     cursor: default;
   }
   .day-row:hover { background: var(--control-active); }
-  .day-row:not(:hover) .copy-btn:not(:focus-visible) { opacity: 0.2; }
+  .day-row:not(:hover) .copy-btn { opacity: 0; pointer-events: none; }
 
   .copy-btn {
     all: unset;
@@ -548,8 +544,7 @@
     flex-shrink: 0;
     margin-top: 2px;
   }
-  .copy-btn:hover,
-  .copy-btn:focus-visible { opacity: 1; }
+  .copy-btn:hover { opacity: 0.9; }
   .copy-btn.copied { color: var(--jap-500, #d97757); opacity: 1; }
   .copy-btn svg { width: 10px; height: 10px; }
 
@@ -571,7 +566,7 @@
   }
 
   .error-msg {
-    color: var(--danger);
+    color: var(--ink-mute);
     font-style: italic;
   }
 

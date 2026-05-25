@@ -89,7 +89,9 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
 
 #[tauri::command]
 pub async fn save_api_key(_app: AppHandle, provider: String, key: String) -> Result<(), String> {
-    crate::data::credentials::set(&provider, &key)
+    tokio::task::spawn_blocking(move || crate::data::credentials::set(&provider, &key))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -102,11 +104,15 @@ pub async fn delete_api_key(_app: AppHandle, provider: String) -> Result<(), Str
 #[tauri::command]
 pub async fn get_api_key_status(_app: AppHandle) -> Result<serde_json::Value, String> {
     use crate::data::{credentials, store};
-    Ok(serde_json::json!({
-        "groq":   credentials::has(store::GROQ),
-        "openai": credentials::has(store::OPENAI),
-        "google": credentials::has(store::GOOGLE),
-    }))
+    tokio::task::spawn_blocking(move || {
+        Ok(serde_json::json!({
+            "groq":   credentials::has(store::GROQ),
+            "openai": credentials::has(store::OPENAI),
+            "google": credentials::has(store::GOOGLE),
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ---------- generic settings ----------

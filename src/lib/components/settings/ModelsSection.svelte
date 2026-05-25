@@ -331,7 +331,6 @@
 
   async function handleAdvancedModelUi(value: boolean) {
     advancedModelUi = value;
-    if (value) { openTile('transcription'); openTile('cleanup'); }
     try {
       await saveSetting('advanced_model_ui', value);
     } catch (err) {

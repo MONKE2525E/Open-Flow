@@ -1678,22 +1678,35 @@ async fn finalize_pipeline_completion(
 
     let db = app.state::<DbHandle>();
     let words = ctx.raw.split_whitespace().count() as i64;
-    let entry = match db::insert_transcription_returning(
-        &db,
-        ctx.raw,
-        ctx.final_text_before_dict,
-        words,
-        ctx.duration_ms as i64,
-        ctx.api_used,
-    ) {
-        Ok(entry) => entry,
-        Err(e) => {
+    let db_for_insert = db.inner().clone();
+    let raw_for_insert = ctx.raw.to_string();
+    let clean_for_insert = ctx.final_text_before_dict.to_string();
+    let api_used_for_insert = ctx.api_used.to_string();
+    let duration_for_insert = ctx.duration_ms as i64;
+    let entry = match tokio::task::spawn_blocking(move || {
+        db::insert_transcription_returning(
+            &db_for_insert,
+            &raw_for_insert,
+            &clean_for_insert,
+            words,
+            duration_for_insert,
+            &api_used_for_insert,
+        )
+    })
+    .await
+    {
+        Ok(Ok(entry)) => entry,
+        Ok(Err(e)) => {
             show_error_pill(
                 app,
                 &format!("Failed to save transcription: {}", trim_err(&e.to_string())),
             )
             .await;
             return Err(e);
+        }
+        Err(e) => {
+            show_error_pill(app, "Failed to save transcription: background task crashed").await;
+            return Err(anyhow::anyhow!("insert_transcription task panicked: {e}"));
         }
     };
 

@@ -134,6 +134,13 @@
     if (languageDropdownOpen && !target.closest('.language-dropdown')) languageDropdownOpen = false;
   }
 
+  function handleWindowKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      micDropdownOpen = false;
+      languageDropdownOpen = false;
+    }
+  }
+
   async function saveMic(name: string) {
     selectedMic = name;
     micDropdownOpen = false;
@@ -314,7 +321,7 @@
 
   loadSettings();
 </script>
-<svelte:window onclick={handleWindowClick} />
+<svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
 
 <h2 class="settings-h">General</h2>
 <div class="setting-row">
@@ -337,8 +344,7 @@
 </div>
 <div class="setting-row">
   <div><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect</div></div>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="language-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && languageDropdownOpen) { languageDropdownOpen = false; e.stopPropagation(); } }}>
+  <div class="language-dropdown">
     <button
       class="btn-ghost language-btn"
       use:animateWidth={{ text: getTranscriptionLanguageLabel(selectedLanguage) }}
@@ -346,19 +352,13 @@
     >
       <span>{getTranscriptionLanguageLabel(selectedLanguage)}</span>
       <span class="language-code">{selectedLanguage}</span>
-      <svg class:open={languageDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="m6 9 6 6 6-6"/>
       </svg>
     </button>
     {#if languageDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div
-        class="language-menu scroll-styled scroll-thumb-elev"
-        role="presentation"
-        onclick={(e) => e.stopPropagation()}
-        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
-        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
-      >
+      <div class="language-menu scroll-styled scroll-thumb-elev" role="presentation" onclick={(e) => e.stopPropagation()}>
         {#each transcriptionLanguages as language}
           <button
             class="language-item"
@@ -378,8 +378,7 @@
     <div class="label">{audioCopy.inputDeviceLabel}</div>
     <div class="desc">{audioCopy.inputDeviceDescription}</div>
   </div>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="mic-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && micDropdownOpen) { micDropdownOpen = false; e.stopPropagation(); } }}>
+  <div class="mic-dropdown">
     <button
       class="btn-ghost mic-btn"
       use:animateWidth={{ text: selectedMic || audioCopy.defaultDevice, max: 180 }}
@@ -490,8 +489,6 @@
   }
   .mic-btn svg { transition: transform 0.2s; }
   .mic-btn svg.open { transform: rotate(180deg); }
-  .language-btn svg { transition: transform 150ms; }
-  .language-btn svg.open { transform: rotate(180deg); }
   .mic-btn-label {
     min-width: 0;
     overflow: hidden;
@@ -536,8 +533,6 @@
   .mic-empty { padding: 8px 10px; font-size: 12px; color: var(--ink-mute); text-align: center; }
   .language-dropdown { position: relative; flex-shrink: 0; }
   .language-btn { max-width: 210px; }
-  .language-btn svg { transition: transform 0.2s; }
-  .language-btn svg.open { transform: rotate(180deg); }
   .language-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
   .language-code {
     font-family: var(--mono);

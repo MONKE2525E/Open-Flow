@@ -41,7 +41,7 @@ fn decode_utf16le_blob(blob: &[u8]) -> (String, bool) {
         return (String::new(), false);
     }
 
-    let has_odd_length = blob.len() % 2 != 0;
+    let has_odd_length = !blob.len().is_multiple_of(2);
     let mut utf16 = Vec::with_capacity(blob.len() / 2);
     for i in 0..(blob.len() / 2) {
         let lo = blob[i * 2];
@@ -92,7 +92,7 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
 
     if key.is_empty() {
         unsafe {
-            match CredDeleteW(PCWSTR(target_wide.as_ptr()), CRED_TYPE_GENERIC, None) {
+            match CredDeleteW(PCWSTR(target_wide.as_ptr()), CRED_TYPE_GENERIC, Some(0)) {
                 Ok(_) => Ok(()),
                 Err(e) if e.code().0 == HRESULT_NOT_FOUND => Ok(()),
                 Err(e) => Err(format!(
@@ -155,7 +155,7 @@ pub fn get(provider: &str) -> String {
         match CredReadW(
             PCWSTR(target_wide.as_ptr()),
             CRED_TYPE_GENERIC,
-            None,
+            Some(0),
             &mut p_cred,
         ) {
             Ok(()) => {
@@ -250,7 +250,7 @@ pub fn has(provider: &str) -> bool {
         let ok = CredReadW(
             PCWSTR(target_wide.as_ptr()),
             CRED_TYPE_GENERIC,
-            None,
+            Some(0),
             &mut p_cred,
         )
         .is_ok();
