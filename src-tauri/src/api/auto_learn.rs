@@ -613,6 +613,9 @@ fn detect_span_corrections(original_span: &str, current_span: &str) -> Vec<Candi
         .filter_map(|(old_idx, new_idx)| {
             let old = &original[old_idx];
             let new = &current[new_idx];
+            if old.norm.is_empty() || new.norm.is_empty() || old.norm == new.norm {
+                return None;
+            }
             let metrics = compute_correction_metrics(old, new);
             if is_candidate_correction(old, new, metrics) {
                 Some(CandidateCorrection {
