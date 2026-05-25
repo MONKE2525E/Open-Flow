@@ -29,7 +29,7 @@ fn end_of_char_at(text: &str, start: usize) -> usize {
 }
 
 fn is_word_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_' || ch == '\'' || ch == '-'
+    ch.is_alphanumeric() || ch == '_' || ch == '\'' || ch == '\u{2019}' || ch == '-'
 }
 
 /// If the entire transcription is just a snippet trigger (ignoring trailing punctuation
