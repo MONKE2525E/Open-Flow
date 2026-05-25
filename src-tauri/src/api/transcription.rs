@@ -50,6 +50,7 @@ pub async fn transcribe(
                 wav,
                 api_key,
                 "https://api.groq.com/openai/v1/audio/transcriptions",
+                "Groq",
                 model,
                 language,
             )
@@ -61,6 +62,7 @@ pub async fn transcribe(
                 wav,
                 api_key,
                 "https://api.openai.com/v1/audio/transcriptions",
+                "OpenAI",
                 model,
                 language,
             )
@@ -75,6 +77,7 @@ async fn transcribe_whisper(
     wav: Bytes,
     api_key: &str,
     url: &str,
+    provider_label: &str,
     model: &str,
     language: &str,
 ) -> Result<String> {
@@ -84,7 +87,8 @@ async fn transcribe_whisper(
     }
 
     log::debug!(
-        "transcription: whisper request model={} url={} language={} wav_bytes={}",
+        "transcription: whisper request provider={} model={} url={} language={} wav_bytes={}",
+        provider_label,
         model,
         url,
         language,
@@ -111,21 +115,57 @@ async fn transcribe_whisper(
         .headers()
         .get("x-request-id")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("-");
+        .unwrap_or("-")
+        .to_string();
+    let status = resp.status();
     log::debug!(
-        "transcription: whisper response status={} request_id={} latency_ms={}",
-        resp.status(),
+        "transcription: whisper response provider={} status={} request_id={} latency_ms={}",
+        provider_label,
+        status,
         request_id,
         request_started.elapsed().as_millis()
     );
 
-    if resp.status().as_u16() == 429 {
+    if status.as_u16() == 429 {
         return Err(crate::api::quota_bail(model));
     }
-    if resp.status().as_u16() == 401 {
-        anyhow::bail!("API key rejected — please re-enter your key in Settings");
+
+    if status.as_u16() == 401 {
+        let body = resp.text().await.unwrap_or_default();
+        let preview = crate::api::sanitize_error_body_preview(&body);
+        let category = crate::api::classify_unauthorized_body(&body);
+        log::warn!(
+            "transcription: whisper unauthorized provider={} model={} status={} request_id={} body_preview=\"{}\"",
+            provider_label,
+            model,
+            status,
+            request_id,
+            preview
+        );
+        return Err(crate::api::auth_401_error(
+            provider_label,
+            model,
+            &request_id,
+            category,
+        ));
     }
-    let resp = resp.error_for_status().context("Transcription API error")?;
+
+    if let Err(e) = resp.error_for_status_ref() {
+        let body = resp.text().await.unwrap_or_default();
+        let preview = crate::api::sanitize_error_body_preview(&body);
+        log::warn!(
+            "transcription: whisper non_success provider={} model={} status={} request_id={} body_preview=\"{}\"",
+            provider_label,
+            model,
+            status,
+            request_id,
+            preview
+        );
+        return Err(anyhow::Error::new(e).context(format!(
+            "Transcription API error provider={} model={} status={} request_id={} body_preview={}",
+            provider_label, model, status, request_id, preview
+        )));
+    }
 
     let body: WhisperResponse = resp.json().await?;
     log::debug!(
@@ -135,7 +175,12 @@ async fn transcribe_whisper(
     Ok(body.text.trim().to_owned())
 }
 
-async fn transcribe_gemini(wav: Bytes, api_key: &str, language: &str, model: &str) -> Result<String> {
+async fn transcribe_gemini(
+    wav: Bytes,
+    api_key: &str,
+    language: &str,
+    model: &str,
+) -> Result<String> {
     let language_label = crate::data::store::transcription_language_label(language);
     let prompt = format!(
         "Transcribe this audio exactly as spoken in {language_label}. \
@@ -196,7 +241,8 @@ async fn transcribe_gemini_with_prompt(
         .headers()
         .get("x-request-id")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("-");
+        .unwrap_or("-")
+        .to_string();
     log::debug!(
         "transcription: gemini response status={} request_id={} latency_ms={}",
         status,
@@ -208,7 +254,20 @@ async fn transcribe_gemini_with_prompt(
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Gemini {status}: {body}");
+        let preview = crate::api::sanitize_error_body_preview(&body);
+        log::warn!(
+            "transcription: gemini non_success model={} status={} request_id={} body_preview=\"{}\"",
+            model,
+            status,
+            request_id,
+            preview
+        );
+        anyhow::bail!(
+            "Gemini error status={} request_id={} body_preview={}",
+            status,
+            request_id,
+            preview
+        );
     }
 
     let raw_body = resp.text().await?;

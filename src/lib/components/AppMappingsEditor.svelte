@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
-  import { fly, slide } from 'svelte/transition';
+  import { fly, slide, fade } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
   import {
@@ -13,7 +13,7 @@
     type AppMapping,
     type InstalledApp,
   } from '../appMappings';
-  import { animateWidth } from '../motion';
+  import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
 
   let {
     showHeading = true,
@@ -88,12 +88,17 @@
     await saveMappings(mappings.filter((mapping) => normalizeExe(mapping.exe) !== normalizeExe(exe)));
   }
 
+  function customExeFromSearch(s: string): string {
+    return normalizeExe(s).replace(/\.exe$/, '') + '.exe';
+  }
+
   async function addMapping() {
-    if (!addExe) return;
+    const rawExe = addExe || (appSearch.trim() ? customExeFromSearch(appSearch) : '');
+    if (!rawExe) return;
     const entry = normalizeMapping({
-      exe: addExe,
+      exe: rawExe,
       profile: addProfile,
-      name: addName || appSearch || addExe,
+      name: addName || appSearch || rawExe,
     });
     await saveMappings([...mappings.filter((mapping) => mapping.exe !== entry.exe), entry]);
     addExe = '';
@@ -231,6 +236,10 @@
             </button>
           {/each}
         </div>
+      {:else if appPickerOpen && appSearch.trim()}
+        <div class="app-picker-menu app-picker-empty" role="presentation">
+          <span>No matching apps found. Press Enter to map custom executable: <b>{customExeFromSearch(appSearch)}</b></span>
+        </div>
       {/if}
     </div>
     <div class="profile-drop-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
@@ -245,12 +254,18 @@
         onclick={() => (profileDropdownOpen = !profileDropdownOpen)}
       >
         <span>{getProfileLabel(addProfile)}</span>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg class:open={profileDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="m6 9 6 6 6-6"/>
         </svg>
       </button>
       {#if profileDropdownOpen}
-        <div class="profile-drop-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <div
+          class="profile-drop-menu scroll-styled"
+          role="presentation"
+          onclick={(e) => e.stopPropagation()}
+          in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+          out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+        >
           {#each profileOptions as profile}
             <button
               class="profile-drop-item"
@@ -263,7 +278,7 @@
         </div>
       {/if}
     </div>
-    <button class="btn-ghost add-btn" onclick={addMapping} disabled={!addExe}>Add</button>
+    <button class="btn-primary add-btn" onclick={addMapping} disabled={!addExe && !appSearch.trim()}>Add</button>
   </div>
   {#if addExe}
     <div class="add-preview">
@@ -281,21 +296,6 @@
     margin: 0 0 16px;
     line-height: 1.5;
   }
-
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-size: 12px;
-    color: var(--ink-strong);
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .btn-ghost:hover { background: var(--control-hover); }
-  .btn-ghost:disabled { opacity: 0.4; cursor: default; }
 
   .mapping-list {
     border: 1px solid var(--line);
@@ -439,6 +439,13 @@
     z-index: 20;
   }
 
+  .app-picker-empty {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--ink-mute);
+    line-height: 1.5;
+  }
+
   .app-picker-item {
     display: block;
     width: 100%;
@@ -499,6 +506,8 @@
   }
 
   .profile-drop-btn:hover { background: var(--control-hover); }
+  .profile-drop-btn svg { transition: transform 150ms; }
+  .profile-drop-btn svg.open { transform: rotate(180deg); }
 
   .profile-drop-btn span {
     overflow: hidden;

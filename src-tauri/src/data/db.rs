@@ -760,6 +760,25 @@ pub fn increment_snippet_use(db: &Db, id: i64) -> Result<()> {
     Ok(())
 }
 
+pub fn increment_snippet_use_counts(db: &Db, counts: &[(i64, i64)]) -> Result<()> {
+    if counts.is_empty() {
+        return Ok(());
+    }
+    let mut conn = lock_conn(db)?;
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare("UPDATE snippets SET use_count = use_count + ?2 WHERE id=?1")?;
+        for (id, count) in counts.iter().copied() {
+            if count <= 0 {
+                continue;
+            }
+            stmt.execute(params![id, count])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 // ---------- cleanup cache ----------
 
 pub fn cleanup_cache_get_active(db: &Db, key: &str) -> Result<Option<CleanupCacheEntry>> {

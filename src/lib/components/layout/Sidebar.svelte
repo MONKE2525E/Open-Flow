@@ -107,7 +107,7 @@
         </span>
       </div>
     </div>
-    <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 200 * 100, 100)}%"></span></div>
+    <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 200 * 100, 100)}%; background:{$memoryMb >= 150 ? 'var(--accent)' : 'var(--arm-300, #9caa8e)'}"></span></div>
   </div>
 </aside>
 
@@ -192,7 +192,7 @@
 
   .lock-tag {
     margin-left: auto;
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 9px;
     color: var(--ink-mute);
     padding: 1px 6px;
@@ -285,7 +285,7 @@
   .local-meter-thin span {
     display: block;
     height: 100%;
-    background: var(--accent);
     border-radius: 999px;
+    transition: background 0.4s ease;
   }
 </style>

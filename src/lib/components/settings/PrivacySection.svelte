@@ -1,9 +1,11 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { tick } from 'svelte';
+  import { fly, fade } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
   import { saveSetting, type HistoryRetention } from '../../settings';
-  import { animateWidth } from '../../motion';
+  import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
 
   const historyOptions = ['7 days', '30 days', '90 days', 'Forever'];
   type CleanupCacheStatus = {
@@ -18,7 +20,7 @@
   let autoLearn = $state(false);
   let cleanupCacheEntries = $state(0);
   let cleanupCacheSpaceConstrained = $state(false);
-  let cleanupCacheFreeBytes = $state(0);
+  let cleanupCacheFreeBytes = $state<number | null>(null);
   let clearingCleanupCache = $state(false);
   let autoLearnSummary = $state({
     monitors_started: 0,
@@ -45,7 +47,7 @@
       autoLearn = learn ?? false;
       cleanupCacheEntries = cacheStatus?.entry_count ?? 0;
       cleanupCacheSpaceConstrained = cacheStatus?.is_space_constrained ?? false;
-      cleanupCacheFreeBytes = cacheStatus?.free_bytes ?? 0;
+      cleanupCacheFreeBytes = cacheStatus?.free_bytes ?? null;
       autoLearnSummary = summary ?? autoLearnSummary;
       recentAutoLearn = recent ?? [];
     } catch (err) {
@@ -91,7 +93,7 @@
       const status = await invoke<CleanupCacheStatus>('get_cleanup_cache_status');
       cleanupCacheEntries = status?.entry_count ?? 0;
       cleanupCacheSpaceConstrained = status?.is_space_constrained ?? false;
-      cleanupCacheFreeBytes = status?.free_bytes ?? 0;
+      cleanupCacheFreeBytes = status?.free_bytes ?? null;
     } catch (err) {
       console.error('clearCleanupCache failed:', err);
     } finally {
@@ -122,13 +124,19 @@
       onclick={() => (historyDropdownOpen = !historyDropdownOpen)}
     >
       <span>{historyRetention}</span>
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <svg class:open={historyDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="m6 9 6 6 6-6"/>
       </svg>
     </button>
     {#if historyDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="mic-menu scroll-styled scroll-thumb-elev" role="presentation" onclick={(e) => e.stopPropagation()}>
+      <div
+        class="mic-menu scroll-styled scroll-thumb-elev"
+        role="presentation"
+        onclick={(e) => e.stopPropagation()}
+        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+      >
         {#each historyOptions as opt}
           <button class="mic-item" class:active={historyRetention === opt} onclick={() => saveHistoryRetention(opt)}>
             {opt}
@@ -178,6 +186,8 @@
       {cleanupCacheEntries} cached phrase{cleanupCacheEntries === 1 ? '' : 's'}.
       {#if cleanupCacheSpaceConstrained}
         Low disk space (&lt;1 GB free). Clearing cache may help free space.
+      {:else if cleanupCacheFreeBytes === null}
+        Status unavailable.
       {:else}
         {(cleanupCacheFreeBytes / 1024 / 1024 / 1024).toFixed(1)} GB free.
       {/if}
@@ -196,6 +206,8 @@
 <style>
   .history-dropdown { position: relative; flex-shrink: 0; }
   .mic-btn { display: flex; align-items: center; gap: 6px; max-width: 180px; }
+  .mic-btn svg { transition: transform 150ms; }
+  .mic-btn svg.open { transform: rotate(180deg); }
   .mic-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
   .mic-menu {
     position: absolute;
