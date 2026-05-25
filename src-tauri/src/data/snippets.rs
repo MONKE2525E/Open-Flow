@@ -273,7 +273,8 @@ fn ensure_final_exclamation(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_cleanup_instruction_overrides;
+    use super::{apply_cleanup_instruction_overrides, expand_snippets_from};
+    use crate::data::db;
 
     #[test]
     fn uppercase_override_applies_to_entire_output() {
@@ -308,5 +309,37 @@ mod tests {
         );
 
         assert_eq!(output, "PLEASE SHIP THIS!");
+    }
+
+    #[test]
+    fn snippet_expansion_respects_word_boundaries() {
+        let db = db::open(":memory:").expect("db");
+        let mut snippets = vec![db::Snippet {
+            id: 1,
+            trigger: "app".to_string(),
+            expansion: "application".to_string(),
+            instructions: String::new(),
+            use_count: 0,
+            created_at: "2026-01-01 00:00:00".to_string(),
+        }];
+
+        let expanded = expand_snippets_from("the app is on the apple tree", &mut snippets, &db);
+        assert_eq!(expanded, "the application is on the apple tree");
+    }
+
+    #[test]
+    fn snippet_expansion_handles_non_ascii_boundaries() {
+        let db = db::open(":memory:").expect("db");
+        let mut snippets = vec![db::Snippet {
+            id: 1,
+            trigger: "cafe".to_string(),
+            expansion: "café".to_string(),
+            instructions: String::new(),
+            use_count: 0,
+            created_at: "2026-01-01 00:00:00".to_string(),
+        }];
+
+        let expanded = expand_snippets_from("cafe noir and cafeteria", &mut snippets, &db);
+        assert_eq!(expanded, "café noir and cafeteria");
     }
 }
