@@ -66,7 +66,7 @@
 
 {#if appStore.settingsOpen}
   <div class="settings-overlay-wrap" transition:fade={{ duration: 200 }}>
-    <button type="button" class="settings-overlay" aria-label="Close settings" tabindex="-1" onclick={close}></button>
+    <button type="button" class="settings-overlay" aria-label="Close settings" tabindex="-1" aria-hidden="true" onclick={close}></button>
     <div
       class="settings-modal"
       role="dialog"

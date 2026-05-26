@@ -292,21 +292,21 @@
                 aria-pressed={selected?.id === s.id}
                 onclick={() => selectRow(s)}
               >
-                <div class="snip-left">
-                  <div class="snip-trigger">{s.trigger}</div>
-                  <div class="snip-arrow" aria-hidden="true">
+                <span class="snip-left">
+                  <span class="snip-trigger">{s.trigger}</span>
+                  <span class="snip-arrow" aria-hidden="true">
                     <svg width="9" height="13" viewBox="0 0 9 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
                       <line x1="4.5" y1="0" x2="4.5" y2="9"/>
                       <polyline points="1.5,6.5 4.5,10 7.5,6.5"/>
                     </svg>
-                  </div>
-                  <div class="snip-expansion">{s.expansion}</div>
-                </div>
-                <div class="snip-meta">
+                  </span>
+                  <span class="snip-expansion">{s.expansion}</span>
+                </span>
+                <span class="snip-meta">
                   <span>{s.use_count} {s.use_count === 1 ? 'use' : 'uses'}</span>
                   <span class="meta-dot">·</span>
                   <span>{fmtDate(s.created_at)}</span>
-                </div>
+                </span>
               </button>
             {/each}
           </div>
@@ -680,9 +680,10 @@
     outline-offset: -2px;
   }
 
-  .snip-left { min-width: 0; }
+  .snip-left { display: block; min-width: 0; }
 
   .snip-trigger {
+    display: block;
     font-size: 13px;
     font-weight: 500;
     color: var(--ink);
@@ -696,6 +697,7 @@
   }
 
   .snip-expansion {
+    display: block;
     font-size: 12.5px;
     color: var(--ink-mute);
     line-height: 1.45;

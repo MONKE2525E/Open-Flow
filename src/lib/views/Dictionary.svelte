@@ -290,8 +290,8 @@
                 aria-pressed={selected?.id === e.id}
                 onclick={() => selectRow(e)}
               >
-                <div class="dict-left">
-                  <div class="dict-main">
+                <span class="dict-left">
+                  <span class="dict-main">
                     <span class="dict-term">{e.term}</span>
                     {#if e.auto_learned}
                       <svg class="dict-auto-star" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-label="Auto-learned">
@@ -303,9 +303,9 @@
                       <span class="dict-often-label">often:</span>
                       <span class="dict-mistake">"{e.mistake}"</span>
                     {/if}
-                  </div>
-                </div>
-                <div class="dict-meta">
+                  </span>
+                </span>
+                <span class="dict-meta">
                   {#if e.correction_count > 0}
                     <span>{e.correction_count} {e.correction_count === 1 ? 'correction' : 'corrections'}</span>
                   {/if}
@@ -313,7 +313,7 @@
                     <span>{confidenceLabel(e.confidence_tier)}</span>
                   {/if}
                   <span>{fmtDate(e.created_at)}</span>
-                </div>
+                </span>
               </button>
             {/each}
           </div>
@@ -686,7 +686,7 @@
     outline-offset: -2px;
   }
 
-  .dict-left { min-width: 0; overflow: hidden; }
+  .dict-left { display: block; min-width: 0; overflow: hidden; }
 
   .dict-main {
     display: flex;
