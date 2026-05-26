@@ -101,7 +101,10 @@
   }
 
   function closeHistoryDropdown(e: MouseEvent | PointerEvent) {
-    if (!(e.target as HTMLElement).closest('.history-dropdown')) historyDropdownOpen = false;
+    const target = e.target;
+    if (target instanceof Element && !target.closest('.history-dropdown')) {
+      historyDropdownOpen = false;
+    }
   }
 
   function handleHistoryButtonKeydown(e: KeyboardEvent) {

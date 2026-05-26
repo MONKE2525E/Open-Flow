@@ -118,11 +118,17 @@
   }
 
   function closeAppPicker(e: MouseEvent | PointerEvent) {
-    if (!(e.target as HTMLElement).closest('.app-picker-wrap')) appPickerOpen = false;
+    const target = e.target;
+    if (target instanceof Element && !target.closest('.app-picker-wrap')) {
+      appPickerOpen = false;
+    }
   }
 
   function closeProfileDropdown(e: MouseEvent | PointerEvent) {
-    if (!(e.target as HTMLElement).closest('.profile-drop-wrap')) profileDropdownOpen = false;
+    const target = e.target;
+    if (target instanceof Element && !target.closest('.profile-drop-wrap')) {
+      profileDropdownOpen = false;
+    }
   }
 
   function handleProfileButtonKeydown(e: KeyboardEvent) {
