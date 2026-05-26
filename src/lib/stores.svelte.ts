@@ -63,7 +63,10 @@ function formatIpcError(err: unknown): string {
     return err.message.trim();
   }
   const raw = String(err ?? '').trim();
-  return raw || 'The backend is unavailable.';
+  if (!raw || raw === '[object Object]') {
+    return 'The backend is unavailable.';
+  }
+  return raw;
 }
 
 export async function fetchSnippets(): Promise<void> {

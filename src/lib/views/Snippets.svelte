@@ -255,7 +255,7 @@
     <div class="empty-state empty-state-error" role="alert" in:fade={{ duration: 250 }}>
       <p class="empty-h">Could not load snippets</p>
       <p class="empty-sub">The backend is unavailable right now. {appStore.snippetsFetchError}</p>
-      <button class="btn-ghost" onclick={() => fetchSnippets()}>Try again</button>
+      <button type="button" class="btn-ghost" onclick={() => fetchSnippets()}>Try again</button>
     </div>
   {:else if appStore.snippets.length === 0}
     <div class="empty-state" in:fade={{ duration: 250 }}>

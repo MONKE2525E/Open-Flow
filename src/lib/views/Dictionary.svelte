@@ -253,7 +253,7 @@
     <div class="empty-state empty-state-error" role="alert" in:fade={{ duration: 220 }}>
       <p class="empty-h">Could not load dictionary</p>
       <p class="empty-sub">The backend is unavailable right now. {appStore.dictionaryFetchError}</p>
-      <button class="btn-ghost" onclick={() => fetchDictionary()}>Try again</button>
+      <button type="button" class="btn-ghost" onclick={() => fetchDictionary()}>Try again</button>
     </div>
   {:else if appStore.dictionary.length === 0}
     <div class="empty-state" in:fade={{ duration: 220 }}>
