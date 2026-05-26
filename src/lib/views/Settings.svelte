@@ -61,6 +61,9 @@
       if (target?.closest('input, textarea, select, [contenteditable="true"]')) {
         return;
       }
+      if (typeof document !== 'undefined' && document.querySelector('[aria-expanded="true"]')) {
+        return;
+      }
       close();
     }
   }
