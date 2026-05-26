@@ -47,7 +47,8 @@
   const TRIGGER_LIMIT = 300;
 
   $effect(() => {
-    const timer = window.setTimeout(() => { debouncedSearch = search; }, 120);
+    const currentSearch = search;
+    const timer = window.setTimeout(() => { debouncedSearch = currentSearch; }, 120);
     return () => window.clearTimeout(timer);
   });
   const filtered = $derived.by(() => {
