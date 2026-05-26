@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { fly, fade } from 'svelte/transition';
-  import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
   import { snippets, fetchSnippets, type Snippet } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
@@ -48,7 +47,8 @@
   const TRIGGER_LIMIT = 300;
 
   $effect(() => {
-    const timer = window.setTimeout(() => { debouncedSearch = search; }, 120);
+    const currentSearch = search;
+    const timer = window.setTimeout(() => { debouncedSearch = currentSearch; }, 120);
     return () => window.clearTimeout(timer);
   });
   const filtered = $derived.by(() => {
@@ -273,9 +273,6 @@
                 class:is-selected={selected?.id === s.id}
                 role="button"
                 tabindex="0"
-                in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}
-                out:fade={{ duration: motionMs(MOTION_MS.fast) }}
-                animate:flip={{ duration: motionMs(MOTION_MS.base), easing: expoOut }}
                 onclick={() => selectRow(s)}
                 onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRow(s); } }}
               >

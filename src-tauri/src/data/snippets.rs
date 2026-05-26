@@ -101,7 +101,7 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
             let before_ok = abs == 0
                 || !haystack[..abs]
                     .chars()
-                    .last()
+                    .next_back()
                     .map(is_word_char)
                     .unwrap_or(false);
             let after_ok = abs + needle.len() >= haystack.len()

@@ -3,7 +3,6 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { fly, fade } from 'svelte/transition';
-  import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
   import { currentPage, dictionary, fetchDictionary, type DictionaryEntry } from '../stores';
@@ -69,7 +68,8 @@
   ];
 
   $effect(() => {
-    const timer = window.setTimeout(() => { debouncedSearch = search; }, 120);
+    const currentSearch = search;
+    const timer = window.setTimeout(() => { debouncedSearch = currentSearch; }, 120);
     return () => window.clearTimeout(timer);
   });
 
@@ -271,9 +271,6 @@
                 class:is-selected={selected?.id === e.id}
                 role="button"
                 tabindex="0"
-                in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}
-                out:fade={{ duration: motionMs(MOTION_MS.fast) }}
-                animate:flip={{ duration: motionMs(MOTION_MS.base), easing: expoOut }}
                 onclick={() => selectRow(e)}
                 onkeydown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectRow(e); } }}
               >

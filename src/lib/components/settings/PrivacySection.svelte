@@ -1,6 +1,5 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { tick } from 'svelte';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
@@ -101,14 +100,31 @@
     }
   }
 
-  function closeHistoryDropdown(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest('.history-dropdown')) historyDropdownOpen = false;
+  function closeHistoryDropdown(e: MouseEvent | PointerEvent) {
+    const target = e.target;
+    if (target instanceof Element && !target.closest('.history-dropdown')) {
+      historyDropdownOpen = false;
+    }
+  }
+
+  function handleHistoryButtonKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && historyDropdownOpen) {
+      historyDropdownOpen = false;
+      e.stopPropagation();
+    }
   }
 
   $effect(() => {
-    if (historyDropdownOpen) {
-      tick().then(() => window.addEventListener('click', closeHistoryDropdown, { once: true }));
-    }
+    if (!historyDropdownOpen) return;
+
+    const timeout = window.setTimeout(() => {
+      window.addEventListener('pointerdown', closeHistoryDropdown);
+    });
+
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener('pointerdown', closeHistoryDropdown);
+    };
   });
 
   loadSettings();
@@ -122,6 +138,7 @@
       class="btn-ghost mic-btn"
       use:animateWidth={{ text: historyRetention }}
       onclick={() => (historyDropdownOpen = !historyDropdownOpen)}
+      onkeydown={handleHistoryButtonKeydown}
     >
       <span>{historyRetention}</span>
       <svg class:open={historyDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -138,7 +155,12 @@
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
         {#each historyOptions as opt}
-          <button class="mic-item" class:active={historyRetention === opt} onclick={() => saveHistoryRetention(opt)}>
+          <button
+            class="mic-item"
+            class:active={historyRetention === opt}
+            onclick={() => saveHistoryRetention(opt)}
+            onkeydown={handleHistoryButtonKeydown}
+          >
             {opt}
           </button>
         {/each}

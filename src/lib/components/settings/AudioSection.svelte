@@ -5,6 +5,7 @@
   import { onDestroy } from 'svelte';
   import Toggle from '../Toggle.svelte';
   import { saveSetting } from '../../settings';
+  import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import { getAudioCalibrationCopy } from '../../calibrationCopy';
   import type { TranscriptionLanguageCode } from '../../transcriptionLanguages';
 
@@ -98,7 +99,7 @@
     </div>
   </div>
   {#if micGain >= 5}
-    <div class="gain-tip" transition:slide={{ duration: 220 }}>
+    <div class="gain-tip" transition:slide={{ duration: motionMs(MOTION_MS.base) }}>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       At high gain, enable <strong>noise reduction</strong> to avoid amplifying background noise.
     </div>
@@ -115,7 +116,7 @@
     <div class="label">Auto calibration</div>
     <div class="desc">Speak naturally to automatically set the ideal microphone gain</div>
     {#if $speechDetected === false}
-      <div class="gain-tip" style="margin-top: 10px;" transition:slide={{ duration: 200 }}>
+      <div class="gain-tip" style="margin-top: 10px;" transition:slide={{ duration: motionMs(200) }}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="10"/>
           <line x1="12" x2="12" y1="8" y2="12"/>
@@ -129,7 +130,7 @@
   <div class="cal-control">
     {#if !$isCalibrating}
       <button class="btn-ghost cal-btn" onclick={startCalibration}
-        out:fade={{ duration: 80 }}>
+        out:fade={{ duration: motionMs(80) }}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
           <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
@@ -139,7 +140,7 @@
       </button>
     {:else}
       <div class="cal-active-panel"
-        in:fly={{ x: 8, duration: 180, delay: 100, easing: expoOut }}>
+        in:fly={{ x: motionPx(MOTION_PX.lift), duration: motionMs(180), delay: motionMs(100), easing: expoOut }}>
         <span class="cal-timer">{$calibrationCountdown}s</span>
         <span class="cal-phrase-hint">{audioCopy.speakingHint}</span>
         <div class="cal-level-bar">
