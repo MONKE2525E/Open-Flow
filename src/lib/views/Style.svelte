@@ -102,38 +102,34 @@
           <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Open Flow does.</span></p>
           <div class="style-grid four">
             {#each cleanupCards as c}
-              <div
+              <button
+                type="button"
                 class="style-card"
                 class:active={intensity === c.id}
-                role="button"
-                tabindex="0"
                 onclick={() => selectIntensity(c.id)}
-                onkeydown={(e) => e.key === 'Enter' && selectIntensity(c.id)}
                 in:fly={!mountedTabs.cleanup ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
                 <h4>{c.name}</h4>
                 <p class="desc">{c.desc}</p>
                 <div class="style-sample">"{c.sample}"</div>
-              </div>
+              </button>
             {/each}
           </div>
         {:else if tab === 'personal'}
           <p class="style-intro">Default tone. <span>Applies to any app not explicitly mapped.</span></p>
           <div class="style-grid">
             {#each personalCards as c}
-              <div
+              <button
+                type="button"
                 class="style-card"
                 class:active={tone === c.id}
-                role="button"
-                tabindex="0"
                 onclick={() => selectTone(c.id)}
-                onkeydown={(e) => e.key === 'Enter' && selectTone(c.id)}
                 in:fly={!mountedTabs.personal ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
                 <h4>{c.name}</h4>
                 <p class="desc">{c.desc}</p>
                 <div class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</div>
-              </div>
+              </button>
             {/each}
           </div>
         {:else if tab === 'apps'}
@@ -251,9 +247,11 @@
   }
 
   .style-card {
+    border: 1px solid var(--line);
+    width: 100%;
+    text-align: left;
     padding: 14px;
     background: var(--bg-elev);
-    border: 1px solid var(--line);
     border-radius: var(--r-md);
     display: flex;
     flex-direction: column;
@@ -269,6 +267,10 @@
     background: var(--control-hover);
     transform: translateY(-2px);
     box-shadow: var(--shadow-popover);
+  }
+  .style-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
 
   .style-card:active {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { devModeEnabled, settingsOpen } from '../stores';
+  import { appStore } from '../stores';
   import { icons } from '../icons';
   import { onDestroy, onMount } from 'svelte';
   import { fly, fade } from 'svelte/transition';
@@ -30,7 +30,7 @@
       { id: 'models',   label: 'Models',       icon: 'command'  as keyof typeof icons },
       { id: 'privacy',  label: 'Privacy',      icon: 'lock'     as keyof typeof icons },
       { id: 'advanced', label: 'Advanced',    icon: 'mic'      as keyof typeof icons },
-      ...($devModeEnabled ? [{ id: 'developer', label: 'Developer', icon: 'command' as keyof typeof icons }] : []),
+      ...(appStore.devModeEnabled ? [{ id: 'developer', label: 'Developer', icon: 'command' as keyof typeof icons }] : []),
     ]},
     { group: 'Account', items: [
       { id: 'about', label: 'About', icon: 'help' as keyof typeof icons },
@@ -41,7 +41,7 @@
     appVersion = await getVersion();
   });
 
-  function close() { $settingsOpen = false; }
+  function close() { appStore.settingsOpen = false; }
 
   function goTo(id: string) {
     if (id === section) return;
@@ -50,47 +50,45 @@
   }
 
   $effect(() => {
-    if (!$devModeEnabled && section === 'developer') {
+    if (!appStore.devModeEnabled && section === 'developer') {
       section = 'about';
     }
   });
+
+  function onWindowKeydown(e: KeyboardEvent) {
+    if (appStore.settingsOpen && e.key === 'Escape') {
+      close();
+    }
+  }
 </script>
 
-{#if $settingsOpen}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div
-    class="settings-overlay"
-    role="button"
-    tabindex="0"
-    transition:fade={{ duration: 200 }}
-    onclick={close}
-    onkeydown={(e) => (e.key === 'Enter' || e.key === 'Escape') && close()}
-  >
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+<svelte:window onkeydown={onWindowKeydown} />
+
+{#if appStore.settingsOpen}
+  <div class="settings-overlay-wrap" transition:fade={{ duration: 200 }}>
+    <button type="button" class="settings-overlay" aria-label="Close settings" onclick={close}></button>
     <div
       class="settings-modal"
       role="dialog"
       aria-modal="true"
+      aria-label="Settings"
       tabindex="-1"
       transition:fly={{ y: 40, duration: 400, easing: expoOut }}
-      onclick={(e) => e.stopPropagation()}
     >
       <!-- Left nav -->
       <div class="settings-nav">
         {#each navSections as g}
           <div class="settings-section-label">{g.group}</div>
           {#each g.items as it}
-            <div
+            <button
+              type="button"
               class="settings-nav-item"
               class:active={section === it.id}
-              role="button"
-              tabindex="0"
               onclick={() => goTo(it.id)}
-              onkeydown={(e) => e.key === 'Enter' && goTo(it.id)}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons[it.icon]}</svg>
               <span>{it.label}</span>
-            </div>
+            </button>
           {/each}
         {/each}
         <div style="flex:1"></div>
@@ -119,7 +117,7 @@
               <AudioSection />
             {:else if section === 'about'}
               <AboutSection {appVersion} />
-            {:else if section === 'developer' && $devModeEnabled}
+            {:else if section === 'developer' && appStore.devModeEnabled}
               <DeveloperSection />
             {/if}
           </div>
@@ -130,17 +128,26 @@
 {/if}
 
 <style>
+  .settings-overlay-wrap {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: grid;
+    place-items: center;
+  }
+
   .settings-overlay {
     position: absolute;
     inset: 0;
     background: var(--overlay);
     backdrop-filter: blur(2px);
-    display: grid;
-    place-items: center;
-    z-index: 5;
+    border: 0;
+    padding: 0;
   }
 
   .settings-modal {
+    position: relative;
+    z-index: 1;
     width: 720px;
     height: 540px;
     background: var(--bg-elev);
@@ -172,6 +179,10 @@
   }
 
   .settings-nav-item {
+    border: 0;
+    background: transparent;
+    width: 100%;
+    text-align: left;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -184,6 +195,10 @@
 
   .settings-nav-item :global(svg) { opacity: 0.7; }
   .settings-nav-item:hover { color: var(--ink-strong); }
+  .settings-nav-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
   .settings-nav-item.active { color: var(--ink); font-weight: 500; background: var(--bg-elev); }
   .settings-nav-item.active :global(svg) { opacity: 1; }
 

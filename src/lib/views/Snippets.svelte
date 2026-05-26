@@ -3,7 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { snippets, fetchSnippets, type Snippet } from '../stores';
+  import { appStore, fetchSnippets, type Snippet } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
 
@@ -54,10 +54,10 @@
   const filtered = $derived.by(() => {
     const q = debouncedSearch.toLowerCase();
     let list = q
-      ? $snippets.filter(s =>
+      ? appStore.snippets.filter(s =>
           s.trigger.toLowerCase().includes(q) || s.expansion.toLowerCase().includes(q)
         )
-      : [...$snippets];
+      : [...appStore.snippets];
 
     if (sort === 'newest')    list.sort((a, b) => b.created_at.localeCompare(a.created_at));
     if (sort === 'oldest')    list.sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -115,7 +115,7 @@
       await fetchSnippets();
       // Re-sync selected manually — no $effect to avoid reactivity loops
       if (editedId !== undefined) {
-        selected = $snippets.find(s => s.id === editedId) ?? null;
+        selected = appStore.snippets.find(s => s.id === editedId) ?? null;
       }
       closeModal();
     } catch (err) {
@@ -233,6 +233,7 @@
         <button
           class="sort-pill"
           class:active={sort === key}
+          aria-pressed={sort === key}
           bind:this={sortButtonEls[key]}
           onclick={() => setSort(key)}
         >{label}</button>
@@ -245,7 +246,18 @@
     </button>
   </div>
 
-  {#if $snippets.length === 0}
+  {#if appStore.snippetsFetchStatus === 'loading' && appStore.snippets.length === 0}
+    <div class="empty-state" role="status" aria-live="polite" in:fade={{ duration: 250 }}>
+      <p class="empty-h">Loading snippets…</p>
+      <p class="empty-sub">Fetching snippets from the backend.</p>
+    </div>
+  {:else if appStore.snippetsFetchStatus === 'error' && appStore.snippets.length === 0}
+    <div class="empty-state empty-state-error" role="alert" in:fade={{ duration: 250 }}>
+      <p class="empty-h">Could not load snippets</p>
+      <p class="empty-sub">The backend is unavailable right now. {appStore.snippetsFetchError}</p>
+      <button class="btn-ghost" onclick={() => fetchSnippets()}>Try again</button>
+    </div>
+  {:else if appStore.snippets.length === 0}
     <div class="empty-state" in:fade={{ duration: 250 }}>
       <p class="empty-h">No snippets yet</p>
       <p class="empty-sub">Add a trigger phrase and Open Flow will expand it automatically during dictation.</p>
@@ -255,6 +267,11 @@
       </button>
     </div>
   {:else}
+    {#if appStore.snippetsFetchStatus === 'loading'}
+      <p class="fetch-status" role="status" aria-live="polite">Refreshing snippets…</p>
+    {:else if appStore.snippetsFetchStatus === 'error'}
+      <p class="fetch-status fetch-status-error" role="alert">Refresh failed: {appStore.snippetsFetchError}</p>
+    {/if}
     <div class="snip-layout">
 
       <!-- Left: list -->
@@ -268,13 +285,12 @@
         {:else}
           <div class="snip-list">
             {#each filtered as s (s.id)}
-              <div
+              <button
+                type="button"
                 class="snip-row"
                 class:is-selected={selected?.id === s.id}
-                role="button"
-                tabindex="0"
+                aria-pressed={selected?.id === s.id}
                 onclick={() => selectRow(s)}
-                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRow(s); } }}
               >
                 <div class="snip-left">
                   <div class="snip-trigger">{s.trigger}</div>
@@ -291,7 +307,7 @@
                   <span class="meta-dot">·</span>
                   <span>{fmtDate(s.created_at)}</span>
                 </div>
-              </div>
+              </button>
             {/each}
           </div>
         {/if}
@@ -490,6 +506,16 @@
 
   .page-sub { color: var(--ink-mute); font-size: 12.5px; margin: 0 0 22px; }
 
+  .fetch-status {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--ink-mute);
+  }
+
+  .fetch-status-error {
+    color: var(--danger);
+  }
+
   /* ── toolbar ── */
 
   .toolbar {
@@ -633,6 +659,10 @@
   }
 
   .snip-row {
+    border: 0;
+    background: transparent;
+    width: 100%;
+    text-align: left;
     display: grid;
     grid-template-columns: 1fr auto;
     align-items: center;
@@ -645,6 +675,10 @@
   .snip-row:last-child { border-bottom: 0; }
   .snip-row:hover { background: var(--control-hover); }
   .snip-row.is-selected { background: var(--control-active); }
+  .snip-row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
 
   .snip-left { min-width: 0; }
 
