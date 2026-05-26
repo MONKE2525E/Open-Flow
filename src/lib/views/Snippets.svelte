@@ -148,9 +148,10 @@
   function autoGrow(node: HTMLTextAreaElement, value: string) {
     let last = 0;
     let hadSelection = false;
+    const borderDiff = node.offsetHeight - node.clientHeight;
     function resize(couldShrink = true) {
       if (couldShrink) node.style.height = 'auto';
-      const h = node.scrollHeight + node.offsetHeight - node.clientHeight;
+      const h = node.scrollHeight + borderDiff;
       if (h === last) { if (couldShrink) node.style.height = last + 'px'; return; }
       last = h;
       node.style.height = h + 'px';
@@ -225,7 +226,7 @@
   {#if appStore.snippetsFetchStatus === 'error' && appStore.snippets.length > 0}
     <div class="load-warning" role="alert" aria-live="assertive">
       <span>{appStore.snippetsFetchError || 'Unable to load snippets.'} Check backend connection and retry.</span>
-      <button class="load-warning-retry" onclick={() => fetchSnippets()}>Retry</button>
+      <button type="button" class="load-warning-retry" onclick={() => fetchSnippets()}>Retry</button>
     </div>
   {/if}
 

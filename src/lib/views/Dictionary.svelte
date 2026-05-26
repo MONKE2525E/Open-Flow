@@ -208,7 +208,7 @@
   {#if appStore.dictionaryFetchStatus === 'error' && appStore.dictionary.length > 0}
     <div class="load-warning" role="alert" aria-live="assertive">
       <span>{appStore.dictionaryFetchError || 'Unable to load dictionary terms.'} Check backend connection and retry.</span>
-      <button class="load-warning-retry" onclick={() => fetchDictionary()}>Retry</button>
+      <button type="button" class="load-warning-retry" onclick={() => fetchDictionary()}>Retry</button>
     </div>
   {/if}
 
