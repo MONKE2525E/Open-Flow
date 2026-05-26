@@ -110,9 +110,9 @@
                 onclick={() => selectIntensity(c.id)}
                 in:fly={!mountedTabs.cleanup ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
-                <h4>{c.name}</h4>
-                <p class="desc">{c.desc}</p>
-                <div class="style-sample">"{c.sample}"</div>
+                <span class="style-card-title">{c.name}</span>
+                <span class="desc">{c.desc}</span>
+                <span class="style-sample">"{c.sample}"</span>
               </button>
             {/each}
           </div>
@@ -128,9 +128,9 @@
                 onclick={() => selectTone(c.id)}
                 in:fly={!mountedTabs.personal ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
-                <h4>{c.name}</h4>
-                <p class="desc">{c.desc}</p>
-                <div class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</div>
+                <span class="style-card-title">{c.name}</span>
+                <span class="desc">{c.desc}</span>
+                <span class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</span>
               </button>
             {/each}
           </div>
@@ -287,7 +287,8 @@
     box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 12%, transparent);
   }
 
-  .style-card h4 {
+  .style-card-title {
+    display: block;
     font-family: var(--serif);
     font-size: 16px;
     font-weight: 500;
@@ -297,6 +298,7 @@
   }
 
   .style-card .desc {
+    display: block;
     font-size: 12px;
     color: var(--ink-mute);
     margin-bottom: 14px;
@@ -304,6 +306,7 @@
   }
 
   .style-sample {
+    display: block;
     margin-top: auto;
     font-family: var(--serif);
     font-style: italic;

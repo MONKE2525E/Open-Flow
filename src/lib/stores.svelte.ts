@@ -54,7 +54,7 @@ function formatIpcError(err: unknown): string {
       return message.trim();
     }
   }
-  if (err instanceof Error && err.message.trim()) {
+  if (err instanceof Error && err.message?.trim()) {
     return err.message.trim();
   }
   const raw = String(err ?? '').trim();
@@ -69,7 +69,7 @@ export async function fetchSnippets(): Promise<void> {
   appStore.snippetsFetchError = '';
   try {
     const data = await invoke<Snippet[]>('get_snippets');
-    appStore.snippets = data;
+    appStore.snippets = data ?? [];
     appStore.snippetsFetchStatus = 'loaded';
   } catch (err) {
     console.error('IPC fetchSnippets failed:', err);
@@ -83,7 +83,7 @@ export async function fetchDictionary(): Promise<void> {
   appStore.dictionaryFetchError = '';
   try {
     const data = await invoke<DictionaryEntry[]>('get_dictionary');
-    appStore.dictionary = data;
+    appStore.dictionary = data ?? [];
     appStore.dictionaryFetchStatus = 'loaded';
   } catch (err) {
     console.error('IPC fetchDictionary failed:', err);
