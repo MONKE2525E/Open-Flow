@@ -5,7 +5,7 @@
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
-  import { currentPage, dictionary, fetchDictionary, type DictionaryEntry } from '../stores';
+  import { appStore, fetchDictionary, type DictionaryEntry } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
 
   type SortKey = 'newest' | 'oldest' | 'alpha' | 'most_corrected';
@@ -76,11 +76,11 @@
   const filtered = $derived.by(() => {
     const q = debouncedSearch.trim().toLowerCase();
     let list = q
-      ? $dictionary.filter(e =>
+      ? appStore.dictionary.filter(e =>
           e.term.toLowerCase().includes(q) ||
           (e.mistake ?? '').toLowerCase().includes(q)
         )
-      : [...$dictionary];
+      : [...appStore.dictionary];
 
     if (sort === 'newest')         list.sort((a, b) => b.created_at.localeCompare(a.created_at));
     if (sort === 'oldest')         list.sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -149,7 +149,7 @@
       }
       await fetchDictionary();
       if (editedId !== undefined) {
-        selected = $dictionary.find(e => e.id === editedId) ?? null;
+        selected = appStore.dictionary.find(e => e.id === editedId) ?? null;
       }
       closeModal();
     } catch (err) {
@@ -214,7 +214,7 @@
       <input
         class="search-input"
         type="text"
-        placeholder={`Search ${$dictionary.length} ${$dictionary.length === 1 ? 'term' : 'terms'}…`}
+        placeholder={`Search ${appStore.dictionary.length} ${appStore.dictionary.length === 1 ? 'term' : 'terms'}…`}
         bind:value={search}
         aria-label="Search dictionary"
       />
@@ -231,6 +231,7 @@
         <button
           class="sort-pill"
           class:active={sort === key}
+          aria-pressed={sort === key}
           bind:this={sortButtonEls[key]}
           onclick={() => { sort = key; }}
         >{label}</button>
@@ -243,7 +244,18 @@
     </button>
   </div>
 
-  {#if $dictionary.length === 0}
+  {#if appStore.dictionaryFetchStatus === 'loading' && appStore.dictionary.length === 0}
+    <div class="empty-state" role="status" aria-live="polite" in:fade={{ duration: 220 }}>
+      <p class="empty-h">Loading terms…</p>
+      <p class="empty-sub">Fetching your dictionary from the backend.</p>
+    </div>
+  {:else if appStore.dictionaryFetchStatus === 'error' && appStore.dictionary.length === 0}
+    <div class="empty-state empty-state-error" role="alert" in:fade={{ duration: 220 }}>
+      <p class="empty-h">Could not load dictionary</p>
+      <p class="empty-sub">The backend is unavailable right now. {appStore.dictionaryFetchError}</p>
+      <button type="button" class="btn-ghost" onclick={() => fetchDictionary()}>Try again</button>
+    </div>
+  {:else if appStore.dictionary.length === 0}
     <div class="empty-state" in:fade={{ duration: 220 }}>
       <p class="empty-h">No terms yet</p>
       <p class="empty-sub">Add words the AI should know — names, brands, jargon, anything a generic model is unlikely to get right.</p>
@@ -253,6 +265,11 @@
       </button>
     </div>
   {:else}
+    {#if appStore.dictionaryFetchStatus === 'loading'}
+      <p class="fetch-status" role="status" aria-live="polite">Refreshing dictionary…</p>
+    {:else if appStore.dictionaryFetchStatus === 'error'}
+      <p class="fetch-status fetch-status-error" role="alert">Refresh failed: {appStore.dictionaryFetchError}</p>
+    {/if}
     <div class="dict-layout">
 
       <!-- Left: list -->
@@ -266,16 +283,15 @@
         {:else}
           <div class="dict-list">
             {#each filtered as e (e.id)}
-              <div
+              <button
+                type="button"
                 class="dict-row"
                 class:is-selected={selected?.id === e.id}
-                role="button"
-                tabindex="0"
+                aria-pressed={selected?.id === e.id}
                 onclick={() => selectRow(e)}
-                onkeydown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectRow(e); } }}
               >
-                <div class="dict-left">
-                  <div class="dict-main">
+                <span class="dict-left">
+                  <span class="dict-main">
                     <span class="dict-term">{e.term}</span>
                     {#if e.auto_learned}
                       <svg class="dict-auto-star" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-label="Auto-learned">
@@ -287,9 +303,9 @@
                       <span class="dict-often-label">often:</span>
                       <span class="dict-mistake">"{e.mistake}"</span>
                     {/if}
-                  </div>
-                </div>
-                <div class="dict-meta">
+                  </span>
+                </span>
+                <span class="dict-meta">
                   {#if e.correction_count > 0}
                     <span>{e.correction_count} {e.correction_count === 1 ? 'correction' : 'corrections'}</span>
                   {/if}
@@ -297,8 +313,8 @@
                     <span>{confidenceLabel(e.confidence_tier)}</span>
                   {/if}
                   <span>{fmtDate(e.created_at)}</span>
-                </div>
-              </div>
+                </span>
+              </button>
             {/each}
           </div>
         {/if}
@@ -456,7 +472,7 @@
       {#if draftTerm.length >= TERM_LIMIT}
         <button
           class="snippet-nudge"
-          onclick={() => { closeModal(); currentPage.set('snippets'); }}
+          onclick={() => { closeModal(); appStore.currentPage = 'snippets'; }}
           in:fly={{ y: 5, duration: 220, easing: expoOut }}
           out:fade={{ duration: 100 }}
         >Maybe this would be better as a snippet.</button>
@@ -495,6 +511,16 @@
   }
 
   .page-sub { color: var(--ink-mute); font-size: 12.5px; margin: 0 0 22px; max-width: 560px; line-height: 1.5; }
+
+  .fetch-status {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--ink-mute);
+  }
+
+  .fetch-status-error {
+    color: var(--danger);
+  }
 
   /* ── toolbar ── */
 
@@ -639,6 +665,10 @@
   }
 
   .dict-row {
+    border: 0;
+    background: transparent;
+    width: 100%;
+    text-align: left;
     display: grid;
     grid-template-columns: 1fr auto;
     align-items: center;
@@ -651,8 +681,12 @@
   .dict-row:last-child { border-bottom: 0; }
   .dict-row:hover { background: var(--control-hover); }
   .dict-row.is-selected { background: var(--control-active); }
+  .dict-row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
 
-  .dict-left { min-width: 0; overflow: hidden; }
+  .dict-left { display: block; min-width: 0; overflow: hidden; }
 
   .dict-main {
     display: flex;

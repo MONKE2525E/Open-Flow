@@ -6,7 +6,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { getVersion } from '@tauri-apps/api/app';
   import { icons } from '../icons';
-  import { updateInfo, type UpdateInfo } from '../stores';
+  import { appStore, type UpdateInfo } from '../stores';
   import { saveSetting } from '../settings';
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
@@ -166,22 +166,22 @@
   }
 
   function handleInstall() {
-    if (!$updateInfo) return;
+    if (!appStore.updateInfo) return;
     installing = true;
     // Happy path: backend exits the process — no response ever arrives.
     // Error path: invoke rejects and we reset the button.
-    invoke('install_update', { downloadUrl: $updateInfo.downloadUrl }).catch((e) => {
+    invoke('install_update', { downloadUrl: appStore.updateInfo.downloadUrl }).catch((e) => {
       console.error('Install failed:', e);
       installing = false;
     });
   }
 
   async function dismissUpdate() {
-    if (!$updateInfo) return;
+    if (!appStore.updateInfo) return;
     try {
-      await saveSetting('update_dismissed_version', $updateInfo.version);
+      await saveSetting('update_dismissed_version', appStore.updateInfo.version);
     } catch { /* dev mode */ }
-    updateInfo.set(null);
+    appStore.updateInfo = null;
   }
 
   onMount(() => {
@@ -196,7 +196,7 @@
           const dismissed = await invoke<string | null>('get_setting', { key: 'update_dismissed_version' });
           if (dismissed === update.version) return;
         } catch { /* dev mode */ }
-        updateInfo.set(update);
+        appStore.updateInfo = update;
       }
     }).catch(() => {});
 
@@ -248,11 +248,11 @@
         </div>
       </div>
 
-      {#if $updateInfo}
+      {#if appStore.updateInfo}
         <div class="notice-wrap">
           <div class="update-banner">
             <span class="update-text">
-              Update available — v{currentVersion} → v{$updateInfo.version}
+              Update available — v{currentVersion} → v{appStore.updateInfo.version}
             </span>
             <div class="update-actions">
               <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
@@ -527,7 +527,8 @@
     cursor: default;
   }
   .day-row:hover { background: var(--control-active); }
-  .day-row:not(:hover) .copy-btn { opacity: 0; pointer-events: none; }
+  .day-row:not(:hover) .copy-btn:not(:focus-visible) { opacity: 0.25; }
+  .day-row:hover .copy-btn { opacity: 0.9; }
 
   .copy-btn {
     all: unset;
@@ -539,12 +540,17 @@
     height: 18px;
     border-radius: 4px;
     color: var(--ink-mute);
-    opacity: 0.45;
+    opacity: 0.25;
     transition: color 0.12s, opacity 0.12s;
     flex-shrink: 0;
     margin-top: 2px;
   }
   .copy-btn:hover { opacity: 0.9; }
+  .copy-btn:focus-visible {
+    opacity: 0.9;
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .copy-btn.copied { color: var(--jap-500, #d97757); opacity: 1; }
   .copy-btn svg { width: 10px; height: 10px; }
 

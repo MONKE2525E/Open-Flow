@@ -3,7 +3,7 @@
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
-  import { appearanceMode } from '../../stores';
+  import { appStore } from '../../stores';
   import { saveSetting, type AppearanceMode } from '../../settings';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx, animateWidth } from '../../motion';
   import {
@@ -31,13 +31,15 @@
   let hotkeyState = $state<'idle' | 'armed' | 'first' | 'saving' | 'success' | 'error'>('idle');
   const HOTKEY_SUCCESS_MS = 700;
   const HOTKEY_ERROR_MS   = 900;
+  const LANGUAGE_MENU_ID = 'spoken-language-menu';
+  const MIC_MENU_ID = 'microphone-menu';
   let keybindEl: HTMLElement | null = $state(null);
   let capturedWidth = 0;
   let segmentEl: HTMLElement | null = $state(null);
   let indicatorStyle = $state('');
 
   $effect(() => {
-    const idx = appearanceOptions.findIndex(o => o.id === $appearanceMode);
+    const idx = appearanceOptions.findIndex(o => o.id === appStore.appearanceMode);
     if (!segmentEl) return;
     const btn = segmentEl.querySelectorAll<HTMLElement>('.appearance-option')[idx];
     if (!btn) return;
@@ -112,7 +114,7 @@
 
     const appearance = val<AppearanceMode | null>(3, null);
     if (appearance === 'system' || appearance === 'light' || appearance === 'dark') {
-      appearanceMode.set(appearance);
+      appStore.appearanceMode = appearance;
     }
 
     const language = val<TranscriptionLanguageCode | null>(4, null);
@@ -207,12 +209,12 @@
 
 
   async function handleAppearance(mode: AppearanceMode) {
-    const previous = $appearanceMode;
-    appearanceMode.set(mode);
+    const previous = appStore.appearanceMode;
+    appStore.appearanceMode = mode;
     try {
       await saveSetting('appearance_mode', mode);
     } catch (err) {
-      appearanceMode.set(previous);
+      appStore.appearanceMode = previous;
       console.error('save appearance_mode failed:', err);
     }
   }
@@ -343,6 +345,10 @@
       class="btn-ghost language-btn"
       use:animateWidth={{ text: getTranscriptionLanguageLabel(selectedLanguage) }}
       onclick={() => (languageDropdownOpen = !languageDropdownOpen)}
+      aria-haspopup="true"
+      aria-expanded={languageDropdownOpen}
+      aria-controls={LANGUAGE_MENU_ID}
+      aria-label="Spoken language"
     >
       <span>{getTranscriptionLanguageLabel(selectedLanguage)}</span>
       <span class="language-code">{selectedLanguage}</span>
@@ -353,8 +359,9 @@
     {#if languageDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
+        id={LANGUAGE_MENU_ID}
         class="language-menu scroll-styled scroll-thumb-elev"
-        role="presentation"
+        aria-label="Spoken language options"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
@@ -384,6 +391,10 @@
       class="btn-ghost mic-btn"
       use:animateWidth={{ text: selectedMic || audioCopy.defaultDevice, max: 180 }}
       onclick={() => (micDropdownOpen = !micDropdownOpen)}
+      aria-haspopup="true"
+      aria-expanded={micDropdownOpen}
+      aria-controls={MIC_MENU_ID}
+      aria-label="Microphone device"
     >
       <span class="mic-btn-label">{selectedMic || audioCopy.defaultDevice}</span>
       <svg class:open={micDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -393,8 +404,9 @@
     {#if micDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
+        id={MIC_MENU_ID}
         class="mic-menu scroll-styled scroll-thumb-elev"
-        role="presentation"
+        aria-label="Microphone device options"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
@@ -423,9 +435,9 @@
     {#each appearanceOptions as option}
       <button
         class="appearance-option"
-        class:active={$appearanceMode === option.id}
+        class:active={appStore.appearanceMode === option.id}
         role="radio"
-        aria-checked={$appearanceMode === option.id}
+        aria-checked={appStore.appearanceMode === option.id}
         onclick={() => handleAppearance(option.id)}
       >{option.label}</button>
     {/each}
