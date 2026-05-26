@@ -59,18 +59,14 @@ npm run test:rust
 # Run a single Rust test
 cargo test --manifest-path src-tauri/Cargo.toml <test_name>
 
-# Smoke tests — Vite dev server (port 5173)
-npm run dev   # terminal 1
-node tests/smoke/test.cjs
-node tests/smoke/test-app.cjs
-node tests/smoke/playwright-test-ui.cjs
-node tests/smoke/playwright-test-state.cjs
-node tests/smoke/playwright-test-fixes.cjs
+# Smoke tests — unified runner (preferred)
+python tests/OnePyFone.py                    # full suite, auto-starts Tauri dev server
+python tests/OnePyFone.py --suite ui         # ui suite only
+python tests/OnePyFone.py --suite rust       # Rust unit tests only (no server needed)
+python tests/OnePyFone.py --vite             # use Vite :5173 instead of Tauri :1420
 
-# Smoke tests — full Tauri window (port 1420)
-npm run tauri dev   # terminal 1
-node tests/smoke/playwright-test-ui.cjs
-node tests/smoke/playwright-test-fixes.cjs
+# Available suites: preflight | rust | pipeline | ui | state | animation
+# pipeline suite calls live APIs — skipped automatically when API keys are absent
 ```
 
 ## Agent Skills
@@ -78,6 +74,8 @@ node tests/smoke/playwright-test-fixes.cjs
 When executing tasks, refer to the guidelines in the `Agent-Skills/` directory:
 - **Updating version**: See [`Agent-Skills/Updating_version.md`](Agent-Skills/Updating_version.md) for the required files to modify when bumping the application version.
 - **Smoke Tests**: See [`Agent-Skills/SmokeTest.md`](Agent-Skills/SmokeTest.md) for testing procedures.
+- **Release descriptions**: See [`Agent-Skills/Release_Description_Writing.md`](Agent-Skills/Release_Description_Writing.md) for the canonical format — always wrap output in a ` ```markdown ` code block.
+- **Multi-agent parallel work**: See [`Agent-Skills/Multi_Agent_Parallel.md`](Agent-Skills/Multi_Agent_Parallel.md) for the permanent worktree slot workflow (`G:\Open Flow\worktrees\worktree-{1,2,3}`) used to run agents in parallel without port or branch conflicts.
 
 ## CI/CD & Review
 
@@ -179,9 +177,9 @@ WAL mode is enabled. Migrations use `execute_batch` wrapped in explicit `BEGIN/C
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
 | Google | `gemini-3.5-flash` (inline audio) | `gemini-3.5-flash` |
 
-Groq is the recommended default — free tier, fast LPU inference. Google uses base64-encoded audio in the request body; Groq/OpenAI use multipart form upload. The cleanup API wraps transcription text in `<raw_dictation>` XML delimiters before sending. Google cleanup sets `thinking_budget: 0` to disable deep thinking.
+Groq is the recommended default — free tier, fast LPU inference. Google sends audio as base64 in the request body; Groq and OpenAI use multipart form upload. The cleanup request wraps transcription text in `<raw_dictation>` XML tags. Google cleanup sets `thinking_budget: 0`.
 
-The `transcription_language` setting (ISO 639-1 code, default `en`) is passed to Groq/OpenAI as a `language` form field, and to Gemini as a natural-language label in the prompt (resolved via `transcription_language_label()` in `store.rs`). The supported language list lives in `src/lib/transcriptionLanguages.ts` (frontend) and is validated by `is_supported_transcription_language()` (Rust).
+The `transcription_language` setting (ISO 639-1, default `en`) is sent to Groq/OpenAI as the `language` form field and to Gemini as a natural-language label via `transcription_language_label()` in `store.rs`. Supported languages: `src/lib/transcriptionLanguages.ts` (frontend), `is_supported_transcription_language()` (Rust).
 
 **API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to any configured fallback models. Fallback models are configured per task (transcription/cleanup) in the Models settings tab and stored as `transcription_fallback_models` / `cleanup_fallback_models` arrays. Fallback is implicit — if fallback models are configured, they are always tried in order. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately.
 
@@ -196,7 +194,7 @@ The hotkey uses a raw `SetWindowsHookExW(WH_KEYBOARD_LL)` hook in `core/hotkey.r
 
 Active window process name → profile → system prompt prefix sent to cleanup LLM.
 
-Built-in profiles: `casual`, `formal`, `email`, `excited`, `very_casual`. Profile system prompts live in `src-tauri/src/api/cleanup.rs`. `resolve_profile()` reads `AppMapping` entries (`Vec<AppMapping>`) from `tauri-plugin-store` at pipeline time to map foreground process name → profile name. Lookup key is the lowercase `.exe` name. Falls back to `default_tone` setting if no mapping found.
+Built-in profiles: `casual`, `formal`, `very_casual`. Profile system prompts live in `src-tauri/src/api/cleanup.rs`. `resolve_profile()` reads `AppMapping` entries (`Vec<AppMapping>`) from `tauri-plugin-store` at pipeline time to map foreground process name → profile name. Lookup key is the lowercase `.exe` name. Falls back to `default_tone` setting if no mapping found.
 
 Store keys (API keys, settings) are defined as constants in `src-tauri/src/data/store.rs` — always use the constant, never a raw string literal. When adding a new setting, update both `store.rs` (Rust constant + validation) and `src/lib/settings.ts` (frontend `SettingsValueMap` type entry).
 
@@ -277,13 +275,14 @@ The frontend reads the version dynamically via `@tauri-apps/api/app` `getVersion
 ### Smoke test contracts
 Files in `tests/smoke/` are a frozen contract — **never edit them**. Fix the app code to satisfy the tests, not the reverse. CSS classes that tests assert by exact name:
 
-| Element | Required class |
+| Element | Required class / selector |
 |---|---|
 | Sidebar nav buttons | `nav-item` |
 | Settings container | `settings-modal` |
 | Settings section buttons | `settings-nav-item` |
-| Privacy toggles | `toggle` |
+| Privacy toggles | `toggle` with `role="switch"` and `aria-checked` |
 | Info badges | `badge` on a `<div>` |
-| Hotkey badge | `badge key-badge` on a `<kbd>` |
+| Hotkey badge | `badge key-badge` on a `<kbd>` (contains "Ctrl") |
 | About GitHub button | `btn-ghost` on a `<button>` |
-| Model selector rows | `model-row` |
+| Model selector rows | `model-row` (active row also has `active`) |
+| Advanced gain display | `span.gain-value` |

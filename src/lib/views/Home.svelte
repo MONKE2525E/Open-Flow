@@ -6,7 +6,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { getVersion } from '@tauri-apps/api/app';
   import { icons } from '../icons';
-  import { updateInfo, type UpdateInfo } from '../stores';
+  import { appStore, type UpdateInfo } from '../stores';
   import { saveSetting } from '../settings';
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
@@ -15,6 +15,10 @@
   let copiedId: number | null = null;
   let currentVersion = '';
   let installing = false;
+  let failedEntry: { created_at: string } | null = null;
+  let retrying = false;
+  let failedTimer: ReturnType<typeof setTimeout> | null = null;
+  let unlistenFailed: (() => void) | undefined;
 
   function getGreeting(): string {
     const now = new Date();
@@ -89,6 +93,20 @@
 
   const greeting = getGreeting();
 
+  async function retryTranscription() {
+    if (retrying) return;
+    retrying = true;
+    try {
+      await invoke('retry_transcription');
+      // success: open-flow:transcribed listener clears failedEntry and calls load()
+    } catch (err) {
+      console.error('Retry failed:', err);
+      // keep failedEntry so user can try again
+    } finally {
+      retrying = false;
+    }
+  }
+
   async function copyText(entry: Entry) {
     try {
       await navigator.clipboard.writeText(entry.clean_text);
@@ -101,15 +119,22 @@
   let stats: Stats = { total_words: 0, avg_wpm: 0, day_streak: 0 };
   let loading = true;
 
+  function parseTimestamp(value: string): Date {
+    if (value.includes('T')) {
+      return new Date(value.endsWith('Z') ? value : `${value}Z`);
+    }
+    return new Date(value.replace(' ', 'T') + 'Z');
+  }
+
   function fmtTime(iso: string) {
     try {
-      return new Date(iso + 'Z').toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return parseTimestamp(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     } catch { return iso; }
   }
 
   function fmtDate(iso: string) {
     try {
-      const d = new Date(iso + 'Z');
+      const d = parseTimestamp(iso);
       const today = new Date();
       const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
       if (d.toDateString() === today.toDateString()) return 'Today';
@@ -141,22 +166,22 @@
   }
 
   function handleInstall() {
-    if (!$updateInfo) return;
+    if (!appStore.updateInfo) return;
     installing = true;
     // Happy path: backend exits the process — no response ever arrives.
     // Error path: invoke rejects and we reset the button.
-    invoke('install_update', { downloadUrl: $updateInfo.downloadUrl }).catch((e) => {
+    invoke('install_update', { downloadUrl: appStore.updateInfo.downloadUrl }).catch((e) => {
       console.error('Install failed:', e);
       installing = false;
     });
   }
 
   async function dismissUpdate() {
-    if (!$updateInfo) return;
+    if (!appStore.updateInfo) return;
     try {
-      await saveSetting('update_dismissed_version', $updateInfo.version);
+      await saveSetting('update_dismissed_version', appStore.updateInfo.version);
     } catch { /* dev mode */ }
-    updateInfo.set(null);
+    appStore.updateInfo = null;
   }
 
   onMount(() => {
@@ -171,17 +196,34 @@
           const dismissed = await invoke<string | null>('get_setting', { key: 'update_dismissed_version' });
           if (dismissed === update.version) return;
         } catch { /* dev mode */ }
-        updateInfo.set(update);
+        appStore.updateInfo = update;
       }
     }).catch(() => {});
 
-    // Refresh when a new transcription comes in
     import('@tauri-apps/api/event').then(({ listen }) => {
-      listen('open-flow:transcribed', load).then(u => unlisten = u).catch(() => {});
+      listen('open-flow:transcribed', () => {
+        failedEntry = null;
+        if (failedTimer) { clearTimeout(failedTimer); failedTimer = null; }
+        load();
+      }).then(u => unlisten = u).catch(() => {});
+
+      listen<string>('open-flow:pipeline-failed', (ev) => {
+        failedEntry = { created_at: ev.payload };
+        if (failedTimer) clearTimeout(failedTimer);
+        failedTimer = setTimeout(() => {
+          failedEntry = null;
+          failedTimer = null;
+        }, 10 * 60 * 1000);
+      }).then(u => unlistenFailed = u).catch(() => {});
     }).catch(() => {});
 
     return () => {
       if (unlisten) unlisten();
+      if (unlistenFailed) unlistenFailed();
+      if (failedTimer) {
+        clearTimeout(failedTimer);
+        failedTimer = null;
+      }
     };
   });
 </script>
@@ -206,11 +248,11 @@
         </div>
       </div>
 
-      {#if $updateInfo}
+      {#if appStore.updateInfo}
         <div class="notice-wrap">
           <div class="update-banner">
             <span class="update-text">
-              Update available — v{currentVersion} → v{$updateInfo.version}
+              Update available — v{currentVersion} → v{appStore.updateInfo.version}
             </span>
             <div class="update-actions">
               <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
@@ -224,37 +266,61 @@
 
       {#if loading}
         <div class="empty-state">Loading history…</div>
-      {:else if recents.length === 0}
-        <div class="empty-state">
-          No dictations yet. Hold <kbd>Ctrl</kbd> <kbd>Windows</kbd> to get started.
-        </div>
       {:else}
-        {#each grouped as group, gi (group.label)}
-          <div class="day-head" class:muted={gi > 0}>{group.label}</div>
+        {#if failedEntry}
+          <div class="day-head">Today</div>
           <div class="day-table">
-            {#each group.rows as r (r.id)}
-              <div class="day-row" in:fly={{ y: -10, duration: 400, easing: expoOut }} animate:flip={{ duration: 400, easing: expoOut }}>
-                <div class="day-time">{fmtTime(r.created_at)}</div>
-                <div class="day-text">{r.clean_text}</div>
-                <button
-                  class="copy-btn"
-                  class:copied={copiedId === r.id}
-                  onclick={() => copyText(r)}
-                  title="Copy to clipboard"
-                  aria-label="Copy"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    {#if copiedId === r.id}
-                      {@html icons.check}
-                    {:else}
-                      {@html icons.copy}
-                    {/if}
-                  </svg>
-                </button>
-              </div>
-            {/each}
+            <div
+              class="day-row"
+              transition:fly={{ y: -10, duration: 400, easing: expoOut }}
+            >
+              <div class="day-time">{fmtTime(failedEntry.created_at)}</div>
+              <div class="day-text error-msg">Looks like your last transcription failed.</div>
+              <button
+                class="retry-btn"
+                onclick={retryTranscription}
+                disabled={retrying}
+              >
+                {retrying ? '…' : 'Retry'}
+              </button>
+            </div>
           </div>
-        {/each}
+        {/if}
+
+        {#if recents.length === 0 && !failedEntry}
+          <div class="empty-state">
+            No dictations yet. Hold <kbd>Ctrl</kbd> <kbd>Windows</kbd> to get started.
+          </div>
+        {:else}
+          {#each grouped as group, gi (group.label)}
+            {#if !(failedEntry && group.label === 'Today')}
+              <div class="day-head" class:muted={gi > 0 || !!failedEntry}>{group.label}</div>
+            {/if}
+            <div class="day-table">
+              {#each group.rows as r (r.id)}
+                <div class="day-row" in:fly={{ y: -10, duration: 400, easing: expoOut }} animate:flip={{ duration: 400, easing: expoOut }}>
+                  <div class="day-time">{fmtTime(r.created_at)}</div>
+                  <div class="day-text">{r.clean_text}</div>
+                  <button
+                    class="copy-btn"
+                    class:copied={copiedId === r.id}
+                    onclick={() => copyText(r)}
+                    title="Copy to clipboard"
+                    aria-label="Copy"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      {#if copiedId === r.id}
+                        {@html icons.check}
+                      {:else}
+                        {@html icons.copy}
+                      {/if}
+                    </svg>
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {/each}
+        {/if}
       {/if}
     </div>
 
@@ -461,7 +527,8 @@
     cursor: default;
   }
   .day-row:hover { background: var(--control-active); }
-  .day-row:not(:hover) .copy-btn { opacity: 0; pointer-events: none; }
+  .day-row:not(:hover) .copy-btn:not(:focus-visible) { opacity: 0.25; }
+  .day-row:hover .copy-btn { opacity: 0.9; }
 
   .copy-btn {
     all: unset;
@@ -473,12 +540,17 @@
     height: 18px;
     border-radius: 4px;
     color: var(--ink-mute);
-    opacity: 0.45;
+    opacity: 0.25;
     transition: color 0.12s, opacity 0.12s;
     flex-shrink: 0;
     margin-top: 2px;
   }
   .copy-btn:hover { opacity: 0.9; }
+  .copy-btn:focus-visible {
+    opacity: 0.9;
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .copy-btn.copied { color: var(--jap-500, #d97757); opacity: 1; }
   .copy-btn svg { width: 10px; height: 10px; }
 
@@ -497,6 +569,34 @@
     color: var(--ink-strong);
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+
+  .error-msg {
+    color: var(--ink-mute);
+    font-style: italic;
+  }
+
+  .retry-btn {
+    all: unset;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent);
+    padding: 2px 8px;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    transition: background 0.12s, color 0.12s;
+    flex-shrink: 0;
+    white-space: nowrap;
+    line-height: 1.6;
+  }
+  .retry-btn:hover:not(:disabled) {
+    background: var(--accent);
+    color: var(--on-accent, #fff);
+  }
+  .retry-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .empty-state {

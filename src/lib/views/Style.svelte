@@ -102,38 +102,36 @@
           <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Open Flow does.</span></p>
           <div class="style-grid four">
             {#each cleanupCards as c}
-              <div
+              <button
+                type="button"
                 class="style-card"
                 class:active={intensity === c.id}
-                role="button"
-                tabindex="0"
+                aria-pressed={intensity === c.id}
                 onclick={() => selectIntensity(c.id)}
-                onkeydown={(e) => e.key === 'Enter' && selectIntensity(c.id)}
                 in:fly={!mountedTabs.cleanup ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
-                <h4>{c.name}</h4>
-                <p class="desc">{c.desc}</p>
-                <div class="style-sample">"{c.sample}"</div>
-              </div>
+                <span class="style-card-title">{c.name}</span>
+                <span class="desc">{c.desc}</span>
+                <span class="style-sample">"{c.sample}"</span>
+              </button>
             {/each}
           </div>
         {:else if tab === 'personal'}
           <p class="style-intro">Default tone. <span>Applies to any app not explicitly mapped.</span></p>
           <div class="style-grid">
             {#each personalCards as c}
-              <div
+              <button
+                type="button"
                 class="style-card"
                 class:active={tone === c.id}
-                role="button"
-                tabindex="0"
+                aria-pressed={tone === c.id}
                 onclick={() => selectTone(c.id)}
-                onkeydown={(e) => e.key === 'Enter' && selectTone(c.id)}
                 in:fly={!mountedTabs.personal ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
-                <h4>{c.name}</h4>
-                <p class="desc">{c.desc}</p>
-                <div class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</div>
-              </div>
+                <span class="style-card-title">{c.name}</span>
+                <span class="desc">{c.desc}</span>
+                <span class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</span>
+              </button>
             {/each}
           </div>
         {:else if tab === 'apps'}
@@ -221,7 +219,7 @@
   }
 
   .tab .pill {
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 9px;
     background: transparent;
     color: var(--ink-mute);
@@ -251,9 +249,11 @@
   }
 
   .style-card {
+    border: 1px solid var(--line);
+    width: 100%;
+    text-align: left;
     padding: 14px;
     background: var(--bg-elev);
-    border: 1px solid var(--line);
     border-radius: var(--r-md);
     display: flex;
     flex-direction: column;
@@ -270,6 +270,10 @@
     transform: translateY(-2px);
     box-shadow: var(--shadow-popover);
   }
+  .style-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
 
   .style-card:active {
     transform: translateY(0) scale(0.98);
@@ -283,7 +287,8 @@
     box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 12%, transparent);
   }
 
-  .style-card h4 {
+  .style-card-title {
+    display: block;
     font-family: var(--serif);
     font-size: 16px;
     font-weight: 500;
@@ -293,6 +298,7 @@
   }
 
   .style-card .desc {
+    display: block;
     font-size: 12px;
     color: var(--ink-mute);
     margin-bottom: 14px;
@@ -300,6 +306,7 @@
   }
 
   .style-sample {
+    display: block;
     margin-top: auto;
     font-family: var(--serif);
     font-style: italic;

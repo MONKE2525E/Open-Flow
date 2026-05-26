@@ -2,8 +2,12 @@
   import { invoke } from '@tauri-apps/api/core';
   import { fly, slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
+  import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
 
-  function pillScale(node: Element, { duration = 180 }: { duration?: number } = {}) {
+  function pillScale(
+    node: Element,
+    { duration = motionMs(MOTION_MS.fast) }: { duration?: number } = {},
+  ) {
     const w = (node as HTMLElement).getBoundingClientRect().width;
     return {
       duration,
@@ -294,7 +298,8 @@
         setTaskDefault(type, nextActive);
         setTaskFallbacks(type, remaining);
       } else {
-        setTaskDefault(type, '');
+        const provId = provider as UiProviderId;
+        setTaskDefault(type, modelId(provider, recommendedModels[type][provId].standard));
       }
     } else if (currentState === 'fallback') {
       setTaskFallbacks(type, taskFallbacks(type).filter((m) => m !== id));
@@ -365,7 +370,7 @@
     </button>
 
     {#if opened}
-      <div class="tile-inner" transition:slide={{ duration: 220, easing: cubicOut }}>
+      <div class="tile-inner" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
         {#if missingKeyWarning(type)}
           <div class="warn-banner">{missingKeyWarning(type)}</div>
         {/if}
@@ -415,8 +420,8 @@
               {@const isActive = state === 'active'}
               {@const isFallback = state === 'fallback'}
               <div
-                in:fly={{ y: 5, duration: 200, easing: cubicOut }}
-                out:fly={{ y: -5, duration: 150, easing: cubicOut }}
+                in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: cubicOut }}
+                out:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: cubicOut }}
                 class="simple-row model-row"
                 class:simple-active={isActive}
                 class:simple-fallback={isFallback}
@@ -446,7 +451,7 @@
             {/each}
 
             {#if advancedModelUi}
-              <div class="custom-row" transition:slide={{ duration: 240, easing: cubicOut }}>
+              <div class="custom-row" transition:slide={{ duration: motionMs(240), easing: cubicOut }}>
                 <input
                   class="model-input"
                   placeholder="custom model…"

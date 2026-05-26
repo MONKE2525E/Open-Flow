@@ -2,9 +2,8 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { fly, fade } from 'svelte/transition';
-  import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
-  import { snippets, fetchSnippets, type Snippet } from '../stores';
+  import { appStore, fetchSnippets, type Snippet } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
 
@@ -23,6 +22,7 @@
   }
 
   let search    = $state('');
+  let debouncedSearch = $state('');
   let sort      = $state<SortKey>('newest');
   let selected  = $state<Snippet | null>(null);
   let modal     = $state<{ mode: 'add' | 'edit'; snippet?: Snippet } | null>(null);
@@ -34,6 +34,7 @@
   let draftInstructions  = $state('');
   let triggerInput   = $state<HTMLInputElement | null>(null);
   let inspectorDir = $state<1 | -1>(1);
+  let expansionTextareaEl = $state<HTMLTextAreaElement | null>(null);
   let sortWrapEl = $state<HTMLDivElement | null>(null);
   let sortButtonEls = $state<Record<SortKey, HTMLButtonElement | null>>({
     newest: null,
@@ -45,21 +46,18 @@
 
   const TRIGGER_LIMIT = 300;
 
-  const inspExpansion = $derived.by(() => {
-    if (!selected) return '';
-    const chars = [...selected.expansion.slice(0, 401)];
-    return chars.length > 200
-      ? chars.slice(0, 200).join('').trimEnd() + '…'
-      : selected.expansion;
+  $effect(() => {
+    const currentSearch = search;
+    const timer = window.setTimeout(() => { debouncedSearch = currentSearch; }, 120);
+    return () => window.clearTimeout(timer);
   });
-
   const filtered = $derived.by(() => {
-    const q = search.toLowerCase();
+    const q = debouncedSearch.toLowerCase();
     let list = q
-      ? $snippets.filter(s =>
+      ? appStore.snippets.filter(s =>
           s.trigger.toLowerCase().includes(q) || s.expansion.toLowerCase().includes(q)
         )
-      : [...$snippets];
+      : [...appStore.snippets];
 
     if (sort === 'newest')    list.sort((a, b) => b.created_at.localeCompare(a.created_at));
     if (sort === 'oldest')    list.sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -117,7 +115,7 @@
       await fetchSnippets();
       // Re-sync selected manually — no $effect to avoid reactivity loops
       if (editedId !== undefined) {
-        selected = $snippets.find(s => s.id === editedId) ?? null;
+        selected = appStore.snippets.find(s => s.id === editedId) ?? null;
       }
       closeModal();
     } catch (err) {
@@ -157,6 +155,12 @@
 
   $effect(() => {
     if (modal && triggerInput) setTimeout(() => triggerInput?.focus(), 50);
+  });
+
+  $effect(() => {
+    void draftExpansion;
+    const el = expansionTextareaEl;
+    if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
   });
 
   const sortLabels: { key: SortKey; label: string }[] = [
@@ -229,6 +233,7 @@
         <button
           class="sort-pill"
           class:active={sort === key}
+          aria-pressed={sort === key}
           bind:this={sortButtonEls[key]}
           onclick={() => setSort(key)}
         >{label}</button>
@@ -241,7 +246,18 @@
     </button>
   </div>
 
-  {#if $snippets.length === 0}
+  {#if appStore.snippetsFetchStatus === 'loading' && appStore.snippets.length === 0}
+    <div class="empty-state" role="status" aria-live="polite" in:fade={{ duration: 250 }}>
+      <p class="empty-h">Loading snippets…</p>
+      <p class="empty-sub">Fetching snippets from the backend.</p>
+    </div>
+  {:else if appStore.snippetsFetchStatus === 'error' && appStore.snippets.length === 0}
+    <div class="empty-state empty-state-error" role="alert" in:fade={{ duration: 250 }}>
+      <p class="empty-h">Could not load snippets</p>
+      <p class="empty-sub">The backend is unavailable right now. {appStore.snippetsFetchError}</p>
+      <button type="button" class="btn-ghost" onclick={() => fetchSnippets()}>Try again</button>
+    </div>
+  {:else if appStore.snippets.length === 0}
     <div class="empty-state" in:fade={{ duration: 250 }}>
       <p class="empty-h">No snippets yet</p>
       <p class="empty-sub">Add a trigger phrase and Open Flow will expand it automatically during dictation.</p>
@@ -251,6 +267,11 @@
       </button>
     </div>
   {:else}
+    {#if appStore.snippetsFetchStatus === 'loading'}
+      <p class="fetch-status" role="status" aria-live="polite">Refreshing snippets…</p>
+    {:else if appStore.snippetsFetchStatus === 'error'}
+      <p class="fetch-status fetch-status-error" role="alert">Refresh failed: {appStore.snippetsFetchError}</p>
+    {/if}
     <div class="snip-layout">
 
       <!-- Left: list -->
@@ -264,33 +285,29 @@
         {:else}
           <div class="snip-list">
             {#each filtered as s (s.id)}
-              <div
+              <button
+                type="button"
                 class="snip-row"
                 class:is-selected={selected?.id === s.id}
-                role="button"
-                tabindex="0"
-                in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}
-                out:fade={{ duration: motionMs(MOTION_MS.fast) }}
-                animate:flip={{ duration: motionMs(MOTION_MS.base), easing: expoOut }}
+                aria-pressed={selected?.id === s.id}
                 onclick={() => selectRow(s)}
-                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRow(s); } }}
               >
-                <div class="snip-left">
-                  <div class="snip-trigger">{s.trigger}</div>
-                  <div class="snip-arrow" aria-hidden="true">
+                <span class="snip-left">
+                  <span class="snip-trigger">{s.trigger}</span>
+                  <span class="snip-arrow" aria-hidden="true">
                     <svg width="9" height="13" viewBox="0 0 9 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
                       <line x1="4.5" y1="0" x2="4.5" y2="9"/>
                       <polyline points="1.5,6.5 4.5,10 7.5,6.5"/>
                     </svg>
-                  </div>
-                  <div class="snip-expansion">{s.expansion}</div>
-                </div>
-                <div class="snip-meta">
+                  </span>
+                  <span class="snip-expansion">{s.expansion}</span>
+                </span>
+                <span class="snip-meta">
                   <span>{s.use_count} {s.use_count === 1 ? 'use' : 'uses'}</span>
                   <span class="meta-dot">·</span>
                   <span>{fmtDate(s.created_at)}</span>
-                </div>
-              </div>
+                </span>
+              </button>
             {/each}
           </div>
         {/if}
@@ -312,7 +329,7 @@
                 <polyline points="2,9 5.5,13.5 9,9"/>
               </svg>
               </div>
-              <div class="insp-expansion">{inspExpansion}</div>
+              <div class="insp-expansion scroll-styled">{selected.expansion}</div>
 
               {#if selected.instructions}
                 <div class="insp-instructions" in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: expoOut }}>
@@ -422,7 +439,7 @@
           class="field-input scrollbar-standard"
           placeholder="e.g. hello@example.com"
           bind:value={draftExpansion}
-          use:autoGrow
+          bind:this={expansionTextareaEl}
           rows="3"
           spellcheck="false"
         ></textarea>
@@ -488,6 +505,16 @@
   }
 
   .page-sub { color: var(--ink-mute); font-size: 12.5px; margin: 0 0 22px; }
+
+  .fetch-status {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--ink-mute);
+  }
+
+  .fetch-status-error {
+    color: var(--danger);
+  }
 
   /* ── toolbar ── */
 
@@ -632,6 +659,10 @@
   }
 
   .snip-row {
+    border: 0;
+    background: transparent;
+    width: 100%;
+    text-align: left;
     display: grid;
     grid-template-columns: 1fr auto;
     align-items: center;
@@ -644,10 +675,15 @@
   .snip-row:last-child { border-bottom: 0; }
   .snip-row:hover { background: var(--control-hover); }
   .snip-row.is-selected { background: var(--control-active); }
+  .snip-row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
 
-  .snip-left { min-width: 0; }
+  .snip-left { display: block; min-width: 0; }
 
   .snip-trigger {
+    display: block;
     font-size: 13px;
     font-weight: 500;
     color: var(--ink);
@@ -661,6 +697,7 @@
   }
 
   .snip-expansion {
+    display: block;
     font-size: 12.5px;
     color: var(--ink-mute);
     line-height: 1.45;
@@ -719,6 +756,8 @@
     line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-word;
+    max-height: 120px;
+    overflow-y: auto;
   }
 
   .insp-divider {
@@ -1111,3 +1150,4 @@
     word-break: break-word;
   }
 </style>
+

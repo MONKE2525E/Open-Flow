@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { currentPage, settingsOpen } from '../../stores';
+  import { appStore } from '../../stores';
   import { icons } from '../../icons';
   import { tweened } from 'svelte/motion';
   import { expoOut } from 'svelte/easing';
@@ -35,8 +35,8 @@
   ] as const;
 
   function nav(id: string) {
-    if (id === 'settings') { $settingsOpen = true; return; }
-    $currentPage = id as typeof $currentPage;
+    if (id === 'settings') { appStore.settingsOpen = true; return; }
+    appStore.currentPage = id as typeof appStore.currentPage;
   }
 </script>
 
@@ -54,37 +54,34 @@
 
   <div class="nav-section">
     {#each navItems as item (item.id)}
-      <div
+      <button
+        type="button"
         class="nav-item"
-        class:active={$currentPage === item.id}
+        class:active={appStore.currentPage === item.id}
         class:locked={item.locked}
-        role="button"
-        tabindex={item.locked ? -1 : 0}
-        onclick={() => !item.locked && nav(item.id)}
-        onkeydown={(e) => e.key === 'Enter' && !item.locked && nav(item.id)}
+        disabled={item.locked}
+        onclick={() => nav(item.id)}
       >
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={$currentPage === item.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[item.icon]}</svg>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.currentPage === item.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[item.icon]}</svg>
         <span>{item.label}</span>
         {#if item.locked}
           <span class="lock-tag">Soon</span>
         {/if}
-      </div>
+      </button>
     {/each}
   </div>
 
   <div class="sidebar-spacer"></div>
 
   <div class="sidebar-foot">
-    <div
+    <button
+      type="button"
       class="nav-item"
-      role="button"
-      tabindex="0"
       onclick={() => nav('settings')}
-      onkeydown={(e) => e.key === 'Enter' && nav('settings')}
     >
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons.settings}</svg>
       <span>Settings</span>
-    </div>
+    </button>
   </div>
 
   <div class="local-bar">
@@ -107,7 +104,7 @@
         </span>
       </div>
     </div>
-    <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 200 * 100, 100)}%"></span></div>
+    <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 200 * 100, 100)}%; background:{$memoryMb >= 150 ? 'var(--accent)' : 'var(--arm-300, #9caa8e)'}"></span></div>
   </div>
 </aside>
 
@@ -159,6 +156,8 @@
   }
 
   .nav-item {
+    border: 0;
+    background: transparent;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -170,11 +169,17 @@
     font-weight: 450;
     user-select: none;
     position: relative;
+    text-align: left;
+    width: 100%;
   }
 
   .nav-item :global(svg) { opacity: 0.75; flex-shrink: 0; }
 
   .nav-item:hover { color: var(--ink-strong); background: var(--control-hover); }
+  .nav-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
 
   .nav-item.active {
     color: var(--ink);
@@ -192,7 +197,7 @@
 
   .lock-tag {
     margin-left: auto;
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 9px;
     color: var(--ink-mute);
     padding: 1px 6px;
@@ -285,7 +290,7 @@
   .local-meter-thin span {
     display: block;
     height: 100%;
-    background: var(--accent);
     border-radius: 999px;
+    transition: background 0.4s ease;
   }
 </style>

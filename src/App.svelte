@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentPage, settingsOpen, appearanceMode, setupComplete, isOnline } from './lib/stores';
+  import { appStore } from './lib/stores';
   import TitleBar from './lib/components/layout/TitleBar.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
@@ -26,12 +26,12 @@
   }
 
   function applyTheme() {
-    const theme = effectiveTheme($appearanceMode);
+    const theme = effectiveTheme(appStore.appearanceMode);
     document.documentElement.dataset.theme = theme;
   }
 
   $effect(() => {
-    $appearanceMode;
+    appStore.appearanceMode;
     if (typeof document !== 'undefined') applyTheme();
   });
 
@@ -42,7 +42,7 @@
   let prevPage = $state<string>('home');
 
   $effect(() => {
-    const next = $currentPage;
+    const next = appStore.currentPage;
     pageDir = directionFromOrder(prevPage, next, NAV_ORDER);
     prevPage = next;
   });
@@ -50,9 +50,9 @@
   async function pingConnectivity() {
     try {
       const online = await invoke<boolean>('check_connectivity');
-      isOnline.set(online);
+      appStore.isOnline = online;
     } catch {
-      isOnline.set(false);
+      appStore.isOnline = false;
     }
   }
 
@@ -66,12 +66,12 @@
           invoke<'system' | 'light' | 'dark' | null>('get_setting', { key: 'appearance_mode' }),
           invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' }),
         ]);
-        setupComplete.set(forceSetupOnLaunch ? false : done === true);
+        appStore.setupComplete = forceSetupOnLaunch ? false : done === true;
         if (appearance === 'light' || appearance === 'dark' || appearance === 'system') {
-          appearanceMode.set(appearance);
+          appStore.appearanceMode = appearance;
         }
       } catch {
-        setupComplete.set(false);
+        appStore.setupComplete = false;
       }
 
       try {
@@ -87,7 +87,7 @@
 
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
     const onSystemThemeChange = () => {
-      if ($appearanceMode === 'system') applyTheme();
+      if (appStore.appearanceMode === 'system') applyTheme();
     };
     media?.addEventListener?.('change', onSystemThemeChange);
 
@@ -116,26 +116,26 @@
 </svelte:head>
 
 <div class="app">
-  {#if $setupComplete === false}
+  {#if appStore.setupComplete === false}
     <Setup />
   {/if}
   <TitleBar />
   <div class="body">
     <Sidebar />
     <div class="content scroll-styled">
-      {#key $currentPage}
+      {#key appStore.currentPage}
         <div
           class="page-wrapper"
           in:fly={{ y: pageDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.page + 120), easing: expoOut }}
           out:fly={{ y: -pageDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.base + 100), easing: expoOut }}
         >
-          {#if $currentPage === 'home'}
+          {#if appStore.currentPage === 'home'}
             <Home />
-          {:else if $currentPage === 'dictionary'}
+          {:else if appStore.currentPage === 'dictionary'}
             <Dictionary />
-          {:else if $currentPage === 'snippets'}
+          {:else if appStore.currentPage === 'snippets'}
             <Snippets />
-          {:else if $currentPage === 'style'}
+          {:else if appStore.currentPage === 'style'}
             <Style />
           {/if}
         </div>
@@ -146,7 +146,7 @@
   <DictationPill />
 
   {#if errorToast}
-    <div class="error-toast" role="alert" style:bottom={!$isOnline ? '66px' : '18px'}>
+    <div class="error-toast" role="alert" style:bottom={!appStore.isOnline ? '66px' : '18px'}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
         <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
       </svg>
@@ -154,7 +154,7 @@
       <button class="toast-close" onclick={() => { errorToast = ''; clearTimeout(toastTimer); }}>✕</button>
     </div>
   {/if}
-  {#if !$isOnline}
+  {#if !appStore.isOnline}
     <div class="offline-toast" role="status" transition:fly={{ y: 6, duration: 180, easing: expoOut }}>
       <span class="offline-dot"></span>
       No internet connection

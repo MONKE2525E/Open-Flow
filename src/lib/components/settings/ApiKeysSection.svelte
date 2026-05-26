@@ -30,6 +30,16 @@
     }
   }
 
+  async function clearKey(provider: 'groq' | 'openai' | 'google') {
+    try {
+      await invoke('delete_api_key', { provider });
+      keyStatus = { ...keyStatus, [provider]: false };
+      draftKeys = { ...draftKeys, [provider]: '' };
+    } catch (e) {
+      console.error('delete_api_key failed', e);
+    }
+  }
+
   loadKeyStatus();
 </script>
 
@@ -61,6 +71,12 @@
         onclick={() => saveKey(item.id)}
         disabled={!draftKeys[item.id].trim()}
       >Save</button>
+      {#if keyStatus[item.id]}
+        <button
+          class="btn-ghost btn-clear"
+          onclick={() => clearKey(item.id)}
+        >Clear</button>
+      {/if}
     </div>
   </div>
 {/each}
@@ -87,5 +103,18 @@
     color: var(--ink-soft);
     width: 200px;
     letter-spacing: 0.04em;
+  }
+  .key-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+  .btn-clear {
+    color: var(--danger);
+    border-color: var(--danger-line);
+  }
+  .btn-clear:hover {
+    background: var(--danger-bg);
+    border-color: var(--danger-line);
   }
 </style>

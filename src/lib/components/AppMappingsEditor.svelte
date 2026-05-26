@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
-  import { fly, slide } from 'svelte/transition';
+  import { fly, slide, fade } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
   import {
@@ -13,7 +13,7 @@
     type AppMapping,
     type InstalledApp,
   } from '../appMappings';
-  import { animateWidth } from '../motion';
+  import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
 
   let {
     showHeading = true,
@@ -38,6 +38,8 @@
   let profileDropdownOpen = $state(false);
   let mappingError = $state('');
 
+  const pendingExe = $derived(addExe || (appSearch.trim() ? customExeFromSearch(appSearch) : ''));
+  const pendingName = $derived(cleanAppName(addName || appSearch || pendingExe));
   const mappedExes = $derived(new Set(mappings.map((mapping) => normalizeExe(mapping.exe))));
   const filteredApps = $derived(
     installedApps
@@ -88,12 +90,17 @@
     await saveMappings(mappings.filter((mapping) => normalizeExe(mapping.exe) !== normalizeExe(exe)));
   }
 
+  function customExeFromSearch(s: string): string {
+    return normalizeExe(s).replace(/\.exe$/, '') + '.exe';
+  }
+
   async function addMapping() {
-    if (!addExe) return;
+    const rawExe = pendingExe;
+    if (!rawExe) return;
     const entry = normalizeMapping({
-      exe: addExe,
+      exe: rawExe,
       profile: addProfile,
-      name: addName || appSearch || addExe,
+      name: addName || appSearch || rawExe,
     });
     await saveMappings([...mappings.filter((mapping) => mapping.exe !== entry.exe), entry]);
     addExe = '';
@@ -110,12 +117,25 @@
     appPickerOpen = false;
   }
 
-  function closeAppPicker(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest('.app-picker-wrap')) appPickerOpen = false;
+  function closeAppPicker(e: MouseEvent | PointerEvent) {
+    const target = e.target;
+    if (target instanceof Element && !target.closest('.app-picker-wrap')) {
+      appPickerOpen = false;
+    }
   }
 
-  function closeProfileDropdown(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest('.profile-drop-wrap')) profileDropdownOpen = false;
+  function closeProfileDropdown(e: MouseEvent | PointerEvent) {
+    const target = e.target;
+    if (target instanceof Element && !target.closest('.profile-drop-wrap')) {
+      profileDropdownOpen = false;
+    }
+  }
+
+  function handleProfileButtonKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && profileDropdownOpen) {
+      profileDropdownOpen = false;
+      e.stopPropagation();
+    }
   }
 
   function normalizeMappings(entries: AppMapping[]) {
@@ -157,12 +177,12 @@
     if (!appPickerOpen) return;
 
     const timeout = window.setTimeout(() => {
-      window.addEventListener('click', closeAppPicker);
+      window.addEventListener('pointerdown', closeAppPicker);
     });
 
     return () => {
       window.clearTimeout(timeout);
-      window.removeEventListener('click', closeAppPicker);
+      window.removeEventListener('pointerdown', closeAppPicker);
     };
   });
 
@@ -170,12 +190,12 @@
     if (!profileDropdownOpen) return;
 
     const timeout = window.setTimeout(() => {
-      window.addEventListener('click', closeProfileDropdown);
+      window.addEventListener('pointerdown', closeProfileDropdown);
     });
 
     return () => {
       window.clearTimeout(timeout);
-      window.removeEventListener('click', closeProfileDropdown);
+      window.removeEventListener('pointerdown', closeProfileDropdown);
     };
   });
 </script>
@@ -188,7 +208,12 @@
 {#if mappings.length > 0}
   <div class="mapping-list">
     {#each mappings as mapping (mapping.exe)}
-      <div class="mapping-row" animate:flip={{duration: 300, easing: expoOut}} in:fly={{y: 10, duration: 300, easing: expoOut}} out:slide={{duration: 200, easing: expoOut}}>
+      <div
+        class="mapping-row"
+        animate:flip={{ duration: motionMs(300), easing: expoOut }}
+        in:fly={{ y: motionPx(10), duration: motionMs(300), easing: expoOut }}
+        out:slide={{ duration: motionMs(200), easing: expoOut }}
+      >
         <div class="mapping-app-info">
           <span class="mapping-app-name">{getAppDisplayName(mapping, installedApps)}</span>
           <span class="mapping-exe-pill" aria-hidden="true">{mapping.exe}</span>
@@ -220,10 +245,23 @@
         bind:value={appSearch}
         onfocus={() => { appPickerOpen = true; }}
         oninput={() => { addExe = ''; addName = ''; appPickerOpen = true; }}
-        onkeydown={(e) => e.key === 'Enter' && addMapping()}
+        onkeydown={(e) => {
+          if (e.key === 'Enter') {
+            addMapping();
+          } else if (e.key === 'Escape' && appPickerOpen) {
+            appPickerOpen = false;
+            e.stopPropagation();
+          }
+        }}
       />
       {#if appPickerOpen && filteredApps.length > 0}
-        <div class="app-picker-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <div
+          class="app-picker-menu scroll-styled"
+          role="presentation"
+          onclick={(e) => e.stopPropagation()}
+          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
+          out:fade={{ duration: motionMs(100) }}
+        >
           {#each filteredApps as app}
             <button class="app-picker-item" onclick={() => pickApp(app)}>
               <span class="app-picker-name">{cleanAppName(app.name || app.exe)}</span>
@@ -231,9 +269,25 @@
             </button>
           {/each}
         </div>
+      {:else if appPickerOpen && appSearch.trim()}
+        <div
+          class="app-picker-menu app-picker-empty"
+          role="presentation"
+          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
+          out:fade={{ duration: motionMs(100) }}
+        >
+          <span>
+            No matching apps found. Press Enter to map custom executable:
+            <b>{customExeFromSearch(appSearch)}</b>
+          </span>
+        </div>
       {/if}
     </div>
-    <div class="profile-drop-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
+    <div
+      class="profile-drop-wrap"
+      role="presentation"
+      onclick={(e) => e.stopPropagation()}
+    >
       <select class="profile-select profile-select-hidden" bind:value={addProfile} tabindex="-1" aria-hidden="true">
         {#each profileOptions as profile}
           <option value={profile.id}>{profile.label}</option>
@@ -243,19 +297,27 @@
         class="profile-drop-btn"
         use:animateWidth={{ text: getProfileLabel(addProfile) }}
         onclick={() => (profileDropdownOpen = !profileDropdownOpen)}
+        onkeydown={handleProfileButtonKeydown}
       >
         <span>{getProfileLabel(addProfile)}</span>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg class:open={profileDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="m6 9 6 6 6-6"/>
         </svg>
       </button>
       {#if profileDropdownOpen}
-        <div class="profile-drop-menu scroll-styled" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <div
+          class="profile-drop-menu scroll-styled"
+          role="presentation"
+          onclick={(e) => e.stopPropagation()}
+          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
+          out:fade={{ duration: motionMs(100) }}
+        >
           {#each profileOptions as profile}
             <button
               class="profile-drop-item"
               class:active={addProfile === profile.id}
               onclick={() => { addProfile = profile.id; profileDropdownOpen = false; }}
+              onkeydown={handleProfileButtonKeydown}
             >
               {profile.label}
             </button>
@@ -263,11 +325,11 @@
         </div>
       {/if}
     </div>
-    <button class="btn-ghost add-btn" onclick={addMapping} disabled={!addExe}>Add</button>
+    <button class="btn-ghost add-btn" onclick={addMapping} disabled={!addExe && !appSearch.trim()}>Add</button>
   </div>
-  {#if addExe}
+  {#if pendingExe}
     <div class="add-preview">
-      <span>{cleanAppName(addName || addExe)}</span>
+      <span>{pendingName}</span>
       <span class="preview-dot"></span>
       <span>{getProfileLabel(addProfile)}</span>
     </div>
@@ -439,6 +501,13 @@
     z-index: 20;
   }
 
+  .app-picker-empty {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--ink-mute);
+    line-height: 1.5;
+  }
+
   .app-picker-item {
     display: block;
     width: 100%;
@@ -499,6 +568,8 @@
   }
 
   .profile-drop-btn:hover { background: var(--control-hover); }
+  .profile-drop-btn svg { transition: transform 150ms; }
+  .profile-drop-btn svg.open { transform: rotate(180deg); }
 
   .profile-drop-btn span {
     overflow: hidden;
