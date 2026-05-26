@@ -38,6 +38,8 @@
   let profileDropdownOpen = $state(false);
   let mappingError = $state('');
 
+  const pendingExe = $derived(addExe || (appSearch.trim() ? customExeFromSearch(appSearch) : ''));
+  const pendingName = $derived(cleanAppName(addName || appSearch || pendingExe));
   const mappedExes = $derived(new Set(mappings.map((mapping) => normalizeExe(mapping.exe))));
   const filteredApps = $derived(
     installedApps
@@ -93,7 +95,7 @@
   }
 
   async function addMapping() {
-    const rawExe = addExe || (appSearch.trim() ? customExeFromSearch(appSearch) : '');
+    const rawExe = pendingExe;
     if (!rawExe) return;
     const entry = normalizeMapping({
       exe: rawExe,
@@ -115,12 +117,19 @@
     appPickerOpen = false;
   }
 
-  function closeAppPicker(e: MouseEvent) {
+  function closeAppPicker(e: MouseEvent | PointerEvent) {
     if (!(e.target as HTMLElement).closest('.app-picker-wrap')) appPickerOpen = false;
   }
 
-  function closeProfileDropdown(e: MouseEvent) {
+  function closeProfileDropdown(e: MouseEvent | PointerEvent) {
     if (!(e.target as HTMLElement).closest('.profile-drop-wrap')) profileDropdownOpen = false;
+  }
+
+  function handleProfileButtonKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && profileDropdownOpen) {
+      profileDropdownOpen = false;
+      e.stopPropagation();
+    }
   }
 
   function normalizeMappings(entries: AppMapping[]) {
@@ -162,12 +171,12 @@
     if (!appPickerOpen) return;
 
     const timeout = window.setTimeout(() => {
-      window.addEventListener('click', closeAppPicker);
+      window.addEventListener('pointerdown', closeAppPicker);
     });
 
     return () => {
       window.clearTimeout(timeout);
-      window.removeEventListener('click', closeAppPicker);
+      window.removeEventListener('pointerdown', closeAppPicker);
     };
   });
 
@@ -175,12 +184,12 @@
     if (!profileDropdownOpen) return;
 
     const timeout = window.setTimeout(() => {
-      window.addEventListener('click', closeProfileDropdown);
+      window.addEventListener('pointerdown', closeProfileDropdown);
     });
 
     return () => {
       window.clearTimeout(timeout);
-      window.removeEventListener('click', closeProfileDropdown);
+      window.removeEventListener('pointerdown', closeProfileDropdown);
     };
   });
 </script>
@@ -193,7 +202,12 @@
 {#if mappings.length > 0}
   <div class="mapping-list">
     {#each mappings as mapping (mapping.exe)}
-      <div class="mapping-row" animate:flip={{duration: 300, easing: expoOut}} in:fly={{y: 10, duration: 300, easing: expoOut}} out:slide={{duration: 200, easing: expoOut}}>
+      <div
+        class="mapping-row"
+        animate:flip={{ duration: motionMs(300), easing: expoOut }}
+        in:fly={{ y: motionPx(10), duration: motionMs(300), easing: expoOut }}
+        out:slide={{ duration: motionMs(200), easing: expoOut }}
+      >
         <div class="mapping-app-info">
           <span class="mapping-app-name">{getAppDisplayName(mapping, installedApps)}</span>
           <span class="mapping-exe-pill" aria-hidden="true">{mapping.exe}</span>
@@ -255,12 +269,6 @@
       class="profile-drop-wrap"
       role="presentation"
       onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => {
-        if (e.key === 'Escape' && profileDropdownOpen) {
-          profileDropdownOpen = false;
-          e.stopPropagation();
-        }
-      }}
     >
       <select class="profile-select profile-select-hidden" bind:value={addProfile} tabindex="-1" aria-hidden="true">
         {#each profileOptions as profile}
@@ -271,6 +279,7 @@
         class="profile-drop-btn"
         use:animateWidth={{ text: getProfileLabel(addProfile) }}
         onclick={() => (profileDropdownOpen = !profileDropdownOpen)}
+        onkeydown={handleProfileButtonKeydown}
       >
         <span>{getProfileLabel(addProfile)}</span>
         <svg class:open={profileDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -290,6 +299,7 @@
               class="profile-drop-item"
               class:active={addProfile === profile.id}
               onclick={() => { addProfile = profile.id; profileDropdownOpen = false; }}
+              onkeydown={handleProfileButtonKeydown}
             >
               {profile.label}
             </button>
@@ -299,9 +309,9 @@
     </div>
     <button class="btn-ghost add-btn" onclick={addMapping} disabled={!addExe && !appSearch.trim()}>Add</button>
   </div>
-  {#if addExe}
+  {#if pendingExe}
     <div class="add-preview">
-      <span>{cleanAppName(addName || addExe)}</span>
+      <span>{pendingName}</span>
       <span class="preview-dot"></span>
       <span>{getProfileLabel(addProfile)}</span>
     </div>
