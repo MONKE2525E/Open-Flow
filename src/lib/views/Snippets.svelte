@@ -146,7 +146,14 @@
   }
 
   function autoGrow(node: HTMLTextAreaElement, value: string) {
-    function resize() { node.style.height = 'auto'; node.style.height = node.scrollHeight + 'px'; }
+    let last = 0;
+    function resize() {
+      node.style.height = 'auto';
+      const h = node.scrollHeight;
+      if (h === last) { node.style.height = last + 'px'; return; }
+      last = h;
+      node.style.height = h + 'px';
+    }
     node.addEventListener('input', resize);
     resize();
     return {
