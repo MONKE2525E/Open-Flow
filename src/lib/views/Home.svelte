@@ -528,6 +528,7 @@
   }
   .day-row:hover { background: var(--control-active); }
   .day-row:not(:hover) .copy-btn:not(:focus-visible) { opacity: 0.25; }
+  .day-row:hover .copy-btn { opacity: 0.9; }
 
   .copy-btn {
     all: unset;

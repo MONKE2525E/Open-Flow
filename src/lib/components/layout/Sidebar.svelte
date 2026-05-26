@@ -157,6 +157,7 @@
 
   .nav-item {
     border: 0;
+    background: transparent;
     display: flex;
     align-items: center;
     gap: 10px;

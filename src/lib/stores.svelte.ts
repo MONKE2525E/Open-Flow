@@ -53,6 +53,12 @@ export const appStore = $state({
 });
 
 function formatIpcError(err: unknown): string {
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim()) {
+      return message.trim();
+    }
+  }
   if (err instanceof Error && err.message.trim()) {
     return err.message.trim();
   }
