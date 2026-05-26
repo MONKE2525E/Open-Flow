@@ -325,7 +325,7 @@
         </div>
       {/if}
     </div>
-    <button class="btn-primary add-btn" onclick={addMapping} disabled={!addExe && !appSearch.trim()}>Add</button>
+    <button type="button" class="btn-primary add-btn" onclick={addMapping} disabled={!addExe && !appSearch.trim()}>Add</button>
   </div>
   {#if pendingExe}
     <div class="add-preview">

@@ -148,9 +148,9 @@
   function autoGrow(node: HTMLTextAreaElement, value: string) {
     let last = 0;
     let hadSelection = false;
-    const borderDiff = node.offsetHeight - node.clientHeight;
     function resize(couldShrink = true) {
       if (couldShrink) node.style.height = 'auto';
+      const borderDiff = node.offsetHeight - node.clientHeight;
       const h = node.scrollHeight + borderDiff;
       if (h === last) { if (couldShrink) node.style.height = last + 'px'; return; }
       last = h;
@@ -160,6 +160,7 @@
       hadSelection = node.selectionStart !== node.selectionEnd;
     }
     function onInput(e: Event) {
+      value = node.value;
       const type = (e as InputEvent).inputType ?? '';
       const insertOnly = type === 'insertText' || type === 'insertLineBreak' || type === 'insertParagraph' || type === 'insertCompositionText';
       resize(!(insertOnly && !hadSelection));
@@ -169,7 +170,11 @@
     resize();
     return {
       update(nextValue: string) {
-        if (nextValue !== value) { value = nextValue; resize(true); }
+        if (nextValue !== value) {
+          value = nextValue;
+          if (node.value !== nextValue) node.value = nextValue;
+          resize(true);
+        }
       },
       destroy() {
         node.removeEventListener('beforeinput', onBeforeInput);

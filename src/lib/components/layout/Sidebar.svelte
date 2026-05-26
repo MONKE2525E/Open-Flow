@@ -59,10 +59,8 @@
         type="button"
         class="nav-item"
         class:active={appStore.currentPage === item.id}
-        class:locked={item.locked}
-        aria-disabled={item.locked}
-        tabindex={item.locked ? -1 : 0}
-        onclick={() => !item.locked && nav(item.id)}
+        disabled={item.locked}
+        onclick={() => nav(item.id)}
       >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.currentPage === item.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[item.icon]}</svg>
         <span>{item.label}</span>
@@ -190,12 +188,13 @@
   }
   .nav-item.active :global(svg) { opacity: 1; }
 
-  .nav-item.locked {
+  .nav-item:disabled {
     color: var(--ink-faint);
     cursor: default;
+    opacity: 1;
   }
-  .nav-item.locked:hover { background: transparent; color: var(--ink-faint); }
-  .nav-item.locked :global(svg) { opacity: 0.5; }
+  .nav-item:disabled:hover { background: transparent; color: var(--ink-faint); }
+  .nav-item:disabled :global(svg) { opacity: 0.5; }
 
   .lock-tag {
     margin-left: auto;
