@@ -147,6 +147,7 @@
 
   function autoGrow(node: HTMLTextAreaElement, value: string) {
     let last = 0;
+    let hadSelection = false;
     function resize(couldShrink = true) {
       if (couldShrink) node.style.height = 'auto';
       const h = node.scrollHeight;
@@ -154,17 +155,25 @@
       last = h;
       node.style.height = h + 'px';
     }
+    function onBeforeInput() {
+      hadSelection = node.selectionStart !== node.selectionEnd;
+    }
     function onInput(e: Event) {
       const type = (e as InputEvent).inputType ?? '';
-      resize(type.startsWith('delete') || type === 'historyUndo' || type === 'historyRedo');
+      const insertOnly = type === 'insertText' || type === 'insertLineBreak' || type === 'insertParagraph' || type === 'insertCompositionText';
+      resize(!(insertOnly && !hadSelection));
     }
+    node.addEventListener('beforeinput', onBeforeInput);
     node.addEventListener('input', onInput);
     resize();
     return {
       update(nextValue: string) {
         if (nextValue !== value) { value = nextValue; resize(true); }
       },
-      destroy() { node.removeEventListener('input', onInput); }
+      destroy() {
+        node.removeEventListener('beforeinput', onBeforeInput);
+        node.removeEventListener('input', onInput);
+      }
     };
   }
 
@@ -213,7 +222,7 @@
 <div class="content-inner">
   <h1 class="page-h">Snippets</h1>
   <p class="page-sub">Speak a trigger and Open Flow expands it during dictation.</p>
-  {#if appStore.snippetsFetchStatus === 'error' && appStore.snippets.length === 0}
+  {#if appStore.snippetsFetchStatus === 'error' && appStore.snippets.length > 0}
     <div class="load-warning" role="alert" aria-live="assertive">
       <span>{appStore.snippetsFetchError || 'Unable to load snippets.'} Check backend connection and retry.</span>
       <button class="load-warning-retry" onclick={() => fetchSnippets()}>Retry</button>

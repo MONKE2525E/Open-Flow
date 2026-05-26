@@ -205,7 +205,7 @@
 <div class="content-inner">
   <h1 class="page-h">Dictionary</h1>
   <p class="page-sub">Your personal vocabulary. Add words or phrases the AI should know — names, brands, jargon, anything niche. They get injected into every transcription so the AI recognises them and uses your exact spelling.</p>
-  {#if appStore.dictionaryFetchStatus === 'error'}
+  {#if appStore.dictionaryFetchStatus === 'error' && appStore.dictionary.length > 0}
     <div class="load-warning" role="alert" aria-live="assertive">
       <span>{appStore.dictionaryFetchError || 'Unable to load dictionary terms.'} Check backend connection and retry.</span>
       <button class="load-warning-retry" onclick={() => fetchDictionary()}>Retry</button>
