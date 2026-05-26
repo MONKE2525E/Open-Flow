@@ -163,7 +163,7 @@
   }
 
   .settings-section-label {
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.12em;

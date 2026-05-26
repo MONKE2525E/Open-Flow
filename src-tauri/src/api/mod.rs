@@ -6,6 +6,42 @@ pub mod prompts;
 pub mod transcription;
 pub mod updater;
 
+const AUTH_401_PREFIX: &str = "AUTH_401";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthErrorCategory {
+    InvalidOrRevokedKey,
+    ScopeOrAccountRestriction,
+    UnknownUnauthorized,
+}
+
+impl AuthErrorCategory {
+    fn as_wire_value(self) -> &'static str {
+        match self {
+            Self::InvalidOrRevokedKey => "invalid_or_revoked_key",
+            Self::ScopeOrAccountRestriction => "scope_or_account_restriction",
+            Self::UnknownUnauthorized => "unknown_unauthorized",
+        }
+    }
+
+    fn from_wire_value(v: &str) -> Option<Self> {
+        match v {
+            "invalid_or_revoked_key" => Some(Self::InvalidOrRevokedKey),
+            "scope_or_account_restriction" => Some(Self::ScopeOrAccountRestriction),
+            "unknown_unauthorized" => Some(Self::UnknownUnauthorized),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParsedAuth401Error {
+    pub provider: String,
+    pub category: AuthErrorCategory,
+    pub model: Option<String>,
+    pub request_id: Option<String>,
+}
+
 pub fn quota_bail(provider: &str) -> anyhow::Error {
     anyhow::anyhow!("QUOTA_EXCEEDED: {provider} quota reached")
 }
@@ -21,11 +57,134 @@ pub fn validate_model_for_url(model: &str) -> anyhow::Result<()> {
     if model.contains("..") {
         anyhow::bail!("Invalid model identifier (path traversal): {model}");
     }
-    if model.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '.' | '_' | '/')) {
+    if model
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, '-' | '.' | '_' | '/'))
+    {
         Ok(())
     } else {
         anyhow::bail!("Invalid model identifier for API URL: {model}")
     }
+}
+
+pub fn sanitize_error_body_preview(body: &str) -> String {
+    let compact = body
+        .replace(['\r', '\n', '\t'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if compact.chars().count() > 180 {
+        format!("{}...", compact.chars().take(177).collect::<String>())
+    } else {
+        compact
+    }
+}
+
+pub fn classify_unauthorized_body(body: &str) -> AuthErrorCategory {
+    let lower = body.to_lowercase();
+
+    if [
+        "forbidden",
+        "permission",
+        "not allowed",
+        "access denied",
+        "scope",
+        "organization",
+        "role",
+        "project",
+        "team owner",
+        "developer role",
+        "insufficient",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+    {
+        return AuthErrorCategory::ScopeOrAccountRestriction;
+    }
+
+    if [
+        "invalid api key",
+        "incorrect api key",
+        "invalid key",
+        "revoked",
+        "authentication failed",
+        "unauthorized",
+        "api key is not valid",
+        "bad api key",
+        "key has expired",
+        "expired key",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+    {
+        return AuthErrorCategory::InvalidOrRevokedKey;
+    }
+
+    AuthErrorCategory::UnknownUnauthorized
+}
+
+fn auth_401_user_message(provider: &str, category: AuthErrorCategory) -> String {
+    match category {
+        AuthErrorCategory::InvalidOrRevokedKey => {
+            format!("{provider} API key looks invalid or revoked. Re-enter it in Settings.")
+        }
+        AuthErrorCategory::ScopeOrAccountRestriction => format!(
+            "{provider} rejected this key for account or model access. Check key role, team, and model permissions."
+        ),
+        AuthErrorCategory::UnknownUnauthorized => {
+            format!("{provider} rejected authentication. Re-enter the key and verify account access.")
+        }
+    }
+}
+
+pub fn auth_401_error(
+    provider: &str,
+    model: &str,
+    request_id: &str,
+    category: AuthErrorCategory,
+) -> anyhow::Error {
+    let user_msg = auth_401_user_message(provider, category);
+    anyhow::anyhow!(
+        "{AUTH_401_PREFIX}|provider={provider}|category={}|model={model}|request_id={request_id}|status=401: {user_msg}",
+        category.as_wire_value()
+    )
+}
+
+pub fn parse_auth_401_error(message: &str) -> Option<ParsedAuth401Error> {
+    if !message.starts_with(AUTH_401_PREFIX) {
+        return None;
+    }
+    let meta = message.split(": ").next().unwrap_or(message);
+    let mut provider: Option<String> = None;
+    let mut category: Option<AuthErrorCategory> = None;
+    let mut model: Option<String> = None;
+    let mut request_id: Option<String> = None;
+
+    for part in meta.split('|').skip(1) {
+        let Some((key, value)) = part.split_once('=') else {
+            continue;
+        };
+        match key {
+            "provider" => provider = Some(value.to_string()),
+            "category" => category = AuthErrorCategory::from_wire_value(value),
+            "model" if !value.is_empty() && value != "-" => model = Some(value.to_string()),
+            "request_id" if !value.is_empty() && value != "-" => {
+                request_id = Some(value.to_string())
+            }
+            _ => {}
+        }
+    }
+
+    Some(ParsedAuth401Error {
+        provider: provider?,
+        category: category?,
+        model,
+        request_id,
+    })
+}
+
+pub fn auth_401_display_message(parsed: &ParsedAuth401Error) -> String {
+    auth_401_user_message(&parsed.provider, parsed.category)
 }
 
 pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
@@ -47,6 +206,11 @@ pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
     }
 
     let msg = e.to_string().to_lowercase();
+    if let Some(status) = extract_http_status_code(&msg) {
+        if status == 408 || status == 429 || (500..=599).contains(&status) {
+            return true;
+        }
+    }
     msg.contains("timeout")
         || msg.contains("timed out")
         || msg.contains("connection")
@@ -56,4 +220,76 @@ pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
         || msg.contains(" 502")
         || msg.contains(" 503")
         || msg.contains(" 504")
+}
+
+fn extract_http_status_code(msg: &str) -> Option<u16> {
+    for marker in ["status=", "status:"] {
+        if let Some(idx) = msg.find(marker) {
+            let digits: String = msg[idx + marker.len()..]
+                .chars()
+                .skip_while(|c| c.is_whitespace())
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if digits.len() == 3 {
+                if let Ok(status) = digits.parse::<u16>() {
+                    return Some(status);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        auth_401_display_message, classify_unauthorized_body, parse_auth_401_error,
+        sanitize_error_body_preview, AuthErrorCategory, ParsedAuth401Error,
+    };
+
+    #[test]
+    fn classifies_invalid_or_revoked_key_signals() {
+        let c = classify_unauthorized_body(r#"{"error":{"message":"Invalid API Key"}}"#);
+        assert_eq!(c, AuthErrorCategory::InvalidOrRevokedKey);
+    }
+
+    #[test]
+    fn classifies_scope_and_role_signals() {
+        let c = classify_unauthorized_body(
+            r#"{"error":{"message":"Only team owners or users with the developer role may create or manage API keys."}}"#,
+        );
+        assert_eq!(c, AuthErrorCategory::ScopeOrAccountRestriction);
+    }
+
+    #[test]
+    fn parses_auth_401_metadata() {
+        let parsed = parse_auth_401_error(
+            "AUTH_401|provider=Groq|category=invalid_or_revoked_key|model=whisper-large-v3-turbo|request_id=req_123|status=401: Groq API key looks invalid or revoked. Re-enter it in Settings.",
+        )
+        .expect("parse");
+        assert_eq!(parsed.provider, "Groq");
+        assert_eq!(parsed.category, AuthErrorCategory::InvalidOrRevokedKey);
+        assert_eq!(parsed.model.as_deref(), Some("whisper-large-v3-turbo"));
+        assert_eq!(parsed.request_id.as_deref(), Some("req_123"));
+    }
+
+    #[test]
+    fn auth_display_message_is_specific() {
+        let msg = auth_401_display_message(&ParsedAuth401Error {
+            provider: "Groq".to_string(),
+            category: AuthErrorCategory::InvalidOrRevokedKey,
+            model: None,
+            request_id: None,
+        });
+        assert!(msg.to_lowercase().contains("invalid or revoked"));
+    }
+
+    #[test]
+    fn error_preview_is_single_line_and_truncated() {
+        let source = "line one\nline two\tline three";
+        let preview = sanitize_error_body_preview(source);
+        assert!(!preview.contains('\n'));
+        assert!(!preview.contains('\t'));
+        assert!(preview.contains("line one line two line three"));
+    }
 }
