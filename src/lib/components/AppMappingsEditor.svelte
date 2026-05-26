@@ -358,8 +358,8 @@
     transition: opacity 0.15s;
   }
 
-  .btn-primary:hover { opacity: 0.82; }
   .btn-primary:disabled { opacity: 0.4; cursor: default; }
+  .btn-primary:not(:disabled):hover { opacity: 0.82; }
 
   .mapping-list {
     border: 1px solid var(--line);

@@ -147,23 +147,24 @@
 
   function autoGrow(node: HTMLTextAreaElement, value: string) {
     let last = 0;
-    function resize() {
-      node.style.height = 'auto';
+    function resize(couldShrink = true) {
+      if (couldShrink) node.style.height = 'auto';
       const h = node.scrollHeight;
-      if (h === last) { node.style.height = last + 'px'; return; }
+      if (h === last) { if (couldShrink) node.style.height = last + 'px'; return; }
       last = h;
       node.style.height = h + 'px';
     }
-    node.addEventListener('input', resize);
+    function onInput(e: Event) {
+      const type = (e as InputEvent).inputType ?? '';
+      resize(type.startsWith('delete') || type === 'historyUndo' || type === 'historyRedo');
+    }
+    node.addEventListener('input', onInput);
     resize();
     return {
       update(nextValue: string) {
-        if (nextValue !== value) {
-          value = nextValue;
-          resize();
-        }
+        if (nextValue !== value) { value = nextValue; resize(true); }
       },
-      destroy() { node.removeEventListener('input', resize); }
+      destroy() { node.removeEventListener('input', onInput); }
     };
   }
 
