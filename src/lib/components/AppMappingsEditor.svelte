@@ -265,7 +265,7 @@
           {#each filteredApps as app}
             <button class="app-picker-item" onclick={() => pickApp(app)}>
               <span class="app-picker-name">{cleanAppName(app.name || app.exe)}</span>
-              <span class="mapping-exe-pill" aria-hidden="true">{app.exe}</span>
+              <span class="app-picker-exe-pill" aria-hidden="true">{app.exe}</span>
             </button>
           {/each}
         </div>
@@ -325,7 +325,7 @@
         </div>
       {/if}
     </div>
-    <button class="btn-ghost add-btn" onclick={addMapping} disabled={!addExe && !appSearch.trim()}>Add</button>
+    <button type="button" class="btn-primary add-btn" onclick={addMapping} disabled={!addExe && !appSearch.trim()}>Add</button>
   </div>
   {#if pendingExe}
     <div class="add-preview">
@@ -344,20 +344,22 @@
     line-height: 1.5;
   }
 
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid var(--line-strong);
+  .btn-primary {
+    background: var(--ink);
+    color: var(--amber-50);
+    border: 1px solid transparent;
     border-radius: 6px;
     padding: 6px 12px;
     font-size: 12px;
-    color: var(--ink-strong);
+    font-family: var(--sans);
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
+    transition: opacity 0.15s;
   }
 
-  .btn-ghost:hover { background: var(--control-hover); }
-  .btn-ghost:disabled { opacity: 0.4; cursor: default; }
+  .btn-primary:disabled { opacity: 0.4; cursor: default; }
+  .btn-primary:not(:disabled):hover { opacity: 0.82; }
 
   .mapping-list {
     border: 1px solid var(--line);
@@ -405,6 +407,15 @@
   }
 
   .mapping-exe-pill {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .app-picker-exe-pill {
     position: absolute;
     width: 1px;
     height: 1px;
