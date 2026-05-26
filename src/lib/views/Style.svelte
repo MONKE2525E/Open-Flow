@@ -106,6 +106,7 @@
                 type="button"
                 class="style-card"
                 class:active={intensity === c.id}
+                aria-pressed={intensity === c.id}
                 onclick={() => selectIntensity(c.id)}
                 in:fly={!mountedTabs.cleanup ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
@@ -123,6 +124,7 @@
                 type="button"
                 class="style-card"
                 class:active={tone === c.id}
+                aria-pressed={tone === c.id}
                 onclick={() => selectTone(c.id)}
                 in:fly={!mountedTabs.personal ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
