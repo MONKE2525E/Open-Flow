@@ -424,7 +424,7 @@
 </div>
 <div class="setting-row">
   <div><div class="label">Mute PC Audio</div><div class="desc">Mutes Windows volume while dictating to prevent audio interference</div></div>
-  <Toggle checked={muteAudio} onchange={handleMuteAudio} />
+  <Toggle checked={muteAudio} onchange={handleMuteAudio} label="Mute PC audio" />
 </div>
 <div class="setting-row">
   <div><div class="label">Appearance</div><div class="desc">Follow Windows or force a specific theme</div></div>
@@ -445,19 +445,19 @@
 </div>
 <div class="setting-row">
   <div><div class="label">Start on Boot</div><div class="desc">Launch Open Flow when Windows starts</div></div>
-  <Toggle checked={autostart} onchange={handleAutostart} />
+  <Toggle checked={autostart} onchange={handleAutostart} label="Start on boot" />
 </div>
 <div class="setting-row">
   <div><div class="label">Auto-cleanup</div><div class="desc">Run LLM cleanup on every transcription</div></div>
-  <Toggle checked={cleanup} onchange={handleCleanup} />
+  <Toggle checked={cleanup} onchange={handleCleanup} label="Auto-cleanup" />
 </div>
 <div class="setting-row">
   <div><div class="label">Contextual capitalization</div><div class="desc">Lowercases the first word when injecting mid-sentence</div></div>
-  <Toggle checked={contextualCaps} onchange={handleContextualCaps} />
+  <Toggle checked={contextualCaps} onchange={handleContextualCaps} label="Contextual capitalization" />
 </div>
 <div class="setting-row">
   <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
-  <Toggle checked={autoSpacing} onchange={handleAutoSpacing} />
+  <Toggle checked={autoSpacing} onchange={handleAutoSpacing} label="Automatic spacing" />
 </div>
 
 <style>

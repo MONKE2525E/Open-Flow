@@ -107,6 +107,7 @@ impl RecordingSession {
 
         let (stop_tx, stop_rx) = mpsc::sync_channel::<()>(1);
         let (result_tx, result_rx) = mpsc::sync_channel(1);
+        let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<()>>(1);
 
         let level = Arc::new(AtomicU32::new(0f32.to_bits()));
         let active = Arc::new(AtomicBool::new(true));
@@ -222,8 +223,7 @@ impl RecordingSession {
                     None,
                 ),
                 fmt => {
-                    let _ =
-                        result_tx.send(Err(anyhow::anyhow!("Unsupported sample format: {fmt:?}")));
+                    let _ = ready_tx.send(Err(anyhow::anyhow!("Unsupported sample format: {fmt:?}")));
                     return;
                 }
             };
@@ -231,16 +231,17 @@ impl RecordingSession {
             let stream = match stream {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = result_tx.send(Err(e.into()));
+                    let _ = ready_tx.send(Err(e.into()));
                     return;
                 }
             };
 
             if let Err(e) = stream.play() {
-                let _ = result_tx.send(Err(e.into()));
+                let _ = ready_tx.send(Err(e.into()));
                 return;
             }
 
+            let _ = ready_tx.send(Ok(()));
             let _ = stop_rx.recv();
             drop(stream);
 
@@ -274,6 +275,10 @@ impl RecordingSession {
 
             let _ = result_tx.send(result);
         });
+
+        ready_rx
+            .recv()
+            .context("recording thread exited before signalling ready")??;
 
         Ok(RecordingSession {
             stop_tx,

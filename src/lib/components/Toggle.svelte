@@ -2,7 +2,8 @@
   let {
     checked = false,
     onchange,
-  }: { checked: boolean; onchange: (value: boolean) => void } = $props();
+    label = '',
+  }: { checked: boolean; onchange: (value: boolean) => void; label?: string } = $props();
 </script>
 
 <div
@@ -10,6 +11,7 @@
   class:on={checked}
   role="switch"
   aria-checked={checked}
+  aria-label={label || undefined}
   tabindex="0"
   onclick={() => onchange(!checked)}
   onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onchange(!checked)}
