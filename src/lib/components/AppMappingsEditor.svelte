@@ -263,6 +263,18 @@
             </button>
           {/each}
         </div>
+      {:else if appPickerOpen && appSearch.trim()}
+        <div
+          class="app-picker-menu app-picker-empty"
+          role="presentation"
+          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
+          out:fade={{ duration: motionMs(100) }}
+        >
+          <span>
+            No matching apps found. Press Enter to map custom executable:
+            <b>{customExeFromSearch(appSearch)}</b>
+          </span>
+        </div>
       {/if}
     </div>
     <div
@@ -481,6 +493,13 @@
     max-height: 180px;
     overflow-y: auto;
     z-index: 20;
+  }
+
+  .app-picker-empty {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--ink-mute);
+    line-height: 1.5;
   }
 
   .app-picker-item {
