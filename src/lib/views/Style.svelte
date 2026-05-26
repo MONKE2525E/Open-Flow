@@ -108,6 +108,7 @@
                 class:active={intensity === c.id}
                 role="radio"
                 aria-checked={intensity === c.id}
+                tabindex={intensity === c.id ? 0 : -1}
                 onclick={() => selectIntensity(c.id)}
                 in:fly={!mountedTabs.cleanup ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
@@ -127,6 +128,7 @@
                 class:active={tone === c.id}
                 role="radio"
                 aria-checked={tone === c.id}
+                tabindex={tone === c.id ? 0 : -1}
                 onclick={() => selectTone(c.id)}
                 in:fly={!mountedTabs.personal ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >

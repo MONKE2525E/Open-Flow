@@ -373,6 +373,8 @@
             class="language-item"
             class:active={selectedLanguage === language.code}
             onclick={() => saveLanguage(language.code)}
+            role="option"
+            aria-selected={selectedLanguage === language.code}
           >
             <span>{language.label}</span>
             <span>{language.code}</span>
@@ -415,9 +417,9 @@
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
-        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{audioCopy.defaultDevice}</button>
+        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')} role="option" aria-selected={!selectedMic}>{audioCopy.defaultDevice}</button>
         {#each microphones as m}
-          <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>{m}</button>
+          <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)} role="option" aria-selected={selectedMic === m}>{m}</button>
         {/each}
         {#if microphones.length === 0}
           <div class="mic-empty">{audioCopy.noDevicesFound}</div>
