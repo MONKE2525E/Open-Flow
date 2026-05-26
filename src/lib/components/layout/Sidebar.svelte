@@ -38,6 +38,7 @@
     if (id === 'settings') { appStore.settingsOpen = true; return; }
     appStore.currentPage = id as typeof appStore.currentPage;
   }
+
 </script>
 
 <aside class="sidebar">
@@ -58,7 +59,6 @@
         type="button"
         class="nav-item"
         class:active={appStore.currentPage === item.id}
-        class:locked={item.locked}
         disabled={item.locked}
         onclick={() => nav(item.id)}
       >
@@ -188,12 +188,13 @@
   }
   .nav-item.active :global(svg) { opacity: 1; }
 
-  .nav-item.locked {
+  .nav-item:disabled {
     color: var(--ink-faint);
     cursor: default;
+    opacity: 1;
   }
-  .nav-item.locked:hover { background: transparent; color: var(--ink-faint); }
-  .nav-item.locked :global(svg) { opacity: 0.5; }
+  .nav-item:disabled:hover { background: transparent; color: var(--ink-faint); }
+  .nav-item:disabled :global(svg) { opacity: 0.5; }
 
   .lock-tag {
     margin-left: auto;
