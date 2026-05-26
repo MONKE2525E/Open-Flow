@@ -80,6 +80,11 @@
       tabindex="-1"
       transition:fly={{ y: 40, duration: 400, easing: expoOut }}
     >
+      <button type="button" class="settings-close" aria-label="Close settings" onclick={close}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <path d="M6 6l12 12M18 6L6 18"/>
+        </svg>
+      </button>
       <!-- Left nav -->
       <div class="settings-nav">
         {#each navSections as g}
@@ -161,6 +166,27 @@
     box-shadow: var(--shadow-elev);
     display: flex;
     overflow: hidden;
+  }
+
+  .settings-close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--line-strong);
+    border-radius: 7px;
+    background: var(--paper);
+    color: var(--ink-mute);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    z-index: 2;
+  }
+  .settings-close:hover { color: var(--ink-strong); background: var(--control-hover); }
+  .settings-close:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
   /* Nav */
