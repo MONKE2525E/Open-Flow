@@ -345,7 +345,7 @@
       class="btn-ghost language-btn"
       use:animateWidth={{ text: getTranscriptionLanguageLabel(selectedLanguage) }}
       onclick={() => (languageDropdownOpen = !languageDropdownOpen)}
-      aria-haspopup="listbox"
+      aria-haspopup="true"
       aria-expanded={languageDropdownOpen}
       aria-controls={LANGUAGE_MENU_ID}
       aria-label="Spoken language"
@@ -361,8 +361,6 @@
       <div
         id={LANGUAGE_MENU_ID}
         class="language-menu scroll-styled scroll-thumb-elev"
-        role="listbox"
-        tabindex="-1"
         aria-label="Spoken language options"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
@@ -373,8 +371,6 @@
             class="language-item"
             class:active={selectedLanguage === language.code}
             onclick={() => saveLanguage(language.code)}
-            role="option"
-            aria-selected={selectedLanguage === language.code}
           >
             <span>{language.label}</span>
             <span>{language.code}</span>
@@ -395,7 +391,7 @@
       class="btn-ghost mic-btn"
       use:animateWidth={{ text: selectedMic || audioCopy.defaultDevice, max: 180 }}
       onclick={() => (micDropdownOpen = !micDropdownOpen)}
-      aria-haspopup="listbox"
+      aria-haspopup="true"
       aria-expanded={micDropdownOpen}
       aria-controls={MIC_MENU_ID}
       aria-label="Microphone device"
@@ -410,16 +406,14 @@
       <div
         id={MIC_MENU_ID}
         class="mic-menu scroll-styled scroll-thumb-elev"
-        role="listbox"
-        tabindex="-1"
         aria-label="Microphone device options"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
-        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')} role="option" aria-selected={!selectedMic}>{audioCopy.defaultDevice}</button>
+        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{audioCopy.defaultDevice}</button>
         {#each microphones as m}
-          <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)} role="option" aria-selected={selectedMic === m}>{m}</button>
+          <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>{m}</button>
         {/each}
         {#if microphones.length === 0}
           <div class="mic-empty">{audioCopy.noDevicesFound}</div>

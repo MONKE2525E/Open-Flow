@@ -57,6 +57,10 @@
 
   function onWindowKeydown(e: KeyboardEvent) {
     if (appStore.settingsOpen && e.key === 'Escape') {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) {
+        return;
+      }
       close();
     }
   }
@@ -66,7 +70,8 @@
 
 {#if appStore.settingsOpen}
   <div class="settings-overlay-wrap" transition:fade={{ duration: 200 }}>
-    <button type="button" class="settings-overlay" aria-label="Close settings" tabindex="-1" aria-hidden="true" onclick={close}></button>
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="settings-overlay" aria-hidden="true" onclick={close}></div>
     <div
       class="settings-modal"
       role="dialog"
