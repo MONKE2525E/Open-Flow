@@ -345,7 +345,7 @@
       class="btn-ghost language-btn"
       use:animateWidth={{ text: getTranscriptionLanguageLabel(selectedLanguage) }}
       onclick={() => (languageDropdownOpen = !languageDropdownOpen)}
-      aria-haspopup="true"
+      aria-haspopup="listbox"
       aria-expanded={languageDropdownOpen}
       aria-controls={LANGUAGE_MENU_ID}
       aria-label="Spoken language"
@@ -395,7 +395,7 @@
       class="btn-ghost mic-btn"
       use:animateWidth={{ text: selectedMic || audioCopy.defaultDevice, max: 180 }}
       onclick={() => (micDropdownOpen = !micDropdownOpen)}
-      aria-haspopup="true"
+      aria-haspopup="listbox"
       aria-expanded={micDropdownOpen}
       aria-controls={MIC_MENU_ID}
       aria-label="Microphone device"
