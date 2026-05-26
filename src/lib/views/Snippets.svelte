@@ -150,7 +150,7 @@
     let hadSelection = false;
     function resize(couldShrink = true) {
       if (couldShrink) node.style.height = 'auto';
-      const h = node.scrollHeight;
+      const h = node.scrollHeight + node.offsetHeight - node.clientHeight;
       if (h === last) { if (couldShrink) node.style.height = last + 'px'; return; }
       last = h;
       node.style.height = h + 'px';
