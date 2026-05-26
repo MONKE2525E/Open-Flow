@@ -13,7 +13,7 @@
     type AppMapping,
     type InstalledApp,
   } from '../appMappings';
-  import { animateWidth } from '../motion';
+  import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
 
   let {
     showHeading = true,
@@ -88,12 +88,17 @@
     await saveMappings(mappings.filter((mapping) => normalizeExe(mapping.exe) !== normalizeExe(exe)));
   }
 
+  function customExeFromSearch(s: string): string {
+    return normalizeExe(s).replace(/\.exe$/, '') + '.exe';
+  }
+
   async function addMapping() {
-    if (!addExe) return;
+    const rawExe = addExe || (appSearch.trim() ? customExeFromSearch(appSearch) : '');
+    if (!rawExe) return;
     const entry = normalizeMapping({
-      exe: addExe,
+      exe: rawExe,
       profile: addProfile,
-      name: addName || appSearch || addExe,
+      name: addName || appSearch || rawExe,
     });
     await saveMappings([...mappings.filter((mapping) => mapping.exe !== entry.exe), entry]);
     addExe = '';
@@ -220,15 +225,22 @@
         bind:value={appSearch}
         onfocus={() => { appPickerOpen = true; }}
         oninput={() => { addExe = ''; addName = ''; appPickerOpen = true; }}
-        onkeydown={(e) => e.key === 'Enter' && addMapping()}
+        onkeydown={(e) => {
+          if (e.key === 'Enter') {
+            addMapping();
+          } else if (e.key === 'Escape' && appPickerOpen) {
+            appPickerOpen = false;
+            e.stopPropagation();
+          }
+        }}
       />
       {#if appPickerOpen && filteredApps.length > 0}
         <div
           class="app-picker-menu scroll-styled"
           role="presentation"
           onclick={(e) => e.stopPropagation()}
-          in:fly={{ y: 6, duration: 150, easing: expoOut }}
-          out:fade={{ duration: 100 }}
+          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
+          out:fade={{ duration: motionMs(100) }}
         >
           {#each filteredApps as app}
             <button class="app-picker-item" onclick={() => pickApp(app)}>
@@ -239,7 +251,17 @@
         </div>
       {/if}
     </div>
-    <div class="profile-drop-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
+    <div
+      class="profile-drop-wrap"
+      role="presentation"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => {
+        if (e.key === 'Escape' && profileDropdownOpen) {
+          profileDropdownOpen = false;
+          e.stopPropagation();
+        }
+      }}
+    >
       <select class="profile-select profile-select-hidden" bind:value={addProfile} tabindex="-1" aria-hidden="true">
         {#each profileOptions as profile}
           <option value={profile.id}>{profile.label}</option>
@@ -260,8 +282,8 @@
           class="profile-drop-menu scroll-styled"
           role="presentation"
           onclick={(e) => e.stopPropagation()}
-          in:fly={{ y: 6, duration: 150, easing: expoOut }}
-          out:fade={{ duration: 100 }}
+          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
+          out:fade={{ duration: motionMs(100) }}
         >
           {#each profileOptions as profile}
             <button
@@ -275,7 +297,7 @@
         </div>
       {/if}
     </div>
-    <button class="btn-ghost add-btn" onclick={addMapping} disabled={!addExe}>Add</button>
+    <button class="btn-ghost add-btn" onclick={addMapping} disabled={!addExe && !appSearch.trim()}>Add</button>
   </div>
   {#if addExe}
     <div class="add-preview">
