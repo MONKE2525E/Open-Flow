@@ -205,6 +205,12 @@
 <div class="content-inner">
   <h1 class="page-h">Dictionary</h1>
   <p class="page-sub">Your personal vocabulary. Add words or phrases the AI should know — names, brands, jargon, anything niche. They get injected into every transcription so the AI recognises them and uses your exact spelling.</p>
+  {#if appStore.dictionaryFetchStatus === 'error'}
+    <div class="load-warning" role="alert" aria-live="assertive">
+      <span>{appStore.dictionaryFetchError || 'Unable to load dictionary terms.'} Check backend connection and retry.</span>
+      <button class="load-warning-retry" onclick={() => fetchDictionary()}>Retry</button>
+    </div>
+  {/if}
 
   <div class="toolbar">
     <div class="search">
@@ -520,6 +526,35 @@
 
   .fetch-status-error {
     color: var(--danger);
+  }
+
+  .load-warning {
+    margin: 0 0 16px;
+    padding: 8px 10px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--danger-line);
+    background: var(--danger-bg);
+    color: var(--danger);
+    font-size: 11.5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .load-warning-retry {
+    border: 1px solid var(--danger-line);
+    background: transparent;
+    color: var(--danger);
+    font-family: var(--sans);
+    font-size: 11px;
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+
+  .load-warning-retry:hover {
+    background: color-mix(in oklab, var(--danger-bg) 60%, transparent);
   }
 
   /* ── toolbar ── */

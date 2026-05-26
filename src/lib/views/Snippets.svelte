@@ -34,7 +34,6 @@
   let draftInstructions  = $state('');
   let triggerInput   = $state<HTMLInputElement | null>(null);
   let inspectorDir = $state<1 | -1>(1);
-  let expansionTextareaEl = $state<HTMLTextAreaElement | null>(null);
   let sortWrapEl = $state<HTMLDivElement | null>(null);
   let sortButtonEls = $state<Record<SortKey, HTMLButtonElement | null>>({
     newest: null,
@@ -146,21 +145,23 @@
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && modal) saveModal();
   }
 
-  function autoGrow(node: HTMLTextAreaElement) {
+  function autoGrow(node: HTMLTextAreaElement, value: string) {
     function resize() { node.style.height = 'auto'; node.style.height = node.scrollHeight + 'px'; }
     node.addEventListener('input', resize);
     resize();
-    return { destroy() { node.removeEventListener('input', resize); } };
+    return {
+      update(nextValue: string) {
+        if (nextValue !== value) {
+          value = nextValue;
+          resize();
+        }
+      },
+      destroy() { node.removeEventListener('input', resize); }
+    };
   }
 
   $effect(() => {
     if (modal && triggerInput) setTimeout(() => triggerInput?.focus(), 50);
-  });
-
-  $effect(() => {
-    void draftExpansion;
-    const el = expansionTextareaEl;
-    if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
   });
 
   const sortLabels: { key: SortKey; label: string }[] = [
@@ -204,6 +205,12 @@
 <div class="content-inner">
   <h1 class="page-h">Snippets</h1>
   <p class="page-sub">Speak a trigger and Open Flow expands it during dictation.</p>
+  {#if appStore.snippetsFetchStatus === 'error' && appStore.snippets.length === 0}
+    <div class="load-warning" role="alert" aria-live="assertive">
+      <span>{appStore.snippetsFetchError || 'Unable to load snippets.'} Check backend connection and retry.</span>
+      <button class="load-warning-retry" onclick={() => fetchSnippets()}>Retry</button>
+    </div>
+  {/if}
 
   <div class="toolbar">
     <div class="search">
@@ -439,7 +446,7 @@
           class="field-input scrollbar-standard"
           placeholder="e.g. hello@example.com"
           bind:value={draftExpansion}
-          bind:this={expansionTextareaEl}
+          use:autoGrow={draftExpansion}
           rows="3"
           spellcheck="false"
         ></textarea>
@@ -460,7 +467,7 @@
         class="field-input instructions-input scrollbar-standard"
         placeholder="e.g. Don't add a period at the end of this phrase."
         bind:value={draftInstructions}
-        use:autoGrow
+        use:autoGrow={draftInstructions}
         rows="2"
         spellcheck="false"
       ></textarea>
@@ -514,6 +521,35 @@
 
   .fetch-status-error {
     color: var(--danger);
+  }
+
+  .load-warning {
+    margin: 0 0 16px;
+    padding: 8px 10px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--danger-line);
+    background: var(--danger-bg);
+    color: var(--danger);
+    font-size: 11.5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .load-warning-retry {
+    border: 1px solid var(--danger-line);
+    background: transparent;
+    color: var(--danger);
+    font-family: var(--sans);
+    font-size: 11px;
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+
+  .load-warning-retry:hover {
+    background: color-mix(in oklab, var(--danger-bg) 60%, transparent);
   }
 
   /* ── toolbar ── */

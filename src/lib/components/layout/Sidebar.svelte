@@ -38,6 +38,14 @@
     if (id === 'settings') { appStore.settingsOpen = true; return; }
     appStore.currentPage = id as typeof appStore.currentPage;
   }
+
+  function activateNavFromKeyboard(event: KeyboardEvent, id: string, locked: boolean) {
+    if (locked) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      nav(id);
+    }
+  }
 </script>
 
 <aside class="sidebar">
@@ -59,8 +67,10 @@
         class="nav-item"
         class:active={appStore.currentPage === item.id}
         class:locked={item.locked}
-        disabled={item.locked}
-        onclick={() => nav(item.id)}
+        aria-disabled={item.locked}
+        tabindex={item.locked ? -1 : 0}
+        onclick={() => !item.locked && nav(item.id)}
+        onkeydown={(e) => activateNavFromKeyboard(e, item.id, item.locked)}
       >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.currentPage === item.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[item.icon]}</svg>
         <span>{item.label}</span>
@@ -78,6 +88,7 @@
       type="button"
       class="nav-item"
       onclick={() => nav('settings')}
+      onkeydown={(e) => activateNavFromKeyboard(e, 'settings', false)}
     >
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons.settings}</svg>
       <span>Settings</span>
