@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { devModeEnabled, updateInfo, type UpdateInfo } from '../../stores';
+  import { appStore, type UpdateInfo } from '../../stores';
   import { saveSetting } from '../../settings';
 
   let { appVersion }: { appVersion: string } = $props();
@@ -13,7 +13,7 @@
   let devModeHintVisible = $state(false);
 
   $effect(() => {
-    if ($updateInfo) updateCheckState = 'available';
+    if (appStore.updateInfo) updateCheckState = 'available';
   });
 
   async function openRepo() {
@@ -31,7 +31,7 @@
       const update = await invoke<UpdateInfo | null>('check_for_update');
       if (update) {
         try { await saveSetting('update_dismissed_version', null); } catch {}
-        updateInfo.set(update);
+        appStore.updateInfo = update;
         updateCheckState = 'available';
       } else {
         updateCheckState = 'up-to-date';
@@ -42,10 +42,10 @@
   }
 
   async function handleInstall() {
-    if (!$updateInfo) return;
+    if (!appStore.updateInfo) return;
     installingFromAbout = true;
     try {
-      await invoke('install_update', { downloadUrl: $updateInfo.downloadUrl });
+      await invoke('install_update', { downloadUrl: appStore.updateInfo.downloadUrl });
     } catch (e) {
       console.error('Install failed:', e);
     } finally {
@@ -54,14 +54,14 @@
   }
 
   function handleVersionTap() {
-    if ($devModeEnabled) return;
+    if (appStore.devModeEnabled) return;
     versionTapCount += 1;
     if (versionTapTimer) clearTimeout(versionTapTimer);
     versionTapTimer = setTimeout(() => {
       versionTapCount = 0;
     }, 2600);
     if (versionTapCount >= 10) {
-      devModeEnabled.set(true);
+      appStore.devModeEnabled = true;
       invoke('set_dev_logging_enabled', { enabled: true }).catch(() => {});
       versionTapCount = 0;
       if (versionTapTimer) {
@@ -101,14 +101,14 @@
       <div class="update-status-wrap">
         <div class="desc update-ok update-status">You're on the latest version</div>
       </div>
-    {:else if updateCheckState === 'available' && $updateInfo}
+    {:else if updateCheckState === 'available' && appStore.updateInfo}
       <div class="update-status-wrap">
-        <div class="desc update-available update-status">v{$updateInfo.version} is available</div>
+        <div class="desc update-available update-status">v{appStore.updateInfo.version} is available</div>
       </div>
     {/if}
   </div>
   <div class="update-controls">
-    {#if updateCheckState === 'available' && $updateInfo}
+    {#if updateCheckState === 'available' && appStore.updateInfo}
       <button class="btn-ghost" onclick={handleInstall} disabled={installingFromAbout}>
         {installingFromAbout ? 'Downloading…' : 'Install Now'}
       </button>

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, onDestroy } from 'svelte';
-  import { appearanceMode, setupComplete } from '../stores';
+  import { appStore } from '../stores';
   import { animateWidth } from '../motion';
   import { getSetupCalibrationCopy } from '../calibrationCopy';
   import { saveSetting, type AppearanceMode, type CleanupIntensity, type ToneId } from '../settings';
@@ -224,8 +224,8 @@
       if (quickPrefs.autostart) await invoke('set_autostart', { enabled: true });
       await saveSetting('setup_complete', true);
     } catch {}
-    appearanceMode.set(selectedAppearance);
-    setupComplete.set(true);
+    appStore.appearanceMode = selectedAppearance;
+    appStore.setupComplete = true;
   }
 
   function copyUrl(url: string) {
@@ -510,7 +510,7 @@
               class:selected={selectedAppearance === mode.id}
               onclick={() => {
                 selectedAppearance = mode.id;
-                appearanceMode.set(mode.id);
+                appStore.appearanceMode = mode.id;
               }}
             >
               <div class="appearance-mode-title-row">

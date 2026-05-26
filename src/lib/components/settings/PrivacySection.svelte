@@ -7,6 +7,7 @@
   import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
 
   const historyOptions = ['7 days', '30 days', '90 days', 'Forever'];
+  const HISTORY_MENU_ID = 'history-retention-menu';
   type CleanupCacheStatus = {
     entry_count: number;
     is_space_constrained: boolean;
@@ -139,6 +140,10 @@
       use:animateWidth={{ text: historyRetention }}
       onclick={() => (historyDropdownOpen = !historyDropdownOpen)}
       onkeydown={handleHistoryButtonKeydown}
+      aria-haspopup="listbox"
+      aria-expanded={historyDropdownOpen}
+      aria-controls={HISTORY_MENU_ID}
+      aria-label="Transcription history retention"
     >
       <span>{historyRetention}</span>
       <svg class:open={historyDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -148,8 +153,11 @@
     {#if historyDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
+        id={HISTORY_MENU_ID}
         class="mic-menu scroll-styled scroll-thumb-elev"
-        role="presentation"
+        role="listbox"
+        tabindex="-1"
+        aria-label="History retention options"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
@@ -160,6 +168,8 @@
             class:active={historyRetention === opt}
             onclick={() => saveHistoryRetention(opt)}
             onkeydown={handleHistoryButtonKeydown}
+            role="option"
+            aria-selected={historyRetention === opt}
           >
             {opt}
           </button>

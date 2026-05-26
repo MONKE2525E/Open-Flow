@@ -27,7 +27,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 ### [PR Group 1: UI - Reactivity & State Modernization]
 *   **Goal**: Standardize Svelte state management using Svelte 5 Runes, eliminating double tracking, and ensuring proper IPC error handling.
 
-#### Task 1.1: Migrating `stores.ts` to Svelte 5 Reactive States
+#### ✅ Task 1.1: Migrating `stores.ts` to Svelte 5 Reactive States
 *   **Context**: [stores.ts](file:///g:/Open%20Flow/src/lib/stores.ts#L1-L72), [App.svelte](file:///g:/Open%20Flow/src/App.svelte), [Sidebar.svelte](file:///g:/Open%20Flow/src/lib/components/layout/Sidebar.svelte), and view files.
 *   **Problem Statement**: The application runs Svelte 5 but manages global state using legacy Svelte 4 `writable` stores. This forces the compiler to wrap subscriptions in compatibility layers, resulting in double tracking and inconsistent access syntax (`$store` vs standard runes).
 *   **Actionable Implementation Steps**:
@@ -38,7 +38,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
     *   *Build Verification*: Run `npm run check` followed by `npm run lint` to confirm zero compilation or TypeScript errors.
     *   *State Test*: Run the Playwright test using `node tests/smoke/playwright-test-state.cjs` to verify that active page routing and modal states update correctly.
 
-#### Task 1.2: Unifying IPC Error Handling & Logging
+#### ✅ Task 1.2: Unifying IPC Error Handling & Logging
 *   **Context**: [stores.ts](file:///g:/Open%20Flow/src/lib/stores.ts#L34-L39) (`fetchSnippets`) and [stores.ts](file:///g:/Open%20Flow/src/lib/stores.ts#L55-L60) (`fetchDictionary`).
 *   **Problem Statement**: Key data-fetching functions swallow all errors inside their catch blocks (`catch { /* dev mode — no backend */ }`). This hides DB lock errors, IPC deserialization failures, and network bugs, leaving the UI empty without diagnostic feedback.
 *   **Actionable Implementation Steps**:
@@ -53,7 +53,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 ### [PR Group 2: UI - Performance, Animations & Frame Loops]
 *   **Goal**: Eliminate CPU cycles wasted on background animation frames and process scans during idle states.
 
-#### Task 2.1: Conditional `requestAnimationFrame` Loop in Pill HUD
+#### ✅ Task 2.1: Conditional `requestAnimationFrame` Loop in Pill HUD
 *   **Context**: [PillApp.svelte](file:///g:/Open%20Flow/src/PillApp.svelte#L103-L144).
 *   **Problem Statement**: On mount, the floating pill window starts a `requestAnimationFrame` loop to animate audio visualizer bars. This loop runs continuously even when the app is in the `'idle'` state (transparent and click-through), consuming unnecessary CPU and GPU resources.
 *   **Actionable Implementation Steps**:
@@ -63,7 +63,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 *   **Verification & Test Plan**:
     *   *CPU Profile*: Launch the app in Tauri dev mode, open the frontend dev tools, select the Performance panel, and confirm that no frames are computed and script activity is 0% while the pill is in the `'idle'` state.
 
-#### Task 2.2: Svelte List Transition Optimizations
+#### ✅ Task 2.2: Svelte List Transition Optimizations
 *   **Context**: [Dictionary.svelte](file:///g:/Open%20Flow/src/lib/views/Dictionary.svelte) and [Snippets.svelte](file:///g:/Open%20Flow/src/lib/views/Snippets.svelte).
 *   **Problem Statement**: When lists grow to hundreds of items, applying `in:fly`, `out:fade`, and `animate:flip` transitions directly on wrapper `div` nodes within `{#each}` loops causes major layout stutters and input lag when filtering terms.
 *   **Actionable Implementation Steps**:
@@ -95,7 +95,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 *   **Verification & Test Plan**:
     *   *Keyboard Walkthrough*: Open the Settings modal and press the `Tab` key repeatedly. Verify that a clear outline highlight follows the active toggle elements and API key inputs.
 
-#### Task 3.3: Textarea Auto-Grow Svelte Action Recalculation
+#### ✅ Task 3.3: Textarea Auto-Grow Svelte Action Recalculation
 *   **Context**: [Snippets.svelte](file:///g:/Open%20Flow/src/lib/views/Snippets.svelte#L151-L156).
 *   **Problem Statement**: The `autoGrow` text layout action listens for native `'input'` DOM events to dynamically adjust textarea heights. However, when users dictate text into a snippet expansion using the `<MicInputButton>`, Svelte updates the value programmatically. Since this bypasses standard browser key input events, the textarea fails to resize, clipping long text.
 *   **Actionable Implementation Steps**:
@@ -118,7 +118,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 ### [PR Group 4: UI - Visual Polish, Spacing & Design System Alignment]
 *   **Goal**: Rectify typography mismatches, color variables, and transition discrepancies across panels.
 
-#### Task 4.1: Dropdown Overlay Mount/Unmount Transitions
+#### ✅ Task 4.1: Dropdown Overlay Mount/Unmount Transitions
 *   **Context**: [GeneralSection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/GeneralSection.svelte) (Language list), [PrivacySection.svelte](file:///g:/Open%20Flow/src/lib/components/settings/PrivacySection.svelte) (History list), and [AppMappingsEditor.svelte](file:///g:/Open%20Flow/src/lib/components/AppMappingsEditor.svelte).
 *   **Problem Statement**: The Microphone dropdown features smooth Svelte transitions, but other dropdown menus mount instantly. This causes visual stuttering and inconsistent UI styling.
 *   **Actionable Implementation Steps**:
@@ -207,6 +207,7 @@ We have organized the technical debt and usability audit into **11 focused Pull 
 
 ### [PR Group 7: Backend - Audio Pipeline & Real-Time Safety]
 *   **Goal**: Implement real-time thread safety for audio input callbacks and capture stream initialization failures.
+*   **Status Note**: Backend-heavy tasks in PR Groups 7-11 are intentionally deferred to dedicated backend-focused PRs to reduce regression risk and keep frontend accessibility fixes reviewable.
 
 #### Task 7.1: Lock-Free Audio Callback Stream
 *   **Context**: [audio.rs](file:///g:/Open%20Flow/src-tauri/src/media/audio.rs).

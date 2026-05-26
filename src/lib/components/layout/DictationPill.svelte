@@ -1,18 +1,18 @@
 <script lang="ts">
-  import { pillState } from '../../stores';
+  import { appStore } from '../../stores';
 </script>
 
-{#if $pillState !== 'idle'}
-  <div class="pill" class:recording={$pillState === 'recording'} class:processing={$pillState === 'processing'} class:handsfree={$pillState === 'handsfree'}>
+{#if appStore.pillState !== 'idle'}
+  <div class="pill" class:recording={appStore.pillState === 'recording'} class:processing={appStore.pillState === 'processing'} class:handsfree={appStore.pillState === 'handsfree'}>
 
-    {#if $pillState === 'recording'}
+    {#if appStore.pillState === 'recording'}
       <div class="bars">
         {#each { length: 18 } as _, i (i)}
           <i style="animation-delay:{i * 0.047}s"></i>
         {/each}
       </div>
 
-    {:else if $pillState === 'processing'}
+    {:else if appStore.pillState === 'processing'}
       <div class="dots">
         {#each { length: 22 } as _, i (i)}
           <i style="animation-delay:{i * 0.073}s"></i>
@@ -20,11 +20,11 @@
       </div>
       <div class="spinner"></div>
 
-    {:else if $pillState === 'handsfree'}
+    {:else if appStore.pillState === 'handsfree'}
       <button class="hf-btn cancel" aria-label="Cancel" onclick={async () => {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('stop_recording').catch(() => {});
-        $pillState = 'idle';
+        appStore.pillState = 'idle';
       }}>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
           <path d="M6 6l12 12M6 18 18 6"/>
@@ -38,7 +38,7 @@
       <button class="hf-btn confirm" aria-label="Confirm" onclick={async () => {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('stop_handless_mode').catch(() => {});
-        $pillState = 'idle';
+        appStore.pillState = 'idle';
       }}>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M20 6L9 17l-5-5"/>
