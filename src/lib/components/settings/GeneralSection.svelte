@@ -361,6 +361,8 @@
       <div
         id={LANGUAGE_MENU_ID}
         class="language-menu scroll-styled scroll-thumb-elev"
+        role="listbox"
+        tabindex="-1"
         aria-label="Spoken language options"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
@@ -406,6 +408,8 @@
       <div
         id={MIC_MENU_ID}
         class="mic-menu scroll-styled scroll-thumb-elev"
+        role="listbox"
+        tabindex="-1"
         aria-label="Microphone device options"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}

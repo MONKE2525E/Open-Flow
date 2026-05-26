@@ -100,13 +100,14 @@
       >
         {#if tab === 'cleanup'}
           <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Open Flow does.</span></p>
-          <div class="style-grid four">
+          <div class="style-grid four" role="radiogroup" aria-label="Auto-cleanup intensity">
             {#each cleanupCards as c}
               <button
                 type="button"
                 class="style-card"
                 class:active={intensity === c.id}
-                aria-pressed={intensity === c.id}
+                role="radio"
+                aria-checked={intensity === c.id}
                 onclick={() => selectIntensity(c.id)}
                 in:fly={!mountedTabs.cleanup ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
@@ -118,13 +119,14 @@
           </div>
         {:else if tab === 'personal'}
           <p class="style-intro">Default tone. <span>Applies to any app not explicitly mapped.</span></p>
-          <div class="style-grid">
+          <div class="style-grid" role="radiogroup" aria-label="Personal tone">
             {#each personalCards as c}
               <button
                 type="button"
                 class="style-card"
                 class:active={tone === c.id}
-                aria-pressed={tone === c.id}
+                role="radio"
+                aria-checked={tone === c.id}
                 onclick={() => selectTone(c.id)}
                 in:fly={!mountedTabs.personal ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
               >
