@@ -24,9 +24,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOD_SHIFT, MOD_WIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, SetWindowsHookExW,
-    TranslateMessage, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
-    WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
+    GetWindowThreadProcessId, SetWindowsHookExW, TranslateMessage, HC_ACTION, KBDLLHOOKSTRUCT,
+    LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 // Returns true if the given specific-side VK (or its mirror) is currently held.
@@ -78,10 +78,20 @@ fn vk_to_char(vk: u32) -> Option<char> {
 
     unsafe {
         let mut state = [0u8; 256];
-        if GetKeyboardState(&mut state).is_err() {
-            return None;
+        let _ = GetKeyboardState(&mut state);
+        if (GetAsyncKeyState(0x10) & 0x8000u16 as i16) != 0 {
+            state[0x10] = 0x80;
         }
-        let layout = GetKeyboardLayout(0);
+        if (GetAsyncKeyState(0x11) & 0x8000u16 as i16) != 0 {
+            state[0x11] = 0x80;
+        }
+        if (GetAsyncKeyState(0x12) & 0x8000u16 as i16) != 0 {
+            state[0x12] = 0x80;
+        }
+
+        let foreground = GetForegroundWindow();
+        let thread_id = GetWindowThreadProcessId(foreground, None);
+        let layout = GetKeyboardLayout(thread_id);
         let scan = MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC, Some(layout));
         if scan == 0 {
             return None;

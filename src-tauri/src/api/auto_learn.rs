@@ -938,20 +938,48 @@ unsafe extern "system" fn value_change_event_proc(
 
 #[cfg(windows)]
 fn ensure_value_change_hook() -> bool {
-    *VALUE_CHANGE_HOOK_READY.get_or_init(|| unsafe {
-        use windows::Win32::UI::Accessibility::SetWinEventHook;
-        use windows::Win32::UI::WindowsAndMessaging::{EVENT_OBJECT_VALUECHANGE, WINEVENT_OUTOFCONTEXT};
+    *VALUE_CHANGE_HOOK_READY.get_or_init(|| {
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
 
-        let hook = SetWinEventHook(
-            EVENT_OBJECT_VALUECHANGE,
-            EVENT_OBJECT_VALUECHANGE,
-            None,
-            Some(value_change_event_proc),
-            0,
-            0,
-            WINEVENT_OUTOFCONTEXT,
-        );
-        !hook.is_invalid()
+        let spawn_result =
+            std::thread::Builder::new()
+                .name("auto_learn_value_change_hook".to_string())
+                .spawn(move || unsafe {
+                    use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent};
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        DispatchMessageW, GetMessageW, EVENT_OBJECT_VALUECHANGE, MSG,
+                        WINEVENT_OUTOFCONTEXT,
+                    };
+
+                    let hook = SetWinEventHook(
+                        EVENT_OBJECT_VALUECHANGE,
+                        EVENT_OBJECT_VALUECHANGE,
+                        None,
+                        Some(value_change_event_proc),
+                        0,
+                        0,
+                        WINEVENT_OUTOFCONTEXT,
+                    );
+
+                    let ready = !hook.is_invalid();
+                    let _ = ready_tx.send(ready);
+                    if !ready {
+                        return;
+                    }
+
+                    let mut msg = MSG::default();
+                    while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                        DispatchMessageW(&msg);
+                    }
+
+                    let _ = UnhookWinEvent(hook);
+                });
+
+        if spawn_result.is_err() {
+            return false;
+        }
+
+        ready_rx.recv().unwrap_or(false)
     })
 }
 
@@ -990,7 +1018,7 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
 
     let event_mode = auto_learn_event_mode_enabled(&app);
 
-    tauri::async_runtime::spawn(async move {
+    std::thread::spawn(move || {
         let _monitor_guard = MonitorKeyGuard::new(key);
         if let Err(e) = db::prune_pending_corrections(&db, PENDING_RETENTION_DAYS) {
             log::warn!("auto-learn prune failed: {e}");
@@ -1009,24 +1037,12 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
             0.0,
         );
 
-        tokio::time::sleep(std::time::Duration::from_millis(BASELINE_CAPTURE_DELAY_MS)).await;
-        let mut baseline_text = tokio::task::spawn_blocking({
-            let injected_text = injected_text.clone();
-            move || capture_baseline_text(&injected_text)
-        })
-        .await
-        .ok()
-        .flatten();
+        std::thread::sleep(std::time::Duration::from_millis(BASELINE_CAPTURE_DELAY_MS));
+        let mut baseline_text = capture_baseline_text(&injected_text);
 
         if baseline_text.is_none() {
-            tokio::time::sleep(std::time::Duration::from_millis(BASELINE_RETRY_DELAY_MS)).await;
-            baseline_text = tokio::task::spawn_blocking({
-                let injected_text = injected_text.clone();
-                move || capture_baseline_text(&injected_text)
-            })
-            .await
-            .ok()
-            .flatten();
+            std::thread::sleep(std::time::Duration::from_millis(BASELINE_RETRY_DELAY_MS));
+            baseline_text = capture_baseline_text(&injected_text);
         }
 
         let Some(baseline_text) = baseline_text else {
@@ -1038,14 +1054,13 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
         let _ = db::log_auto_learn_event(&db, "anchor", "anchor_ok", &app_context, "", "", 0.0);
 
         let mut stable_text_gate = StableTextGate::default();
-        let deadline =
-            tokio::time::Instant::now() + std::time::Duration::from_secs(MONITOR_WINDOW_SECS);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(MONITOR_WINDOW_SECS);
         let mut recorded_this_session: HashSet<(String, String)> = HashSet::new();
         #[cfg(windows)]
         let mut last_event_seq = VALUE_CHANGE_SEQ.load(Ordering::Relaxed);
 
         loop {
-            if tokio::time::Instant::now() >= deadline {
+            if std::time::Instant::now() >= deadline {
                 break;
             }
 
@@ -1053,39 +1068,35 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
                 #[cfg(windows)]
                 {
                     if ensure_value_change_hook() {
-                        let timeout_at = tokio::time::Instant::now()
+                        let timeout_at = std::time::Instant::now()
                             + std::time::Duration::from_secs(POLL_INTERVAL_SECS);
                         let mut saw_event = false;
-                        while tokio::time::Instant::now() < timeout_at {
+                        while std::time::Instant::now() < timeout_at {
                             let seq = VALUE_CHANGE_SEQ.load(Ordering::Relaxed);
                             if seq != last_event_seq {
                                 last_event_seq = seq;
                                 saw_event = true;
                                 break;
                             }
-                            tokio::time::sleep(std::time::Duration::from_millis(
+                            std::thread::sleep(std::time::Duration::from_millis(
                                 EVENT_MONITOR_POLL_MS,
-                            ))
-                            .await;
+                            ));
                         }
                         if !saw_event {
                             continue;
                         }
                     } else {
-                        tokio::time::sleep(std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS))
-                            .await;
+                        std::thread::sleep(std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS));
                     }
                 }
                 #[cfg(not(windows))]
-                tokio::time::sleep(std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS)).await;
+                std::thread::sleep(std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS));
             } else {
-                tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
+                std::thread::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
             }
 
-            let current_text = tokio::task::spawn_blocking(read_focused_text).await;
-            let current_text = match current_text {
-                Ok(Some(t)) => t,
-                _ => continue,
+            let Some(current_text) = read_focused_text() else {
+                continue;
             };
 
             let Some(stable_text) = stable_text_gate.observe(current_text) else {
