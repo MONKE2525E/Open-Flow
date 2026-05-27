@@ -13,6 +13,8 @@ const HISTORY_TAIL: usize = 512;
 // Retry gap between successive OpenClipboard attempts when the clipboard is held
 // by another process.
 const CLIPBOARD_OPEN_RETRY_MS: u64 = 50;
+const CLIPBOARD_RESTORE_RETRY_MS: u64 = 60;
+const CLIPBOARD_RESTORE_ATTEMPTS: usize = 3;
 
 // Settle time after SetForegroundWindow before writing to the clipboard; some
 // compositor/DWM frame cycles are needed before the HWND is fully active.
@@ -78,14 +80,22 @@ pub fn append_or_reset_injection_history(hwnd: usize, ch: char) {
                 if text.len() > HISTORY_TAIL {
                     let excess = text.len() - HISTORY_TAIL;
                     let mut trim_at = excess;
-                    while !text.is_char_boundary(trim_at) { trim_at += 1; }
+                    while !text.is_char_boundary(trim_at) {
+                        trim_at += 1;
+                    }
                     *text = text[trim_at..].to_owned();
                 }
                 *time = Instant::now();
                 true
-            } else { false }
-        } else { false };
-        if !keep { *guard = None; }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if !keep {
+            *guard = None;
+        }
     }
 }
 
@@ -116,7 +126,9 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
     let mut entries = Vec::new();
 
     let opened = (0..3).any(|i| {
-        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS)); }
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS));
+        }
         OpenClipboard(None).is_ok()
     });
     if !opened {
@@ -129,7 +141,10 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
         if fmt == 0 {
             break;
         }
-        if matches!(fmt, CF_BITMAP | CF_METAFILEPICT | CF_PALETTE | CF_ENHMETAFILE) {
+        if matches!(
+            fmt,
+            CF_BITMAP | CF_METAFILEPICT | CF_PALETTE | CF_ENHMETAFILE
+        ) {
             continue;
         }
         if let Ok(h) = GetClipboardData(fmt) {
@@ -162,32 +177,56 @@ unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
         return;
     }
 
-    let opened = (0..3).any(|i| {
-        if i > 0 { std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS)); }
-        OpenClipboard(None).is_ok()
-    });
-    if !opened {
-        return;
-    }
-
-    EmptyClipboard().ok();
-
-    for (fmt, data) in &saved.entries {
-        if let Ok(hg) = GlobalAlloc(GMEM_MOVEABLE, data.len()) {
-            let ptr = GlobalLock(hg) as *mut u8;
-            if ptr.is_null() {
-                let _ = GlobalFree(Some(hg));
-                continue;
+    for attempt in 0..CLIPBOARD_RESTORE_ATTEMPTS {
+        let opened = (0..3).any(|i| {
+            if i > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS));
             }
-            std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
-            let _ = GlobalUnlock(hg);
-            if SetClipboardData(*fmt, Some(HANDLE(hg.0))).is_err() {
-                let _ = GlobalFree(Some(hg));
+            OpenClipboard(None).is_ok()
+        });
+        if !opened {
+            if attempt + 1 == CLIPBOARD_RESTORE_ATTEMPTS {
+                log::warn!("clipboard restore failed: OpenClipboard unavailable");
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_RESTORE_RETRY_MS));
+            continue;
+        }
+
+        EmptyClipboard().ok();
+        let mut restored = 0usize;
+        for (fmt, data) in &saved.entries {
+            if let Ok(hg) = GlobalAlloc(GMEM_MOVEABLE, data.len()) {
+                let ptr = GlobalLock(hg) as *mut u8;
+                if ptr.is_null() {
+                    let _ = GlobalFree(Some(hg));
+                    continue;
+                }
+                std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+                let _ = GlobalUnlock(hg);
+                if SetClipboardData(*fmt, Some(HANDLE(hg.0))).is_ok() {
+                    restored += 1;
+                } else {
+                    let _ = GlobalFree(Some(hg));
+                }
             }
         }
-    }
+        CloseClipboard().ok();
 
-    CloseClipboard().ok();
+        if restored == saved.entries.len() {
+            return;
+        }
+
+        if attempt + 1 < CLIPBOARD_RESTORE_ATTEMPTS {
+            std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_RESTORE_RETRY_MS));
+        } else {
+            log::warn!(
+                "clipboard restore incomplete: restored {} of {} formats",
+                restored,
+                saved.entries.len()
+            );
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -214,7 +253,6 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
         Err(anyhow::anyhow!("OpenClipboard failed"))
     }
 }
-
 
 pub async fn inject_text(
     text: &str,
@@ -286,7 +324,8 @@ pub async fn inject_text(
             // "Hello"   → trimmed = "Hello"  → last = 'o' → lowercase (mid-sentence).
             // ""        → no prior context              → capitalize (new/empty field).
             let sentence_enders: &[char] = &['.', '!', '?', '\n', '\r'];
-            let trimmed_ctx = context.trim_end_matches(|c: char| c.is_whitespace() && !sentence_enders.contains(&c));
+            let trimmed_ctx = context
+                .trim_end_matches(|c: char| c.is_whitespace() && !sentence_enders.contains(&c));
             let should_capitalize = trimmed_ctx.is_empty()
                 || trimmed_ctx
                     .chars()
@@ -332,7 +371,10 @@ pub async fn inject_text(
                     break;
                 }
                 if attempt < 2 {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_WRITE_RETRY_MS)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(
+                        CLIPBOARD_WRITE_RETRY_MS,
+                    ))
+                    .await;
                 }
             }
             if !clipboard_written {
@@ -341,7 +383,10 @@ pub async fn inject_text(
                 ));
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_WRITE_SETTLE_MS)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                CLIPBOARD_WRITE_SETTLE_MS,
+            ))
+            .await;
 
             // Step 1 — clear any dangling Alt the target app may have from the
             // recording gesture.  Ctrl-down is sent first so that the Alt-up is

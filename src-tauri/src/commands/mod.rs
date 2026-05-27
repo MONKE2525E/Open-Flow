@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
 use crate::data::{db, store};
@@ -24,8 +24,10 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         };
         obj.keys().all(|k| store::PROVIDERS.contains(&k.as_str()))
             && obj.values().all(|val| {
-                val.as_array()
-                    .is_some_and(|arr| arr.iter().all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty())))
+                val.as_array().is_some_and(|arr| {
+                    arr.iter()
+                        .all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty()))
+                })
             })
     };
     let is_non_empty_string_array = |v: &serde_json::Value| {
@@ -64,6 +66,7 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::MUTE_AUDIO
         | store::APP_CONTEXT_HINT
         | store::AUTO_LEARN_ENABLED
+        | store::AUTO_LEARN_EVENT_MODE
         | store::CONTEXTUAL_CAPS
         | store::AUTO_SPACING
         | store::SETUP_COMPLETE
@@ -266,7 +269,9 @@ pub async fn retry_transcription(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<db::RecentEntry, String> {
-    pipeline::retry_transcription_impl(&app, &state).await.map_err(|e| e.to_string())
+    pipeline::retry_transcription_impl(&app, &state)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(target_os = "windows")]
@@ -303,20 +308,28 @@ fn free_bytes_for_path(_path: &std::path::Path) -> Result<u64, String> {
 }
 
 #[tauri::command]
-pub fn clear_cleanup_cache(app: AppHandle) -> Result<usize, String> {
-    let db = app.state::<DbHandle>();
-    db::cleanup_cache_clear_all(&db).map_err(|e| e.to_string())
+pub async fn clear_cleanup_cache(app: AppHandle) -> Result<usize, String> {
+    let db = app.state::<DbHandle>().inner().clone();
+    tokio::task::spawn_blocking(move || db::cleanup_cache_clear_all(&db).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| format!("clear_cleanup_cache task panicked: {e}"))?
 }
 
 #[tauri::command]
-pub fn get_cleanup_cache_status(app: AppHandle) -> Result<CleanupCacheStatus, String> {
-    let db = app.state::<DbHandle>();
-    let entry_count = db::cleanup_cache_count(&db).map_err(|e| e.to_string())?;
+pub async fn get_cleanup_cache_status(app: AppHandle) -> Result<CleanupCacheStatus, String> {
+    let db = app.state::<DbHandle>().inner().clone();
     let app_data = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
-    let free_bytes = free_bytes_for_path(&app_data)?;
+    let free_bytes = tokio::task::spawn_blocking(move || free_bytes_for_path(&app_data))
+        .await
+        .map_err(|e| format!("free space task panicked: {e}"))??;
+    let entry_count = tokio::task::spawn_blocking(move || {
+        db::cleanup_cache_count(&db).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("cleanup cache count task panicked: {e}"))??;
     Ok(CleanupCacheStatus {
         entry_count,
         is_space_constrained: free_bytes < SPACE_CONSTRAINED_THRESHOLD_BYTES,
@@ -340,8 +353,14 @@ pub async fn get_microphones() -> Vec<String> {
 // ---------- memory ----------
 
 #[tauri::command]
-pub fn get_memory_mb() -> u64 {
-    crate::system::memory::measure()
+pub async fn get_memory_mb() -> u64 {
+    match tokio::task::spawn_blocking(crate::system::memory::measure).await {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("Task to get memory usage panicked: {e}");
+            0
+        }
+    }
 }
 
 // ---------- recording control ----------
@@ -354,8 +373,15 @@ pub async fn start_input_recording(
     if lock_state(&state)?.session.is_some() {
         return Err("Already recording".to_string());
     }
-    pipeline::start_recording_session(&app, &state, "recording", false);
-    Ok(())
+    match pipeline::start_recording_session_ex(&app, &state, "recording", false, None, true, false)
+    {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let msg = format!("Failed to start recording: {e}");
+            app.emit("open-flow:error", msg.clone()).ok();
+            Err(msg)
+        }
+    }
 }
 
 #[tauri::command]
@@ -367,15 +393,7 @@ pub async fn start_calibration_monitoring(
         return Err("Already recording".to_string());
     }
 
-    pipeline::start_recording_session_ex(
-        &app,
-        &state,
-        "calibration",
-        false,
-        Some(1.0),
-        false,
-        true,
-    )
+    pipeline::start_recording_session_ex(&app, &state, "calibration", false, Some(1.0), false, true)
 }
 
 #[tauri::command]
@@ -555,9 +573,11 @@ pub async fn edit_dictionary_entry(
 #[tauri::command]
 pub async fn remove_dictionary_entry(app: AppHandle, id: i64) -> Result<(), String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || db::delete_dictionary_entry(&db, id).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || {
+        db::delete_dictionary_entry(&db, id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

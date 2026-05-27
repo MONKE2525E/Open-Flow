@@ -1,4 +1,3 @@
-
 /// API key names in the store — never expose values to the frontend after write.
 pub const KEY_GROQ: &str = "api_key_groq";
 pub const KEY_OPENAI: &str = "api_key_openai";
@@ -27,6 +26,7 @@ pub const MIC_GAIN: &str = "mic_gain";
 pub const SETUP_COMPLETE: &str = "setup_complete";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
+pub const AUTO_LEARN_EVENT_MODE: &str = "auto_learn_event_mode";
 pub const CONTEXTUAL_CAPS: &str = "contextual_caps_enabled";
 pub const AUTO_SPACING: &str = "auto_spacing_enabled";
 pub const APPEARANCE_MODE: &str = "appearance_mode";
@@ -207,20 +207,25 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
     };
     let transcription_provider = str_or(TRANSCRIPTION_PROVIDER, GROQ);
     let cleanup_provider = str_or(CLEANUP_PROVIDER, GROQ);
-    let legacy_transcription_model =
-        str_or(TRANSCRIPTION_MODEL, &format!("{}/{}", GROQ, default_transcription_model_for(GROQ)));
-    let legacy_cleanup_model =
-        str_or(CLEANUP_MODEL, &format!("{}/{}", GROQ, default_cleanup_model_for(GROQ)));
+    let legacy_transcription_model = str_or(
+        TRANSCRIPTION_MODEL,
+        &format!("{}/{}", GROQ, default_transcription_model_for(GROQ)),
+    );
+    let legacy_cleanup_model = str_or(
+        CLEANUP_MODEL,
+        &format!("{}/{}", GROQ, default_cleanup_model_for(GROQ)),
+    );
 
     let transcription_default_from_new = str_val(TRANSCRIPTION_DEFAULT_MODEL);
     let cleanup_default_from_new = str_val(CLEANUP_DEFAULT_MODEL);
 
-    let resolve_default = |new_val: &str, legacy_val: &str, provider: &str, default_fn: fn(&str) -> &'static str| {
-        parse_model_id(new_val)
-            .or_else(|| parse_model_id(legacy_val))
-            .map(|(p, m)| format!("{p}/{m}"))
-            .unwrap_or_else(|| format!("{provider}/{}", default_fn(provider)))
-    };
+    let resolve_default =
+        |new_val: &str, legacy_val: &str, provider: &str, default_fn: fn(&str) -> &'static str| {
+            parse_model_id(new_val)
+                .or_else(|| parse_model_id(legacy_val))
+                .map(|(p, m)| format!("{p}/{m}"))
+                .unwrap_or_else(|| format!("{provider}/{}", default_fn(provider)))
+        };
 
     let transcription_default_model = resolve_default(
         &transcription_default_from_new,

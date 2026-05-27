@@ -1,14 +1,17 @@
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
+use tauri_plugin_store::StoreExt;
 
-use crate::data::db;
+use crate::data::{db, store};
 use crate::DbHandle;
 
 const MONITOR_WINDOW_SECS: u64 = 60;
 const POLL_INTERVAL_SECS: u64 = 2;
 const BASELINE_CAPTURE_DELAY_MS: u64 = 250;
 const BASELINE_RETRY_DELAY_MS: u64 = 500;
+const EVENT_MONITOR_POLL_MS: u64 = 250;
 const REJECTION_WINDOW_SECS: u64 = 8;
 const REJECTION_POLL_MS: u64 = 500;
 const CACHE_REJECTION_WINDOW_SECS: u64 = 10;
@@ -300,10 +303,7 @@ fn is_candidate_correction(
 
     let original_distinct = has_distinctive_features(&original.raw);
     let corrected_distinct = has_distinctive_features(&corrected.raw);
-    if metrics.max_len <= 3
-        && !original_distinct
-        && !corrected_distinct
-    {
+    if metrics.max_len <= 3 && !original_distinct && !corrected_distinct {
         return false;
     }
 
@@ -323,7 +323,9 @@ fn is_candidate_correction(
     }
 
     metrics.distance <= 2_usize.max(metrics.max_len / 2)
-        || ((original_distinct || corrected_distinct) && metrics.max_len >= 4 && metrics.distance <= 3)
+        || ((original_distinct || corrected_distinct)
+            && metrics.max_len >= 4
+            && metrics.distance <= 3)
 }
 
 fn pair_hash(left: &str, right: &str) -> (String, String) {
@@ -621,7 +623,13 @@ fn detect_span_corrections(original_span: &str, current_span: &str) -> Vec<Candi
                 Some(CandidateCorrection {
                     mistake: old.raw.clone(),
                     correction: new.raw.clone(),
-                    confidence: candidate_confidence(old, new, metrics, changed_ops, replacements_len),
+                    confidence: candidate_confidence(
+                        old,
+                        new,
+                        metrics,
+                        changed_ops,
+                        replacements_len,
+                    ),
                 })
             } else {
                 log::debug!("auto-learn: rejected low-confidence candidate");
@@ -825,51 +833,41 @@ impl Drop for ComGuard {
 #[cfg(windows)]
 thread_local! {
     static COM_INIT: std::cell::RefCell<Option<ComGuard>> = const { std::cell::RefCell::new(None) };
+    static FOCUSED_TEXT_READER: std::cell::RefCell<Option<FocusedTextReader>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(windows)]
-pub fn read_focused_text() -> Option<String> {
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
-    use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationTextPattern, IUIAutomationValuePattern,
-        UIA_TextPatternId, UIA_ValuePatternId,
-    };
+struct FocusedTextReader {
+    automation: windows::Win32::UI::Accessibility::IUIAutomation,
+}
 
-    COM_INIT.with(|cell| {
-        let mut guard = cell.borrow_mut();
-        if guard.is_none() {
-            *guard = Some(ComGuard::init());
+#[cfg(windows)]
+impl FocusedTextReader {
+    fn new() -> Option<Self> {
+        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+        use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+
+        unsafe {
+            let automation: IUIAutomation =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            Some(Self { automation })
         }
-    });
+    }
 
-    unsafe {
-        let automation: IUIAutomation =
-            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
-        let element = automation.GetFocusedElement().ok()?;
+    fn read(&self) -> Option<String> {
+        use windows::Win32::UI::Accessibility::{
+            IUIAutomationTextPattern, IUIAutomationValuePattern, UIA_TextPatternId,
+            UIA_ValuePatternId,
+        };
 
-        // Track whether any pattern was readable (even if the field is empty).
-        // Only return None when UIAutomation cannot read the element at all —
-        // an accessible-but-empty field must return Some("") so callers can
-        // distinguish "field cleared" from "UIAutomation unavailable".
-        let mut accessible_empty: Option<String> = None;
+        unsafe {
+            let element = self.automation.GetFocusedElement().ok()?;
+            let mut accessible_empty: Option<String> = None;
 
-        if let Ok(pattern) =
-            element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-        {
-            if let Ok(val) = pattern.CurrentValue() {
-                let s = val.to_string();
-                if !s.is_empty() {
-                    return Some(s);
-                }
-                accessible_empty = Some(s);
-            }
-        }
-
-        if let Ok(pattern) =
-            element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
-        {
-            if let Ok(doc_range) = pattern.DocumentRange() {
-                if let Ok(val) = doc_range.GetText(-1) {
+            if let Ok(pattern) =
+                element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+            {
+                if let Ok(val) = pattern.CurrentValue() {
                     let s = val.to_string();
                     if !s.is_empty() {
                         return Some(s);
@@ -877,15 +875,100 @@ pub fn read_focused_text() -> Option<String> {
                     accessible_empty = Some(s);
                 }
             }
-        }
 
-        accessible_empty
+            if let Ok(pattern) =
+                element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+            {
+                if let Ok(doc_range) = pattern.DocumentRange() {
+                    if let Ok(val) = doc_range.GetText(-1) {
+                        let s = val.to_string();
+                        if !s.is_empty() {
+                            return Some(s);
+                        }
+                        accessible_empty = Some(s);
+                    }
+                }
+            }
+
+            accessible_empty
+        }
     }
+}
+
+#[cfg(windows)]
+pub fn read_focused_text() -> Option<String> {
+    COM_INIT.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        if guard.is_none() {
+            *guard = Some(ComGuard::init());
+        }
+    });
+
+    FOCUSED_TEXT_READER.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        if guard.is_none() {
+            *guard = FocusedTextReader::new();
+        }
+        guard.as_ref().and_then(FocusedTextReader::read)
+    })
+}
+
+#[cfg(windows)]
+static VALUE_CHANGE_HOOK_READY: OnceLock<bool> = OnceLock::new();
+#[cfg(windows)]
+static VALUE_CHANGE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(windows)]
+unsafe extern "system" fn value_change_event_proc(
+    _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
+    event: u32,
+    _hwnd: windows::Win32::Foundation::HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _id_event_thread: u32,
+    _event_time: u32,
+) {
+    use windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_VALUECHANGE;
+
+    if event != EVENT_OBJECT_VALUECHANGE {
+        return;
+    }
+    VALUE_CHANGE_SEQ.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(windows)]
+fn ensure_value_change_hook() -> bool {
+    *VALUE_CHANGE_HOOK_READY.get_or_init(|| unsafe {
+        use windows::Win32::UI::Accessibility::SetWinEventHook;
+        use windows::Win32::UI::WindowsAndMessaging::{EVENT_OBJECT_VALUECHANGE, WINEVENT_OUTOFCONTEXT};
+
+        let hook = SetWinEventHook(
+            EVENT_OBJECT_VALUECHANGE,
+            EVENT_OBJECT_VALUECHANGE,
+            None,
+            Some(value_change_event_proc),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        );
+        !hook.is_invalid()
+    })
 }
 
 #[cfg(not(windows))]
 pub fn read_focused_text() -> Option<String> {
     None
+}
+
+fn auto_learn_event_mode_enabled(app: &AppHandle) -> bool {
+    app.store("settings.json")
+        .ok()
+        .and_then(|store| {
+            store
+                .get(store::AUTO_LEARN_EVENT_MODE)
+                .and_then(|v| v.as_bool())
+        })
+        .unwrap_or(false)
 }
 
 pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, app: AppHandle) {
@@ -905,11 +988,26 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
     }
     let _ = db::log_auto_learn_event(&db, "monitor", "started", &app_context, "", "", 0.0);
 
+    let event_mode = auto_learn_event_mode_enabled(&app);
+
     tauri::async_runtime::spawn(async move {
         let _monitor_guard = MonitorKeyGuard::new(key);
         if let Err(e) = db::prune_pending_corrections(&db, PENDING_RETENTION_DAYS) {
             log::warn!("auto-learn prune failed: {e}");
         }
+        let _ = db::log_auto_learn_event(
+            &db,
+            "monitor",
+            if event_mode {
+                "event_mode"
+            } else {
+                "poll_mode"
+            },
+            &app_context,
+            "",
+            "",
+            0.0,
+        );
 
         tokio::time::sleep(std::time::Duration::from_millis(BASELINE_CAPTURE_DELAY_MS)).await;
         let mut baseline_text = tokio::task::spawn_blocking({
@@ -943,13 +1041,46 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
         let deadline =
             tokio::time::Instant::now() + std::time::Duration::from_secs(MONITOR_WINDOW_SECS);
         let mut recorded_this_session: HashSet<(String, String)> = HashSet::new();
+        #[cfg(windows)]
+        let mut last_event_seq = VALUE_CHANGE_SEQ.load(Ordering::Relaxed);
 
         loop {
             if tokio::time::Instant::now() >= deadline {
                 break;
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
+            if event_mode {
+                #[cfg(windows)]
+                {
+                    if ensure_value_change_hook() {
+                        let timeout_at = tokio::time::Instant::now()
+                            + std::time::Duration::from_secs(POLL_INTERVAL_SECS);
+                        let mut saw_event = false;
+                        while tokio::time::Instant::now() < timeout_at {
+                            let seq = VALUE_CHANGE_SEQ.load(Ordering::Relaxed);
+                            if seq != last_event_seq {
+                                last_event_seq = seq;
+                                saw_event = true;
+                                break;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                EVENT_MONITOR_POLL_MS,
+                            ))
+                            .await;
+                        }
+                        if !saw_event {
+                            continue;
+                        }
+                    } else {
+                        tokio::time::sleep(std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS))
+                            .await;
+                    }
+                }
+                #[cfg(not(windows))]
+                tokio::time::sleep(std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS)).await;
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
+            }
 
             let current_text = tokio::task::spawn_blocking(read_focused_text).await;
             let current_text = match current_text {
@@ -1019,7 +1150,8 @@ fn apply_rejection(target: &RejectionTarget, db: &DbHandle, app: &AppHandle, pre
             if let Err(e) = db::delete_auto_learned_entries_by_ids(db, ids) {
                 log::warn!("{prefix}: delete failed: {e}");
             } else {
-                app.emit("open-flow:dictionary-entry-rejected", ids.len()).ok();
+                app.emit("open-flow:dictionary-entry-rejected", ids.len())
+                    .ok();
             }
         }
         RejectionTarget::CacheKey { key } => {
@@ -1139,11 +1271,10 @@ fn run_rejection_monitor(
             if rejected {
                 // Guard against false positives from window switches: only fire
                 // if the original injection window is still in the foreground.
-                let still_focused = tokio::task::spawn_blocking(move || {
-                    is_target_window_focused(target_hwnd)
-                })
-                .await
-                .unwrap_or(false);
+                let still_focused =
+                    tokio::task::spawn_blocking(move || is_target_window_focused(target_hwnd))
+                        .await
+                        .unwrap_or(false);
                 if still_focused {
                     log::info!("{prefix}: deletion detected, firing rejection");
                     apply_rejection(&target, &db, &app, prefix);
@@ -1168,7 +1299,9 @@ pub fn start_rejection_monitor(
     }
     run_rejection_monitor(
         injected_text,
-        RejectionTarget::DictEntries { ids: applied_entry_ids },
+        RejectionTarget::DictEntries {
+            ids: applied_entry_ids,
+        },
         target_hwnd,
         db,
         app,
