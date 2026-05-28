@@ -846,7 +846,7 @@ pub fn cleanup_cache_get_active(db: &Db, key: &str) -> Result<Option<CleanupCach
                 is_snippet
          FROM cleanup_cache
          WHERE key = ?1
-           AND COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at) AS INTEGER), 0) > CAST(strftime('%s', 'now') AS INTEGER)
+           AND expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER)
          LIMIT 1",
     )?;
     let mut rows = stmt.query(params![key])?;

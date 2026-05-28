@@ -100,7 +100,11 @@ fn vk_to_char(vk: u32) -> Option<char> {
         let mut buff = [0u16; 8];
         let rc = ToUnicodeEx(vk, scan, &state, &mut buff, 0, Some(layout));
         if rc < 0 {
-            let _ = ToUnicodeEx(vk, scan, &state, &mut buff, 0, Some(layout));
+            for _ in 0..4 {
+                if ToUnicodeEx(vk, scan, &state, &mut buff, 0, Some(layout)) >= 0 {
+                    break;
+                }
+            }
             return None;
         }
         if rc == 0 {
