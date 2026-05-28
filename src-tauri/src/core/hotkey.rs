@@ -100,8 +100,12 @@ fn vk_to_char(vk: u32) -> Option<char> {
         let mut buff = [0u16; 8];
         let rc = ToUnicodeEx(vk, scan, &state, &mut buff, 0, Some(layout));
         if rc < 0 {
+            // Flush dead-key compose state with a neutral key so subsequent
+            // translations are not polluted by stale composition state.
+            let neutral_vk = 0x20u32; // VK_SPACE
+            let neutral_scan = MapVirtualKeyExW(neutral_vk, MAPVK_VK_TO_VSC, Some(layout));
             for _ in 0..4 {
-                if ToUnicodeEx(vk, scan, &state, &mut buff, 0, Some(layout)) >= 0 {
+                if ToUnicodeEx(neutral_vk, neutral_scan, &state, &mut buff, 0, Some(layout)) >= 0 {
                     break;
                 }
             }
