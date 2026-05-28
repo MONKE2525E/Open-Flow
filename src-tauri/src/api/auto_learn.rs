@@ -832,14 +832,29 @@ impl Drop for ComGuard {
 
 #[cfg(windows)]
 thread_local! {
-    static COM_INIT: std::cell::RefCell<Option<ComGuard>> = const { std::cell::RefCell::new(None) };
-    // Outer Option tracks initialization attempt; inner Option stores success/failure.
-    static FOCUSED_TEXT_READER: std::cell::RefCell<Option<Option<FocusedTextReader>>> = const { std::cell::RefCell::new(None) };
+    static FOCUSED_TEXT_STATE: std::cell::RefCell<FocusedTextState> = const { std::cell::RefCell::new(FocusedTextState::new()) };
 }
 
 #[cfg(windows)]
 struct FocusedTextReader {
     automation: windows::Win32::UI::Accessibility::IUIAutomation,
+}
+
+#[cfg(windows)]
+struct FocusedTextState {
+    // Reader drops before COM guard because fields drop in declaration order.
+    reader: Option<Option<FocusedTextReader>>,
+    com: Option<ComGuard>,
+}
+
+#[cfg(windows)]
+impl FocusedTextState {
+    const fn new() -> Self {
+        Self {
+            reader: None,
+            com: None,
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -898,16 +913,12 @@ impl FocusedTextReader {
 
 #[cfg(windows)]
 pub fn read_focused_text() -> Option<String> {
-    COM_INIT.with(|cell| {
+    FOCUSED_TEXT_STATE.with(|cell| {
         let mut guard = cell.borrow_mut();
-        if guard.is_none() {
-            *guard = Some(ComGuard::init());
+        if guard.com.is_none() {
+            guard.com = Some(ComGuard::init());
         }
-    });
-
-    FOCUSED_TEXT_READER.with(|cell| {
-        let mut guard = cell.borrow_mut();
-        let reader = guard.get_or_insert_with(FocusedTextReader::new);
+        let reader = guard.reader.get_or_insert_with(FocusedTextReader::new);
         reader.as_ref().and_then(FocusedTextReader::read)
     })
 }

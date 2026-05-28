@@ -846,7 +846,10 @@ pub fn cleanup_cache_get_active(db: &Db, key: &str) -> Result<Option<CleanupCach
                 is_snippet
          FROM cleanup_cache
          WHERE key = ?1
-           AND expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER)
+           AND (
+                (expires_at_epoch IS NOT NULL AND expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER))
+                OR (expires_at_epoch IS NULL AND expires_at > datetime('now'))
+           )
          LIMIT 1",
     )?;
     let mut rows = stmt.query(params![key])?;
@@ -909,14 +912,25 @@ pub fn cleanup_cache_touch_hit(
 
 pub fn cleanup_cache_prune_expired(db: &Db) -> Result<usize> {
     let conn = lock_conn(db)?;
-    let changed = conn.execute(
+    let changed_epoch = conn.execute(
         "DELETE FROM cleanup_cache
-         WHERE expires_at_epoch <= CAST(strftime('%s', 'now') AS INTEGER)
-            OR (last_hit_at_epoch <= CAST(strftime('%s', 'now', '-2 days') AS INTEGER)
+         WHERE (expires_at_epoch IS NOT NULL
+                AND expires_at_epoch <= CAST(strftime('%s', 'now') AS INTEGER))
+            OR (last_hit_at_epoch IS NOT NULL
+                AND last_hit_at_epoch <= CAST(strftime('%s', 'now', '-2 days') AS INTEGER)
                 AND is_snippet = 0)",
         [],
     )?;
-    Ok(changed)
+    let changed_fallback = conn.execute(
+        "DELETE FROM cleanup_cache
+         WHERE (expires_at_epoch IS NULL
+                AND expires_at <= datetime('now'))
+            OR (last_hit_at_epoch IS NULL
+                AND last_hit_at <= datetime('now', '-2 days')
+                AND is_snippet = 0)",
+        [],
+    )?;
+    Ok(changed_epoch + changed_fallback)
 }
 
 pub fn cleanup_cache_clear_all(db: &Db) -> Result<usize> {
@@ -1026,6 +1040,29 @@ mod tests {
         assert!(cleanup_cache_get_active(&db, "live")
             .expect("query live")
             .is_some());
+    }
+
+    #[test]
+    fn cleanup_cache_get_active_supports_null_epoch_fallback() {
+        let db = test_db();
+        cleanup_cache_insert_new(&db, "legacy", "hello", "2999-01-01 00:00:00", false)
+            .expect("insert");
+
+        let conn = lock_conn(&db).expect("lock");
+        conn.execute(
+            "UPDATE cleanup_cache
+             SET expires_at_epoch = NULL
+             WHERE key = 'legacy'",
+            [],
+        )
+        .expect("null out epoch");
+        drop(conn);
+
+        assert!(
+            cleanup_cache_get_active(&db, "legacy")
+                .expect("query")
+                .is_some()
+        );
     }
 
     #[test]
