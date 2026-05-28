@@ -217,15 +217,12 @@ unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
             return;
         }
 
-        if attempt + 1 < CLIPBOARD_RESTORE_ATTEMPTS {
-            std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_RESTORE_RETRY_MS));
-        } else {
-            log::warn!(
-                "clipboard restore incomplete: restored {} of {} formats",
-                restored,
-                saved.entries.len()
-            );
-        }
+        log::warn!(
+            "clipboard restore incomplete: restored {} of {} formats",
+            restored,
+            saved.entries.len()
+        );
+        return;
     }
 }
 
