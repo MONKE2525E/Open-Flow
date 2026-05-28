@@ -322,14 +322,15 @@ pub async fn get_cleanup_cache_status(app: AppHandle) -> Result<CleanupCacheStat
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
-    let free_bytes = tokio::task::spawn_blocking(move || free_bytes_for_path(&app_data))
-        .await
-        .map_err(|e| format!("free space task panicked: {e}"))??;
-    let entry_count = tokio::task::spawn_blocking(move || {
-        db::cleanup_cache_count(&db).map_err(|e| e.to_string())
+    let (free_bytes, entry_count) = tokio::task::spawn_blocking(move || {
+        let free = free_bytes_for_path(&app_data)
+            .map_err(|e| format!("Failed to read free disk space: {e}"))?;
+        let count = db::cleanup_cache_count(&db)
+            .map_err(|e| format!("Failed to count cleanup cache entries: {e}"))?;
+        Ok::<_, String>((free, count))
     })
     .await
-    .map_err(|e| format!("cleanup cache count task panicked: {e}"))??;
+    .map_err(|e| format!("get_cleanup_cache_status task panicked: {e}"))??;
     Ok(CleanupCacheStatus {
         entry_count,
         is_space_constrained: free_bytes < SPACE_CONSTRAINED_THRESHOLD_BYTES,

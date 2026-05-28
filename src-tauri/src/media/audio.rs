@@ -301,11 +301,9 @@ fn enqueue_i16_buffer(
         }
     } else {
         for frame in data.chunks(channels) {
-            let mut mixed = 0.0f32;
-            for &raw in frame {
-                mixed += (raw as f32 / i16::MAX as f32).clamp(-1.0, 1.0);
-            }
-            let mono = (mixed / frame.len() as f32).clamp(-1.0, 1.0);
+            let sum_raw: i64 = frame.iter().map(|&sample| sample as i64).sum();
+            let mono =
+                (sum_raw as f32 / (frame.len() as f32 * i16::MAX as f32)).clamp(-1.0, 1.0);
             sum += mono * mono;
             count += 1;
             push_overwriting_oldest(queue, dropped, mono);
@@ -377,9 +375,9 @@ fn encode_wav(samples: &[f32], sample_rate: u32, channels: u16) -> Result<Vec<u8
 
 #[cfg(test)]
 mod tests {
-    use super::push_overwriting_oldest;
+    use super::{enqueue_i16_buffer, push_overwriting_oldest};
     use crossbeam_queue::ArrayQueue;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
     #[test]
     fn push_overwrite_drops_oldest_when_queue_is_full() {
@@ -397,5 +395,21 @@ mod tests {
 
         assert_eq!(dropped.load(Ordering::Relaxed), 6);
         assert_eq!(out, vec![6.0, 7.0, 8.0, 9.0]);
+    }
+
+    #[test]
+    fn enqueue_i16_multichannel_sums_raw_before_normalizing() {
+        let q = ArrayQueue::<f32>::new(8);
+        let dropped = AtomicU64::new(0);
+        let level = AtomicU32::new(0f32.to_bits());
+        let data = [i16::MAX, i16::MAX, 0, 0];
+
+        enqueue_i16_buffer(&data, 2, &q, &dropped, &level);
+
+        let first = q.pop().expect("first sample");
+        let second = q.pop().expect("second sample");
+        assert!((first - 1.0).abs() < 1e-6);
+        assert!(second.abs() < 1e-6);
+        assert_eq!(dropped.load(Ordering::Relaxed), 0);
     }
 }

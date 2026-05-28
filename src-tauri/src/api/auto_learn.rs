@@ -999,6 +999,14 @@ fn auto_learn_event_mode_enabled(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
+fn event_mode_poll_sleep_duration(hook_ready: bool) -> std::time::Duration {
+    if hook_ready {
+        std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS)
+    } else {
+        std::time::Duration::from_secs(POLL_INTERVAL_SECS)
+    }
+}
+
 pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, app: AppHandle) {
     if injected_text.split_whitespace().count() < 2 {
         let _ = db::log_auto_learn_event(&db, "monitor", "too_short", &app_context, "", "", 0.0);
@@ -1078,19 +1086,17 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
                                 saw_event = true;
                                 break;
                             }
-                            std::thread::sleep(std::time::Duration::from_millis(
-                                EVENT_MONITOR_POLL_MS,
-                            ));
+                            std::thread::sleep(event_mode_poll_sleep_duration(true));
                         }
                         if !saw_event {
                             continue;
                         }
                     } else {
-                        std::thread::sleep(std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS));
+                        std::thread::sleep(event_mode_poll_sleep_duration(false));
                     }
                 }
                 #[cfg(not(windows))]
-                std::thread::sleep(std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS));
+                std::thread::sleep(event_mode_poll_sleep_duration(false));
             } else {
                 std::thread::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
             }
@@ -1537,6 +1543,22 @@ mod tests {
             Some("say nuggaaaa")
         );
         assert_eq!(gate.observe("say nuggaaaa".to_string()), None);
+    }
+
+    #[test]
+    fn event_mode_hook_unavailable_uses_poll_interval_sleep() {
+        assert_eq!(
+            event_mode_poll_sleep_duration(false),
+            std::time::Duration::from_secs(POLL_INTERVAL_SECS)
+        );
+    }
+
+    #[test]
+    fn event_mode_hook_ready_uses_fast_poll_sleep() {
+        assert_eq!(
+            event_mode_poll_sleep_duration(true),
+            std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS)
+        );
     }
 
     #[test]

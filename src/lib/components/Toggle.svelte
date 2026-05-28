@@ -4,6 +4,19 @@
     onchange,
     label = '',
   }: { checked: boolean; onchange: (value: boolean) => void; label?: string } = $props();
+
+  function preventToggleKeyScroll(event: KeyboardEvent) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+    }
+  }
+
+  function handleToggleKeyup(event: KeyboardEvent) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onchange(!checked);
+    }
+  }
 </script>
 
 <div
@@ -11,10 +24,11 @@
   class:on={checked}
   role="switch"
   aria-checked={checked}
-  aria-label={label || undefined}
+  aria-label={label || 'Toggle'}
   tabindex="0"
   onclick={() => onchange(!checked)}
-  onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onchange(!checked)}
+  onkeydown={preventToggleKeyScroll}
+  onkeyup={handleToggleKeyup}
 ></div>
 
 <style>
