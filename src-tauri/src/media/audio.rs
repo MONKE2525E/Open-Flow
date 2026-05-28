@@ -9,6 +9,14 @@ const DISPLAY_GAIN: f32 = 15.0;
 const AUDIO_QUEUE_CAPACITY_SAMPLES: usize = 320_000;
 const WORKER_IDLE_SLEEP_MS: u64 = 2;
 
+fn clamp_unit_sample(v: f32) -> f32 {
+    if v.is_finite() {
+        v.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
 pub fn list_input_devices() -> Vec<String> {
     let host = cpal::default_host();
     host.input_devices()
@@ -42,7 +50,7 @@ impl FrameDenoiser {
                 }
                 self.state.process_frame(&mut frame_out, &frame_in);
                 for &n in &frame_out {
-                    out.push((n / 32767.0).clamp(-1.0, 1.0));
+                    out.push(clamp_unit_sample(n / 32767.0));
                 }
                 self.buf.clear();
             }
@@ -62,7 +70,7 @@ impl FrameDenoiser {
         }
         self.state.process_frame(&mut frame_out, &frame_in);
         for &n in &frame_out[..len] {
-            out.push((n / 32767.0).clamp(-1.0, 1.0));
+            out.push(clamp_unit_sample(n / 32767.0));
         }
         self.buf.clear();
     }
@@ -120,7 +128,7 @@ impl RecordingSession {
                 loop {
                     batch.clear();
                     while let Some(sample) = worker_queue.pop() {
-                        batch.push((sample * gain).clamp(-1.0, 1.0));
+                        batch.push(clamp_unit_sample(sample * gain));
                     }
 
                     if !batch.is_empty() {
@@ -256,14 +264,14 @@ fn enqueue_f32_buffer(
     let mut count = 0usize;
     if channels <= 1 {
         for &raw in data {
-            let mono = raw.clamp(-1.0, 1.0);
+            let mono = clamp_unit_sample(raw);
             sum += mono * mono;
             count += 1;
             push_overwriting_oldest(queue, dropped, mono);
         }
     } else {
         for frame in data.chunks(channels) {
-            let mono = (frame.iter().copied().sum::<f32>() / frame.len() as f32).clamp(-1.0, 1.0);
+            let mono = clamp_unit_sample(frame.iter().copied().sum::<f32>() / frame.len() as f32);
             sum += mono * mono;
             count += 1;
             push_overwriting_oldest(queue, dropped, mono);
@@ -295,7 +303,7 @@ fn enqueue_i16_buffer(
     let mut count = 0usize;
     if channels <= 1 {
         for &raw in data {
-            let mono = (raw as f32 / i16::MAX as f32).clamp(-1.0, 1.0);
+            let mono = clamp_unit_sample(raw as f32 / i16::MAX as f32);
             sum += mono * mono;
             count += 1;
             push_overwriting_oldest(queue, dropped, mono);
@@ -303,8 +311,7 @@ fn enqueue_i16_buffer(
     } else {
         for frame in data.chunks(channels) {
             let sum_raw: i64 = frame.iter().map(|&sample| sample as i64).sum();
-            let mono =
-                (sum_raw as f32 / (frame.len() as f32 * i16::MAX as f32)).clamp(-1.0, 1.0);
+            let mono = clamp_unit_sample(sum_raw as f32 / (frame.len() as f32 * i16::MAX as f32));
             sum += mono * mono;
             count += 1;
             push_overwriting_oldest(queue, dropped, mono);
@@ -368,7 +375,7 @@ fn encode_wav(samples: &[f32], sample_rate: u32, channels: u16) -> Result<Vec<u8
     let mut buf = std::io::Cursor::new(Vec::new());
     let mut writer = hound::WavWriter::new(&mut buf, spec)?;
     for &s in samples {
-        writer.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
+        writer.write_sample((clamp_unit_sample(s) * i16::MAX as f32) as i16)?;
     }
     writer.finalize()?;
     Ok(buf.into_inner())

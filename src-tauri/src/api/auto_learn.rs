@@ -978,7 +978,15 @@ fn ensure_value_change_hook() -> bool {
                     }
 
                     let mut msg = MSG::default();
-                    while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                    loop {
+                        let status = GetMessageW(&mut msg, None, 0, 0).0;
+                        if status == -1 {
+                            log::error!("GetMessageW failed in auto-learn hook thread");
+                            break;
+                        }
+                        if status == 0 {
+                            break;
+                        }
                         DispatchMessageW(&msg);
                     }
 

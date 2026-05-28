@@ -478,7 +478,15 @@ where
         };
 
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+        loop {
+            let status = GetMessageW(&mut msg, None, 0, 0).0;
+            if status == -1 {
+                log::error!("GetMessageW failed in hotkey hook thread");
+                break;
+            }
+            if status == 0 {
+                break;
+            }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
