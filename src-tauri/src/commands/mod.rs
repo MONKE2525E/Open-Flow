@@ -379,6 +379,7 @@ pub async fn start_input_recording(
         Ok(()) => Ok(()),
         Err(e) => {
             let msg = format!("Failed to start recording: {e}");
+            crate::pipeline::hide_pill(&app);
             app.emit("open-flow:error", msg.clone()).ok();
             Err(msg)
         }

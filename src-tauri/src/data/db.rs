@@ -909,16 +909,6 @@ pub fn cleanup_cache_touch_hit(
 
 pub fn cleanup_cache_prune_expired(db: &Db) -> Result<usize> {
     let conn = lock_conn(db)?;
-    conn.execute(
-        "UPDATE cleanup_cache
-         SET created_at_epoch = COALESCE(created_at_epoch, CAST(strftime('%s', created_at) AS INTEGER)),
-             last_hit_at_epoch = COALESCE(last_hit_at_epoch, CAST(strftime('%s', last_hit_at) AS INTEGER)),
-             expires_at_epoch = COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at) AS INTEGER))
-         WHERE created_at_epoch IS NULL
-            OR last_hit_at_epoch IS NULL
-            OR expires_at_epoch IS NULL",
-        [],
-    )?;
     let changed = conn.execute(
         "DELETE FROM cleanup_cache
          WHERE expires_at_epoch <= CAST(strftime('%s', 'now') AS INTEGER)
@@ -1036,30 +1026,6 @@ mod tests {
         assert!(cleanup_cache_get_active(&db, "live")
             .expect("query live")
             .is_some());
-    }
-
-    #[test]
-    fn cleanup_cache_prune_backfills_null_epoch_fields() {
-        let db = test_db();
-        cleanup_cache_insert_new(&db, "legacy", "x", "2000-01-01 00:00:00", false)
-            .expect("insert legacy");
-
-        let conn = lock_conn(&db).expect("lock");
-        conn.execute(
-            "UPDATE cleanup_cache
-             SET created_at_epoch = NULL,
-                 last_hit_at_epoch = NULL,
-                 expires_at_epoch = NULL
-             WHERE key = 'legacy'",
-            [],
-        )
-        .expect("null out epoch fields");
-        drop(conn);
-
-        assert_eq!(cleanup_cache_prune_expired(&db).expect("prune"), 1);
-        assert!(cleanup_cache_get_active(&db, "legacy")
-            .expect("query legacy")
-            .is_none());
     }
 
     #[test]
