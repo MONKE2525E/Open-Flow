@@ -374,8 +374,23 @@ pub async fn start_input_recording(
     if lock_state(&state)?.session.is_some() {
         return Err("Already recording".to_string());
     }
-    match pipeline::start_recording_session_ex(&app, &state, "recording", false, None, true, false)
-    {
+    let state_clone = state.inner().clone();
+    let app_clone = app.clone();
+    let start_result = tokio::task::spawn_blocking(move || {
+        pipeline::start_recording_session_ex(
+            &app_clone,
+            &state_clone,
+            "recording",
+            false,
+            None,
+            true,
+            false,
+        )
+    })
+    .await
+    .map_err(|e| format!("Recording task panicked: {e}"))?;
+
+    match start_result {
         Ok(()) => Ok(()),
         Err(e) => {
             let msg = format!("Failed to start recording: {e}");
@@ -395,7 +410,21 @@ pub async fn start_calibration_monitoring(
         return Err("Already recording".to_string());
     }
 
-    pipeline::start_recording_session_ex(&app, &state, "calibration", false, Some(1.0), false, true)
+    let state_clone = state.inner().clone();
+    let app_clone = app.clone();
+    tokio::task::spawn_blocking(move || {
+        pipeline::start_recording_session_ex(
+            &app_clone,
+            &state_clone,
+            "calibration",
+            false,
+            Some(1.0),
+            false,
+            true,
+        )
+    })
+    .await
+    .map_err(|e| format!("Calibration task panicked: {e}"))?
 }
 
 #[tauri::command]
