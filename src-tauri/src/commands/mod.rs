@@ -371,9 +371,14 @@ pub async fn start_input_recording(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    if lock_state(&state)?.session.is_some() {
-        return Err("Already recording".to_string());
+    {
+        let mut st = lock_state(&state)?;
+        if st.session.is_some() || st.starting {
+            return Err("Already recording".to_string());
+        }
+        st.starting = true;
     }
+
     let state_clone = state.inner().clone();
     let app_clone = app.clone();
     let start_result = tokio::task::spawn_blocking(move || {
@@ -387,8 +392,14 @@ pub async fn start_input_recording(
             false,
         )
     })
-    .await
-    .map_err(|e| format!("Recording task panicked: {e}"))?;
+    .await;
+
+    {
+        let mut st = lock_state(&state)?;
+        st.starting = false;
+    }
+
+    let start_result = start_result.map_err(|e| format!("Recording task panicked: {e}"))?;
 
     match start_result {
         Ok(()) => Ok(()),
@@ -406,13 +417,17 @@ pub async fn start_calibration_monitoring(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    if lock_state(&state)?.session.is_some() {
-        return Err("Already recording".to_string());
+    {
+        let mut st = lock_state(&state)?;
+        if st.session.is_some() || st.starting {
+            return Err("Already recording".to_string());
+        }
+        st.starting = true;
     }
 
     let state_clone = state.inner().clone();
     let app_clone = app.clone();
-    tokio::task::spawn_blocking(move || {
+    let start_result = tokio::task::spawn_blocking(move || {
         pipeline::start_recording_session_ex(
             &app_clone,
             &state_clone,
@@ -423,8 +438,14 @@ pub async fn start_calibration_monitoring(
             true,
         )
     })
-    .await
-    .map_err(|e| format!("Calibration task panicked: {e}"))?
+    .await;
+
+    {
+        let mut st = lock_state(&state)?;
+        st.starting = false;
+    }
+
+    start_result.map_err(|e| format!("Calibration task panicked: {e}"))?
 }
 
 #[tauri::command]

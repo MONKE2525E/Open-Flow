@@ -37,6 +37,7 @@ fn cleanup_provider_from_str(s: &str) -> cleanup::CleanupProvider {
 
 pub struct AppState {
     pub session: Option<audio::RecordingSession>,
+    pub starting: bool,
     pub handless: bool,
     pub target_hwnd: usize,
     pub retry_capture: Option<RetryCapture>,

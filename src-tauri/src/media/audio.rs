@@ -17,6 +17,10 @@ fn clamp_unit_sample(v: f32) -> f32 {
     }
 }
 
+fn finite_sample_or_zero(v: f32) -> f32 {
+    if v.is_finite() { v } else { 0.0 }
+}
+
 pub fn list_input_devices() -> Vec<String> {
     let host = cpal::default_host();
     host.input_devices()
@@ -264,14 +268,14 @@ fn enqueue_f32_buffer(
     let mut count = 0usize;
     if channels <= 1 {
         for &raw in data {
-            let mono = clamp_unit_sample(raw);
+            let mono = finite_sample_or_zero(raw);
             sum += mono * mono;
             count += 1;
             push_overwriting_oldest(queue, dropped, mono);
         }
     } else {
         for frame in data.chunks(channels) {
-            let mono = clamp_unit_sample(frame.iter().copied().sum::<f32>() / frame.len() as f32);
+            let mono = finite_sample_or_zero(frame.iter().copied().sum::<f32>() / frame.len() as f32);
             sum += mono * mono;
             count += 1;
             push_overwriting_oldest(queue, dropped, mono);

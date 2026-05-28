@@ -19,7 +19,7 @@ static MODIFIER_VKS: &[u32] = &[
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetKeyboardLayout, GetKeyboardState, MapVirtualKeyExW, RegisterHotKey,
+    GetAsyncKeyState, GetKeyState, GetKeyboardLayout, MapVirtualKeyExW, RegisterHotKey,
     ToUnicodeEx, UnregisterHotKey, HOT_KEY_MODIFIERS, MAPVK_VK_TO_VSC, MOD_ALT, MOD_CONTROL,
     MOD_SHIFT, MOD_WIN,
 };
@@ -78,15 +78,18 @@ fn vk_to_char(vk: u32) -> Option<char> {
 
     unsafe {
         let mut state = [0u8; 256];
-        let _ = GetKeyboardState(&mut state);
         if GetAsyncKeyState(0x10) < 0 {
-            state[0x10] = 0x80;
+            state[0x10] |= 0x80;
         }
         if GetAsyncKeyState(0x11) < 0 {
-            state[0x11] = 0x80;
+            state[0x11] |= 0x80;
         }
         if GetAsyncKeyState(0x12) < 0 {
-            state[0x12] = 0x80;
+            state[0x12] |= 0x80;
+        }
+        // Caps Lock is a toggle key; low-order bit indicates toggle state.
+        if (GetKeyState(0x14) & 0x0001) != 0 {
+            state[0x14] |= 0x01;
         }
 
         let foreground = GetForegroundWindow();
