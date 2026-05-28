@@ -79,13 +79,13 @@ fn vk_to_char(vk: u32) -> Option<char> {
     unsafe {
         let mut state = [0u8; 256];
         let _ = GetKeyboardState(&mut state);
-        if (GetAsyncKeyState(0x10) & 0x8000u16 as i16) != 0 {
+        if GetAsyncKeyState(0x10) < 0 {
             state[0x10] = 0x80;
         }
-        if (GetAsyncKeyState(0x11) & 0x8000u16 as i16) != 0 {
+        if GetAsyncKeyState(0x11) < 0 {
             state[0x11] = 0x80;
         }
-        if (GetAsyncKeyState(0x12) & 0x8000u16 as i16) != 0 {
+        if GetAsyncKeyState(0x12) < 0 {
             state[0x12] = 0x80;
         }
 

@@ -110,23 +110,24 @@ impl RecordingSession {
             let worker_stop = Arc::clone(&stop_processing);
             let worker = std::thread::spawn(move || {
                 let mut processed = Vec::<f32>::new();
+                let mut batch = Vec::<f32>::with_capacity(2048);
                 let mut denoiser = if noise_reduction {
                     Some(FrameDenoiser::new())
                 } else {
                     None
                 };
-                let mut one = [0.0f32; 1];
 
                 loop {
-                    let mut moved_any = false;
+                    batch.clear();
                     while let Some(sample) = worker_queue.pop() {
-                        moved_any = true;
-                        let adjusted = (sample * gain).clamp(-1.0, 1.0);
+                        batch.push((sample * gain).clamp(-1.0, 1.0));
+                    }
+
+                    if !batch.is_empty() {
                         if let Some(d) = denoiser.as_mut() {
-                            one[0] = adjusted;
-                            d.push(&one, &mut processed);
+                            d.push(&batch, &mut processed);
                         } else {
-                            processed.push(adjusted);
+                            processed.extend_from_slice(&batch);
                         }
                     }
 
@@ -134,7 +135,7 @@ impl RecordingSession {
                         break;
                     }
 
-                    if !moved_any {
+                    if batch.is_empty() {
                         std::thread::sleep(std::time::Duration::from_millis(WORKER_IDLE_SLEEP_MS));
                     }
                 }
