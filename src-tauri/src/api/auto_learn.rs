@@ -833,7 +833,8 @@ impl Drop for ComGuard {
 #[cfg(windows)]
 thread_local! {
     static COM_INIT: std::cell::RefCell<Option<ComGuard>> = const { std::cell::RefCell::new(None) };
-    static FOCUSED_TEXT_READER: std::cell::RefCell<Option<FocusedTextReader>> = const { std::cell::RefCell::new(None) };
+    // Outer Option tracks initialization attempt; inner Option stores success/failure.
+    static FOCUSED_TEXT_READER: std::cell::RefCell<Option<Option<FocusedTextReader>>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(windows)]
@@ -906,10 +907,8 @@ pub fn read_focused_text() -> Option<String> {
 
     FOCUSED_TEXT_READER.with(|cell| {
         let mut guard = cell.borrow_mut();
-        if guard.is_none() {
-            *guard = FocusedTextReader::new();
-        }
-        guard.as_ref().and_then(FocusedTextReader::read)
+        let reader = guard.get_or_insert_with(FocusedTextReader::new);
+        reader.as_ref().and_then(FocusedTextReader::read)
     })
 }
 

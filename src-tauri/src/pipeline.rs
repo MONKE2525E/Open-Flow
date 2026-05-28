@@ -154,7 +154,6 @@ pub fn start_recording_session(
         hide_pill(app);
         app.emit("open-flow:error", format!("Failed to start recording: {e}"))
             .ok();
-        std::thread::spawn(crate::system::volume::unmute);
     }
 }
 
@@ -205,10 +204,7 @@ pub fn start_recording_session_ex(
             spawn_level_emitter(app.clone(), level_arc, active_arc, emit_globally);
             Ok(())
         }
-        Err(e) => {
-            std::thread::spawn(crate::system::volume::unmute);
-            Err(e.to_string())
-        }
+        Err(e) => Err(e.to_string()),
     }
 }
 
