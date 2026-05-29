@@ -176,23 +176,23 @@ fn normalize_number_word_run(tokens: &[String], start: usize) -> Option<(String,
     };
 
     if next < tokens.len() && tokens[next] == "point" {
-        next += 1;
+        let mut temp_next = next + 1;
         let mut frac = String::new();
-        while next < tokens.len() {
-            let t = tokens[next].as_str();
+        while temp_next < tokens.len() {
+            let t = tokens[temp_next].as_str();
             if t.chars().all(|c| c.is_ascii_digit()) {
                 frac.push_str(t);
-                next += 1;
+                temp_next += 1;
                 continue;
             }
             if t == "oh" {
                 frac.push('0');
-                next += 1;
+                temp_next += 1;
                 continue;
             }
             if let Some(d) = unit_word_value(t) {
                 frac.push(char::from(b'0' + d as u8));
-                next += 1;
+                temp_next += 1;
                 continue;
             }
             break;
@@ -200,6 +200,7 @@ fn normalize_number_word_run(tokens: &[String], start: usize) -> Option<(String,
         if !frac.is_empty() {
             normalized.push('.');
             normalized.push_str(&frac);
+            next = temp_next;
         }
     }
 
@@ -342,6 +343,14 @@ mod tests {
         let a = normalize_cleanup_cache_key("version 2.5");
         let b = normalize_cleanup_cache_key("version two point five");
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cache_key_keeps_point_when_not_followed_by_fraction_digits() {
+        let a = normalize_cleanup_cache_key("one point");
+        let b = normalize_cleanup_cache_key("one");
+        assert_ne!(a, b);
+        assert!(a.contains("point"));
     }
 
     #[test]

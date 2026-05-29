@@ -96,13 +96,13 @@ fn vk_to_char(vk: u32) -> Option<char> {
 
     unsafe {
         let mut state = [0u8; 256];
-        if GetKeyState(0x10) < 0 {
+        if GetAsyncKeyState(0x10) < 0 {
             state[0x10] |= 0x80;
         }
-        if GetKeyState(0x11) < 0 {
+        if GetAsyncKeyState(0x11) < 0 {
             state[0x11] |= 0x80;
         }
-        if GetKeyState(0x12) < 0 {
+        if GetAsyncKeyState(0x12) < 0 {
             state[0x12] |= 0x80;
         }
         // Caps Lock is a toggle key; low-order bit indicates toggle state.
