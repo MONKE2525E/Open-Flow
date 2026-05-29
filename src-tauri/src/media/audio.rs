@@ -102,6 +102,9 @@ impl RecordingSession {
         let config = device.default_input_config()?;
         let sample_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
+        if channels == 0 {
+            return Err(anyhow::anyhow!("Audio device reported zero channels"));
+        }
 
         let (stop_tx, stop_rx) = mpsc::sync_channel::<()>(1);
         let (result_tx, result_rx) = mpsc::sync_channel(1);

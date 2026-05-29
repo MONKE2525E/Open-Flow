@@ -965,15 +965,20 @@ static VALUE_CHANGE_SEQ: AtomicU64 = AtomicU64::new(0);
 static VALUE_CHANGE_HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 #[cfg(windows)]
 static ACTIVE_EVENT_MODE_MONITORS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(windows)]
+static VALUE_CHANGE_HOOK_STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+const WM_APP_AUTO_LEARN_STOP: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 17;
 
 #[cfg(windows)]
 fn request_value_change_hook_shutdown() {
     use windows::Win32::Foundation::{LPARAM, WPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
+    use windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
 
     if !VALUE_CHANGE_HOOK_SPAWNED.load(Ordering::SeqCst) {
         return;
     }
+    VALUE_CHANGE_HOOK_STOP_REQUESTED.store(true, Ordering::SeqCst);
 
     let thread_id = VALUE_CHANGE_HOOK_THREAD_ID.load(Ordering::SeqCst);
     if thread_id == 0 {
@@ -981,9 +986,16 @@ fn request_value_change_hook_shutdown() {
     }
 
     unsafe {
-        if PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0)).is_err() {
+        if PostThreadMessageW(
+            thread_id,
+            WM_APP_AUTO_LEARN_STOP,
+            WPARAM(0),
+            LPARAM(0),
+        )
+        .is_err()
+        {
             log::debug!(
-                "auto-learn: failed to post WM_QUIT to value-change hook thread id={thread_id}"
+                "auto-learn: failed to post stop message to value-change hook thread id={thread_id}"
             );
         }
     }
@@ -1022,14 +1034,17 @@ unsafe extern "system" fn value_change_event_proc(
 
 #[cfg(windows)]
 fn ensure_value_change_hook() -> bool {
-    if VALUE_CHANGE_HOOK_READY.load(Ordering::Relaxed) {
+    if VALUE_CHANGE_HOOK_READY.load(Ordering::Relaxed)
+        && !VALUE_CHANGE_HOOK_STOP_REQUESTED.load(Ordering::SeqCst)
+    {
         return true;
     }
     if VALUE_CHANGE_HOOK_SPAWNED
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
-        return VALUE_CHANGE_HOOK_READY.load(Ordering::Relaxed);
+        return VALUE_CHANGE_HOOK_READY.load(Ordering::Relaxed)
+            && !VALUE_CHANGE_HOOK_STOP_REQUESTED.load(Ordering::SeqCst);
     }
 
     let spawned = {
@@ -1066,14 +1081,17 @@ fn ensure_value_change_hook() -> bool {
                     if !ready {
                         VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
                         VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
+                        VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
                         return;
                     }
                     VALUE_CHANGE_HOOK_READY.store(true, Ordering::Relaxed);
+                    VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
                     if ACTIVE_EVENT_MODE_MONITORS.load(Ordering::SeqCst) == 0 {
                         let _ = UnhookWinEvent(hook);
                         VALUE_CHANGE_HOOK_READY.store(false, Ordering::Relaxed);
                         VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
                         VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+                        VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
                         return;
                     }
 
@@ -1087,6 +1105,13 @@ fn ensure_value_change_hook() -> bool {
                         if status == 0 {
                             break;
                         }
+                        if msg.message == WM_APP_AUTO_LEARN_STOP {
+                            if ACTIVE_EVENT_MODE_MONITORS.load(Ordering::SeqCst) == 0 {
+                                break;
+                            }
+                            VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
+                            continue;
+                        }
                         let _ = TranslateMessage(&msg);
                         DispatchMessageW(&msg);
                     }
@@ -1095,6 +1120,7 @@ fn ensure_value_change_hook() -> bool {
                     VALUE_CHANGE_HOOK_READY.store(false, Ordering::Relaxed);
                     VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
                     VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+                    VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
                 });
 
         match spawn_result {
@@ -1107,6 +1133,7 @@ fn ensure_value_change_hook() -> bool {
 
     if !spawned {
         VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
+        VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
     }
     spawned
 }
