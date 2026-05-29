@@ -482,7 +482,7 @@
     <span class="adv-label">Custom models</span>
     <span class="adv-desc">Add custom model names per provider</span>
   </div>
-  <Toggle checked={advancedModelUi} onchange={handleAdvancedModelUi} />
+  <Toggle checked={advancedModelUi} onchange={handleAdvancedModelUi} label="Custom models" />
 </div>
 
 <style>

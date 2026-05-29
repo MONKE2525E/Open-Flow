@@ -1,31 +1,32 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
-const VK_BACK: u32 = 0x08;    // Backspace
-const VK_ESCAPE: u32 = 0x1B;  // Escape
-const VK_CTRL: u32 = 0x11;    // VK_CONTROL (generic, used with modifier_held)
-const VK_ALT: u32 = 0x12;     // VK_MENU (generic, used with modifier_held)
+const VK_BACK: u32 = 0x08; // Backspace
+const VK_ESCAPE: u32 = 0x1B; // Escape
+const VK_CTRL: u32 = 0x11; // VK_CONTROL (generic, used with modifier_held)
+const VK_ALT: u32 = 0x12; // VK_MENU (generic, used with modifier_held)
 
 // Side-specific modifier VK codes that should never trigger a history update.
 // Generic codes (0x10/0x11/0x12) are omitted: the !is_injected guard already
 // filters all synthetic input where those codes appear, so only side-specific
 // codes reach this path from real physical key presses.
 static MODIFIER_VKS: &[u32] = &[
-    0xA0, 0xA1,       // VK_LSHIFT, VK_RSHIFT
-    0xA2, 0xA3,       // VK_LCONTROL, VK_RCONTROL
-    0xA4, 0xA5,       // VK_LMENU, VK_RMENU
-    0x5B, 0x5C,       // VK_LWIN, VK_RWIN
+    0xA0, 0xA1, // VK_LSHIFT, VK_RSHIFT
+    0xA2, 0xA3, // VK_LCONTROL, VK_RCONTROL
+    0xA4, 0xA5, // VK_LMENU, VK_RMENU
+    0x5B, 0x5C, // VK_LWIN, VK_RWIN
     0x14, 0x90, 0x91, // VK_CAPITAL, VK_NUMLOCK, VK_SCROLL
 ];
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL,
+    GetAsyncKeyState, GetKeyState, GetKeyboardLayout, MapVirtualKeyExW, RegisterHotKey,
+    ToUnicodeEx, UnregisterHotKey, HOT_KEY_MODIFIERS, MAPVK_VK_TO_VSC, MOD_ALT, MOD_CONTROL,
     MOD_SHIFT, MOD_WIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, SetWindowsHookExW,
-    TranslateMessage, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL,
-    WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
+    GetWindowThreadProcessId, SetWindowsHookExW, TranslateMessage, HC_ACTION, KBDLLHOOKSTRUCT,
+    LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 // Returns true if the given specific-side VK (or its mirror) is currently held.
@@ -55,39 +56,105 @@ fn vk_matches(vk: u32, key: u32) -> bool {
 }
 
 fn is_cursor_movement_key(vk: u32) -> bool {
-    matches!(vk,
+    matches!(
+        vk,
         0x21..=0x28 | // PgUp, PgDn, End, Home, Left, Up, Right, Down
         0x2D |        // Insert
-        0x2E          // Delete (forward)
+        0x2E // Delete (forward)
     )
+}
+
+#[inline]
+fn map_vk_to_scan_code(vk: u32, layout: windows::Win32::UI::Input::KeyboardAndMouse::HKL) -> u32 {
+    // windows crate (0.61.x) wraps MapVirtualKeyExW with Option<HKL>.
+    unsafe { MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC, Some(layout)) }
+}
+
+#[inline]
+fn to_unicode_layout(
+    vk: u32,
+    scan: u32,
+    state: &[u8; 256],
+    buff: &mut [u16],
+    layout: windows::Win32::UI::Input::KeyboardAndMouse::HKL,
+) -> i32 {
+    // windows crate (0.61.x) wrapper derives cchBuff from buff.len().
+    unsafe { ToUnicodeEx(vk, scan, state, buff, 0, Some(layout)) }
 }
 
 /// Maps a VK code to the character it produces (US QWERTY layout).
 /// Letters are always returned lowercase — case doesn't affect sentence-ender
 /// or whitespace checks downstream. Returns None for keys with no stable
 /// printable character (numpad, function keys, etc.); those reset history.
-fn vk_to_char(vk: u32, shift: bool) -> Option<char> {
-    match vk {
-        0x0D => Some('\n'),
-        0x20 => Some(' '),
-        0x30..=0x39 => {
-            if shift && vk == 0x31 { Some('!') } else { char::from_digit(vk - 0x30, 10) }
+fn vk_to_char(vk: u32) -> Option<char> {
+    if vk == 0x0D {
+        return Some('\n');
+    }
+    if vk == 0x20 {
+        return Some(' ');
+    }
+
+    unsafe {
+        let mut state = [0u8; 256];
+        if GetAsyncKeyState(0xA0) < 0 {
+            state[0xA0] |= 0x80; // VK_LSHIFT
+            state[0x10] |= 0x80; // VK_SHIFT
         }
-        0x60..=0x69 => char::from_digit(vk - 0x60, 10),
-        0x41..=0x5A => Some((b'a' + (vk as u8 - 0x41)) as char),
-        0xBA => Some(if shift { ':' } else { ';' }),
-        0xBB => Some(if shift { '+' } else { '=' }),
-        0xBC => Some(if shift { '<' } else { ',' }),
-        0xBD => Some(if shift { '_' } else { '-' }),
-        0xBE => Some(if shift { '>' } else { '.' }),
-        0xBF => Some(if shift { '?' } else { '/' }),
-        0xC0 => Some(if shift { '~' } else { '`' }),
-        0xDB => Some(if shift { '{' } else { '[' }),
-        0xDC => Some(if shift { '|' } else { '\\' }),
-        0xDD => Some(if shift { '}' } else { ']' }),
-        0xDE => Some(if shift { '"' } else { '\'' }),
-        0x6E => Some('.'),
-        _ => None,
+        if GetAsyncKeyState(0xA1) < 0 {
+            state[0xA1] |= 0x80; // VK_RSHIFT
+            state[0x10] |= 0x80;
+        }
+        if GetAsyncKeyState(0xA2) < 0 {
+            state[0xA2] |= 0x80; // VK_LCONTROL
+            state[0x11] |= 0x80; // VK_CONTROL
+        }
+        if GetAsyncKeyState(0xA3) < 0 {
+            state[0xA3] |= 0x80; // VK_RCONTROL
+            state[0x11] |= 0x80;
+        }
+        if GetAsyncKeyState(0xA4) < 0 {
+            state[0xA4] |= 0x80; // VK_LMENU
+            state[0x12] |= 0x80; // VK_MENU
+        }
+        if GetAsyncKeyState(0xA5) < 0 {
+            state[0xA5] |= 0x80; // VK_RMENU (AltGr)
+            state[0x12] |= 0x80;
+        }
+        // Caps Lock is a toggle key; low-order bit indicates toggle state.
+        if (GetKeyState(0x14) & 0x0001) != 0 {
+            state[0x14] |= 0x01;
+        }
+
+        let foreground = GetForegroundWindow();
+        let thread_id = GetWindowThreadProcessId(foreground, None);
+        let layout = GetKeyboardLayout(thread_id);
+        let scan = map_vk_to_scan_code(vk, layout);
+        if scan == 0 {
+            return None;
+        }
+
+        let mut buff = [0u16; 8];
+        let rc = to_unicode_layout(vk, scan, &state, &mut buff, layout);
+        if rc < 0 {
+            // Flush dead-key compose state with a neutral key so subsequent
+            // translations are not polluted by stale composition state.
+            let neutral_vk = 0x20u32; // VK_SPACE
+            let neutral_scan = map_vk_to_scan_code(neutral_vk, layout);
+            for _ in 0..4 {
+                if to_unicode_layout(neutral_vk, neutral_scan, &state, &mut buff, layout) >= 0 {
+                    break;
+                }
+            }
+            return None;
+        }
+        if rc == 0 {
+            return None;
+        }
+
+        let s = String::from_utf16_lossy(&buff[..rc as usize]);
+        s.chars()
+            .next()
+            .map(|ch| ch.to_lowercase().next().unwrap_or(ch))
     }
 }
 
@@ -346,7 +413,9 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);
             }
 
-            if CHORD_DOWN.swap(false, Ordering::SeqCst) && !ESCAPE_CANCELLED.swap(false, Ordering::SeqCst) {
+            if CHORD_DOWN.swap(false, Ordering::SeqCst)
+                && !ESCAPE_CANCELLED.swap(false, Ordering::SeqCst)
+            {
                 if let Some(cb) = RELEASE_CB.get() {
                     cb();
                 }
@@ -360,7 +429,9 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         }
 
         if vk == VK_ESCAPE {
-            if is_down && (CHORD_DOWN.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst)) {
+            if is_down
+                && (CHORD_DOWN.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst))
+            {
                 if CHORD_DOWN.load(Ordering::SeqCst) {
                     ESCAPE_CANCELLED.store(true, Ordering::SeqCst);
                 }
@@ -396,8 +467,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 // Keyboard shortcut (Ctrl+Z, Ctrl+A, etc.) — context unknown.
                 crate::core::injection::reset_injection_history();
             } else {
-                let shift = unsafe { modifier_held(0xA0) }; // VK_LSHIFT → checks VK_SHIFT
-                if let Some(ch) = vk_to_char(vk, shift) {
+                if let Some(ch) = vk_to_char(vk) {
                     let hwnd = unsafe { GetForegroundWindow().0 as usize };
                     crate::core::injection::append_or_reset_injection_history(hwnd, ch);
                 } else {
@@ -448,7 +518,15 @@ where
         };
 
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+        loop {
+            let status = GetMessageW(&mut msg, None, 0, 0).0;
+            if status == -1 {
+                log::error!("GetMessageW failed in hotkey hook thread");
+                break;
+            }
+            if status == 0 {
+                break;
+            }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }

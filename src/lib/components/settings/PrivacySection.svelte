@@ -180,7 +180,7 @@
 </div>
 <div class="setting-row">
   <div><div class="label">App context hint</div><div class="desc">Passes the active app to the cleanup model to tailor formatting</div></div>
-  <Toggle checked={appContextHint} onchange={handleAppContextHint} />
+  <Toggle checked={appContextHint} onchange={handleAppContextHint} label="App context hint" />
 </div>
 <div class="setting-row">
   <div>
@@ -196,7 +196,7 @@
     </div>
     <div class="desc">Add confirmed corrections to dictionary automatically</div>
   </div>
-  <Toggle checked={autoLearn} onchange={handleAutoLearn} />
+  <Toggle checked={autoLearn} onchange={handleAutoLearn} label="Auto-learn corrections" />
 </div>
 <div class="setting-row">
   <div>

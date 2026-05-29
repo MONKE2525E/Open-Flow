@@ -1,14 +1,17 @@
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
+use tauri_plugin_store::StoreExt;
 
-use crate::data::db;
+use crate::data::{db, store};
 use crate::DbHandle;
 
 const MONITOR_WINDOW_SECS: u64 = 60;
 const POLL_INTERVAL_SECS: u64 = 2;
 const BASELINE_CAPTURE_DELAY_MS: u64 = 250;
 const BASELINE_RETRY_DELAY_MS: u64 = 500;
+const EVENT_MONITOR_POLL_MS: u64 = 250;
 const REJECTION_WINDOW_SECS: u64 = 8;
 const REJECTION_POLL_MS: u64 = 500;
 const CACHE_REJECTION_WINDOW_SECS: u64 = 10;
@@ -42,6 +45,38 @@ impl Drop for MonitorKeyGuard {
     fn drop(&mut self) {
         if let Ok(mut active) = active_monitors().lock() {
             active.remove(&self.key);
+        }
+    }
+}
+
+#[cfg(windows)]
+struct EventModeHookGuard;
+
+#[cfg(windows)]
+impl EventModeHookGuard {
+    fn new() -> Self {
+        ACTIVE_EVENT_MODE_MONITORS.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+#[cfg(windows)]
+impl Drop for EventModeHookGuard {
+    fn drop(&mut self) {
+        loop {
+            let current = ACTIVE_EVENT_MODE_MONITORS.load(Ordering::SeqCst);
+            if current == 0 {
+                return;
+            }
+            if ACTIVE_EVENT_MODE_MONITORS
+                .compare_exchange(current, current - 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                if current == 1 {
+                    request_value_change_hook_shutdown();
+                }
+                return;
+            }
         }
     }
 }
@@ -300,10 +335,7 @@ fn is_candidate_correction(
 
     let original_distinct = has_distinctive_features(&original.raw);
     let corrected_distinct = has_distinctive_features(&corrected.raw);
-    if metrics.max_len <= 3
-        && !original_distinct
-        && !corrected_distinct
-    {
+    if metrics.max_len <= 3 && !original_distinct && !corrected_distinct {
         return false;
     }
 
@@ -323,7 +355,9 @@ fn is_candidate_correction(
     }
 
     metrics.distance <= 2_usize.max(metrics.max_len / 2)
-        || ((original_distinct || corrected_distinct) && metrics.max_len >= 4 && metrics.distance <= 3)
+        || ((original_distinct || corrected_distinct)
+            && metrics.max_len >= 4
+            && metrics.distance <= 3)
 }
 
 fn pair_hash(left: &str, right: &str) -> (String, String) {
@@ -621,7 +655,13 @@ fn detect_span_corrections(original_span: &str, current_span: &str) -> Vec<Candi
                 Some(CandidateCorrection {
                     mistake: old.raw.clone(),
                     correction: new.raw.clone(),
-                    confidence: candidate_confidence(old, new, metrics, changed_ops, replacements_len),
+                    confidence: candidate_confidence(
+                        old,
+                        new,
+                        metrics,
+                        changed_ops,
+                        replacements_len,
+                    ),
                 })
             } else {
                 log::debug!("auto-learn: rejected low-confidence candidate");
@@ -824,52 +864,58 @@ impl Drop for ComGuard {
 
 #[cfg(windows)]
 thread_local! {
-    static COM_INIT: std::cell::RefCell<Option<ComGuard>> = const { std::cell::RefCell::new(None) };
+    static FOCUSED_TEXT_STATE: std::cell::RefCell<FocusedTextState> = const { std::cell::RefCell::new(FocusedTextState::new()) };
 }
 
 #[cfg(windows)]
-pub fn read_focused_text() -> Option<String> {
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
-    use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationTextPattern, IUIAutomationValuePattern,
-        UIA_TextPatternId, UIA_ValuePatternId,
-    };
+struct FocusedTextReader {
+    automation: windows::Win32::UI::Accessibility::IUIAutomation,
+}
 
-    COM_INIT.with(|cell| {
-        let mut guard = cell.borrow_mut();
-        if guard.is_none() {
-            *guard = Some(ComGuard::init());
+#[cfg(windows)]
+struct FocusedTextState {
+    // Reader drops before COM guard because fields drop in declaration order.
+    reader: Option<Option<FocusedTextReader>>,
+    com: Option<ComGuard>,
+}
+
+#[cfg(windows)]
+impl FocusedTextState {
+    const fn new() -> Self {
+        Self {
+            reader: None,
+            com: None,
         }
-    });
+    }
+}
 
-    unsafe {
-        let automation: IUIAutomation =
-            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
-        let element = automation.GetFocusedElement().ok()?;
+#[cfg(windows)]
+impl FocusedTextReader {
+    fn new() -> Option<Self> {
+        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+        use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
 
-        // Track whether any pattern was readable (even if the field is empty).
-        // Only return None when UIAutomation cannot read the element at all —
-        // an accessible-but-empty field must return Some("") so callers can
-        // distinguish "field cleared" from "UIAutomation unavailable".
-        let mut accessible_empty: Option<String> = None;
-
-        if let Ok(pattern) =
-            element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-        {
-            if let Ok(val) = pattern.CurrentValue() {
-                let s = val.to_string();
-                if !s.is_empty() {
-                    return Some(s);
-                }
-                accessible_empty = Some(s);
-            }
+        unsafe {
+            let automation: IUIAutomation =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            Some(Self { automation })
         }
+    }
 
-        if let Ok(pattern) =
-            element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
-        {
-            if let Ok(doc_range) = pattern.DocumentRange() {
-                if let Ok(val) = doc_range.GetText(-1) {
+    fn read(&self) -> Option<String> {
+        use windows::Win32::UI::Accessibility::{
+            IUIAutomationTextPattern, IUIAutomationValuePattern, UIA_TextPatternId,
+            UIA_ValuePatternId,
+        };
+
+        unsafe {
+            let element = self.automation.GetFocusedElement().ok()?;
+            let mut accessible_empty: Option<String> = None;
+
+            if let Ok(pattern) =
+                element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+            {
+                if let Ok(val) = pattern.CurrentValue() {
                     let s = val.to_string();
                     if !s.is_empty() {
                         return Some(s);
@@ -877,15 +923,245 @@ pub fn read_focused_text() -> Option<String> {
                     accessible_empty = Some(s);
                 }
             }
-        }
 
-        accessible_empty
+            if let Ok(pattern) =
+                element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+            {
+                if let Ok(doc_range) = pattern.DocumentRange() {
+                    if let Ok(val) = doc_range.GetText(-1) {
+                        let s = val.to_string();
+                        if !s.is_empty() {
+                            return Some(s);
+                        }
+                        accessible_empty = Some(s);
+                    }
+                }
+            }
+
+            accessible_empty
+        }
     }
+}
+
+#[cfg(windows)]
+pub fn read_focused_text() -> Option<String> {
+    FOCUSED_TEXT_STATE.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        if guard.com.is_none() {
+            guard.com = Some(ComGuard::init());
+        }
+        let reader = guard.reader.get_or_insert_with(FocusedTextReader::new);
+        reader.as_ref().and_then(FocusedTextReader::read)
+    })
+}
+
+#[cfg(windows)]
+static VALUE_CHANGE_HOOK_READY: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+static VALUE_CHANGE_HOOK_SPAWNED: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+static VALUE_CHANGE_SEQ: AtomicU64 = AtomicU64::new(0);
+#[cfg(windows)]
+static VALUE_CHANGE_HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+#[cfg(windows)]
+static ACTIVE_EVENT_MODE_MONITORS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(windows)]
+static VALUE_CHANGE_HOOK_STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+const WM_APP_AUTO_LEARN_STOP: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 17;
+
+#[cfg(windows)]
+fn request_value_change_hook_shutdown() {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+
+    if !VALUE_CHANGE_HOOK_SPAWNED.load(Ordering::SeqCst) {
+        return;
+    }
+    VALUE_CHANGE_HOOK_STOP_REQUESTED.store(true, Ordering::SeqCst);
+
+    let thread_id = VALUE_CHANGE_HOOK_THREAD_ID.load(Ordering::SeqCst);
+    if thread_id == 0 {
+        return;
+    }
+
+    unsafe {
+        if PostThreadMessageW(
+            thread_id,
+            WM_APP_AUTO_LEARN_STOP,
+            WPARAM(0),
+            LPARAM(0),
+        )
+        .is_err()
+        {
+            log::debug!(
+                "auto-learn: failed to post stop message to value-change hook thread id={thread_id}"
+            );
+        }
+    }
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn value_change_event_proc(
+    _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
+    event: u32,
+    hwnd: windows::Win32::Foundation::HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _id_event_thread: u32,
+    _event_time: u32,
+) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EVENT_OBJECT_VALUECHANGE, GetForegroundWindow, IsChild,
+    };
+
+    if event != EVENT_OBJECT_VALUECHANGE {
+        return;
+    }
+    if hwnd.0.is_null() {
+        return;
+    }
+
+    let foreground = GetForegroundWindow();
+    if foreground.0.is_null() {
+        return;
+    }
+
+    if hwnd == foreground || IsChild(foreground, hwnd).as_bool() {
+        VALUE_CHANGE_SEQ.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(windows)]
+fn ensure_value_change_hook() -> bool {
+    if VALUE_CHANGE_HOOK_READY.load(Ordering::Relaxed)
+        && !VALUE_CHANGE_HOOK_STOP_REQUESTED.load(Ordering::SeqCst)
+    {
+        return true;
+    }
+    if VALUE_CHANGE_HOOK_SPAWNED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return VALUE_CHANGE_HOOK_READY.load(Ordering::Relaxed)
+            && !VALUE_CHANGE_HOOK_STOP_REQUESTED.load(Ordering::SeqCst);
+    }
+
+    let (spawned, should_reset_flags) = {
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+
+        let spawn_result =
+            std::thread::Builder::new()
+                .name("auto_learn_value_change_hook".to_string())
+                .spawn(move || unsafe {
+                    use windows::Win32::System::Threading::GetCurrentThreadId;
+                    use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent};
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        DispatchMessageW, GetMessageW, PeekMessageW, TranslateMessage,
+                        EVENT_OBJECT_VALUECHANGE, MSG, PM_NOREMOVE, WINEVENT_OUTOFCONTEXT,
+                    };
+
+                    let thread_id = GetCurrentThreadId();
+                    VALUE_CHANGE_HOOK_THREAD_ID.store(thread_id, Ordering::SeqCst);
+                    let mut queue_msg = MSG::default();
+                    let _ = PeekMessageW(&mut queue_msg, None, 0, 0, PM_NOREMOVE);
+
+                    let hook = SetWinEventHook(
+                        EVENT_OBJECT_VALUECHANGE,
+                        EVENT_OBJECT_VALUECHANGE,
+                        None,
+                        Some(value_change_event_proc),
+                        0,
+                        0,
+                        WINEVENT_OUTOFCONTEXT,
+                    );
+
+                    let ready = !hook.is_invalid();
+                    let _ = ready_tx.send(ready);
+                    if !ready {
+                        VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+                        VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
+                        VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
+                        return;
+                    }
+                    VALUE_CHANGE_HOOK_READY.store(true, Ordering::Relaxed);
+                    VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
+                    if ACTIVE_EVENT_MODE_MONITORS.load(Ordering::SeqCst) == 0 {
+                        let _ = UnhookWinEvent(hook);
+                        VALUE_CHANGE_HOOK_READY.store(false, Ordering::Relaxed);
+                        VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
+                        VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+                        VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
+                        return;
+                    }
+
+                    let mut msg = MSG::default();
+                    loop {
+                        let status = GetMessageW(&mut msg, None, 0, 0).0;
+                        if status == -1 {
+                            log::error!("GetMessageW failed in auto-learn hook thread");
+                            break;
+                        }
+                        if status == 0 {
+                            break;
+                        }
+                        if msg.message == WM_APP_AUTO_LEARN_STOP {
+                            if ACTIVE_EVENT_MODE_MONITORS.load(Ordering::SeqCst) == 0 {
+                                break;
+                            }
+                            VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
+                            continue;
+                        }
+                        let _ = TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+
+                    let _ = UnhookWinEvent(hook);
+                    VALUE_CHANGE_HOOK_READY.store(false, Ordering::Relaxed);
+                    VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
+                    VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+                    VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
+                });
+
+        match spawn_result {
+            Ok(_) => match ready_rx.recv_timeout(std::time::Duration::from_secs(2)) {
+                Ok(ready) => (ready, false),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (false, false),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => (false, true),
+            },
+            Err(_) => (false, true),
+        }
+    };
+
+    if should_reset_flags {
+        VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
+        VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
+    }
+    spawned
 }
 
 #[cfg(not(windows))]
 pub fn read_focused_text() -> Option<String> {
     None
+}
+
+fn auto_learn_event_mode_enabled(app: &AppHandle) -> bool {
+    app.store("settings.json")
+        .ok()
+        .and_then(|store| {
+            store
+                .get(store::AUTO_LEARN_EVENT_MODE)
+                .and_then(|v| v.as_bool())
+        })
+        .unwrap_or(false)
+}
+
+fn event_mode_poll_sleep_duration(hook_ready: bool) -> std::time::Duration {
+    if hook_ready {
+        std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS)
+    } else {
+        std::time::Duration::from_secs(POLL_INTERVAL_SECS)
+    }
 }
 
 pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, app: AppHandle) {
@@ -905,30 +1181,40 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
     }
     let _ = db::log_auto_learn_event(&db, "monitor", "started", &app_context, "", "", 0.0);
 
-    tauri::async_runtime::spawn(async move {
+    let event_mode = auto_learn_event_mode_enabled(&app);
+
+    std::thread::spawn(move || {
         let _monitor_guard = MonitorKeyGuard::new(key);
+        #[cfg(windows)]
+        let _event_mode_hook_guard = if event_mode {
+            Some(EventModeHookGuard::new())
+        } else {
+            None
+        };
+
         if let Err(e) = db::prune_pending_corrections(&db, PENDING_RETENTION_DAYS) {
             log::warn!("auto-learn prune failed: {e}");
         }
+        let _ = db::log_auto_learn_event(
+            &db,
+            "monitor",
+            if event_mode {
+                "event_mode"
+            } else {
+                "poll_mode"
+            },
+            &app_context,
+            "",
+            "",
+            0.0,
+        );
 
-        tokio::time::sleep(std::time::Duration::from_millis(BASELINE_CAPTURE_DELAY_MS)).await;
-        let mut baseline_text = tokio::task::spawn_blocking({
-            let injected_text = injected_text.clone();
-            move || capture_baseline_text(&injected_text)
-        })
-        .await
-        .ok()
-        .flatten();
+        std::thread::sleep(std::time::Duration::from_millis(BASELINE_CAPTURE_DELAY_MS));
+        let mut baseline_text = capture_baseline_text(&injected_text);
 
         if baseline_text.is_none() {
-            tokio::time::sleep(std::time::Duration::from_millis(BASELINE_RETRY_DELAY_MS)).await;
-            baseline_text = tokio::task::spawn_blocking({
-                let injected_text = injected_text.clone();
-                move || capture_baseline_text(&injected_text)
-            })
-            .await
-            .ok()
-            .flatten();
+            std::thread::sleep(std::time::Duration::from_millis(BASELINE_RETRY_DELAY_MS));
+            baseline_text = capture_baseline_text(&injected_text);
         }
 
         let Some(baseline_text) = baseline_text else {
@@ -940,21 +1226,47 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
         let _ = db::log_auto_learn_event(&db, "anchor", "anchor_ok", &app_context, "", "", 0.0);
 
         let mut stable_text_gate = StableTextGate::default();
-        let deadline =
-            tokio::time::Instant::now() + std::time::Duration::from_secs(MONITOR_WINDOW_SECS);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(MONITOR_WINDOW_SECS);
         let mut recorded_this_session: HashSet<(String, String)> = HashSet::new();
+        #[cfg(windows)]
+        let mut last_event_seq = VALUE_CHANGE_SEQ.load(Ordering::Relaxed);
 
         loop {
-            if tokio::time::Instant::now() >= deadline {
+            if std::time::Instant::now() >= deadline {
                 break;
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
+            if event_mode {
+                #[cfg(windows)]
+                {
+                    if ensure_value_change_hook() {
+                        let timeout_at = std::time::Instant::now()
+                            + std::time::Duration::from_secs(POLL_INTERVAL_SECS);
+                        let mut saw_event = false;
+                        while std::time::Instant::now() < timeout_at {
+                            let seq = VALUE_CHANGE_SEQ.load(Ordering::Relaxed);
+                            if seq != last_event_seq {
+                                last_event_seq = seq;
+                                saw_event = true;
+                                break;
+                            }
+                            std::thread::sleep(event_mode_poll_sleep_duration(true));
+                        }
+                        if !saw_event {
+                            continue;
+                        }
+                    } else {
+                        std::thread::sleep(event_mode_poll_sleep_duration(false));
+                    }
+                }
+                #[cfg(not(windows))]
+                std::thread::sleep(event_mode_poll_sleep_duration(false));
+            } else {
+                std::thread::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
+            }
 
-            let current_text = tokio::task::spawn_blocking(read_focused_text).await;
-            let current_text = match current_text {
-                Ok(Some(t)) => t,
-                _ => continue,
+            let Some(current_text) = read_focused_text() else {
+                continue;
             };
 
             let Some(stable_text) = stable_text_gate.observe(current_text) else {
@@ -1019,7 +1331,8 @@ fn apply_rejection(target: &RejectionTarget, db: &DbHandle, app: &AppHandle, pre
             if let Err(e) = db::delete_auto_learned_entries_by_ids(db, ids) {
                 log::warn!("{prefix}: delete failed: {e}");
             } else {
-                app.emit("open-flow:dictionary-entry-rejected", ids.len()).ok();
+                app.emit("open-flow:dictionary-entry-rejected", ids.len())
+                    .ok();
             }
         }
         RejectionTarget::CacheKey { key } => {
@@ -1139,11 +1452,10 @@ fn run_rejection_monitor(
             if rejected {
                 // Guard against false positives from window switches: only fire
                 // if the original injection window is still in the foreground.
-                let still_focused = tokio::task::spawn_blocking(move || {
-                    is_target_window_focused(target_hwnd)
-                })
-                .await
-                .unwrap_or(false);
+                let still_focused =
+                    tokio::task::spawn_blocking(move || is_target_window_focused(target_hwnd))
+                        .await
+                        .unwrap_or(false);
                 if still_focused {
                     log::info!("{prefix}: deletion detected, firing rejection");
                     apply_rejection(&target, &db, &app, prefix);
@@ -1168,7 +1480,9 @@ pub fn start_rejection_monitor(
     }
     run_rejection_monitor(
         injected_text,
-        RejectionTarget::DictEntries { ids: applied_entry_ids },
+        RejectionTarget::DictEntries {
+            ids: applied_entry_ids,
+        },
         target_hwnd,
         db,
         app,
@@ -1393,6 +1707,22 @@ mod tests {
             Some("say nuggaaaa")
         );
         assert_eq!(gate.observe("say nuggaaaa".to_string()), None);
+    }
+
+    #[test]
+    fn event_mode_hook_unavailable_uses_poll_interval_sleep() {
+        assert_eq!(
+            event_mode_poll_sleep_duration(false),
+            std::time::Duration::from_secs(POLL_INTERVAL_SECS)
+        );
+    }
+
+    #[test]
+    fn event_mode_hook_ready_uses_fast_poll_sleep() {
+        assert_eq!(
+            event_mode_poll_sleep_duration(true),
+            std::time::Duration::from_millis(EVENT_MONITOR_POLL_MS)
+        );
     }
 
     #[test]

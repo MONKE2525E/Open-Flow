@@ -238,7 +238,7 @@
 
   .settings-foot {
     padding: 8px 10px;
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 9.5px;
     color: var(--ink-mute);
   }
