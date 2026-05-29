@@ -105,7 +105,7 @@
     <div class="label">Force Setup On Launch</div>
     <div class="desc">Shows onboarding on startup without erasing saved settings.</div>
   </div>
-  <Toggle checked={forceSetupOnLaunch} onchange={handleForceSetupOnLaunch} />
+  <Toggle checked={forceSetupOnLaunch} onchange={handleForceSetupOnLaunch} label="Force setup on launch" />
 </div>
 <div class="setting-row">
   <div>

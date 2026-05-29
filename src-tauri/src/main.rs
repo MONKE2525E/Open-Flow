@@ -51,6 +51,7 @@ fn lock_app_state(state: &SharedState) -> Option<MutexGuard<'_, AppState>> {
 fn main() {
     let shared: SharedState = Arc::new(Mutex::new(AppState {
         session: None,
+        starting: false,
         handless: false,
         target_hwnd: 0,
         retry_capture: None,

@@ -175,13 +175,13 @@ WAL mode is enabled. Migrations use `execute_batch` wrapped in explicit `BEGIN/C
 |---|---|---|
 | Groq | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` |
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
-| Google | `gemini-3.5-flash` | `gemini-3.5-flash` |
+| Google | `gemini-3.5-flash` (inline audio) | `gemini-3.5-flash` |
 
 Groq is the recommended default — free tier, fast LPU inference. Google sends audio as base64 in the request body; Groq and OpenAI use multipart form upload. The cleanup request wraps transcription text in `<raw_dictation>` XML tags. Google cleanup sets `thinking_budget: 0`.
 
 The `transcription_language` setting (ISO 639-1, default `en`) is sent to Groq/OpenAI as the `language` form field and to Gemini as a natural-language label via `transcription_language_label()` in `store.rs`. Supported languages: `src/lib/transcriptionLanguages.ts` (frontend), `is_supported_transcription_language()` (Rust).
 
-**API fallback:** Retryable errors (timeouts, 429, 5xx) try configured fallback models in order. Fallbacks are set per task in Models settings (`transcription_fallback_models` / `cleanup_fallback_models`). Quota errors (`QUOTA_EXCEEDED:` prefix — use `quota_bail()`) and non-retryable errors fail immediately with no fallback.
+**API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to any configured fallback models. Fallback models are configured per task (transcription/cleanup) in the Models settings tab and stored as `transcription_fallback_models` / `cleanup_fallback_models` arrays. Fallback is implicit — if fallback models are configured, they are always tried in order. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately.
 
 ## Global Hotkey Behavior
 

@@ -63,6 +63,21 @@
   // ── Quick Settings (step 6) ───────────────────────────────────────────────
   let quickPrefs = { cleanup: true, noise: true, caps: true, autoLearn: false, autostart: false, muteAudio: false };
   let quickSettingsReady = false;
+  type QuickPrefKey = keyof typeof quickPrefs;
+  function toggleQuickPref(key: QuickPrefKey) {
+    quickPrefs = { ...quickPrefs, [key]: !quickPrefs[key] };
+  }
+  function handleQuickSwitchKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+    }
+  }
+  function handleQuickSwitchKeyup(event: KeyboardEvent, key: QuickPrefKey) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      toggleQuickPref(key);
+    }
+  }
   let selectedLanguage = 'en' as TranscriptionLanguageCode;
   let setupCalibrationCopy = getSetupCalibrationCopy(selectedLanguage);
   $: setupCalibrationCopy = getSetupCalibrationCopy(selectedLanguage);
@@ -638,9 +653,10 @@
                   <div class="qs-toggle-label">AI cleanup</div>
                   <div class="qs-toggle-desc">Refine every transcription with an LLM automatically</div>
                 </div>
-                <div class="qs-toggle" class:on={quickPrefs.cleanup} role="switch" aria-checked={quickPrefs.cleanup} tabindex="0"
-                  onclick={() => { quickPrefs = { ...quickPrefs, cleanup: !quickPrefs.cleanup }; }}
-                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, cleanup: !quickPrefs.cleanup })}
+                <div class="qs-toggle" class:on={quickPrefs.cleanup} role="switch" aria-checked={quickPrefs.cleanup} aria-label="AI cleanup" tabindex="0"
+                  onclick={() => toggleQuickPref('cleanup')}
+                  onkeydown={handleQuickSwitchKeydown}
+                  onkeyup={(e) => handleQuickSwitchKeyup(e, 'cleanup')}
                 ></div>
               </div>
               <div class="qs-toggle-row">
@@ -648,9 +664,10 @@
                   <div class="qs-toggle-label">Noise reduction</div>
                   <div class="qs-toggle-desc">Suppress background noise before transcription</div>
                 </div>
-                <div class="qs-toggle" class:on={quickPrefs.noise} role="switch" aria-checked={quickPrefs.noise} tabindex="0"
-                  onclick={() => { quickPrefs = { ...quickPrefs, noise: !quickPrefs.noise }; }}
-                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, noise: !quickPrefs.noise })}
+                <div class="qs-toggle" class:on={quickPrefs.noise} role="switch" aria-checked={quickPrefs.noise} aria-label="Noise reduction" tabindex="0"
+                  onclick={() => toggleQuickPref('noise')}
+                  onkeydown={handleQuickSwitchKeydown}
+                  onkeyup={(e) => handleQuickSwitchKeyup(e, 'noise')}
                 ></div>
               </div>
               <div class="qs-toggle-row">
@@ -658,9 +675,10 @@
                   <div class="qs-toggle-label">Contextual capitalization</div>
                   <div class="qs-toggle-desc">Lowercase the first word when injecting mid-sentence</div>
                 </div>
-                <div class="qs-toggle" class:on={quickPrefs.caps} role="switch" aria-checked={quickPrefs.caps} tabindex="0"
-                  onclick={() => { quickPrefs = { ...quickPrefs, caps: !quickPrefs.caps }; }}
-                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, caps: !quickPrefs.caps })}
+                <div class="qs-toggle" class:on={quickPrefs.caps} role="switch" aria-checked={quickPrefs.caps} aria-label="Contextual capitalization" tabindex="0"
+                  onclick={() => toggleQuickPref('caps')}
+                  onkeydown={handleQuickSwitchKeydown}
+                  onkeyup={(e) => handleQuickSwitchKeyup(e, 'caps')}
                 ></div>
               </div>
               <div class="qs-toggle-row">
@@ -668,9 +686,10 @@
                   <div class="qs-toggle-label">Auto-learn corrections</div>
                   <div class="qs-toggle-desc">Add confirmed corrections to your dictionary automatically</div>
                 </div>
-                <div class="qs-toggle" class:on={quickPrefs.autoLearn} role="switch" aria-checked={quickPrefs.autoLearn} tabindex="0"
-                  onclick={() => { quickPrefs = { ...quickPrefs, autoLearn: !quickPrefs.autoLearn }; }}
-                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, autoLearn: !quickPrefs.autoLearn })}
+                <div class="qs-toggle" class:on={quickPrefs.autoLearn} role="switch" aria-checked={quickPrefs.autoLearn} aria-label="Auto-learn corrections" tabindex="0"
+                  onclick={() => toggleQuickPref('autoLearn')}
+                  onkeydown={handleQuickSwitchKeydown}
+                  onkeyup={(e) => handleQuickSwitchKeyup(e, 'autoLearn')}
                 ></div>
               </div>
             </div>
@@ -695,9 +714,10 @@
                   <div class="qs-toggle-label">Start on boot</div>
                   <div class="qs-toggle-desc">Launch Open Flow with Windows</div>
                 </div>
-                <div class="qs-toggle" class:on={quickPrefs.autostart} role="switch" aria-checked={quickPrefs.autostart} tabindex="0"
-                  onclick={() => { quickPrefs = { ...quickPrefs, autostart: !quickPrefs.autostart }; }}
-                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, autostart: !quickPrefs.autostart })}
+                <div class="qs-toggle" class:on={quickPrefs.autostart} role="switch" aria-checked={quickPrefs.autostart} aria-label="Start on boot" tabindex="0"
+                  onclick={() => toggleQuickPref('autostart')}
+                  onkeydown={handleQuickSwitchKeydown}
+                  onkeyup={(e) => handleQuickSwitchKeyup(e, 'autostart')}
                 ></div>
               </div>
               <div class="qs-toggle-row">
@@ -705,9 +725,10 @@
                   <div class="qs-toggle-label">Mute while recording</div>
                   <div class="qs-toggle-desc">Silence other audio during dictation</div>
                 </div>
-                <div class="qs-toggle" class:on={quickPrefs.muteAudio} role="switch" aria-checked={quickPrefs.muteAudio} tabindex="0"
-                  onclick={() => { quickPrefs = { ...quickPrefs, muteAudio: !quickPrefs.muteAudio }; }}
-                  onkeydown={(e) => e.key === 'Enter' && (quickPrefs = { ...quickPrefs, muteAudio: !quickPrefs.muteAudio })}
+                <div class="qs-toggle" class:on={quickPrefs.muteAudio} role="switch" aria-checked={quickPrefs.muteAudio} aria-label="Mute while recording" tabindex="0"
+                  onclick={() => toggleQuickPref('muteAudio')}
+                  onkeydown={handleQuickSwitchKeydown}
+                  onkeyup={(e) => handleQuickSwitchKeyup(e, 'muteAudio')}
                 ></div>
               </div>
             </div>

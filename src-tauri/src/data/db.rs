@@ -100,12 +100,19 @@ CREATE TABLE IF NOT EXISTS cleanup_cache (
   created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
   last_hit_at DATETIME NOT NULL DEFAULT (datetime('now')),
   expires_at  DATETIME NOT NULL,
+  created_at_epoch  INTEGER,
+  last_hit_at_epoch INTEGER,
+  expires_at_epoch  INTEGER,
   is_snippet  INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at
   ON cleanup_cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
   ON cleanup_cache(last_hit_at);
+CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at_epoch
+  ON cleanup_cache(expires_at_epoch);
+CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at_epoch
+  ON cleanup_cache(last_hit_at_epoch);
 ";
 
 pub fn open(path: &str) -> Result<Db> {
@@ -175,12 +182,19 @@ pub fn open(path: &str) -> Result<Db> {
                hit_count   INTEGER NOT NULL DEFAULT 0,
                created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
                last_hit_at DATETIME NOT NULL DEFAULT (datetime('now')),
-               expires_at  DATETIME NOT NULL
-             );
+               expires_at  DATETIME NOT NULL,
+               created_at_epoch  INTEGER,
+               last_hit_at_epoch INTEGER,
+               expires_at_epoch  INTEGER
+              );
              CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at
                ON cleanup_cache(expires_at);
              CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
                ON cleanup_cache(last_hit_at);
+             CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at_epoch
+               ON cleanup_cache(expires_at_epoch);
+             CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at_epoch
+               ON cleanup_cache(last_hit_at_epoch);
              PRAGMA user_version = 3;
              COMMIT;",
         );
@@ -250,6 +264,45 @@ pub fn open(path: &str) -> Result<Db> {
                 "ALTER TABLE cleanup_cache ADD COLUMN is_snippet INTEGER NOT NULL DEFAULT 0;",
             )?;
             conn.execute_batch("PRAGMA user_version = 5;")?;
+            Ok(())
+        })() {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err);
+        }
+        conn.execute_batch("COMMIT;")?;
+    }
+    if user_version < 6 {
+        conn.execute_batch("BEGIN;")?;
+        if let Err(err) = (|| -> Result<()> {
+            ensure_table_column(
+                &conn,
+                "cleanup_cache",
+                "created_at_epoch",
+                "ALTER TABLE cleanup_cache ADD COLUMN created_at_epoch INTEGER;",
+            )?;
+            ensure_table_column(
+                &conn,
+                "cleanup_cache",
+                "last_hit_at_epoch",
+                "ALTER TABLE cleanup_cache ADD COLUMN last_hit_at_epoch INTEGER;",
+            )?;
+            ensure_table_column(
+                &conn,
+                "cleanup_cache",
+                "expires_at_epoch",
+                "ALTER TABLE cleanup_cache ADD COLUMN expires_at_epoch INTEGER;",
+            )?;
+            conn.execute_batch(
+                "UPDATE cleanup_cache
+                 SET created_at_epoch = COALESCE(created_at_epoch, CAST(strftime('%s', created_at || 'Z') AS INTEGER)),
+                     last_hit_at_epoch = COALESCE(last_hit_at_epoch, CAST(strftime('%s', last_hit_at || 'Z') AS INTEGER)),
+                     expires_at_epoch = COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at || 'Z') AS INTEGER));
+                 CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at_epoch
+                   ON cleanup_cache(expires_at_epoch);
+                 CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at_epoch
+                   ON cleanup_cache(last_hit_at_epoch);
+                 PRAGMA user_version = 6;",
+            )?;
             Ok(())
         })() {
             let _ = conn.execute_batch("ROLLBACK;");
@@ -783,14 +836,53 @@ pub fn increment_snippet_use_counts(db: &Db, counts: &[(i64, i64)]) -> Result<()
 
 pub fn cleanup_cache_get_active(db: &Db, key: &str) -> Result<Option<CleanupCacheEntry>> {
     let conn = lock_conn(db)?;
-    let mut stmt = conn.prepare(
-        "SELECT key, clean_text, hit_count, created_at, last_hit_at, expires_at, is_snippet
+    let now_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let mut epoch_stmt = conn.prepare(
+        "SELECT key,
+                clean_text,
+                hit_count,
+                COALESCE(datetime(created_at_epoch, 'unixepoch'), created_at),
+                COALESCE(datetime(last_hit_at_epoch, 'unixepoch'), last_hit_at),
+                COALESCE(datetime(expires_at_epoch, 'unixepoch'), expires_at),
+                is_snippet
          FROM cleanup_cache
-         WHERE key = ?1 AND expires_at > datetime('now')
+         WHERE key = ?1
+           AND expires_at_epoch > ?2
          LIMIT 1",
     )?;
-    let mut rows = stmt.query(params![key])?;
-    let Some(row) = rows.next()? else {
+    let mut epoch_rows = epoch_stmt.query(params![key, now_epoch])?;
+    if let Some(row) = epoch_rows.next()? {
+        return Ok(Some(CleanupCacheEntry {
+            key: row.get(0)?,
+            clean_text: row.get(1)?,
+            hit_count: row.get(2)?,
+            created_at: row.get(3)?,
+            last_hit_at: row.get(4)?,
+            expires_at: row.get(5)?,
+            is_snippet: row.get::<_, i64>(6)? != 0,
+        }));
+    }
+
+    let mut fallback_stmt = conn.prepare(
+        "SELECT key,
+                clean_text,
+                hit_count,
+                created_at,
+                last_hit_at,
+                expires_at,
+                is_snippet
+         FROM cleanup_cache
+         WHERE key = ?1
+           AND expires_at_epoch IS NULL
+           AND expires_at > datetime('now')
+         LIMIT 1",
+    )?;
+    let mut fallback_rows = fallback_stmt.query(params![key])?;
+    let Some(row) = fallback_rows.next()? else {
         return Ok(None);
     };
     Ok(Some(CleanupCacheEntry {
@@ -814,8 +906,13 @@ pub fn cleanup_cache_insert_new(
     let conn = lock_conn(db)?;
     conn.execute(
         "INSERT OR REPLACE INTO cleanup_cache
-         (key, clean_text, hit_count, created_at, last_hit_at, expires_at, is_snippet)
-         VALUES (?1, ?2, 1, datetime('now'), datetime('now'), ?3, ?4)",
+         (key, clean_text, hit_count, created_at, last_hit_at, expires_at,
+          created_at_epoch, last_hit_at_epoch, expires_at_epoch, is_snippet)
+         VALUES (?1, ?2, 1, datetime('now'), datetime('now'), ?3,
+                 CAST(strftime('%s', 'now') AS INTEGER),
+                 CAST(strftime('%s', 'now') AS INTEGER),
+                 CAST(strftime('%s', ?3 || 'Z') AS INTEGER),
+                 ?4)",
         params![key, clean_text, expires_at, is_snippet as i64],
     )?;
     Ok(())
@@ -831,7 +928,11 @@ pub fn cleanup_cache_touch_hit(
     let conn = lock_conn(db)?;
     conn.execute(
         "UPDATE cleanup_cache
-         SET hit_count = ?2, last_hit_at = ?3, expires_at = ?4
+         SET hit_count = ?2,
+             last_hit_at = ?3,
+             expires_at = ?4,
+             last_hit_at_epoch = CAST(strftime('%s', ?3 || 'Z') AS INTEGER),
+             expires_at_epoch = CAST(strftime('%s', ?4 || 'Z') AS INTEGER)
          WHERE key = ?1",
         params![key, new_hit_count, last_hit_at, expires_at],
     )?;
@@ -840,13 +941,25 @@ pub fn cleanup_cache_touch_hit(
 
 pub fn cleanup_cache_prune_expired(db: &Db) -> Result<usize> {
     let conn = lock_conn(db)?;
-    let changed = conn.execute(
+    let changed_epoch = conn.execute(
         "DELETE FROM cleanup_cache
-         WHERE expires_at <= datetime('now')
-            OR (last_hit_at <= datetime('now', '-2 days') AND is_snippet = 0)",
+         WHERE (expires_at_epoch IS NOT NULL
+                AND expires_at_epoch <= CAST(strftime('%s', 'now') AS INTEGER))
+            OR (last_hit_at_epoch IS NOT NULL
+                AND last_hit_at_epoch <= CAST(strftime('%s', 'now', '-2 days') AS INTEGER)
+                AND is_snippet = 0)",
         [],
     )?;
-    Ok(changed)
+    let changed_fallback = conn.execute(
+        "DELETE FROM cleanup_cache
+         WHERE (expires_at_epoch IS NULL
+                AND expires_at <= datetime('now'))
+            OR (last_hit_at_epoch IS NULL
+                AND last_hit_at <= datetime('now', '-2 days')
+                AND is_snippet = 0)",
+        [],
+    )?;
+    Ok(changed_epoch + changed_fallback)
 }
 
 pub fn cleanup_cache_clear_all(db: &Db) -> Result<usize> {
@@ -956,6 +1069,90 @@ mod tests {
         assert!(cleanup_cache_get_active(&db, "live")
             .expect("query live")
             .is_some());
+    }
+
+    #[test]
+    fn cleanup_cache_get_active_supports_null_epoch_fallback() {
+        let db = test_db();
+        cleanup_cache_insert_new(&db, "legacy", "hello", "2999-01-01 00:00:00", false)
+            .expect("insert");
+
+        let conn = lock_conn(&db).expect("lock");
+        conn.execute(
+            "UPDATE cleanup_cache
+             SET expires_at_epoch = NULL
+             WHERE key = 'legacy'",
+            [],
+        )
+        .expect("null out epoch");
+        drop(conn);
+
+        assert!(
+            cleanup_cache_get_active(&db, "legacy")
+                .expect("query")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn cleanup_cache_get_active_handles_null_created_and_last_hit_epochs() {
+        let db = test_db();
+        cleanup_cache_insert_new(&db, "partial", "hello", "2999-01-01 00:00:00", false)
+            .expect("insert");
+
+        let conn = lock_conn(&db).expect("lock");
+        conn.execute(
+            "UPDATE cleanup_cache
+             SET created_at_epoch = NULL,
+                 last_hit_at_epoch = NULL
+             WHERE key = 'partial'",
+            [],
+        )
+        .expect("null out partial epochs");
+        drop(conn);
+
+        let row = cleanup_cache_get_active(&db, "partial")
+            .expect("query")
+            .expect("row exists");
+        assert_eq!(row.key, "partial");
+        assert_eq!(row.clean_text, "hello");
+    }
+
+    #[test]
+    fn cleanup_cache_epoch_columns_treat_utc_text_as_utc() {
+        let db = test_db();
+        cleanup_cache_insert_new(&db, "utc", "value", "2026-01-01 00:00:00", false).expect("insert");
+
+        let conn = lock_conn(&db).expect("lock");
+        let inserted_expiry_epoch: i64 = conn
+            .query_row(
+                "SELECT expires_at_epoch FROM cleanup_cache WHERE key = 'utc'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("select insert epoch");
+        drop(conn);
+        assert_eq!(inserted_expiry_epoch, 1_767_225_600);
+
+        cleanup_cache_touch_hit(
+            &db,
+            "utc",
+            2,
+            "2026-01-02 03:04:05",
+            "2026-02-03 04:05:06",
+        )
+        .expect("touch");
+        let conn = lock_conn(&db).expect("lock");
+        let (last_hit_epoch, expires_epoch): (i64, i64) = conn
+            .query_row(
+                "SELECT last_hit_at_epoch, expires_at_epoch FROM cleanup_cache WHERE key = 'utc'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("select touched epochs");
+
+        assert_eq!(last_hit_epoch, 1_767_323_045);
+        assert_eq!(expires_epoch, 1_770_091_506);
     }
 
     #[test]
@@ -1131,4 +1328,3 @@ mod tests {
         assert_eq!(query_dictionary(&db).expect("after").len(), 0);
     }
 }
-

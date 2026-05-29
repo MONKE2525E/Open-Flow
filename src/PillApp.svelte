@@ -95,6 +95,7 @@
     if (rafId !== 0) { cancelAnimationFrame(rafId); rafId = 0; barHeights = Array(BARS).fill(3); }
   }
 
+
   function goIdle() {
     if (dying) return;
     dying = true;

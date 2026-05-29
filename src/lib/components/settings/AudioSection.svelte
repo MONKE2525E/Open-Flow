@@ -108,7 +108,7 @@
 
 <div class="setting-row">
   <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
-  <Toggle checked={noiseReduction} onchange={handleNoiseReduction} />
+  <Toggle checked={noiseReduction} onchange={handleNoiseReduction} label="Noise reduction" />
 </div>
 
 <div class="setting-row cal-row" class:calibrating={$isCalibrating}>
