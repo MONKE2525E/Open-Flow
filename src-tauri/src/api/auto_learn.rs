@@ -1047,7 +1047,7 @@ fn ensure_value_change_hook() -> bool {
             && !VALUE_CHANGE_HOOK_STOP_REQUESTED.load(Ordering::SeqCst);
     }
 
-    let spawned = {
+    let (spawned, should_reset_flags) = {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
 
         let spawn_result =
@@ -1124,14 +1124,16 @@ fn ensure_value_change_hook() -> bool {
                 });
 
         match spawn_result {
-            Ok(_) => ready_rx
-                .recv_timeout(std::time::Duration::from_secs(2))
-                .unwrap_or(false),
-            Err(_) => false,
+            Ok(_) => match ready_rx.recv_timeout(std::time::Duration::from_secs(2)) {
+                Ok(ready) => (ready, false),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (false, false),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => (false, true),
+            },
+            Err(_) => (false, true),
         }
     };
 
-    if !spawned {
+    if should_reset_flags {
         VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
         VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
     }

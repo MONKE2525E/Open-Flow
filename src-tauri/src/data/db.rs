@@ -845,9 +845,9 @@ pub fn cleanup_cache_get_active(db: &Db, key: &str) -> Result<Option<CleanupCach
         "SELECT key,
                 clean_text,
                 hit_count,
-                datetime(created_at_epoch, 'unixepoch'),
-                datetime(last_hit_at_epoch, 'unixepoch'),
-                datetime(expires_at_epoch, 'unixepoch'),
+                COALESCE(datetime(created_at_epoch, 'unixepoch'), created_at),
+                COALESCE(datetime(last_hit_at_epoch, 'unixepoch'), last_hit_at),
+                COALESCE(datetime(expires_at_epoch, 'unixepoch'), expires_at),
                 is_snippet
          FROM cleanup_cache
          WHERE key = ?1
@@ -1092,6 +1092,30 @@ mod tests {
                 .expect("query")
                 .is_some()
         );
+    }
+
+    #[test]
+    fn cleanup_cache_get_active_handles_null_created_and_last_hit_epochs() {
+        let db = test_db();
+        cleanup_cache_insert_new(&db, "partial", "hello", "2999-01-01 00:00:00", false)
+            .expect("insert");
+
+        let conn = lock_conn(&db).expect("lock");
+        conn.execute(
+            "UPDATE cleanup_cache
+             SET created_at_epoch = NULL,
+                 last_hit_at_epoch = NULL
+             WHERE key = 'partial'",
+            [],
+        )
+        .expect("null out partial epochs");
+        drop(conn);
+
+        let row = cleanup_cache_get_active(&db, "partial")
+            .expect("query")
+            .expect("row exists");
+        assert_eq!(row.key, "partial");
+        assert_eq!(row.clean_text, "hello");
     }
 
     #[test]
