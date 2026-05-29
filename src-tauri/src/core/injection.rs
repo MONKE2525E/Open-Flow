@@ -222,7 +222,9 @@ unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
             restored,
             saved.entries.len()
         );
-        return;
+        if attempt + 1 < CLIPBOARD_RESTORE_ATTEMPTS {
+            std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_RESTORE_RETRY_MS));
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_store::StoreExt;
@@ -924,7 +924,9 @@ pub fn read_focused_text() -> Option<String> {
 }
 
 #[cfg(windows)]
-static VALUE_CHANGE_HOOK_READY: OnceLock<bool> = OnceLock::new();
+static VALUE_CHANGE_HOOK_READY: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+static VALUE_CHANGE_HOOK_SPAWNED: AtomicBool = AtomicBool::new(false);
 #[cfg(windows)]
 static VALUE_CHANGE_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -932,23 +934,46 @@ static VALUE_CHANGE_SEQ: AtomicU64 = AtomicU64::new(0);
 unsafe extern "system" fn value_change_event_proc(
     _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
     event: u32,
-    _hwnd: windows::Win32::Foundation::HWND,
+    hwnd: windows::Win32::Foundation::HWND,
     _id_object: i32,
     _id_child: i32,
     _id_event_thread: u32,
     _event_time: u32,
 ) {
-    use windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_VALUECHANGE;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EVENT_OBJECT_VALUECHANGE, GetForegroundWindow, IsChild,
+    };
 
     if event != EVENT_OBJECT_VALUECHANGE {
         return;
     }
-    VALUE_CHANGE_SEQ.fetch_add(1, Ordering::Relaxed);
+    if hwnd.0.is_null() {
+        return;
+    }
+
+    let foreground = GetForegroundWindow();
+    if foreground.0.is_null() {
+        return;
+    }
+
+    if hwnd == foreground || IsChild(foreground, hwnd).as_bool() {
+        VALUE_CHANGE_SEQ.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 #[cfg(windows)]
 fn ensure_value_change_hook() -> bool {
-    *VALUE_CHANGE_HOOK_READY.get_or_init(|| {
+    if VALUE_CHANGE_HOOK_READY.load(Ordering::Relaxed) {
+        return true;
+    }
+    if VALUE_CHANGE_HOOK_SPAWNED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return VALUE_CHANGE_HOOK_READY.load(Ordering::Relaxed);
+    }
+
+    let spawned = {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
 
         let spawn_result =
@@ -957,8 +982,8 @@ fn ensure_value_change_hook() -> bool {
                 .spawn(move || unsafe {
                     use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent};
                     use windows::Win32::UI::WindowsAndMessaging::{
-                        DispatchMessageW, GetMessageW, EVENT_OBJECT_VALUECHANGE, MSG,
-                        WINEVENT_OUTOFCONTEXT,
+                        DispatchMessageW, GetMessageW, TranslateMessage,
+                        EVENT_OBJECT_VALUECHANGE, MSG, WINEVENT_OUTOFCONTEXT,
                     };
 
                     let hook = SetWinEventHook(
@@ -974,8 +999,10 @@ fn ensure_value_change_hook() -> bool {
                     let ready = !hook.is_invalid();
                     let _ = ready_tx.send(ready);
                     if !ready {
+                        VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
                         return;
                     }
+                    VALUE_CHANGE_HOOK_READY.store(true, Ordering::Relaxed);
 
                     let mut msg = MSG::default();
                     loop {
@@ -987,18 +1014,27 @@ fn ensure_value_change_hook() -> bool {
                         if status == 0 {
                             break;
                         }
+                        let _ = TranslateMessage(&msg);
                         DispatchMessageW(&msg);
                     }
 
                     let _ = UnhookWinEvent(hook);
+                    VALUE_CHANGE_HOOK_READY.store(false, Ordering::Relaxed);
+                    VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
                 });
 
-        if spawn_result.is_err() {
-            return false;
+        match spawn_result {
+            Ok(_) => ready_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap_or(false),
+            Err(_) => false,
         }
+    };
 
-        ready_rx.recv().unwrap_or(false)
-    })
+    if !spawned {
+        VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
+    }
+    spawned
 }
 
 #[cfg(not(windows))]
