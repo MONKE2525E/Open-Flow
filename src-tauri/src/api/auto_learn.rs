@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_store::StoreExt;
@@ -45,6 +45,38 @@ impl Drop for MonitorKeyGuard {
     fn drop(&mut self) {
         if let Ok(mut active) = active_monitors().lock() {
             active.remove(&self.key);
+        }
+    }
+}
+
+#[cfg(windows)]
+struct EventModeHookGuard;
+
+#[cfg(windows)]
+impl EventModeHookGuard {
+    fn new() -> Self {
+        ACTIVE_EVENT_MODE_MONITORS.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+#[cfg(windows)]
+impl Drop for EventModeHookGuard {
+    fn drop(&mut self) {
+        loop {
+            let current = ACTIVE_EVENT_MODE_MONITORS.load(Ordering::SeqCst);
+            if current == 0 {
+                return;
+            }
+            if ACTIVE_EVENT_MODE_MONITORS
+                .compare_exchange(current, current - 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                if current == 1 {
+                    request_value_change_hook_shutdown();
+                }
+                return;
+            }
         }
     }
 }
@@ -929,6 +961,33 @@ static VALUE_CHANGE_HOOK_READY: AtomicBool = AtomicBool::new(false);
 static VALUE_CHANGE_HOOK_SPAWNED: AtomicBool = AtomicBool::new(false);
 #[cfg(windows)]
 static VALUE_CHANGE_SEQ: AtomicU64 = AtomicU64::new(0);
+#[cfg(windows)]
+static VALUE_CHANGE_HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+#[cfg(windows)]
+static ACTIVE_EVENT_MODE_MONITORS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(windows)]
+fn request_value_change_hook_shutdown() {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
+
+    if !VALUE_CHANGE_HOOK_SPAWNED.load(Ordering::SeqCst) {
+        return;
+    }
+
+    let thread_id = VALUE_CHANGE_HOOK_THREAD_ID.load(Ordering::SeqCst);
+    if thread_id == 0 {
+        return;
+    }
+
+    unsafe {
+        if PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0)).is_err() {
+            log::debug!(
+                "auto-learn: failed to post WM_QUIT to value-change hook thread id={thread_id}"
+            );
+        }
+    }
+}
 
 #[cfg(windows)]
 unsafe extern "system" fn value_change_event_proc(
@@ -980,11 +1039,17 @@ fn ensure_value_change_hook() -> bool {
             std::thread::Builder::new()
                 .name("auto_learn_value_change_hook".to_string())
                 .spawn(move || unsafe {
+                    use windows::Win32::System::Threading::GetCurrentThreadId;
                     use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent};
                     use windows::Win32::UI::WindowsAndMessaging::{
-                        DispatchMessageW, GetMessageW, TranslateMessage,
-                        EVENT_OBJECT_VALUECHANGE, MSG, WINEVENT_OUTOFCONTEXT,
+                        DispatchMessageW, GetMessageW, PeekMessageW, TranslateMessage,
+                        EVENT_OBJECT_VALUECHANGE, MSG, PM_NOREMOVE, WINEVENT_OUTOFCONTEXT,
                     };
+
+                    let thread_id = GetCurrentThreadId();
+                    VALUE_CHANGE_HOOK_THREAD_ID.store(thread_id, Ordering::SeqCst);
+                    let mut queue_msg = MSG::default();
+                    let _ = PeekMessageW(&mut queue_msg, None, 0, 0, PM_NOREMOVE);
 
                     let hook = SetWinEventHook(
                         EVENT_OBJECT_VALUECHANGE,
@@ -999,10 +1064,18 @@ fn ensure_value_change_hook() -> bool {
                     let ready = !hook.is_invalid();
                     let _ = ready_tx.send(ready);
                     if !ready {
+                        VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
                         VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
                         return;
                     }
                     VALUE_CHANGE_HOOK_READY.store(true, Ordering::Relaxed);
+                    if ACTIVE_EVENT_MODE_MONITORS.load(Ordering::SeqCst) == 0 {
+                        let _ = UnhookWinEvent(hook);
+                        VALUE_CHANGE_HOOK_READY.store(false, Ordering::Relaxed);
+                        VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
+                        VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+                        return;
+                    }
 
                     let mut msg = MSG::default();
                     loop {
@@ -1021,6 +1094,7 @@ fn ensure_value_change_hook() -> bool {
                     let _ = UnhookWinEvent(hook);
                     VALUE_CHANGE_HOOK_READY.store(false, Ordering::Relaxed);
                     VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
+                    VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
                 });
 
         match spawn_result {
@@ -1082,6 +1156,13 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
 
     std::thread::spawn(move || {
         let _monitor_guard = MonitorKeyGuard::new(key);
+        #[cfg(windows)]
+        let _event_mode_hook_guard = if event_mode {
+            Some(EventModeHookGuard::new())
+        } else {
+            None
+        };
+
         if let Err(e) = db::prune_pending_corrections(&db, PENDING_RETENTION_DAYS) {
             log::warn!("auto-learn prune failed: {e}");
         }

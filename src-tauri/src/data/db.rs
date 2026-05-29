@@ -294,9 +294,9 @@ pub fn open(path: &str) -> Result<Db> {
             )?;
             conn.execute_batch(
                 "UPDATE cleanup_cache
-                 SET created_at_epoch = COALESCE(created_at_epoch, CAST(strftime('%s', created_at) AS INTEGER)),
-                     last_hit_at_epoch = COALESCE(last_hit_at_epoch, CAST(strftime('%s', last_hit_at) AS INTEGER)),
-                     expires_at_epoch = COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at) AS INTEGER));
+                 SET created_at_epoch = COALESCE(created_at_epoch, CAST(strftime('%s', created_at || 'Z') AS INTEGER)),
+                     last_hit_at_epoch = COALESCE(last_hit_at_epoch, CAST(strftime('%s', last_hit_at || 'Z') AS INTEGER)),
+                     expires_at_epoch = COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at || 'Z') AS INTEGER));
                  CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at_epoch
                    ON cleanup_cache(expires_at_epoch);
                  CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at_epoch
@@ -911,7 +911,7 @@ pub fn cleanup_cache_insert_new(
          VALUES (?1, ?2, 1, datetime('now'), datetime('now'), ?3,
                  CAST(strftime('%s', 'now') AS INTEGER),
                  CAST(strftime('%s', 'now') AS INTEGER),
-                 CAST(strftime('%s', ?3) AS INTEGER),
+                 CAST(strftime('%s', ?3 || 'Z') AS INTEGER),
                  ?4)",
         params![key, clean_text, expires_at, is_snippet as i64],
     )?;
@@ -931,8 +931,8 @@ pub fn cleanup_cache_touch_hit(
          SET hit_count = ?2,
              last_hit_at = ?3,
              expires_at = ?4,
-             last_hit_at_epoch = CAST(strftime('%s', ?3) AS INTEGER),
-             expires_at_epoch = CAST(strftime('%s', ?4) AS INTEGER)
+             last_hit_at_epoch = CAST(strftime('%s', ?3 || 'Z') AS INTEGER),
+             expires_at_epoch = CAST(strftime('%s', ?4 || 'Z') AS INTEGER)
          WHERE key = ?1",
         params![key, new_hit_count, last_hit_at, expires_at],
     )?;
@@ -1092,6 +1092,43 @@ mod tests {
                 .expect("query")
                 .is_some()
         );
+    }
+
+    #[test]
+    fn cleanup_cache_epoch_columns_treat_utc_text_as_utc() {
+        let db = test_db();
+        cleanup_cache_insert_new(&db, "utc", "value", "2026-01-01 00:00:00", false).expect("insert");
+
+        let conn = lock_conn(&db).expect("lock");
+        let inserted_expiry_epoch: i64 = conn
+            .query_row(
+                "SELECT expires_at_epoch FROM cleanup_cache WHERE key = 'utc'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("select insert epoch");
+        drop(conn);
+        assert_eq!(inserted_expiry_epoch, 1_767_225_600);
+
+        cleanup_cache_touch_hit(
+            &db,
+            "utc",
+            2,
+            "2026-01-02 03:04:05",
+            "2026-02-03 04:05:06",
+        )
+        .expect("touch");
+        let conn = lock_conn(&db).expect("lock");
+        let (last_hit_epoch, expires_epoch): (i64, i64) = conn
+            .query_row(
+                "SELECT last_hit_at_epoch, expires_at_epoch FROM cleanup_cache WHERE key = 'utc'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("select touched epochs");
+
+        assert_eq!(last_hit_epoch, 1_767_323_045);
+        assert_eq!(expires_epoch, 1_770_091_506);
     }
 
     #[test]
