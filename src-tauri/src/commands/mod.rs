@@ -445,7 +445,8 @@ pub async fn start_calibration_monitoring(
         st.starting = false;
     }
 
-    start_result.map_err(|e| format!("Calibration task panicked: {e}"))?
+    let start_result = start_result.map_err(|e| format!("Calibration task panicked: {e}"))?;
+    start_result.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

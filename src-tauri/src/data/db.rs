@@ -836,9 +836,10 @@ pub fn increment_snippet_use_counts(db: &Db, counts: &[(i64, i64)]) -> Result<()
 
 pub fn cleanup_cache_get_active(db: &Db, key: &str) -> Result<Option<CleanupCacheEntry>> {
     let conn = lock_conn(db)?;
-    let now_epoch: i64 = conn.query_row("SELECT CAST(strftime('%s', 'now') AS INTEGER)", [], |r| {
-        r.get(0)
-    })?;
+    let now_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
 
     let mut epoch_stmt = conn.prepare(
         "SELECT key,
