@@ -307,7 +307,7 @@ fn enqueue_i16_buffer(
     let mut count = 0usize;
     if channels <= 1 {
         for &raw in data {
-            let mono = clamp_unit_sample(raw as f32 / i16::MAX as f32);
+            let mono = raw as f32 / i16::MAX as f32;
             sum += mono * mono;
             count += 1;
             push_overwriting_oldest(queue, dropped, mono);
@@ -315,7 +315,7 @@ fn enqueue_i16_buffer(
     } else {
         for frame in data.chunks(channels) {
             let sum_raw: i64 = frame.iter().map(|&sample| sample as i64).sum();
-            let mono = clamp_unit_sample(sum_raw as f32 / (frame.len() as f32 * i16::MAX as f32));
+            let mono = sum_raw as f32 / (frame.len() as f32 * i16::MAX as f32);
             sum += mono * mono;
             count += 1;
             push_overwriting_oldest(queue, dropped, mono);

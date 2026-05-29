@@ -836,24 +836,52 @@ pub fn increment_snippet_use_counts(db: &Db, counts: &[(i64, i64)]) -> Result<()
 
 pub fn cleanup_cache_get_active(db: &Db, key: &str) -> Result<Option<CleanupCacheEntry>> {
     let conn = lock_conn(db)?;
-    let mut stmt = conn.prepare(
+    let now_epoch: i64 = conn.query_row("SELECT CAST(strftime('%s', 'now') AS INTEGER)", [], |r| {
+        r.get(0)
+    })?;
+
+    let mut epoch_stmt = conn.prepare(
         "SELECT key,
                 clean_text,
                 hit_count,
-                datetime(COALESCE(created_at_epoch, CAST(strftime('%s', created_at) AS INTEGER)), 'unixepoch'),
-                datetime(COALESCE(last_hit_at_epoch, CAST(strftime('%s', last_hit_at) AS INTEGER)), 'unixepoch'),
-                datetime(COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at) AS INTEGER)), 'unixepoch'),
+                datetime(created_at_epoch, 'unixepoch'),
+                datetime(last_hit_at_epoch, 'unixepoch'),
+                datetime(expires_at_epoch, 'unixepoch'),
                 is_snippet
          FROM cleanup_cache
          WHERE key = ?1
-           AND (
-                (expires_at_epoch IS NOT NULL AND expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER))
-                OR (expires_at_epoch IS NULL AND expires_at > datetime('now'))
-           )
+           AND expires_at_epoch > ?2
          LIMIT 1",
     )?;
-    let mut rows = stmt.query(params![key])?;
-    let Some(row) = rows.next()? else {
+    let mut epoch_rows = epoch_stmt.query(params![key, now_epoch])?;
+    if let Some(row) = epoch_rows.next()? {
+        return Ok(Some(CleanupCacheEntry {
+            key: row.get(0)?,
+            clean_text: row.get(1)?,
+            hit_count: row.get(2)?,
+            created_at: row.get(3)?,
+            last_hit_at: row.get(4)?,
+            expires_at: row.get(5)?,
+            is_snippet: row.get::<_, i64>(6)? != 0,
+        }));
+    }
+
+    let mut fallback_stmt = conn.prepare(
+        "SELECT key,
+                clean_text,
+                hit_count,
+                created_at,
+                last_hit_at,
+                expires_at,
+                is_snippet
+         FROM cleanup_cache
+         WHERE key = ?1
+           AND expires_at_epoch IS NULL
+           AND expires_at > datetime('now')
+         LIMIT 1",
+    )?;
+    let mut fallback_rows = fallback_stmt.query(params![key])?;
+    let Some(row) = fallback_rows.next()? else {
         return Ok(None);
     };
     Ok(Some(CleanupCacheEntry {

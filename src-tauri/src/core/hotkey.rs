@@ -64,6 +64,24 @@ fn is_cursor_movement_key(vk: u32) -> bool {
     )
 }
 
+#[inline]
+fn map_vk_to_scan_code(vk: u32, layout: windows::Win32::UI::Input::KeyboardAndMouse::HKL) -> u32 {
+    // windows crate (0.61.x) wraps MapVirtualKeyExW with Option<HKL>.
+    unsafe { MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC, Some(layout)) }
+}
+
+#[inline]
+fn to_unicode_layout(
+    vk: u32,
+    scan: u32,
+    state: &[u8; 256],
+    buff: &mut [u16],
+    layout: windows::Win32::UI::Input::KeyboardAndMouse::HKL,
+) -> i32 {
+    // windows crate (0.61.x) wrapper derives cchBuff from buff.len().
+    unsafe { ToUnicodeEx(vk, scan, state, buff, 0, Some(layout)) }
+}
+
 /// Maps a VK code to the character it produces (US QWERTY layout).
 /// Letters are always returned lowercase — case doesn't affect sentence-ender
 /// or whitespace checks downstream. Returns None for keys with no stable
@@ -95,20 +113,20 @@ fn vk_to_char(vk: u32) -> Option<char> {
         let foreground = GetForegroundWindow();
         let thread_id = GetWindowThreadProcessId(foreground, None);
         let layout = GetKeyboardLayout(thread_id);
-        let scan = MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC, Some(layout));
+        let scan = map_vk_to_scan_code(vk, layout);
         if scan == 0 {
             return None;
         }
 
         let mut buff = [0u16; 8];
-        let rc = ToUnicodeEx(vk, scan, &state, &mut buff, 0, Some(layout));
+        let rc = to_unicode_layout(vk, scan, &state, &mut buff, layout);
         if rc < 0 {
             // Flush dead-key compose state with a neutral key so subsequent
             // translations are not polluted by stale composition state.
             let neutral_vk = 0x20u32; // VK_SPACE
-            let neutral_scan = MapVirtualKeyExW(neutral_vk, MAPVK_VK_TO_VSC, Some(layout));
+            let neutral_scan = map_vk_to_scan_code(neutral_vk, layout);
             for _ in 0..4 {
-                if ToUnicodeEx(neutral_vk, neutral_scan, &state, &mut buff, 0, Some(layout)) >= 0 {
+                if to_unicode_layout(neutral_vk, neutral_scan, &state, &mut buff, layout) >= 0 {
                     break;
                 }
             }
