@@ -23,48 +23,58 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool
     Ok(false)
 }
 
-fn ensure_table_column(conn: &Connection, table: &str, column: &str, def_sql: &str) -> Result<()> {
+fn ensure_table_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    def_sql: &str,
+) -> Result<bool> {
     if table_has_column(conn, table, column)? {
-        return Ok(());
+        return Ok(false);
     }
     conn.execute_batch(def_sql)?;
-    Ok(())
+    Ok(true)
 }
 
 fn ensure_cleanup_cache_schema(conn: &Connection) -> Result<()> {
-    ensure_table_column(
+    let mut repaired = false;
+    repaired |= ensure_table_column(
         conn,
         "cleanup_cache",
         "created_at_epoch",
         "ALTER TABLE cleanup_cache ADD COLUMN created_at_epoch INTEGER;",
     )?;
-    ensure_table_column(
+    repaired |= ensure_table_column(
         conn,
         "cleanup_cache",
         "last_hit_at_epoch",
         "ALTER TABLE cleanup_cache ADD COLUMN last_hit_at_epoch INTEGER;",
     )?;
-    ensure_table_column(
+    repaired |= ensure_table_column(
         conn,
         "cleanup_cache",
         "expires_at_epoch",
         "ALTER TABLE cleanup_cache ADD COLUMN expires_at_epoch INTEGER;",
     )?;
-    ensure_table_column(
+    repaired |= ensure_table_column(
         conn,
         "cleanup_cache",
         "is_snippet",
         "ALTER TABLE cleanup_cache ADD COLUMN is_snippet INTEGER NOT NULL DEFAULT 0;",
     )?;
+    if repaired {
+        conn.execute_batch(
+            "UPDATE cleanup_cache
+             SET created_at_epoch = COALESCE(created_at_epoch, CAST(strftime('%s', created_at || 'Z') AS INTEGER)),
+                 last_hit_at_epoch = COALESCE(last_hit_at_epoch, CAST(strftime('%s', last_hit_at || 'Z') AS INTEGER)),
+                 expires_at_epoch = COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at || 'Z') AS INTEGER))
+             WHERE created_at_epoch IS NULL
+                OR last_hit_at_epoch IS NULL
+                OR expires_at_epoch IS NULL;",
+        )?;
+    }
     conn.execute_batch(
-        "UPDATE cleanup_cache
-         SET created_at_epoch = COALESCE(created_at_epoch, CAST(strftime('%s', created_at || 'Z') AS INTEGER)),
-             last_hit_at_epoch = COALESCE(last_hit_at_epoch, CAST(strftime('%s', last_hit_at || 'Z') AS INTEGER)),
-             expires_at_epoch = COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at || 'Z') AS INTEGER))
-         WHERE created_at_epoch IS NULL
-            OR last_hit_at_epoch IS NULL
-            OR expires_at_epoch IS NULL;
-         CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at_epoch
+        "CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at_epoch
            ON cleanup_cache(expires_at_epoch);
          CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at_epoch
            ON cleanup_cache(last_hit_at_epoch);",
