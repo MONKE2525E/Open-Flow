@@ -60,7 +60,10 @@ fn ensure_cleanup_cache_schema(conn: &Connection) -> Result<()> {
         "UPDATE cleanup_cache
          SET created_at_epoch = COALESCE(created_at_epoch, CAST(strftime('%s', created_at || 'Z') AS INTEGER)),
              last_hit_at_epoch = COALESCE(last_hit_at_epoch, CAST(strftime('%s', last_hit_at || 'Z') AS INTEGER)),
-             expires_at_epoch = COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at || 'Z') AS INTEGER));
+             expires_at_epoch = COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at || 'Z') AS INTEGER))
+         WHERE created_at_epoch IS NULL
+            OR last_hit_at_epoch IS NULL
+            OR expires_at_epoch IS NULL;
          CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at_epoch
            ON cleanup_cache(expires_at_epoch);
          CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at_epoch

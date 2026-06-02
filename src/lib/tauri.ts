@@ -81,8 +81,12 @@ function readDevSettings(): Record<string, unknown> {
 
 function writeDevSetting(key: string, value: unknown) {
   if (typeof localStorage === 'undefined') return;
-  const next = { ...readDevSettings(), [key]: value };
-  localStorage.setItem(DEV_STORAGE_KEY, JSON.stringify(next));
+  try {
+    const next = { ...readDevSettings(), [key]: value };
+    localStorage.setItem(DEV_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // Browser dev mode should keep working even when persistent storage is blocked.
+  }
 }
 
 function getDevSetting(key: string): unknown {
@@ -99,12 +103,15 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return undefined as T;
     case 'get_all_settings':
       return { ...defaultSettings, ...readDevSettings() } as T;
+    case 'get_app_mappings':
+      return getDevSetting('app_mappings') as T;
     case 'get_recent':
     case 'get_snippets':
     case 'get_dictionary':
     case 'get_recent_auto_learn_activity':
     case 'get_microphones':
     case 'get_recent_logs':
+    case 'get_installed_apps':
       return [] as T;
     case 'get_stats':
       return { total_words: 0, avg_wpm: 0, day_streak: 0 } as T;
@@ -135,7 +142,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return '' as T;
     case 'save_api_key':
     case 'delete_api_key':
-    case 'save_app_mappings':
     case 'set_autostart':
     case 'save_hotkey':
     case 'hide_main':
@@ -152,6 +158,11 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'start_calibration_monitoring':
     case 'stop_calibration_monitoring':
       return undefined as T;
+    case 'save_app_mappings':
+      writeDevSetting('app_mappings', args?.mappings ?? []);
+      return undefined as T;
+    case 'download_logs':
+      return 'browser-dev://open-flow-logs.txt' as T;
     default:
       throw new Error(`Tauri command "${command}" is unavailable in browser dev mode.`);
   }
