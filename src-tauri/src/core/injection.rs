@@ -686,6 +686,7 @@ pub async fn inject_text(
                         tail,
                         instant: Instant::now(),
                     };
+                    crate::core::hotkey::sync_context_hwnd(target_hwnd);
                 }
             }
 

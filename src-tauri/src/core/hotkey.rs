@@ -214,6 +214,10 @@ pub fn reset_chord_state() {
     CHORD_FIRST_DOWN_MS.store(0, Ordering::SeqCst);
 }
 
+pub fn sync_context_hwnd(hwnd: usize) {
+    LAST_CONTEXT_HWND.store(hwnd, Ordering::SeqCst);
+}
+
 pub fn set_handless_active(v: bool) {
     HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
 }
