@@ -1,10 +1,7 @@
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-// How long a previous injection stays relevant for spacing and capitalisation decisions.
-// The keyboard hook resets this early whenever the user types, so the timeout is mainly
-// a safety net for inactivity (e.g. the user idle for a minute then dictates again).
-const INJECTION_STALE: Duration = Duration::from_secs(60);
+use crate::core::text_context;
 
 // Maximum bytes stored for backspace-tracking. Covers any practical editing sequence
 // while keeping the per-injection allocation bounded.
@@ -156,6 +153,16 @@ impl ContextKind {
             Self::SentenceBoundary => "sentence_boundary",
             Self::Continuation => "continuation",
         }
+    }
+}
+
+fn context_kind_from_sentence_context(
+    context: crate::core::text_context::SentenceContext,
+) -> ContextKind {
+    match context {
+        crate::core::text_context::SentenceContext::NewSentence => ContextKind::SentenceBoundary,
+        crate::core::text_context::SentenceContext::MidSentence => ContextKind::Continuation,
+        crate::core::text_context::SentenceContext::Unknown => ContextKind::Unknown,
     }
 }
 #[derive(Clone, Copy, Debug)]
@@ -391,7 +398,7 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
     };
     use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 
-    // GDI object formats — GetClipboardData returns an opaque GDI handle for these,
+    // GDI object formats â€” GetClipboardData returns an opaque GDI handle for these,
     // not an HGLOBAL, so GlobalSize/GlobalLock are undefined on them.
     const CF_BITMAP: u32 = 2;
     const CF_METAFILEPICT: u32 = 3;
@@ -399,7 +406,7 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
     const CF_ENHMETAFILE: u32 = 14;
 
     // Per-format cap: skip anything larger than 32 MB to stay within the 200 MB
-    // RAM budget. Typical screenshots are 2–8 MB as CF_DIB; 32 MB is generous.
+    // RAM budget. Typical screenshots are 2â€“8 MB as CF_DIB; 32 MB is generous.
     const MAX_FORMAT_BYTES: usize = 32 * 1024 * 1024;
 
     let mut entries = Vec::new();
@@ -577,78 +584,110 @@ pub async fn inject_text(
             };
 
             // Read cursor context from the tracked tail.
-            // moves the cursor, or switches windows — so when it's absent the context
+            // moves the cursor, or switches windows â€” so when it's absent the context
             // is genuinely unknown and we default to capitalising (safe for new fields).
-            let (context_tail, context_kind) = if contextual_caps || auto_spacing {
-                match last_injection().lock() {
-                    Ok(guard) => match &*guard {
-                        CursorContextState::Known {
-                            hwnd,
-                            tail,
-                            instant,
-                        } if *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE => {
-                            (tail.clone(), classify_context(tail))
+            let prefix_class = text_context::classify_leading_prefix(text);
+            let injection_probe = if contextual_caps || auto_spacing {
+                crate::api::auto_learn::read_injection_context_probe()
+            } else {
+                crate::api::auto_learn::InjectionContextProbe {
+                    context: crate::core::text_context::SentenceContext::Unknown,
+                    source: crate::api::auto_learn::InjectionProbeSource::Unavailable,
+                    context_tail: String::new(),
+                    control_type: "unavailable".to_string(),
+                    pattern_support: "unavailable".to_string(),
+                    selection_state: crate::api::auto_learn::SelectionState::Unknown,
+                    control_identity_hash: "unavailable".to_string(),
+                }
+            };
+            let context_kind = context_kind_from_sentence_context(injection_probe.context);
+            let source_is_caret_local =
+                matches!(injection_probe.source, crate::api::auto_learn::InjectionProbeSource::CaretLocal);
+
+            // Apply profile-aware casing using the probe-derived context state.
+            let mut adjusted = text.to_owned();
+            let case_decision = if !contextual_caps {
+                CaseDecision::ContextualCapsDisabled
+            } else if injection_probe.context
+                == crate::core::text_context::SentenceContext::NewSentence
+                && profile == "very_casual"
+            {
+                CaseDecision::SentenceBoundaryPreservedVeryCasual
+            } else {
+                match prefix_class {
+                    text_context::InjectionPrefixClass::PlainWordStart => match context_kind {
+                        ContextKind::Unknown => {
+                            adjusted = text_context::format_injection_text(
+                                text,
+                                injection_probe.context,
+                                prefix_class,
+                            );
+                            if adjusted == text {
+                                CaseDecision::UnknownContextPreserved
+                            } else {
+                                CaseDecision::SentenceBoundaryCapitalized
+                            }
                         }
-                        CursorContextState::Unknown { instant } => {
-                            let _ = instant.elapsed();
-                            (String::new(), ContextKind::Unknown)
+                        ContextKind::SentenceBoundary => {
+                            adjusted = text_context::format_injection_text(
+                                text,
+                                injection_probe.context,
+                                prefix_class,
+                            );
+                            CaseDecision::SentenceBoundaryCapitalized
                         }
-                        _ => (String::new(), ContextKind::Unknown),
+                        ContextKind::Continuation => {
+                            let (lowered, did_lower) = lowercase_first_word_if_safe(text);
+                            if did_lower {
+                                adjusted = lowered;
+                                CaseDecision::ContinuationLowercased
+                            } else {
+                                CaseDecision::ContinuationPreserved
+                            }
+                        }
                     },
-                    Err(_) => {
-                        log::error!("injection history mutex poisoned");
-                        (String::new(), ContextKind::Unknown)
+                    text_context::InjectionPrefixClass::HardSentenceTerminator => {
+                        adjusted = text_context::format_injection_text(
+                            text,
+                            injection_probe.context,
+                            prefix_class,
+                        );
+                        CaseDecision::SentenceBoundaryCapitalized
                     }
-                }
-            } else {
-                (String::new(), ContextKind::Unknown)
-            };
-
-            // Apply profile-aware casing policy using the derived context state.
-            let (mut adjusted, case_decision) = if !contextual_caps {
-                (text.to_owned(), CaseDecision::ContextualCapsDisabled)
-            } else {
-                match context_kind {
-                    ContextKind::Unknown => {
-                        (text.to_owned(), CaseDecision::UnknownContextPreserved)
-                    }
-                    ContextKind::SentenceBoundary => {
-                        if profile == "very_casual" {
-                            (
-                                text.to_owned(),
-                                CaseDecision::SentenceBoundaryPreservedVeryCasual,
-                            )
-                        } else {
-                            (
-                                uppercase_first_word(text),
-                                CaseDecision::SentenceBoundaryCapitalized,
-                            )
-                        }
-                    }
-                    ContextKind::Continuation => {
-                        let (lowered, did_lower) = lowercase_first_word_if_safe(text);
-                        if did_lower {
-                            (lowered, CaseDecision::ContinuationLowercased)
-                        } else {
-                            (text.to_owned(), CaseDecision::ContinuationPreserved)
+                    text_context::InjectionPrefixClass::SoftPunctuationPrefix
+                    | text_context::InjectionPrefixClass::InvisibleOrAmbiguousPrefix => {
+                        adjusted = text_context::format_injection_text(
+                            text,
+                            injection_probe.context,
+                            prefix_class,
+                        );
+                        match context_kind {
+                            ContextKind::Unknown => CaseDecision::UnknownContextPreserved,
+                            ContextKind::SentenceBoundary => {
+                                CaseDecision::SentenceBoundaryCapitalized
+                            }
+                            ContextKind::Continuation => CaseDecision::ContinuationPreserved
                         }
                     }
                 }
             };
 
-            // Add a space only when the cursor sits immediately after a non-whitespace
-            // character. Empty context (new field) or trailing whitespace → no space.
-            if auto_spacing {
-                if let Some(c) = context_tail.chars().next_back() {
-                    if !c.is_whitespace() && !adjusted.starts_with(char::is_whitespace) {
-                        adjusted = format!(" {adjusted}");
-                    }
-                }
+            // Add a space only when the probe sees real caret-local context.
+            if auto_spacing
+                && text_context::should_add_leading_injection_space(
+                    text,
+                    injection_probe.context,
+                    prefix_class,
+                    source_is_caret_local,
+                    &injection_probe.context_tail,
+                )
+            {
+                adjusted = format!(" {adjusted}");
             }
 
             let text_to_inject = adjusted.as_str();
 
-            // Write injection text — retry up to 3 times if another process holds the clipboard.
+            // Write injection text â€” retry up to 3 times if another process holds the clipboard.
             let wide: Vec<u16> = text_to_inject
                 .encode_utf16()
                 .chain(std::iter::once(0))
@@ -677,7 +716,7 @@ pub async fn inject_text(
             ))
             .await;
 
-            // Step 1 — clear any dangling Alt the target app may have from the
+            // Step 1 â€” clear any dangling Alt the target app may have from the
             // recording gesture.  Ctrl-down is sent first so that the Alt-up is
             // NOT the message immediately following Alt-down; this prevents
             // DefWindowProc from firing SC_KEYMENU (menu-bar activation).
@@ -689,13 +728,13 @@ pub async fn inject_text(
             ];
             SendInput(&clear, std::mem::size_of::<INPUT>() as i32);
 
-            // Step 2 — let the app process the modifier-state change before we
+            // Step 2 â€” let the app process the modifier-state change before we
             // inject Ctrl+V.  Without this pause, some apps (browsers, IDEs) end
             // up processing V without Ctrl because the Alt-up and V-down land in
             // the same message-pump cycle.
             tokio::time::sleep(tokio::time::Duration::from_millis(MODIFIER_GAP_MS)).await;
 
-            // Step 3 — clean Ctrl+V with no dangling modifiers.
+            // Step 3 â€” clean Ctrl+V with no dangling modifiers.
             let paste = [
                 ki(VK_CONTROL, 0),
                 ki(VK_V, 0),
@@ -717,7 +756,6 @@ pub async fn inject_text(
                         tail,
                         instant: Instant::now(),
                     };
-                    crate::core::hotkey::sync_context_hwnd(target_hwnd);
                 }
             }
 

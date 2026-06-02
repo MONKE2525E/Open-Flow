@@ -21,14 +21,64 @@
 - **Relevant Files**: `src-tauri/src/data/credentials.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/api/mod.rs`, `src-tauri/src/pipeline.rs`, `src-tauri/src/main.rs`.
 
 ## 3. Contextual Capitalization Reliability Regression
-- **Goal**: Stop random capitalization behavior and make sentence-start detection reliable after punctuation and common separators.
+- **Goal**: Replace the brittle history-only contextual capitalization path with a deterministic context engine that reliably starts new chat messages with proper casing and preserves punctuation across Gemini, browser chat inputs, normal text boxes, and contenteditable editors.
+- **Current Failure Pattern**:
+    - The existing implementation mostly trusts `LAST_INJECTION`, an internal tail of text injected by Open Flow.
+    - Mouse-click send buttons, browser chat inputs clearing themselves after submit, DOM rewrites, and some Enter/send paths can leave that tail stale.
+    - Once stale, the next dictation can be treated as a mid-sentence continuation and the first letter is lowercased even though the target field is empty.
+    - Punctuation loss must be debugged separately from casing. Some missing punctuation is likely cleanup/transcription output, not paste-time capitalization.
+- **Design Principle**:
+    - Never lowercase the first letter unless Open Flow has high-confidence evidence that the cursor is still inside the same editable control and immediately follows a non-sentence-ending character.
+    - Unknown context must fail closed: preserve the cleanup output casing, or capitalize only through a deterministic sentence-start rule. It must not randomly force lowercase.
+    - The old injection tail can remain as a last-resort cache, but it must not be the primary source of truth.
 - **Implementation Plan**:
-    - Build a deterministic test matrix for punctuation and separators (`.`, `?`, `!`, `,`, `/`, newline, trailing spaces, mixed manual typing + dictation).
-    - Trace the keyboard hook to confirm punctuation keys are consistently converted by `vk_to_char` across layouts and are not dropped by dead-key or shortcut paths.
-    - Audit injection history invalidation rules (backspace, cursor movement, shortcut keys, window changes) to prevent stale or empty context from causing random lowercase or uppercase output.
-    - Re-check interaction between contextual capitalization and tone/profile cleanup so lowercase transformations in cleanup are not being mistaken for injection bugs.
-    - Add focused regression coverage for contextual caps to lock behavior before 0.11.0 release.
-- **Relevant Files**: `src-tauri/src/core/hotkey.rs`, `src-tauri/src/core/injection.rs`, `src/lib/components/settings/GeneralSection.svelte`, `src-tauri/src/api/prompts.rs`, `tests/manual/`, `tests/OnePyFone.py`.
+    - **Phase 0 - Instrument the bug without leaking text**:
+        - Add verbose diagnostics around injection decisions, but never log dictated text, clipboard contents, user names, emails, prompt contents, or full field contents.
+        - Log only metadata: target HWND, process name, focused element identity hash, context source (`uia`, `selection_probe`, `history_tail`, `unknown`), previous-character class (`empty`, `sentence_end`, `word_char`, `space`, `separator`), capitalization decision, punctuation status, and whether the field looked empty.
+        - Add a debug-only counter for stale-history invalidations so repeated Gemini failures can be measured instead of guessed.
+    - **Phase 1 - Extract pure decision logic**:
+        - Move capitalization and auto-spacing decisions out of `inject_text()` into a pure module, likely `src-tauri/src/core/text_context.rs`.
+        - Define a small data contract such as `CursorContext { source, confidence, previous_char, field_empty, same_edit_control, boundary_generation }`.
+        - Define output as `InjectionDecision { casing_action, spacing_action, reason }`.
+        - Unit-test the pure rules first: empty field, after `.`, `?`, `!`, newline, trailing spaces after sentence end, comma, slash, plain word char, selected text unknown, stale context, and provider output that already starts uppercase.
+    - **Phase 2 - Build a real pre-paste context probe**:
+        - Before modifying casing, try to read the focused editable control in the captured target window.
+        - Prefer Windows UI Automation because this repo already uses UIA in `src-tauri/src/api/auto_learn.rs`.
+        - Capture enough identity to know whether this is the same edit control as the last injection: HWND, process, focused element runtime ID or a stable fallback hash, and control type.
+        - If UIA can read selection/caret-adjacent text, use it as the primary context source.
+        - If UIA can only tell that the field is empty, treat that as a new-message boundary and do not lowercase.
+        - If UIA is unavailable or opaque, fall back to a guarded selection probe: save clipboard, select one character before the caret, copy, restore selection/clipboard, and time out quickly. This must fail closed if anything looks unsafe.
+        - Use `LAST_INJECTION` only when the probe is unavailable and the same edit-control identity is still valid.
+    - **Phase 3 - Detect message send boundaries**:
+        - Treat "message sent away" as a boundary event, not as ordinary text.
+        - In the low-level keyboard hook, classify Enter separately from printable newlines. Plain Enter in browser/chat-like controls should invalidate the injection tail as a submit boundary. Shift+Enter can remain a line-break boundary.
+        - Add low-level mouse invalidation or focused-control invalidation for send-button clicks. A click outside the tracked edit control should clear the old tail unless the next pre-paste probe proves otherwise.
+        - Track a `boundary_generation` number that increments on submit-like Enter, Escape, Tab, focus/control changes, mouse clicks outside the edit control, and destructive shortcuts.
+        - Store the generation with `LAST_INJECTION`; reject history when the generation has changed.
+        - After paste, optionally run a short UIA post-injection watch for chat apps: if the input becomes empty or the focused control changes within a small window after Enter/click, mark the next dictation as a fresh message.
+    - **Phase 4 - Separate punctuation reliability from casing**:
+        - Add a punctuation audit before injection: output ends with terminal punctuation, output ends with separator, output has no punctuation, output is code/list/URL-like, or snippet/prompt explicitly requested no punctuation.
+        - Tighten cleanup prompt contracts for Gemini and other cleanup models so normal sentences get sentence punctuation unless the user dictated otherwise.
+        - Add a deterministic terminal-punctuation finalizer only for safe cases: natural-language sentence, cleanup enabled, not `very_casual`, not code-like, not a pure snippet, not an explicit "no punctuation" instruction.
+        - Do not hide punctuation issues inside the capitalization engine. If cleanup returns punctuation-free text, the logs and tests should identify it as cleanup/punctuation, not contextual caps.
+    - **Phase 5 - Replace the injection flow**:
+        - In `src-tauri/src/core/injection.rs`, call the new context probe and decision module before building `adjusted`.
+        - Preserve the existing clipboard paste path, refocus timing, modifier gap, and clipboard restoration because those are hard-won Windows reliability pieces.
+        - Stop lowercasing from stale history. History can suggest mid-sentence only when it is fresh, same HWND, same edit control, same boundary generation, and no stronger probe exists.
+        - Keep auto-spacing on the same decision path so spacing and capitalization cannot disagree about whether the cursor is mid-sentence.
+    - **Phase 6 - Regression test matrix**:
+        - Add Rust unit tests for pure context decisions and punctuation finalization.
+        - Add Windows-focused integration/manual tests covering Notepad, normal `<textarea>`, contenteditable, Gemini/ChatGPT-style input clearing, Enter submit, Shift+Enter newline, click send, Backspace, cursor movement, and app switching.
+        - Add a Playwright fixture page for browser inputs with textarea, contenteditable, fake chat send button, and DOM-clearing submit behavior. Use it to reproduce the "sent away but next dictation starts lowercase" path.
+        - Keep the test fixture free of real user content and API keys.
+    - **Acceptance Criteria**:
+        - Dictating into an empty Gemini message box after sending a previous message starts with uppercase when the cleanup output is sentence-like.
+        - Dictating after `.`, `?`, `!`, or newline starts a new sentence.
+        - Dictating after a comma, slash, or ordinary word character lowercases only when the same edit control and caret context are confirmed.
+        - Clicking a send button, pressing plain Enter to submit, switching windows, or losing focused-control identity cannot cause stale lowercase.
+        - Punctuation failures are reproducible in tests or logs as cleanup/punctuation issues, not misattributed to capitalization.
+        - No diagnostic path logs private dictated text, clipboard text, names, emails, API keys, or full field contents.
+- **Relevant Files**: `src-tauri/src/core/injection.rs`, `src-tauri/src/core/hotkey.rs`, `src-tauri/src/api/auto_learn.rs`, `src-tauri/src/api/prompts.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/pipeline.rs`, `src/lib/components/settings/GeneralSection.svelte`, `tests/manual/`, `tests/OnePyFone.py`.
 
 ## 4. Model-Specific Prompt Contracts and Context Retention
 - **Goal**: Replace generic cleanup prompting with model-specific contracts that are token-efficient while preserving essential context, especially on `light` mode.
