@@ -891,6 +891,7 @@ pub enum SelectionState {
 }
 
 impl SelectionState {
+    #[allow(dead_code, clippy::wrong_self_convention)]
     pub fn as_str(self) -> &'static str {
         match self {
             SelectionState::EmptyField => "empty_field",
@@ -911,6 +912,7 @@ pub enum InjectionProbeSource {
 }
 
 impl InjectionProbeSource {
+    #[allow(dead_code, clippy::wrong_self_convention)]
     pub fn as_str(self) -> &'static str {
         match self {
             InjectionProbeSource::EmptyField => "empty_field",
@@ -969,9 +971,7 @@ fn control_type_label(control_type: i32) -> String {
 }
 
 fn pattern_support_label(value: bool, text: bool, text2: bool, read_only: Option<bool>) -> String {
-    let read_only_label = read_only
-        .map(|v| if v { "1" } else { "0" })
-        .unwrap_or("?");
+    let read_only_label = read_only.map(|v| if v { "1" } else { "0" }).unwrap_or("?");
     format!(
         "value={} text={} text2={} readonly={}",
         value as u8, text as u8, text2 as u8, read_only_label
@@ -981,13 +981,17 @@ fn pattern_support_label(value: bool, text: bool, text2: bool, read_only: Option
 fn is_invisible_probe_char(ch: char) -> bool {
     ch.is_whitespace()
         || ch.is_control()
-        || matches!(ch, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}')
+        || matches!(
+            ch,
+            '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}'
+        )
 }
 
 fn is_effectively_empty_text(text: &str) -> bool {
     text.chars().all(is_invisible_probe_char)
 }
 
+#[cfg(test)]
 fn classify_caret_char(ch: char) -> Option<SentenceContext> {
     if matches!(ch, '.' | '!' | '?' | '\n' | '\r') {
         return Some(SentenceContext::NewSentence);
@@ -1010,9 +1014,7 @@ fn classify_caret_char(ch: char) -> Option<SentenceContext> {
 unsafe fn read_previous_context_text(
     range: &windows::Win32::UI::Accessibility::IUIAutomationTextRange,
 ) -> Option<String> {
-    use windows::Win32::UI::Accessibility::{
-        TextPatternRangeEndpoint_Start, TextUnit_Character,
-    };
+    use windows::Win32::UI::Accessibility::{TextPatternRangeEndpoint_Start, TextUnit_Character};
 
     let caret = range.Clone().ok()?;
     let moved = caret
@@ -1048,6 +1050,7 @@ unsafe fn range_is_collapsed(
     )
 }
 
+#[cfg(test)]
 fn resolve_injection_context(field_empty: bool, caret_context: Option<char>) -> SentenceContext {
     if field_empty {
         SentenceContext::NewSentence
@@ -1234,10 +1237,10 @@ impl FocusedTextReader {
                 .map(|value| format!("{:p}", value.0))
                 .unwrap_or_default();
             let control_identity_hash = stable_metadata_hash(&[
-                &control_type,
-                &automation_id,
-                &class_name,
-                &native_hwnd,
+                control_type.as_str(),
+                automation_id.as_str(),
+                class_name.as_str(),
+                native_hwnd.as_str(),
             ]);
 
             if read_only == Some(true) {
@@ -1270,10 +1273,9 @@ impl FocusedTextReader {
             let mut source = InjectionProbeSource::NonTextFocus;
 
             if let Some(pattern) = &text_pattern2 {
-                let mut is_active = 0i32;
-                let is_active_ptr = std::ptr::addr_of_mut!(is_active) as *mut windows::core::BOOL;
-                if let Ok(range) = pattern.GetCaretRange(is_active_ptr) {
-                    if is_active != 0 {
+                let mut is_active = windows::core::BOOL::default();
+                if let Ok(range) = pattern.GetCaretRange(&mut is_active) {
+                    if is_active.as_bool() {
                         range_seen = true;
                         range_collapsed = true;
                         caret_context = read_previous_context_text(&range);
@@ -1315,11 +1317,13 @@ impl FocusedTextReader {
             }
 
             let field_empty = caret_context.is_none() && source == InjectionProbeSource::EmptyField;
-            let context = resolve_injection_context_from_tail(field_empty, caret_context.as_deref());
+            let context =
+                resolve_injection_context_from_tail(field_empty, caret_context.as_deref());
             if matches!(context, SentenceContext::Unknown) && caret_context.is_some() {
                 source = InjectionProbeSource::Ambiguous;
             }
-            let selection_state = describe_selection_state(field_empty, range_seen, range_collapsed);
+            let selection_state =
+                describe_selection_state(field_empty, range_seen, range_collapsed);
 
             InjectionContextProbe {
                 context,
@@ -1944,8 +1948,8 @@ pub fn start_cache_rejection_monitor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::db;
     use crate::core::text_context::SentenceContext;
+    use crate::data::db;
 
     #[derive(Debug, serde::Deserialize)]
     struct AutoLearnCase {
@@ -2197,8 +2201,14 @@ mod tests {
         assert_eq!(classify_caret_char('\u{feff}'), None);
         assert_eq!(classify_caret_char('"'), None);
         assert_eq!(classify_caret_char('('), None);
-        assert_eq!(resolve_injection_context(false, Some('\u{200b}')), SentenceContext::Unknown);
-        assert_eq!(resolve_injection_context(false, Some('"')), SentenceContext::Unknown);
+        assert_eq!(
+            resolve_injection_context(false, Some('\u{200b}')),
+            SentenceContext::Unknown
+        );
+        assert_eq!(
+            resolve_injection_context(false, Some('"')),
+            SentenceContext::Unknown
+        );
     }
 
     #[test]

@@ -42,12 +42,12 @@ const MODIFIER_GAP_MS: u64 = 30;
 #[cfg(target_os = "windows")]
 const PASTE_SETTLE_MS: u64 = 80;
 
+#[cfg(test)]
 const SENTENCE_ENDERS: &[char] = &['.', '!', '?', '\n', '\r'];
 #[derive(Clone, Debug)]
 enum CursorContextState {
     Unknown {
-        #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-        instant: Instant,
+        _instant: Instant,
     },
     Known {
         hwnd: usize,
@@ -194,7 +194,7 @@ pub struct InjectionOutcome {
 static LAST_INJECTION: OnceLock<Mutex<CursorContextState>> = OnceLock::new();
 fn unknown_context() -> CursorContextState {
     CursorContextState::Unknown {
-        instant: Instant::now(),
+        _instant: Instant::now(),
     }
 }
 fn last_injection() -> &'static Mutex<CursorContextState> {
@@ -210,9 +210,11 @@ fn trim_tail_to_limit(text: &mut String) {
         *text = text[trim_at..].to_owned();
     }
 }
+#[cfg(test)]
 fn trimmed_context_for_decision(text: &str) -> &str {
     text.trim_end_matches(|c: char| c.is_whitespace() && !SENTENCE_ENDERS.contains(&c))
 }
+#[cfg(test)]
 fn classify_context(tail: &str) -> ContextKind {
     let trimmed = trimmed_context_for_decision(tail);
     if trimmed
@@ -276,6 +278,7 @@ fn find_first_alpha_span(text: &str) -> Option<(usize, usize)> {
     }
     start.map(|s| (s, end))
 }
+#[cfg(test)]
 fn uppercase_first_word(text: &str) -> String {
     let Some((start, _)) = find_first_alpha_span(text) else {
         return text.to_owned();
@@ -601,8 +604,10 @@ pub async fn inject_text(
                 }
             };
             let context_kind = context_kind_from_sentence_context(injection_probe.context);
-            let source_is_caret_local =
-                matches!(injection_probe.source, crate::api::auto_learn::InjectionProbeSource::CaretLocal);
+            let source_is_caret_local = matches!(
+                injection_probe.source,
+                crate::api::auto_learn::InjectionProbeSource::CaretLocal
+            );
 
             // Apply profile-aware casing using the probe-derived context state.
             let mut adjusted = text.to_owned();
@@ -666,7 +671,7 @@ pub async fn inject_text(
                             ContextKind::SentenceBoundary => {
                                 CaseDecision::SentenceBoundaryCapitalized
                             }
-                            ContextKind::Continuation => CaseDecision::ContinuationPreserved
+                            ContextKind::Continuation => CaseDecision::ContinuationPreserved,
                         }
                     }
                 }

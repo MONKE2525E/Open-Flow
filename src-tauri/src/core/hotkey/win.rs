@@ -36,9 +36,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 unsafe fn modifier_held(vk: u32) -> bool {
     let held = |v: u32| -> bool { (GetAsyncKeyState(v as i32) & 0x8000u16 as i16) != 0 };
     match vk {
-        160 | 161 => held(16),           // L/RShift → VK_SHIFT
-        162 | 163 => held(17),           // L/RControl → VK_CONTROL
-        164 | 165 => held(18),           // L/RMenu → VK_MENU
+        160 | 161 => held(16),           // L/RShift -> VK_SHIFT
+        162 | 163 => held(17),           // L/RControl -> VK_CONTROL
+        164 | 165 => held(18),           // L/RMenu -> VK_MENU
         91 | 92 => held(91) || held(92), // LWin / RWin (no generic VK_WIN)
         _ => held(vk),
     }
@@ -84,7 +84,7 @@ fn to_unicode_layout(
 }
 
 /// Maps a VK code to the character it produces (US QWERTY layout).
-/// Letters are always returned lowercase — case doesn't affect sentence-ender
+/// Letters are always returned lowercase - case doesn't affect sentence-ender
 /// or whitespace checks downstream. Returns None for keys with no stable
 /// printable character (numpad, function keys, etc.); those reset history.
 fn vk_to_char(vk: u32) -> Option<char> {
@@ -355,7 +355,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
 
         if is_key2 && is_up {
             // KEY2_WAS_CHORD guarantees we suppress key2-up even if key1 went up
-            // first and cleared CHORD_DOWN — otherwise a bare Win-up reaches the OS
+            // first and cleared CHORD_DOWN - otherwise a bare Win-up reaches the OS
             // and triggers the Start menu / Win shortcuts.
             let key2_was_chord = KEY2_WAS_CHORD.swap(false, Ordering::SeqCst);
             if CHORD_DOWN.swap(false, Ordering::SeqCst) {
@@ -448,13 +448,13 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         }
 
         // Update injection history for real user keystrokes only.
-        // Synthetic events (LLKHF_INJECTED) are skipped — this prevents our own
+        // Synthetic events (LLKHF_INJECTED) are skipped - this prevents our own
         // Ctrl+V paste and any app-generated keyboard events from corrupting the
         // history that backs backspace recovery.
         let is_injected = (kb.flags.0 & LLKHF_INJECTED.0) != 0;
         if !is_injected && is_down && !MODIFIER_VKS.contains(&vk) {
             if vk == VK_BACK {
-                // Ctrl+Backspace and Alt+Backspace both delete a whole word —
+                // Ctrl+Backspace and Alt+Backspace both delete a whole word -
                 // unknown char count, so reset entirely. Plain Backspace pops
                 // just the last character to keep context accurate.
                 if unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) } {
@@ -463,18 +463,14 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     let hwnd = unsafe { GetForegroundWindow().0 as usize };
                     crate::core::injection::backspace_injection_history(hwnd);
                 }
-            } else if vk == 0x0D
+            } else if (vk == 0x0D
                 && !unsafe {
-                    modifier_held(VK_SHIFT)
-                        || modifier_held(VK_CTRL)
-                        || modifier_held(VK_ALT)
-                }
+                    modifier_held(VK_SHIFT) || modifier_held(VK_CTRL) || modifier_held(VK_ALT)
+                })
+                || is_cursor_movement_key(vk)
+                || unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) }
             {
-                crate::core::injection::reset_injection_history();
-            } else if is_cursor_movement_key(vk) {
-                crate::core::injection::reset_injection_history();
-            } else if unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) } {
-                // Keyboard shortcut (Ctrl+Z, Ctrl+A, etc.) — context unknown.
+                // Keyboard shortcut (Ctrl+Z, Ctrl+A, etc.) - context unknown.
                 crate::core::injection::reset_injection_history();
             } else {
                 if let Some(ch) = vk_to_char(vk) {

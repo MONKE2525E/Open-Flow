@@ -6,6 +6,7 @@ pub enum SentenceContext {
 }
 
 impl SentenceContext {
+    #[allow(dead_code, clippy::wrong_self_convention)]
     pub fn as_str(self) -> &'static str {
         match self {
             SentenceContext::NewSentence => "new_sentence",
@@ -18,6 +19,7 @@ impl SentenceContext {
         !matches!(self, SentenceContext::MidSentence)
     }
 
+    #[cfg(test)]
     pub fn should_add_space(self) -> bool {
         matches!(self, SentenceContext::MidSentence)
     }
@@ -32,6 +34,7 @@ pub enum InjectionPrefixClass {
 }
 
 impl InjectionPrefixClass {
+    #[allow(dead_code, clippy::wrong_self_convention)]
     pub fn as_str(self) -> &'static str {
         match self {
             InjectionPrefixClass::PlainWordStart => "plain_word_start",
@@ -71,17 +74,32 @@ pub fn classify_local_context(context: &str) -> SentenceContext {
 fn is_invisible_prefix_char(ch: char) -> bool {
     ch.is_whitespace()
         || ch.is_control()
-        || matches!(ch, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}')
+        || matches!(
+            ch,
+            '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}'
+        )
 }
 
 fn is_context_tail_wrapper_char(ch: char) -> bool {
     matches!(
         ch,
-        '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '"' | '\''
-            | '\u{201C}' | '\u{201D}'
-            | '\u{2018}' | '\u{2019}'
-            | '\u{00AB}' | '\u{00BB}'
-            | '\u{2039}' | '\u{203A}'
+        '(' | ')'
+            | '['
+            | ']'
+            | '{'
+            | '}'
+            | '<'
+            | '>'
+            | '"'
+            | '\''
+            | '\u{201C}'
+            | '\u{201D}'
+            | '\u{2018}'
+            | '\u{2019}'
+            | '\u{00AB}'
+            | '\u{00BB}'
+            | '\u{2039}'
+            | '\u{203A}'
     )
 }
 
@@ -137,7 +155,7 @@ pub fn classify_leading_prefix(text: &str) -> InjectionPrefixClass {
         }
         return InjectionPrefixClass::HardSentenceTerminator;
     }
-    if matches!(first_visible, '!' | '?' ) {
+    if matches!(first_visible, '!' | '?') {
         return InjectionPrefixClass::HardSentenceTerminator;
     }
     if is_soft_punctuation_prefix_char(first_visible) {
@@ -158,11 +176,7 @@ pub fn classify_context_tail(text: &str) -> SentenceContext {
         if matches!(ch, '.' | '!' | '?' | '\n' | '\r') {
             return SentenceContext::NewSentence;
         }
-        if ch.is_alphanumeric()
-            || matches!(
-                ch,
-                ',' | ';' | ':' | '-' | '–' | '—' | '/' | '\\'
-            )
+        if ch.is_alphanumeric() || matches!(ch, ',' | ';' | ':' | '-' | '–' | '—' | '/' | '\\')
         {
             return SentenceContext::MidSentence;
         }
@@ -200,6 +214,7 @@ pub fn apply_contextual_casing(text: &str, context: SentenceContext) -> String {
     transform_first_cased_char(text, context.should_capitalize())
 }
 
+#[cfg(test)]
 pub fn should_add_injection_space(context: SentenceContext, prefix: InjectionPrefixClass) -> bool {
     matches!(prefix, InjectionPrefixClass::PlainWordStart) && context.should_add_space()
 }
@@ -229,6 +244,9 @@ pub fn should_add_leading_injection_space(
     source_is_caret_local: bool,
     context_tail: &str,
 ) -> bool {
+    if text.starts_with(char::is_whitespace) {
+        return false;
+    }
     if !source_is_caret_local {
         return false;
     }
@@ -238,7 +256,10 @@ pub fn should_add_leading_injection_space(
 
     match prefix {
         InjectionPrefixClass::PlainWordStart => {
-            matches!(context, SentenceContext::MidSentence | SentenceContext::NewSentence)
+            matches!(
+                context,
+                SentenceContext::MidSentence | SentenceContext::NewSentence
+            )
         }
         InjectionPrefixClass::SoftPunctuationPrefix => {
             matches!(first_visible_char(text), Some(ch) if is_opening_prefix_char(ch))
@@ -248,6 +269,7 @@ pub fn should_add_leading_injection_space(
     }
 }
 
+#[cfg(test)]
 pub fn should_capitalize_injection(context: SentenceContext, prefix: InjectionPrefixClass) -> bool {
     match prefix {
         InjectionPrefixClass::PlainWordStart => context.should_capitalize(),
@@ -289,17 +311,38 @@ mod tests {
 
     #[test]
     fn sentence_enders_capitalize() {
-        assert_eq!(classify_local_context("hello."), SentenceContext::NewSentence);
-        assert_eq!(classify_local_context("hello?"), SentenceContext::NewSentence);
-        assert_eq!(classify_local_context("hello!"), SentenceContext::NewSentence);
-        assert_eq!(classify_local_context("hello.\n"), SentenceContext::NewSentence);
+        assert_eq!(
+            classify_local_context("hello."),
+            SentenceContext::NewSentence
+        );
+        assert_eq!(
+            classify_local_context("hello?"),
+            SentenceContext::NewSentence
+        );
+        assert_eq!(
+            classify_local_context("hello!"),
+            SentenceContext::NewSentence
+        );
+        assert_eq!(
+            classify_local_context("hello.\n"),
+            SentenceContext::NewSentence
+        );
     }
 
     #[test]
     fn mid_sentence_context_lowercases() {
-        assert_eq!(classify_local_context("hello"), SentenceContext::MidSentence);
-        assert_eq!(classify_local_context("hello,"), SentenceContext::MidSentence);
-        assert_eq!(classify_local_context("hello /"), SentenceContext::MidSentence);
+        assert_eq!(
+            classify_local_context("hello"),
+            SentenceContext::MidSentence
+        );
+        assert_eq!(
+            classify_local_context("hello,"),
+            SentenceContext::MidSentence
+        );
+        assert_eq!(
+            classify_local_context("hello /"),
+            SentenceContext::MidSentence
+        );
     }
 
     #[test]
@@ -308,8 +351,14 @@ mod tests {
         assert_eq!(classify_context_tail("hi\""), SentenceContext::MidSentence);
         assert_eq!(classify_context_tail("hi)"), SentenceContext::MidSentence);
         assert_eq!(classify_context_tail("hi.\""), SentenceContext::NewSentence);
-        assert_eq!(classify_context_tail("hi.\u{200B} "), SentenceContext::NewSentence);
-        assert_eq!(classify_context_tail("\u{200B}  "), SentenceContext::Unknown);
+        assert_eq!(
+            classify_context_tail("hi.\u{200B} "),
+            SentenceContext::NewSentence
+        );
+        assert_eq!(
+            classify_context_tail("\u{200B}  "),
+            SentenceContext::Unknown
+        );
     }
 
     #[test]
@@ -378,8 +427,14 @@ mod tests {
 
     #[test]
     fn trailing_whitespace_after_sentence_end_keeps_capitalization() {
-        assert_eq!(classify_local_context("hello. "), SentenceContext::NewSentence);
-        assert_eq!(classify_local_context("hello?\t"), SentenceContext::NewSentence);
+        assert_eq!(
+            classify_local_context("hello. "),
+            SentenceContext::NewSentence
+        );
+        assert_eq!(
+            classify_local_context("hello?\t"),
+            SentenceContext::NewSentence
+        );
     }
 
     #[test]
@@ -429,8 +484,14 @@ mod tests {
             format_injection_text("\"Hello\"", SentenceContext::MidSentence, prefix),
             "\"Hello\""
         );
-        assert!(!should_add_injection_space(SentenceContext::MidSentence, prefix));
-        assert!(!should_capitalize_injection(SentenceContext::MidSentence, prefix));
+        assert!(!should_add_injection_space(
+            SentenceContext::MidSentence,
+            prefix
+        ));
+        assert!(!should_capitalize_injection(
+            SentenceContext::MidSentence,
+            prefix
+        ));
     }
 
     #[test]
@@ -462,6 +523,13 @@ mod tests {
             InjectionPrefixClass::PlainWordStart,
             true,
             "hello ",
+        ));
+        assert!(!should_add_leading_injection_space(
+            " Hello world",
+            SentenceContext::MidSentence,
+            InjectionPrefixClass::PlainWordStart,
+            true,
+            "hello.",
         ));
     }
 
@@ -512,7 +580,10 @@ mod tests {
             format_injection_text(", I think", SentenceContext::NewSentence, prefix),
             ", I think"
         );
-        assert!(!should_add_injection_space(SentenceContext::MidSentence, prefix));
+        assert!(!should_add_injection_space(
+            SentenceContext::MidSentence,
+            prefix
+        ));
     }
 
     #[test]
@@ -544,7 +615,13 @@ mod tests {
             format_injection_text("!hello", SentenceContext::MidSentence, prefix),
             "!Hello"
         );
-        assert!(should_capitalize_injection(SentenceContext::MidSentence, prefix));
-        assert!(!should_add_injection_space(SentenceContext::MidSentence, prefix));
+        assert!(should_capitalize_injection(
+            SentenceContext::MidSentence,
+            prefix
+        ));
+        assert!(!should_add_injection_space(
+            SentenceContext::MidSentence,
+            prefix
+        ));
     }
 }

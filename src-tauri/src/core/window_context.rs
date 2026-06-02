@@ -28,11 +28,12 @@ const BROWSER_EXES: &[(&str, &str)] = &[
     ("arc.app", "Arc"),
 ];
 
-/// The focus target to refocus before paste. On Windows this is the foreground
-/// `HWND`; on macOS it is the frontmost application's PID (both fit in a `usize`).
+#[allow(dead_code)]
 pub fn is_browser_process_name(process_name: &str) -> bool {
     BROWSER_EXES.iter().any(|(exe, _)| *exe == process_name)
 }
+/// The focus target to refocus before paste. On Windows this is the foreground
+/// `HWND`; on macOS it is the frontmost application's PID (both fit in a `usize`).
 pub fn get_foreground_hwnd() -> usize {
     #[cfg(windows)]
     unsafe {
