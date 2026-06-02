@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
+  import { emit, invoke } from '../../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
@@ -295,7 +295,6 @@
         }
         if (!available) {
           hotkeyState = 'error';
-          const { emit } = await import('@tauri-apps/api/event');
           await emit('open-flow:error', 'Hotkey may already be in use by another application');
           setTimeout(() => { hotkeyState = 'idle'; }, HOTKEY_ERROR_MS);
           return;
@@ -307,7 +306,6 @@
       } catch (e) {
         console.error('Failed to save hotkey', e);
         hotkeyState = 'error';
-        const { emit } = await import('@tauri-apps/api/event');
         await emit('open-flow:error', 'Failed to save hotkey - key may not be recognized');
         setTimeout(() => { hotkeyState = 'idle'; }, HOTKEY_ERROR_MS);
       }

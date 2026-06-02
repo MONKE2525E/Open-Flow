@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './tauri';
 import type { TranscriptionLanguageCode } from './transcriptionLanguages';
 
 export type ProviderId = 'groq' | 'openai' | 'google';

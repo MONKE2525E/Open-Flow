@@ -23,11 +23,62 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool
     Ok(false)
 }
 
-fn ensure_table_column(conn: &Connection, table: &str, column: &str, def_sql: &str) -> Result<()> {
+fn ensure_table_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    def_sql: &str,
+) -> Result<bool> {
     if table_has_column(conn, table, column)? {
-        return Ok(());
+        return Ok(false);
     }
     conn.execute_batch(def_sql)?;
+    Ok(true)
+}
+
+fn ensure_cleanup_cache_schema(conn: &Connection) -> Result<()> {
+    let mut repaired = false;
+    repaired |= ensure_table_column(
+        conn,
+        "cleanup_cache",
+        "created_at_epoch",
+        "ALTER TABLE cleanup_cache ADD COLUMN created_at_epoch INTEGER;",
+    )?;
+    repaired |= ensure_table_column(
+        conn,
+        "cleanup_cache",
+        "last_hit_at_epoch",
+        "ALTER TABLE cleanup_cache ADD COLUMN last_hit_at_epoch INTEGER;",
+    )?;
+    repaired |= ensure_table_column(
+        conn,
+        "cleanup_cache",
+        "expires_at_epoch",
+        "ALTER TABLE cleanup_cache ADD COLUMN expires_at_epoch INTEGER;",
+    )?;
+    repaired |= ensure_table_column(
+        conn,
+        "cleanup_cache",
+        "is_snippet",
+        "ALTER TABLE cleanup_cache ADD COLUMN is_snippet INTEGER NOT NULL DEFAULT 0;",
+    )?;
+    if repaired {
+        conn.execute_batch(
+            "UPDATE cleanup_cache
+             SET created_at_epoch = COALESCE(created_at_epoch, CAST(strftime('%s', created_at || 'Z') AS INTEGER)),
+                 last_hit_at_epoch = COALESCE(last_hit_at_epoch, CAST(strftime('%s', last_hit_at || 'Z') AS INTEGER)),
+                 expires_at_epoch = COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at || 'Z') AS INTEGER))
+             WHERE created_at_epoch IS NULL
+                OR last_hit_at_epoch IS NULL
+                OR expires_at_epoch IS NULL;",
+        )?;
+    }
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at_epoch
+           ON cleanup_cache(expires_at_epoch);
+         CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at_epoch
+           ON cleanup_cache(last_hit_at_epoch);",
+    )?;
     Ok(())
 }
 
@@ -109,10 +160,6 @@ CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at
   ON cleanup_cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
   ON cleanup_cache(last_hit_at);
-CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at_epoch
-  ON cleanup_cache(expires_at_epoch);
-CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at_epoch
-  ON cleanup_cache(last_hit_at_epoch);
 ";
 
 pub fn open(path: &str) -> Result<Db> {
@@ -191,10 +238,6 @@ pub fn open(path: &str) -> Result<Db> {
                ON cleanup_cache(expires_at);
              CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
                ON cleanup_cache(last_hit_at);
-             CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at_epoch
-               ON cleanup_cache(expires_at_epoch);
-             CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at_epoch
-               ON cleanup_cache(last_hit_at_epoch);
              PRAGMA user_version = 3;
              COMMIT;",
         );
@@ -257,12 +300,7 @@ pub fn open(path: &str) -> Result<Db> {
     if user_version < 5 {
         conn.execute_batch("BEGIN;")?;
         if let Err(err) = (|| -> Result<()> {
-            ensure_table_column(
-                &conn,
-                "cleanup_cache",
-                "is_snippet",
-                "ALTER TABLE cleanup_cache ADD COLUMN is_snippet INTEGER NOT NULL DEFAULT 0;",
-            )?;
+            ensure_cleanup_cache_schema(&conn)?;
             conn.execute_batch("PRAGMA user_version = 5;")?;
             Ok(())
         })() {
@@ -274,35 +312,8 @@ pub fn open(path: &str) -> Result<Db> {
     if user_version < 6 {
         conn.execute_batch("BEGIN;")?;
         if let Err(err) = (|| -> Result<()> {
-            ensure_table_column(
-                &conn,
-                "cleanup_cache",
-                "created_at_epoch",
-                "ALTER TABLE cleanup_cache ADD COLUMN created_at_epoch INTEGER;",
-            )?;
-            ensure_table_column(
-                &conn,
-                "cleanup_cache",
-                "last_hit_at_epoch",
-                "ALTER TABLE cleanup_cache ADD COLUMN last_hit_at_epoch INTEGER;",
-            )?;
-            ensure_table_column(
-                &conn,
-                "cleanup_cache",
-                "expires_at_epoch",
-                "ALTER TABLE cleanup_cache ADD COLUMN expires_at_epoch INTEGER;",
-            )?;
-            conn.execute_batch(
-                "UPDATE cleanup_cache
-                 SET created_at_epoch = COALESCE(created_at_epoch, CAST(strftime('%s', created_at || 'Z') AS INTEGER)),
-                     last_hit_at_epoch = COALESCE(last_hit_at_epoch, CAST(strftime('%s', last_hit_at || 'Z') AS INTEGER)),
-                     expires_at_epoch = COALESCE(expires_at_epoch, CAST(strftime('%s', expires_at || 'Z') AS INTEGER));
-                 CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at_epoch
-                   ON cleanup_cache(expires_at_epoch);
-                 CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at_epoch
-                   ON cleanup_cache(last_hit_at_epoch);
-                 PRAGMA user_version = 6;",
-            )?;
+            ensure_cleanup_cache_schema(&conn)?;
+            conn.execute_batch("PRAGMA user_version = 6;")?;
             Ok(())
         })() {
             let _ = conn.execute_batch("ROLLBACK;");
@@ -310,6 +321,7 @@ pub fn open(path: &str) -> Result<Db> {
         }
         conn.execute_batch("COMMIT;")?;
     }
+    ensure_cleanup_cache_schema(&conn)?;
 
     Ok(Arc::new(Mutex::new(conn)))
 }
@@ -988,6 +1000,57 @@ mod tests {
         open(":memory:").expect("test db")
     }
 
+    fn temp_db_path(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "open_flow_{name}_{}_{}.db",
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    #[test]
+    fn open_repairs_legacy_cleanup_cache_missing_epoch_columns() {
+        let path = temp_db_path("legacy_cleanup_cache");
+        {
+            let conn = Connection::open(&path).expect("create legacy db");
+            conn.execute_batch(
+                "CREATE TABLE cleanup_cache (
+                   key         TEXT PRIMARY KEY,
+                   clean_text  TEXT NOT NULL,
+                   hit_count   INTEGER NOT NULL DEFAULT 0,
+                   created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
+                   last_hit_at DATETIME NOT NULL DEFAULT (datetime('now')),
+                   expires_at  DATETIME NOT NULL,
+                   is_snippet  INTEGER NOT NULL DEFAULT 0
+                 );
+                 INSERT INTO cleanup_cache
+                   (key, clean_text, hit_count, created_at, last_hit_at, expires_at, is_snippet)
+                 VALUES
+                   ('legacy', 'hello', 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '2999-01-01 00:00:00', 0);
+                 PRAGMA user_version = 6;",
+            )
+            .expect("seed legacy db");
+        }
+
+        let db = open(path.to_str().expect("path string")).expect("open repairs legacy db");
+        assert!(cleanup_cache_get_active(&db, "legacy")
+            .expect("query repaired row")
+            .is_some());
+
+        let conn = lock_conn(&db).expect("lock");
+        assert!(table_has_column(&conn, "cleanup_cache", "expires_at_epoch").expect("column"));
+        assert!(table_has_column(&conn, "cleanup_cache", "last_hit_at_epoch").expect("column"));
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
     #[test]
     fn auto_learn_does_not_overwrite_manual_dictionary_entry() {
         let db = test_db();
@@ -1087,11 +1150,9 @@ mod tests {
         .expect("null out epoch");
         drop(conn);
 
-        assert!(
-            cleanup_cache_get_active(&db, "legacy")
-                .expect("query")
-                .is_some()
-        );
+        assert!(cleanup_cache_get_active(&db, "legacy")
+            .expect("query")
+            .is_some());
     }
 
     #[test]
@@ -1121,7 +1182,8 @@ mod tests {
     #[test]
     fn cleanup_cache_epoch_columns_treat_utc_text_as_utc() {
         let db = test_db();
-        cleanup_cache_insert_new(&db, "utc", "value", "2026-01-01 00:00:00", false).expect("insert");
+        cleanup_cache_insert_new(&db, "utc", "value", "2026-01-01 00:00:00", false)
+            .expect("insert");
 
         let conn = lock_conn(&db).expect("lock");
         let inserted_expiry_epoch: i64 = conn
@@ -1134,14 +1196,8 @@ mod tests {
         drop(conn);
         assert_eq!(inserted_expiry_epoch, 1_767_225_600);
 
-        cleanup_cache_touch_hit(
-            &db,
-            "utc",
-            2,
-            "2026-01-02 03:04:05",
-            "2026-02-03 04:05:06",
-        )
-        .expect("touch");
+        cleanup_cache_touch_hit(&db, "utc", 2, "2026-01-02 03:04:05", "2026-02-03 04:05:06")
+            .expect("touch");
         let conn = lock_conn(&db).expect("lock");
         let (last_hit_epoch, expires_epoch): (i64, i64) = conn
             .query_row(

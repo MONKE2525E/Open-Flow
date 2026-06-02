@@ -4,7 +4,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { getVersion } from '@tauri-apps/api/app';
+  import { getVersion } from '../tauri';
   import { MOTION_MS, MOTION_PX, SETTINGS_SECTION_ORDER, directionFromOrder, motionMs, motionPx } from '../motion';
 
   import GeneralSection from '../components/settings/GeneralSection.svelte';
