@@ -22,7 +22,7 @@ const CLIPBOARD_RESTORE_ATTEMPTS: usize = 3;
 const REFOCUS_SETTLE_MS: u64 = 150;
 
 // Settle time after a successful clipboard write before beginning the Ctrl+V
-// sequence — ensures the data is visible to the target app's clipboard reader.
+// sequence - ensures the data is visible to the target app's clipboard reader.
 #[cfg(target_os = "windows")]
 const CLIPBOARD_WRITE_SETTLE_MS: u64 = 50;
 
@@ -37,7 +37,7 @@ const CLIPBOARD_WRITE_RETRY_MS: u64 = 50;
 const MODIFIER_GAP_MS: u64 = 30;
 
 // Settle time after the paste (Ctrl+V) before restoring saved clipboard
-// formats — gives the target app time to read the clipboard before we
+// formats - gives the target app time to read the clipboard before we
 // overwrite it with the original contents.
 #[cfg(target_os = "windows")]
 const PASTE_SETTLE_MS: u64 = 80;
@@ -398,7 +398,7 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
     };
     use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 
-    // GDI object formats â€” GetClipboardData returns an opaque GDI handle for these,
+    // GDI object formats - GetClipboardData returns an opaque GDI handle for these,
     // not an HGLOBAL, so GlobalSize/GlobalLock are undefined on them.
     const CF_BITMAP: u32 = 2;
     const CF_METAFILEPICT: u32 = 3;
@@ -406,7 +406,7 @@ unsafe fn save_clipboard_all() -> SavedClipboard {
     const CF_ENHMETAFILE: u32 = 14;
 
     // Per-format cap: skip anything larger than 32 MB to stay within the 200 MB
-    // RAM budget. Typical screenshots are 2â€“8 MB as CF_DIB; 32 MB is generous.
+    // RAM budget. Typical screenshots are 2-8 MB as CF_DIB; 32 MB is generous.
     const MAX_FORMAT_BYTES: usize = 32 * 1024 * 1024;
 
     let mut entries = Vec::new();
@@ -584,7 +584,7 @@ pub async fn inject_text(
             };
 
             // Read cursor context from the tracked tail.
-            // moves the cursor, or switches windows â€” so when it's absent the context
+            // moves the cursor, or switches windows - so when it's absent the context
             // is genuinely unknown and we default to capitalising (safe for new fields).
             let prefix_class = text_context::classify_leading_prefix(text);
             let injection_probe = if contextual_caps || auto_spacing {
@@ -687,7 +687,7 @@ pub async fn inject_text(
 
             let text_to_inject = adjusted.as_str();
 
-            // Write injection text â€” retry up to 3 times if another process holds the clipboard.
+            // Write injection text - retry up to 3 times if another process holds the clipboard.
             let wide: Vec<u16> = text_to_inject
                 .encode_utf16()
                 .chain(std::iter::once(0))
@@ -716,7 +716,7 @@ pub async fn inject_text(
             ))
             .await;
 
-            // Step 1 â€” clear any dangling Alt the target app may have from the
+            // Step 1 - clear any dangling Alt the target app may have from the
             // recording gesture.  Ctrl-down is sent first so that the Alt-up is
             // NOT the message immediately following Alt-down; this prevents
             // DefWindowProc from firing SC_KEYMENU (menu-bar activation).
@@ -728,13 +728,13 @@ pub async fn inject_text(
             ];
             SendInput(&clear, std::mem::size_of::<INPUT>() as i32);
 
-            // Step 2 â€” let the app process the modifier-state change before we
+            // Step 2 - let the app process the modifier-state change before we
             // inject Ctrl+V.  Without this pause, some apps (browsers, IDEs) end
             // up processing V without Ctrl because the Alt-up and V-down land in
             // the same message-pump cycle.
             tokio::time::sleep(tokio::time::Duration::from_millis(MODIFIER_GAP_MS)).await;
 
-            // Step 3 â€” clean Ctrl+V with no dangling modifiers.
+            // Step 3 - clean Ctrl+V with no dangling modifiers.
             let paste = [
                 ki(VK_CONTROL, 0),
                 ki(VK_V, 0),
