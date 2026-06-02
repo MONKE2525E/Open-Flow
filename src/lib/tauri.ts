@@ -80,7 +80,7 @@ function readDevSettings(): Record<string, unknown> {
 }
 
 function writeDevSetting(key: string, value: unknown) {
-  if (typeof localStorage === 'undefined') return;
+  if (typeof localStorage === 'undefined' || !key) return;
   try {
     const next = { ...readDevSettings(), [key]: value };
     localStorage.setItem(DEV_STORAGE_KEY, JSON.stringify(next));
@@ -99,7 +99,10 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'get_setting':
       return getDevSetting(String(args?.key ?? '')) as T;
     case 'save_setting':
-      writeDevSetting(String(args?.key ?? ''), args?.value);
+      if (typeof args?.key !== 'string' || args.key.length === 0) {
+        return undefined as T;
+      }
+      writeDevSetting(args.key, args?.value);
       return undefined as T;
     case 'get_all_settings':
       return { ...defaultSettings, ...readDevSettings() } as T;
