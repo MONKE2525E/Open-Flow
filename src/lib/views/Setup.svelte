@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
+  import { invoke } from '../tauri';
   import { onMount, onDestroy } from 'svelte';
   import { appStore } from '../stores';
   import { animateWidth } from '../motion';

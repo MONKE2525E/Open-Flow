@@ -10,7 +10,7 @@
   import Settings from './lib/views/Settings.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { invoke, listen } from './lib/tauri';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx } from './lib/motion';
@@ -74,15 +74,12 @@
         appStore.setupComplete = false;
       }
 
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        const unlisten = await listen<string>('open-flow:error', (ev) => {
-          errorToast = ev.payload ?? 'Something went wrong';
-          clearTimeout(toastTimer);
-          toastTimer = setTimeout(() => { errorToast = ''; }, 5000);
-        });
-        cleanupFn = unlisten;
-      } catch {}
+      const unlisten = await listen<string>('open-flow:error', (ev) => {
+        errorToast = ev.payload ?? 'Something went wrong';
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => { errorToast = ''; }, 5000);
+      });
+      cleanupFn = unlisten;
     })();
 
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');

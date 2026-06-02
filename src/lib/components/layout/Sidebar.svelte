@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { invoke } from '../../tauri';
   import { appStore } from '../../stores';
   import { icons } from '../../icons';
   import { tweened } from 'svelte/motion';

@@ -647,6 +647,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
             api_used: &api_used,
             target_hwnd,
             cfg: &cfg,
+            profile: &profile,
             process_name,
             cleanup_cache_key,
             captured_at: retry_captured_at,
@@ -1204,6 +1205,7 @@ pub async fn retry_transcription_impl(
             api_used: &api_used,
             target_hwnd: capture.target_hwnd,
             cfg: &cfg,
+            profile: &capture.profile,
             process_name: capture.process_name,
             cleanup_cache_key,
             captured_at: capture.captured_at,
@@ -1220,6 +1222,7 @@ struct PipelineCompletionContext<'a> {
     api_used: &'a str,
     target_hwnd: usize,
     cfg: &'a store::PipelineConfig,
+    profile: &'a str,
     process_name: String,
     cleanup_cache_key: String,
     captured_at: std::time::Instant,
@@ -1294,25 +1297,33 @@ async fn finalize_pipeline_completion(
 
     hide_pill(app);
     let inject_stage = std::time::Instant::now();
-    let injected_text = match injection::inject_text(
+    let injected = match injection::inject_text(
         &final_text_substituted,
         ctx.target_hwnd,
         ctx.cfg.contextual_caps_enabled,
         ctx.cfg.auto_spacing_enabled,
+        ctx.profile,
     )
     .await
     {
-        Ok(text) => text,
+        Ok(outcome) => outcome,
         Err(e) => {
             log::error!("inject: {e}");
             show_error_pill(app, "Failed to paste - text saved to history").await;
-            final_text_substituted.clone()
+            injection::InjectionOutcome {
+                text: final_text_substituted.clone(),
+                context_state: "unknown",
+                case_decision: "inject_failed",
+            }
         }
     };
+    let injected_text = injected.text;
     log::debug!(
-        "pipeline: injection done contextual_caps={} auto_spacing={} output_chars={} stage_ms={}",
+        "pipeline: injection done contextual_caps={} auto_spacing={} context_state={} case_decision={} output_chars={} stage_ms={}",
         ctx.cfg.contextual_caps_enabled,
         ctx.cfg.auto_spacing_enabled,
+        injected.context_state,
+        injected.case_decision,
         injected_text.chars().count(),
         inject_stage.elapsed().as_millis()
     );

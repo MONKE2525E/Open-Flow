@@ -37,64 +37,312 @@ const MODIFIER_GAP_MS: u64 = 30;
 // overwrite it with the original contents.
 const PASTE_SETTLE_MS: u64 = 80;
 
-static LAST_INJECTION: OnceLock<Mutex<Option<(usize, String, Instant)>>> = OnceLock::new();
-
-fn last_injection() -> &'static Mutex<Option<(usize, String, Instant)>> {
-    LAST_INJECTION.get_or_init(|| Mutex::new(None))
+const SENTENCE_ENDERS: &[char] = &['.', '!', '?', '\n', '\r'];
+#[derive(Clone, Debug)]
+enum CursorContextState {
+    Unknown {
+        instant: Instant,
+    },
+    Known {
+        hwnd: usize,
+        tail: String,
+        instant: Instant,
+    },
 }
 
-/// Full reset — called on Enter, character keys, arrows, etc. The cursor context
-/// is unknown after such input, so the next injection starts fresh.
-pub fn reset_injection_history() {
-    if let Ok(mut guard) = last_injection().lock() {
-        *guard = None;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_context_detects_sentence_boundary() {
+        assert!(matches!(
+            classify_context("Hello. "),
+            ContextKind::SentenceBoundary
+        ));
+        assert!(matches!(
+            classify_context("Hello?\n"),
+            ContextKind::SentenceBoundary
+        ));
+        assert!(matches!(
+            classify_context(""),
+            ContextKind::SentenceBoundary
+        ));
+    }
+
+    #[test]
+    fn classify_context_detects_continuation() {
+        assert!(matches!(
+            classify_context("hello, "),
+            ContextKind::Continuation
+        ));
+        assert!(matches!(
+            classify_context("path/to/"),
+            ContextKind::Continuation
+        ));
+        assert!(matches!(
+            classify_context("label:"),
+            ContextKind::Continuation
+        ));
+    }
+
+    #[test]
+    fn uppercase_first_word_handles_prefix_symbols() {
+        assert_eq!(uppercase_first_word("hello world"), "Hello world");
+        assert_eq!(uppercase_first_word("\"hello world"), "\"Hello world");
+        assert_eq!(uppercase_first_word("(hello world"), "(Hello world");
+    }
+
+    #[test]
+    fn lowercase_first_word_only_for_safe_words() {
+        assert_eq!(
+            lowercase_first_word_if_safe("The fix is ready"),
+            ("the fix is ready".into(), true)
+        );
+        assert_eq!(
+            lowercase_first_word_if_safe("OpenAI ships model updates"),
+            ("OpenAI ships model updates".into(), false)
+        );
+        assert_eq!(
+            lowercase_first_word_if_safe("I am here"),
+            ("I am here".into(), false)
+        );
+        assert_eq!(
+            lowercase_first_word_if_safe("HTTP server"),
+            ("HTTP server".into(), false)
+        );
+    }
+
+    #[test]
+    fn history_tracks_manual_typing_and_backspace_by_window() {
+        reset_injection_history();
+        append_or_reset_injection_history(11, 'h');
+        append_or_reset_injection_history(11, 'i');
+
+        let state = last_injection().lock().expect("lock");
+        match &*state {
+            CursorContextState::Known { hwnd, tail, .. } => {
+                assert_eq!(*hwnd, 11);
+                assert_eq!(tail, "hi");
+            }
+            CursorContextState::Unknown { .. } => panic!("expected known state"),
+        }
+        drop(state);
+
+        backspace_injection_history(22);
+        let state = last_injection().lock().expect("lock");
+        assert!(matches!(&*state, CursorContextState::Unknown { .. }));
     }
 }
-
-/// Called on Backspace. Pops the last character off the tracked text so the
-/// next injection still knows what's immediately before the cursor after the
-/// deletion. Clears the record entirely once the tracked text empties.
-pub fn backspace_injection_history() {
-    if let Ok(mut guard) = last_injection().lock() {
-        let empty = if let Some((_, ref mut text, ref mut time)) = *guard {
-            text.pop();
-            *time = Instant::now();
-            text.is_empty()
-        } else {
-            false
-        };
-        if empty {
-            *guard = None;
+#[derive(Clone, Copy, Debug)]
+enum ContextKind {
+    Unknown,
+    SentenceBoundary,
+    Continuation,
+}
+impl ContextKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::SentenceBoundary => "sentence_boundary",
+            Self::Continuation => "continuation",
         }
     }
 }
-
-/// Called on a printable character keypress. If the foreground window matches
-/// the injection record, appends `ch` to the tracked tail and refreshes the
-/// timestamp. Otherwise clears the record — the cursor context is unknown.
+#[derive(Clone, Copy, Debug)]
+enum CaseDecision {
+    ContextualCapsDisabled,
+    UnknownContextPreserved,
+    SentenceBoundaryCapitalized,
+    SentenceBoundaryPreservedVeryCasual,
+    ContinuationLowercased,
+    ContinuationPreserved,
+}
+impl CaseDecision {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ContextualCapsDisabled => "contextual_caps_disabled",
+            Self::UnknownContextPreserved => "unknown_context_preserved",
+            Self::SentenceBoundaryCapitalized => "sentence_boundary_capitalized",
+            Self::SentenceBoundaryPreservedVeryCasual => "sentence_boundary_preserved_very_casual",
+            Self::ContinuationLowercased => "continuation_lowercased",
+            Self::ContinuationPreserved => "continuation_preserved",
+        }
+    }
+}
+pub struct InjectionOutcome {
+    pub text: String,
+    pub context_state: &'static str,
+    pub case_decision: &'static str,
+}
+static LAST_INJECTION: OnceLock<Mutex<CursorContextState>> = OnceLock::new();
+fn unknown_context() -> CursorContextState {
+    CursorContextState::Unknown {
+        instant: Instant::now(),
+    }
+}
+fn last_injection() -> &'static Mutex<CursorContextState> {
+    LAST_INJECTION.get_or_init(|| Mutex::new(unknown_context()))
+}
+fn trim_tail_to_limit(text: &mut String) {
+    if text.len() > HISTORY_TAIL {
+        let excess = text.len() - HISTORY_TAIL;
+        let mut trim_at = excess;
+        while !text.is_char_boundary(trim_at) {
+            trim_at += 1;
+        }
+        *text = text[trim_at..].to_owned();
+    }
+}
+fn trimmed_context_for_decision(text: &str) -> &str {
+    text.trim_end_matches(|c: char| c.is_whitespace() && !SENTENCE_ENDERS.contains(&c))
+}
+fn classify_context(tail: &str) -> ContextKind {
+    let trimmed = trimmed_context_for_decision(tail);
+    if trimmed
+        .chars()
+        .next_back()
+        .map(|c| SENTENCE_ENDERS.contains(&c))
+        .unwrap_or(true)
+    {
+        ContextKind::SentenceBoundary
+    } else {
+        ContextKind::Continuation
+    }
+}
+fn is_safe_lowercase_candidate(word: &str) -> bool {
+    if word.is_empty() || word == "I" || word.contains(|c: char| c.is_ascii_digit()) {
+        return false;
+    }
+    if word
+        .chars()
+        .any(|c| !c.is_alphabetic() && c != '\'' && c != '-')
+    {
+        return false;
+    }
+    let lower = word.to_lowercase();
+    let upper = word.to_uppercase();
+    if word == upper || word == lower {
+        return false;
+    }
+    let mut chars = word.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_uppercase() {
+        return false;
+    }
+    if chars.any(|c| c.is_uppercase()) {
+        return false;
+    }
+    const LOWERCASE_WHITELIST: &[&str] = &[
+        "a", "an", "and", "as", "at", "but", "by", "for", "from", "if", "in", "is", "it", "of",
+        "on", "or", "so", "than", "that", "the", "then", "this", "to", "we", "with", "you",
+    ];
+    LOWERCASE_WHITELIST.contains(&lower.as_str())
+}
+fn find_first_alpha_span(text: &str) -> Option<(usize, usize)> {
+    let mut start = None;
+    let mut end = 0usize;
+    for (idx, ch) in text.char_indices() {
+        if start.is_none() {
+            if ch.is_alphabetic() {
+                start = Some(idx);
+                end = idx + ch.len_utf8();
+            }
+            continue;
+        }
+        if ch.is_alphabetic() || ch == '\'' || ch == '-' {
+            end = idx + ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+    start.map(|s| (s, end))
+}
+fn uppercase_first_word(text: &str) -> String {
+    let Some((start, _)) = find_first_alpha_span(text) else {
+        return text.to_owned();
+    };
+    let mut chars = text[start..].chars();
+    let Some(first) = chars.next() else {
+        return text.to_owned();
+    };
+    if !first.is_lowercase() {
+        return text.to_owned();
+    }
+    let first_len = first.len_utf8();
+    let mut out = String::with_capacity(text.len());
+    out.push_str(&text[..start]);
+    out.push_str(&first.to_uppercase().collect::<String>());
+    out.push_str(&text[start + first_len..]);
+    out
+}
+fn lowercase_first_word_if_safe(text: &str) -> (String, bool) {
+    let Some((start, end)) = find_first_alpha_span(text) else {
+        return (text.to_owned(), false);
+    };
+    let word = &text[start..end];
+    if !is_safe_lowercase_candidate(word) {
+        return (text.to_owned(), false);
+    }
+    let mut chars = text[start..].chars();
+    let Some(first) = chars.next() else {
+        return (text.to_owned(), false);
+    };
+    let first_len = first.len_utf8();
+    let mut out = String::with_capacity(text.len());
+    out.push_str(&text[..start]);
+    out.push_str(&first.to_lowercase().collect::<String>());
+    out.push_str(&text[start + first_len..]);
+    (out, true)
+}
+pub fn reset_injection_history() {
+    if let Ok(mut guard) = last_injection().lock() {
+        *guard = unknown_context();
+    }
+}
+pub fn backspace_injection_history(hwnd: usize) {
+    if let Ok(mut guard) = last_injection().lock() {
+        match &mut *guard {
+            CursorContextState::Known {
+                hwnd: stored_hwnd,
+                tail,
+                instant,
+            } if *stored_hwnd == hwnd => {
+                tail.pop();
+                *instant = Instant::now();
+                if tail.is_empty() {
+                    *guard = unknown_context();
+                }
+            }
+            _ => {
+                *guard = unknown_context();
+            }
+        }
+    }
+}
 pub fn append_or_reset_injection_history(hwnd: usize, ch: char) {
     if let Ok(mut guard) = last_injection().lock() {
-        let keep = if let Some((stored_hwnd, ref mut text, ref mut time)) = *guard {
-            if stored_hwnd == hwnd {
-                text.push(ch);
-                if text.len() > HISTORY_TAIL {
-                    let excess = text.len() - HISTORY_TAIL;
-                    let mut trim_at = excess;
-                    while !text.is_char_boundary(trim_at) {
-                        trim_at += 1;
-                    }
-                    *text = text[trim_at..].to_owned();
-                }
-                *time = Instant::now();
-                true
-            } else {
-                false
+        match &mut *guard {
+            CursorContextState::Known {
+                hwnd: stored_hwnd,
+                tail,
+                instant,
+            } if *stored_hwnd == hwnd => {
+                tail.push(ch);
+                trim_tail_to_limit(tail);
+                *instant = Instant::now();
             }
-        } else {
-            false
-        };
-        if !keep {
-            *guard = None;
+            _ => {
+                let mut tail = ch.to_string();
+                trim_tail_to_limit(&mut tail);
+                *guard = CursorContextState::Known {
+                    hwnd,
+                    tail,
+                    instant: Instant::now(),
+                };
+            }
         }
     }
 }
@@ -258,7 +506,8 @@ pub async fn inject_text(
     target_hwnd: usize,
     contextual_caps: bool,
     auto_spacing: bool,
-) -> anyhow::Result<String> {
+    profile: &str,
+) -> anyhow::Result<InjectionOutcome> {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::Foundation::HWND;
@@ -296,60 +545,70 @@ pub async fn inject_text(
                 },
             };
 
-            // Retrieve up to 3 characters immediately before the cursor from the
-            // injection history tail. History is cleared whenever the user types,
+            // Read cursor context from the tracked tail.
             // moves the cursor, or switches windows — so when it's absent the context
             // is genuinely unknown and we default to capitalising (safe for new fields).
-            let context: String = if contextual_caps || auto_spacing {
+            let (context_tail, context_kind) = if contextual_caps || auto_spacing {
                 match last_injection().lock() {
-                    Ok(guard) => (*guard)
-                        .as_ref()
-                        .filter(|(hwnd, _, instant)| {
-                            *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE
-                        })
-                        .map(|(_, text, _)| text.clone())
-                        .unwrap_or_default(),
+                    Ok(guard) => match &*guard {
+                        CursorContextState::Known {
+                            hwnd,
+                            tail,
+                            instant,
+                        } if *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE => {
+                            (tail.clone(), classify_context(tail))
+                        }
+                        CursorContextState::Unknown { instant } => {
+                            let _ = instant.elapsed();
+                            (String::new(), ContextKind::Unknown)
+                        }
+                        _ => (String::new(), ContextKind::Unknown),
+                    },
                     Err(_) => {
                         log::error!("injection history mutex poisoned");
-                        String::new()
+                        (String::new(), ContextKind::Unknown)
                     }
                 }
             } else {
-                String::new()
+                (String::new(), ContextKind::Unknown)
             };
 
-            // Strip trailing whitespace from context to find the last meaningful char.
-            // "Hello. " → trimmed = "Hello." → last = '.' → capitalize (new sentence).
-            // "Hello"   → trimmed = "Hello"  → last = 'o' → lowercase (mid-sentence).
-            // ""        → no prior context              → capitalize (new/empty field).
-            let sentence_enders: &[char] = &['.', '!', '?', '\n', '\r'];
-            let trimmed_ctx = context
-                .trim_end_matches(|c: char| c.is_whitespace() && !sentence_enders.contains(&c));
-            let should_capitalize = trimmed_ctx.is_empty()
-                || trimmed_ctx
-                    .chars()
-                    .next_back()
-                    .map(|c| sentence_enders.contains(&c))
-                    .unwrap_or(true);
-
-            let mut adjusted = if contextual_caps {
-                if should_capitalize {
-                    text.to_owned()
-                } else {
-                    let mut chars = text.chars();
-                    match chars.next() {
-                        Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
-                        None => text.to_owned(),
+            // Apply profile-aware casing policy using the derived context state.
+            let (mut adjusted, case_decision) = if !contextual_caps {
+                (text.to_owned(), CaseDecision::ContextualCapsDisabled)
+            } else {
+                match context_kind {
+                    ContextKind::Unknown => {
+                        (text.to_owned(), CaseDecision::UnknownContextPreserved)
+                    }
+                    ContextKind::SentenceBoundary => {
+                        if profile == "very_casual" {
+                            (
+                                text.to_owned(),
+                                CaseDecision::SentenceBoundaryPreservedVeryCasual,
+                            )
+                        } else {
+                            (
+                                uppercase_first_word(text),
+                                CaseDecision::SentenceBoundaryCapitalized,
+                            )
+                        }
+                    }
+                    ContextKind::Continuation => {
+                        let (lowered, did_lower) = lowercase_first_word_if_safe(text);
+                        if did_lower {
+                            (lowered, CaseDecision::ContinuationLowercased)
+                        } else {
+                            (text.to_owned(), CaseDecision::ContinuationPreserved)
+                        }
                     }
                 }
-            } else {
-                text.to_owned()
             };
 
             // Add a space only when the cursor sits immediately after a non-whitespace
             // character. Empty context (new field) or trailing whitespace → no space.
             if auto_spacing {
-                if let Some(c) = context.chars().next_back() {
+                if let Some(c) = context_tail.chars().next_back() {
                     if !c.is_whitespace() && !adjusted.starts_with(char::is_whitespace) {
                         adjusted = format!(" {adjusted}");
                     }
@@ -378,7 +637,7 @@ pub async fn inject_text(
             }
             if !clipboard_written {
                 return Err(anyhow::anyhow!(
-                    "OpenClipboard failed after 3 attempts — clipboard held by another process"
+                    "OpenClipboard failed after 3 attempts - clipboard held by another process"
                 ));
             }
 
@@ -418,32 +677,34 @@ pub async fn inject_text(
             // Restore all previously saved clipboard formats.
             restore_clipboard_all(&saved);
 
-            // Record a tail of the injected text so the keyboard hook can pop
-            // characters off it on Backspace, keeping the context accurate after
-            // editing. Only the last HISTORY_TAIL bytes are kept to bound memory use.
             if target_hwnd != 0 && !adjusted.is_empty() {
                 if let Ok(mut guard) = last_injection().lock() {
-                    let tail = if adjusted.len() > HISTORY_TAIL {
-                        let mut start = adjusted.len() - HISTORY_TAIL;
-                        while !adjusted.is_char_boundary(start) {
-                            start += 1;
-                        }
-                        adjusted[start..].to_owned()
-                    } else {
-                        adjusted.clone()
+                    let mut tail = adjusted.clone();
+                    trim_tail_to_limit(&mut tail);
+                    *guard = CursorContextState::Known {
+                        hwnd: target_hwnd,
+                        tail,
+                        instant: Instant::now(),
                     };
-                    *guard = Some((target_hwnd, tail, Instant::now()));
                 }
             }
 
-            Ok(adjusted)
+            Ok(InjectionOutcome {
+                text: adjusted,
+                context_state: context_kind.as_str(),
+                case_decision: case_decision.as_str(),
+            })
         }
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        log::warn!("inject_text: not on Windows — skipping target_hwnd={target_hwnd}");
+        log::warn!("inject_text: not on Windows - skipping target_hwnd={target_hwnd}");
 
-        Ok(text.to_string())
+        Ok(InjectionOutcome {
+            text: text.to_string(),
+            context_state: "unknown",
+            case_decision: "contextual_caps_disabled",
+        })
     }
 }

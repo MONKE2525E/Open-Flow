@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
+  import { invoke } from '../tauri';
   import { onMount } from 'svelte';
   import { fly, slide, fade } from 'svelte/transition';
   import { flip } from 'svelte/animate';

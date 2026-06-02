@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
+  import { invoke } from '../tauri';
 
   let { onResult }: { onResult: (text: string) => void } = $props();
 
