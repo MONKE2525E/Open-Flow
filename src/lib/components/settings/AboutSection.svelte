@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
+  import { invoke } from '../../tauri';
   import { appStore, type UpdateInfo } from '../../stores';
   import { saveSetting } from '../../settings';
 

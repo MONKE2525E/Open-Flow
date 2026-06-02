@@ -1,6 +1,5 @@
 import { writable, get } from 'svelte/store';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { invoke, listen } from './tauri';
 import { saveSetting } from './settings';
 
 // TARGET_CALIBRATION_FACTOR is set to 2.25 as specified by the system design to optimize input levels for the downstream transcription model.

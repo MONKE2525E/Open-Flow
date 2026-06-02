@@ -3,8 +3,7 @@
   import { fly } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
-  import { invoke } from '@tauri-apps/api/core';
-  import { getVersion } from '@tauri-apps/api/app';
+  import { invoke, getVersion, listen } from '../tauri';
   import { icons } from '../icons';
   import { appStore, type UpdateInfo } from '../stores';
   import { saveSetting } from '../settings';
@@ -187,7 +186,20 @@
   onMount(() => {
     getVersion().then(v => currentVersion = v);
     load();
-    let unlisten: (() => void) | undefined;
+    let mounted = true;
+    const unlisteners: (() => void)[] = [];
+
+    function trackListener(promise: Promise<() => void>) {
+      promise
+        .then((cleanup) => {
+          if (!mounted) {
+            cleanup();
+            return;
+          }
+          unlisteners.push(cleanup);
+        })
+        .catch(() => {});
+    }
 
     // Check for updates, skip banner if user dismissed this version
     invoke<UpdateInfo | null>('check_for_update').then(async (update) => {
@@ -200,26 +212,26 @@
       }
     }).catch(() => {});
 
-    import('@tauri-apps/api/event').then(({ listen }) => {
-      listen('open-flow:transcribed', () => {
-        failedEntry = null;
-        if (failedTimer) { clearTimeout(failedTimer); failedTimer = null; }
-        load();
-      }).then(u => unlisten = u).catch(() => {});
+    trackListener(listen('open-flow:transcribed', () => {
+      failedEntry = null;
+      if (failedTimer) { clearTimeout(failedTimer); failedTimer = null; }
+      load();
+    }));
 
-      listen<string>('open-flow:pipeline-failed', (ev) => {
-        failedEntry = { created_at: ev.payload };
-        if (failedTimer) clearTimeout(failedTimer);
-        failedTimer = setTimeout(() => {
-          failedEntry = null;
-          failedTimer = null;
-        }, 10 * 60 * 1000);
-      }).then(u => unlistenFailed = u).catch(() => {});
-    }).catch(() => {});
+    trackListener(listen<string>('open-flow:pipeline-failed', (ev) => {
+      failedEntry = { created_at: ev.payload };
+      if (failedTimer) clearTimeout(failedTimer);
+      failedTimer = setTimeout(() => {
+        failedEntry = null;
+        failedTimer = null;
+      }, 10 * 60 * 1000);
+    }));
 
     return () => {
-      if (unlisten) unlisten();
-      if (unlistenFailed) unlistenFailed();
+      mounted = false;
+      while (unlisteners.length > 0) {
+        unlisteners.pop()?.();
+      }
       if (failedTimer) {
         clearTimeout(failedTimer);
         failedTimer = null;
