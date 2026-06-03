@@ -1,8 +1,59 @@
 /// Returns the total resident private memory used by this process and all
 /// WebView2 child processes (in MB), matching Task Manager's "Memory" column.
 pub fn measure() -> u64 {
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     return 0;
+
+    // macOS: sum resident memory of this process and its WebView child processes
+    // by walking the process tree (children are grandchildren of the main app,
+    // same as WebView2 on Windows). Uses RSS, which includes some shared pages, so
+    // it slightly over-reports versus Windows' private working set — informational.
+    #[cfg(target_os = "macos")]
+    {
+        use libproc::libproc::bsd_info::BSDInfo;
+        use libproc::libproc::proc_pid::pidinfo;
+        use libproc::libproc::task_info::TaskAllInfo;
+        use libproc::processes::{pids_by_type, ProcFilter};
+        use std::collections::{HashMap, HashSet, VecDeque};
+
+        let our_pid = std::process::id() as i32;
+
+        let mut children: HashMap<i32, Vec<i32>> = HashMap::new();
+        if let Ok(all) = pids_by_type(ProcFilter::All) {
+            for pid in all {
+                let pid = pid as i32;
+                if pid <= 0 {
+                    continue;
+                }
+                if let Ok(info) = pidinfo::<BSDInfo>(pid, 0) {
+                    children.entry(info.pbi_ppid as i32).or_default().push(pid);
+                }
+            }
+        }
+
+        let resident = |pid: i32| -> u64 {
+            pidinfo::<TaskAllInfo>(pid, 0)
+                .map(|t| t.ptinfo.pti_resident_size)
+                .unwrap_or(0)
+        };
+
+        let mut total = resident(our_pid);
+        let mut seen: HashSet<i32> = HashSet::new();
+        seen.insert(our_pid);
+        let mut queue: VecDeque<i32> = VecDeque::new();
+        if let Some(kids) = children.get(&our_pid) {
+            queue.extend(kids.iter().copied());
+        }
+        while let Some(pid) = queue.pop_front() {
+            if seen.insert(pid) {
+                total += resident(pid);
+                if let Some(kids) = children.get(&pid) {
+                    queue.extend(kids.iter().copied());
+                }
+            }
+        }
+        total / (1024 * 1024)
+    }
 
     #[cfg(target_os = "windows")]
     unsafe {

@@ -297,6 +297,25 @@ fn lowercase_first_word_if_safe(text: &str) -> (String, bool) {
     out.push_str(&text[start + first_len..]);
     (out, true)
 }
+fn injection_context(target_hwnd: usize, contextual_caps: bool, auto_spacing: bool) -> String {
+    if !(contextual_caps || auto_spacing) {
+        return String::new();
+    }
+    match last_injection().lock() {
+        Ok(guard) => match &*guard {
+            CursorContextState::Known {
+                hwnd,
+                tail,
+                instant,
+            } if *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE => tail.clone(),
+            _ => String::new(),
+        },
+        Err(_) => {
+            log::error!("injection history mutex poisoned");
+            String::new()
+        }
+    }
+}
 pub fn reset_injection_history() {
     if let Ok(mut guard) = last_injection().lock() {
         *guard = unknown_context();
@@ -698,7 +717,121 @@ pub async fn inject_text(
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
+        use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+        const VK_ANSI_V: CGKeyCode = 9;
+
+        if target_hwnd != 0 {
+            crate::system::mac_app::activate_pid(target_hwnd as i32);
+            tokio::time::sleep(Duration::from_millis(120)).await;
+        }
+
+        let context = injection_context(target_hwnd, contextual_caps, auto_spacing);
+        let (mut adjusted, context_kind, case_decision) = if !contextual_caps {
+            (
+                text.to_owned(),
+                ContextKind::Unknown,
+                CaseDecision::ContextualCapsDisabled,
+            )
+        } else {
+            match classify_context(&context) {
+                ContextKind::Unknown => (
+                    text.to_owned(),
+                    ContextKind::Unknown,
+                    CaseDecision::UnknownContextPreserved,
+                ),
+                ContextKind::SentenceBoundary => {
+                    if profile == "very_casual" {
+                        (
+                            text.to_owned(),
+                            ContextKind::SentenceBoundary,
+                            CaseDecision::SentenceBoundaryPreservedVeryCasual,
+                        )
+                    } else {
+                        (
+                            uppercase_first_word(text),
+                            ContextKind::SentenceBoundary,
+                            CaseDecision::SentenceBoundaryCapitalized,
+                        )
+                    }
+                }
+                ContextKind::Continuation => {
+                    let (lowered, did_lower) = lowercase_first_word_if_safe(text);
+                    if did_lower {
+                        (
+                            lowered,
+                            ContextKind::Continuation,
+                            CaseDecision::ContinuationLowercased,
+                        )
+                    } else {
+                        (
+                            text.to_owned(),
+                            ContextKind::Continuation,
+                            CaseDecision::ContinuationPreserved,
+                        )
+                    }
+                }
+            }
+        };
+
+        if auto_spacing {
+            if let Some(c) = context.chars().next_back() {
+                if !c.is_whitespace() && !adjusted.starts_with(char::is_whitespace) {
+                    adjusted = format!(" {adjusted}");
+                }
+            }
+        }
+
+        let saved = crate::system::mac_app::pasteboard_get_string();
+        crate::system::mac_app::pasteboard_set_string(&adjusted);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let posted = (|| -> Option<()> {
+            let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
+            let down = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, true).ok()?;
+            down.set_flags(CGEventFlags::CGEventFlagCommand);
+            down.post(CGEventTapLocation::HID);
+            let up = CGEvent::new_keyboard_event(src, VK_ANSI_V, false).ok()?;
+            up.set_flags(CGEventFlags::CGEventFlagCommand);
+            up.post(CGEventTapLocation::HID);
+            Some(())
+        })();
+
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        if let Some(prev) = saved {
+            crate::system::mac_app::pasteboard_set_string(&prev);
+        }
+
+        if posted.is_none() {
+            return Err(anyhow::anyhow!(
+                "inject_text: failed to synthesise Cmd+V — grant Open Flow Accessibility permission"
+            ));
+        }
+
+        if target_hwnd != 0 && !adjusted.is_empty() {
+            if let Ok(mut guard) = last_injection().lock() {
+                let mut tail = adjusted.clone();
+                trim_tail_to_limit(&mut tail);
+                *guard = CursorContextState::Known {
+                    hwnd: target_hwnd,
+                    tail,
+                    instant: Instant::now(),
+                };
+            }
+        }
+
+        Ok(InjectionOutcome {
+            text: adjusted,
+            context_state: context_kind.as_str(),
+            case_decision: case_decision.as_str(),
+        })
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         log::warn!("inject_text: not on Windows - skipping target_hwnd={target_hwnd}");
 

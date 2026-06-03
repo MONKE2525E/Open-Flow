@@ -13,7 +13,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-ico"] }
+tauri = { version = "2", features = ["tray-icon", "image-ico", "macos-private-api"] }
 tauri-plugin-store       = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-shell       = "2"
@@ -53,6 +53,17 @@ windows = { version = "0.61", features = [
   "Win32_Storage_FileSystem",
   "Win32_Security_Credentials",
 ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics      = "0.24"   # CGEventTap, CGEvent post (Cmd+V)
+core-foundation    = "0.10"   # CFRunLoop, CFString, CFRunLoopSource
+core-foundation-sys = "0.8"   # CFGetTypeID / CFRelease for AX value handling
+objc2              = "0.5"     # msg_send! for AppKit (NSWorkspace, NSPasteboard)
+objc2-foundation   = { version = "0.2", features = ["NSData", "NSString"] }  # NSData/NSString conversions
+accessibility-sys  = "0.1"     # AXUIElement (auto-learn focused text + AX prompt)
+libproc            = "0.14"    # process RSS for memory monitor
+libc               = "0.2"     # statvfs (free disk space)
+security-framework = "3.7"     # macOS Keychain generic-password storage
 
 [profile.release]
 opt-level  = "s"

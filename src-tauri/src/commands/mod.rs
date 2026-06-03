@@ -302,7 +302,22 @@ fn free_bytes_for_path(path: &std::path::Path) -> Result<u64, String> {
         .map_err(|_| "Failed to read free disk space".to_string())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn free_bytes_for_path(path: &std::path::Path) -> Result<u64, String> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path =
+        CString::new(path.as_os_str().as_bytes()).map_err(|_| "Invalid path".to_string())?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) };
+    if rc != 0 {
+        return Err("Failed to read free disk space".to_string());
+    }
+    Ok(stat.f_bavail as u64 * stat.f_frsize as u64)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn free_bytes_for_path(_path: &std::path::Path) -> Result<u64, String> {
     Ok(u64::MAX)
 }
@@ -750,9 +765,130 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
         }
     }
 
+    // macOS: write/remove a LaunchAgent plist that launches the app at login.
+    #[cfg(target_os = "macos")]
+    {
+        let label = "com.openflow.app";
+        let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+        let dir = std::path::PathBuf::from(&home).join("Library/LaunchAgents");
+        let plist_path = dir.join(format!("{label}.plist"));
+
+        if enabled {
+            let app_path = std::env::current_exe()
+                .map_err(|e| format!("Failed to get executable path: {e}"))?
+                .to_string_lossy()
+                .to_string();
+            let escaped_app_path = app_path
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let plist = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+                 <plist version=\"1.0\">\n\
+                 <dict>\n\
+                   <key>Label</key><string>{label}</string>\n\
+                   <key>ProgramArguments</key><array><string>{escaped_app_path}</string></array>\n\
+                   <key>RunAtLoad</key><true/>\n\
+                 </dict>\n\
+                 </plist>\n"
+            );
+            std::fs::write(&plist_path, plist).map_err(|e| e.to_string())?;
+        } else if plist_path.exists() {
+            std::fs::remove_file(&plist_path).map_err(|e| e.to_string())?;
+        }
+    }
+
     let store = _app.store("settings.json").map_err(|e| e.to_string())?;
     store.set("autostart_enabled", serde_json::json!(enabled));
     store.save().map_err(|e| e.to_string())
+}
+
+// ---------- macOS permissions ----------
+
+/// Whether Open Flow is trusted for the Accessibility API (needed for the global
+/// hotkey, Cmd+V injection, and auto-learn). When `prompt` is true, macOS shows
+/// the system permission dialog. Always true on non-macOS platforms.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn check_accessibility_permission(prompt: bool) -> bool {
+    use accessibility_sys::{kAXTrustedCheckOptionPrompt, AXIsProcessTrustedWithOptions};
+    use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::string::CFString;
+
+    unsafe {
+        let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
+        let value = CFBoolean::from(prompt);
+        let options = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
+        AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub fn check_accessibility_permission(_prompt: bool) -> bool {
+    true
+}
+
+/// Opens the macOS Accessibility privacy pane so the user can grant permission.
+/// No-op on other platforms.
+#[tauri::command]
+pub fn open_accessibility_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_accessibility_permission_status() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        if check_accessibility_permission(false) {
+            "authorized".to_string()
+        } else {
+            "needs_permission".to_string()
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        "authorized".to_string()
+    }
+}
+
+#[tauri::command]
+pub fn get_microphone_permission_status() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        crate::system::mac_app::microphone_permission_status().to_string()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        "authorized".to_string()
+    }
+}
+
+/// Opens the macOS Microphone privacy pane so the user can grant permission.
+/// No-op on other platforms.
+#[tauri::command]
+pub fn open_microphone_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // ---------- updates ----------
@@ -774,55 +910,67 @@ pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
 
 #[tauri::command]
 pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), String> {
-    use std::io::Write;
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    // Back up the database before touching anything.
-    if let Ok(mut db_path) = app.path().app_data_dir() {
-        db_path.push("openflow.db");
-        if db_path.exists() {
-            let _ = std::fs::copy(&db_path, db_path.with_extension("db.bak"));
-        }
+    #[cfg(not(windows))]
+    {
+        let _ = (&app, &download_url);
+        Err(
+            "In-app update is only available on Windows. Download the latest release from GitHub."
+                .into(),
+        )
     }
 
-    let bytes = crate::api::client::get()
-        .get(&download_url)
-        .header("User-Agent", "open-flow")
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| e.to_string())?
-        .bytes()
-        .await
-        .map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    let installer = std::env::temp_dir().join("open-flow-update.exe");
-    let mut f = std::fs::File::create(&installer).map_err(|e| e.to_string())?;
-    f.write_all(&bytes).map_err(|e| e.to_string())?;
-    drop(f);
+        // Back up the database before touching anything.
+        if let Ok(mut db_path) = app.path().app_data_dir() {
+            db_path.push("openflow.db");
+            if db_path.exists() {
+                let _ = std::fs::copy(&db_path, db_path.with_extension("db.bak"));
+            }
+        }
 
-    // Batch launcher: waits for this process to exit, runs the installer silently,
-    // then relaunches the app. cmd.exe avoids PowerShell execution-policy issues;
-    // CREATE_NO_WINDOW suppresses any console flash.
-    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let script = format!(
-        "@echo off\r\ntimeout /t 2 /nobreak >nul\r\n\"{}\" /S\r\nstart \"\" \"{}\"\r\n",
-        installer.display(),
-        current_exe.display()
-    );
-    let script_path = std::env::temp_dir().join("open-flow-updater.cmd");
-    std::fs::write(&script_path, &script).map_err(|e| e.to_string())?;
+        let bytes = crate::api::client::get()
+            .get(&download_url)
+            .header("User-Agent", "open-flow")
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+            .map_err(|e| e.to_string())?
+            .bytes()
+            .await
+            .map_err(|e| e.to_string())?;
 
-    std::process::Command::new("cmd")
-        .arg("/c")
-        .arg(&script_path)
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+        let installer = std::env::temp_dir().join("open-flow-update.exe");
+        let mut f = std::fs::File::create(&installer).map_err(|e| e.to_string())?;
+        f.write_all(&bytes).map_err(|e| e.to_string())?;
+        drop(f);
 
-    // Exit immediately so the binary is free before the installer starts.
-    std::process::exit(0);
+        // Batch launcher: waits for this process to exit, runs the installer silently,
+        // then relaunches the app. cmd.exe avoids PowerShell execution-policy issues;
+        // CREATE_NO_WINDOW suppresses any console flash.
+        let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let script = format!(
+            "@echo off\r\ntimeout /t 2 /nobreak >nul\r\n\"{}\" /S\r\nstart \"\" \"{}\"\r\n",
+            installer.display(),
+            current_exe.display()
+        );
+        let script_path = std::env::temp_dir().join("open-flow-updater.cmd");
+        std::fs::write(&script_path, &script).map_err(|e| e.to_string())?;
+
+        std::process::Command::new("cmd")
+            .arg("/c")
+            .arg(&script_path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+
+        // Exit immediately so the binary is free before the installer starts.
+        std::process::exit(0)
+    }
 }
 
 // ---------- connectivity ----------
