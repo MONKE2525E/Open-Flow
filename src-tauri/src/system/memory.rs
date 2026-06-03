@@ -35,7 +35,7 @@ pub fn measure() -> u64 {
                 }
 
                 let bytes = bytes as usize;
-                let count = bytes / std::mem::size_of::<libc::pid_t>();
+                let count = bytes;
                 for pid in buf.into_iter().take(count) {
                     let pid = pid as i32;
                     if pid > 0 && pid != ppid {
@@ -43,7 +43,7 @@ pub fn measure() -> u64 {
                     }
                 }
 
-                if bytes < capacity * std::mem::size_of::<libc::pid_t>() {
+                if count < capacity {
                     break;
                 }
 

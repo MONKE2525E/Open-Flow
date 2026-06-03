@@ -778,22 +778,43 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
                 .map_err(|e| format!("Failed to get executable path: {e}"))?
                 .to_string_lossy()
                 .to_string();
-            let escaped_app_path = app_path
+            let mut use_open = false;
+            let mut target_path = app_path.clone();
+            if let Some(index) = app_path.find(".app/Contents/MacOS/") {
+                target_path = app_path[..index + 4].to_string();
+                use_open = true;
+            }
+
+            let escaped_target_path = target_path
                 .replace('&', "&amp;")
                 .replace('<', "&lt;")
                 .replace('>', "&gt;");
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let plist = format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-                 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-                 <plist version=\"1.0\">\n\
-                 <dict>\n\
-                   <key>Label</key><string>{label}</string>\n\
-                   <key>ProgramArguments</key><array><string>{escaped_app_path}</string></array>\n\
-                   <key>RunAtLoad</key><true/>\n\
-                 </dict>\n\
-                 </plist>\n"
-            );
+            let plist = if use_open {
+                format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                     <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+                     <plist version=\"1.0\">\n\
+                     <dict>\n\
+                       <key>Label</key><string>{label}</string>\n\
+                       <key>ProgramArguments</key><array><string>open</string><string>-g</string><string>{escaped_target_path}</string></array>\n\
+                       <key>RunAtLoad</key><true/>\n\
+                     </dict>\n\
+                     </plist>\n"
+                )
+            } else {
+                format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                     <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+                     <plist version=\"1.0\">\n\
+                     <dict>\n\
+                       <key>Label</key><string>{label}</string>\n\
+                       <key>ProgramArguments</key><array><string>{escaped_target_path}</string></array>\n\
+                       <key>RunAtLoad</key><true/>\n\
+                     </dict>\n\
+                     </plist>\n"
+                )
+            };
             std::fs::write(&plist_path, plist).map_err(|e| e.to_string())?;
         } else if plist_path.exists() {
             std::fs::remove_file(&plist_path).map_err(|e| e.to_string())?;
