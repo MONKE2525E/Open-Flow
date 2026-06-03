@@ -29,7 +29,9 @@ pub fn list_installed_apps() -> Vec<InstalledApp> {
 
         let mut dirs = vec![
             std::path::PathBuf::from("/Applications"),
+            std::path::PathBuf::from("/Applications/Utilities"),
             std::path::PathBuf::from("/System/Applications"),
+            std::path::PathBuf::from("/System/Applications/Utilities"),
         ];
         if let Ok(home) = std::env::var("HOME") {
             dirs.push(std::path::PathBuf::from(home).join("Applications"));
