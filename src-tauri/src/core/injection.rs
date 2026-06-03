@@ -800,7 +800,7 @@ pub async fn inject_text(
             Some(())
         })();
 
-        tokio::time::sleep(Duration::from_millis(80)).await;
+        tokio::time::sleep(Duration::from_millis(120)).await;
 
         if let Some(prev) = saved {
             crate::system::mac_app::pasteboard_set_string(&prev);

@@ -1,4 +1,4 @@
-use tauri::Wry;
+use tauri::{AppHandle, Manager, Wry};
 use tauri_plugin_store::Store;
 
 #[cfg(windows)]
@@ -177,26 +177,31 @@ const KEYCHAIN_SERVICE: &str = "com.openflow.app";
 const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
 
 #[cfg(target_os = "macos")]
-fn legacy_creds_path() -> std::path::PathBuf {
-    std::env::var("HOME")
-        .map(|h| {
-            std::path::PathBuf::from(h)
-                .join("Library/Application Support/OpenFlow/credentials.json")
-        })
-        .unwrap_or_else(|_| std::path::PathBuf::from("credentials.json"))
+fn legacy_creds_path(app: &AppHandle) -> std::path::PathBuf {
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("credentials.json")
 }
 
 #[cfg(target_os = "macos")]
-fn read_legacy_creds() -> serde_json::Map<String, serde_json::Value> {
-    std::fs::read_to_string(legacy_creds_path())
+fn read_legacy_creds(app: &AppHandle) -> serde_json::Map<String, serde_json::Value> {
+    std::fs::read_to_string(legacy_creds_path(app))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
 }
 
 #[cfg(target_os = "macos")]
-fn write_legacy_creds(map: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
-    let path = legacy_creds_path();
+fn write_legacy_creds(
+    app: &AppHandle,
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let path = legacy_creds_path(app);
     if map.is_empty() {
         let _ = std::fs::remove_file(&path);
         return Ok(());
@@ -205,12 +210,26 @@ fn write_legacy_creds(map: &serde_json::Map<String, serde_json::Value>) -> Resul
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("create credentials dir failed: {e}"))?;
     }
-    let data = serde_json::to_string(map).map_err(|e| e.to_string())?;
-    std::fs::write(&path, data).map_err(|e| format!("write credentials failed: {e}"))?;
-    // Restrict to the current user (rw-------).
+    let data = serde_json::to_vec(map).map_err(|e| e.to_string())?;
+    let tmp_path = path.with_file_name("credentials.json.tmp");
+
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&tmp_path)
+            .map_err(|e| format!("open credentials temp file failed: {e}"))?;
+        file.write_all(&data)
+            .map_err(|e| format!("write credentials failed: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("sync credentials failed: {e}"))?;
+    }
+
+    if let Err(e) = std::fs::rename(&tmp_path, &path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("replace credentials failed: {e}"));
     }
     Ok(())
 }
@@ -296,7 +315,7 @@ pub fn has(_provider: &str) -> bool {
 /// One-shot migration: moves any plaintext API keys from settings.json or the
 /// legacy macOS credentials.json file into the OS secret store, then sets a flag
 /// so it never runs again. Platform-agnostic — delegates to `set`/`get`.
-pub fn migrate_from_store(store: &Store<Wry>) {
+pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
     if store
         .get(crate::data::store::CREDENTIALS_MIGRATED)
         .and_then(|v| v.as_bool())
@@ -306,12 +325,12 @@ pub fn migrate_from_store(store: &Store<Wry>) {
     }
 
     #[cfg(target_os = "macos")]
-    let mut legacy_creds = read_legacy_creds();
+    let mut legacy_creds = read_legacy_creds(_app);
     #[cfg(not(target_os = "macos"))]
     let mut legacy_creds: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
 
     #[cfg(target_os = "macos")]
-    let legacy_creds_existed = legacy_creds_path().exists();
+    let legacy_creds_existed = legacy_creds_path(_app).exists();
 
     let mut any_failed = false;
     for (provider, store_key) in [
@@ -362,14 +381,14 @@ pub fn migrate_from_store(store: &Store<Wry>) {
     {
         if legacy_creds.is_empty() {
             if legacy_creds_existed {
-                if let Err(e) = std::fs::remove_file(legacy_creds_path()) {
+                if let Err(e) = std::fs::remove_file(legacy_creds_path(_app)) {
                     log::warn!(
                         "Migration: could not remove legacy plaintext credentials file: {e}"
                     );
                     any_failed = true;
                 }
             }
-        } else if let Err(e) = write_legacy_creds(&legacy_creds) {
+        } else if let Err(e) = write_legacy_creds(_app, &legacy_creds) {
             log::warn!("Migration: could not persist legacy credentials cleanup: {e}");
             any_failed = true;
         }

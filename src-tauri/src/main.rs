@@ -124,7 +124,7 @@ fn main() {
                 tauri_plugin_store::StoreExt::store(app.handle(), "settings.json")
             {
                 let _ = store.reload();
-                crate::data::credentials::migrate_from_store(&store);
+                crate::data::credentials::migrate_from_store(app.handle(), &store);
                 if let Some(val) = store.get("hotkey") {
                     if let Some(arr) = val.as_array() {
                         if arr.len() == 2 {

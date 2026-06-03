@@ -10,26 +10,51 @@ pub fn measure() -> u64 {
     // it slightly over-reports versus Windows' private working set — informational.
     #[cfg(target_os = "macos")]
     {
-        use libproc::libproc::bsd_info::BSDInfo;
         use libproc::libproc::proc_pid::pidinfo;
         use libproc::libproc::task_info::TaskAllInfo;
-        use libproc::processes::{pids_by_type, ProcFilter};
-        use std::collections::{HashMap, HashSet, VecDeque};
+        use std::collections::{HashSet, VecDeque};
 
         let our_pid = std::process::id() as i32;
 
-        let mut children: HashMap<i32, Vec<i32>> = HashMap::new();
-        if let Ok(all) = pids_by_type(ProcFilter::All) {
-            for pid in all {
-                let pid = pid as i32;
-                if pid <= 0 {
-                    continue;
+        let direct_children = |ppid: i32| -> Vec<i32> {
+            let mut found = HashSet::new();
+            let mut capacity = 32usize;
+
+            loop {
+                let mut buf = vec![0 as libc::pid_t; capacity];
+                let bytes = unsafe {
+                    libc::proc_listchildpids(
+                        ppid as libc::pid_t,
+                        buf.as_mut_ptr() as *mut core::ffi::c_void,
+                        (buf.len() * std::mem::size_of::<libc::pid_t>()) as i32,
+                    )
+                };
+
+                if bytes <= 0 {
+                    break;
                 }
-                if let Ok(info) = pidinfo::<BSDInfo>(pid, 0) {
-                    children.entry(info.pbi_ppid as i32).or_default().push(pid);
+
+                let bytes = bytes as usize;
+                let count = bytes / std::mem::size_of::<libc::pid_t>();
+                for pid in buf.into_iter().take(count) {
+                    let pid = pid as i32;
+                    if pid > 0 && pid != ppid {
+                        found.insert(pid);
+                    }
+                }
+
+                if bytes < capacity * std::mem::size_of::<libc::pid_t>() {
+                    break;
+                }
+
+                capacity *= 2;
+                if capacity > 4096 {
+                    break;
                 }
             }
-        }
+
+            found.into_iter().collect()
+        };
 
         let resident = |pid: i32| -> u64 {
             pidinfo::<TaskAllInfo>(pid, 0)
@@ -41,15 +66,11 @@ pub fn measure() -> u64 {
         let mut seen: HashSet<i32> = HashSet::new();
         seen.insert(our_pid);
         let mut queue: VecDeque<i32> = VecDeque::new();
-        if let Some(kids) = children.get(&our_pid) {
-            queue.extend(kids.iter().copied());
-        }
+        queue.extend(direct_children(our_pid));
         while let Some(pid) = queue.pop_front() {
             if seen.insert(pid) {
                 total += resident(pid);
-                if let Some(kids) = children.get(&pid) {
-                    queue.extend(kids.iter().copied());
-                }
+                queue.extend(direct_children(pid));
             }
         }
         total / (1024 * 1024)

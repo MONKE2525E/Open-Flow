@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 #[cfg(windows)]
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
@@ -9,7 +9,7 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
 };
 
-static IS_MUTED: AtomicBool = AtomicBool::new(false);
+static IS_MUTED: Mutex<bool> = Mutex::new(false);
 
 #[cfg(windows)]
 unsafe fn get_volume_interface() -> Result<IAudioEndpointVolume, windows::core::Error> {
@@ -53,25 +53,41 @@ fn set_system_muted(_muted: bool) -> Result<(), String> {
 }
 
 pub fn mute() {
-    if IS_MUTED.load(Ordering::SeqCst) {
+    let mut muted = match IS_MUTED.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("System mute state lock was poisoned; recovering");
+            poisoned.into_inner()
+        }
+    };
+
+    if *muted {
         return;
     }
     if let Err(err) = set_system_muted(true) {
         log::warn!("Failed to mute system audio: {err}");
         return;
     }
-    IS_MUTED.store(true, Ordering::SeqCst);
+    *muted = true;
 }
 
 pub fn unmute() {
-    if !IS_MUTED.load(Ordering::SeqCst) {
+    let mut muted = match IS_MUTED.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("System mute state lock was poisoned; recovering");
+            poisoned.into_inner()
+        }
+    };
+
+    if !*muted {
         return;
     }
     if let Err(err) = set_system_muted(false) {
         log::warn!("Failed to unmute system audio: {err}");
         return;
     }
-    IS_MUTED.store(false, Ordering::SeqCst);
+    *muted = false;
 }
 
 trait EmptyFallback {
