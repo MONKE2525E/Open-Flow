@@ -315,7 +315,7 @@ fn handle_event(etype: CGEventType, event: &core_graphics::event::CGEvent) {
     let is_up = matches!(etype, CGEventType::KeyUp);
 
     // Track down-state for regular (non-modifier) configured keys.
-    if !is_modifier(k1) {
+    if k1 >= REGULAR_BASE {
         let kc = (k1 - REGULAR_BASE) as i64;
         if is_down && keycode == kc {
             K1_REGULAR_DOWN.store(true, Ordering::SeqCst);
@@ -323,7 +323,7 @@ fn handle_event(etype: CGEventType, event: &core_graphics::event::CGEvent) {
             K1_REGULAR_DOWN.store(false, Ordering::SeqCst);
         }
     }
-    if !is_modifier(k2) {
+    if k2 >= REGULAR_BASE {
         let kc = (k2 - REGULAR_BASE) as i64;
         if is_down && keycode == kc {
             K2_REGULAR_DOWN.store(true, Ordering::SeqCst);
