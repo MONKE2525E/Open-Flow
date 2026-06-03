@@ -71,7 +71,7 @@ pub fn classify_local_context(context: &str) -> SentenceContext {
     }
 }
 
-fn is_invisible_prefix_char(ch: char) -> bool {
+pub(crate) fn is_invisible_prefix_char(ch: char) -> bool {
     ch.is_whitespace()
         || ch.is_control()
         || matches!(

@@ -6,7 +6,7 @@ use tauri_plugin_store::StoreExt;
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use crate::core::text_context::SentenceContext;
+use crate::core::text_context::{is_invisible_prefix_char as is_invisible_probe_char, SentenceContext};
 use crate::data::{db, store};
 use crate::DbHandle;
 
@@ -976,15 +976,6 @@ fn pattern_support_label(value: bool, text: bool, text2: bool, read_only: Option
         "value={} text={} text2={} readonly={}",
         value as u8, text as u8, text2 as u8, read_only_label
     )
-}
-
-fn is_invisible_probe_char(ch: char) -> bool {
-    ch.is_whitespace()
-        || ch.is_control()
-        || matches!(
-            ch,
-            '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}'
-        )
 }
 
 fn is_effectively_empty_text(text: &str) -> bool {
