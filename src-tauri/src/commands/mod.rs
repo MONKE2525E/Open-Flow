@@ -872,16 +872,13 @@ fn run_launchctl(args: &[&str]) -> Result<(), String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let mut detail = if !stderr.is_empty() {
+    let detail = if !stderr.is_empty() {
         stderr
     } else if !stdout.is_empty() {
         stdout
     } else {
         format!("exit status {}", output.status)
     };
-    if detail.is_empty() {
-        detail = format!("exit status {}", output.status);
-    }
 
     Err(format!("launchctl {:?} failed: {detail}", args))
 }

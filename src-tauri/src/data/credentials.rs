@@ -28,6 +28,10 @@ fn user_for(provider: &str) -> Option<&'static str> {
     }
 }
 
+fn normalize_key(key: &str) -> &str {
+    key.trim()
+}
+
 #[cfg(windows)]
 fn wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -37,6 +41,7 @@ fn wide_null(s: &str) -> Vec<u16> {
 
 #[cfg(windows)]
 pub fn set(provider: &str, key: &str) -> Result<(), String> {
+    let key = normalize_key(key);
     let user = user_for(provider).ok_or_else(|| format!("Unknown provider: {provider}"))?;
     let target = format!("{user}.{SERVICE}");
     let mut target_wide = wide_null(&target);
@@ -253,6 +258,7 @@ fn read_keychain(provider: &str) -> Result<Option<String>, String> {
 
 #[cfg(target_os = "macos")]
 pub fn set(provider: &str, key: &str) -> Result<(), String> {
+    let key = normalize_key(key);
     let user = keychain_user(provider)?;
     if key.is_empty() {
         match delete_generic_password(KEYCHAIN_SERVICE, user) {
@@ -310,6 +316,21 @@ pub fn get(_provider: &str) -> String {
 #[cfg(not(any(windows, target_os = "macos")))]
 pub fn has(_provider: &str) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_key;
+
+    #[test]
+    fn normalize_key_trims_surrounding_whitespace() {
+        assert_eq!(normalize_key("  key  "), "key");
+    }
+
+    #[test]
+    fn normalize_key_treats_whitespace_only_input_as_empty() {
+        assert_eq!(normalize_key("   \t  \n"), "");
+    }
 }
 
 /// One-shot migration: moves any plaintext API keys from settings.json or the
