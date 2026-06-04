@@ -16,16 +16,24 @@
 //!   are `REGULAR_BASE + <macOS keycode>` and tracked via key down/up.
 //! - The default chord is **Control (key1) + Fn (key2)**.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use core_foundation::base::TCFType;
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+use core_foundation_sys::mach_port::CFMachPortRef;
 use core_graphics::event::{
     CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventTapProxy,
     CGEventType, EventField,
 };
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+}
 
 // --- private key id scheme -------------------------------------------------
 
@@ -84,6 +92,7 @@ static ESCAPE_CANCELLED: AtomicBool = AtomicBool::new(false);
 static CHORD_DOWN_MS: AtomicU64 = AtomicU64::new(0);
 static HANDLESS_PENDING: AtomicBool = AtomicBool::new(false);
 static HANDLESS_PENDING_MS: AtomicU64 = AtomicU64::new(0);
+static EVENT_TAP_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 // Down-state for the (rare) case where a configured chord key is a regular key
 // rather than a modifier. Modifiers are read from CGEventFlags instead.
@@ -100,6 +109,19 @@ struct HotkeyEvent {
 fn now_ms() -> u64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+fn reenable_event_tap() {
+    let tap_port = EVENT_TAP_PORT.load(Ordering::SeqCst) as CFMachPortRef;
+    if tap_port.is_null() {
+        log::warn!("macOS event tap disabled before a tap port was registered");
+        return;
+    }
+
+    unsafe {
+        CGEventTapEnable(tap_port, true);
+    }
+    log::info!("macOS event tap re-enabled");
 }
 
 // --- public contract -------------------------------------------------------
@@ -318,6 +340,10 @@ where
         unsafe {
             current.add_source(&loop_source, kCFRunLoopCommonModes);
         }
+        EVENT_TAP_PORT.store(
+            tap.mach_port.as_concrete_TypeRef() as *mut c_void,
+            Ordering::SeqCst,
+        );
         tap.enable();
         log::info!("macOS hotkey event tap installed");
         if HOTKEY_DEBUG {
@@ -333,13 +359,14 @@ where
 
 fn handle_event(event: HotkeyEvent) {
     let etype = event.etype;
-    // The system disables a tap that misbehaves; nothing to re-enable for a
-    // listen-only tap in practice, but log it for diagnosis.
+    // The system can disable a tap during lag or timeout; re-enable so the
+    // global hotkey does not stop permanently.
     if matches!(
         etype,
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
     ) {
         log::warn!("macOS event tap disabled by system ({etype:?})");
+        reenable_event_tap();
         return;
     }
 
