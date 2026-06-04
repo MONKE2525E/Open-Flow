@@ -804,6 +804,8 @@ pub async fn inject_text(
         let posted = (|| -> Option<()> {
             let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
             let down = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, true).ok()?;
+            // core-graphics 0.24.x exposes the Command modifier under the
+            // CGEventFlagCommand name.
             down.set_flags(CGEventFlags::CGEventFlagCommand);
             down.post(CGEventTapLocation::HID);
             let up = CGEvent::new_keyboard_event(src, VK_ANSI_V, false).ok()?;

@@ -260,6 +260,8 @@ where
                 CGEventTapLocation::HID,
                 CGEventTapPlacement::HeadInsertEventTap,
                 CGEventTapOptions::ListenOnly,
+                // core-graphics 0.24.x builds the CGEventMask internally from
+                // a Vec<CGEventType>, so keep the typed list here.
                 vec![
                     CGEventType::KeyDown,
                     CGEventType::KeyUp,
