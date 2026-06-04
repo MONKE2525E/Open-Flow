@@ -213,7 +213,11 @@ fn write_legacy_creds_file(
     use std::os::unix::fs::OpenOptionsExt;
 
     if map.is_empty() {
-        let _ = std::fs::remove_file(path);
+        if let Err(e) = std::fs::remove_file(path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!("failed to remove legacy credentials file: {e}"));
+            }
+        }
         return Ok(());
     }
 
@@ -562,6 +566,8 @@ mod tests {
     use super::manual_legacy_creds_path_from_home;
     use super::normalize_key;
     #[cfg(target_os = "macos")]
+    use super::write_legacy_creds_file;
+    #[cfg(target_os = "macos")]
     use super::LegacyCredFile;
     #[cfg(target_os = "macos")]
     use std::path::Path;
@@ -630,5 +636,35 @@ mod tests {
             &file,
             crate::data::store::OPENAI
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn empty_legacy_write_ignores_missing_file() {
+        let path = std::env::temp_dir().join(format!(
+            "open-flow-missing-legacy-credentials-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let map = serde_json::Map::new();
+
+        assert!(write_legacy_creds_file(&path, &map).is_ok());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn empty_legacy_write_propagates_delete_errors() {
+        let path = std::env::temp_dir().join(format!(
+            "open-flow-legacy-credentials-delete-error-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir(&path).expect("create temp directory");
+        let map = serde_json::Map::new();
+
+        let result = write_legacy_creds_file(&path, &map);
+        std::fs::remove_dir(&path).expect("remove temp directory");
+
+        assert!(result.is_err());
     }
 }
