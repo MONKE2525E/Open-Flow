@@ -464,8 +464,6 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
 
     #[cfg(target_os = "macos")]
     let mut legacy_files = load_legacy_cred_files(_app);
-    #[cfg(not(target_os = "macos"))]
-    let legacy_files: Vec<()> = vec![];
 
     let has_store_plaintext = [
         crate::data::store::KEY_GROQ,
