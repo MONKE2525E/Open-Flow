@@ -91,15 +91,15 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
 // ---------- API keys ----------
 
 #[tauri::command]
-pub async fn save_api_key(_app: AppHandle, provider: String, key: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || crate::data::credentials::set(&provider, &key))
+pub async fn save_api_key(app: AppHandle, provider: String, key: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || crate::data::credentials::save(&app, &provider, &key))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn delete_api_key(_app: AppHandle, provider: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || crate::data::credentials::delete(&provider))
+pub async fn delete_api_key(app: AppHandle, provider: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || crate::data::credentials::delete_saved(&app, &provider))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -779,8 +779,11 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
         let label = "com.openflow.app";
         let domain = format!("gui/{}", unsafe { libc::getuid() });
         let service_target = format!("{domain}/{label}");
-        let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-        let dir = std::path::PathBuf::from(&home).join("Library/LaunchAgents");
+        let home = _app
+            .path()
+            .home_dir()
+            .map_err(|e| format!("Failed to get home directory: {e}"))?;
+        let dir = home.join("Library/LaunchAgents");
         let plist_path = dir.join(format!("{label}.plist"));
 
         if enabled {

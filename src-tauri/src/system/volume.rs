@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 #[cfg(windows)]
@@ -9,7 +11,27 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
 };
 
+#[cfg(windows)]
 static IS_MUTED: Mutex<bool> = Mutex::new(false);
+
+#[cfg(target_os = "macos")]
+static RESTORE_STATE: Mutex<MacRestoreState> = Mutex::new(MacRestoreState::Idle);
+#[cfg(target_os = "macos")]
+static WARNED_UNSUPPORTED_AUDIO_CONTROL: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug)]
+enum MacRestoreState {
+    Idle,
+    Muted {
+        device_id: u32,
+        was_muted: bool,
+    },
+    Volume {
+        device_id: u32,
+        previous_volume: f32,
+    },
+}
 
 #[cfg(windows)]
 unsafe fn get_volume_interface() -> Result<IAudioEndpointVolume, windows::core::Error> {
@@ -27,68 +49,260 @@ fn set_system_muted(muted: bool) -> Result<(), String> {
         .map_err(|e| format!("Failed to set system mute: {e}"))
 }
 
-// macOS: toggle the default output device mute via CoreAudio. Runs on the
-// caller's (already-spawned) thread, so the brief native call is fine.
 #[cfg(target_os = "macos")]
-fn set_system_muted(muted: bool) -> Result<(), String> {
+mod macos {
     use coreaudio::sys::{
-        kAudioDevicePropertyMute, kAudioHardwareNoError, kAudioHardwarePropertyDefaultOutputDevice,
-        kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeGlobal,
-        kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject, AudioDeviceID,
-        AudioObjectGetPropertyData, AudioObjectPropertyAddress, AudioObjectSetPropertyData,
+        kAudioDevicePropertyMute, kAudioDevicePropertyVolumeScalar, kAudioHardwareNoError,
+        kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyElementMain,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
+        AudioDeviceID, AudioObjectGetPropertyData, AudioObjectHasProperty,
+        AudioObjectIsPropertySettable, AudioObjectPropertyAddress, AudioObjectSetPropertyData,
+        Boolean, OSStatus,
     };
     use std::mem;
     use std::ptr::null;
 
-    let default_output_device = {
-        let property_address = AudioObjectPropertyAddress {
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMaster,
-        };
+    use super::MacRestoreState;
 
-        let device_id: AudioDeviceID = 0;
-        let data_size = mem::size_of::<AudioDeviceID>() as u32;
+    fn property_address(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress {
+            mSelector: selector,
+            mScope: scope,
+            mElement: kAudioObjectPropertyElementMain,
+        }
+    }
+
+    fn default_output_device() -> Result<AudioDeviceID, String> {
+        let property_address = property_address(
+            kAudioHardwarePropertyDefaultOutputDevice,
+            kAudioObjectPropertyScopeGlobal,
+        );
+        let mut device_id: AudioDeviceID = 0;
+        let mut data_size = mem::size_of::<AudioDeviceID>() as u32;
         let status = unsafe {
             AudioObjectGetPropertyData(
                 kAudioObjectSystemObject,
                 &property_address as *const _,
                 0,
                 null(),
-                &data_size as *const _ as *mut _,
-                &device_id as *const _ as *mut _,
+                &mut data_size,
+                &mut device_id as *mut _ as *mut _,
             )
         };
-        if status != kAudioHardwareNoError as i32 {
-            return Err(format!(
-                "Failed to get default output device for system mute: OSStatus {status}"
-            ));
+        if status == kAudioHardwareNoError as OSStatus {
+            Ok(device_id)
+        } else {
+            Err(format!(
+                "Failed to get default output device for system audio control: OSStatus {status}"
+            ))
         }
-        device_id
-    };
+    }
 
-    let muted_value: u32 = if muted { 1 } else { 0 };
-    let property_address = AudioObjectPropertyAddress {
-        mSelector: kAudioDevicePropertyMute,
-        mScope: kAudioObjectPropertyScopeOutput,
-        mElement: kAudioObjectPropertyElementMaster,
-    };
-    let data_size = mem::size_of::<u32>() as u32;
-    let status = unsafe {
-        AudioObjectSetPropertyData(
-            default_output_device,
-            &property_address as *const _,
-            0,
-            null(),
-            data_size,
-            &muted_value as *const _ as *const _,
-        )
-    };
+    fn property_is_settable(
+        device_id: AudioDeviceID,
+        selector: u32,
+        scope: u32,
+    ) -> Result<bool, String> {
+        let address = property_address(selector, scope);
+        let has_property =
+            unsafe { AudioObjectHasProperty(device_id, &address as *const _) } != 0 as Boolean;
+        if !has_property {
+            return Ok(false);
+        }
 
-    if status == kAudioHardwareNoError as i32 {
-        Ok(())
-    } else {
-        Err(format!("Failed to set system mute: OSStatus {status}"))
+        let mut settable: Boolean = 0;
+        let status = unsafe {
+            AudioObjectIsPropertySettable(device_id, &address as *const _, &mut settable)
+        };
+        if status == kAudioHardwareNoError as OSStatus {
+            Ok(settable != 0)
+        } else {
+            Err(format!(
+                "Failed to inspect audio property settable state: selector={selector} status={status}"
+            ))
+        }
+    }
+
+    fn get_u32_property(
+        device_id: AudioDeviceID,
+        selector: u32,
+        scope: u32,
+    ) -> Result<u32, String> {
+        let address = property_address(selector, scope);
+        let mut value: u32 = 0;
+        let mut data_size = mem::size_of::<u32>() as u32;
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                device_id,
+                &address as *const _,
+                0,
+                null(),
+                &mut data_size,
+                &mut value as *mut _ as *mut _,
+            )
+        };
+        if status == kAudioHardwareNoError as OSStatus {
+            Ok(value)
+        } else {
+            Err(format!(
+                "Failed to read audio property: selector={selector} status={status}"
+            ))
+        }
+    }
+
+    fn get_f32_property(
+        device_id: AudioDeviceID,
+        selector: u32,
+        scope: u32,
+    ) -> Result<f32, String> {
+        let address = property_address(selector, scope);
+        let mut value: f32 = 0.0;
+        let mut data_size = mem::size_of::<f32>() as u32;
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                device_id,
+                &address as *const _,
+                0,
+                null(),
+                &mut data_size,
+                &mut value as *mut _ as *mut _,
+            )
+        };
+        if status == kAudioHardwareNoError as OSStatus {
+            Ok(value)
+        } else {
+            Err(format!(
+                "Failed to read audio property: selector={selector} status={status}"
+            ))
+        }
+    }
+
+    fn set_u32_property(
+        device_id: AudioDeviceID,
+        selector: u32,
+        scope: u32,
+        value: u32,
+    ) -> Result<(), String> {
+        let address = property_address(selector, scope);
+        let data_size = mem::size_of::<u32>() as u32;
+        let status = unsafe {
+            AudioObjectSetPropertyData(
+                device_id,
+                &address as *const _,
+                0,
+                null(),
+                data_size,
+                &value as *const _ as *const _,
+            )
+        };
+        if status == kAudioHardwareNoError as OSStatus {
+            Ok(())
+        } else {
+            Err(format!(
+                "Failed to set audio property: selector={selector} status={status}"
+            ))
+        }
+    }
+
+    fn set_f32_property(
+        device_id: AudioDeviceID,
+        selector: u32,
+        scope: u32,
+        value: f32,
+    ) -> Result<(), String> {
+        let address = property_address(selector, scope);
+        let data_size = mem::size_of::<f32>() as u32;
+        let status = unsafe {
+            AudioObjectSetPropertyData(
+                device_id,
+                &address as *const _,
+                0,
+                null(),
+                data_size,
+                &value as *const _ as *const _,
+            )
+        };
+        if status == kAudioHardwareNoError as OSStatus {
+            Ok(())
+        } else {
+            Err(format!(
+                "Failed to set audio property: selector={selector} status={status}"
+            ))
+        }
+    }
+
+    pub fn snapshot_and_mute() -> Result<Option<MacRestoreState>, String> {
+        let device_id = default_output_device()?;
+
+        if property_is_settable(
+            device_id,
+            kAudioDevicePropertyMute,
+            kAudioObjectPropertyScopeOutput,
+        )? {
+            let was_muted = get_u32_property(
+                device_id,
+                kAudioDevicePropertyMute,
+                kAudioObjectPropertyScopeOutput,
+            )? != 0;
+            set_u32_property(
+                device_id,
+                kAudioDevicePropertyMute,
+                kAudioObjectPropertyScopeOutput,
+                1,
+            )?;
+            return Ok(Some(MacRestoreState::Muted {
+                device_id,
+                was_muted,
+            }));
+        }
+
+        if property_is_settable(
+            device_id,
+            kAudioDevicePropertyVolumeScalar,
+            kAudioObjectPropertyScopeOutput,
+        )? {
+            let previous_volume = get_f32_property(
+                device_id,
+                kAudioDevicePropertyVolumeScalar,
+                kAudioObjectPropertyScopeOutput,
+            )?;
+            set_f32_property(
+                device_id,
+                kAudioDevicePropertyVolumeScalar,
+                kAudioObjectPropertyScopeOutput,
+                0.0,
+            )?;
+            return Ok(Some(MacRestoreState::Volume {
+                device_id,
+                previous_volume,
+            }));
+        }
+
+        Ok(None)
+    }
+
+    pub fn restore(previous: MacRestoreState) -> Result<(), String> {
+        match previous {
+            MacRestoreState::Idle => Ok(()),
+            MacRestoreState::Muted {
+                device_id,
+                was_muted,
+            } => set_u32_property(
+                device_id,
+                kAudioDevicePropertyMute,
+                kAudioObjectPropertyScopeOutput,
+                if was_muted { 1 } else { 0 },
+            ),
+            MacRestoreState::Volume {
+                device_id,
+                previous_volume,
+            } => set_f32_property(
+                device_id,
+                kAudioDevicePropertyVolumeScalar,
+                kAudioObjectPropertyScopeOutput,
+                previous_volume,
+            ),
+        }
     }
 }
 
@@ -97,6 +311,7 @@ fn set_system_muted(_muted: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
 pub fn mute() {
     let mut muted = match IS_MUTED.lock() {
         Ok(guard) => guard,
@@ -116,6 +331,7 @@ pub fn mute() {
     *muted = true;
 }
 
+#[cfg(windows)]
 pub fn unmute() {
     let mut muted = match IS_MUTED.lock() {
         Ok(guard) => guard,
@@ -133,4 +349,68 @@ pub fn unmute() {
         return;
     }
     *muted = false;
+}
+
+#[cfg(target_os = "macos")]
+pub fn mute() {
+    let mut restore_state = match RESTORE_STATE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("System audio restore state lock was poisoned; recovering");
+            poisoned.into_inner()
+        }
+    };
+
+    if !matches!(*restore_state, MacRestoreState::Idle) {
+        return;
+    }
+
+    match macos::snapshot_and_mute() {
+        Ok(Some(snapshot)) => {
+            *restore_state = snapshot;
+        }
+        Ok(None) => {
+            if !WARNED_UNSUPPORTED_AUDIO_CONTROL.swap(true, Ordering::Relaxed) {
+                log::warn!(
+                    "Default macOS output device does not expose a writable mute or master volume property; auto-mute is unavailable for this device"
+                );
+            }
+        }
+        Err(err) => {
+            log::warn!("Failed to mute system audio: {err}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn unmute() {
+    let mut restore_state = match RESTORE_STATE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("System audio restore state lock was poisoned; recovering");
+            poisoned.into_inner()
+        }
+    };
+
+    let snapshot = *restore_state;
+    if matches!(snapshot, MacRestoreState::Idle) {
+        return;
+    }
+
+    if let Err(err) = macos::restore(snapshot) {
+        log::warn!("Failed to restore system audio: {err}");
+        return;
+    }
+
+    *restore_state = MacRestoreState::Idle;
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn mute() {
+    let _ = set_system_muted(true);
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn unmute() {
+    let _ = set_system_muted(false);
 }

@@ -175,6 +175,8 @@ pub fn has(provider: &str) -> bool {
 use security_framework::passwords::{
     delete_generic_password, get_generic_password, set_generic_password,
 };
+#[cfg(target_os = "macos")]
+use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "com.openflow.app";
@@ -182,33 +184,49 @@ const KEYCHAIN_SERVICE: &str = "com.openflow.app";
 const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
 
 #[cfg(target_os = "macos")]
-fn legacy_creds_path(app: &AppHandle) -> std::path::PathBuf {
+fn tauri_legacy_creds_path(app: &AppHandle) -> PathBuf {
     app.path()
         .app_data_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .unwrap_or_else(|_| PathBuf::from("."))
         .join("credentials.json")
 }
 
 #[cfg(target_os = "macos")]
-fn read_legacy_creds(app: &AppHandle) -> serde_json::Map<String, serde_json::Value> {
-    std::fs::read_to_string(legacy_creds_path(app))
+fn manual_legacy_creds_path_from_home(home: &Path) -> PathBuf {
+    home.join("Library/Application Support/OpenFlow/credentials.json")
+}
+
+#[cfg(target_os = "macos")]
+fn manual_legacy_creds_path() -> PathBuf {
+    std::env::var("HOME")
+        .map(|home| manual_legacy_creds_path_from_home(Path::new(&home)))
+        .unwrap_or_else(|_| PathBuf::from("Library/Application Support/OpenFlow/credentials.json"))
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_creds_paths(app: &AppHandle) -> Vec<PathBuf> {
+    vec![tauri_legacy_creds_path(app), manual_legacy_creds_path()]
+}
+
+#[cfg(target_os = "macos")]
+fn read_legacy_creds_file(path: &Path) -> serde_json::Map<String, serde_json::Value> {
+    std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
 }
 
 #[cfg(target_os = "macos")]
-fn write_legacy_creds(
-    app: &AppHandle,
+fn write_legacy_creds_file(
+    path: &Path,
     map: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    let path = legacy_creds_path(app);
     if map.is_empty() {
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path);
         return Ok(());
     }
 
@@ -238,11 +256,30 @@ fn write_legacy_creds(
         return Err(e);
     }
 
-    if let Err(e) = std::fs::rename(&tmp_path, &path) {
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
         let _ = std::fs::remove_file(&tmp_path);
         return Err(format!("replace credentials failed: {e}"));
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+struct LegacyCredFile {
+    path: PathBuf,
+    existed: bool,
+    map: serde_json::Map<String, serde_json::Value>,
+}
+
+#[cfg(target_os = "macos")]
+fn load_legacy_cred_files(app: &AppHandle) -> Vec<LegacyCredFile> {
+    legacy_creds_paths(app)
+        .into_iter()
+        .map(|path| LegacyCredFile {
+            existed: path.exists(),
+            map: read_legacy_creds_file(&path),
+            path,
+        })
+        .collect()
 }
 
 #[cfg(target_os = "macos")]
@@ -279,6 +316,43 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
+fn verify_keychain_write(provider: &str, expected_key: &str) -> Result<(), String> {
+    match read_keychain(provider)? {
+        Some(saved) if saved == expected_key => Ok(()),
+        Some(_) => Err(format!(
+            "Keychain verification failed for {provider}: value mismatch"
+        )),
+        None => Err(format!(
+            "Keychain verification failed for {provider}: item missing"
+        )),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn cleanup_legacy_plaintext_entries(app: &AppHandle, providers: &[&str]) {
+    for mut legacy in load_legacy_cred_files(app) {
+        let mut changed = false;
+        for provider in providers {
+            if let Some(user) = user_for(provider) {
+                if legacy.map.remove(user).is_some() {
+                    changed = true;
+                }
+            }
+        }
+        if !changed && !legacy.existed {
+            continue;
+        }
+        if let Err(err) = write_legacy_creds_file(&legacy.path, &legacy.map) {
+            log::warn!(
+                "Could not clean legacy plaintext credentials file {}: {}",
+                legacy.path.display(),
+                err
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
 pub fn get(provider: &str) -> String {
     match read_keychain(provider) {
         Ok(Some(key)) => key,
@@ -302,9 +376,35 @@ pub fn has(provider: &str) -> bool {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub fn save(app: &AppHandle, provider: &str, key: &str) -> Result<(), String> {
+    let expected_key = normalize_key(key).to_string();
+    set(provider, &expected_key)?;
+    verify_keychain_write(provider, &expected_key)?;
+    cleanup_legacy_plaintext_entries(app, &[provider]);
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn save(_app: &AppHandle, provider: &str, key: &str) -> Result<(), String> {
+    set(provider, key)
+}
+
 #[cfg(any(windows, target_os = "macos"))]
 pub fn delete(provider: &str) -> Result<(), String> {
     set(provider, "")
+}
+
+#[cfg(target_os = "macos")]
+pub fn delete_saved(app: &AppHandle, provider: &str) -> Result<(), String> {
+    delete(provider)?;
+    cleanup_legacy_plaintext_entries(app, &[provider]);
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn delete_saved(_app: &AppHandle, provider: &str) -> Result<(), String> {
+    delete(provider)
 }
 
 // ============================== Fallback (e.g. Linux) ==============================
@@ -326,7 +426,11 @@ pub fn has(_provider: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use super::manual_legacy_creds_path_from_home;
     use super::normalize_key;
+    #[cfg(target_os = "macos")]
+    use std::path::Path;
 
     #[test]
     fn normalize_key_trims_surrounding_whitespace() {
@@ -337,27 +441,53 @@ mod tests {
     fn normalize_key_treats_whitespace_only_input_as_empty() {
         assert_eq!(normalize_key("   \t  \n"), "");
     }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn manual_legacy_creds_path_uses_openflow_directory() {
+        let path = manual_legacy_creds_path_from_home(Path::new("/Users/tester"));
+        assert_eq!(
+            path,
+            Path::new("/Users/tester/Library/Application Support/OpenFlow/credentials.json")
+        );
+    }
 }
 
-/// One-shot migration: moves any plaintext API keys from settings.json or the
-/// legacy macOS credentials.json file into the OS secret store, then sets a flag
-/// so it never runs again. Platform-agnostic — delegates to `set`/`get`.
+/// Moves any plaintext API keys from settings.json or legacy macOS
+/// credentials.json files into the OS secret store, then keeps retrying cleanup
+/// until plaintext remnants are gone.
 pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
-    if store
+    let already_marked = store
         .get(crate::data::store::CREDENTIALS_MIGRATED)
         .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+
+    #[cfg(target_os = "macos")]
+    let mut legacy_files = load_legacy_cred_files(_app);
+    #[cfg(not(target_os = "macos"))]
+    let legacy_files: Vec<()> = vec![];
+
+    let has_store_plaintext = [
+        crate::data::store::KEY_GROQ,
+        crate::data::store::KEY_OPENAI,
+        crate::data::store::KEY_GOOGLE,
+    ]
+    .into_iter()
+    .any(|store_key| {
+        store
+            .get(store_key)
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .is_some_and(|value| !normalize_key(&value).is_empty())
+    });
+
+    #[cfg(target_os = "macos")]
+    let legacy_cleanup_needed = legacy_files.iter().any(|file| file.existed);
+    #[cfg(not(target_os = "macos"))]
+    let legacy_cleanup_needed = false;
+
+    if already_marked && !has_store_plaintext && !legacy_cleanup_needed {
         return;
     }
-
-    #[cfg(target_os = "macos")]
-    let mut legacy_creds = read_legacy_creds(_app);
-    #[cfg(not(target_os = "macos"))]
-    let mut legacy_creds: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-
-    #[cfg(target_os = "macos")]
-    let legacy_creds_existed = legacy_creds_path(_app).exists();
 
     let mut any_failed = false;
     for (provider, store_key) in [
@@ -369,23 +499,31 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
             .get(store_key)
             .and_then(|v| v.as_str().map(String::from))
             .unwrap_or_default();
+        #[cfg(target_os = "macos")]
         let legacy_plaintext = user_for(provider)
-            .and_then(|user| legacy_creds.get(user))
-            .and_then(|v| v.as_str())
+            .and_then(|user| {
+                legacy_files.iter().find_map(|file| {
+                    file.map
+                        .get(user)
+                        .and_then(|v| v.as_str())
+                        .filter(|value| !normalize_key(value).is_empty())
+                })
+            })
             .unwrap_or_default()
             .to_string();
+        #[cfg(not(target_os = "macos"))]
+        let legacy_plaintext = String::new();
         let plaintext = if store_plaintext.is_empty() {
             legacy_plaintext
         } else {
             store_plaintext
         };
 
-        let already_migrated = has(provider);
+        let already_migrated = !get(provider).is_empty();
         if plaintext.is_empty() && !already_migrated {
             continue;
         }
 
-        // Only write if not already present — avoids overwriting a manually-set credential.
         if !already_migrated && !plaintext.is_empty() {
             if let Err(e) = set(provider, &plaintext) {
                 log::error!("Migration: could not write {provider} key to secret store: {e}");
@@ -396,27 +534,24 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
         }
 
         let _ = store.delete(store_key);
+        #[cfg(target_os = "macos")]
         if let Some(user) = user_for(provider) {
-            if legacy_creds.remove(user).is_some() {
-                #[cfg(target_os = "macos")]
-                log::debug!("Migration: removed legacy plaintext entry for {provider}");
+            for legacy in &mut legacy_files {
+                if legacy.map.remove(user).is_some() {
+                    log::debug!("Migration: removed legacy plaintext entry for {provider}");
+                }
             }
         }
     }
 
     #[cfg(target_os = "macos")]
-    {
-        if legacy_creds.is_empty() {
-            if legacy_creds_existed {
-                if let Err(e) = std::fs::remove_file(legacy_creds_path(_app)) {
-                    log::warn!(
-                        "Migration: could not remove legacy plaintext credentials file: {e}"
-                    );
-                    any_failed = true;
-                }
-            }
-        } else if let Err(e) = write_legacy_creds(_app, &legacy_creds) {
-            log::warn!("Migration: could not persist legacy credentials cleanup: {e}");
+    for legacy in &legacy_files {
+        if let Err(e) = write_legacy_creds_file(&legacy.path, &legacy.map) {
+            log::warn!(
+                "Migration: could not persist legacy credentials cleanup for {}: {}",
+                legacy.path.display(),
+                e
+            );
             any_failed = true;
         }
     }

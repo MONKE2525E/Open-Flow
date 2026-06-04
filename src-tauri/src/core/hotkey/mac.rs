@@ -268,12 +268,21 @@ where
                 {
                     let tx = tx.clone();
                     move |_proxy: CGEventTapProxy, etype: CGEventType, event| {
+                        let (flags, keycode) = if matches!(
+                            etype,
+                            CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
+                        ) {
+                            (0, 0)
+                        } else {
+                            (
+                                event.get_flags().bits(),
+                                event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
+                            )
+                        };
                         let _ = tx.send(HotkeyEvent {
                             etype,
-                            flags: event.get_flags().bits(),
-                            keycode: event.get_integer_value_field(
-                                EventField::KEYBOARD_EVENT_KEYCODE,
-                            ),
+                            flags,
+                            keycode,
                         });
                         None
                     }

@@ -19,7 +19,7 @@ use tauri::AppHandle;
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {}
 
-const APP_ICON_ICNS: &[u8] = include_bytes!("../../../icons/icon.icns");
+const APP_ICON_ICNS: &[u8] = include_bytes!("../../icons/icon.icns");
 
 const POLICY_UNKNOWN: u8 = 0;
 const POLICY_ACCESSORY: u8 = 1;
