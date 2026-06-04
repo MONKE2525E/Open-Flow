@@ -19,15 +19,30 @@ const BROWSER_EXES: &[(&str, &str)] = &[
     ("arc.exe", "Arc"),
     ("waterfox.exe", "Waterfox"),
     ("librewolf.exe", "LibreWolf"),
+    // macOS app names (process name is "<localized name>.app", lowercased)
+    ("google chrome.app", "Google Chrome"),
+    ("safari.app", "Safari"),
+    ("microsoft edge.app", "Microsoft Edge"),
+    ("firefox.app", "Firefox"),
+    ("brave browser.app", "Brave"),
+    ("arc.app", "Arc"),
 ];
 
+/// The focus target to refocus before paste. On Windows this is the foreground
+/// `HWND`; on macOS it is the frontmost application's PID (both fit in a `usize`).
 pub fn get_foreground_hwnd() -> usize {
     #[cfg(windows)]
     unsafe {
         let hwnd = GetForegroundWindow();
         hwnd.0 as usize
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::system::mac_app::frontmost_pid()
+            .map(|p| p as usize)
+            .unwrap_or(0)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     0
 }
 
@@ -68,7 +83,12 @@ pub fn get_active_process_name() -> Option<String> {
         }
         None
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        // Match the AppMapping key convention: "<localized name>.app", lowercased.
+        crate::system::mac_app::frontmost_app_name().map(|n| format!("{}.app", n.to_lowercase()))
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     None
 }
 

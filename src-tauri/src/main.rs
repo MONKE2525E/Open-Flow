@@ -48,7 +48,72 @@ fn lock_app_state(state: &SharedState) -> Option<MutexGuard<'_, AppState>> {
     }
 }
 
+fn show_main_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        if w.is_minimized().unwrap_or(false) {
+            w.unminimize().ok();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            crate::system::mac_app::set_regular_activation_policy_on_main_thread(app);
+            crate::system::mac_app::activate_current_app_on_main_thread(app);
+        }
+        w.show().ok();
+        w.set_focus().ok();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn hide_main_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        crate::system::mac_app::set_accessory_activation_policy_on_main_thread(app);
+        w.hide().ok();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
+    if let Some(w) = app.get_webview_window("main") {
+        let bg = match resolve_icon_theme(app, theme_hint) {
+            IconTheme::Dark => tauri::utils::config::Color(20, 17, 14, 255),
+            IconTheme::Light => tauri::utils::config::Color(249, 247, 243, 255),
+        };
+        w.set_decorations(true).ok();
+        w.set_background_color(Some(bg)).ok();
+        w.set_title("").ok();
+        w.set_title_bar_style(tauri::TitleBarStyle::Transparent)
+            .ok();
+    }
+}
+
+/// Per-user directory for the SQLite database, following each OS's convention.
+#[cfg(windows)]
+fn app_data_dir() -> std::path::PathBuf {
+    std::env::var("APPDATA")
+        .map(|p| std::path::PathBuf::from(p).join("OpenFlow"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+#[cfg(target_os = "macos")]
+fn app_data_dir() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/OpenFlow"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn app_data_dir() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".config/OpenFlow"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
 fn main() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = crate::system::mac_app::set_process_name("Open Flow");
+    }
+
     let shared: SharedState = Arc::new(Mutex::new(AppState {
         session: None,
         starting: false,
@@ -57,9 +122,7 @@ fn main() {
         retry_capture: None,
     }));
 
-    let db_dir = std::env::var("APPDATA")
-        .map(|p| std::path::PathBuf::from(p).join("OpenFlow"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let db_dir = app_data_dir();
     std::fs::create_dir_all(&db_dir).ok();
     let db_handle: DbHandle =
         db::open(db_dir.join("openflow.db").to_str().unwrap()).expect("failed to open database");
@@ -69,20 +132,17 @@ fn main() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                w.show().ok();
-                w.set_focus().ok();
-            }
+            show_main_window(app);
         }))
         .manage(shared.clone())
         .manage(db_handle.clone())
         .setup(move |app| {
             crate::system::logger::init(app.handle())?;
-            let first_launch = if let Ok(store) =
+            let _first_launch = if let Ok(store) =
                 tauri_plugin_store::StoreExt::store(app.handle(), "settings.json")
             {
                 let _ = store.reload();
-                crate::data::credentials::migrate_from_store(&store);
+                crate::data::credentials::migrate_from_store(app.handle(), &store);
                 if let Some(val) = store.get("hotkey") {
                     if let Some(arr) = val.as_array() {
                         if arr.len() == 2 {
@@ -104,14 +164,23 @@ fn main() {
 
             setup_tray(app)?;
             setup_hotkey(app, shared.clone());
+            #[cfg(target_os = "macos")]
+            apply_native_main_window_chrome(app.handle(), None);
+            #[cfg(target_os = "macos")]
+            {
+                crate::system::mac_app::set_accessory_activation_policy_on_main_thread(app.handle());
+            }
+            // macOS requires Accessibility permission for the global hotkey, Cmd+V
+            // injection, and auto-learn. Prompt on launch when not yet trusted.
+            #[cfg(target_os = "macos")]
+            if !commands::check_accessibility_permission(false) {
+                let _ = commands::check_accessibility_permission(true);
+            }
             crate::pipeline::show_pill(app.handle(), "idle");
 
-            if first_launch {
-                if let Some(w) = app.get_webview_window("main") {
-                    w.show().ok();
-                    w.set_focus().ok();
-                }
-            }
+            // Keep the main UI visible on startup so normal launches don't
+            // feel like the app disappeared into the tray.
+            show_main_window(app.handle());
 
             Ok(())
         })
@@ -120,12 +189,37 @@ fn main() {
                 match event {
                     tauri::WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
-                        window.hide().ok();
+                        #[cfg(target_os = "macos")]
+                        {
+                            hide_main_window(window.app_handle());
+                        }
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            window.hide().ok();
+                        }
+                    }
+                    #[cfg(target_os = "macos")]
+                    tauri::WindowEvent::Resized(_) => {
+                        if window.is_minimized().unwrap_or(false) {
+                            crate::system::mac_app::set_regular_activation_policy_on_main_thread(
+                                window.app_handle(),
+                            );
+                        }
+                    }
+                    tauri::WindowEvent::Focused(true) => {
+                        #[cfg(target_os = "macos")]
+                        {
+                            crate::system::mac_app::set_regular_activation_policy_on_main_thread(
+                                window.app_handle(),
+                            );
+                        }
                     }
                     tauri::WindowEvent::ThemeChanged(theme) => {
                         let app = window.app_handle();
                         if appearance_mode(app).as_deref().unwrap_or("system") == "system" {
                             apply_runtime_icons(app, Some(*theme));
+                            #[cfg(target_os = "macos")]
+                            apply_native_main_window_chrome(app, Some(*theme));
                         }
                     }
                     _ => {}
@@ -142,6 +236,11 @@ fn main() {
             commands::get_setting,
             commands::get_all_settings,
             commands::set_autostart,
+            commands::check_accessibility_permission,
+            commands::open_accessibility_settings,
+            commands::get_accessibility_permission_status,
+            commands::get_microphone_permission_status,
+            commands::open_microphone_settings,
             commands::show_main,
             commands::hide_main,
             commands::get_recent,
@@ -177,8 +276,14 @@ fn main() {
             commands::download_logs,
             commands::set_dev_logging_enabled,
         ])
-        .run(tauri::generate_context!())
-        .expect("error running Open Flow");
+        .build(tauri::generate_context!())
+        .expect("error building Open Flow")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_main_window(app);
+            }
+        });
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
@@ -189,7 +294,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&title_i, &sep, &show_i, &quit_i])?;
 
     let icon_theme = resolve_icon_theme(app.handle(), None);
-    let tray_icon = runtime_icon_image(icon_theme, 32);
+    let tray_icon = runtime_tray_icon_image(icon_theme, 32);
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_icon)
@@ -198,10 +303,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .tooltip("Open Flow - Ctrl+Windows to record")
         .on_menu_event(|app, ev| match ev.id.as_ref() {
             "show" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    w.show().ok();
-                    w.set_focus().ok();
-                }
+                show_main_window(app);
             }
             "quit" => app.exit(0),
             _ => {}
@@ -218,8 +320,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                     if w.is_visible().unwrap_or(false) {
                         w.hide().ok();
                     } else {
-                        w.show().ok();
-                        w.set_focus().ok();
+                        show_main_window(app);
                     }
                 }
             }
@@ -240,11 +341,76 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    apply_native_main_window_chrome(app, theme_hint);
+
+    #[cfg(target_os = "macos")]
+    if !crate::system::mac_app::apply_dock_icon() {
+        log::warn!("Failed to update macOS Dock icon");
+    }
+
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        if let Err(err) = tray.set_icon(Some(runtime_icon_image(icon_theme, 32))) {
+        if let Err(err) = tray.set_icon(Some(runtime_tray_icon_image(icon_theme, 32))) {
             log::warn!("Failed to update tray icon: {err}");
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn runtime_tray_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'static> {
+    let mut rgba = vec![0_u8; (size * size * 4) as usize];
+    let color = runtime_tray_icon_color(theme);
+
+    for (x, y, width, height, radius) in [
+        (64, 304, 64, 96, 30),
+        (144, 208, 64, 192, 30),
+        (224, 112, 64, 288, 30),
+        (304, 240, 64, 160, 30),
+        (384, 320, 64, 80, 30),
+    ] {
+        draw_rounded_rect(
+            &mut rgba,
+            size,
+            IconRect {
+                x: scale(size, x),
+                y: scale(size, y),
+                width: scale(size, width),
+                height: scale(size, height),
+                radius: scale(size, radius),
+            },
+            color,
+        );
+    }
+
+    tauri::image::Image::new_owned(rgba, size, size)
+}
+
+#[cfg(target_os = "macos")]
+fn runtime_tray_icon_color(theme: IconTheme) -> [u8; 4] {
+    match theme {
+        IconTheme::Light => [0, 0, 0, 255],
+        IconTheme::Dark => [255, 255, 255, 255],
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::{runtime_tray_icon_color, IconTheme};
+
+    #[test]
+    fn tray_icon_uses_black_in_light_mode() {
+        assert_eq!(runtime_tray_icon_color(IconTheme::Light), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn tray_icon_uses_white_in_dark_mode() {
+        assert_eq!(runtime_tray_icon_color(IconTheme::Dark), [255, 255, 255, 255]);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn runtime_tray_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'static> {
+    runtime_icon_image(theme, size)
 }
 
 fn resolve_icon_theme(app: &AppHandle, theme_hint: Option<Theme>) -> IconTheme {
@@ -276,26 +442,45 @@ fn runtime_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'stati
     };
     let accent = [217, 119, 87, 255];
 
-    draw_rounded_rect(
-        &mut rgba,
-        size,
-        IconRect {
-            x: 0,
-            y: 0,
-            width: size,
-            height: size,
-            radius: scale(size, 96),
-        },
-        background,
-    );
+    #[cfg(target_os = "macos")]
+    let background_rect = IconRect {
+        x: scale(size, 64),
+        y: scale(size, 64),
+        width: scale(size, 384),
+        height: scale(size, 384),
+        radius: scale(size, 76),
+    };
 
-    for (x, y, width, height, radius) in [
+    #[cfg(not(target_os = "macos"))]
+    let background_rect = IconRect {
+        x: 0,
+        y: 0,
+        width: size,
+        height: size,
+        radius: scale(size, 96),
+    };
+
+    draw_rounded_rect(&mut rgba, size, background_rect, background);
+
+    #[cfg(target_os = "macos")]
+    let bar_rects = [
+        (129, 290, 38, 70, 19),
+        (183, 220, 38, 140, 19),
+        (237, 152, 38, 208, 19),
+        (291, 240, 38, 120, 19),
+        (345, 298, 38, 62, 19),
+    ];
+
+    #[cfg(not(target_os = "macos"))]
+    let bar_rects = [
         (76, 302, 56, 98, 28),
         (152, 204, 56, 196, 28),
         (228, 120, 56, 280, 28),
         (304, 246, 56, 154, 28),
         (380, 330, 56, 70, 28),
-    ] {
+    ];
+
+    for (x, y, width, height, radius) in bar_rects {
         draw_rounded_rect(
             &mut rgba,
             size,

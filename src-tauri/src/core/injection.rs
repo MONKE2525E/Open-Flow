@@ -12,35 +12,44 @@ const HISTORY_TAIL: usize = 512;
 
 // Retry gap between successive OpenClipboard attempts when the clipboard is held
 // by another process.
+#[cfg(target_os = "windows")]
 const CLIPBOARD_OPEN_RETRY_MS: u64 = 50;
+#[cfg(target_os = "windows")]
 const CLIPBOARD_RESTORE_RETRY_MS: u64 = 60;
+#[cfg(target_os = "windows")]
 const CLIPBOARD_RESTORE_ATTEMPTS: usize = 3;
 
 // Settle time after SetForegroundWindow before writing to the clipboard; some
 // compositor/DWM frame cycles are needed before the HWND is fully active.
+#[cfg(target_os = "windows")]
 const REFOCUS_SETTLE_MS: u64 = 150;
 
 // Settle time after a successful clipboard write before beginning the Ctrl+V
 // sequence — ensures the data is visible to the target app's clipboard reader.
+#[cfg(target_os = "windows")]
 const CLIPBOARD_WRITE_SETTLE_MS: u64 = 50;
 
 // Retry gap between successive clipboard write attempts.
+#[cfg(target_os = "windows")]
 const CLIPBOARD_WRITE_RETRY_MS: u64 = 50;
 
 // Gap between releasing modifier keys (Alt/Ctrl) and sending Ctrl+V.
 // Without this, some apps (browsers, IDEs) process V without Ctrl because
 // the alt-up and V-down land in the same message-pump cycle.
+#[cfg(target_os = "windows")]
 const MODIFIER_GAP_MS: u64 = 30;
 
 // Settle time after the paste (Ctrl+V) before restoring saved clipboard
 // formats — gives the target app time to read the clipboard before we
 // overwrite it with the original contents.
+#[cfg(target_os = "windows")]
 const PASTE_SETTLE_MS: u64 = 80;
 
 const SENTENCE_ENDERS: &[char] = &['.', '!', '?', '\n', '\r'];
 #[derive(Clone, Debug)]
 enum CursorContextState {
     Unknown {
+        #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
         instant: Instant,
     },
     Known {
@@ -297,11 +306,32 @@ fn lowercase_first_word_if_safe(text: &str) -> (String, bool) {
     out.push_str(&text[start + first_len..]);
     (out, true)
 }
+fn injection_context(target_hwnd: usize, contextual_caps: bool, auto_spacing: bool) -> String {
+    if !(contextual_caps || auto_spacing) {
+        return String::new();
+    }
+    match last_injection().lock() {
+        Ok(guard) => match &*guard {
+            CursorContextState::Known {
+                hwnd,
+                tail,
+                instant,
+            } if *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE => tail.clone(),
+            _ => String::new(),
+        },
+        Err(_) => {
+            log::error!("injection history mutex poisoned");
+            String::new()
+        }
+    }
+}
+#[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
 pub fn reset_injection_history() {
     if let Ok(mut guard) = last_injection().lock() {
         *guard = unknown_context();
     }
 }
+#[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
 pub fn backspace_injection_history(hwnd: usize) {
     if let Ok(mut guard) = last_injection().lock() {
         match &mut *guard {
@@ -322,6 +352,7 @@ pub fn backspace_injection_history(hwnd: usize) {
         }
     }
 }
+#[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
 pub fn append_or_reset_injection_history(hwnd: usize, ch: char) {
     if let Ok(mut guard) = last_injection().lock() {
         match &mut *guard {
@@ -698,7 +729,123 @@ pub async fn inject_text(
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
+        use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+        const VK_ANSI_V: CGKeyCode = 9;
+
+        if target_hwnd != 0 {
+            crate::system::mac_app::activate_pid(target_hwnd as i32);
+            tokio::time::sleep(Duration::from_millis(120)).await;
+        }
+
+        let context = injection_context(target_hwnd, contextual_caps, auto_spacing);
+        let (mut adjusted, context_kind, case_decision) = if !contextual_caps {
+            (
+                text.to_owned(),
+                ContextKind::Unknown,
+                CaseDecision::ContextualCapsDisabled,
+            )
+        } else {
+            match classify_context(&context) {
+                ContextKind::Unknown => (
+                    text.to_owned(),
+                    ContextKind::Unknown,
+                    CaseDecision::UnknownContextPreserved,
+                ),
+                ContextKind::SentenceBoundary => {
+                    if profile == "very_casual" {
+                        (
+                            text.to_owned(),
+                            ContextKind::SentenceBoundary,
+                            CaseDecision::SentenceBoundaryPreservedVeryCasual,
+                        )
+                    } else {
+                        (
+                            uppercase_first_word(text),
+                            ContextKind::SentenceBoundary,
+                            CaseDecision::SentenceBoundaryCapitalized,
+                        )
+                    }
+                }
+                ContextKind::Continuation => {
+                    let (lowered, did_lower) = lowercase_first_word_if_safe(text);
+                    if did_lower {
+                        (
+                            lowered,
+                            ContextKind::Continuation,
+                            CaseDecision::ContinuationLowercased,
+                        )
+                    } else {
+                        (
+                            text.to_owned(),
+                            ContextKind::Continuation,
+                            CaseDecision::ContinuationPreserved,
+                        )
+                    }
+                }
+            }
+        };
+
+        if auto_spacing {
+            if let Some(c) = context.chars().next_back() {
+                if !c.is_whitespace() && !adjusted.starts_with(char::is_whitespace) {
+                    adjusted = format!(" {adjusted}");
+                }
+            }
+        }
+
+        let saved = crate::system::mac_app::pasteboard_get_string();
+        crate::system::mac_app::pasteboard_set_string(&adjusted);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let posted = (|| -> Option<()> {
+            let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
+            let down = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, true).ok()?;
+            // core-graphics 0.24.x exposes the Command modifier under the
+            // CGEventFlagCommand name.
+            down.set_flags(CGEventFlags::CGEventFlagCommand);
+            down.post(CGEventTapLocation::HID);
+            let up = CGEvent::new_keyboard_event(src, VK_ANSI_V, false).ok()?;
+            up.set_flags(CGEventFlags::CGEventFlagCommand);
+            up.post(CGEventTapLocation::HID);
+            Some(())
+        })();
+
+        tokio::time::sleep(Duration::from_millis(120)).await;
+
+        if let Some(prev) = saved {
+            crate::system::mac_app::pasteboard_set_string(&prev);
+        }
+
+        if posted.is_none() {
+            return Err(anyhow::anyhow!(
+                "inject_text: failed to synthesise Cmd+V — grant Open Flow Accessibility permission"
+            ));
+        }
+
+        if target_hwnd != 0 && !adjusted.is_empty() {
+            if let Ok(mut guard) = last_injection().lock() {
+                let mut tail = adjusted.clone();
+                trim_tail_to_limit(&mut tail);
+                *guard = CursorContextState::Known {
+                    hwnd: target_hwnd,
+                    tail,
+                    instant: Instant::now(),
+                };
+            }
+        }
+
+        Ok(InjectionOutcome {
+            text: adjusted,
+            context_state: context_kind.as_str(),
+            case_decision: case_decision.as_str(),
+        })
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         log::warn!("inject_text: not on Windows - skipping target_hwnd={target_hwnd}");
 

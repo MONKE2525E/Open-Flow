@@ -189,9 +189,7 @@ fn profanity_policy(profile: &str, intensity: &str) -> String {
     };
 
     let tone_line = match profile {
-        "very_casual" => {
-            "PROFANITY TONE (VERY CASUAL): Keep swear words and speaker intensity."
-        }
+        "very_casual" => "PROFANITY TONE (VERY CASUAL): Keep swear words and speaker intensity.",
         _ => "PROFANITY TONE (CASUAL): Keep swear words and speaker intensity.",
     };
 
@@ -365,21 +363,17 @@ mod tests {
         let very_casual_prompt =
             get_system_prompt_with_extras("very_casual", "medium", "", None, &input);
 
-        assert!(casual_prompt.contains(
-            "PROFANITY TONE (CASUAL): Keep swear words and speaker intensity."
-        ));
-        assert!(very_casual_prompt.contains(
-            "PROFANITY TONE (VERY CASUAL): Keep swear words and speaker intensity."
-        ));
+        assert!(casual_prompt
+            .contains("PROFANITY TONE (CASUAL): Keep swear words and speaker intensity."));
+        assert!(very_casual_prompt
+            .contains("PROFANITY TONE (VERY CASUAL): Keep swear words and speaker intensity."));
     }
 
     #[test]
     fn formal_profanity_rules_are_conflict_free_with_direct_intensity() {
         let input = "holy shit this is wild".to_string();
         let prompt = get_system_prompt_with_extras("formal", "high", "", None, &input);
-        assert!(prompt.contains(
-            "This overrides intensity profanity defaults."
-        ));
+        assert!(prompt.contains("This overrides intensity profanity defaults."));
         assert!(!prompt.contains("Keep profanity as spoken."));
     }
 

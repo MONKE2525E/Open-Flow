@@ -122,6 +122,10 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return 0 as T;
     case 'get_api_key_status':
       return { groq: false, openai: false, google: false } as T;
+    case 'get_accessibility_permission_status':
+      return String(getDevSetting('accessibility_permission_status') ?? 'authorized') as T;
+    case 'get_microphone_permission_status':
+      return String(getDevSetting('microphone_permission_status') ?? 'authorized') as T;
     case 'check_for_update':
       return null as T;
     case 'check_connectivity':
@@ -148,6 +152,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'set_autostart':
     case 'save_hotkey':
     case 'hide_main':
+    case 'open_accessibility_settings':
+    case 'open_microphone_settings':
     case 'start_input_recording':
     case 'retry_transcription':
     case 'install_update':
@@ -161,6 +167,11 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'start_calibration_monitoring':
     case 'stop_calibration_monitoring':
       return undefined as T;
+    case 'check_accessibility_permission':
+      if (args?.prompt) {
+        writeDevSetting('accessibility_permission_status', 'authorized');
+      }
+      return true as T;
     case 'save_app_mappings':
       writeDevSetting('app_mappings', args?.mappings ?? []);
       return undefined as T;

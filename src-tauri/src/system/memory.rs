@@ -1,8 +1,87 @@
 /// Returns the total resident private memory used by this process and all
 /// WebView2 child processes (in MB), matching Task Manager's "Memory" column.
 pub fn measure() -> u64 {
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     return 0;
+
+    // macOS: sum resident memory of this process and its WebView child processes
+    // by walking the process tree (children are grandchildren of the main app,
+    // same as WebView2 on Windows). Uses RSS, which includes some shared pages, so
+    // it slightly over-reports versus Windows' private working set — informational.
+    #[cfg(target_os = "macos")]
+    {
+        use libproc::libproc::proc_pid::pidinfo;
+        use libproc::libproc::task_info::TaskAllInfo;
+        use std::collections::{HashSet, VecDeque};
+
+        let our_pid = std::process::id() as i32;
+
+        let direct_children = |ppid: i32| -> Vec<i32> {
+            let mut found = HashSet::new();
+            let mut capacity = 32usize;
+
+            loop {
+                let mut buf = vec![0 as libc::pid_t; capacity];
+                let bytes = unsafe {
+                    extern "C" {
+                        fn proc_listchildpids(
+                            ppid: libc::pid_t,
+                            buffer: *mut libc::c_void,
+                            buffersize: libc::c_int,
+                        ) -> libc::c_int;
+                    }
+                    proc_listchildpids(
+                        ppid as libc::pid_t,
+                        buf.as_mut_ptr() as *mut core::ffi::c_void,
+                        (buf.len() * std::mem::size_of::<libc::pid_t>()) as i32,
+                    )
+                };
+
+                if bytes <= 0 {
+                    break;
+                }
+
+                let bytes = bytes as usize;
+                let count = bytes;
+                for pid in buf.into_iter().take(count) {
+                    let pid = pid as i32;
+                    if pid > 0 && pid != ppid {
+                        found.insert(pid);
+                    }
+                }
+
+                if count < capacity {
+                    break;
+                }
+
+                capacity *= 2;
+                if capacity > 4096 {
+                    break;
+                }
+            }
+
+            found.into_iter().collect()
+        };
+
+        let resident = |pid: i32| -> u64 {
+            pidinfo::<TaskAllInfo>(pid, 0)
+                .map(|t| t.ptinfo.pti_resident_size)
+                .unwrap_or(0)
+        };
+
+        let mut total = resident(our_pid);
+        let mut seen: HashSet<i32> = HashSet::new();
+        seen.insert(our_pid);
+        let mut queue: VecDeque<i32> = VecDeque::new();
+        queue.extend(direct_children(our_pid));
+        while let Some(pid) = queue.pop_front() {
+            if seen.insert(pid) {
+                total += resident(pid);
+                queue.extend(direct_children(pid));
+            }
+        }
+        total / (1024 * 1024)
+    }
 
     #[cfg(target_os = "windows")]
     unsafe {

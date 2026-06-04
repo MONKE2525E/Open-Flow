@@ -10,8 +10,26 @@
     transcriptionLanguages,
     type TranscriptionLanguageCode,
   } from '../transcriptionLanguages';
+  import { isMac } from '../platform';
 
-  let win: { minimize: () => Promise<void> } | null = null;
+  // Platform-aware labels for the dictation hotkey and copy.
+  const hkKey1 = 'Ctrl';
+  const hkKey2 = isMac ? 'fn' : 'Windows';
+  const platformTagline = isMac ? 'macOS' : 'Windows';
+  const TOTAL_STEPS = isMac ? 8 : 7; // steps 1–8 show progress dots (done is step 8 on Windows / 9 on macOS)
+  const permissionStep = isMac ? 3 : -1;
+  const cleanupStep = isMac ? 4 : 3;
+  const toneStep = isMac ? 5 : 4;
+  const appearanceStep = isMac ? 6 : 5;
+  const quickSettingsStep = isMac ? 7 : 6;
+  const calibrationStep = isMac ? 8 : 7;
+  const doneStep = isMac ? 9 : 8;
+
+  type AppWindow = {
+    minimize: () => Promise<void>;
+  };
+
+  let win: AppWindow | null = null;
   onMount(async () => {
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
@@ -29,6 +47,9 @@
         selectedLanguage = savedLanguage;
       }
     } catch {}
+    if (isMac) {
+      void refreshMacPermissions();
+    }
     setTimeout(() => { introReady = true; }, 60);
   });
 
@@ -39,7 +60,6 @@
 
   // ── Step state ──────────────────────────────────────────────────────────────
   let step = 0;
-  const TOTAL_STEPS = 7; // steps 1–7 show progress dots (0 = intro, 8 = done)
 
   // ── Microphone Calibration ──────────────────────────────────────────────────
   import {
@@ -60,7 +80,7 @@
   let animating = false;
   let visible = true;
 
-  // ── Quick Settings (step 6) ───────────────────────────────────────────────
+  // ── Quick Settings ──────────────────────────────────────────────────────────
   let quickPrefs = { cleanup: true, noise: true, caps: true, autoLearn: false, autostart: false, muteAudio: false };
   let quickSettingsReady = false;
   type QuickPrefKey = keyof typeof quickPrefs;
@@ -136,6 +156,13 @@
   let keyError = '';
   let showKey = false;
 
+  type MacPermissionStatus = 'authorized' | 'needs_permission' | 'not_determined' | 'denied' | 'restricted' | 'unknown';
+  let accessibilityPermission: MacPermissionStatus = isMac ? 'unknown' : 'authorized';
+  let microphonePermission: MacPermissionStatus = isMac ? 'unknown' : 'authorized';
+  let permissionsLoading = false;
+  let permissionsError = '';
+  let accessibilityPrompting = false;
+
   // ── Cleanup intensity ─────────────────────────────────────────────────────────
   let selectedIntensity = 'medium';
   const cleanupCards = [
@@ -156,7 +183,7 @@
   // ── Appearance ──────────────────────────────────────────────────────────────
   let selectedAppearance: AppearanceMode = 'system';
   const appearanceModes: { id: AppearanceMode; name: string; desc: string }[] = [
-    { id: 'system', name: 'System', desc: 'Match your Windows theme automatically.' },
+    { id: 'system', name: 'System', desc: 'Match your system theme automatically.' },
     { id: 'dark', name: 'Dark', desc: 'Lower glare for night work and dark desktops.' },
     { id: 'light', name: 'Light', desc: 'Brighter surfaces with higher daylight contrast.' },
   ];
@@ -165,16 +192,73 @@
     selectedLanguage = code;
   }
 
+  function permissionLabel(status: MacPermissionStatus) {
+    switch (status) {
+      case 'authorized':
+        return 'Granted';
+      case 'not_determined':
+        return 'Not yet asked';
+      case 'denied':
+        return 'Blocked';
+      case 'restricted':
+        return 'Restricted';
+      case 'needs_permission':
+        return 'Needs access';
+      default:
+        return 'Unknown';
+    }
+  }
+
+  async function refreshMacPermissions() {
+    if (!isMac) return;
+    permissionsLoading = true;
+    permissionsError = '';
+    try {
+      const [accessibility, microphone] = await Promise.all([
+        invoke<string>('get_accessibility_permission_status'),
+        invoke<string>('get_microphone_permission_status'),
+      ]);
+      accessibilityPermission = (accessibility as MacPermissionStatus) || 'unknown';
+      microphonePermission = (microphone as MacPermissionStatus) || 'unknown';
+    } catch {
+      permissionsError = 'Could not refresh permission status right now.';
+    } finally {
+      permissionsLoading = false;
+    }
+  }
+
+  async function requestAccessibilityPrompt() {
+    if (!isMac) return;
+    accessibilityPrompting = true;
+    permissionsError = '';
+    try {
+      await invoke('check_accessibility_permission', { prompt: true });
+    } catch {}
+    await refreshMacPermissions();
+    accessibilityPrompting = false;
+  }
+
+  async function openPermissionSettings(kind: 'accessibility' | 'microphone') {
+    try {
+      await invoke(kind === 'accessibility' ? 'open_accessibility_settings' : 'open_microphone_settings');
+    } catch {
+      permissionsError = 'Could not open System Settings.';
+    }
+  }
+
   // ── Navigation ────────────────────────────────────────────────────────────────
   async function goNext() {
     if (animating) return;
-    if (step === 8) { await finish(); return; }
+    if (step === doneStep) { await finish(); return; }
     direction = 'forward';
     animating = true;
     visible = false;
     await delay(220);
     step++;
-    if (step === 6) setTimeout(() => { quickSettingsReady = true; }, 60);
+    if (isMac && step === permissionStep) {
+      void refreshMacPermissions();
+    }
+    if (step === quickSettingsStep) setTimeout(() => { quickSettingsReady = true; }, 60);
     visible = true;
     await delay(220);
     animating = false;
@@ -182,13 +266,16 @@
 
   async function goBack() {
     if (animating || step === 0) return;
-    if (step === 6 || step === 8) quickSettingsReady = false;
+    if (step === quickSettingsStep || step === doneStep) quickSettingsReady = false;
     direction = 'back';
     animating = true;
     visible = false;
     await delay(220);
     step--;
-    if (step === 6) setTimeout(() => { quickSettingsReady = true; }, 60);
+    if (isMac && step === permissionStep) {
+      void refreshMacPermissions();
+    }
+    if (step === quickSettingsStep) setTimeout(() => { quickSettingsReady = true; }, 60);
     visible = true;
     await delay(220);
     animating = false;
@@ -200,6 +287,9 @@
     visible = false;
     await delay(220);
     step++;
+    if (isMac && step === permissionStep) {
+      void refreshMacPermissions();
+    }
     visible = true;
     await delay(220);
     animating = false;
@@ -254,32 +344,34 @@
 
   // ── Done animation ────────────────────────────────────────────────────────────
   let checkAnimating = false;
-  $: if (step === 8) { setTimeout(() => { checkAnimating = true; }, 200); }
+  $: if (step === doneStep) { setTimeout(() => { checkAnimating = true; }, 200); }
 </script>
 
 <!-- Full-screen overlay -->
 <div class="setup-overlay">
-  <!-- Draggable title bar -->
-  <div class="setup-titlebar" data-tauri-drag-region>
-    <div></div>
-    <div class="tb-right">
-      <button class="tb-btn" title="Minimize" onclick={minimize}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <path d="M5 12h14"/>
-        </svg>
-      </button>
-      <button class="tb-btn close" title="Close" onclick={closeWindow}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <path d="M6 6l12 12M6 18 18 6"/>
-        </svg>
-      </button>
+  {#if !isMac}
+    <!-- Draggable title bar -->
+    <div class="setup-titlebar" data-tauri-drag-region>
+      <div></div>
+      <div class="tb-right">
+        <button class="tb-btn" title="Minimize" onclick={minimize}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M5 12h14"/>
+          </svg>
+        </button>
+        <button class="tb-btn close" title="Close" onclick={closeWindow}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M6 6l12 12M6 18 18 6"/>
+          </svg>
+        </button>
+      </div>
     </div>
-  </div>
+  {/if}
 
-  <!-- Progress dots (steps 1–7) -->
-  {#if step > 0 && step < 8}
+  <!-- Progress dots -->
+  {#if step > 0 && step < doneStep}
     <div class="progress">
-      {#each Array(TOTAL_STEPS) as _, i}
+      {#each Array.from({ length: TOTAL_STEPS }) as _, i}
         <button
           class="dot"
           class:active={i + 1 === step}
@@ -312,7 +404,7 @@
             </div>
             <div class="intro-wordmark">
               <h1 class="brand-name">Open Flow</h1>
-              <p class="brand-tagline">open-source AI dictation for Windows</p>
+              <p class="brand-tagline">open-source AI dictation for {platformTagline}</p>
             </div>
           </div>
         </div>
@@ -323,7 +415,7 @@
             <div class="how-step">
               <div class="how-num">1</div>
               <div>
-                <strong>Hold <kbd>Ctrl</kbd> + <kbd>Windows</kbd></strong>
+                <strong>Hold <kbd>{hkKey1}</kbd> + <kbd>{hkKey2}</kbd></strong>
                 <p>Start recording. A floating pill shows your audio level.</p>
               </div>
             </div>
@@ -444,6 +536,13 @@
           {#if keySaved}
             <p class="key-saved">Key saved successfully.</p>
           {/if}
+          {#if isMac}
+            <div class="keychain-note">
+              <strong>macOS note:</strong>
+              If Keychain asks for your login password, choose <span>Always Allow</span>.
+              That keeps your API key stored securely without repeating the prompt.
+            </div>
+          {/if}
         </div>
 
         <div class="step-footer">
@@ -454,8 +553,85 @@
         </div>
       </div>
 
-    <!-- ── Step 3: Cleanup Intensity ─────────────────────── -->
-    {:else if step === 3}
+    <!-- ── Step 3: macOS permissions ─────────────────────── -->
+    {:else if isMac && step === permissionStep}
+      <div class="step">
+        <div class="step-header">
+          <h2>Check your macOS permissions</h2>
+          <p class="step-sub">Open Flow works best when macOS trusts it for both the mic and the global hotkey.</p>
+        </div>
+
+        <div class="permission-panel">
+          <div class="permission-panel-head">
+            <div>
+              <p class="guide-label">What this screen is for</p>
+              <p class="permission-panel-copy">
+                Accessibility lets Open Flow listen for the hotkey and paste text for you.
+                Microphone access lets it hear your voice in the first place.
+              </p>
+            </div>
+            <button class="copy-btn" onclick={refreshMacPermissions} disabled={permissionsLoading}>
+              {permissionsLoading ? 'Refreshing…' : 'Refresh status'}
+            </button>
+          </div>
+
+          <div class="permission-grid">
+            <article class="permission-card">
+              <div class="permission-card-top">
+                <div>
+                  <p class="permission-title">Accessibility</p>
+                  <p class="permission-desc">Needed for the global hotkey and Cmd+V text injection.</p>
+                </div>
+                <span class="permission-badge" class:warn={accessibilityPermission !== 'authorized'}>
+                  {permissionLabel(accessibilityPermission)}
+                </span>
+              </div>
+              <div class="permission-actions">
+                <button class="btn-ghost permission-btn" onclick={requestAccessibilityPrompt} disabled={accessibilityPrompting}>
+                  {accessibilityPrompting ? 'Prompting…' : 'Show system prompt'}
+                </button>
+                <button class="btn-ghost permission-btn" onclick={() => openPermissionSettings('accessibility')}>
+                  Open Settings
+                </button>
+              </div>
+            </article>
+
+            <article class="permission-card">
+              <div class="permission-card-top">
+                <div>
+                  <p class="permission-title">Microphone</p>
+                  <p class="permission-desc">Needed to capture speech and calibrate your mic gain.</p>
+                </div>
+                <span class="permission-badge" class:warn={microphonePermission !== 'authorized'}>
+                  {permissionLabel(microphonePermission)}
+                </span>
+              </div>
+              <div class="permission-actions">
+                <button class="btn-ghost permission-btn" onclick={() => openPermissionSettings('microphone')}>
+                  Open Settings
+                </button>
+              </div>
+            </article>
+          </div>
+
+          {#if permissionsError}
+            <p class="permission-error">{permissionsError}</p>
+          {/if}
+
+          <div class="permission-note">
+            <strong>Tip:</strong> If a macOS permission prompt appears, choose <span>Allow</span> or <span>Always Allow</span>.
+            If you miss it, use the buttons above to jump to System Settings and try again.
+          </div>
+        </div>
+
+        <div class="step-footer">
+          <button class="btn-skip" onclick={skip}>Skip for now</button>
+          <button class="btn-primary" onclick={goNext}>Next</button>
+        </div>
+      </div>
+
+    <!-- ── Step 3/4: Cleanup Intensity ───────────────────── -->
+    {:else if step === cleanupStep}
       <div class="step">
         <div class="step-header">
           <h2>How should your text be cleaned up?</h2>
@@ -482,8 +658,8 @@
         </div>
       </div>
 
-    <!-- ── Step 4: Personal Tone ─────────────────────────── -->
-    {:else if step === 4}
+    <!-- ── Step 4/5: Personal Tone ───────────────────────── -->
+    {:else if step === toneStep}
       <div class="step">
         <div class="step-header">
           <h2>Pick your default tone</h2>
@@ -510,8 +686,8 @@
         </div>
       </div>
 
-    <!-- ── Step 5: Appearance ───────────────────────────── -->
-    {:else if step === 5}
+    <!-- ── Step 5/6: Appearance ───────────────────────────── -->
+    {:else if step === appearanceStep}
       <div class="step appearance-step">
         <div class="step-header">
           <h2>Choose your appearance</h2>
@@ -543,8 +719,8 @@
         </div>
       </div>
 
-    <!-- ── Step 6: Microphone Calibration ────────────────── -->
-    {:else if step === 7}
+    <!-- ── Step 6/7: Microphone Calibration ───────────────── -->
+    {:else if step === calibrationStep}
       <div class="step">
         <div class="step-header">
           <h2>{setupCalibrationCopy.title}</h2>
@@ -625,8 +801,8 @@
         </div>
       </div>
 
-    <!-- ── Step 6: Quick Settings ──────────────────────────── -->
-    {:else if step === 6}
+    <!-- ── Step 7/8: Quick Settings ─────────────────────────── -->
+    {:else if step === quickSettingsStep}
       <div class="step qs-step">
         <div class="step-header">
           <h2>A few things worth knowing about</h2>
@@ -712,7 +888,7 @@
               <div class="qs-toggle-row">
                 <div>
                   <div class="qs-toggle-label">Start on boot</div>
-                  <div class="qs-toggle-desc">Launch Open Flow with Windows</div>
+                  <div class="qs-toggle-desc">Launch Open Flow at login</div>
                 </div>
                 <div class="qs-toggle" class:on={quickPrefs.autostart} role="switch" aria-checked={quickPrefs.autostart} aria-label="Start on boot" tabindex="0"
                   onclick={() => toggleQuickPref('autostart')}
@@ -770,8 +946,8 @@
         </div>
       </div>
 
-    <!-- ── Step 8: Done ───────────────────────────────────── -->
-    {:else if step === 8}
+    <!-- ── Step 8/9: Done ───────────────────────────────────── -->
+    {:else if step === doneStep}
       <div class="step done-step">
         <div class="done-check-wrap">
           <svg class="done-check" class:animate={checkAnimating} width="64" height="64" viewBox="0 0 64 64" fill="none">
@@ -796,7 +972,7 @@
         </div>
         <h2 class="done-title">You're all set.</h2>
         <p class="done-sub">
-          Hold <kbd>Ctrl</kbd> + <kbd>Windows</kbd> anywhere to start dictating.
+          Hold <kbd>{hkKey1}</kbd> + <kbd>{hkKey2}</kbd> anywhere to start dictating.
           Open Flow lives in your system tray and is always ready.
         </p>
         <div class="done-summary">
@@ -1521,6 +1697,162 @@
   .key-error { font-size: 12px; color: var(--danger); margin: 0; }
   .key-saved { font-size: 12px; color: var(--accent-ink); margin: 0; }
 
+  .keychain-note {
+    padding: 11px 12px;
+    border-radius: var(--r-sm);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
+    background: color-mix(in srgb, var(--accent-soft) 42%, var(--paper-2));
+    color: var(--ink-soft);
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+
+  .keychain-note strong {
+    color: var(--ink-strong);
+    font-weight: 600;
+  }
+
+  .keychain-note span {
+    color: var(--accent-ink);
+    font-weight: 600;
+  }
+
+  /* ── macOS permissions step ───────────────────────────── */
+  .permission-panel {
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 16px 18px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .permission-panel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .permission-panel-copy {
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin: 5px 0 0;
+    line-height: 1.5;
+    max-width: 520px;
+  }
+
+  .permission-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .permission-card {
+    background: var(--bg-elev);
+    border: 1.5px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 14px 14px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .permission-card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .permission-title {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--ink-strong);
+    margin: 0 0 4px;
+  }
+
+  .permission-desc {
+    font-size: 12.5px;
+    color: var(--ink-mute);
+    margin: 0;
+    line-height: 1.45;
+  }
+
+  .permission-badge {
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    flex-shrink: 0;
+  }
+
+  .permission-badge.warn {
+    background: var(--warning-bg);
+    color: var(--warning);
+  }
+
+  .permission-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .permission-btn {
+    padding: 7px 12px;
+    border-radius: 999px;
+    font-size: 12.5px;
+  }
+
+  .permission-error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 12px;
+  }
+
+  .permission-note {
+    background: color-mix(in srgb, var(--accent-soft) 55%, var(--paper));
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+    border-radius: var(--r-sm);
+    padding: 10px 12px;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    line-height: 1.45;
+  }
+
+  .permission-note strong {
+    color: var(--ink-strong);
+  }
+
+  .permission-note span {
+    color: var(--accent-ink);
+    font-weight: 600;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--line-strong);
+    color: var(--ink-mute);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .btn-ghost:hover {
+    background: var(--paper-2);
+    color: var(--ink-strong);
+    border-color: var(--accent);
+  }
+
+  .btn-ghost:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   /* ── Option cards (cleanup intensity) ─────────────────────────────── */
   .option-cards {
     display: grid;
@@ -1718,6 +2050,15 @@
   @media (max-width: 960px) {
     .appearance-mode-grid {
       grid-template-columns: 1fr;
+    }
+
+    .permission-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .permission-panel-head {
+      flex-direction: column;
+      align-items: stretch;
     }
   }
   /* Done step */
@@ -1950,5 +2291,3 @@
     line-height: 1.4;
   }
 </style>
-
-
