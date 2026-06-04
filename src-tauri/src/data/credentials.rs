@@ -286,6 +286,11 @@ fn load_legacy_cred_files(app: &AppHandle) -> Vec<LegacyCredFile> {
 }
 
 #[cfg(target_os = "macos")]
+fn legacy_file_contains_provider_key(file: &LegacyCredFile, provider: &str) -> bool {
+    user_for(provider).is_some_and(|user| file.map.contains_key(user))
+}
+
+#[cfg(target_os = "macos")]
 fn keychain_user(provider: &str) -> Result<&'static str, String> {
     user_for(provider).ok_or_else(|| format!("Unknown provider: {provider}"))
 }
@@ -446,10 +451,16 @@ pub fn has(_provider: &str) -> bool {
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "macos")]
+    use super::legacy_file_contains_provider_key;
+    #[cfg(target_os = "macos")]
+    use super::LegacyCredFile;
+    #[cfg(target_os = "macos")]
     use super::manual_legacy_creds_path_from_home;
     use super::normalize_key;
     #[cfg(target_os = "macos")]
     use std::path::Path;
+    #[cfg(target_os = "macos")]
+    use std::path::PathBuf;
 
     #[test]
     fn normalize_key_trims_surrounding_whitespace() {
@@ -469,6 +480,29 @@ mod tests {
             path,
             Path::new("/Users/tester/Library/Application Support/OpenFlow/credentials.json")
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn legacy_cleanup_only_tracks_provider_keys() {
+        let mut map = serde_json::Map::new();
+        map.insert(
+            crate::data::store::KEY_GROQ.to_string(),
+            serde_json::Value::String("gsk_test".into()),
+        );
+        map.insert("custom_key".into(), serde_json::Value::String("value".into()));
+
+        let file = LegacyCredFile {
+            path: PathBuf::from("/tmp/credentials.json"),
+            existed: true,
+            map,
+        };
+
+        assert!(legacy_file_contains_provider_key(&file, crate::data::store::GROQ));
+        assert!(!legacy_file_contains_provider_key(
+            &file,
+            crate::data::store::OPENAI
+        ));
     }
 }
 
@@ -498,7 +532,16 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
     });
 
     #[cfg(target_os = "macos")]
-    let legacy_cleanup_needed = legacy_files.iter().any(|file| file.existed);
+    let legacy_cleanup_needed = legacy_files.iter().any(|file| {
+        file.existed
+            && [
+                crate::data::store::GROQ,
+                crate::data::store::OPENAI,
+                crate::data::store::GOOGLE,
+            ]
+            .into_iter()
+            .any(|provider| legacy_file_contains_provider_key(file, provider))
+    });
     #[cfg(not(target_os = "macos"))]
     let legacy_cleanup_needed = false;
 

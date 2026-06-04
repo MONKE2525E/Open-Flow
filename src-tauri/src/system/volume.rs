@@ -397,12 +397,11 @@ pub fn unmute() {
         return;
     }
 
+    *restore_state = MacRestoreState::Idle;
+
     if let Err(err) = macos::restore(snapshot) {
         log::warn!("Failed to restore system audio: {err}");
-        return;
     }
-
-    *restore_state = MacRestoreState::Idle;
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
