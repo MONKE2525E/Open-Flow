@@ -150,6 +150,28 @@ pub fn set_regular_activation_policy_on_main_thread(app: &AppHandle) {
     });
 }
 
+/// Ask macOS to activate the current app and bring its windows forward.
+pub fn activate_current_app() -> bool {
+    autoreleasepool(|_| unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSRunningApplication), currentApplication];
+        if app.is_null() {
+            return false;
+        }
+        // NSApplicationActivateIgnoringOtherApps = 1 << 1
+        let options: usize = 1 << 1;
+        let ok: bool = msg_send![app, activateWithOptions: options];
+        ok
+    })
+}
+
+/// Dispatch `activate_current_app()` onto the macOS main thread.
+pub fn activate_current_app_on_main_thread(app: &AppHandle) {
+    let app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let _ = activate_current_app();
+    });
+}
+
 /// Override the live process name so macOS surfaces the friendly app name
 /// instead of the Rust binary name while running in dev mode.
 pub fn set_process_name(display_name: &str) -> bool {

@@ -1,17 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  statSync,
-} from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 const APP_BINARY_NAME = 'open-flow';
-const FRIENDLY_BINARY_NAME = 'Open Flow';
 
 const args = process.argv.slice(2);
 
@@ -43,18 +36,13 @@ const sourceBinary = path.join(
   resolveProfile(cargoArgs),
   resolveBinaryName(cargoArgs),
 );
-const friendlyBinary = path.join(path.dirname(sourceBinary), FRIENDLY_BINARY_NAME);
 
 if (!existsSync(sourceBinary)) {
   console.error(`Expected built binary was not found: ${sourceBinary}`);
   process.exit(1);
 }
 
-mkdirSync(path.dirname(friendlyBinary), { recursive: true });
-copyFileSync(sourceBinary, friendlyBinary);
-chmodSync(friendlyBinary, statSync(sourceBinary).mode);
-
-const child = spawn(friendlyBinary, appArgs, {
+const child = spawn(sourceBinary, appArgs, {
   env: process.env,
   stdio: 'inherit',
 });

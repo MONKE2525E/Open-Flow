@@ -235,6 +235,7 @@ pub async fn show_main(app: AppHandle) -> Result<(), String> {
         #[cfg(target_os = "macos")]
         {
             crate::system::mac_app::set_regular_activation_policy_on_main_thread(&app);
+            crate::system::mac_app::activate_current_app_on_main_thread(&app);
         }
         w.show().ok();
         w.set_focus().ok();
