@@ -1,8 +1,10 @@
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_store::StoreExt;
+
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::data::{db, store};
 use crate::DbHandle;
@@ -986,14 +988,7 @@ fn request_value_change_hook_shutdown() {
     }
 
     unsafe {
-        if PostThreadMessageW(
-            thread_id,
-            WM_APP_AUTO_LEARN_STOP,
-            WPARAM(0),
-            LPARAM(0),
-        )
-        .is_err()
-        {
+        if PostThreadMessageW(thread_id, WM_APP_AUTO_LEARN_STOP, WPARAM(0), LPARAM(0)).is_err() {
             log::debug!(
                 "auto-learn: failed to post stop message to value-change hook thread id={thread_id}"
             );
@@ -1012,7 +1007,7 @@ unsafe extern "system" fn value_change_event_proc(
     _event_time: u32,
 ) {
     use windows::Win32::UI::WindowsAndMessaging::{
-        EVENT_OBJECT_VALUECHANGE, GetForegroundWindow, IsChild,
+        GetForegroundWindow, IsChild, EVENT_OBJECT_VALUECHANGE,
     };
 
     if event != EVENT_OBJECT_VALUECHANGE {
@@ -1050,78 +1045,77 @@ fn ensure_value_change_hook() -> bool {
     let (spawned, should_reset_flags) = {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
 
-        let spawn_result =
-            std::thread::Builder::new()
-                .name("auto_learn_value_change_hook".to_string())
-                .spawn(move || unsafe {
-                    use windows::Win32::System::Threading::GetCurrentThreadId;
-                    use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent};
-                    use windows::Win32::UI::WindowsAndMessaging::{
-                        DispatchMessageW, GetMessageW, PeekMessageW, TranslateMessage,
-                        EVENT_OBJECT_VALUECHANGE, MSG, PM_NOREMOVE, WINEVENT_OUTOFCONTEXT,
-                    };
+        let spawn_result = std::thread::Builder::new()
+            .name("auto_learn_value_change_hook".to_string())
+            .spawn(move || unsafe {
+                use windows::Win32::System::Threading::GetCurrentThreadId;
+                use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent};
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    DispatchMessageW, GetMessageW, PeekMessageW, TranslateMessage,
+                    EVENT_OBJECT_VALUECHANGE, MSG, PM_NOREMOVE, WINEVENT_OUTOFCONTEXT,
+                };
 
-                    let thread_id = GetCurrentThreadId();
-                    VALUE_CHANGE_HOOK_THREAD_ID.store(thread_id, Ordering::SeqCst);
-                    let mut queue_msg = MSG::default();
-                    let _ = PeekMessageW(&mut queue_msg, None, 0, 0, PM_NOREMOVE);
+                let thread_id = GetCurrentThreadId();
+                VALUE_CHANGE_HOOK_THREAD_ID.store(thread_id, Ordering::SeqCst);
+                let mut queue_msg = MSG::default();
+                let _ = PeekMessageW(&mut queue_msg, None, 0, 0, PM_NOREMOVE);
 
-                    let hook = SetWinEventHook(
-                        EVENT_OBJECT_VALUECHANGE,
-                        EVENT_OBJECT_VALUECHANGE,
-                        None,
-                        Some(value_change_event_proc),
-                        0,
-                        0,
-                        WINEVENT_OUTOFCONTEXT,
-                    );
+                let hook = SetWinEventHook(
+                    EVENT_OBJECT_VALUECHANGE,
+                    EVENT_OBJECT_VALUECHANGE,
+                    None,
+                    Some(value_change_event_proc),
+                    0,
+                    0,
+                    WINEVENT_OUTOFCONTEXT,
+                );
 
-                    let ready = !hook.is_invalid();
-                    let _ = ready_tx.send(ready);
-                    if !ready {
-                        VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
-                        VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
-                        VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
-                        return;
-                    }
-                    VALUE_CHANGE_HOOK_READY.store(true, Ordering::Relaxed);
+                let ready = !hook.is_invalid();
+                let _ = ready_tx.send(ready);
+                if !ready {
+                    VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+                    VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
                     VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
-                    if ACTIVE_EVENT_MODE_MONITORS.load(Ordering::SeqCst) == 0 {
-                        let _ = UnhookWinEvent(hook);
-                        VALUE_CHANGE_HOOK_READY.store(false, Ordering::Relaxed);
-                        VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
-                        VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
-                        VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
-                        return;
-                    }
-
-                    let mut msg = MSG::default();
-                    loop {
-                        let status = GetMessageW(&mut msg, None, 0, 0).0;
-                        if status == -1 {
-                            log::error!("GetMessageW failed in auto-learn hook thread");
-                            break;
-                        }
-                        if status == 0 {
-                            break;
-                        }
-                        if msg.message == WM_APP_AUTO_LEARN_STOP {
-                            if ACTIVE_EVENT_MODE_MONITORS.load(Ordering::SeqCst) == 0 {
-                                break;
-                            }
-                            VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
-                            continue;
-                        }
-                        let _ = TranslateMessage(&msg);
-                        DispatchMessageW(&msg);
-                    }
-
+                    return;
+                }
+                VALUE_CHANGE_HOOK_READY.store(true, Ordering::Relaxed);
+                VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
+                if ACTIVE_EVENT_MODE_MONITORS.load(Ordering::SeqCst) == 0 {
                     let _ = UnhookWinEvent(hook);
                     VALUE_CHANGE_HOOK_READY.store(false, Ordering::Relaxed);
                     VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
                     VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
                     VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
-                });
+                    return;
+                }
+
+                let mut msg = MSG::default();
+                loop {
+                    let status = GetMessageW(&mut msg, None, 0, 0).0;
+                    if status == -1 {
+                        log::error!("GetMessageW failed in auto-learn hook thread");
+                        break;
+                    }
+                    if status == 0 {
+                        break;
+                    }
+                    if msg.message == WM_APP_AUTO_LEARN_STOP {
+                        if ACTIVE_EVENT_MODE_MONITORS.load(Ordering::SeqCst) == 0 {
+                            break;
+                        }
+                        VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
+                        continue;
+                    }
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+
+                let _ = UnhookWinEvent(hook);
+                VALUE_CHANGE_HOOK_READY.store(false, Ordering::Relaxed);
+                VALUE_CHANGE_HOOK_SPAWNED.store(false, Ordering::Relaxed);
+                VALUE_CHANGE_HOOK_THREAD_ID.store(0, Ordering::SeqCst);
+                VALUE_CHANGE_HOOK_STOP_REQUESTED.store(false, Ordering::SeqCst);
+            });
 
         match spawn_result {
             Ok(_) => match ready_rx.recv_timeout(std::time::Duration::from_secs(2)) {
@@ -1226,7 +1220,8 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
         let _ = db::log_auto_learn_event(&db, "anchor", "anchor_ok", &app_context, "", "", 0.0);
 
         let mut stable_text_gate = StableTextGate::default();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(MONITOR_WINDOW_SECS);
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(MONITOR_WINDOW_SECS);
         let mut recorded_this_session: HashSet<(String, String)> = HashSet::new();
         #[cfg(windows)]
         let mut last_event_seq = VALUE_CHANGE_SEQ.load(Ordering::Relaxed);

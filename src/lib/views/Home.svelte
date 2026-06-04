@@ -7,6 +7,11 @@
   import { icons } from '../icons';
   import { appStore, type UpdateInfo } from '../stores';
   import { saveSetting } from '../settings';
+  import { isMac } from '../platform';
+
+  // Hotkey labels reflect each platform's default dictation chord.
+  const hk1 = 'Ctrl';
+  const hk2 = isMac ? 'fn' : 'Windows';
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
   interface Stats { total_words: number; avg_wpm: number; day_streak: number; }
@@ -251,7 +256,7 @@
       <div class="hero-photo">
         <div class="hero-photo-content">
           <h2 class="hero-photo-title">
-            Hold <kbd>Ctrl</kbd> <kbd>Windows</kbd> to dictate
+            Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to dictate
           </h2>
           <p class="hero-photo-sub">
             Open Flow works in any app. Try it in
@@ -301,7 +306,7 @@
 
         {#if recents.length === 0 && !failedEntry}
           <div class="empty-state">
-            No dictations yet. Hold <kbd>Ctrl</kbd> <kbd>Windows</kbd> to get started.
+            No dictations yet. Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to get started.
           </div>
         {:else}
           {#each grouped as group, gi (group.label)}

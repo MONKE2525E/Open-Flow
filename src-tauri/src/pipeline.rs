@@ -16,6 +16,11 @@ use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
 const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
+const PILL_WIDTH_POINTS: f64 = 140.0;
+const PILL_HEIGHT_POINTS: f64 = 44.0;
+const PILL_BOTTOM_GAP_POINTS: f64 = 16.0;
+#[cfg(target_os = "macos")]
+const MACOS_DOCK_FALLBACK_HEIGHT_POINTS: f64 = 48.0;
 
 fn transcription_provider_from_str(s: &str) -> transcription::Provider {
     match s {
@@ -119,12 +124,32 @@ pub fn show_pill(app: &AppHandle, state: &str) {
         if let Ok(Some(m)) = pill.primary_monitor() {
             let sz = m.size();
             let sf = m.scale_factor();
-            let x = ((sz.width as f64 / sf - 140.0) / 2.0 * sf) as i32;
-            let y = ((sz.height as f64 / sf - 44.0 - 64.0) * sf) as i32;
+            let x = ((sz.width as f64 / sf - PILL_WIDTH_POINTS) / 2.0 * sf) as i32;
+            let bottom_offset_points = pill_bottom_offset_points();
+            let y =
+                ((sz.height as f64 / sf - PILL_HEIGHT_POINTS - bottom_offset_points) * sf) as i32;
             pill.set_position(tauri::PhysicalPosition::new(x, y)).ok();
         }
 
         pill.emit("pill-state", state).ok();
+    }
+}
+
+fn pill_bottom_offset_points() -> f64 {
+    #[cfg(target_os = "macos")]
+    {
+        let dock_height = crate::system::mac_app::dock_height_points();
+        let effective_dock_height = if dock_height > 0.0 {
+            dock_height
+        } else {
+            MACOS_DOCK_FALLBACK_HEIGHT_POINTS
+        };
+        return effective_dock_height + PILL_BOTTOM_GAP_POINTS;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        64.0
     }
 }
 
@@ -179,6 +204,27 @@ pub fn start_recording_session_ex(
             store::AudioConfig::default()
         }
     };
+
+    #[cfg(target_os = "macos")]
+    {
+        if !crate::commands::check_accessibility_permission(false) {
+            return Err(
+                "Accessibility permission is required for Open Flow on macOS. Open System Settings > Privacy & Security > Accessibility and enable Open Flow."
+                    .to_string(),
+            );
+        }
+
+        match crate::system::mac_app::microphone_permission_status() {
+            "denied" | "restricted" => {
+                return Err(
+                    "Microphone access is blocked on macOS. Open System Settings > Privacy & Security > Microphone and enable Open Flow."
+                        .to_string(),
+                );
+            }
+            _ => {}
+        }
+    }
+
     let device = audio_config.device;
     let noise_reduction = audio_config.noise_reduction;
     let mute_audio = audio_config.mute_audio;

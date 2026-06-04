@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { appStore } from './lib/stores';
+  import { isMac } from './lib/platform';
   import TitleBar from './lib/components/layout/TitleBar.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
@@ -116,7 +117,9 @@
   {#if appStore.setupComplete === false}
     <Setup />
   {/if}
-  <TitleBar />
+  {#if !isMac}
+    <TitleBar />
+  {/if}
   <div class="body">
     <Sidebar />
     <div class="content scroll-styled">

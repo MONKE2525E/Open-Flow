@@ -15,7 +15,10 @@
         micState = 'recording';
       } catch (e) {
         const msg = String(e);
-        error = msg.includes('Already recording') ? 'Hotkey recording is active' : 'Could not start mic';
+        error = msg.includes('Already recording') ? 'Hotkey recording is active'
+              : msg.includes('Microphone access is blocked') ? 'Enable microphone permission in System Settings'
+              : msg.includes('Accessibility permission is required') ? 'Enable Accessibility permission in System Settings'
+              : 'Could not start mic';
       }
     } else if (micState === 'recording') {
       micState = 'loading';
@@ -27,6 +30,8 @@
         const msg = String(e);
         error = msg.includes('too short') ? 'Too short — try again'
               : msg.includes('No API key') ? 'No API key configured'
+              : msg.includes('Microphone access is blocked') ? 'Enable microphone permission in System Settings'
+              : msg.includes('Accessibility permission is required') ? 'Enable Accessibility permission in System Settings'
               : 'Transcription failed';
         micState = 'idle';
       }

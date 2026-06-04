@@ -1,46 +1,81 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { invoke } from '../../tauri';
 
-  const keyProviders: { id: 'groq' | 'openai' | 'google'; label: string; ph: string; models: string }[] = [
+  type ProviderId = 'groq' | 'openai' | 'google';
+  type KeyStatus = Record<ProviderId, boolean>;
+  type KeyDrafts = Record<ProviderId, string>;
+
+  const keyProviders: { id: ProviderId; label: string; ph: string; models: string }[] = [
     { id: 'groq',   label: 'Groq',   ph: 'gsk_…',  models: 'whisper-large-v3-turbo · llama-3.3-70b' },
     { id: 'openai', label: 'OpenAI', ph: 'sk-…',   models: 'gpt-4o-transcribe · gpt-4o-mini' },
     { id: 'google', label: 'Google', ph: 'AIza…',  models: 'Chirp 3 · gemini-3.5-flash' },
   ];
 
-  let keyStatus = $state({ groq: false, openai: false, google: false });
-  let draftKeys = $state({ groq: '', openai: '', google: '' });
+  let keyStatus = $state<KeyStatus>({ groq: false, openai: false, google: false });
+  let draftKeys = $state<KeyDrafts>({ groq: '', openai: '', google: '' });
+  let keySaving = $state<Record<ProviderId, boolean>>({ groq: false, openai: false, google: false });
+  let keyErrors = $state<KeyDrafts>({ groq: '', openai: '', google: '' });
 
   async function loadKeyStatus() {
     try {
-      keyStatus = await invoke<typeof keyStatus>('get_api_key_status');
+      const status = await invoke<KeyStatus>('get_api_key_status');
+      keyStatus = status;
+      return status;
     } catch (err) {
       console.error('get_api_key_status failed:', err);
+      return keyStatus;
     }
   }
 
-  async function saveKey(provider: 'groq' | 'openai' | 'google') {
+  async function saveKey(provider: ProviderId) {
     const key = draftKeys[provider].trim();
     if (!key) return;
+    keyErrors = { ...keyErrors, [provider]: '' };
+    keySaving = { ...keySaving, [provider]: true };
     try {
       await invoke('save_api_key', { provider, key });
-      keyStatus = { ...keyStatus, [provider]: true };
-      draftKeys = { ...draftKeys, [provider]: '' };
+      const status = await loadKeyStatus();
+      if (status[provider]) {
+        draftKeys = { ...draftKeys, [provider]: '' };
+      } else {
+        keyErrors = {
+          ...keyErrors,
+          [provider]: 'The key did not persist after saving. Please try again.',
+        };
+      }
     } catch (e) {
       console.error('save_api_key failed', e);
+      keyErrors = {
+        ...keyErrors,
+        [provider]: 'Could not save this key locally. Please try again.',
+      };
+    } finally {
+      keySaving = { ...keySaving, [provider]: false };
     }
   }
 
-  async function clearKey(provider: 'groq' | 'openai' | 'google') {
+  async function clearKey(provider: ProviderId) {
+    keyErrors = { ...keyErrors, [provider]: '' };
+    keySaving = { ...keySaving, [provider]: true };
     try {
       await invoke('delete_api_key', { provider });
-      keyStatus = { ...keyStatus, [provider]: false };
+      await loadKeyStatus();
       draftKeys = { ...draftKeys, [provider]: '' };
     } catch (e) {
       console.error('delete_api_key failed', e);
+      keyErrors = {
+        ...keyErrors,
+        [provider]: 'Could not remove this key locally. Please try again.',
+      };
+    } finally {
+      keySaving = { ...keySaving, [provider]: false };
     }
   }
 
-  loadKeyStatus();
+  onMount(() => {
+    void loadKeyStatus();
+  });
 </script>
 
 <h2 class="settings-h">API Keys</h2>
@@ -65,24 +100,29 @@
         bind:value={draftKeys[item.id]}
         onkeydown={(e) => e.key === 'Enter' && saveKey(item.id)}
         autocomplete="off"
+        aria-invalid={keyErrors[item.id] ? 'true' : 'false'}
       />
       <button
         class="btn-ghost"
         onclick={() => saveKey(item.id)}
-        disabled={!draftKeys[item.id].trim()}
-      >Save</button>
+        disabled={!draftKeys[item.id].trim() || keySaving[item.id]}
+      >{keySaving[item.id] ? 'Saving…' : 'Save'}</button>
       {#if keyStatus[item.id]}
         <button
           class="btn-ghost btn-clear"
           onclick={() => clearKey(item.id)}
+          disabled={keySaving[item.id]}
         >Clear</button>
       {/if}
     </div>
+    {#if keyErrors[item.id]}
+      <p class="key-error">{keyErrors[item.id]}</p>
+    {/if}
   </div>
 {/each}
 
 <style>
-  .key-row { align-items: flex-start; gap: 12px; }
+  .key-row { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
   .key-left { flex: 1; min-width: 0; }
   .key-right { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
   .key-saved {
@@ -116,5 +156,11 @@
   .btn-clear:hover {
     background: var(--danger-bg);
     border-color: var(--danger-line);
+  }
+  .key-error {
+    width: 100%;
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: var(--danger);
   }
 </style>

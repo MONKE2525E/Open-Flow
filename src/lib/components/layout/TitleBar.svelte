@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  let win: { minimize: () => Promise<void> } | null = null;
+  type AppWindow = {
+    minimize: () => Promise<void>;
+  };
+
+  let win: AppWindow | null = null;
 
   onMount(async () => {
     try {
@@ -68,6 +72,5 @@
 
   .tb-btn:hover { background: var(--control-active); color: var(--ink-strong); }
   .tb-btn.close:hover { background: var(--danger); color: var(--on-accent); }
-
 
 </style>

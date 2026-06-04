@@ -187,7 +187,6 @@ pub fn auth_401_display_message(parsed: &ParsedAuth401Error) -> String {
     auth_401_user_message(&parsed.provider, parsed.category)
 }
 
-
 pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
     if is_quota_error(e) {
         return true;

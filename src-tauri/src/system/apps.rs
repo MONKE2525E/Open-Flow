@@ -16,8 +16,51 @@ pub struct AppMapping {
 
 /// Combines registry-discovered and currently-running apps into a single deduplicated list.
 pub fn list_installed_apps() -> Vec<InstalledApp> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     return vec![];
+
+    // macOS: enumerate `.app` bundles in the standard Applications folders. The
+    // `exe` key is "<bundle name>.app" lowercased, matching the foreground app
+    // name produced by `window_context::get_active_process_name` so AppMappings
+    // resolve correctly.
+    #[cfg(target_os = "macos")]
+    {
+        use std::collections::HashSet;
+
+        let mut dirs = vec![
+            std::path::PathBuf::from("/Applications"),
+            std::path::PathBuf::from("/Applications/Utilities"),
+            std::path::PathBuf::from("/System/Applications"),
+            std::path::PathBuf::from("/System/Applications/Utilities"),
+        ];
+        if let Ok(home) = std::env::var("HOME") {
+            dirs.push(std::path::PathBuf::from(home).join("Applications"));
+        }
+
+        let mut apps: Vec<InstalledApp> = Vec::new();
+        for dir in dirs {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("app") {
+                    continue;
+                }
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let name = stem.to_string();
+                let exe = format!("{}.app", name.to_lowercase());
+                apps.push(InstalledApp { name, exe });
+            }
+        }
+
+        let mut seen = HashSet::new();
+        apps.retain(|a| seen.insert(a.exe.clone()));
+        apps.sort_by_key(|app| app.name.to_lowercase());
+        apps
+    }
 
     #[cfg(windows)]
     {
