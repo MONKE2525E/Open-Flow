@@ -30,6 +30,8 @@ fn user_for(provider: &str) -> Option<&'static str> {
 
 fn normalize_key(key: &str) -> &str {
     key.trim()
+        .trim_end_matches(|c: char| c == '\0' || c.is_control())
+        .trim()
 }
 
 #[cfg(windows)]
@@ -127,11 +129,12 @@ pub fn get(provider: &str) -> String {
                     String::from_utf16_lossy(&utf16)
                 };
                 CredFree(p_cred as *const _);
+                let normalized = normalize_key(&pw).to_string();
                 log::debug!(
                     "credentials: read ok provider={provider} key_len={}",
-                    pw.len()
+                    normalized.len()
                 );
-                pw
+                normalized
             }
             Err(e) => {
                 if e.code().0 != HRESULT_NOT_FOUND {
@@ -147,26 +150,7 @@ pub fn get(provider: &str) -> String {
 
 #[cfg(windows)]
 pub fn has(provider: &str) -> bool {
-    let user = match user_for(provider) {
-        Some(u) => u,
-        None => return false,
-    };
-    let target = format!("{user}.{SERVICE}");
-    let target_wide = wide_null(&target);
-    unsafe {
-        let mut p_cred: *mut CREDENTIALW = ptr::null_mut();
-        let ok = CredReadW(
-            PCWSTR(target_wide.as_ptr()),
-            CRED_TYPE_GENERIC,
-            None,
-            &mut p_cred,
-        )
-        .is_ok();
-        if ok && !p_cred.is_null() {
-            CredFree(p_cred as *const _);
-        }
-        ok
-    }
+    !get(provider).is_empty()
 }
 
 // ================================ macOS: Keychain ================================
@@ -379,7 +363,7 @@ fn cleanup_legacy_plaintext_entries(app: &AppHandle, providers: &[&str]) {
 #[cfg(target_os = "macos")]
 pub fn get(provider: &str) -> String {
     match read_keychain(provider) {
-        Ok(Some(key)) => key,
+        Ok(Some(key)) => normalize_key(&key).to_string(),
         Ok(None) => String::new(),
         Err(e) => {
             log::error!("{e}");
@@ -391,7 +375,7 @@ pub fn get(provider: &str) -> String {
 #[cfg(target_os = "macos")]
 pub fn has(provider: &str) -> bool {
     match read_keychain(provider) {
-        Ok(Some(key)) => !key.is_empty(),
+        Ok(Some(key)) => !normalize_key(&key).is_empty(),
         Ok(None) => false,
         Err(e) => {
             log::warn!("{e}");
@@ -448,64 +432,6 @@ pub fn has(_provider: &str) -> bool {
     false
 }
 
-#[cfg(test)]
-mod tests {
-    #[cfg(target_os = "macos")]
-    use super::legacy_file_contains_provider_key;
-    #[cfg(target_os = "macos")]
-    use super::LegacyCredFile;
-    #[cfg(target_os = "macos")]
-    use super::manual_legacy_creds_path_from_home;
-    use super::normalize_key;
-    #[cfg(target_os = "macos")]
-    use std::path::Path;
-    #[cfg(target_os = "macos")]
-    use std::path::PathBuf;
-
-    #[test]
-    fn normalize_key_trims_surrounding_whitespace() {
-        assert_eq!(normalize_key("  key  "), "key");
-    }
-
-    #[test]
-    fn normalize_key_treats_whitespace_only_input_as_empty() {
-        assert_eq!(normalize_key("   \t  \n"), "");
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn manual_legacy_creds_path_uses_openflow_directory() {
-        let path = manual_legacy_creds_path_from_home(Path::new("/Users/tester"));
-        assert_eq!(
-            path,
-            Path::new("/Users/tester/Library/Application Support/OpenFlow/credentials.json")
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn legacy_cleanup_only_tracks_provider_keys() {
-        let mut map = serde_json::Map::new();
-        map.insert(
-            crate::data::store::KEY_GROQ.to_string(),
-            serde_json::Value::String("gsk_test".into()),
-        );
-        map.insert("custom_key".into(), serde_json::Value::String("value".into()));
-
-        let file = LegacyCredFile {
-            path: PathBuf::from("/tmp/credentials.json"),
-            existed: true,
-            map,
-        };
-
-        assert!(legacy_file_contains_provider_key(&file, crate::data::store::GROQ));
-        assert!(!legacy_file_contains_provider_key(
-            &file,
-            crate::data::store::OPENAI
-        ));
-    }
-}
-
 /// Moves any plaintext API keys from settings.json or legacy macOS
 /// credentials.json files into the OS secret store, then keeps retrying cleanup
 /// until plaintext remnants are gone.
@@ -558,6 +484,7 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
         let store_plaintext = store
             .get(store_key)
             .and_then(|v| v.as_str().map(String::from))
+            .map(|value| normalize_key(&value).to_string())
             .unwrap_or_default();
         #[cfg(target_os = "macos")]
         let legacy_plaintext = user_for(provider)
@@ -567,10 +494,10 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
                         .get(user)
                         .and_then(|v| v.as_str())
                         .filter(|value| !normalize_key(value).is_empty())
+                        .map(|value| normalize_key(value).to_string())
                 })
             })
-            .unwrap_or_default()
-            .to_string();
+            .unwrap_or_default();
         #[cfg(not(target_os = "macos"))]
         let legacy_plaintext = String::new();
         let plaintext = if store_plaintext.is_empty() {
@@ -624,5 +551,84 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
     }
     if let Err(e) = store.save() {
         log::warn!("Migration: could not persist settings.json after key removal: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "macos")]
+    use super::legacy_file_contains_provider_key;
+    #[cfg(target_os = "macos")]
+    use super::manual_legacy_creds_path_from_home;
+    use super::normalize_key;
+    #[cfg(target_os = "macos")]
+    use super::LegacyCredFile;
+    #[cfg(target_os = "macos")]
+    use std::path::Path;
+    #[cfg(target_os = "macos")]
+    use std::path::PathBuf;
+
+    #[test]
+    fn normalize_key_trims_surrounding_whitespace() {
+        assert_eq!(normalize_key("  key  "), "key");
+    }
+
+    #[test]
+    fn normalize_key_treats_whitespace_only_input_as_empty() {
+        assert_eq!(normalize_key("   \t  \n"), "");
+    }
+
+    #[test]
+    fn normalize_key_strips_trailing_null_bytes() {
+        assert_eq!(normalize_key("sk-test\0\0"), "sk-test");
+    }
+
+    #[test]
+    fn normalize_key_strips_trailing_control_characters() {
+        assert_eq!(normalize_key("gsk-test\r\n\0"), "gsk-test");
+    }
+
+    #[test]
+    fn normalize_key_preserves_normal_key_content() {
+        assert_eq!(normalize_key("AIza-normal-key_123"), "AIza-normal-key_123");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn manual_legacy_creds_path_uses_openflow_directory() {
+        let path = manual_legacy_creds_path_from_home(Path::new("/Users/tester"));
+        assert_eq!(
+            path,
+            Path::new("/Users/tester/Library/Application Support/OpenFlow/credentials.json")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn legacy_cleanup_only_tracks_provider_keys() {
+        let mut map = serde_json::Map::new();
+        map.insert(
+            crate::data::store::KEY_GROQ.to_string(),
+            serde_json::Value::String("gsk_test".into()),
+        );
+        map.insert(
+            "custom_key".into(),
+            serde_json::Value::String("value".into()),
+        );
+
+        let file = LegacyCredFile {
+            path: PathBuf::from("/tmp/credentials.json"),
+            existed: true,
+            map,
+        };
+
+        assert!(legacy_file_contains_provider_key(
+            &file,
+            crate::data::store::GROQ
+        ));
+        assert!(!legacy_file_contains_provider_key(
+            &file,
+            crate::data::store::OPENAI
+        ));
     }
 }

@@ -53,7 +53,7 @@ fn set_system_muted(muted: bool) -> Result<(), String> {
 mod macos {
     use coreaudio::sys::{
         kAudioDevicePropertyMute, kAudioDevicePropertyVolumeScalar, kAudioHardwareNoError,
-        kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyElementMain,
+        kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyElementMaster,
         kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
         AudioDeviceID, AudioObjectGetPropertyData, AudioObjectHasProperty,
         AudioObjectIsPropertySettable, AudioObjectPropertyAddress, AudioObjectSetPropertyData,
@@ -68,7 +68,7 @@ mod macos {
         AudioObjectPropertyAddress {
             mSelector: selector,
             mScope: scope,
-            mElement: kAudioObjectPropertyElementMain,
+            mElement: kAudioObjectPropertyElementMaster,
         }
     }
 
