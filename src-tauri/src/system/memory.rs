@@ -23,7 +23,14 @@ pub fn measure() -> u64 {
             loop {
                 let mut buf = vec![0 as libc::pid_t; capacity];
                 let bytes = unsafe {
-                    libc::proc_listchildpids(
+                    extern "C" {
+                        fn proc_listchildpids(
+                            ppid: libc::pid_t,
+                            buffer: *mut libc::c_void,
+                            buffersize: libc::c_int,
+                        ) -> libc::c_int;
+                    }
+                    proc_listchildpids(
                         ppid as libc::pid_t,
                         buf.as_mut_ptr() as *mut core::ffi::c_void,
                         (buf.len() * std::mem::size_of::<libc::pid_t>()) as i32,
