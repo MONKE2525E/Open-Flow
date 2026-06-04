@@ -63,7 +63,7 @@ objc2-foundation   = { version = "0.2", features = ["NSData", "NSString"] }  # N
 accessibility-sys  = "0.1"     # AXUIElement (auto-learn focused text + AX prompt)
 libproc            = "0.14"    # process RSS for memory monitor
 libc               = "0.2"     # statvfs (free disk space)
-security-framework = "3.7"     # macOS Keychain generic-password storage
+security-framework = "2"       # macOS Keychain generic-password storage
 coreaudio          = { package = "coreaudio-rs", version = "0.11" }  # CoreAudio native mute control
 
 [profile.release]
