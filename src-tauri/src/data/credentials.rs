@@ -50,7 +50,7 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
 
     if key.is_empty() {
         unsafe {
-            match CredDeleteW(PCWSTR(target_wide.as_ptr()), CRED_TYPE_GENERIC, None) {
+            match CredDeleteW(PCWSTR(target_wide.as_ptr()), CRED_TYPE_GENERIC, Some(0)) {
                 Ok(_) => Ok(()),
                 Err(e) if e.code().0 == HRESULT_NOT_FOUND => Ok(()),
                 Err(e) => Err(format!(
@@ -96,7 +96,7 @@ pub fn get(provider: &str) -> String {
         match CredReadW(
             PCWSTR(target_wide.as_ptr()),
             CRED_TYPE_GENERIC,
-            None,
+            Some(0),
             &mut p_cred,
         ) {
             Ok(()) => {
@@ -351,7 +351,7 @@ fn cleanup_legacy_plaintext_entries(app: &AppHandle, providers: &[&str]) {
                 }
             }
         }
-        if !changed && !legacy.existed {
+        if !changed {
             continue;
         }
         if let Err(err) = write_legacy_creds_file(&legacy.path, &legacy.map) {
