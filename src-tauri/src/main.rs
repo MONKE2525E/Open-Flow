@@ -55,21 +55,17 @@ fn show_main_window(app: &AppHandle) {
         }
         #[cfg(target_os = "macos")]
         {
-            let _ = crate::system::mac_app::set_regular_activation_policy();
+            crate::system::mac_app::set_regular_activation_policy_on_main_thread(app);
         }
         w.show().ok();
         w.set_focus().ok();
-        #[cfg(target_os = "macos")]
-        {
-            crate::system::mac_app::refresh_dock_icon();
-        }
     }
 }
 
 #[cfg(target_os = "macos")]
 fn hide_main_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        let _ = crate::system::mac_app::set_accessory_activation_policy();
+        crate::system::mac_app::set_accessory_activation_policy_on_main_thread(app);
         w.hide().ok();
     }
 }
@@ -171,7 +167,7 @@ fn main() {
             apply_native_main_window_chrome(app.handle(), None);
             #[cfg(target_os = "macos")]
             {
-                let _ = crate::system::mac_app::set_accessory_activation_policy();
+                crate::system::mac_app::set_accessory_activation_policy_on_main_thread(app.handle());
             }
             // macOS requires Accessibility permission for the global hotkey, Cmd+V
             // injection, and auto-learn. Prompt on launch when not yet trusted.
@@ -204,15 +200,21 @@ fn main() {
                     #[cfg(target_os = "macos")]
                     tauri::WindowEvent::Resized(_) => {
                         if window.is_minimized().unwrap_or(false) {
-                            let _ = crate::system::mac_app::set_regular_activation_policy();
+                            crate::system::mac_app::set_regular_activation_policy_on_main_thread(
+                                window.app_handle(),
+                            );
                         } else if window.is_visible().unwrap_or(false) {
-                            let _ = crate::system::mac_app::set_accessory_activation_policy();
+                            crate::system::mac_app::set_accessory_activation_policy_on_main_thread(
+                                window.app_handle(),
+                            );
                         }
                     }
                     tauri::WindowEvent::Focused(true) => {
                         #[cfg(target_os = "macos")]
                         {
-                            let _ = crate::system::mac_app::set_regular_activation_policy();
+                            crate::system::mac_app::set_regular_activation_policy_on_main_thread(
+                                window.app_handle(),
+                            );
                         }
                     }
                     tauri::WindowEvent::ThemeChanged(theme) => {

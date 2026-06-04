@@ -14,6 +14,7 @@ use objc2::rc::autoreleasepool;
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
 use objc2_foundation::{NSData, NSString};
+use tauri::AppHandle;
 
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {}
@@ -122,6 +123,14 @@ pub fn set_accessory_activation_policy() -> bool {
     set_activation_policy(POLICY_ACCESSORY)
 }
 
+/// Dispatch `set_accessory_activation_policy()` onto the macOS main thread.
+pub fn set_accessory_activation_policy_on_main_thread(app: &AppHandle) {
+    let app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let _ = set_accessory_activation_policy();
+    });
+}
+
 /// Switch the app to regular mode so it appears in the Dock.
 ///
 /// We use this while the main window is minimized.
@@ -131,6 +140,14 @@ pub fn set_regular_activation_policy() -> bool {
         refresh_dock_icon();
     }
     ok
+}
+
+/// Dispatch `set_regular_activation_policy()` onto the macOS main thread.
+pub fn set_regular_activation_policy_on_main_thread(app: &AppHandle) {
+    let app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let _ = set_regular_activation_policy();
+    });
 }
 
 /// Override the live process name so macOS surfaces the friendly app name

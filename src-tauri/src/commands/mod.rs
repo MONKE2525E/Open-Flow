@@ -234,14 +234,10 @@ pub async fn show_main(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("main") {
         #[cfg(target_os = "macos")]
         {
-            let _ = crate::system::mac_app::set_regular_activation_policy();
+            crate::system::mac_app::set_regular_activation_policy_on_main_thread(&app);
         }
         w.show().ok();
         w.set_focus().ok();
-        #[cfg(target_os = "macos")]
-        {
-            crate::system::mac_app::refresh_dock_icon();
-        }
     }
     Ok(())
 }
@@ -251,7 +247,7 @@ pub async fn hide_main(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("main") {
         #[cfg(target_os = "macos")]
         {
-            let _ = crate::system::mac_app::set_accessory_activation_policy();
+            crate::system::mac_app::set_accessory_activation_policy_on_main_thread(&app);
         }
         w.hide().ok();
     }
