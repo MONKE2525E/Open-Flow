@@ -203,7 +203,9 @@ fn main() {
                             crate::system::mac_app::set_regular_activation_policy_on_main_thread(
                                 window.app_handle(),
                             );
-                        } else if window.is_visible().unwrap_or(false) {
+                        } else if window.is_visible().unwrap_or(false)
+                            && !window.is_focused().unwrap_or(false)
+                        {
                             crate::system::mac_app::set_accessory_activation_policy_on_main_thread(
                                 window.app_handle(),
                             );
