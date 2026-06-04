@@ -371,7 +371,7 @@
   <!-- Progress dots -->
   {#if step > 0 && step < doneStep}
     <div class="progress">
-      {#each Array(TOTAL_STEPS) as _, i}
+      {#each Array.from({ length: TOTAL_STEPS }) as _, i}
         <button
           class="dot"
           class:active={i + 1 === step}

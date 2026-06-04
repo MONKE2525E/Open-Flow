@@ -232,8 +232,16 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
 #[tauri::command]
 pub async fn show_main(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("main") {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = crate::system::mac_app::set_regular_activation_policy();
+        }
         w.show().ok();
         w.set_focus().ok();
+        #[cfg(target_os = "macos")]
+        {
+            crate::system::mac_app::refresh_dock_icon();
+        }
     }
     Ok(())
 }
@@ -241,6 +249,10 @@ pub async fn show_main(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn hide_main(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("main") {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = crate::system::mac_app::set_accessory_activation_policy();
+        }
         w.hide().ok();
     }
     Ok(())
@@ -769,6 +781,8 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
     #[cfg(target_os = "macos")]
     {
         let label = "com.openflow.app";
+        let domain = format!("gui/{}", unsafe { libc::getuid() });
+        let service_target = format!("{domain}/{label}");
         let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
         let dir = std::path::PathBuf::from(&home).join("Library/LaunchAgents");
         let plist_path = dir.join(format!("{label}.plist"));
@@ -816,14 +830,60 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
                 )
             };
             std::fs::write(&plist_path, plist).map_err(|e| e.to_string())?;
-        } else if plist_path.exists() {
-            std::fs::remove_file(&plist_path).map_err(|e| e.to_string())?;
+            let _ = launchctl_bootout(&service_target);
+            launchctl_bootstrap(&domain, &plist_path)?;
+        } else {
+            let _ = launchctl_bootout(&service_target);
+            if plist_path.exists() {
+                std::fs::remove_file(&plist_path).map_err(|e| e.to_string())?;
+            }
         }
     }
 
     let store = _app.store("settings.json").map_err(|e| e.to_string())?;
     store.set("autostart_enabled", serde_json::json!(enabled));
     store.save().map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn launchctl_bootstrap(domain: &str, plist_path: &std::path::Path) -> Result<(), String> {
+    run_launchctl(&[
+        "bootstrap",
+        domain,
+        plist_path.to_str().ok_or("Invalid plist path")?,
+    ])
+}
+
+#[cfg(target_os = "macos")]
+fn launchctl_bootout(service_target: &str) -> Result<(), String> {
+    run_launchctl(&["bootout", service_target])
+}
+
+#[cfg(target_os = "macos")]
+fn run_launchctl(args: &[&str]) -> Result<(), String> {
+    let output = std::process::Command::new("launchctl")
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to run launchctl: {e}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let mut detail = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        format!("exit status {}", output.status)
+    };
+    if detail.is_empty() {
+        detail = format!("exit status {}", output.status);
+    }
+
+    Err(format!("launchctl {:?} failed: {detail}", args))
 }
 
 // ---------- macOS permissions ----------

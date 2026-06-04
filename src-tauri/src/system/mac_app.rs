@@ -8,6 +8,7 @@
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use objc2::rc::autoreleasepool;
 use objc2::runtime::AnyObject;
@@ -17,7 +18,21 @@ use objc2_foundation::{NSData, NSString};
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {}
 
-const APP_ICON_PNG: &[u8] = include_bytes!("../../icons/icon.png");
+const APP_ICON_ICNS: &[u8] = include_bytes!("../../icons/icon.icns");
+
+const POLICY_UNKNOWN: u8 = 0;
+const POLICY_ACCESSORY: u8 = 1;
+const POLICY_REGULAR: u8 = 2;
+
+static LAST_APPLIED_POLICY: AtomicU8 = AtomicU8::new(POLICY_UNKNOWN);
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct NSApplicationActivationPolicy(isize);
+
+unsafe impl objc2::Encode for NSApplicationActivationPolicy {
+    const ENCODING: objc2::Encoding = isize::ENCODING;
+}
 
 // CGRect-compatible structs for msg_send! return values (64-bit macOS).
 // AppKit returns CGRect here; objc2 checks the exact type code at runtime, so
@@ -86,7 +101,7 @@ pub fn apply_dock_icon() -> bool {
             return false;
         }
 
-        let data = NSData::with_bytes(APP_ICON_PNG);
+        let data = NSData::with_bytes(APP_ICON_ICNS);
         let image: *mut AnyObject = msg_send![class!(NSImage), alloc];
         let image: *mut AnyObject = msg_send![image, initWithData: &*data];
         if image.is_null() {
@@ -96,6 +111,88 @@ pub fn apply_dock_icon() -> bool {
         let _: () = msg_send![app, setApplicationIconImage: image];
         let _: () = msg_send![image, release];
         true
+    })
+}
+
+/// Switch the app to macOS accessory mode so it stays out of the Dock.
+///
+/// This is the default for Open Flow on macOS when the main window is hidden
+/// or shown from the menu bar/tray.
+pub fn set_accessory_activation_policy() -> bool {
+    set_activation_policy(POLICY_ACCESSORY)
+}
+
+/// Switch the app to regular mode so it appears in the Dock.
+///
+/// We use this while the main window is minimized.
+pub fn set_regular_activation_policy() -> bool {
+    let ok = set_activation_policy(POLICY_REGULAR);
+    if ok {
+        refresh_dock_icon();
+    }
+    ok
+}
+
+/// Override the live process name so macOS surfaces the friendly app name
+/// instead of the Rust binary name while running in dev mode.
+pub fn set_process_name(display_name: &str) -> bool {
+    autoreleasepool(|_| unsafe {
+        let process_info: *mut AnyObject = msg_send![class!(NSProcessInfo), processInfo];
+        if process_info.is_null() {
+            return false;
+        }
+
+        let display_name = NSString::from_str(display_name);
+        let _: () = msg_send![process_info, setProcessName: &*display_name];
+        true
+    })
+}
+
+fn set_activation_policy(new_policy: u8) -> bool {
+    if LAST_APPLIED_POLICY.load(Ordering::Relaxed) == new_policy {
+        return true;
+    }
+
+    autoreleasepool(|_| unsafe {
+        let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        if ns_app.is_null() {
+            return false;
+        }
+
+        let policy = match new_policy {
+            POLICY_ACCESSORY => NSApplicationActivationPolicy(1),
+            POLICY_REGULAR => NSApplicationActivationPolicy(0),
+            _ => return false,
+        };
+
+        let ok: bool = msg_send![ns_app, setActivationPolicy: policy];
+        if ok {
+            LAST_APPLIED_POLICY.store(new_policy, Ordering::Relaxed);
+        }
+        ok
+    })
+}
+
+pub fn refresh_dock_icon() {
+    autoreleasepool(|_| unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        if app.is_null() {
+            return;
+        }
+
+        let data = NSData::with_bytes(APP_ICON_ICNS);
+        let image: *mut AnyObject = msg_send![class!(NSImage), alloc];
+        let image: *mut AnyObject = msg_send![image, initWithData: &*data];
+        if image.is_null() {
+            return;
+        }
+
+        let _: () = msg_send![app, setApplicationIconImage: image];
+        let dock_tile: *mut AnyObject = msg_send![app, dockTile];
+        if !dock_tile.is_null() {
+            let _: () = msg_send![dock_tile, display];
+        }
+        let _: () = msg_send![image, release];
     })
 }
 

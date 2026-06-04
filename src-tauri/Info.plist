@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleIconFile</key>
+	<string>icon</string>
+	<key>CFBundleDisplayName</key>
+	<string>Open Flow</string>
+	<key>CFBundleName</key>
+	<string>Open Flow</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Open Flow uses the microphone to transcribe your dictation into text.</string>
 </dict>

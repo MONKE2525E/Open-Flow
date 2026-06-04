@@ -53,8 +53,24 @@ fn show_main_window(app: &AppHandle) {
         if w.is_minimized().unwrap_or(false) {
             w.unminimize().ok();
         }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = crate::system::mac_app::set_regular_activation_policy();
+        }
         w.show().ok();
         w.set_focus().ok();
+        #[cfg(target_os = "macos")]
+        {
+            crate::system::mac_app::refresh_dock_icon();
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn hide_main_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = crate::system::mac_app::set_accessory_activation_policy();
+        w.hide().ok();
     }
 }
 
@@ -96,6 +112,11 @@ fn app_data_dir() -> std::path::PathBuf {
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = crate::system::mac_app::set_process_name("Open Flow");
+    }
+
     let shared: SharedState = Arc::new(Mutex::new(AppState {
         session: None,
         starting: false,
@@ -148,6 +169,10 @@ fn main() {
             setup_hotkey(app, shared.clone());
             #[cfg(target_os = "macos")]
             apply_native_main_window_chrome(app.handle(), None);
+            #[cfg(target_os = "macos")]
+            {
+                let _ = crate::system::mac_app::set_accessory_activation_policy();
+            }
             // macOS requires Accessibility permission for the global hotkey, Cmd+V
             // injection, and auto-learn. Prompt on launch when not yet trusted.
             #[cfg(target_os = "macos")]
@@ -167,7 +192,28 @@ fn main() {
                 match event {
                     tauri::WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
-                        window.hide().ok();
+                        #[cfg(target_os = "macos")]
+                        {
+                            hide_main_window(window.app_handle());
+                        }
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            window.hide().ok();
+                        }
+                    }
+                    #[cfg(target_os = "macos")]
+                    tauri::WindowEvent::Resized(_) => {
+                        if window.is_minimized().unwrap_or(false) {
+                            let _ = crate::system::mac_app::set_regular_activation_policy();
+                        } else if window.is_visible().unwrap_or(false) {
+                            let _ = crate::system::mac_app::set_accessory_activation_policy();
+                        }
+                    }
+                    tauri::WindowEvent::Focused(true) => {
+                        #[cfg(target_os = "macos")]
+                        {
+                            let _ = crate::system::mac_app::set_regular_activation_policy();
+                        }
                     }
                     tauri::WindowEvent::ThemeChanged(theme) => {
                         let app = window.app_handle();
