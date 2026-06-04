@@ -203,12 +203,6 @@ fn main() {
                             crate::system::mac_app::set_regular_activation_policy_on_main_thread(
                                 window.app_handle(),
                             );
-                        } else if window.is_visible().unwrap_or(false)
-                            && !window.is_focused().unwrap_or(false)
-                        {
-                            crate::system::mac_app::set_accessory_activation_policy_on_main_thread(
-                                window.app_handle(),
-                            );
                         }
                     }
                     tauri::WindowEvent::Focused(true) => {
@@ -362,9 +356,9 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
 }
 
 #[cfg(target_os = "macos")]
-fn runtime_tray_icon_image(_theme: IconTheme, size: u32) -> tauri::image::Image<'static> {
+fn runtime_tray_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'static> {
     let mut rgba = vec![0_u8; (size * size * 4) as usize];
-    let white = [255, 255, 255, 255];
+    let color = runtime_tray_icon_color(theme);
 
     for (x, y, width, height, radius) in [
         (64, 304, 64, 96, 30),
@@ -383,11 +377,34 @@ fn runtime_tray_icon_image(_theme: IconTheme, size: u32) -> tauri::image::Image<
                 height: scale(size, height),
                 radius: scale(size, radius),
             },
-            white,
+            color,
         );
     }
 
     tauri::image::Image::new_owned(rgba, size, size)
+}
+
+#[cfg(target_os = "macos")]
+fn runtime_tray_icon_color(theme: IconTheme) -> [u8; 4] {
+    match theme {
+        IconTheme::Light => [0, 0, 0, 255],
+        IconTheme::Dark => [255, 255, 255, 255],
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::{runtime_tray_icon_color, IconTheme};
+
+    #[test]
+    fn tray_icon_uses_black_in_light_mode() {
+        assert_eq!(runtime_tray_icon_color(IconTheme::Light), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn tray_icon_uses_white_in_dark_mode() {
+        assert_eq!(runtime_tray_icon_color(IconTheme::Dark), [255, 255, 255, 255]);
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

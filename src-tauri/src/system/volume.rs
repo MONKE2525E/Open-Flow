@@ -27,23 +27,68 @@ fn set_system_muted(muted: bool) -> Result<(), String> {
         .map_err(|e| format!("Failed to set system mute: {e}"))
 }
 
-// macOS: toggle the default output device mute via AppleScript. Runs on the
-// caller's (already-spawned) thread, so the brief `osascript` invocation is fine.
+// macOS: toggle the default output device mute via CoreAudio. Runs on the
+// caller's (already-spawned) thread, so the brief native call is fine.
 #[cfg(target_os = "macos")]
 fn set_system_muted(muted: bool) -> Result<(), String> {
-    let value = if muted { "true" } else { "false" };
-    let output = std::process::Command::new("osascript")
-        .args(["-e", &format!("set volume output muted {value}")])
-        .output()
-        .map_err(|e| format!("Failed to run osascript: {e}"))?;
+    use coreaudio::sys::{
+        kAudioDevicePropertyMute, kAudioHardwareNoError, kAudioHardwarePropertyDefaultOutputDevice,
+        kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject, AudioDeviceID,
+        AudioObjectGetPropertyData, AudioObjectPropertyAddress, AudioObjectSetPropertyData,
+    };
+    use std::mem;
+    use std::ptr::null;
 
-    if output.status.success() {
+    let default_output_device = {
+        let property_address = AudioObjectPropertyAddress {
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMaster,
+        };
+
+        let device_id: AudioDeviceID = 0;
+        let data_size = mem::size_of::<AudioDeviceID>() as u32;
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                kAudioObjectSystemObject,
+                &property_address as *const _,
+                0,
+                null(),
+                &data_size as *const _ as *mut _,
+                &device_id as *const _ as *mut _,
+            )
+        };
+        if status != kAudioHardwareNoError as i32 {
+            return Err(format!(
+                "Failed to get default output device for system mute: OSStatus {status}"
+            ));
+        }
+        device_id
+    };
+
+    let muted_value: u32 = if muted { 1 } else { 0 };
+    let property_address = AudioObjectPropertyAddress {
+        mSelector: kAudioDevicePropertyMute,
+        mScope: kAudioObjectPropertyScopeOutput,
+        mElement: kAudioObjectPropertyElementMaster,
+    };
+    let data_size = mem::size_of::<u32>() as u32;
+    let status = unsafe {
+        AudioObjectSetPropertyData(
+            default_output_device,
+            &property_address as *const _,
+            0,
+            null(),
+            data_size,
+            &muted_value as *const _ as *const _,
+        )
+    };
+
+    if status == kAudioHardwareNoError as i32 {
         Ok(())
     } else {
-        Err(String::from_utf8_lossy(&output.stderr)
-            .trim()
-            .to_string()
-            .if_empty_fallback("osascript failed to set system mute"))
+        Err(format!("Failed to set system mute: OSStatus {status}"))
     }
 }
 
@@ -88,18 +133,4 @@ pub fn unmute() {
         return;
     }
     *muted = false;
-}
-
-trait EmptyFallback {
-    fn if_empty_fallback(self, fallback: &str) -> String;
-}
-
-impl EmptyFallback for String {
-    fn if_empty_fallback(self, fallback: &str) -> String {
-        if self.trim().is_empty() {
-            fallback.to_string()
-        } else {
-            self
-        }
-    }
 }
