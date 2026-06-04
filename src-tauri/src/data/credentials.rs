@@ -257,6 +257,21 @@ fn read_keychain(provider: &str) -> Result<Option<String>, String> {
 }
 
 #[cfg(target_os = "macos")]
+fn replace_keychain_password<E, FDelete, FWrite>(
+    provider: &str,
+    delete_existing: FDelete,
+    write_new: FWrite,
+) -> Result<(), String>
+where
+    FDelete: FnOnce(),
+    FWrite: FnOnce() -> Result<(), E>,
+    E: std::fmt::Display,
+{
+    delete_existing();
+    write_new().map_err(|err| format!("Keychain write failed for {provider}: {err}"))
+}
+
+#[cfg(target_os = "macos")]
 pub fn set(provider: &str, key: &str) -> Result<(), String> {
     let key = normalize_key(key);
     let user = keychain_user(provider)?;
@@ -267,8 +282,13 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
             Err(err) => Err(format!("Keychain delete failed for {provider}: {err}")),
         }
     } else {
-        set_generic_password(KEYCHAIN_SERVICE, user, key.as_bytes())
-            .map_err(|err| format!("Keychain write failed for {provider}: {err}"))
+        replace_keychain_password(
+            provider,
+            || {
+                let _ = delete_generic_password(KEYCHAIN_SERVICE, user);
+            },
+            || set_generic_password(KEYCHAIN_SERVICE, user, key.as_bytes()),
+        )
     }
 }
 
@@ -330,6 +350,27 @@ mod tests {
     #[test]
     fn normalize_key_treats_whitespace_only_input_as_empty() {
         assert_eq!(normalize_key("   \t  \n"), "");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::replace_keychain_password;
+
+    #[test]
+    fn replace_keychain_password_deletes_before_writing() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let result = replace_keychain_password(
+            "groq",
+            || calls.borrow_mut().push("delete"),
+            || {
+                calls.borrow_mut().push("write");
+                Ok::<(), &str>(())
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(calls.into_inner(), vec!["delete", "write"]);
     }
 }
 
