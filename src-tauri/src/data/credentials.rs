@@ -218,7 +218,7 @@ fn write_legacy_creds(
     let data = serde_json::to_vec(map).map_err(|e| e.to_string())?;
     let tmp_path = path.with_file_name("credentials.json.tmp");
 
-    {
+    let write_result = (|| -> Result<(), String> {
         let mut file = OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -230,6 +230,12 @@ fn write_legacy_creds(
             .map_err(|e| format!("write credentials failed: {e}"))?;
         file.sync_all()
             .map_err(|e| format!("sync credentials failed: {e}"))?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
     }
 
     if let Err(e) = std::fs::rename(&tmp_path, &path) {

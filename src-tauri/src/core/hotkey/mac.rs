@@ -17,6 +17,7 @@
 //! - The default chord is **Control (key1) + Fn (key2)**.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -88,6 +89,13 @@ static HANDLESS_PENDING_MS: AtomicU64 = AtomicU64::new(0);
 // rather than a modifier. Modifiers are read from CGEventFlags instead.
 static K1_REGULAR_DOWN: AtomicBool = AtomicBool::new(false);
 static K2_REGULAR_DOWN: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy)]
+struct HotkeyEvent {
+    etype: CGEventType,
+    flags: u64,
+    keycode: i64,
+}
 
 fn now_ms() -> u64 {
     static START: OnceLock<Instant> = OnceLock::new();
@@ -235,7 +243,14 @@ where
     let _ = CANCEL_CB.set(Box::new(on_cancel));
     let _ = ESCAPE_CB.set(Box::new(on_escape));
 
-    let handle = std::thread::spawn(|| {
+    let (tx, rx) = mpsc::channel::<HotkeyEvent>();
+    std::thread::spawn(move || {
+        while let Ok(event) = rx.recv() {
+            handle_event(event);
+        }
+    });
+
+    let handle = std::thread::spawn(move || {
         // CGEventTap creation returns Err until Accessibility permission is
         // granted. Rather than failing permanently (forcing an app restart after
         // the user grants it), poll until it succeeds.
@@ -250,9 +265,18 @@ where
                     CGEventType::KeyUp,
                     CGEventType::FlagsChanged,
                 ],
-                |_proxy: CGEventTapProxy, etype: CGEventType, event| {
-                    handle_event(etype, event);
-                    None
+                {
+                    let tx = tx.clone();
+                    move |_proxy: CGEventTapProxy, etype: CGEventType, event| {
+                        let _ = tx.send(HotkeyEvent {
+                            etype,
+                            flags: event.get_flags().bits(),
+                            keycode: event.get_integer_value_field(
+                                EventField::KEYBOARD_EVENT_KEYCODE,
+                            ),
+                        });
+                        None
+                    }
                 },
             );
             match result {
@@ -296,7 +320,8 @@ where
 
 // --- event handling --------------------------------------------------------
 
-fn handle_event(etype: CGEventType, event: &core_graphics::event::CGEvent) {
+fn handle_event(event: HotkeyEvent) {
+    let etype = event.etype;
     // The system disables a tap that misbehaves; nothing to re-enable for a
     // listen-only tap in practice, but log it for diagnosis.
     if matches!(
@@ -309,8 +334,8 @@ fn handle_event(etype: CGEventType, event: &core_graphics::event::CGEvent) {
 
     let k1 = KEY1.load(Ordering::Relaxed);
     let k2 = KEY2.load(Ordering::Relaxed);
-    let flags = event.get_flags().bits();
-    let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+    let flags = event.flags;
+    let keycode = event.keycode;
     let is_down = matches!(etype, CGEventType::KeyDown);
     let is_up = matches!(etype, CGEventType::KeyUp);
 
