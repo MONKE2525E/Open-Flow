@@ -182,6 +182,8 @@ use std::path::{Path, PathBuf};
 const KEYCHAIN_SERVICE: &str = "com.openflow.app";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
+#[cfg(target_os = "macos")]
+const KEYCHAIN_DUPLICATE_ITEM: i32 = -25299;
 
 #[cfg(target_os = "macos")]
 fn tauri_legacy_creds_path(app: &AppHandle) -> PathBuf {
@@ -197,15 +199,16 @@ fn manual_legacy_creds_path_from_home(home: &Path) -> PathBuf {
 }
 
 #[cfg(target_os = "macos")]
-fn manual_legacy_creds_path() -> PathBuf {
-    std::env::var("HOME")
+fn manual_legacy_creds_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .home_dir()
         .map(|home| manual_legacy_creds_path_from_home(Path::new(&home)))
         .unwrap_or_else(|_| PathBuf::from("Library/Application Support/OpenFlow/credentials.json"))
 }
 
 #[cfg(target_os = "macos")]
 fn legacy_creds_paths(app: &AppHandle) -> Vec<PathBuf> {
-    vec![tauri_legacy_creds_path(app), manual_legacy_creds_path()]
+    vec![tauri_legacy_creds_path(app), manual_legacy_creds_path(app)]
 }
 
 #[cfg(target_os = "macos")]
@@ -310,8 +313,24 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
             Err(err) => Err(format!("Keychain delete failed for {provider}: {err}")),
         }
     } else {
-        set_generic_password(KEYCHAIN_SERVICE, user, key.as_bytes())
-            .map_err(|err| format!("Keychain write failed for {provider}: {err}"))
+        match set_generic_password(KEYCHAIN_SERVICE, user, key.as_bytes()) {
+            Ok(()) => Ok(()),
+            Err(err) if err.code() == KEYCHAIN_DUPLICATE_ITEM => {
+                match delete_generic_password(KEYCHAIN_SERVICE, user) {
+                    Ok(()) => {}
+                    Err(err) if err.code() == KEYCHAIN_ITEM_NOT_FOUND => {}
+                    Err(err) => {
+                        return Err(format!(
+                            "Keychain overwrite cleanup failed for {provider}: {err}"
+                        ));
+                    }
+                }
+
+                set_generic_password(KEYCHAIN_SERVICE, user, key.as_bytes())
+                    .map_err(|err| format!("Keychain overwrite failed for {provider}: {err}"))
+            }
+            Err(err) => Err(format!("Keychain write failed for {provider}: {err}")),
+        }
     }
 }
 

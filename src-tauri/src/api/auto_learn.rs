@@ -1,8 +1,10 @@
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_store::StoreExt;
+
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::data::{db, store};
 use crate::DbHandle;

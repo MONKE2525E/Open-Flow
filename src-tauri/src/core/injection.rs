@@ -12,35 +12,44 @@ const HISTORY_TAIL: usize = 512;
 
 // Retry gap between successive OpenClipboard attempts when the clipboard is held
 // by another process.
+#[cfg(target_os = "windows")]
 const CLIPBOARD_OPEN_RETRY_MS: u64 = 50;
+#[cfg(target_os = "windows")]
 const CLIPBOARD_RESTORE_RETRY_MS: u64 = 60;
+#[cfg(target_os = "windows")]
 const CLIPBOARD_RESTORE_ATTEMPTS: usize = 3;
 
 // Settle time after SetForegroundWindow before writing to the clipboard; some
 // compositor/DWM frame cycles are needed before the HWND is fully active.
+#[cfg(target_os = "windows")]
 const REFOCUS_SETTLE_MS: u64 = 150;
 
 // Settle time after a successful clipboard write before beginning the Ctrl+V
 // sequence — ensures the data is visible to the target app's clipboard reader.
+#[cfg(target_os = "windows")]
 const CLIPBOARD_WRITE_SETTLE_MS: u64 = 50;
 
 // Retry gap between successive clipboard write attempts.
+#[cfg(target_os = "windows")]
 const CLIPBOARD_WRITE_RETRY_MS: u64 = 50;
 
 // Gap between releasing modifier keys (Alt/Ctrl) and sending Ctrl+V.
 // Without this, some apps (browsers, IDEs) process V without Ctrl because
 // the alt-up and V-down land in the same message-pump cycle.
+#[cfg(target_os = "windows")]
 const MODIFIER_GAP_MS: u64 = 30;
 
 // Settle time after the paste (Ctrl+V) before restoring saved clipboard
 // formats — gives the target app time to read the clipboard before we
 // overwrite it with the original contents.
+#[cfg(target_os = "windows")]
 const PASTE_SETTLE_MS: u64 = 80;
 
 const SENTENCE_ENDERS: &[char] = &['.', '!', '?', '\n', '\r'];
 #[derive(Clone, Debug)]
 enum CursorContextState {
     Unknown {
+        #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
         instant: Instant,
     },
     Known {
@@ -316,11 +325,13 @@ fn injection_context(target_hwnd: usize, contextual_caps: bool, auto_spacing: bo
         }
     }
 }
+#[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
 pub fn reset_injection_history() {
     if let Ok(mut guard) = last_injection().lock() {
         *guard = unknown_context();
     }
 }
+#[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
 pub fn backspace_injection_history(hwnd: usize) {
     if let Ok(mut guard) = last_injection().lock() {
         match &mut *guard {
@@ -341,6 +352,7 @@ pub fn backspace_injection_history(hwnd: usize) {
         }
     }
 }
+#[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
 pub fn append_or_reset_injection_history(hwnd: usize, ch: char) {
     if let Ok(mut guard) = last_injection().lock() {
         match &mut *guard {
