@@ -878,8 +878,8 @@ async fn run_cleanup_and_snippets(
     profile: &str,
     app_context: Option<&str>,
 ) -> Option<(String, Vec<db::DictionaryEntry>, String)> {
-    let db = app.state::<DbHandle>();
-    match run_cleanup_and_snippets_for_db(db.inner(), raw, cfg, profile, app_context).await {
+    let db_handle = app.state::<DbHandle>();
+    match run_cleanup_and_snippets_for_db(db_handle.inner(), raw, cfg, profile, app_context).await {
         Ok(result) => Some(result),
         Err(e) => {
             let mut user_msg = format!("Cleanup failed: {}", trim_err(&e.to_string()));
@@ -1188,15 +1188,15 @@ pub async fn run_pipeline_fixture(
         anyhow::bail!("No API key configured for any model in the transcription chain");
     }
 
-    let db = match request.db {
+    let db_handle = match request.db {
         Some(d) => d,
         None => db::open(":memory:")?,
     };
     for snippet in &request.snippets {
-        db::insert_snippet_returning(&db, &snippet.trigger, &snippet.expansion, &snippet.instructions)?;
+        db::insert_snippet_returning(&db_handle, &snippet.trigger, &snippet.expansion, &snippet.instructions)?;
     }
     for entry in &request.dictionary {
-        db::insert_dictionary_entry_returning(&db, &entry.term, entry.mistake.as_deref())?;
+        db::insert_dictionary_entry_returning(&db_handle, &entry.term, entry.mistake.as_deref())?;
     }
 
     let mut transcribed: Option<(String, String)> = None;
@@ -1237,7 +1237,7 @@ pub async fn run_pipeline_fixture(
 
     let (final_text_before_dictionary, dict_entries, cleanup_cache_key) =
         run_cleanup_and_snippets_for_db(
-            &db,
+            &db_handle,
             &raw_text,
             &request.config,
             &request.profile,
@@ -1248,7 +1248,7 @@ pub async fn run_pipeline_fixture(
         dictionary::apply_substitutions_from(&final_text_before_dictionary, &dict_entries);
     let words = raw_text.split_whitespace().count() as i64;
     let history_entry = db::insert_transcription_returning(
-        &db,
+        &db_handle,
         &raw_text,
         &final_text_before_dictionary,
         words,
@@ -1264,8 +1264,8 @@ pub async fn run_pipeline_fixture(
         request.config.macos_clipboard_sniff_enabled,
     )
     .await?;
-    let recent = db::query_recent(&db)?;
-    let stats = db::query_stats(&db)?;
+    let recent = db::query_recent(&db_handle)?;
+    let stats = db::query_stats(&db_handle)?;
 
     Ok(PipelineTestResult {
         raw_text,
@@ -1853,9 +1853,9 @@ async fn finalize_pipeline_completion(
         );
     }
 
-    let db = app.state::<DbHandle>();
+    let db_handle = app.state::<DbHandle>();
     let words = ctx.raw.split_whitespace().count() as i64;
-    let db_for_insert = db.inner().clone();
+    let db_for_insert = db_handle.inner().clone();
     let raw_for_insert = ctx.raw.to_string();
     let clean_for_insert = ctx.final_text_before_dict.to_string();
     let api_used_for_insert = ctx.api_used.to_string();
@@ -1937,7 +1937,7 @@ async fn finalize_pipeline_completion(
             injected_text.clone(),
             ctx.cleanup_cache_key,
             ctx.target_hwnd,
-            db.inner().clone(),
+            db_handle.inner().clone(),
             app.clone(),
         );
     }
@@ -1947,14 +1947,14 @@ async fn finalize_pipeline_completion(
                 injected_text.clone(),
                 applied_dict_ids,
                 ctx.target_hwnd,
-                db.inner().clone(),
+                db_handle.inner().clone(),
                 app.clone(),
             );
         }
         auto_learn::start_monitor(
             injected_text,
             ctx.process_name,
-            db.inner().clone(),
+            db_handle.inner().clone(),
             app.clone(),
         );
     }

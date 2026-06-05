@@ -912,7 +912,8 @@ def _run_sequential(entries: List[TestEntry], verbose: bool, start_idx: int, tot
         if not result.passed:
             n_fail += 1
             global _global_fails
-            _global_fails += 1
+            with _PRINT_LOCK:
+                _global_fails += 1
         results[entry.report_name] = result
         with _PRINT_LOCK:
             _draw_bottom_bar(idx, total, _global_fails)
@@ -936,7 +937,8 @@ def _run_parallel(entries: List[TestEntry], verbose: bool, start_idx: int, total
             if not result.passed:
                 n_fail += 1
                 global _global_fails
-                _global_fails += 1
+                with _PRINT_LOCK:
+                    _global_fails += 1
             results[report_name] = result
             done = len(results)
             with _PRINT_LOCK:
