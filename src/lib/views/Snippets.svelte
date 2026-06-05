@@ -217,7 +217,8 @@
   function autoGrow(el: HTMLTextAreaElement | null) {
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, FIELD_GROW_MAX) + 'px';
+    const borderDiff = el.offsetHeight - el.clientHeight;
+    el.style.height = Math.min(el.scrollHeight + borderDiff, FIELD_GROW_MAX) + 'px';
   }
 
   $effect(() => {
