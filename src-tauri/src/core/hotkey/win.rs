@@ -1,9 +1,11 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 const VK_BACK: u32 = 0x08; // Backspace
 const VK_ESCAPE: u32 = 0x1B; // Escape
+const VK_SHIFT: u32 = 0x10; // VK_SHIFT
 const VK_CTRL: u32 = 0x11; // VK_CONTROL (generic, used with modifier_held)
 const VK_ALT: u32 = 0x12; // VK_MENU (generic, used with modifier_held)
+const VK_RETURN: u32 = 0x0D; // Enter
 
 // Side-specific modifier VK codes that should never trigger a history update.
 // Generic codes (0x10/0x11/0x12) are omitted: the !is_injected guard already
@@ -26,8 +28,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
     SetWindowsHookExW, TranslateMessage, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG,
-    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_MBUTTONDOWN,
-    WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 // Returns true if the given specific-side VK (or its mirror) is currently held.
@@ -36,9 +37,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 unsafe fn modifier_held(vk: u32) -> bool {
     let held = |v: u32| -> bool { (GetAsyncKeyState(v as i32) & 0x8000u16 as i16) != 0 };
     match vk {
-        160 | 161 => held(16),           // L/RShift → VK_SHIFT
-        162 | 163 => held(17),           // L/RControl → VK_CONTROL
-        164 | 165 => held(18),           // L/RMenu → VK_MENU
+        160 | 161 => held(16),           // L/RShift -> VK_SHIFT
+        162 | 163 => held(17),           // L/RControl -> VK_CONTROL
+        164 | 165 => held(18),           // L/RMenu -> VK_MENU
         91 | 92 => held(91) || held(92), // LWin / RWin (no generic VK_WIN)
         _ => held(vk),
     }
@@ -84,11 +85,11 @@ fn to_unicode_layout(
 }
 
 /// Maps a VK code to the character it produces (US QWERTY layout).
-/// Letters are always returned lowercase — case doesn't affect sentence-ender
+/// Letters are always returned lowercase - case doesn't affect sentence-ender
 /// or whitespace checks downstream. Returns None for keys with no stable
 /// printable character (numpad, function keys, etc.); those reset history.
 fn vk_to_char(vk: u32) -> Option<char> {
-    if vk == 0x0D {
+    if vk == VK_RETURN {
         return Some('\n');
     }
     if vk == 0x20 {
@@ -214,13 +215,11 @@ pub fn reset_chord_state() {
     CHORD_FIRST_DOWN_MS.store(0, Ordering::SeqCst);
 }
 
-pub fn sync_context_hwnd(hwnd: usize) {
-    LAST_CONTEXT_HWND.store(hwnd, Ordering::SeqCst);
-}
-
 pub fn set_handless_active(v: bool) {
     HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
 }
+
+pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
 
 pub fn map_code_to_vk(code: &str) -> u32 {
     match code {
@@ -234,7 +233,7 @@ pub fn map_code_to_vk(code: &str) -> u32 {
         "MetaRight" => 92,
         "Space" => 32,
         "Escape" => 27,
-        "Enter" => 13,
+        "Enter" => VK_RETURN,
         "Backspace" => 8,
         "Tab" => 9,
         "CapsLock" => 20,
@@ -310,18 +309,6 @@ static HANDLESS_WAITING_KEY1_2: AtomicBool = AtomicBool::new(false);
 static CHORD_FIRST_DOWN_MS: AtomicU64 = AtomicU64::new(0);
 static CHORD_PENDING: AtomicBool = AtomicBool::new(false);
 static CHORD_PENDING_END_MS: AtomicU64 = AtomicU64::new(0);
-static LAST_CONTEXT_HWND: AtomicUsize = AtomicUsize::new(0);
-
-unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    let _ = lparam;
-    if code == HC_ACTION as i32 {
-        let msg = wparam.0 as u32;
-        if matches!(msg, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN) {
-            crate::core::injection::reset_injection_history();
-        }
-    }
-    CallNextHookEx(None, code, wparam, lparam)
-}
 
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
@@ -371,7 +358,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
 
         if is_key2 && is_up {
             // KEY2_WAS_CHORD guarantees we suppress key2-up even if key1 went up
-            // first and cleared CHORD_DOWN — otherwise a bare Win-up reaches the OS
+            // first and cleared CHORD_DOWN - otherwise a bare Win-up reaches the OS
             // and triggers the Start menu / Win shortcuts.
             let key2_was_chord = KEY2_WAS_CHORD.swap(false, Ordering::SeqCst);
             if CHORD_DOWN.swap(false, Ordering::SeqCst) {
@@ -464,34 +451,33 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         }
 
         // Update injection history for real user keystrokes only.
-        // Synthetic events (LLKHF_INJECTED) are skipped — this prevents our own
+        // Synthetic events (LLKHF_INJECTED) are skipped - this prevents our own
         // Ctrl+V paste and any app-generated keyboard events from corrupting the
-        // context tracking that drives auto-spacing and contextual capitalisation.
+        // history that backs backspace recovery.
         let is_injected = (kb.flags.0 & LLKHF_INJECTED.0) != 0;
         if !is_injected && is_down && !MODIFIER_VKS.contains(&vk) {
-            let hwnd = unsafe { GetForegroundWindow().0 as usize };
-            if hwnd != 0 {
-                let previous_hwnd = LAST_CONTEXT_HWND.swap(hwnd, Ordering::SeqCst);
-                if previous_hwnd != 0 && previous_hwnd != hwnd {
-                    crate::core::injection::reset_injection_history();
-                }
-            }
             if vk == VK_BACK {
-                // Ctrl+Backspace and Alt+Backspace both delete a whole word —
+                // Ctrl+Backspace and Alt+Backspace both delete a whole word -
                 // unknown char count, so reset entirely. Plain Backspace pops
                 // just the last character to keep context accurate.
                 if unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) } {
                     crate::core::injection::reset_injection_history();
                 } else {
+                    let hwnd = unsafe { GetForegroundWindow().0 as usize };
                     crate::core::injection::backspace_injection_history(hwnd);
                 }
-            } else if is_cursor_movement_key(vk) {
-                crate::core::injection::reset_injection_history();
-            } else if unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) } {
-                // Keyboard shortcut (Ctrl+Z, Ctrl+A, etc.) — context unknown.
+            } else if (vk == VK_RETURN
+                && !unsafe {
+                    modifier_held(VK_SHIFT) || modifier_held(VK_CTRL) || modifier_held(VK_ALT)
+                })
+                || is_cursor_movement_key(vk)
+                || unsafe { modifier_held(VK_CTRL) || modifier_held(VK_ALT) }
+            {
+                // Keyboard shortcut (Ctrl+Z, Ctrl+A, etc.) - context unknown.
                 crate::core::injection::reset_injection_history();
             } else {
                 if let Some(ch) = vk_to_char(vk) {
+                    let hwnd = unsafe { GetForegroundWindow().0 as usize };
                     crate::core::injection::append_or_reset_injection_history(hwnd, ch);
                 } else {
                     crate::core::injection::reset_injection_history();
@@ -529,25 +515,13 @@ where
         let probe = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0)
             .map_err(|e| format!("Failed to install keyboard hook: {e}"))?;
         windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(probe).ok();
-
-        let mouse_probe = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), None, 0)
-            .map_err(|e| format!("Failed to install mouse hook: {e}"))?;
-        windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(mouse_probe).ok();
     }
 
     let handle = std::thread::spawn(|| unsafe {
-        let keyboard_hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0) {
+        let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0) {
             Ok(h) => h,
             Err(e) => {
                 log::error!("SetWindowsHookExW failed on hook thread: {e}");
-                return;
-            }
-        };
-        let mouse_hook = match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), None, 0) {
-            Ok(h) => h,
-            Err(e) => {
-                log::error!("SetWindowsHookExW failed for mouse hook: {e}");
-                windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(keyboard_hook).ok();
                 return;
             }
         };
@@ -566,8 +540,7 @@ where
             DispatchMessageW(&msg);
         }
 
-        windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(mouse_hook).ok();
-        windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(keyboard_hook).ok();
+        windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook).ok();
     });
 
     Ok(handle)

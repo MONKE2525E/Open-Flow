@@ -566,7 +566,7 @@
             <div>
               <p class="guide-label">What this screen is for</p>
               <p class="permission-panel-copy">
-                Accessibility lets Open Flow listen for the hotkey and paste text for you.
+                Accessibility lets Open Flow listen for the hotkey, paste text for you, and read local caret context when an editor exposes it.
                 Microphone access lets it hear your voice in the first place.
               </p>
             </div>
@@ -580,7 +580,7 @@
               <div class="permission-card-top">
                 <div>
                   <p class="permission-title">Accessibility</p>
-                  <p class="permission-desc">Needed for the global hotkey and Cmd+V text injection.</p>
+                  <p class="permission-desc">Needed for the global hotkey, Cmd+V injection, and the best capitalization and spacing accuracy in supported editors.</p>
                 </div>
                 <span class="permission-badge" class:warn={accessibilityPermission !== 'authorized'}>
                   {permissionLabel(accessibilityPermission)}

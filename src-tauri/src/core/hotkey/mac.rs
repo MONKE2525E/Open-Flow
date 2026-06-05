@@ -29,10 +29,17 @@ use core_graphics::event::{
     CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventTapProxy,
     CGEventType, EventField,
 };
+use foreign_types_shared::ForeignType;
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    fn CGEventKeyboardGetUnicodeString(
+        event: core_graphics::sys::CGEventRef,
+        max_string_length: libc::c_ulong,
+        actual_string_length: *mut libc::c_ulong,
+        unicode_string: *mut u16,
+    );
 }
 
 // --- private key id scheme -------------------------------------------------
@@ -46,6 +53,18 @@ const ID_CAPS: u32 = 6;
 const REGULAR_BASE: u32 = 0x100;
 
 const KEY_ESCAPE: i64 = 53; // macOS virtual keycode for Escape
+const KEY_TAB: i64 = 48;
+const KEY_BACKSPACE: i64 = 51;
+const KEY_RETURN: i64 = 36;
+const KEY_FORWARD_DELETE: i64 = 117;
+const KEY_HOME: i64 = 115;
+const KEY_END: i64 = 119;
+const KEY_PAGE_UP: i64 = 116;
+const KEY_PAGE_DOWN: i64 = 121;
+const KEY_LEFT: i64 = 123;
+const KEY_RIGHT: i64 = 124;
+const KEY_DOWN: i64 = 125;
+const KEY_UP: i64 = 126;
 
 // Keep production builds quiet unless we're actively debugging the event tap.
 const HOTKEY_DEBUG: bool = false;
@@ -98,17 +117,28 @@ static EVENT_TAP_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 // rather than a modifier. Modifiers are read from CGEventFlags instead.
 static K1_REGULAR_DOWN: AtomicBool = AtomicBool::new(false);
 static K2_REGULAR_DOWN: AtomicBool = AtomicBool::new(false);
+static SYNTHETIC_PASTE_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy)]
 struct HotkeyEvent {
     etype: CGEventType,
     flags: u64,
     keycode: i64,
+    text: [u16; 8],
+    text_len: u8,
 }
 
 fn now_ms() -> u64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+pub fn begin_synthetic_paste_suppression(duration_ms: u64) {
+    SYNTHETIC_PASTE_UNTIL_MS.store(now_ms().saturating_add(duration_ms), Ordering::SeqCst);
+}
+
+fn synthetic_paste_suppressed(now: u64) -> bool {
+    SYNTHETIC_PASTE_UNTIL_MS.load(Ordering::SeqCst) > now
 }
 
 fn reenable_event_tap() {
@@ -292,21 +322,39 @@ where
                 {
                     let tx = tx.clone();
                     move |_proxy: CGEventTapProxy, etype: CGEventType, event| {
-                        let (flags, keycode) = if matches!(
+                        let (flags, keycode, text, text_len) = if matches!(
                             etype,
                             CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
                         ) {
-                            (0, 0)
+                            (0, 0, [0u16; 8], 0)
                         } else {
+                            let mut text = [0u16; 8];
+                            let mut actual_len = 0u8;
+                            if matches!(etype, CGEventType::KeyDown) {
+                                let mut out_len = 0 as libc::c_ulong;
+                                unsafe {
+                                    CGEventKeyboardGetUnicodeString(
+                                        event.as_ptr(),
+                                        text.len() as libc::c_ulong,
+                                        &mut out_len,
+                                        text.as_mut_ptr(),
+                                    );
+                                }
+                                actual_len = out_len.min(text.len() as libc::c_ulong) as u8;
+                            }
                             (
                                 event.get_flags().bits(),
                                 event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
+                                text,
+                                actual_len,
                             )
                         };
                         let _ = tx.send(HotkeyEvent {
                             etype,
                             flags,
                             keycode,
+                            text,
+                            text_len,
                         });
                         None
                     }
@@ -315,6 +363,7 @@ where
             match result {
                 Ok(t) => break t,
                 Err(()) => {
+                    #[allow(clippy::manual_is_multiple_of)]
                     if attempt % 10 == 0 {
                         log::error!(
                             "CGEventTap not created — grant Open Flow Accessibility permission (System Settings → Privacy & Security → Accessibility). Retrying…"
@@ -356,6 +405,83 @@ where
 }
 
 // --- event handling --------------------------------------------------------
+
+fn keycode_is_navigation_or_reset(keycode: i64) -> bool {
+    matches!(
+        keycode,
+        KEY_TAB
+            | KEY_FORWARD_DELETE
+            | KEY_ESCAPE
+            | KEY_HOME
+            | KEY_END
+            | KEY_PAGE_UP
+            | KEY_PAGE_DOWN
+            | KEY_LEFT
+            | KEY_RIGHT
+            | KEY_DOWN
+            | KEY_UP
+    )
+}
+
+fn shortcut_modifier_held(flags: u64) -> bool {
+    flags & (FLAG_CONTROL | FLAG_ALTERNATE | FLAG_COMMAND) != 0
+}
+
+fn event_text(event: &HotkeyEvent) -> String {
+    String::from_utf16_lossy(&event.text[..event.text_len as usize])
+}
+
+fn update_injection_history_for_event(event: &HotkeyEvent, now: u64) {
+    if !matches!(event.etype, CGEventType::KeyDown) || synthetic_paste_suppressed(now) {
+        return;
+    }
+
+    let keycode = event.keycode;
+    let flags = event.flags;
+
+    if keycode == KEY_BACKSPACE {
+        if shortcut_modifier_held(flags) {
+            crate::core::injection::reset_injection_history();
+        } else {
+            let hwnd = crate::core::window_context::get_foreground_hwnd();
+            crate::core::injection::backspace_injection_history(hwnd);
+        }
+        return;
+    }
+
+    if keycode == KEY_RETURN {
+        if flags & FLAG_SHIFT != 0 {
+            let hwnd = crate::core::window_context::get_foreground_hwnd();
+            if hwnd != 0 {
+                crate::core::injection::append_or_reset_injection_history(hwnd, '\n');
+            }
+        } else {
+            crate::core::injection::reset_injection_history();
+        }
+        return;
+    }
+
+    if keycode_is_navigation_or_reset(keycode) || shortcut_modifier_held(flags) {
+        crate::core::injection::reset_injection_history();
+        return;
+    }
+
+    let text = event_text(event);
+    let mut appended = false;
+    let hwnd = crate::core::window_context::get_foreground_hwnd();
+    if hwnd == 0 {
+        crate::core::injection::reset_injection_history();
+        return;
+    }
+    for ch in text.chars().filter(|ch| !ch.is_control() || *ch == '\n' || *ch == '\r') {
+        crate::core::injection::append_or_reset_injection_history(hwnd, ch);
+        appended = true;
+    }
+
+    if !appended && !text.is_empty() {
+        crate::core::injection::reset_injection_history();
+    }
+}
 
 fn handle_event(event: HotkeyEvent) {
     let etype = event.etype;
@@ -428,6 +554,10 @@ fn handle_event(event: HotkeyEvent) {
 
     let active = CHORD_ACTIVE.load(Ordering::SeqCst);
     let now = now_ms();
+
+    if matches!(etype, CGEventType::KeyDown) {
+        update_injection_history_for_event(&event, now);
+    }
 
     if both && !active {
         // Double-tap of the chord within the window toggles handsfree mode.

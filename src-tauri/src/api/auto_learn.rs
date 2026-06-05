@@ -4,8 +4,18 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_store::StoreExt;
 
 #[cfg(windows)]
+use crate::core::context_probe::{
+    describe_selection_state, resolve_context_from_tail, stable_metadata_hash, ContextProbeSource,
+    InjectionContextProbe, SelectionState,
+};
+#[cfg(not(windows))]
+use crate::core::context_probe::{ContextProbeSource, InjectionContextProbe};
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
+use crate::core::text_context::is_invisible_prefix_char as is_invisible_probe_char;
+#[cfg(any(windows, test))]
+use crate::core::text_context::SentenceContext;
 use crate::data::{db, store};
 use crate::DbHandle;
 
@@ -874,6 +884,108 @@ struct FocusedTextReader {
     automation: windows::Win32::UI::Accessibility::IUIAutomation,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FocusedTextProbe {
+    Text(String),
+    NonTextFocus,
+    Unavailable,
+}
+
+
+#[cfg(windows)]
+fn control_type_label(control_type: i32) -> String {
+    use windows::Win32::UI::Accessibility::{
+        UIA_CustomControlTypeId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
+        UIA_PaneControlTypeId, UIA_TextControlTypeId, UIA_WindowControlTypeId,
+    };
+
+    match control_type {
+        value if value == UIA_EditControlTypeId.0 => "edit".to_string(),
+        value if value == UIA_DocumentControlTypeId.0 => "document".to_string(),
+        value if value == UIA_TextControlTypeId.0 => "text".to_string(),
+        value if value == UIA_PaneControlTypeId.0 => "pane".to_string(),
+        value if value == UIA_WindowControlTypeId.0 => "window".to_string(),
+        value if value == UIA_CustomControlTypeId.0 => "custom".to_string(),
+        other => format!("control_type_{other}"),
+    }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_effectively_empty_text(text: &str) -> bool {
+    text.chars().all(is_invisible_probe_char)
+}
+
+#[cfg(test)]
+fn classify_caret_char(ch: char) -> Option<SentenceContext> {
+    if matches!(ch, '.' | '!' | '?' | '\n' | '\r') {
+        return Some(SentenceContext::NewSentence);
+    }
+    if is_invisible_probe_char(ch) {
+        return None;
+    }
+    if ch.is_alphanumeric()
+        || matches!(
+            ch,
+            ',' | ';' | ':' | '-' | '–' | '—' | '/' | '\\' | ')' | ']' | '}' | '>'
+        )
+    {
+        return Some(SentenceContext::MidSentence);
+    }
+    None
+}
+
+#[cfg(windows)]
+unsafe fn read_previous_context_text(
+    range: &windows::Win32::UI::Accessibility::IUIAutomationTextRange,
+) -> Option<String> {
+    use windows::Win32::UI::Accessibility::{TextPatternRangeEndpoint_Start, TextUnit_Character};
+
+    let caret = range.Clone().ok()?;
+    let moved = caret
+        .MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -64)
+        .ok()?;
+    if moved == 0 {
+        return None;
+    }
+
+    let text = caret.GetText(-1).ok()?.to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+#[cfg(windows)]
+unsafe fn range_is_collapsed(
+    range: &windows::Win32::UI::Accessibility::IUIAutomationTextRange,
+) -> bool {
+    use windows::Win32::UI::Accessibility::{
+        TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start,
+    };
+
+    matches!(
+        range.CompareEndpoints(
+            TextPatternRangeEndpoint_Start,
+            range,
+            TextPatternRangeEndpoint_End
+        ),
+        Ok(0)
+    )
+}
+
+#[cfg(test)]
+fn resolve_injection_context(field_empty: bool, caret_context: Option<char>) -> SentenceContext {
+    if field_empty {
+        SentenceContext::NewSentence
+    } else if let Some(ch) = caret_context {
+        classify_caret_char(ch).unwrap_or(SentenceContext::Unknown)
+    } else {
+        SentenceContext::Unknown
+    }
+}
+
 #[cfg(windows)]
 struct FocusedTextState {
     // Reader drops before COM guard because fields drop in declaration order.
@@ -904,23 +1016,28 @@ impl FocusedTextReader {
         }
     }
 
-    fn read(&self) -> Option<String> {
+    fn read_probe(&self) -> FocusedTextProbe {
         use windows::Win32::UI::Accessibility::{
             IUIAutomationTextPattern, IUIAutomationValuePattern, UIA_TextPatternId,
             UIA_ValuePatternId,
         };
 
         unsafe {
-            let element = self.automation.GetFocusedElement().ok()?;
+            let element = match self.automation.GetFocusedElement() {
+                Ok(element) => element,
+                Err(_) => return FocusedTextProbe::Unavailable,
+            };
+            let mut saw_text_pattern = false;
             let mut accessible_empty: Option<String> = None;
 
             if let Ok(pattern) =
                 element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
             {
+                saw_text_pattern = true;
                 if let Ok(val) = pattern.CurrentValue() {
                     let s = val.to_string();
-                    if !s.is_empty() {
-                        return Some(s);
+                    if !is_effectively_empty_text(&s) {
+                        return FocusedTextProbe::Text(s);
                     }
                     accessible_empty = Some(s);
                 }
@@ -929,31 +1046,216 @@ impl FocusedTextReader {
             if let Ok(pattern) =
                 element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
             {
+                saw_text_pattern = true;
                 if let Ok(doc_range) = pattern.DocumentRange() {
                     if let Ok(val) = doc_range.GetText(-1) {
                         let s = val.to_string();
-                        if !s.is_empty() {
-                            return Some(s);
+                        if !is_effectively_empty_text(&s) {
+                            return FocusedTextProbe::Text(s);
                         }
                         accessible_empty = Some(s);
                     }
                 }
             }
 
-            accessible_empty
+            if let Some(s) = accessible_empty {
+                return FocusedTextProbe::Text(s);
+            }
+
+            if saw_text_pattern {
+                FocusedTextProbe::Text(String::new())
+            } else {
+                FocusedTextProbe::NonTextFocus
+            }
+        }
+    }
+
+    fn read_injection_context_probe(&self) -> InjectionContextProbe {
+        use windows::Win32::UI::Accessibility::{
+            IUIAutomationTextPattern, IUIAutomationTextPattern2, IUIAutomationValuePattern,
+            UIA_TextPattern2Id, UIA_TextPatternId, UIA_ValuePatternId,
+        };
+
+        unsafe {
+            let element = match self.automation.GetFocusedElement() {
+                Ok(element) => element,
+                Err(_) => {
+                    return InjectionContextProbe::unavailable(
+                        ContextProbeSource::Unavailable,
+                        "unknown",
+                    );
+                }
+            };
+
+            let control_type = element
+                .CurrentControlType()
+                .map(|value| control_type_label(value.0))
+                .unwrap_or_else(|_| "unknown".to_string());
+            let value_pattern = element
+                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                .ok();
+            let text_pattern = element
+                .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                .ok();
+            let text_pattern2 = element
+                .GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id)
+                .ok();
+            let read_only = value_pattern
+                .as_ref()
+                .and_then(|pattern| pattern.CurrentIsReadOnly().ok())
+                .map(|value| value.as_bool());
+            let value_is_empty = value_pattern
+                .as_ref()
+                .and_then(|pattern| pattern.CurrentValue().ok())
+                .map(|value| is_effectively_empty_text(&value.to_string()));
+            let automation_id = element
+                .CurrentAutomationId()
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            let class_name = element
+                .CurrentClassName()
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            let native_hwnd = element
+                .CurrentNativeWindowHandle()
+                .map(|value| format!("{:p}", value.0))
+                .unwrap_or_default();
+            let control_identity_hash = stable_metadata_hash(&[
+                control_type.as_str(),
+                automation_id.as_str(),
+                class_name.as_str(),
+                native_hwnd.as_str(),
+            ]);
+
+            if read_only == Some(true) {
+                return InjectionContextProbe {
+                    context: SentenceContext::Unknown,
+                    source: ContextProbeSource::UnsupportedControl,
+                    context_tail: String::new(),
+                    control_type,
+                    selection_state: SelectionState::Unknown,
+                    control_identity_hash,
+                };
+            }
+
+            if value_is_empty == Some(true) {
+                return InjectionContextProbe {
+                    context: SentenceContext::NewSentence,
+                    source: ContextProbeSource::EmptyField,
+                    context_tail: String::new(),
+                    control_type,
+                    selection_state: SelectionState::Unknown,
+                    control_identity_hash,
+                };
+            }
+
+            let mut range_seen = false;
+            let mut range_collapsed = false;
+            let mut caret_context: Option<String> = None;
+            let mut source = ContextProbeSource::UnsupportedControl;
+
+            if let Some(pattern) = &text_pattern2 {
+                let mut is_active = windows::core::BOOL::default();
+                if let Ok(range) = pattern.GetCaretRange(&mut is_active) {
+                    if is_active.as_bool() {
+                        range_seen = true;
+                        range_collapsed = true;
+                        caret_context = read_previous_context_text(&range);
+                        if caret_context.is_some() {
+                            source = ContextProbeSource::CaretLocal;
+                        } else {
+                            source = ContextProbeSource::EmptyField;
+                        }
+                    }
+                }
+            }
+
+            if caret_context.is_none() && !range_seen {
+                if let Some(pattern) = &text_pattern {
+                    if let Ok(selection) = pattern.GetSelection() {
+                        if let Ok(len) = selection.Length() {
+                            if len == 1 {
+                                if let Ok(range) = selection.GetElement(0) {
+                                    range_seen = true;
+                                    range_collapsed = range_is_collapsed(&range);
+                                    if range_collapsed {
+                                        caret_context = read_previous_context_text(&range);
+                                        source = if caret_context.is_some() {
+                                            ContextProbeSource::CaretLocal
+                                        } else {
+                                            ContextProbeSource::EmptyField
+                                        };
+                                    } else {
+                                        source = ContextProbeSource::AmbiguousSelection;
+                                    }
+                                }
+                            } else if len > 1 {
+                                range_seen = true;
+                                source = ContextProbeSource::AmbiguousSelection;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let field_empty = caret_context.is_none() && source == ContextProbeSource::EmptyField;
+            let context = resolve_context_from_tail(field_empty, caret_context.as_deref());
+            if matches!(context, SentenceContext::Unknown) && caret_context.is_some() {
+                source = ContextProbeSource::AmbiguousSelection;
+            }
+            let selection_state = describe_selection_state(range_seen, range_collapsed);
+
+            InjectionContextProbe {
+                context,
+                source,
+                context_tail: caret_context.clone().unwrap_or_default(),
+                control_type,
+                selection_state,
+                control_identity_hash,
+            }
         }
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 #[cfg(windows)]
-pub fn read_focused_text() -> Option<String> {
+pub fn read_focused_text_probe() -> FocusedTextProbe {
     FOCUSED_TEXT_STATE.with(|cell| {
         let mut guard = cell.borrow_mut();
         if guard.com.is_none() {
             guard.com = Some(ComGuard::init());
         }
         let reader = guard.reader.get_or_insert_with(FocusedTextReader::new);
-        reader.as_ref().and_then(FocusedTextReader::read)
+        match reader.as_ref() {
+            Some(reader) => reader.read_probe(),
+            None => FocusedTextProbe::Unavailable,
+        }
+    })
+}
+
+#[cfg(windows)]
+pub fn read_focused_text() -> Option<String> {
+    match read_focused_text_probe() {
+        FocusedTextProbe::Text(text) => Some(text),
+        FocusedTextProbe::NonTextFocus | FocusedTextProbe::Unavailable => None,
+    }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(windows)]
+pub fn read_injection_context_probe() -> InjectionContextProbe {
+    FOCUSED_TEXT_STATE.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        if guard.com.is_none() {
+            guard.com = Some(ComGuard::init());
+        }
+        let reader = guard.reader.get_or_insert_with(FocusedTextReader::new);
+        match reader.as_ref() {
+            Some(reader) => reader.read_injection_context_probe(),
+            None => {
+                InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "unavailable")
+            }
+        }
     })
 }
 
@@ -1134,9 +1436,21 @@ fn ensure_value_change_hook() -> bool {
     spawned
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(not(windows))]
+pub fn read_focused_text_probe() -> FocusedTextProbe {
+    FocusedTextProbe::Unavailable
+}
+
 #[cfg(not(windows))]
 pub fn read_focused_text() -> Option<String> {
     None
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(not(windows))]
+pub fn read_injection_context_probe() -> InjectionContextProbe {
+    InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "unavailable")
 }
 
 fn auto_learn_event_mode_enabled(app: &AppHandle) -> bool {
@@ -1503,6 +1817,7 @@ pub fn start_cache_rejection_monitor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::text_context::SentenceContext;
     use crate::data::db;
 
     #[derive(Debug, serde::Deserialize)]
@@ -1702,6 +2017,67 @@ mod tests {
             Some("say nuggaaaa")
         );
         assert_eq!(gate.observe("say nuggaaaa".to_string()), None);
+    }
+
+    #[test]
+    fn blank_field_probe_capitalizes() {
+        let context = resolve_injection_context(true, None);
+        assert_eq!(context, SentenceContext::NewSentence);
+        assert!(context.should_capitalize());
+    }
+
+    #[test]
+    fn unknown_probe_capitalizes() {
+        let context = resolve_injection_context(false, None);
+        assert_eq!(context, SentenceContext::Unknown);
+        assert!(context.should_capitalize());
+    }
+
+    #[test]
+    fn sentence_ending_characters_capitalize() {
+        assert_eq!(
+            resolve_injection_context(false, Some('.')),
+            SentenceContext::NewSentence
+        );
+        assert_eq!(
+            resolve_injection_context(false, Some('!')),
+            SentenceContext::NewSentence
+        );
+        assert_eq!(
+            resolve_injection_context(false, Some('?')),
+            SentenceContext::NewSentence
+        );
+    }
+
+    #[test]
+    fn mid_sentence_probe_lowercases() {
+        let context = resolve_injection_context(false, Some('a'));
+        assert_eq!(context, SentenceContext::MidSentence);
+        assert!(!context.should_capitalize());
+    }
+
+    #[test]
+    fn blank_field_overrides_stale_context() {
+        assert_eq!(
+            resolve_injection_context(true, Some('a')),
+            SentenceContext::NewSentence
+        );
+    }
+
+    #[test]
+    fn invisible_probe_characters_do_not_force_lowercase() {
+        assert_eq!(classify_caret_char('\u{200b}'), None);
+        assert_eq!(classify_caret_char('\u{feff}'), None);
+        assert_eq!(classify_caret_char('"'), None);
+        assert_eq!(classify_caret_char('('), None);
+        assert_eq!(
+            resolve_injection_context(false, Some('\u{200b}')),
+            SentenceContext::Unknown
+        );
+        assert_eq!(
+            resolve_injection_context(false, Some('"')),
+            SentenceContext::Unknown
+        );
     }
 
     #[test]

@@ -168,7 +168,9 @@ fn main() {
             apply_native_main_window_chrome(app.handle(), None);
             #[cfg(target_os = "macos")]
             {
-                crate::system::mac_app::set_accessory_activation_policy_on_main_thread(app.handle());
+                crate::system::mac_app::set_accessory_activation_policy_on_main_thread(
+                    app.handle(),
+                );
             }
             // macOS requires Accessibility permission for the global hotkey, Cmd+V
             // injection, and auto-learn. Prompt on launch when not yet trusted.
@@ -404,7 +406,10 @@ mod tests {
 
     #[test]
     fn tray_icon_uses_white_in_dark_mode() {
-        assert_eq!(runtime_tray_icon_color(IconTheme::Dark), [255, 255, 255, 255]);
+        assert_eq!(
+            runtime_tray_icon_color(IconTheme::Dark),
+            [255, 255, 255, 255]
+        );
     }
 }
 

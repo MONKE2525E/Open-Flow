@@ -2,6 +2,7 @@
   import { emit, invoke } from '../../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
+  import { isMac } from '../../platform';
   import Toggle from '../Toggle.svelte';
   import { appStore } from '../../stores';
   import { saveSetting, type AppearanceMode } from '../../settings';
@@ -25,6 +26,7 @@
   let cleanup = $state(true);
   let contextualCaps = $state(true);
   let autoSpacing = $state(true);
+  let macosClipboardSniff = $state(false);
   let hotkey = $state(['ControlLeft', 'MetaLeft']);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
@@ -98,6 +100,7 @@
       invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
       invoke<string[]>('get_microphones'),
       invoke<string | null>('get_setting', { key: 'microphone_device' }),
+      invoke<boolean | null>('get_setting', { key: 'macos_clipboard_sniff_enabled' }),
     ]);
 
     const val = <T>(i: number, fallback: T): T =>
@@ -108,6 +111,7 @@
     cleanup = val<boolean | null>(5, null) ?? true;
     contextualCaps = val<boolean | null>(6, null) ?? true;
     autoSpacing = val<boolean | null>(7, null) ?? true;
+    macosClipboardSniff = val<boolean | null>(10, null) ?? false;
 
     const hk = val<string[] | null>(2, null);
     if (hk && hk.length === 2) hotkey = hk;
@@ -204,6 +208,16 @@
     } catch (err) {
       autoSpacing = !value;
       console.error('save auto_spacing_enabled failed:', err);
+    }
+  }
+
+  async function handleMacosClipboardSniff(value: boolean) {
+    macosClipboardSniff = value;
+    try {
+      await saveSetting('macos_clipboard_sniff_enabled', value);
+    } catch (err) {
+      macosClipboardSniff = !value;
+      console.error('save macos_clipboard_sniff_enabled failed:', err);
     }
   }
 
@@ -457,6 +471,21 @@
   <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
   <Toggle checked={autoSpacing} onchange={handleAutoSpacing} label="Automatic spacing" />
 </div>
+{#if isMac}
+  <div class="setting-row">
+    <div>
+      <div class="label">Clipboard sniffing fallback</div>
+      <div class="desc">Allows reading clipboard to guess capitalization and spacing in unsupported editors (may disrupt existing text selections)</div>
+    </div>
+    <Toggle checked={macosClipboardSniff} onchange={handleMacosClipboardSniff} label="Clipboard sniffing fallback" />
+  </div>
+  <div class="setting-row setting-row-note">
+    <div>
+      <div class="label">macOS behavior</div>
+      <div class="desc">Supported editors use caret-local context. If an editor is unreadable or unsupported, Open Flow degrades conservatively and pastes without guessing capitalization or leading spaces.</div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .keybind-btn {
