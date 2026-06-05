@@ -327,7 +327,18 @@ pub fn pasteboard_has_non_text_formats() -> bool {
         for i in 0..count {
             let item_type: *mut AnyObject = msg_send![types, objectAtIndex: i];
             if let Some(type_str) = nsstring_to_string(item_type) {
-                if type_str != "public.utf8-plain-text" && type_str != "NSStringPboardType" {
+                let type_lower = type_str.to_lowercase();
+                if type_lower.contains("html")
+                    || type_lower.contains("rtf")
+                    || type_lower.contains("image")
+                    || type_lower.contains("pdf")
+                    || type_lower.contains("file-url")
+                    || type_lower == "public.tiff"
+                    || type_lower == "public.png"
+                    || type_lower == "public.jpeg"
+                    || type_lower == "public.url"
+                    || type_lower == "com.apple.webarchive"
+                {
                     return true;
                 }
             }

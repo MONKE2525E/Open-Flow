@@ -421,15 +421,9 @@ fn apply_probe_adjustments(
                 }
             },
             text_context::InjectionPrefixClass::HardSentenceTerminator => {
-                if matches!(context_kind, ContextKind::SentenceBoundary) {
-                    adjusted =
-                        text_context::format_injection_text(text, probe.context, prefix_class);
-                    CaseDecision::SentenceBoundaryCapitalized
-                } else if matches!(context_kind, ContextKind::Unknown) {
-                    CaseDecision::UnknownContextPreserved
-                } else {
-                    CaseDecision::ContinuationPreserved
-                }
+                adjusted =
+                    text_context::format_injection_text(text, probe.context, prefix_class);
+                CaseDecision::SentenceBoundaryCapitalized
             }
             text_context::InjectionPrefixClass::SoftPunctuationPrefix
             | text_context::InjectionPrefixClass::InvisibleOrAmbiguousPrefix => {
