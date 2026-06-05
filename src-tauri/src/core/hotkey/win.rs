@@ -89,7 +89,7 @@ fn to_unicode_layout(
 /// or whitespace checks downstream. Returns None for keys with no stable
 /// printable character (numpad, function keys, etc.); those reset history.
 fn vk_to_char(vk: u32) -> Option<char> {
-    if vk == 0x0D {
+    if vk == VK_RETURN {
         return Some('\n');
     }
     if vk == 0x20 {
@@ -466,7 +466,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     let hwnd = unsafe { GetForegroundWindow().0 as usize };
                     crate::core::injection::backspace_injection_history(hwnd);
                 }
-            } else if (vk == 0x0D
+            } else if (vk == VK_RETURN
                 && !unsafe {
                     modifier_held(VK_SHIFT) || modifier_held(VK_CTRL) || modifier_held(VK_ALT)
                 })

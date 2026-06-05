@@ -5,6 +5,16 @@
 #include <stdio.h>
 #include <string.h>
 
+// Forward declarations for private/semi-private AXTextMarker APIs to prevent pointer truncation or compile warnings on 64-bit systems.
+extern CFTypeID AXTextMarkerGetTypeID(void);
+extern CFTypeID AXTextMarkerRangeGetTypeID(void);
+extern CFIndex AXTextMarkerGetLength(AXTextMarkerRef marker);
+extern const UInt8 *AXTextMarkerGetBytePtr(AXTextMarkerRef marker);
+extern AXTextMarkerRangeRef AXTextMarkerRangeCreate(CFAllocatorRef allocator, AXTextMarkerRef start_marker, AXTextMarkerRef end_marker);
+extern AXTextMarkerRef AXTextMarkerRangeCopyStartMarker(AXTextMarkerRangeRef range);
+extern AXTextMarkerRef AXTextMarkerRangeCopyEndMarker(AXTextMarkerRangeRef range);
+
+
 #define OF_SOURCE_CARET_LOCAL 0
 #define OF_SOURCE_EMPTY_FIELD 1
 #define OF_SOURCE_AMBIGUOUS_SELECTION 2
