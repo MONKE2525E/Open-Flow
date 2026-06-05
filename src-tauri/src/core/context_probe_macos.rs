@@ -41,16 +41,11 @@ unsafe extern "C" {
 }
 
 fn c_buf_to_string(buf: &[c_char]) -> String {
-    let ptr = buf.as_ptr();
-    if ptr.is_null() {
-        return String::new();
-    }
-
-    // SAFETY: The Objective-C shim guarantees a trailing null byte.
-    unsafe { CStr::from_ptr(ptr) }
-        .to_string_lossy()
-        .trim()
-        .to_string()
+    // Find the null terminator within the buffer bounds to avoid a buffer
+    // overread if the Objective-C shim fails to write a trailing null byte.
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    let u8_bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, len) };
+    String::from_utf8_lossy(u8_bytes).trim().to_string()
 }
 
 fn map_source(source: i32) -> ContextProbeSource {
