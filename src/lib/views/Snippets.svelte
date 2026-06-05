@@ -3,7 +3,7 @@
   import { invoke } from '../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { appStore, fetchSnippets, type Snippet } from '../stores';
+  import { appStore, fetchSnippets, cancelSnippetsFetch, type Snippet } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
 
@@ -113,6 +113,7 @@
   function closeModal() { modal = null; saveError = ''; }
 
   function upsertSnippet(snippet: Snippet) {
+    cancelSnippetsFetch();
     const next = appStore.snippets.filter((entry) => entry.id !== snippet.id);
     appStore.snippets = [snippet, ...next];
   }
@@ -188,6 +189,7 @@
     if (deleteTarget === id) {
       try {
         await invoke('remove_snippet', { id });
+        cancelSnippetsFetch();
         appStore.snippets = appStore.snippets.filter((entry) => entry.id !== id);
         if (selected?.id === id) selected = null;
       } catch (err) { console.error(err); }

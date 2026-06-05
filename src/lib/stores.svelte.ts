@@ -50,6 +50,9 @@ export const appStore = $state({
 let snippetsFetchToken = 0;
 let dictionaryFetchToken = 0;
 
+export function cancelSnippetsFetch() { snippetsFetchToken++; }
+export function cancelDictionaryFetch() { dictionaryFetchToken++; }
+
 function formatIpcError(err: unknown): string {
   if (typeof err === 'object' && err !== null) {
     if ('message' in err) {

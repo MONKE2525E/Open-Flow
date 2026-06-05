@@ -4,7 +4,7 @@
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
-  import { appStore, fetchDictionary, type DictionaryEntry } from '../stores';
+  import { appStore, fetchDictionary, cancelDictionaryFetch, type DictionaryEntry } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
 
   type SortKey = 'newest' | 'oldest' | 'alpha' | 'most_corrected';
@@ -133,6 +133,7 @@
   function closeModal() { modal = null; saveError = ''; }
 
   function upsertDictionaryEntry(entry: DictionaryEntry) {
+    cancelDictionaryFetch();
     const next = appStore.dictionary.filter((item) => item.id !== entry.id);
     appStore.dictionary = [entry, ...next];
   }
@@ -199,6 +200,7 @@
     if (deleteTarget === id) {
       try {
         await invoke('remove_dictionary_entry', { id });
+        cancelDictionaryFetch();
         appStore.dictionary = appStore.dictionary.filter((entry) => entry.id !== id);
         if (selected?.id === id) selected = null;
       } catch (err) { console.error(err); }

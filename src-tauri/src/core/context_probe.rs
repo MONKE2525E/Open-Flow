@@ -169,8 +169,10 @@ impl MacosProbeGuard {
         let mut active_time = MACOS_PROBE_START_TIME.load(Ordering::SeqCst);
         loop {
             if active_time != 0 {
-                // Block concurrent calls if the active probe has not timed out yet (2000ms threshold)
-                if now >= active_time && now - active_time < 2000 {
+                // Block if the active probe hasn't timed out. Also block when
+                // now < active_time: a thread with a later timestamp already
+                // acquired the guard between our load and CAS — treat it as live.
+                if now < active_time || now - active_time < 2000 {
                     return None;
                 }
             }
