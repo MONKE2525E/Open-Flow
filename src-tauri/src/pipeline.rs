@@ -878,8 +878,8 @@ async fn run_cleanup_and_snippets(
     profile: &str,
     app_context: Option<&str>,
 ) -> Option<(String, Vec<db::DictionaryEntry>, String)> {
-    let db = app.state::<DbHandle>().inner().clone();
-    match run_cleanup_and_snippets_for_db(&db, raw, cfg, profile, app_context).await {
+    let db = app.state::<DbHandle>();
+    match run_cleanup_and_snippets_for_db(db.inner(), raw, cfg, profile, app_context).await {
         Ok(result) => Some(result),
         Err(e) => {
             let mut user_msg = format!("Cleanup failed: {}", trim_err(&e.to_string()));

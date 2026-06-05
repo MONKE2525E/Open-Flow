@@ -813,8 +813,11 @@
   .add-fallback-btn {
     appearance: none;
     background: transparent;
+    border: 1px solid var(--line);
+    padding: 2px 7px;
     font: inherit;
     color: inherit;
+    cursor: pointer;
   }
   .add-fallback-btn:focus-visible {
     outline: 2px solid var(--accent, #d97757);

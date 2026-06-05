@@ -23,6 +23,11 @@ const child = spawn(python.command, [...python.prefixArgs, scriptPath, ...extraA
   stdio: 'inherit',
 });
 
+child.on('error', (err) => {
+  console.error('Failed to start OnePyFone process:', err);
+  process.exit(1);
+});
+
 child.on('exit', (code, signal) => {
   if (signal) {
     process.kill(process.pid, signal);
