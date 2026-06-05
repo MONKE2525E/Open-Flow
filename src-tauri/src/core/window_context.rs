@@ -42,8 +42,15 @@ pub fn get_foreground_hwnd() -> usize {
     }
     #[cfg(target_os = "macos")]
     {
-        let (window_id, pid) = crate::system::mac_app::get_active_window_id_and_pid();
-        ((window_id as usize) << 32) | (pid as u32 as usize)
+        // Avoid CGWindowListCopyWindowInfo on the hotkey/keypress path — it
+        // communicates synchronously with WindowServer for all on-screen windows
+        // and introduces several ms of typing latency, which can trigger the
+        // macOS event tap watchdog timeout. frontmost_pid() is a single fast
+        // NSWorkspace call and sufficient for both focus-target tracking and the
+        // "same window?" comparisons in injection.rs (pid & 0xFFFFFFFF).
+        crate::system::mac_app::frontmost_pid()
+            .map(|p| p as usize)
+            .unwrap_or(0)
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     0

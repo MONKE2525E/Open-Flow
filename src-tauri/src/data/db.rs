@@ -4,10 +4,45 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 pub type Db = Arc<Mutex<Connection>>;
+pub const SNIPPET_TRIGGER_CHAR_LIMIT: usize = 300;
+pub const DICTIONARY_ENTRY_CHAR_LIMIT: usize = 120;
 
 fn lock_conn(db: &Db) -> Result<MutexGuard<'_, Connection>> {
     db.lock()
         .map_err(|_| anyhow::anyhow!("Database lock was poisoned"))
+}
+
+fn require_nonempty_trimmed(field: &str, value: &str) -> Result<String> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return Err(anyhow::anyhow!("{field} cannot be empty"));
+    }
+    Ok(normalized.to_string())
+}
+
+fn normalize_optional_trimmed(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn normalize_multiline(value: &str) -> String {
+    value.replace("\r\n", "\n").replace('\r', "\n").trim().to_string()
+}
+
+fn validate_char_limit(field: &str, value: &str, limit: usize) -> Result<()> {
+    if value.chars().count() > limit {
+        return Err(anyhow::anyhow!("{field} must be {limit} characters or fewer"));
+    }
+    Ok(())
+}
+
+fn require_row_changed(changed: usize, item: &str, id: i64) -> Result<()> {
+    if changed == 0 {
+        return Err(anyhow::anyhow!("{item} {id} was not found"));
+    }
+    Ok(())
 }
 
 fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
@@ -354,6 +389,12 @@ pub struct Snippet {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CreatedRecordMeta {
+    pub id: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CleanupCacheEntry {
     pub key: String,
     pub clean_text: String,
@@ -510,12 +551,47 @@ pub fn query_dictionary(db: &Db) -> Result<Vec<DictionaryEntry>> {
 }
 
 pub fn insert_dictionary_entry(db: &Db, term: &str, mistake: Option<&str>) -> Result<()> {
+    let normalized_term = require_nonempty_trimmed("Term", term)?;
+    let normalized_mistake = normalize_optional_trimmed(mistake);
+    validate_char_limit("Term", &normalized_term, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    if let Some(mistake) = normalized_mistake.as_deref() {
+        validate_char_limit("Often mistranscribed as", mistake, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    }
+
     let conn = lock_conn(db)?;
     conn.execute(
         "INSERT INTO dictionary (term, mistake, confidence_tier, last_seen_at) VALUES (?1, ?2, 'manual', datetime('now'))",
-        params![term, mistake],
+        params![normalized_term, normalized_mistake],
     )?;
     Ok(())
+}
+
+pub fn insert_dictionary_entry_returning(
+    db: &Db,
+    term: &str,
+    mistake: Option<&str>,
+) -> Result<CreatedRecordMeta> {
+    let normalized_term = require_nonempty_trimmed("Term", term)?;
+    let normalized_mistake = normalize_optional_trimmed(mistake);
+    validate_char_limit("Term", &normalized_term, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    if let Some(m) = normalized_mistake.as_deref() {
+        validate_char_limit("Often mistranscribed as", m, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    }
+
+    // Insert and read last_insert_rowid under a single lock to prevent another
+    // thread's insert racing between the two acquisitions and returning the wrong id.
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "INSERT INTO dictionary (term, mistake, confidence_tier, last_seen_at) VALUES (?1, ?2, 'manual', datetime('now'))",
+        params![normalized_term, normalized_mistake],
+    )?;
+    let id = conn.last_insert_rowid();
+    let created_at = conn.query_row(
+        "SELECT created_at FROM dictionary WHERE id=?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    Ok(CreatedRecordMeta { id, created_at })
 }
 
 pub fn insert_dictionary_entry_auto_learned(
@@ -524,6 +600,13 @@ pub fn insert_dictionary_entry_auto_learned(
     mistake: Option<&str>,
     confidence_tier: &str,
 ) -> Result<bool> {
+    let normalized_term = require_nonempty_trimmed("Term", term)?;
+    let normalized_mistake = normalize_optional_trimmed(mistake);
+    validate_char_limit("Term", &normalized_term, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    if let Some(mistake) = normalized_mistake.as_deref() {
+        validate_char_limit("Often mistranscribed as", mistake, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    }
+
     let conn = lock_conn(db)?;
     let changed = conn.execute(
         "INSERT INTO dictionary (term, mistake, auto_learned, correction_count) \
@@ -534,7 +617,7 @@ pub fn insert_dictionary_entry_auto_learned(
            last_seen_at = datetime('now') \
          WHERE dictionary.auto_learned = 1 \
            AND COALESCE(dictionary.mistake, '') = COALESCE(excluded.mistake, '')",
-        params![term, mistake, confidence_tier],
+        params![normalized_term, normalized_mistake, confidence_tier],
     )?;
     Ok(changed > 0)
 }
@@ -704,17 +787,52 @@ pub fn prune_pending_corrections(db: &Db, max_age_days: i64) -> Result<usize> {
 }
 
 pub fn update_dictionary_entry(db: &Db, id: i64, term: &str, mistake: Option<&str>) -> Result<()> {
+    let normalized_term = require_nonempty_trimmed("Term", term)?;
+    let normalized_mistake = normalize_optional_trimmed(mistake);
+    validate_char_limit("Term", &normalized_term, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    if let Some(mistake) = normalized_mistake.as_deref() {
+        validate_char_limit("Often mistranscribed as", mistake, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    }
+
     let conn = lock_conn(db)?;
-    conn.execute(
+    let changed = conn.execute(
         "UPDATE dictionary SET term=?2, mistake=?3 WHERE id=?1",
-        params![id, term, mistake],
+        params![id, normalized_term, normalized_mistake],
     )?;
+    require_row_changed(changed, "Dictionary entry", id)?;
     Ok(())
 }
 
 pub fn delete_dictionary_entry(db: &Db, id: i64) -> Result<()> {
-    let conn = lock_conn(db)?;
-    conn.execute("DELETE FROM dictionary WHERE id=?1", params![id])?;
+    let mut conn = lock_conn(db)?;
+    let tx = conn.transaction()?;
+
+    // Capture metadata before deleting so we can clean up auto-learn history.
+    let info: Option<(String, Option<String>, i64)> = tx
+        .query_row(
+            "SELECT term, mistake, auto_learned FROM dictionary WHERE id=?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .ok();
+
+    let changed = tx.execute("DELETE FROM dictionary WHERE id=?1", params![id])?;
+    require_row_changed(changed, "Dictionary entry", id)?;
+
+    // If this was an auto-learned entry, remove its pending corrections and
+    // candidates so the auto-learn system cannot immediately re-promote it.
+    if let Some((term, Some(mistake), 1)) = info {
+        tx.execute(
+            "DELETE FROM pending_corrections WHERE wrong_word = ?1 AND correct_word = ?2",
+            params![mistake, term],
+        )?;
+        tx.execute(
+            "DELETE FROM auto_learn_candidates WHERE wrong_word = ?1 AND correct_word = ?2",
+            params![mistake, term],
+        )?;
+    }
+
+    tx.commit()?;
     Ok(())
 }
 
@@ -766,12 +884,50 @@ pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
 // ---------- snippets ----------
 
 pub fn insert_snippet(db: &Db, trigger: &str, expansion: &str, instructions: &str) -> Result<()> {
+    let normalized_trigger = require_nonempty_trimmed("Trigger", trigger)?;
+    validate_char_limit("Trigger", &normalized_trigger, SNIPPET_TRIGGER_CHAR_LIMIT)?;
+    let normalized_expansion = normalize_multiline(expansion);
+    if normalized_expansion.is_empty() {
+        return Err(anyhow::anyhow!("Expansion cannot be empty"));
+    }
+    let normalized_instructions = normalize_multiline(instructions);
+
     let conn = lock_conn(db)?;
     conn.execute(
         "INSERT INTO snippets (trigger, expansion, instructions) VALUES (?1, ?2, ?3)",
-        params![trigger, expansion, instructions],
+        params![normalized_trigger, normalized_expansion, normalized_instructions],
     )?;
     Ok(())
+}
+
+pub fn insert_snippet_returning(
+    db: &Db,
+    trigger: &str,
+    expansion: &str,
+    instructions: &str,
+) -> Result<CreatedRecordMeta> {
+    let normalized_trigger = require_nonempty_trimmed("Trigger", trigger)?;
+    validate_char_limit("Trigger", &normalized_trigger, SNIPPET_TRIGGER_CHAR_LIMIT)?;
+    let normalized_expansion = normalize_multiline(expansion);
+    if normalized_expansion.is_empty() {
+        return Err(anyhow::anyhow!("Expansion cannot be empty"));
+    }
+    let normalized_instructions = normalize_multiline(instructions);
+
+    // Insert and read last_insert_rowid under a single lock to prevent another
+    // thread's insert racing between the two acquisitions and returning the wrong id.
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "INSERT INTO snippets (trigger, expansion, instructions) VALUES (?1, ?2, ?3)",
+        params![normalized_trigger, normalized_expansion, normalized_instructions],
+    )?;
+    let id = conn.last_insert_rowid();
+    let created_at = conn.query_row(
+        "SELECT created_at FROM snippets WHERE id=?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    Ok(CreatedRecordMeta { id, created_at })
 }
 
 pub fn update_snippet(
@@ -781,17 +937,27 @@ pub fn update_snippet(
     expansion: &str,
     instructions: &str,
 ) -> Result<()> {
+    let normalized_trigger = require_nonempty_trimmed("Trigger", trigger)?;
+    validate_char_limit("Trigger", &normalized_trigger, SNIPPET_TRIGGER_CHAR_LIMIT)?;
+    let normalized_expansion = normalize_multiline(expansion);
+    if normalized_expansion.is_empty() {
+        return Err(anyhow::anyhow!("Expansion cannot be empty"));
+    }
+    let normalized_instructions = normalize_multiline(instructions);
+
     let conn = lock_conn(db)?;
-    conn.execute(
+    let changed = conn.execute(
         "UPDATE snippets SET trigger=?2, expansion=?3, instructions=?4 WHERE id=?1",
-        params![id, trigger, expansion, instructions],
+        params![id, normalized_trigger, normalized_expansion, normalized_instructions],
     )?;
+    require_row_changed(changed, "Snippet", id)?;
     Ok(())
 }
 
 pub fn delete_snippet(db: &Db, id: i64) -> Result<()> {
     let conn = lock_conn(db)?;
-    conn.execute("DELETE FROM snippets WHERE id=?1", params![id])?;
+    let changed = conn.execute("DELETE FROM snippets WHERE id=?1", params![id])?;
+    require_row_changed(changed, "Snippet", id)?;
     Ok(())
 }
 
@@ -1382,5 +1548,98 @@ mod tests {
         assert_eq!(ids.len(), 2);
         delete_auto_learned_entries_by_ids(&db, &ids).expect("bulk delete");
         assert_eq!(query_dictionary(&db).expect("after").len(), 0);
+    }
+
+    #[test]
+    fn manual_dictionary_entries_trim_and_keep_longer_phrases() {
+        let db = test_db();
+        let long_term = "A longer dictionary phrase that still fits inside the supported limit exactly fine";
+        let long_mistake = "A slightly mangled version of that longer phrase for recognition";
+
+        insert_dictionary_entry(&db, &format!("  {long_term}  "), Some(&format!("  {long_mistake}  ")))
+            .expect("insert trimmed long entry");
+
+        let entry = query_dictionary(&db)
+            .expect("query")
+            .into_iter()
+            .next()
+            .expect("entry");
+        assert_eq!(entry.term, long_term);
+        assert_eq!(entry.mistake.as_deref(), Some(long_mistake));
+    }
+
+    #[test]
+    fn dictionary_entry_rejects_values_beyond_limit() {
+        let db = test_db();
+        let too_long = "x".repeat(DICTIONARY_ENTRY_CHAR_LIMIT + 1);
+        let err = insert_dictionary_entry(&db, &too_long, None).expect_err("reject long term");
+        assert!(
+            err.to_string().contains("120 characters or fewer"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn snippet_update_normalizes_expansion_whitespace() {
+        let db = test_db();
+        insert_snippet(&db, "sig", "Hi", "").expect("insert");
+        let snippet = query_snippets(&db)
+            .expect("query")
+            .into_iter()
+            .next()
+            .expect("snippet");
+        // Pasted text often arrives with CRLF line endings and trailing whitespace/newlines.
+        // The backend normalizes these so paste behaves like typing.
+        update_snippet(&db, snippet.id, "sig", "Line one\r\nLine two  \n", "").expect("update");
+        let updated = query_snippets(&db)
+            .expect("query after")
+            .into_iter()
+            .next()
+            .expect("updated");
+        assert_eq!(updated.expansion, "Line one\nLine two");
+    }
+
+    #[test]
+    fn deleting_missing_entries_returns_an_error() {
+        let db = test_db();
+        let dict_err = delete_dictionary_entry(&db, 999).expect_err("missing dictionary entry");
+        assert!(
+            dict_err.to_string().contains("Dictionary entry 999 was not found"),
+            "unexpected dictionary error: {dict_err}"
+        );
+
+        let snippet_err = delete_snippet(&db, 999).expect_err("missing snippet");
+        assert!(
+            snippet_err.to_string().contains("Snippet 999 was not found"),
+            "unexpected snippet error: {snippet_err}"
+        );
+    }
+
+    #[test]
+    fn manual_delete_of_auto_learned_entry_purges_pending_corrections() {
+        let db = test_db();
+
+        insert_dictionary_entry_auto_learned(&db, "Tauri", Some("Tari"), "low").expect("insert");
+        let id = query_dictionary(&db)
+            .expect("query")
+            .into_iter()
+            .next()
+            .expect("entry")
+            .id;
+
+        insert_pending_correction(&db, "Tari", "Tauri").expect("pending");
+        assert_eq!(
+            count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count before"),
+            1
+        );
+
+        delete_dictionary_entry(&db, id).expect("delete");
+
+        assert_eq!(query_dictionary(&db).expect("query after").len(), 0);
+        assert_eq!(
+            count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count after"),
+            0,
+            "pending corrections must be purged when the auto-learned entry is manually deleted"
+        );
     }
 }

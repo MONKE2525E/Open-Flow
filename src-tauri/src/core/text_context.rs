@@ -370,9 +370,18 @@ mod tests {
     fn context_tail_newline_is_sentence_boundary() {
         // Newlines must be checked before is_invisible_prefix_char because
         // is_control() returns true for \n/\r and would otherwise skip them.
-        assert_eq!(classify_context_tail("hello\n"), SentenceContext::NewSentence);
-        assert_eq!(classify_context_tail("hello\r\n"), SentenceContext::NewSentence);
-        assert_eq!(classify_context_tail("hello,\n"), SentenceContext::NewSentence);
+        assert_eq!(
+            classify_context_tail("hello\n"),
+            SentenceContext::NewSentence
+        );
+        assert_eq!(
+            classify_context_tail("hello\r\n"),
+            SentenceContext::NewSentence
+        );
+        assert_eq!(
+            classify_context_tail("hello,\n"),
+            SentenceContext::NewSentence
+        );
     }
 
     #[test]

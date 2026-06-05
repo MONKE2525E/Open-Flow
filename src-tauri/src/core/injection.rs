@@ -261,21 +261,103 @@ fn classify_context(tail: &str) -> ContextKind {
 // Lowercasing is only applied to words in this list so that Title-Case proper
 // nouns (London, Monday, Google) are preserved in continuation context.
 const SAFE_TO_LOWERCASE: &[&str] = &[
-    "the", "a", "an",
-    "this", "that", "these", "those",
-    "it", "he", "she", "we", "they", "you",
-    "is", "was", "are", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did",
-    "will", "would", "could", "should", "may", "might", "must", "can",
-    "and", "or", "but", "if", "so", "then", "because", "though", "although",
-    "my", "your", "his", "her", "our", "their", "its",
-    "let", "just", "not", "also", "even", "now", "here", "there",
-    "make", "get", "go", "see", "think", "say", "tell", "look", "seem",
-    "all", "some", "any", "no", "more", "most", "very", "well", "still",
-    "when", "where", "how", "what", "which",
-    "please", "yes", "no", "ok", "okay",
-    "actually", "basically", "honestly", "literally", "really", "totally",
-    "with", "into", "onto", "upon", "about",
+    "the",
+    "a",
+    "an",
+    "this",
+    "that",
+    "these",
+    "those",
+    "it",
+    "he",
+    "she",
+    "we",
+    "they",
+    "you",
+    "is",
+    "was",
+    "are",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "must",
+    "can",
+    "and",
+    "or",
+    "but",
+    "if",
+    "so",
+    "then",
+    "because",
+    "though",
+    "although",
+    "my",
+    "your",
+    "his",
+    "her",
+    "our",
+    "their",
+    "its",
+    "let",
+    "just",
+    "not",
+    "also",
+    "even",
+    "now",
+    "here",
+    "there",
+    "make",
+    "get",
+    "go",
+    "see",
+    "think",
+    "say",
+    "tell",
+    "look",
+    "seem",
+    "all",
+    "some",
+    "any",
+    "no",
+    "more",
+    "most",
+    "very",
+    "well",
+    "still",
+    "when",
+    "where",
+    "how",
+    "what",
+    "which",
+    "please",
+    "yes",
+    "no",
+    "ok",
+    "okay",
+    "actually",
+    "basically",
+    "honestly",
+    "literally",
+    "really",
+    "totally",
+    "with",
+    "into",
+    "onto",
+    "upon",
+    "about",
 ];
 
 fn is_safe_lowercase_candidate(word: &str) -> bool {
@@ -346,7 +428,6 @@ fn lowercase_first_word_if_safe(text: &str) -> (String, bool) {
 fn unavailable_injection_probe() -> InjectionContextProbe {
     InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "unavailable")
 }
-
 
 fn fallback_probe_from_history(target_hwnd: usize) -> Option<InjectionContextProbe> {
     if target_hwnd == 0 || crate::core::window_context::get_foreground_hwnd() != target_hwnd {
@@ -421,8 +502,7 @@ fn apply_probe_adjustments(
                 }
             },
             text_context::InjectionPrefixClass::HardSentenceTerminator => {
-                adjusted =
-                    text_context::format_injection_text(text, probe.context, prefix_class);
+                adjusted = text_context::format_injection_text(text, probe.context, prefix_class);
                 CaseDecision::SentenceBoundaryCapitalized
             }
             text_context::InjectionPrefixClass::SoftPunctuationPrefix
@@ -699,7 +779,12 @@ async fn macos_clipboard_sniff_context(target_hwnd: usize) -> Option<InjectionCo
     // src is scoped to the block so it is dropped before the await.
     {
         let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
-        post_key_event(src.clone(), KEY_LEFT_ARROW, true, CGEventFlags::CGEventFlagShift);
+        post_key_event(
+            src.clone(),
+            KEY_LEFT_ARROW,
+            true,
+            CGEventFlags::CGEventFlagShift,
+        );
         post_key_event(src, KEY_LEFT_ARROW, false, CGEventFlags::CGEventFlagShift);
     }
     tokio::time::sleep(Duration::from_millis(30)).await;
@@ -707,7 +792,12 @@ async fn macos_clipboard_sniff_context(target_hwnd: usize) -> Option<InjectionCo
     // Cmd+C: copy selection to clipboard.
     {
         let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
-        post_key_event(src.clone(), VK_ANSI_C, true, CGEventFlags::CGEventFlagCommand);
+        post_key_event(
+            src.clone(),
+            VK_ANSI_C,
+            true,
+            CGEventFlags::CGEventFlagCommand,
+        );
         post_key_event(src, VK_ANSI_C, false, CGEventFlags::CGEventFlagCommand);
     }
     tokio::time::sleep(Duration::from_millis(30)).await;
@@ -915,15 +1005,11 @@ pub async fn inject_text(
         } else {
             unavailable_injection_probe()
         };
-        if (contextual_caps || auto_spacing)
-            && injection_probe.source.allows_history_fallback()
-        {
+        if (contextual_caps || auto_spacing) && injection_probe.source.allows_history_fallback() {
             if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
                 injection_probe = history_probe;
             } else if clipboard_sniff_enabled {
-                if let Some(sniff_probe) =
-                    macos_clipboard_sniff_context(target_hwnd).await
-                {
+                if let Some(sniff_probe) = macos_clipboard_sniff_context(target_hwnd).await {
                     injection_probe = sniff_probe;
                 }
             }

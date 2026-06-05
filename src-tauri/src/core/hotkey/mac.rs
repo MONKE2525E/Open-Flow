@@ -473,7 +473,10 @@ fn update_injection_history_for_event(event: &HotkeyEvent, now: u64) {
         crate::core::injection::reset_injection_history();
         return;
     }
-    for ch in text.chars().filter(|ch| !ch.is_control() || *ch == '\n' || *ch == '\r') {
+    for ch in text
+        .chars()
+        .filter(|ch| !ch.is_control() || *ch == '\n' || *ch == '\r')
+    {
         crate::core::injection::append_or_reset_injection_history(hwnd, ch);
         appended = true;
     }

@@ -149,8 +149,7 @@ fn get_monotonic_ms() -> u64 {
 }
 
 #[cfg(target_os = "macos")]
-static MACOS_PROBE_START_TIME: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static MACOS_PROBE_START_TIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[cfg(target_os = "macos")]
 struct MacosProbeGuard {
@@ -164,21 +163,29 @@ impl MacosProbeGuard {
 
         let now = get_monotonic_ms();
 
-        let active_time = MACOS_PROBE_START_TIME.load(Ordering::SeqCst);
-        if active_time != 0 {
-            // Block concurrent calls if the active probe has not timed out yet (2000ms threshold)
-            if now >= active_time && now - active_time < 2000 {
-                return None;
+        // Retry loop: if a concurrent probe is released between our load and the
+        // CAS, the CAS fails with the new (zero) value; loop to re-evaluate
+        // instead of incorrectly reporting busy.
+        let mut active_time = MACOS_PROBE_START_TIME.load(Ordering::SeqCst);
+        loop {
+            if active_time != 0 {
+                // Block if the active probe hasn't timed out. Also block when
+                // now < active_time: a thread with a later timestamp already
+                // acquired the guard between our load and CAS — treat it as live.
+                if now < active_time || now - active_time < 2000 {
+                    return None;
+                }
             }
-        }
 
-        if MACOS_PROBE_START_TIME
-            .compare_exchange(active_time, now, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
-        {
-            Some(Self { start_time: now })
-        } else {
-            None
+            match MACOS_PROBE_START_TIME.compare_exchange(
+                active_time,
+                now,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return Some(Self { start_time: now }),
+                Err(actual) => active_time = actual,
+            }
         }
     }
 }

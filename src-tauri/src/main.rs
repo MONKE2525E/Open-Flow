@@ -277,6 +277,7 @@ fn main() {
             commands::get_recent_logs,
             commands::download_logs,
             commands::set_dev_logging_enabled,
+            commands::log_frontend,
         ])
         .build(tauri::generate_context!())
         .expect("error building Open Flow")

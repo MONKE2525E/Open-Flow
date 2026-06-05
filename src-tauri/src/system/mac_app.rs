@@ -388,7 +388,10 @@ unsafe fn nsstring_to_string(ns: *mut AnyObject) -> Option<String> {
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
-    fn CGWindowListCopyWindowInfo(option: u32, relativeToWindow: u32) -> core_foundation_sys::array::CFArrayRef;
+    fn CGWindowListCopyWindowInfo(
+        option: u32,
+        relativeToWindow: u32,
+    ) -> core_foundation_sys::array::CFArrayRef;
     static kCGWindowNumber: core_foundation_sys::string::CFStringRef;
     static kCGWindowOwnerPID: core_foundation_sys::string::CFStringRef;
     static kCGWindowLayer: core_foundation_sys::string::CFStringRef;
@@ -496,4 +499,3 @@ mod tests {
         println!("Active window ID: {}, PID: {}", win_id, pid);
     }
 }
-

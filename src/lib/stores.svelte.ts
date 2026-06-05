@@ -47,7 +47,13 @@ export const appStore = $state({
   isOnline: true,
 });
 
-function formatIpcError(err: unknown): string {
+let snippetsFetchToken = 0;
+let dictionaryFetchToken = 0;
+
+export function cancelSnippetsFetch() { snippetsFetchToken++; }
+export function cancelDictionaryFetch() { dictionaryFetchToken++; }
+
+export function formatIpcError(err: unknown): string {
   if (typeof err === 'object' && err !== null) {
     if ('message' in err) {
       const message = (err as { message?: unknown }).message;
@@ -73,13 +79,16 @@ function formatIpcError(err: unknown): string {
 }
 
 export async function fetchSnippets(): Promise<void> {
+  const token = ++snippetsFetchToken;
   appStore.snippetsFetchStatus = 'loading';
   appStore.snippetsFetchError = '';
   try {
     const data = await invoke<Snippet[]>('get_snippets');
+    if (token !== snippetsFetchToken) return;
     appStore.snippets = data ?? [];
     appStore.snippetsFetchStatus = 'loaded';
   } catch (err) {
+    if (token !== snippetsFetchToken) return;
     console.error('IPC fetchSnippets failed:', err);
     appStore.snippetsFetchStatus = 'error';
     appStore.snippetsFetchError = formatIpcError(err);
@@ -87,13 +96,16 @@ export async function fetchSnippets(): Promise<void> {
 }
 
 export async function fetchDictionary(): Promise<void> {
+  const token = ++dictionaryFetchToken;
   appStore.dictionaryFetchStatus = 'loading';
   appStore.dictionaryFetchError = '';
   try {
     const data = await invoke<DictionaryEntry[]>('get_dictionary');
+    if (token !== dictionaryFetchToken) return;
     appStore.dictionary = data ?? [];
     appStore.dictionaryFetchStatus = 'loaded';
   } catch (err) {
+    if (token !== dictionaryFetchToken) return;
     console.error('IPC fetchDictionary failed:', err);
     appStore.dictionaryFetchStatus = 'error';
     appStore.dictionaryFetchError = formatIpcError(err);
