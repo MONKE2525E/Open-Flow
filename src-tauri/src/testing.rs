@@ -100,12 +100,24 @@ pub fn resolve_provider_fixture(
     }
 
     let lookup = key(task, provider, model);
-    let fixture = {
-        let mut state = harness().lock().ok()?;
-        let hit = state.hits.entry(lookup.clone()).or_insert(0);
-        *hit += 1;
-        state.fixtures.get(&lookup).cloned()
-    }?;
+    let mut state = match harness().lock() {
+        Ok(guard) => guard,
+        Err(_) => return Some(Err(anyhow::anyhow!("Test harness lock poisoned"))),
+    };
+    let hit = state.hits.entry(lookup.clone()).or_insert(0);
+    *hit += 1;
+
+    let fixture = match state.fixtures.get(&lookup).cloned() {
+        Some(f) => f,
+        None => {
+            return Some(Err(anyhow::anyhow!(
+                "Missing mock fixture for task='{}' provider='{}' model='{}'",
+                task,
+                provider,
+                model
+            )));
+        }
+    };
 
     if let Some(response) = fixture.response {
         return Some(Ok(response));

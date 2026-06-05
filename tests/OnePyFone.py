@@ -865,6 +865,10 @@ def _write_json_report(path: Path, profile: str, suites: List[str], results: Dic
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def xml_attr_escape(val: str) -> str:
+    return xml_escape(val, {'"': '&quot;', "'": '&apos;'})
+
+
 def _write_junit_report(path: Path, profile: str, results: Dict[str, TestResult]) -> None:
     total = len(results)
     failures = sum(1 for result in results.values() if not result.passed and not result.skipped)
@@ -872,12 +876,12 @@ def _write_junit_report(path: Path, profile: str, results: Dict[str, TestResult]
     duration = sum(result.duration for result in results.values())
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
-        f'<testsuite name="OnePyFone:{xml_escape(profile)}" tests="{total}" failures="{failures}" skipped="{skipped}" time="{duration:.3f}">',
+        f'<testsuite name="OnePyFone:{xml_attr_escape(profile)}" tests="{total}" failures="{failures}" skipped="{skipped}" time="{duration:.3f}">',
     ]
     for name, result in results.items():
-        lines.append(f'  <testcase classname="OnePyFone" name="{xml_escape(name)}" time="{result.duration:.3f}">')
+        lines.append(f'  <testcase classname="OnePyFone" name="{xml_attr_escape(name)}" time="{result.duration:.3f}">')
         if result.skipped:
-            lines.append(f'    <skipped message="{xml_escape(result.output or "Skipped")}"/>')
+            lines.append(f'    <skipped message="{xml_attr_escape(result.output or "Skipped")}"/>')
         elif not result.passed:
             lines.append(f'    <failure message="Test failed">{xml_escape(result.output)}</failure>')
         lines.append("  </testcase>")

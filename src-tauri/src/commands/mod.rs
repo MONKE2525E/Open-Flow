@@ -51,7 +51,7 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::CLEANUP_INTENSITY
         | store::MICROPHONE_DEVICE
         | "history_retention"
-        | "update_dismissed_version" => value.is_string() || value.is_null(),
+        | store::UPDATE_DISMISSED_VERSION => value.is_string() || value.is_null(),
         store::TRANSCRIPTION_MODELS_BY_PROVIDER | store::CLEANUP_MODELS_BY_PROVIDER => {
             is_model_map(value)
         }
@@ -221,7 +221,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         mic_gain: f64_val(store::MIC_GAIN),
         history_retention: str_val("history_retention"),
         microphone_device: str_val(store::MICROPHONE_DEVICE),
-        update_dismissed_version: str_val("update_dismissed_version"),
+        update_dismissed_version: str_val(store::UPDATE_DISMISSED_VERSION),
         hotkey: s.get(store::HOTKEY).and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
