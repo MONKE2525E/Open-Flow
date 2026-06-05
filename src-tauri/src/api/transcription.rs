@@ -50,7 +50,7 @@ pub async fn transcribe(
     #[cfg(any(test, debug_assertions))]
     if let Some(result) = crate::testing::resolve_provider_fixture(
         "transcription",
-        match provider {
+        match &provider {
             Provider::Groq => "groq",
             Provider::OpenAI => "openai",
             Provider::Google => "google",

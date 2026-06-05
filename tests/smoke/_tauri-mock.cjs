@@ -122,8 +122,6 @@ function tauriMock() {
       case 'get_setting':        return mem[args?.key] ?? null;
       case 'save_setting':       mem[args?.key] = args?.value; persistMem(); return null;
       case 'get_all_settings':   return {
-        setup_complete:                mem.setup_complete ?? null,
-        force_setup_on_launch:         mem.force_setup_on_launch ?? null,
         transcription_provider:        mem.transcription_provider ?? null,
         cleanup_provider:              mem.cleanup_provider ?? null,
         transcription_model:           mem.transcription_model ?? null,
@@ -140,12 +138,9 @@ function tauriMock() {
         mute_audio:                    mem.mute_audio ?? null,
         autostart_enabled:             mem.autostart_enabled ?? null,
         app_context_hint:              mem.app_context_hint ?? null,
-        api_fallback_enabled:          mem.api_fallback_enabled ?? null,
         auto_learn_enabled:            mem.auto_learn_enabled ?? null,
         contextual_caps_enabled:       mem.contextual_caps_enabled ?? null,
         auto_spacing_enabled:          mem.auto_spacing_enabled ?? null,
-        default_tone:                  mem.default_tone ?? null,
-        cleanup_intensity:             mem.cleanup_intensity ?? null,
         history_retention:             mem.history_retention ?? null,
         mic_gain:                      mem.mic_gain ?? null,
         microphone_device:             mem.microphone_device ?? null,

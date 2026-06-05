@@ -1,4 +1,5 @@
 #![cfg(any(test, debug_assertions))]
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};

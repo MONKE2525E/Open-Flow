@@ -906,8 +906,8 @@ async fn run_cleanup_and_snippets_for_db(
     profile: &str,
     app_context: Option<&str>,
 ) -> anyhow::Result<(String, Vec<db::DictionaryEntry>, String)> {
-    let mut db_snippets = db::query_snippets(&db).unwrap_or_default();
-    let dict_entries = db::query_dictionary(&db).unwrap_or_default();
+    let mut db_snippets = db::query_snippets(db).unwrap_or_default();
+    let dict_entries = db::query_dictionary(db).unwrap_or_default();
     log::debug!(
         "pipeline: cleanup inputs snippets={} dict_entries={}",
         db_snippets.len(),
@@ -936,13 +936,13 @@ async fn run_cleanup_and_snippets_for_db(
 
     // Fast path: entire transcription was a single snippet trigger — skip the LLM.
     let pure_expansion = if snippet_instructions.is_empty() {
-        snippets::try_pure_snippet_expand_from(raw, &db_snippets, &db)
+        snippets::try_pure_snippet_expand_from(raw, &db_snippets, db)
     } else {
         None
     };
     let expanded = pure_expansion
         .clone()
-        .unwrap_or_else(|| snippets::expand_snippets_from(raw, &mut db_snippets, &db));
+        .unwrap_or_else(|| snippets::expand_snippets_from(raw, &mut db_snippets, db));
     log::debug!(
         "pipeline: snippets expanded pure_fast_path={} expanded_chars={}",
         pure_expansion.is_some(),
@@ -970,7 +970,7 @@ async fn run_cleanup_and_snippets_for_db(
         };
         if !cache_key.is_empty() {
             used_cache_key = cache_key.clone();
-            if let Ok(Some(entry)) = db::cleanup_cache_get_active(&db, &cache_key) {
+            if let Ok(Some(entry)) = db::cleanup_cache_get_active(db, &cache_key) {
                 log::debug!(
                     "pipeline: cleanup cache hit key_len={} hit_count={}",
                     cache_key.len(),
@@ -982,7 +982,7 @@ async fn run_cleanup_and_snippets_for_db(
                 let new_expires_at =
                     next_cache_expiry(new_hit_count, &entry.created_at, &entry.expires_at, now);
                 let _ = db::cleanup_cache_touch_hit(
-                    &db,
+                    db,
                     &cache_key,
                     new_hit_count,
                     &now_str,
@@ -1078,7 +1078,7 @@ async fn run_cleanup_and_snippets_for_db(
                 if !cache_key.is_empty() {
                     let expires = sqlite_utc_plus(7);
                     match db::cleanup_cache_insert_new(
-                        &db,
+                        db,
                         &cache_key,
                         &cleaned,
                         &expires,
@@ -1127,6 +1127,7 @@ fn style_scoped_cleanup_cache_key(
 }
 
 #[cfg(any(test, debug_assertions))]
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct PipelineTestSnippet {
     pub trigger: String,
@@ -1135,6 +1136,7 @@ pub struct PipelineTestSnippet {
 }
 
 #[cfg(any(test, debug_assertions))]
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct PipelineTestDictionaryEntry {
     pub term: String,
@@ -1142,6 +1144,7 @@ pub struct PipelineTestDictionaryEntry {
 }
 
 #[cfg(any(test, debug_assertions))]
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct PipelineTestRequest {
     pub db: Option<DbHandle>,
@@ -1157,6 +1160,7 @@ pub struct PipelineTestRequest {
 }
 
 #[cfg(any(test, debug_assertions))]
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct PipelineTestResult {
     pub raw_text: String,
@@ -1170,6 +1174,7 @@ pub struct PipelineTestResult {
 }
 
 #[cfg(any(test, debug_assertions))]
+#[allow(dead_code)]
 pub async fn run_pipeline_fixture(
     request: PipelineTestRequest,
 ) -> anyhow::Result<PipelineTestResult> {
@@ -1183,7 +1188,10 @@ pub async fn run_pipeline_fixture(
         anyhow::bail!("No API key configured for any model in the transcription chain");
     }
 
-    let db = request.db.clone().unwrap_or(db::open(":memory:")?);
+    let db = match request.db {
+        Some(d) => d,
+        None => db::open(":memory:")?,
+    };
     for snippet in &request.snippets {
         db::insert_snippet_returning(&db, &snippet.trigger, &snippet.expansion, &snippet.instructions)?;
     }

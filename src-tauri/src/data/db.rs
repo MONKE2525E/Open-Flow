@@ -550,6 +550,7 @@ pub fn query_dictionary(db: &Db) -> Result<Vec<DictionaryEntry>> {
     Ok(rows)
 }
 
+#[allow(dead_code)]
 pub fn insert_dictionary_entry(db: &Db, term: &str, mistake: Option<&str>) -> Result<()> {
     let normalized_term = require_nonempty_trimmed("Term", term)?;
     let normalized_mistake = normalize_optional_trimmed(mistake);
@@ -883,6 +884,7 @@ pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
 
 // ---------- snippets ----------
 
+#[allow(dead_code)]
 pub fn insert_snippet(db: &Db, trigger: &str, expansion: &str, instructions: &str) -> Result<()> {
     let normalized_trigger = require_nonempty_trimmed("Trigger", trigger)?;
     validate_char_limit("Trigger", &normalized_trigger, SNIPPET_TRIGGER_CHAR_LIMIT)?;
