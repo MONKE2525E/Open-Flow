@@ -409,8 +409,7 @@ where
 fn keycode_is_navigation_or_reset(keycode: i64) -> bool {
     matches!(
         keycode,
-        KEY_RETURN
-            | KEY_TAB
+        KEY_TAB
             | KEY_FORWARD_DELETE
             | KEY_ESCAPE
             | KEY_HOME
@@ -446,6 +445,18 @@ fn update_injection_history_for_event(event: &HotkeyEvent, now: u64) {
         } else {
             let hwnd = crate::core::window_context::get_foreground_hwnd();
             crate::core::injection::backspace_injection_history(hwnd);
+        }
+        return;
+    }
+
+    if keycode == KEY_RETURN {
+        if flags & FLAG_SHIFT != 0 {
+            let hwnd = crate::core::window_context::get_foreground_hwnd();
+            if hwnd != 0 {
+                crate::core::injection::append_or_reset_injection_history(hwnd, '\n');
+            }
+        } else {
+            crate::core::injection::reset_injection_history();
         }
         return;
     }

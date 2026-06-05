@@ -140,21 +140,40 @@ pub(crate) fn describe_selection_state(range_seen: bool, range_collapsed: bool) 
 const MACOS_PROBE_TIMEOUT_MS: u64 = 45;
 
 #[cfg(target_os = "macos")]
-static MACOS_PROBE_ACTIVE: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static MACOS_PROBE_START_TIME: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 #[cfg(target_os = "macos")]
-struct MacosProbeGuard;
+struct MacosProbeGuard {
+    start_time: u64,
+}
 
 #[cfg(target_os = "macos")]
 impl MacosProbeGuard {
     fn acquire() -> Option<Self> {
         use std::sync::atomic::Ordering;
 
-        MACOS_PROBE_ACTIVE
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .ok()
-            .map(|_| Self)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        let active_time = MACOS_PROBE_START_TIME.load(Ordering::SeqCst);
+        if active_time != 0 {
+            // Block concurrent calls if the active probe has not timed out yet (2000ms threshold)
+            if now > active_time && now - active_time < 2000 {
+                return None;
+            }
+        }
+
+        if MACOS_PROBE_START_TIME
+            .compare_exchange(active_time, now, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            Some(Self { start_time: now })
+        } else {
+            None
+        }
     }
 }
 
@@ -162,8 +181,12 @@ impl MacosProbeGuard {
 impl Drop for MacosProbeGuard {
     fn drop(&mut self) {
         use std::sync::atomic::Ordering;
-
-        MACOS_PROBE_ACTIVE.store(false, Ordering::SeqCst);
+        let _ = MACOS_PROBE_START_TIME.compare_exchange(
+            self.start_time,
+            0,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
     }
 }
 
@@ -182,11 +205,14 @@ pub async fn read_injection_context_probe() -> InjectionContextProbe {
             );
         };
 
-        let task = tokio::task::spawn_blocking(|| {
+        // Move the guard into the background task thread. This holds the active lock
+        // state while the AX call runs, preventing re-entrant AX calls on short timeouts.
+        let task = tokio::task::spawn_blocking(move || {
+            let _guard = guard;
             crate::core::context_probe_macos::read_injection_context_probe_sync()
         });
 
-        let result = match tokio::time::timeout(
+        match tokio::time::timeout(
             tokio::time::Duration::from_millis(MACOS_PROBE_TIMEOUT_MS),
             task,
         )
@@ -204,10 +230,7 @@ pub async fn read_injection_context_probe() -> InjectionContextProbe {
                 log::debug!("context probe timed out after {MACOS_PROBE_TIMEOUT_MS}ms");
                 InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "probe_timeout")
             }
-        };
-
-        drop(guard);
-        result
+        }
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
