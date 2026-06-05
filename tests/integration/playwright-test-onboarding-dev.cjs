@@ -30,10 +30,12 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     await page.getByRole('button', { name: 'Next' }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
 
-    await page.waitForTimeout(300);
     const permissionHeading = page.getByRole('heading', { name: 'Check your macOS permissions' });
-    if (await permissionHeading.isVisible().catch(() => false)) {
+    try {
+      await permissionHeading.waitFor({ state: 'visible', timeout: 1000 });
       await page.getByRole('button', { name: 'Next' }).click();
+    } catch (e) {
+      // Heading did not appear (not on macOS or step skipped)
     }
 
     await page.locator('button.option-card', { has: page.locator('.option-name', { hasText: 'Direct' }) }).click();
@@ -53,10 +55,12 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     await muteToggle.click();
     await page.getByRole('button', { name: 'Next' }).click();
 
-    await page.waitForTimeout(300);
     const calibrationBox = page.locator('.calibration-box');
-    if (await calibrationBox.isVisible().catch(() => false)) {
+    try {
+      await calibrationBox.waitFor({ state: 'visible', timeout: 1000 });
       await page.locator('.step-footer .btn-skip').click();
+    } catch (e) {
+      // Calibration box did not appear
     }
 
     await page.locator('.done-summary').waitFor({ state: 'visible', timeout: TIMEOUT });
