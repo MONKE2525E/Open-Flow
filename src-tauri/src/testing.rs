@@ -37,7 +37,16 @@ fn harness() -> &'static Mutex<HarnessState> {
 }
 
 fn lock_harness() -> std::sync::MutexGuard<'static, HarnessState> {
-    harness().lock().unwrap_or_else(|err| err.into_inner())
+    match harness().lock() {
+        Ok(guard) => guard,
+        Err(err) => {
+            let mut guard = err.into_inner();
+            guard.fixtures.clear();
+            guard.hits.clear();
+            guard.injections.clear();
+            guard
+        }
+    }
 }
 
 fn key(task: &str, provider: &str, model: &str) -> String {

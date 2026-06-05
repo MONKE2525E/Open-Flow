@@ -47,20 +47,21 @@
     indicatorStyle = `left:${btn.offsetLeft}px;width:${btn.offsetWidth}px`;
   });
 
+  const readableMac: Record<string, string> = {
+    MetaLeft: 'Cmd',
+    MetaRight: 'Cmd',
+    ControlLeft: 'Ctrl',
+    ControlRight: 'Ctrl',
+    AltLeft: 'Option',
+    AltRight: 'Option',
+    ShiftLeft: 'Shift',
+    ShiftRight: 'Shift',
+    Fn: 'Fn',
+  };
+
   function formatHotkeyBadgeLabel(code: string): string {
-    if (isMac) {
-      const readableMac: Record<string, string> = {
-        MetaLeft: 'Cmd',
-        MetaRight: 'Cmd',
-        ControlLeft: 'Ctrl',
-        ControlRight: 'Ctrl',
-        AltLeft: 'Option',
-        AltRight: 'Option',
-        ShiftLeft: 'Shift',
-        ShiftRight: 'Shift',
-        Fn: 'Fn',
-      };
-      if (readableMac[code]) return readableMac[code];
+    if (isMac && readableMac[code]) {
+      return readableMac[code];
     }
     return formatKeyLabel(code);
   }

@@ -864,6 +864,7 @@ def _write_json_report(path: Path, profile: str, suites: List[str], results: Dic
             for name, result in results.items()
         ],
     }
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
@@ -894,6 +895,7 @@ def _write_junit_report(path: Path, profile: str, results: Dict[str, TestResult]
             lines.append(f'    <failure message="Test failed">{xml_escape(_sanitize_xml(result.output))}</failure>')
         lines.append("  </testcase>")
     lines.append("</testsuite>")
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 # ═══ LOOP RUNNER ══════════════════════════════════════════════════════════════
