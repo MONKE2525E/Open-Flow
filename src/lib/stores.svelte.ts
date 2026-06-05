@@ -52,11 +52,11 @@ let dictionaryFetchToken = 0;
 
 export function cancelSnippetsFetch() {
   snippetsFetchToken++;
-  if (appStore.snippetsFetchStatus === 'loading') appStore.snippetsFetchStatus = 'loaded';
+  if (appStore.snippetsFetchStatus === 'loading') appStore.snippetsFetchStatus = 'idle';
 }
 export function cancelDictionaryFetch() {
   dictionaryFetchToken++;
-  if (appStore.dictionaryFetchStatus === 'loading') appStore.dictionaryFetchStatus = 'loaded';
+  if (appStore.dictionaryFetchStatus === 'loading') appStore.dictionaryFetchStatus = 'idle';
 }
 
 export function formatIpcError(err: unknown): string {
@@ -92,7 +92,7 @@ export async function fetchSnippets(): Promise<void> {
     const data = await invoke<Snippet[]>('get_snippets');
     if (token !== snippetsFetchToken) return;
     appStore.snippets = data ?? [];
-    appStore.snippetsFetchStatus = 'loaded';
+    appStore.snippetsFetchStatus = 'idle';
   } catch (err) {
     if (token !== snippetsFetchToken) return;
     console.error('IPC fetchSnippets failed:', err);
@@ -109,7 +109,7 @@ export async function fetchDictionary(): Promise<void> {
     const data = await invoke<DictionaryEntry[]>('get_dictionary');
     if (token !== dictionaryFetchToken) return;
     appStore.dictionary = data ?? [];
-    appStore.dictionaryFetchStatus = 'loaded';
+    appStore.dictionaryFetchStatus = 'idle';
   } catch (err) {
     if (token !== dictionaryFetchToken) return;
     console.error('IPC fetchDictionary failed:', err);

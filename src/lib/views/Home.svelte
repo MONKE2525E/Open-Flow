@@ -190,9 +190,9 @@
 
   onMount(() => {
     getVersion().then(v => currentVersion = v);
-    invoke<string[] | null>('get_setting', { key: 'hotkey' }).then(hk => {
-      if (hk?.length === 2) hotkey = hk;
-    });
+    invoke<string[] | null>('get_setting', { key: 'hotkey' })
+      .then(hk => { if (hk?.length === 2) hotkey = hk; })
+      .catch(() => { /* use platform default if setting unavailable */ });
     load();
     let mounted = true;
     const unlisteners: (() => void)[] = [];
