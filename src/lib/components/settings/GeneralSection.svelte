@@ -2,7 +2,7 @@
   import { emit, invoke } from '../../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { isMac } from '../../platform';
+  import { isMac, formatKeyLabel, defaultHotkey } from '../../platform';
   import Toggle from '../Toggle.svelte';
   import { appStore } from '../../stores';
   import { saveSetting, type AppearanceMode } from '../../settings';
@@ -26,8 +26,7 @@
   let cleanup = $state(true);
   let contextualCaps = $state(true);
   let autoSpacing = $state(true);
-  let macosClipboardSniff = $state(false);
-  let hotkey = $state(['ControlLeft', 'MetaLeft']);
+  let hotkey = $state(defaultHotkey);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
   let hotkeyState = $state<'idle' | 'armed' | 'first' | 'saving' | 'success' | 'error'>('idle');
@@ -51,11 +50,11 @@
   let buttonText = $derived(
     recordingHotkey
       ? capturedKeys[0] === '__bad__'
-        ? 'Must be Alt/Ctrl/Shift/Win'
+        ? isMac ? 'Must be ⌘/⌃/⌥/⇧' : 'Must be Alt/Ctrl/Shift/Win'
         : capturedKeys.length === 0
-          ? 'Press Alt/Ctrl/Shift/Win...'
+          ? isMac ? 'Press modifier key...' : 'Press Alt/Ctrl/Shift/Win...'
           : 'Press 2nd key...'
-      : `${formatKey(hotkey[0])} + ${formatKey(hotkey[1])}`
+      : `${formatKeyLabel(hotkey[0])} + ${formatKeyLabel(hotkey[1])}`
   );
 
   $effect.pre(() => {
@@ -100,7 +99,6 @@
       invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
       invoke<string[]>('get_microphones'),
       invoke<string | null>('get_setting', { key: 'microphone_device' }),
-      invoke<boolean | null>('get_setting', { key: 'macos_clipboard_sniff_enabled' }),
     ]);
 
     const val = <T>(i: number, fallback: T): T =>
@@ -111,7 +109,6 @@
     cleanup = val<boolean | null>(5, null) ?? true;
     contextualCaps = val<boolean | null>(6, null) ?? true;
     autoSpacing = val<boolean | null>(7, null) ?? true;
-    macosClipboardSniff = val<boolean | null>(10, null) ?? false;
 
     const hk = val<string[] | null>(2, null);
     if (hk && hk.length === 2) hotkey = hk;
@@ -211,17 +208,6 @@
     }
   }
 
-  async function handleMacosClipboardSniff(value: boolean) {
-    macosClipboardSniff = value;
-    try {
-      await saveSetting('macos_clipboard_sniff_enabled', value);
-    } catch (err) {
-      macosClipboardSniff = !value;
-      console.error('save macos_clipboard_sniff_enabled failed:', err);
-    }
-  }
-
-
   async function handleAppearance(mode: AppearanceMode) {
     const previous = appStore.appearanceMode;
     appStore.appearanceMode = mode;
@@ -231,19 +217,6 @@
       appStore.appearanceMode = previous;
       console.error('save appearance_mode failed:', err);
     }
-  }
-
-  function formatKey(code: string) {
-    const labels: Record<string, string> = {
-      ControlLeft: 'Ctrl',
-      ControlRight: 'Ctrl',
-      MetaLeft: 'Windows',
-      MetaRight: 'Windows',
-      AltLeft: 'Alt',
-      AltRight: 'Alt',
-      Space: 'Space',
-    };
-    return labels[code] ?? code.replace('Left', '').replace('Right', '').replace('Key', '').replace('Digit', '');
   }
 
   function startRecordingHotkey(e: MouseEvent | KeyboardEvent) {
@@ -435,11 +408,11 @@
   </div>
 </div>
 <div class="setting-row">
-  <div><div class="label">Mute PC Audio</div><div class="desc">Mutes Windows volume while dictating to prevent audio interference</div></div>
-  <Toggle checked={muteAudio} onchange={handleMuteAudio} label="Mute PC audio" />
+  <div><div class="label">{isMac ? 'Mute System Audio' : 'Mute PC Audio'}</div><div class="desc">{isMac ? 'Mutes system volume while dictating to prevent audio interference' : 'Mutes Windows volume while dictating to prevent audio interference'}</div></div>
+  <Toggle checked={muteAudio} onchange={handleMuteAudio} label={isMac ? 'Mute system audio' : 'Mute PC audio'} />
 </div>
 <div class="setting-row">
-  <div><div class="label">Appearance</div><div class="desc">Follow Windows or force a specific theme</div></div>
+  <div><div class="label">Appearance</div><div class="desc">{isMac ? 'Follow macOS or force a specific theme' : 'Follow Windows or force a specific theme'}</div></div>
   <div class="appearance-segment" role="radiogroup" aria-label="Appearance" bind:this={segmentEl}>
     {#if indicatorStyle}
       <div class="appearance-indicator" style={indicatorStyle} aria-hidden="true"></div>
@@ -456,7 +429,7 @@
   </div>
 </div>
 <div class="setting-row">
-  <div><div class="label">Start on Boot</div><div class="desc">Launch Open Flow when Windows starts</div></div>
+  <div><div class="label">Start on Boot</div><div class="desc">{isMac ? 'Launch Open Flow when macOS starts' : 'Launch Open Flow when Windows starts'}</div></div>
   <Toggle checked={autostart} onchange={handleAutostart} label="Start on boot" />
 </div>
 <div class="setting-row">
@@ -471,21 +444,6 @@
   <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
   <Toggle checked={autoSpacing} onchange={handleAutoSpacing} label="Automatic spacing" />
 </div>
-{#if isMac}
-  <div class="setting-row">
-    <div>
-      <div class="label">Clipboard sniffing fallback</div>
-      <div class="desc">Allows reading clipboard to guess capitalization and spacing in unsupported editors (may disrupt existing text selections)</div>
-    </div>
-    <Toggle checked={macosClipboardSniff} onchange={handleMacosClipboardSniff} label="Clipboard sniffing fallback" />
-  </div>
-  <div class="setting-row setting-row-note">
-    <div>
-      <div class="label">macOS behavior</div>
-      <div class="desc">Supported editors use caret-local context. If an editor is unreadable or unsupported, Open Flow degrades conservatively and pastes without guessing capitalization or leading spaces.</div>
-    </div>
-  </div>
-{/if}
 
 <style>
   .keybind-btn {
