@@ -1,6 +1,7 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+use crate::core::context_probe::{ContextProbeSource, InjectionContextProbe, SelectionState};
 use crate::core::text_context;
 
 // Maximum bytes stored for backspace-tracking. Covers any practical editing sequence
@@ -100,11 +101,21 @@ mod tests {
     }
 
     #[test]
-    fn lowercase_first_word_only_for_safe_words() {
+    fn lowercase_first_word_blocked_for_i_acronyms_and_camelcase() {
+        // Common words are lowercased in continuation context.
         assert_eq!(
             lowercase_first_word_if_safe("The fix is ready"),
             ("the fix is ready".into(), true)
         );
+        assert_eq!(
+            lowercase_first_word_if_safe("Let me explain"),
+            ("let me explain".into(), true)
+        );
+        assert_eq!(
+            lowercase_first_word_if_safe("Make sure to do this"),
+            ("make sure to do this".into(), true)
+        );
+        // Structural guards must still block "I", acronyms, and CamelCase.
         assert_eq!(
             lowercase_first_word_if_safe("OpenAI ships model updates"),
             ("OpenAI ships model updates".into(), false)
@@ -168,6 +179,7 @@ fn context_kind_from_sentence_context(
 #[derive(Clone, Copy, Debug)]
 enum CaseDecision {
     ContextualCapsDisabled,
+    ConservativeDegradePreserved,
     UnknownContextPreserved,
     SentenceBoundaryCapitalized,
     SentenceBoundaryPreservedVeryCasual,
@@ -178,6 +190,7 @@ impl CaseDecision {
     fn as_str(self) -> &'static str {
         match self {
             Self::ContextualCapsDisabled => "contextual_caps_disabled",
+            Self::ConservativeDegradePreserved => "conservative_degrade_preserved",
             Self::UnknownContextPreserved => "unknown_context_preserved",
             Self::SentenceBoundaryCapitalized => "sentence_boundary_capitalized",
             Self::SentenceBoundaryPreservedVeryCasual => "sentence_boundary_preserved_very_casual",
@@ -190,6 +203,8 @@ pub struct InjectionOutcome {
     pub text: String,
     pub context_state: &'static str,
     pub case_decision: &'static str,
+    pub probe_source: &'static str,
+    pub selection_state: &'static str,
 }
 static LAST_INJECTION: OnceLock<Mutex<CursorContextState>> = OnceLock::new();
 fn unknown_context() -> CursorContextState {
@@ -253,11 +268,11 @@ fn is_safe_lowercase_candidate(word: &str) -> bool {
     if chars.any(|c| c.is_uppercase()) {
         return false;
     }
-    const LOWERCASE_WHITELIST: &[&str] = &[
-        "a", "an", "and", "as", "at", "but", "by", "for", "from", "if", "in", "is", "it", "of",
-        "on", "or", "so", "than", "that", "the", "then", "this", "to", "we", "with", "you",
-    ];
-    LOWERCASE_WHITELIST.contains(&lower.as_str())
+    // All structural guards above already block "I", acronyms (all-caps), and
+    // CamelCase proper nouns (OpenAI, iPhone). Any Title-Case word that passes
+    // those checks is safe to lowercase in a confirmed continuation context.
+    let _ = lower;
+    true
 }
 fn find_first_alpha_span(text: &str) -> Option<(usize, usize)> {
     let mut start = None;
@@ -316,24 +331,118 @@ fn lowercase_first_word_if_safe(text: &str) -> (String, bool) {
     out.push_str(&text[start + first_len..]);
     (out, true)
 }
-fn injection_context(target_hwnd: usize, contextual_caps: bool, auto_spacing: bool) -> String {
-    if !(contextual_caps || auto_spacing) {
-        return String::new();
+fn unavailable_injection_probe() -> InjectionContextProbe {
+    InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "unavailable")
+}
+
+
+fn fallback_probe_from_history(target_hwnd: usize) -> Option<InjectionContextProbe> {
+    if target_hwnd == 0 || crate::core::window_context::get_foreground_hwnd() != target_hwnd {
+        return None;
     }
+
     match last_injection().lock() {
         Ok(guard) => match &*guard {
             CursorContextState::Known {
                 hwnd,
                 tail,
                 instant,
-            } if *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE => tail.clone(),
-            _ => String::new(),
+            } if *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE => {
+                Some(InjectionContextProbe {
+                    context: crate::core::text_context::classify_context_tail(tail),
+                    source: ContextProbeSource::HistoryFallback,
+                    context_tail: tail.clone(),
+                    control_type: "history_tail".to_string(),
+                    selection_state: SelectionState::Unknown,
+                    control_identity_hash: "history_tail".to_string(),
+                })
+            }
+            CursorContextState::Unknown { instant } => {
+                let _ = instant.elapsed();
+                None
+            }
+            _ => None,
         },
         Err(_) => {
             log::error!("injection history mutex poisoned");
-            String::new()
+            None
         }
     }
+}
+
+fn apply_probe_adjustments(
+    text: &str,
+    contextual_caps: bool,
+    auto_spacing: bool,
+    profile: &str,
+    probe: &InjectionContextProbe,
+) -> (String, ContextKind, CaseDecision) {
+    let prefix_class = text_context::classify_leading_prefix(text);
+    let context_kind = context_kind_from_sentence_context(probe.context);
+    let mut adjusted = text.to_owned();
+
+    let case_decision = if !contextual_caps {
+        CaseDecision::ContextualCapsDisabled
+    } else if !probe.source.supports_contextual_casing() {
+        CaseDecision::ConservativeDegradePreserved
+    } else if probe.context == crate::core::text_context::SentenceContext::NewSentence
+        && profile == "very_casual"
+    {
+        CaseDecision::SentenceBoundaryPreservedVeryCasual
+    } else {
+        match prefix_class {
+            text_context::InjectionPrefixClass::PlainWordStart => match context_kind {
+                ContextKind::Unknown => CaseDecision::UnknownContextPreserved,
+                ContextKind::SentenceBoundary => {
+                    adjusted =
+                        text_context::format_injection_text(text, probe.context, prefix_class);
+                    CaseDecision::SentenceBoundaryCapitalized
+                }
+                ContextKind::Continuation => {
+                    let (lowered, did_lower) = lowercase_first_word_if_safe(text);
+                    if did_lower {
+                        adjusted = lowered;
+                        CaseDecision::ContinuationLowercased
+                    } else {
+                        CaseDecision::ContinuationPreserved
+                    }
+                }
+            },
+            text_context::InjectionPrefixClass::HardSentenceTerminator => {
+                if matches!(context_kind, ContextKind::SentenceBoundary) {
+                    adjusted =
+                        text_context::format_injection_text(text, probe.context, prefix_class);
+                    CaseDecision::SentenceBoundaryCapitalized
+                } else if matches!(context_kind, ContextKind::Unknown) {
+                    CaseDecision::UnknownContextPreserved
+                } else {
+                    CaseDecision::ContinuationPreserved
+                }
+            }
+            text_context::InjectionPrefixClass::SoftPunctuationPrefix
+            | text_context::InjectionPrefixClass::InvisibleOrAmbiguousPrefix => {
+                match context_kind {
+                    ContextKind::Unknown => CaseDecision::UnknownContextPreserved,
+                    ContextKind::SentenceBoundary => CaseDecision::SentenceBoundaryCapitalized,
+                    ContextKind::Continuation => CaseDecision::ContinuationPreserved,
+                }
+            }
+        }
+    };
+
+    if auto_spacing
+        && text_context::should_add_leading_injection_space(
+            text,
+            probe.context,
+            prefix_class,
+            probe.source.supports_auto_spacing(),
+            &probe.context_tail,
+        )
+    {
+        adjusted = format!(" {adjusted}");
+    }
+
+    (adjusted, context_kind, case_decision)
 }
 #[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
 pub fn reset_injection_history() {
@@ -542,6 +651,82 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn post_key_event(
+    src: core_graphics::event_source::CGEventSource,
+    keycode: core_graphics::event::CGKeyCode,
+    down: bool,
+    flags: core_graphics::event::CGEventFlags,
+) {
+    use core_graphics::event::{CGEvent, CGEventTapLocation};
+    if let Ok(e) = CGEvent::new_keyboard_event(src, keycode, down) {
+        e.set_flags(flags);
+        e.post(CGEventTapLocation::HID);
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn macos_clipboard_sniff_context(target_hwnd: usize) -> Option<InjectionContextProbe> {
+    use core_graphics::event::{CGEventFlags, CGKeyCode};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    const KEY_LEFT_ARROW: CGKeyCode = 123;
+    const KEY_RIGHT_ARROW: CGKeyCode = 124;
+    const VK_ANSI_C: CGKeyCode = 8;
+
+    if crate::core::window_context::get_foreground_hwnd() != target_hwnd {
+        return None;
+    }
+
+    // Clear clipboard so empty selection stays empty, not previous clipboard content.
+    crate::system::mac_app::pasteboard_set_string("");
+
+    // Shift+Left: select one char back (no-op if cursor is at field start).
+    // src is scoped to the block so it is dropped before the await.
+    {
+        let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
+        post_key_event(src.clone(), KEY_LEFT_ARROW, true, CGEventFlags::CGEventFlagShift);
+        post_key_event(src, KEY_LEFT_ARROW, false, CGEventFlags::CGEventFlagShift);
+    }
+    tokio::time::sleep(Duration::from_millis(30)).await;
+
+    // Cmd+C: copy selection to clipboard.
+    {
+        let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
+        post_key_event(src.clone(), VK_ANSI_C, true, CGEventFlags::CGEventFlagCommand);
+        post_key_event(src, VK_ANSI_C, false, CGEventFlags::CGEventFlagCommand);
+    }
+    tokio::time::sleep(Duration::from_millis(30)).await;
+
+    let sniffed = crate::system::mac_app::pasteboard_get_string().unwrap_or_default();
+
+    // Right: deselect and restore cursor position.
+    // Skipped when nothing was selected (cursor was at field start).
+    if !sniffed.is_empty() {
+        {
+            let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
+            post_key_event(src.clone(), KEY_RIGHT_ARROW, true, CGEventFlags::empty());
+            post_key_event(src, KEY_RIGHT_ARROW, false, CGEventFlags::empty());
+        }
+        tokio::time::sleep(Duration::from_millis(15)).await;
+    }
+
+    let context = if sniffed.is_empty() {
+        crate::core::text_context::SentenceContext::NewSentence
+    } else {
+        crate::core::text_context::classify_context_tail(&sniffed)
+    };
+
+    Some(InjectionContextProbe {
+        context,
+        source: ContextProbeSource::ClipboardSniff,
+        context_tail: sniffed,
+        control_type: "clipboard_sniff".to_string(),
+        selection_state: SelectionState::Unknown,
+        control_identity_hash: "clipboard_sniff".to_string(),
+    })
+}
+
 pub async fn inject_text(
     text: &str,
     target_hwnd: usize,
@@ -586,109 +771,28 @@ pub async fn inject_text(
                 },
             };
 
-            // Read cursor context from the tracked tail.
-            // moves the cursor, or switches windows - so when it's absent the context
-            // is genuinely unknown and we default to capitalising (safe for new fields).
-            let prefix_class = text_context::classify_leading_prefix(text);
-            let injection_probe = if contextual_caps || auto_spacing {
-                crate::api::auto_learn::read_injection_context_probe()
+            // Read cursor context from the focused control when possible.
+            // If Windows UIA cannot provide any probe at all, fall back to the
+            // recent injection tail for the same target window.
+            let mut injection_probe = if contextual_caps || auto_spacing {
+                crate::core::context_probe::read_injection_context_probe().await
             } else {
-                crate::api::auto_learn::InjectionContextProbe {
-                    context: crate::core::text_context::SentenceContext::Unknown,
-                    source: crate::api::auto_learn::InjectionProbeSource::Unavailable,
-                    context_tail: String::new(),
-                    control_type: "unavailable".to_string(),
-                    pattern_support: "unavailable".to_string(),
-                    selection_state: crate::api::auto_learn::SelectionState::Unknown,
-                    control_identity_hash: "unavailable".to_string(),
-                }
+                unavailable_injection_probe()
             };
-            let context_kind = context_kind_from_sentence_context(injection_probe.context);
-            let source_is_caret_local = matches!(
-                injection_probe.source,
-                crate::api::auto_learn::InjectionProbeSource::CaretLocal
-            );
-
-            // Apply profile-aware casing using the probe-derived context state.
-            let mut adjusted = text.to_owned();
-            let case_decision = if !contextual_caps {
-                CaseDecision::ContextualCapsDisabled
-            } else if injection_probe.context
-                == crate::core::text_context::SentenceContext::NewSentence
-                && profile == "very_casual"
-            {
-                CaseDecision::SentenceBoundaryPreservedVeryCasual
-            } else {
-                match prefix_class {
-                    text_context::InjectionPrefixClass::PlainWordStart => match context_kind {
-                        ContextKind::Unknown => {
-                            adjusted = text_context::format_injection_text(
-                                text,
-                                injection_probe.context,
-                                prefix_class,
-                            );
-                            if adjusted == text {
-                                CaseDecision::UnknownContextPreserved
-                            } else {
-                                CaseDecision::SentenceBoundaryCapitalized
-                            }
-                        }
-                        ContextKind::SentenceBoundary => {
-                            adjusted = text_context::format_injection_text(
-                                text,
-                                injection_probe.context,
-                                prefix_class,
-                            );
-                            CaseDecision::SentenceBoundaryCapitalized
-                        }
-                        ContextKind::Continuation => {
-                            let (lowered, did_lower) = lowercase_first_word_if_safe(text);
-                            if did_lower {
-                                adjusted = lowered;
-                                CaseDecision::ContinuationLowercased
-                            } else {
-                                CaseDecision::ContinuationPreserved
-                            }
-                        }
-                    },
-                    text_context::InjectionPrefixClass::HardSentenceTerminator => {
-                        adjusted = text_context::format_injection_text(
-                            text,
-                            injection_probe.context,
-                            prefix_class,
-                        );
-                        CaseDecision::SentenceBoundaryCapitalized
-                    }
-                    text_context::InjectionPrefixClass::SoftPunctuationPrefix
-                    | text_context::InjectionPrefixClass::InvisibleOrAmbiguousPrefix => {
-                        adjusted = text_context::format_injection_text(
-                            text,
-                            injection_probe.context,
-                            prefix_class,
-                        );
-                        match context_kind {
-                            ContextKind::Unknown => CaseDecision::UnknownContextPreserved,
-                            ContextKind::SentenceBoundary => {
-                                CaseDecision::SentenceBoundaryCapitalized
-                            }
-                            ContextKind::Continuation => CaseDecision::ContinuationPreserved,
-                        }
+            if contextual_caps || auto_spacing {
+                if injection_probe.source.allows_history_fallback() {
+                    if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
+                        injection_probe = history_probe;
                     }
                 }
-            };
-
-            // Add a space only when the probe sees real caret-local context.
-            if auto_spacing
-                && text_context::should_add_leading_injection_space(
-                    text,
-                    injection_probe.context,
-                    prefix_class,
-                    source_is_caret_local,
-                    &injection_probe.context_tail,
-                )
-            {
-                adjusted = format!(" {adjusted}");
             }
+            let (adjusted, context_kind, case_decision) = apply_probe_adjustments(
+                text,
+                contextual_caps,
+                auto_spacing,
+                profile,
+                &injection_probe,
+            );
 
             let text_to_inject = adjusted.as_str();
 
@@ -768,6 +872,8 @@ pub async fn inject_text(
                 text: adjusted,
                 context_state: context_kind.as_str(),
                 case_decision: case_decision.as_str(),
+                probe_source: injection_probe.source.as_str(),
+                selection_state: injection_probe.selection_state.as_str(),
             })
         }
     }
@@ -784,68 +890,39 @@ pub async fn inject_text(
             tokio::time::sleep(Duration::from_millis(120)).await;
         }
 
-        let context = injection_context(target_hwnd, contextual_caps, auto_spacing);
-        let (mut adjusted, context_kind, case_decision) = if !contextual_caps {
-            (
-                text.to_owned(),
-                ContextKind::Unknown,
-                CaseDecision::ContextualCapsDisabled,
-            )
-        } else {
-            match classify_context(&context) {
-                ContextKind::Unknown => (
-                    text.to_owned(),
-                    ContextKind::Unknown,
-                    CaseDecision::UnknownContextPreserved,
-                ),
-                ContextKind::SentenceBoundary => {
-                    if profile == "very_casual" {
-                        (
-                            text.to_owned(),
-                            ContextKind::SentenceBoundary,
-                            CaseDecision::SentenceBoundaryPreservedVeryCasual,
-                        )
-                    } else {
-                        (
-                            uppercase_first_word(text),
-                            ContextKind::SentenceBoundary,
-                            CaseDecision::SentenceBoundaryCapitalized,
-                        )
-                    }
-                }
-                ContextKind::Continuation => {
-                    let (lowered, did_lower) = lowercase_first_word_if_safe(text);
-                    if did_lower {
-                        (
-                            lowered,
-                            ContextKind::Continuation,
-                            CaseDecision::ContinuationLowercased,
-                        )
-                    } else {
-                        (
-                            text.to_owned(),
-                            ContextKind::Continuation,
-                            CaseDecision::ContinuationPreserved,
-                        )
-                    }
-                }
-            }
-        };
+        // Save original clipboard before any sniff that might clear it.
+        let saved = crate::system::mac_app::pasteboard_get_string();
 
-        if auto_spacing {
-            if let Some(c) = context.chars().next_back() {
-                if !c.is_whitespace() && !adjusted.starts_with(char::is_whitespace) {
-                    adjusted = format!(" {adjusted}");
+        let mut injection_probe = if contextual_caps || auto_spacing {
+            crate::core::context_probe::read_injection_context_probe().await
+        } else {
+            unavailable_injection_probe()
+        };
+        if contextual_caps || auto_spacing {
+            if injection_probe.source.allows_history_fallback() {
+                if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
+                    injection_probe = history_probe;
+                } else if let Some(sniff_probe) =
+                    macos_clipboard_sniff_context(target_hwnd).await
+                {
+                    injection_probe = sniff_probe;
                 }
             }
         }
+        let (adjusted, context_kind, case_decision) = apply_probe_adjustments(
+            text,
+            contextual_caps,
+            auto_spacing,
+            profile,
+            &injection_probe,
+        );
 
-        let saved = crate::system::mac_app::pasteboard_get_string();
         crate::system::mac_app::pasteboard_set_string(&adjusted);
         tokio::time::sleep(Duration::from_millis(20)).await;
 
         let posted = (|| -> Option<()> {
             let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
+            crate::core::hotkey::begin_synthetic_paste_suppression(400);
             let down = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, true).ok()?;
             // core-graphics 0.24.x exposes the Command modifier under the
             // CGEventFlagCommand name.
@@ -885,6 +962,8 @@ pub async fn inject_text(
             text: adjusted,
             context_state: context_kind.as_str(),
             case_decision: case_decision.as_str(),
+            probe_source: injection_probe.source.as_str(),
+            selection_state: injection_probe.selection_state.as_str(),
         })
     }
 
@@ -896,6 +975,8 @@ pub async fn inject_text(
             text: text.to_string(),
             context_state: "unknown",
             case_decision: "contextual_caps_disabled",
+            probe_source: "unavailable",
+            selection_state: "unknown",
         })
     }
 }

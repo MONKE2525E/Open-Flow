@@ -2,6 +2,7 @@
   import { emit, invoke } from '../../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
+  import { isMac } from '../../platform';
   import Toggle from '../Toggle.svelte';
   import { appStore } from '../../stores';
   import { saveSetting, type AppearanceMode } from '../../settings';
@@ -457,6 +458,14 @@
   <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
   <Toggle checked={autoSpacing} onchange={handleAutoSpacing} label="Automatic spacing" />
 </div>
+{#if isMac}
+  <div class="setting-row setting-row-note">
+    <div>
+      <div class="label">macOS behavior</div>
+      <div class="desc">Supported editors use caret-local context. If an editor is unreadable or unsupported, Open Flow degrades conservatively and pastes without guessing capitalization or leading spaces.</div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .keybind-btn {

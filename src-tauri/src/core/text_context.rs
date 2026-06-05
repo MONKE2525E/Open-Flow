@@ -241,13 +241,13 @@ pub fn should_add_leading_injection_space(
     text: &str,
     context: SentenceContext,
     prefix: InjectionPrefixClass,
-    source_is_caret_local: bool,
+    source_allows_spacing: bool,
     context_tail: &str,
 ) -> bool {
     if text.starts_with(char::is_whitespace) {
         return false;
     }
-    if !source_is_caret_local {
+    if !source_allows_spacing {
         return false;
     }
     if !tail_ends_with_visible_char(context_tail) {

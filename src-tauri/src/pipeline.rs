@@ -1360,16 +1360,20 @@ async fn finalize_pipeline_completion(
                 text: final_text_substituted.clone(),
                 context_state: "unknown",
                 case_decision: "inject_failed",
+                probe_source: "unavailable",
+                selection_state: "unknown",
             }
         }
     };
     let injected_text = injected.text;
     log::debug!(
-        "pipeline: injection done contextual_caps={} auto_spacing={} context_state={} case_decision={} output_chars={} stage_ms={}",
+        "pipeline: injection done contextual_caps={} auto_spacing={} context_state={} case_decision={} probe_source={} selection_state={} output_chars={} stage_ms={}",
         ctx.cfg.contextual_caps_enabled,
         ctx.cfg.auto_spacing_enabled,
         injected.context_state,
         injected.case_decision,
+        injected.probe_source,
+        injected.selection_state,
         injected_text.chars().count(),
         inject_stage.elapsed().as_millis()
     );

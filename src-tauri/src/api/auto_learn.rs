@@ -4,6 +4,13 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_store::StoreExt;
 
 #[cfg(windows)]
+use crate::core::context_probe::{
+    describe_selection_state, resolve_context_from_tail, stable_metadata_hash, ContextProbeSource,
+    InjectionContextProbe, SelectionState,
+};
+#[cfg(not(windows))]
+use crate::core::context_probe::{ContextProbeSource, InjectionContextProbe};
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::core::text_context::{is_invisible_prefix_char as is_invisible_probe_char, SentenceContext};
@@ -875,6 +882,7 @@ struct FocusedTextReader {
     automation: windows::Win32::UI::Accessibility::IUIAutomation,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FocusedTextProbe {
     Text(String),
@@ -882,75 +890,6 @@ pub enum FocusedTextProbe {
     Unavailable,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SelectionState {
-    EmptyField,
-    CollapsedCaret,
-    NonCollapsedSelection,
-    Unknown,
-}
-
-impl SelectionState {
-    #[allow(dead_code, clippy::wrong_self_convention)]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SelectionState::EmptyField => "empty_field",
-            SelectionState::CollapsedCaret => "collapsed_caret",
-            SelectionState::NonCollapsedSelection => "non_collapsed_selection",
-            SelectionState::Unknown => "unknown",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InjectionProbeSource {
-    EmptyField,
-    CaretLocal,
-    Ambiguous,
-    NonTextFocus,
-    Unavailable,
-}
-
-impl InjectionProbeSource {
-    #[allow(dead_code, clippy::wrong_self_convention)]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            InjectionProbeSource::EmptyField => "empty_field",
-            InjectionProbeSource::CaretLocal => "caret_local",
-            InjectionProbeSource::Ambiguous => "ambiguous",
-            InjectionProbeSource::NonTextFocus => "non_text_focus",
-            InjectionProbeSource::Unavailable => "unavailable",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InjectionContextProbe {
-    pub context: SentenceContext,
-    pub source: InjectionProbeSource,
-    pub context_tail: String,
-    pub control_type: String,
-    pub pattern_support: String,
-    pub selection_state: SelectionState,
-    pub control_identity_hash: String,
-}
-
-fn stable_metadata_hash(parts: &[&str]) -> String {
-    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-
-    let mut hash = FNV_OFFSET_BASIS;
-    for part in parts {
-        for byte in part.as_bytes() {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(FNV_PRIME);
-        }
-        hash ^= u64::from(b'|');
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-
-    format!("{hash:016x}")
-}
 
 #[cfg(windows)]
 fn control_type_label(control_type: i32) -> String {
@@ -970,14 +909,7 @@ fn control_type_label(control_type: i32) -> String {
     }
 }
 
-fn pattern_support_label(value: bool, text: bool, text2: bool, read_only: Option<bool>) -> String {
-    let read_only_label = read_only.map(|v| if v { "1" } else { "0" }).unwrap_or("?");
-    format!(
-        "value={} text={} text2={} readonly={}",
-        value as u8, text as u8, text2 as u8, read_only_label
-    )
-}
-
+#[cfg_attr(not(windows), allow(dead_code))]
 fn is_effectively_empty_text(text: &str) -> bool {
     text.chars().all(is_invisible_probe_char)
 }
@@ -1049,35 +981,6 @@ fn resolve_injection_context(field_empty: bool, caret_context: Option<char>) -> 
         classify_caret_char(ch).unwrap_or(SentenceContext::Unknown)
     } else {
         SentenceContext::Unknown
-    }
-}
-
-fn resolve_injection_context_from_tail(
-    field_empty: bool,
-    caret_context: Option<&str>,
-) -> SentenceContext {
-    if field_empty {
-        SentenceContext::NewSentence
-    } else if let Some(text) = caret_context {
-        crate::core::text_context::classify_context_tail(text)
-    } else {
-        SentenceContext::Unknown
-    }
-}
-
-fn describe_selection_state(
-    field_empty: bool,
-    range_seen: bool,
-    range_collapsed: bool,
-) -> SelectionState {
-    if field_empty {
-        SelectionState::EmptyField
-    } else if range_seen && range_collapsed {
-        SelectionState::CollapsedCaret
-    } else if range_seen {
-        SelectionState::NonCollapsedSelection
-    } else {
-        SelectionState::Unknown
     }
 }
 
@@ -1175,15 +1078,10 @@ impl FocusedTextReader {
             let element = match self.automation.GetFocusedElement() {
                 Ok(element) => element,
                 Err(_) => {
-                    return InjectionContextProbe {
-                        context: SentenceContext::Unknown,
-                        source: InjectionProbeSource::Unavailable,
-                        context_tail: String::new(),
-                        control_type: "unknown".to_string(),
-                        pattern_support: "unavailable".to_string(),
-                        selection_state: SelectionState::Unknown,
-                        control_identity_hash: "unavailable".to_string(),
-                    }
+                    return InjectionContextProbe::unavailable(
+                        ContextProbeSource::Unavailable,
+                        "unknown",
+                    );
                 }
             };
 
@@ -1208,13 +1106,6 @@ impl FocusedTextReader {
                 .as_ref()
                 .and_then(|pattern| pattern.CurrentValue().ok())
                 .map(|value| is_effectively_empty_text(&value.to_string()));
-            let pattern_support = pattern_support_label(
-                value_pattern.is_some(),
-                text_pattern.is_some(),
-                text_pattern2.is_some(),
-                read_only,
-            );
-
             let automation_id = element
                 .CurrentAutomationId()
                 .map(|value| value.to_string())
@@ -1237,10 +1128,9 @@ impl FocusedTextReader {
             if read_only == Some(true) {
                 return InjectionContextProbe {
                     context: SentenceContext::Unknown,
-                    source: InjectionProbeSource::NonTextFocus,
+                    source: ContextProbeSource::UnsupportedControl,
                     context_tail: String::new(),
                     control_type,
-                    pattern_support,
                     selection_state: SelectionState::Unknown,
                     control_identity_hash,
                 };
@@ -1249,11 +1139,10 @@ impl FocusedTextReader {
             if value_is_empty == Some(true) {
                 return InjectionContextProbe {
                     context: SentenceContext::NewSentence,
-                    source: InjectionProbeSource::EmptyField,
+                    source: ContextProbeSource::EmptyField,
                     context_tail: String::new(),
                     control_type,
-                    pattern_support,
-                    selection_state: SelectionState::EmptyField,
+                    selection_state: SelectionState::Unknown,
                     control_identity_hash,
                 };
             }
@@ -1261,7 +1150,7 @@ impl FocusedTextReader {
             let mut range_seen = false;
             let mut range_collapsed = false;
             let mut caret_context: Option<String> = None;
-            let mut source = InjectionProbeSource::NonTextFocus;
+            let mut source = ContextProbeSource::UnsupportedControl;
 
             if let Some(pattern) = &text_pattern2 {
                 let mut is_active = windows::core::BOOL::default();
@@ -1271,9 +1160,9 @@ impl FocusedTextReader {
                         range_collapsed = true;
                         caret_context = read_previous_context_text(&range);
                         if caret_context.is_some() {
-                            source = InjectionProbeSource::CaretLocal;
+                            source = ContextProbeSource::CaretLocal;
                         } else {
-                            source = InjectionProbeSource::EmptyField;
+                            source = ContextProbeSource::EmptyField;
                         }
                     }
                 }
@@ -1290,38 +1179,35 @@ impl FocusedTextReader {
                                     if range_collapsed {
                                         caret_context = read_previous_context_text(&range);
                                         source = if caret_context.is_some() {
-                                            InjectionProbeSource::CaretLocal
+                                            ContextProbeSource::CaretLocal
                                         } else {
-                                            InjectionProbeSource::EmptyField
+                                            ContextProbeSource::EmptyField
                                         };
                                     } else {
-                                        source = InjectionProbeSource::Ambiguous;
+                                        source = ContextProbeSource::AmbiguousSelection;
                                     }
                                 }
                             } else if len > 1 {
                                 range_seen = true;
-                                source = InjectionProbeSource::Ambiguous;
+                                source = ContextProbeSource::AmbiguousSelection;
                             }
                         }
                     }
                 }
             }
 
-            let field_empty = caret_context.is_none() && source == InjectionProbeSource::EmptyField;
-            let context =
-                resolve_injection_context_from_tail(field_empty, caret_context.as_deref());
+            let field_empty = caret_context.is_none() && source == ContextProbeSource::EmptyField;
+            let context = resolve_context_from_tail(field_empty, caret_context.as_deref());
             if matches!(context, SentenceContext::Unknown) && caret_context.is_some() {
-                source = InjectionProbeSource::Ambiguous;
+                source = ContextProbeSource::AmbiguousSelection;
             }
-            let selection_state =
-                describe_selection_state(field_empty, range_seen, range_collapsed);
+            let selection_state = describe_selection_state(range_seen, range_collapsed);
 
             InjectionContextProbe {
                 context,
                 source,
                 context_tail: caret_context.clone().unwrap_or_default(),
                 control_type,
-                pattern_support,
                 selection_state,
                 control_identity_hash,
             }
@@ -1329,6 +1215,7 @@ impl FocusedTextReader {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 #[cfg(windows)]
 pub fn read_focused_text_probe() -> FocusedTextProbe {
     FOCUSED_TEXT_STATE.with(|cell| {
@@ -1352,6 +1239,7 @@ pub fn read_focused_text() -> Option<String> {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 #[cfg(windows)]
 pub fn read_injection_context_probe() -> InjectionContextProbe {
     FOCUSED_TEXT_STATE.with(|cell| {
@@ -1362,15 +1250,9 @@ pub fn read_injection_context_probe() -> InjectionContextProbe {
         let reader = guard.reader.get_or_insert_with(FocusedTextReader::new);
         match reader.as_ref() {
             Some(reader) => reader.read_injection_context_probe(),
-            None => InjectionContextProbe {
-                context: SentenceContext::Unknown,
-                source: InjectionProbeSource::Unavailable,
-                context_tail: String::new(),
-                control_type: "unavailable".to_string(),
-                pattern_support: "unavailable".to_string(),
-                selection_state: SelectionState::Unknown,
-                control_identity_hash: "unavailable".to_string(),
-            },
+            None => {
+                InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "unavailable")
+            }
         }
     })
 }
@@ -1552,6 +1434,7 @@ fn ensure_value_change_hook() -> bool {
     spawned
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 #[cfg(not(windows))]
 pub fn read_focused_text_probe() -> FocusedTextProbe {
     FocusedTextProbe::Unavailable
@@ -1562,17 +1445,10 @@ pub fn read_focused_text() -> Option<String> {
     None
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 #[cfg(not(windows))]
 pub fn read_injection_context_probe() -> InjectionContextProbe {
-    InjectionContextProbe {
-        context: SentenceContext::Unknown,
-        source: InjectionProbeSource::Unavailable,
-        context_tail: String::new(),
-        control_type: "unavailable".to_string(),
-        pattern_support: "unavailable".to_string(),
-        selection_state: SelectionState::Unknown,
-        control_identity_hash: "unavailable".to_string(),
-    }
+    InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "unavailable")
 }
 
 fn auto_learn_event_mode_enabled(app: &AppHandle) -> bool {
