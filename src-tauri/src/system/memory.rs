@@ -44,7 +44,6 @@ pub fn measure() -> u64 {
                 let bytes = bytes as usize;
                 let count = bytes.min(buf.len());
                 for pid in buf.into_iter().take(count) {
-                    let pid = pid as i32;
                     if pid > 0 && pid != ppid {
                         found.insert(pid);
                     }

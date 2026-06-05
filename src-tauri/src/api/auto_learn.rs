@@ -13,7 +13,9 @@ use crate::core::context_probe::{ContextProbeSource, InjectionContextProbe};
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use crate::core::text_context::{is_invisible_prefix_char as is_invisible_probe_char, SentenceContext};
+use crate::core::text_context::is_invisible_prefix_char as is_invisible_probe_char;
+#[cfg(any(windows, test))]
+use crate::core::text_context::SentenceContext;
 use crate::data::{db, store};
 use crate::DbHandle;
 

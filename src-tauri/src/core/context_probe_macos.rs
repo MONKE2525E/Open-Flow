@@ -1,6 +1,6 @@
 #![cfg(target_os = "macos")]
 
-use std::ffi::{c_char, CStr};
+use std::ffi::c_char;
 
 use crate::core::context_probe::{
     resolve_context_from_tail, stable_metadata_hash, ContextProbeSource, InjectionContextProbe,

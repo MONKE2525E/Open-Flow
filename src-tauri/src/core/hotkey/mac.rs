@@ -363,7 +363,7 @@ where
             match result {
                 Ok(t) => break t,
                 Err(()) => {
-                    if attempt % 10 == 0 {
+                    if attempt.is_multiple_of(10) {
                         log::error!(
                             "CGEventTap not created — grant Open Flow Accessibility permission (System Settings → Privacy & Security → Accessibility). Retrying…"
                         );

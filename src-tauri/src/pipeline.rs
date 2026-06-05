@@ -19,8 +19,6 @@ const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
 const PILL_WIDTH_POINTS: f64 = 140.0;
 const PILL_HEIGHT_POINTS: f64 = 44.0;
 const PILL_BOTTOM_GAP_POINTS: f64 = 16.0;
-#[cfg(target_os = "macos")]
-const MACOS_DOCK_FALLBACK_HEIGHT_POINTS: f64 = 48.0;
 
 fn transcription_provider_from_str(s: &str) -> transcription::Provider {
     match s {
@@ -139,12 +137,7 @@ fn pill_bottom_offset_points() -> f64 {
     #[cfg(target_os = "macos")]
     {
         let dock_height = crate::system::mac_app::dock_height_points();
-        let effective_dock_height = if dock_height > 0.0 {
-            dock_height
-        } else {
-            MACOS_DOCK_FALLBACK_HEIGHT_POINTS
-        };
-        return effective_dock_height + PILL_BOTTOM_GAP_POINTS;
+        dock_height + PILL_BOTTOM_GAP_POINTS
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -1349,6 +1342,7 @@ async fn finalize_pipeline_completion(
         ctx.cfg.contextual_caps_enabled,
         ctx.cfg.auto_spacing_enabled,
         ctx.profile,
+        ctx.cfg.macos_clipboard_sniff_enabled,
     )
     .await
     {

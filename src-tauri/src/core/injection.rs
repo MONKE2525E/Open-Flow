@@ -43,7 +43,7 @@ const MODIFIER_GAP_MS: u64 = 30;
 #[cfg(target_os = "windows")]
 const PASTE_SETTLE_MS: u64 = 80;
 
-#[cfg(test)]
+#[allow(dead_code)]
 const SENTENCE_ENDERS: &[char] = &['.', '!', '?', '\n', '\r'];
 #[derive(Clone, Debug)]
 enum CursorContextState {
@@ -234,11 +234,11 @@ fn trim_tail_to_limit(text: &mut String) {
         *text = text[trim_at..].to_owned();
     }
 }
-#[cfg(test)]
+#[allow(dead_code)]
 fn trimmed_context_for_decision(text: &str) -> &str {
     text.trim_end_matches(|c: char| c.is_whitespace() && !SENTENCE_ENDERS.contains(&c))
 }
-#[cfg(test)]
+#[allow(dead_code)]
 fn classify_context(tail: &str) -> ContextKind {
     let trimmed = trimmed_context_for_decision(tail);
     if trimmed
@@ -300,7 +300,7 @@ fn find_first_alpha_span(text: &str) -> Option<(usize, usize)> {
     }
     start.map(|s| (s, end))
 }
-#[cfg(test)]
+#[allow(dead_code)]
 fn uppercase_first_word(text: &str) -> String {
     let Some((start, _)) = find_first_alpha_span(text) else {
         return text.to_owned();
@@ -737,12 +737,14 @@ async fn macos_clipboard_sniff_context(target_hwnd: usize) -> Option<InjectionCo
     })
 }
 
+#[allow(unused_variables)]
 pub async fn inject_text(
     text: &str,
     target_hwnd: usize,
     contextual_caps: bool,
     auto_spacing: bool,
     profile: &str,
+    clipboard_sniff_enabled: bool,
 ) -> anyhow::Result<InjectionOutcome> {
     #[cfg(target_os = "windows")]
     {
@@ -908,11 +910,13 @@ pub async fn inject_text(
         } else {
             unavailable_injection_probe()
         };
-        if contextual_caps || auto_spacing {
-            if injection_probe.source.allows_history_fallback() {
-                if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
-                    injection_probe = history_probe;
-                } else if let Some(sniff_probe) =
+        if (contextual_caps || auto_spacing)
+            && injection_probe.source.allows_history_fallback()
+        {
+            if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
+                injection_probe = history_probe;
+            } else if clipboard_sniff_enabled {
+                if let Some(sniff_probe) =
                     macos_clipboard_sniff_context(target_hwnd).await
                 {
                     injection_probe = sniff_probe;
