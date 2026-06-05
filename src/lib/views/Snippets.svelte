@@ -3,7 +3,7 @@
   import { invoke } from '../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { appStore, fetchSnippets, cancelSnippetsFetch, type Snippet } from '../stores';
+  import { appStore, fetchSnippets, cancelSnippetsFetch, formatIpcError, type Snippet } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
 
@@ -144,7 +144,6 @@
     saving = true;
     saveError = '';
     try {
-      const editedId = modal?.mode === 'edit' ? modal.snippet?.id : undefined;
       if (modal?.mode === 'add') {
         const created = requireCreatedRecordMeta(await invoke<unknown>('create_snippet', {
           trigger: t,
@@ -172,15 +171,12 @@
         upsertSnippet(snippet);
         selected = snippet;
       }
-      if (editedId !== undefined && !selected) {
-        selected = appStore.snippets.find(s => s.id === editedId) ?? null;
-      }
       closeModal();
     } catch (err) {
-      const msg = String(err);
+      const msg = formatIpcError(err);
       saveError = msg.includes('UNIQUE')
         ? 'A snippet with that trigger already exists.'
-        : (msg || 'Failed to save snippet.');
+        : msg;
     }
     finally { saving = false; }
   }

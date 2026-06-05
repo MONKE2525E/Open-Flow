@@ -4,7 +4,7 @@
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
-  import { appStore, fetchDictionary, cancelDictionaryFetch, type DictionaryEntry } from '../stores';
+  import { appStore, fetchDictionary, cancelDictionaryFetch, formatIpcError, type DictionaryEntry } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
 
   type SortKey = 'newest' | 'oldest' | 'alpha' | 'most_corrected';
@@ -158,7 +158,6 @@
     }
     saving = true; saveError = '';
     try {
-      const editedId = modal?.mode === 'edit' ? modal.entry?.id : undefined;
       if (modal?.mode === 'add') {
         const created = requireCreatedRecordMeta(
           await invoke<unknown>('create_dictionary_entry', { term, mistake }),
@@ -186,13 +185,10 @@
         upsertDictionaryEntry(entry);
         selected = entry;
       }
-      if (editedId !== undefined) {
-        selected = appStore.dictionary.find(e => e.id === editedId) ?? null;
-      }
       closeModal();
     } catch (err) {
-      const msg = String(err);
-      saveError = msg.includes('UNIQUE') ? 'That term already exists.' : (msg || 'Failed to save.');
+      const msg = formatIpcError(err);
+      saveError = msg.includes('UNIQUE') ? 'That term already exists.' : msg;
     } finally { saving = false; }
   }
 
