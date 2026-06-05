@@ -60,11 +60,19 @@ pub struct GeminiInlineData {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GeminiGenConfig {
-    pub thinking_config: GeminiThinkingConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_config: Option<GeminiThinkingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
 }
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GeminiThinkingConfig {
-    pub thinking_budget: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<String>,
 }
