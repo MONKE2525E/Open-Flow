@@ -448,13 +448,14 @@
                   {/if}
                 </div>
               {:else}
-                <!-- svelte-ignore a11y_click_events_have_key_events -->
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
                   in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: cubicOut }}
                   out:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: cubicOut }}
                   class="simple-row model-row"
+                  role="button"
+                  tabindex="0"
                   onclick={() => toggleModelSelection(type, section.storeProvider, custom)}
+                  onkeydown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { if (e.key === ' ') e.preventDefault(); toggleModelSelection(type, section.storeProvider, custom); } }}
                 >
                   <button
                     class="remove-dot"

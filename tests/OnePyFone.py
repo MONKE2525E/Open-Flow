@@ -865,8 +865,14 @@ def _write_json_report(path: Path, profile: str, suites: List[str], results: Dic
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _sanitize_xml(text: str) -> str:
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    text = ansi_escape.sub('', text)
+    return "".join(c for c in text if c in "\t\n\r" or ord(c) >= 32)
+
+
 def xml_attr_escape(val: str) -> str:
-    return xml_escape(val, {'"': '&quot;', "'": '&apos;'})
+    return xml_escape(_sanitize_xml(val), {'"': '&quot;', "'": '&apos;'})
 
 
 def _write_junit_report(path: Path, profile: str, results: Dict[str, TestResult]) -> None:
@@ -883,7 +889,7 @@ def _write_junit_report(path: Path, profile: str, results: Dict[str, TestResult]
         if result.skipped:
             lines.append(f'    <skipped message="{xml_attr_escape(result.output or "Skipped")}"/>')
         elif not result.passed:
-            lines.append(f'    <failure message="Test failed">{xml_escape(result.output)}</failure>')
+            lines.append(f'    <failure message="Test failed">{xml_escape(_sanitize_xml(result.output))}</failure>')
         lines.append("  </testcase>")
     lines.append("</testsuite>")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

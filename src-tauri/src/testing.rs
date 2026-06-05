@@ -36,6 +36,10 @@ fn harness() -> &'static Mutex<HarnessState> {
     HARNESS.get_or_init(|| Mutex::new(HarnessState::default()))
 }
 
+fn lock_harness() -> std::sync::MutexGuard<'static, HarnessState> {
+    harness().lock().unwrap_or_else(|err| err.into_inner())
+}
+
 fn key(task: &str, provider: &str, model: &str) -> String {
     format!(
         "{}|{}|{}",
@@ -57,37 +61,29 @@ pub fn is_enabled() -> bool {
     if std::env::var("OPEN_FLOW_TEST_MODE").ok().as_deref() == Some("1") {
         return true;
     }
-    harness()
-        .lock()
-        .map(|state| state.enabled)
-        .unwrap_or(false)
+    lock_harness().enabled
 }
 
 pub fn set_enabled(enabled: bool) {
-    if let Ok(mut state) = harness().lock() {
-        state.enabled = enabled;
-    }
+    lock_harness().enabled = enabled;
 }
 
 pub fn reset() {
-    if let Ok(mut state) = harness().lock() {
-        *state = HarnessState::default();
-    }
+    *lock_harness() = HarnessState::default();
 }
 
 pub fn register_fixture(spec: FixtureSpec) {
-    if let Ok(mut state) = harness().lock() {
-        state
-            .fixtures
-            .insert(key(&spec.task, &spec.provider, &spec.model), spec);
-    }
+    let mut state = lock_harness();
+    state
+        .fixtures
+        .insert(key(&spec.task, &spec.provider, &spec.model), spec);
 }
 
 pub fn fixture_hit_count(task: &str, provider: &str, model: &str) -> usize {
-    harness()
-        .lock()
-        .ok()
-        .and_then(|state| state.hits.get(&key(task, provider, model)).copied())
+    lock_harness()
+        .hits
+        .get(&key(task, provider, model))
+        .copied()
         .unwrap_or(0)
 }
 
@@ -101,10 +97,7 @@ pub fn resolve_provider_fixture(
     }
 
     let lookup = key(task, provider, model);
-    let mut state = match harness().lock() {
-        Ok(guard) => guard,
-        Err(_) => return Some(Err(anyhow::anyhow!("Test harness lock poisoned"))),
-    };
+    let mut state = lock_harness();
     let hit = state.hits.entry(lookup.clone()).or_insert(0);
     *hit += 1;
 
@@ -156,14 +149,9 @@ pub fn record_injection(record: InjectionRecord) {
     if !is_enabled() {
         return;
     }
-    if let Ok(mut state) = harness().lock() {
-        state.injections.push(record);
-    }
+    lock_harness().injections.push(record);
 }
 
 pub fn take_injections() -> Vec<InjectionRecord> {
-    harness()
-        .lock()
-        .map(|mut state| std::mem::take(&mut state.injections))
-        .unwrap_or_default()
+    std::mem::take(&mut lock_harness().injections)
 }
