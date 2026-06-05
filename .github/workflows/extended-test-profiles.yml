@@ -1,0 +1,88 @@
+name: Extended Test Profiles
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 13 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  live-profile:
+    name: Live profile
+    runs-on: ubuntu-latest
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Detect live API secrets
+        id: live-secrets
+        shell: bash
+        run: |
+          if [ -n "${GROQ_API_KEY}${OPENAI_API_KEY}${GOOGLE_API_KEY}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Seed live test store
+        if: steps.live-secrets.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "api_key_groq": os.environ.get("GROQ_API_KEY", "").strip(),
+              "api_key_openai": os.environ.get("OPENAI_API_KEY", "").strip(),
+              "api_key_google": os.environ.get("GOOGLE_API_KEY", "").strip(),
+          }
+          payload = {key: value for key, value in payload.items() if value}
+          target = Path.home() / "AppData" / "Roaming" / "com.openflow.app" / "settings.json"
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_text(json.dumps(payload), encoding="utf-8")
+          print(f"Seeded live test store at {target}")
+          PY
+
+      - name: Skip live profile when secrets are absent
+        if: steps.live-secrets.outputs.enabled != 'true'
+        run: echo "Skipping live profile because no API secrets are configured."
+
+      - name: Run live profile
+        if: steps.live-secrets.outputs.enabled == 'true'
+        run: npm run test:live -- --json-report tests/live-profile.json
+
+  native-profile:
+    name: Native profile
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run native profile
+        run: npm run test:native -- --json-report tests/native-profile.json

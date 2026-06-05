@@ -1,0 +1,156 @@
+#![cfg(any(test, debug_assertions))]
+
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
+#[derive(Clone, Debug)]
+pub struct FixtureSpec {
+    pub task: String,
+    pub provider: String,
+    pub model: String,
+    pub response: Option<String>,
+    pub error_kind: Option<String>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InjectionRecord {
+    pub text: String,
+    pub target_hwnd: usize,
+    pub contextual_caps: bool,
+    pub auto_spacing: bool,
+    pub profile: String,
+}
+
+#[derive(Default)]
+struct HarnessState {
+    enabled: bool,
+    fixtures: HashMap<String, FixtureSpec>,
+    hits: HashMap<String, usize>,
+    injections: Vec<InjectionRecord>,
+}
+
+fn harness() -> &'static Mutex<HarnessState> {
+    static HARNESS: OnceLock<Mutex<HarnessState>> = OnceLock::new();
+    HARNESS.get_or_init(|| Mutex::new(HarnessState::default()))
+}
+
+fn key(task: &str, provider: &str, model: &str) -> String {
+    format!(
+        "{}|{}|{}",
+        task.trim().to_lowercase(),
+        provider.trim().to_lowercase(),
+        model.trim()
+    )
+}
+
+fn provider_label(provider: &str) -> &'static str {
+    match provider {
+        "openai" => "OpenAI",
+        "google" => "Google",
+        _ => "Groq",
+    }
+}
+
+pub fn is_enabled() -> bool {
+    if std::env::var("OPEN_FLOW_TEST_MODE").ok().as_deref() == Some("1") {
+        return true;
+    }
+    harness()
+        .lock()
+        .map(|state| state.enabled)
+        .unwrap_or(false)
+}
+
+pub fn set_enabled(enabled: bool) {
+    if let Ok(mut state) = harness().lock() {
+        state.enabled = enabled;
+    }
+}
+
+pub fn reset() {
+    if let Ok(mut state) = harness().lock() {
+        *state = HarnessState::default();
+    }
+}
+
+pub fn register_fixture(spec: FixtureSpec) {
+    if let Ok(mut state) = harness().lock() {
+        state
+            .fixtures
+            .insert(key(&spec.task, &spec.provider, &spec.model), spec);
+    }
+}
+
+pub fn fixture_hit_count(task: &str, provider: &str, model: &str) -> usize {
+    harness()
+        .lock()
+        .ok()
+        .and_then(|state| state.hits.get(&key(task, provider, model)).copied())
+        .unwrap_or(0)
+}
+
+pub fn resolve_provider_fixture(
+    task: &str,
+    provider: &str,
+    model: &str,
+) -> Option<anyhow::Result<String>> {
+    if !is_enabled() {
+        return None;
+    }
+
+    let lookup = key(task, provider, model);
+    let fixture = {
+        let mut state = harness().lock().ok()?;
+        let hit = state.hits.entry(lookup.clone()).or_insert(0);
+        *hit += 1;
+        state.fixtures.get(&lookup).cloned()
+    }?;
+
+    if let Some(response) = fixture.response {
+        return Some(Ok(response));
+    }
+
+    let error_kind = fixture.error_kind.as_deref().unwrap_or("generic");
+    let error_message = fixture
+        .error_message
+        .unwrap_or_else(|| format!("fixture {task} failure for {provider}/{model}"));
+
+    let error = match error_kind {
+        "quota" => crate::api::quota_bail(model),
+        "auth_invalid" => crate::api::auth_401_error(
+            provider_label(provider),
+            model,
+            "fixture-request",
+            crate::api::AuthErrorCategory::InvalidOrRevokedKey,
+        ),
+        "auth_scope" => crate::api::auth_401_error(
+            provider_label(provider),
+            model,
+            "fixture-request",
+            crate::api::AuthErrorCategory::ScopeOrAccountRestriction,
+        ),
+        "timeout" => anyhow::anyhow!("fixture timeout: {error_message}"),
+        "status_503" => anyhow::anyhow!("provider failure status=503: {error_message}"),
+        "status_429" => anyhow::anyhow!("provider failure status=429: {error_message}"),
+        _ => anyhow::anyhow!("{error_message}"),
+    };
+
+    Some(Err(error))
+}
+
+pub fn record_injection(record: InjectionRecord) {
+    if !is_enabled() {
+        return;
+    }
+    if let Ok(mut state) = harness().lock() {
+        state.injections.push(record);
+    }
+}
+
+pub fn take_injections() -> Vec<InjectionRecord> {
+    harness()
+        .lock()
+        .map(|mut state| std::mem::take(&mut state.injections))
+        .unwrap_or_default()
+}

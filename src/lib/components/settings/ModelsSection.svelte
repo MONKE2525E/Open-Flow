@@ -445,7 +445,16 @@
                 {:else if isFallback}
                   <span transition:pillScale class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, custom)) + 1}</span>
                 {:else}
-                  <span transition:pillScale class="state-pill muted">Add fallback</span>
+                  <button
+                    type="button"
+                    class="state-pill muted add-fallback-btn"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      toggleModelSelection(type, section.storeProvider, custom);
+                    }}
+                  >
+                    Add fallback
+                  </button>
                 {/if}
               </div>
             {/each}
@@ -787,6 +796,11 @@
     color: var(--ink-soft);
     border-color: var(--line-strong);
     background: color-mix(in srgb, var(--paper) 50%, var(--bg-elev));
+  }
+
+  .add-fallback-btn {
+    appearance: none;
+    outline: none;
   }
 
   /* ── Tier pill (Accurate/Efficient → Add fallback on hover) ── */

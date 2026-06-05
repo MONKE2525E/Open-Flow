@@ -38,6 +38,7 @@ pub const MACOS_CLIPBOARD_SNIFF: &str = "macos_clipboard_sniff_enabled";
 // ---------- pipeline config ----------
 
 /// All settings values needed by run_pipeline, loaded in one place.
+#[derive(Clone, Debug)]
 pub struct PipelineConfig {
     pub transcription_provider: String,
     pub transcription_language: String,

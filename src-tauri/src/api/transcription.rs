@@ -47,6 +47,19 @@ pub async fn transcribe(
     language: &str,
     model: &str,
 ) -> Result<String> {
+    #[cfg(any(test, debug_assertions))]
+    if let Some(result) = crate::testing::resolve_provider_fixture(
+        "transcription",
+        match provider {
+            Provider::Groq => "groq",
+            Provider::OpenAI => "openai",
+            Provider::Google => "google",
+        },
+        model,
+    ) {
+        return result;
+    }
+
     log::debug!(
         "transcription: start provider={:?} language={} wav_bytes={}",
         provider,

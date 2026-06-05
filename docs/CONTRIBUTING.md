@@ -48,6 +48,20 @@ npm run dev
 
 Run the checks that match your change.
 
+Default all-in-one fast profile:
+
+```bash
+npm test
+```
+
+Explicit profiles:
+
+```bash
+npm run test:all
+npm run test:live
+npm run test:native
+```
+
 Frontend type check:
 
 ```bash
@@ -66,13 +80,14 @@ Rust tests:
 npm run test:rust
 ```
 
-Smoke tests with the Vite dev server running on port 5173:
+Targeted UI/state suites against the shared Vite test server:
 
 ```bash
 npm run dev
-npm run test:smoke
-npm run test:smoke:state
+python tests/OnePyFone.py --suite ui,state --no-server
 ```
+
+Live/API checks are opt-in and must never print API keys, clipboard contents, or real dictated text. Keep `tests/smoke/` frozen and add new coverage in `tests/integration/` or Rust tests.
 
 For UI-facing changes, use Playwright where applicable and include what you tested in the PR.
 
