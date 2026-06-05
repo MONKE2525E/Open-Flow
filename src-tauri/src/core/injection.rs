@@ -902,7 +902,8 @@ pub async fn inject_text(
         const VK_ANSI_V: CGKeyCode = 9;
 
         if target_hwnd != 0 {
-            crate::system::mac_app::activate_pid(target_hwnd as i32);
+            let pid = (target_hwnd & 0xFFFFFFFF) as i32;
+            crate::system::mac_app::activate_pid(pid);
             tokio::time::sleep(Duration::from_millis(120)).await;
         }
 

@@ -182,12 +182,11 @@ pub async fn read_injection_context_probe() -> InjectionContextProbe {
             );
         };
 
-        let task = tokio::task::spawn_blocking(move || {
-            let _guard = guard;
+        let task = tokio::task::spawn_blocking(|| {
             crate::core::context_probe_macos::read_injection_context_probe_sync()
         });
 
-        match tokio::time::timeout(
+        let result = match tokio::time::timeout(
             tokio::time::Duration::from_millis(MACOS_PROBE_TIMEOUT_MS),
             task,
         )
@@ -205,7 +204,10 @@ pub async fn read_injection_context_probe() -> InjectionContextProbe {
                 log::debug!("context probe timed out after {MACOS_PROBE_TIMEOUT_MS}ms");
                 InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "probe_timeout")
             }
-        }
+        };
+
+        drop(guard);
+        result
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]

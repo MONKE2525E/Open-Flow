@@ -5,6 +5,7 @@ const VK_ESCAPE: u32 = 0x1B; // Escape
 const VK_SHIFT: u32 = 0x10; // VK_SHIFT
 const VK_CTRL: u32 = 0x11; // VK_CONTROL (generic, used with modifier_held)
 const VK_ALT: u32 = 0x12; // VK_MENU (generic, used with modifier_held)
+const VK_RETURN: u32 = 0x0D; // Enter
 
 // Side-specific modifier VK codes that should never trigger a history update.
 // Generic codes (0x10/0x11/0x12) are omitted: the !is_injected guard already
@@ -232,7 +233,7 @@ pub fn map_code_to_vk(code: &str) -> u32 {
         "MetaRight" => 92,
         "Space" => 32,
         "Escape" => 27,
-        "Enter" => 13,
+        "Enter" => VK_RETURN,
         "Backspace" => 8,
         "Tab" => 9,
         "CapsLock" => 20,

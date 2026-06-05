@@ -42,9 +42,8 @@ pub fn get_foreground_hwnd() -> usize {
     }
     #[cfg(target_os = "macos")]
     {
-        crate::system::mac_app::frontmost_pid()
-            .map(|p| p as usize)
-            .unwrap_or(0)
+        let (window_id, pid) = crate::system::mac_app::get_active_window_id_and_pid();
+        ((window_id as usize) << 32) | (pid as u32 as usize)
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     0
