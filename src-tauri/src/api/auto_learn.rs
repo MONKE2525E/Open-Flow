@@ -892,7 +892,6 @@ pub enum FocusedTextProbe {
     Unavailable,
 }
 
-
 #[cfg(windows)]
 fn control_type_label(control_type: i32) -> String {
     use windows::Win32::UI::Accessibility::{

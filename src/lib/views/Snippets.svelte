@@ -3,11 +3,12 @@
   import { invoke } from '../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { appStore, fetchSnippets, type Snippet } from '../stores';
+  import { appStore, fetchSnippets, cancelSnippetsFetch, formatIpcError, type Snippet } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
 
   type SortKey = 'newest' | 'oldest' | 'alpha' | 'most_used';
+  type CreatedRecordMeta = { id: number; created_at: string };
 
   function fmtDate(iso: string): string {
     try {
@@ -32,7 +33,9 @@
   let draftTrigger       = $state('');
   let draftExpansion     = $state('');
   let draftInstructions  = $state('');
-  let triggerInput   = $state<HTMLInputElement | null>(null);
+  let triggerInput    = $state<HTMLInputElement | null>(null);
+  let expansionEl     = $state<HTMLTextAreaElement | null>(null);
+  let instructionsEl  = $state<HTMLTextAreaElement | null>(null);
   let inspectorDir = $state<1 | -1>(1);
   let sortWrapEl = $state<HTMLDivElement | null>(null);
   let sortButtonEls = $state<Record<SortKey, HTMLButtonElement | null>>({
@@ -44,6 +47,18 @@
   let sortIndicatorStyle = $state('opacity:0;');
 
   const TRIGGER_LIMIT = 300;
+  const countCodePoints = (value: string): number => [...value].length;
+
+  function requireCreatedRecordMeta(value: unknown): CreatedRecordMeta {
+    if (typeof value !== 'object' || value === null) {
+      throw new Error('Snippet save returned no record metadata. Relaunch the Tauri app and try again.');
+    }
+    const meta = value as Partial<CreatedRecordMeta>;
+    if (typeof meta.id !== 'number' || !Number.isFinite(meta.id) || typeof meta.created_at !== 'string' || !meta.created_at.trim()) {
+      throw new Error('Snippet save returned invalid record metadata. Check the app logs before retrying.');
+    }
+    return { id: meta.id, created_at: meta.created_at };
+  }
 
   $effect(() => {
     const currentSearch = search;
@@ -97,29 +112,71 @@
 
   function closeModal() { modal = null; saveError = ''; }
 
+  function upsertSnippet(snippet: Snippet) {
+    cancelSnippetsFetch();
+    const next = appStore.snippets.filter((entry) => entry.id !== snippet.id);
+    appStore.snippets = [snippet, ...next];
+  }
+
+  function normalizeText(value: string): string {
+    return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  }
+
   async function saveModal() {
+    // Read straight from the DOM elements. On WKWebView, `bind:value` can fail
+    // to propagate a pasted value into reactive state before the click fires.
+    // The element's live `.value` is always correct at click time.
+    if (triggerInput) draftTrigger = triggerInput.value;
+    if (expansionEl) draftExpansion = expansionEl.value;
+    if (instructionsEl) draftInstructions = instructionsEl.value;
+
     const t = draftTrigger.trim();
-    const e = draftExpansion.trim();
-    if (!t || !e) return;
+    const e = normalizeText(draftExpansion);
+    const i = normalizeText(draftInstructions);
+    if (!t || !e) {
+      saveError = 'Trigger and expansion are both required.';
+      return;
+    }
+    if (countCodePoints(t) > TRIGGER_LIMIT) {
+      saveError = `Trigger must be ${TRIGGER_LIMIT} characters or fewer.`;
+      return;
+    }
     saving = true;
     saveError = '';
     try {
-      const editedId = modal?.mode === 'edit' ? modal.snippet?.id : undefined;
-      const i = draftInstructions.trim();
       if (modal?.mode === 'add') {
-        await invoke('create_snippet', { trigger: t, expansion: e, instructions: i });
+        const created = requireCreatedRecordMeta(await invoke<unknown>('create_snippet', {
+          trigger: t,
+          expansion: e,
+          instructions: i,
+        }));
+        const snippet: Snippet = {
+          id: created.id,
+          trigger: t,
+          expansion: e,
+          instructions: i,
+          use_count: 0,
+          created_at: created.created_at,
+        };
+        upsertSnippet(snippet);
+        selected = snippet;
       } else if (modal?.mode === 'edit' && modal.snippet) {
         await invoke('edit_snippet', { id: modal.snippet.id, trigger: t, expansion: e, instructions: i });
-      }
-      await fetchSnippets();
-      // Re-sync selected manually — no $effect to avoid reactivity loops
-      if (editedId !== undefined) {
-        selected = appStore.snippets.find(s => s.id === editedId) ?? null;
+        const snippet: Snippet = {
+          ...modal.snippet,
+          trigger: t,
+          expansion: e,
+          instructions: i,
+        };
+        upsertSnippet(snippet);
+        selected = snippet;
       }
       closeModal();
     } catch (err) {
-      const msg = String(err);
-      saveError = msg.includes('UNIQUE') ? 'A snippet with that trigger already exists.' : 'Failed to save snippet.';
+      const msg = formatIpcError(err);
+      saveError = msg.includes('UNIQUE')
+        ? 'A snippet with that trigger already exists.'
+        : msg;
     }
     finally { saving = false; }
   }
@@ -128,8 +185,9 @@
     if (deleteTarget === id) {
       try {
         await invoke('remove_snippet', { id });
+        cancelSnippetsFetch();
+        appStore.snippets = appStore.snippets.filter((entry) => entry.id !== id);
         if (selected?.id === id) selected = null;
-        await fetchSnippets();
       } catch (err) { console.error(err); }
       deleteTarget = null;
     } else {
@@ -145,46 +203,28 @@
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && modal) saveModal();
   }
 
-  function autoGrow(node: HTMLTextAreaElement, value: string) {
-    let last = 0;
-    let hadSelection = false;
-    function resize(couldShrink = true) {
-      if (couldShrink) node.style.height = 'auto';
-      const borderDiff = node.offsetHeight - node.clientHeight;
-      const h = node.scrollHeight + borderDiff;
-      if (h === last) { if (couldShrink) node.style.height = last + 'px'; return; }
-      last = h;
-      node.style.height = h + 'px';
-    }
-    function onBeforeInput() {
-      hadSelection = node.selectionStart !== node.selectionEnd;
-    }
-    function onInput(e: Event) {
-      value = node.value;
-      const type = (e as InputEvent).inputType ?? '';
-      const insertOnly = type === 'insertText' || type === 'insertLineBreak' || type === 'insertParagraph' || type === 'insertCompositionText';
-      resize(!(insertOnly && !hadSelection));
-    }
-    node.addEventListener('beforeinput', onBeforeInput);
-    node.addEventListener('input', onInput);
-    resize();
-    return {
-      update(nextValue: string) {
-        if (nextValue !== value) {
-          value = nextValue;
-          if (node.value !== nextValue) node.value = nextValue;
-          resize(true);
-        }
-      },
-      destroy() {
-        node.removeEventListener('beforeinput', onBeforeInput);
-        node.removeEventListener('input', onInput);
-      }
-    };
+  $effect(() => {
+    if (modal && triggerInput) setTimeout(() => triggerInput?.focus(), 50);
+  });
+
+  // Cap auto-grow so a long paste can't blow out the modal layout; the textarea
+  // scrolls internally past this height.
+  const FIELD_GROW_MAX = 220;
+  function autoGrow(el: HTMLTextAreaElement | null) {
+    if (!el) return;
+    el.style.height = 'auto';
+    const borderDiff = el.offsetHeight - el.clientHeight;
+    el.style.height = Math.min(el.scrollHeight + borderDiff, FIELD_GROW_MAX) + 'px';
   }
 
   $effect(() => {
-    if (modal && triggerInput) setTimeout(() => triggerInput?.focus(), 50);
+    draftExpansion;
+    autoGrow(expansionEl);
+  });
+
+  $effect(() => {
+    draftInstructions;
+    autoGrow(instructionsEl);
   });
 
   const sortLabels: { key: SortKey; label: string }[] = [
@@ -425,6 +465,7 @@
 </div>
 
 {#if modal}
+  <div class="modal-overlay">
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <button class="modal-backdrop" aria-label="Close dialog" onclick={closeModal} in:fade={{ duration: 150 }} out:fade={{ duration: 100 }}></button>
   <div
@@ -435,7 +476,7 @@
     out:fly={{ y: 8, duration: 150, easing: expoOut }}
   >
     <div class="modal-header">
-      <h2 class="modal-title">{modal.mode === 'add' ? 'New snippet' : 'Edit snippet'}</h2>
+      <h2 class="modal-title">{modal?.mode === 'add' ? 'New snippet' : 'Edit snippet'}</h2>
       <button class="icon-btn" onclick={closeModal} aria-label="Close">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
@@ -444,7 +485,7 @@
     <div class="modal-body scrollbar-standard">
       <label class="field-label" for="trigger-input">
         Trigger
-        <span class="char-count" class:over={draftTrigger.length > TRIGGER_LIMIT}>{draftTrigger.length}/{TRIGGER_LIMIT}</span>
+        <span class="char-count" class:over={countCodePoints(draftTrigger) > TRIGGER_LIMIT}>{countCodePoints(draftTrigger)}/{TRIGGER_LIMIT}</span>
       </label>
       <div class="input-row">
         <input
@@ -454,7 +495,6 @@
           placeholder="e.g. my email"
           bind:value={draftTrigger}
           bind:this={triggerInput}
-          maxlength={TRIGGER_LIMIT}
           autocomplete="off"
           spellcheck="false"
         />
@@ -469,7 +509,7 @@
           class="field-input scrollbar-standard"
           placeholder="e.g. hello@example.com"
           bind:value={draftExpansion}
-          use:autoGrow={draftExpansion}
+          bind:this={expansionEl}
           rows="3"
           spellcheck="false"
         ></textarea>
@@ -490,7 +530,7 @@
         class="field-input instructions-input scrollbar-standard"
         placeholder="e.g. Don't add a period at the end of this phrase."
         bind:value={draftInstructions}
-        use:autoGrow={draftInstructions}
+        bind:this={instructionsEl}
         rows="2"
         spellcheck="false"
       ></textarea>
@@ -506,13 +546,14 @@
         <button
           class="btn-primary"
           onclick={saveModal}
-          disabled={saving || !draftTrigger.trim() || !draftExpansion.trim() || draftTrigger.length > TRIGGER_LIMIT}
+          disabled={saving}
         >
           {#if saving}<span class="spinner"></span>{/if}
-          {modal.mode === 'add' ? 'Add snippet' : 'Save changes'}
+          {modal?.mode === 'add' ? 'Add snippet' : 'Save changes'}
         </button>
       </div>
     </div>
+  </div>
   </div>
 {/if}
 
@@ -968,6 +1009,22 @@
 
   /* ── modal ── */
 
+  /* Flex-centered scrolling overlay. Avoids the fixed + translate(-50%,-50%)
+     centering, which in WKWebView breaks pointer hit-testing once the card grows
+     tall enough to scroll — clicks fall through to the backdrop and close the
+     dialog. The card is a normal positioned child reliably above the backdrop. */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    box-sizing: border-box;
+    overflow-y: auto;
+  }
+
   .modal-backdrop {
     position: fixed;
     inset: 0;
@@ -975,22 +1032,24 @@
     padding: 0;
     appearance: none;
     background: var(--overlay);
-    z-index: 50;
-    backdrop-filter: blur(2px);
+    z-index: 0;
     outline: none;
+    /* NOTE: do not use backdrop-filter here. On WKWebView it repaints on every
+       layout change (e.g. the expansion textarea auto-growing) and starts
+       capturing pointer events over the modal card above it, making the dialog
+       controls dead and stealing clicks to close the modal. */
   }
 
   .modal-card {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    translate: -50% -50%;
-    z-index: 51;
+    position: relative;
+    z-index: 1;
+    margin: auto;
+    isolation: isolate;
     background: var(--bg-elev);
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
-    width: min(500px, calc(100vw - 40px));
-    max-height: calc(100dvh - 80px);
+    width: min(500px, 100%);
+    max-height: 100%;
     box-shadow: var(--shadow-elev);
     overflow: hidden;
     display: flex;
@@ -1209,4 +1268,3 @@
     word-break: break-word;
   }
 </style>
-

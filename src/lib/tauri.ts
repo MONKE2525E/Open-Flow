@@ -12,8 +12,29 @@ type EventEnvelope<T> = {
 };
 type EventHandler<T> = (event: EventEnvelope<T>) => void;
 type UnlistenFn = () => void;
+type CreatedRecordMeta = { id: number; created_at: string };
+type DevSnippet = {
+  id: number;
+  trigger: string;
+  expansion: string;
+  instructions: string;
+  use_count: number;
+  created_at: string;
+};
+type DevDictionaryEntry = {
+  id: number;
+  term: string;
+  mistake: string | null;
+  auto_learned: boolean;
+  correction_count: number;
+  confidence_tier: 'manual' | 'low' | 'medium' | 'high';
+  last_seen_at: string | null;
+  created_at: string;
+};
 
 const DEV_STORAGE_KEY = 'open-flow:dev-settings';
+const DEV_SNIPPETS_KEY = 'open-flow:dev-snippets';
+const DEV_DICTIONARY_KEY = 'open-flow:dev-dictionary';
 
 const defaultProviderModels = {
   groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
@@ -94,6 +115,41 @@ function getDevSetting(key: string): unknown {
   return key in saved ? saved[key] : defaultSettings[key] ?? null;
 }
 
+function readDevList<T>(key: string): T[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeDevList<T>(key: string, rows: T[]) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify(rows));
+  } catch {
+    // Browser dev mode should keep working even when persistent storage is blocked.
+  }
+}
+
+function nextDevId(rows: { id: number }[]): number {
+  return rows.reduce((max, row) => Math.max(max, row.id), 0) + 1;
+}
+
+function devCreated(id: number): CreatedRecordMeta {
+  return { id, created_at: new Date().toISOString() };
+}
+
+function assertDevText(value: unknown, field: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`${field} must be text.`);
+  }
+  return value;
+}
+
 async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
   switch (command) {
     case 'get_setting':
@@ -108,9 +164,11 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return { ...defaultSettings, ...readDevSettings() } as T;
     case 'get_app_mappings':
       return getDevSetting('app_mappings') as T;
-    case 'get_recent':
     case 'get_snippets':
+      return readDevList<DevSnippet>(DEV_SNIPPETS_KEY) as T;
     case 'get_dictionary':
+      return readDevList<DevDictionaryEntry>(DEV_DICTIONARY_KEY) as T;
+    case 'get_recent':
     case 'get_recent_auto_learn_activity':
     case 'get_microphones':
     case 'get_recent_logs':
@@ -158,14 +216,122 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'retry_transcription':
     case 'install_update':
     case 'set_dev_logging_enabled':
-    case 'create_dictionary_entry':
-    case 'edit_dictionary_entry':
-    case 'remove_dictionary_entry':
-    case 'create_snippet':
-    case 'edit_snippet':
-    case 'remove_snippet':
     case 'start_calibration_monitoring':
     case 'stop_calibration_monitoring':
+      return undefined as T;
+    case 'create_snippet': {
+      const trigger = assertDevText(args?.trigger, 'Trigger').trim();
+      const expansion = assertDevText(args?.expansion, 'Expansion');
+      const instructions = assertDevText(args?.instructions ?? '', 'Cleanup instructions');
+      if (!trigger) throw new Error('Trigger cannot be empty');
+      if (!expansion.trim()) throw new Error('Expansion cannot be empty');
+      if ([...trigger].length > 300) throw new Error('Trigger must be 300 characters or fewer');
+
+      const rows = readDevList<DevSnippet>(DEV_SNIPPETS_KEY);
+      if (rows.some((row) => row.trigger === trigger)) {
+        throw new Error('UNIQUE constraint failed: snippets.trigger');
+      }
+      const id = nextDevId(rows);
+      const created = devCreated(id);
+      rows.unshift({
+        id,
+        trigger,
+        expansion,
+        instructions,
+        use_count: 0,
+        created_at: created.created_at,
+      });
+      writeDevList(DEV_SNIPPETS_KEY, rows);
+      return created as T;
+    }
+    case 'edit_snippet': {
+      const id = Number(args?.id);
+      const trigger = assertDevText(args?.trigger, 'Trigger').trim();
+      const expansion = assertDevText(args?.expansion, 'Expansion');
+      const instructions = assertDevText(args?.instructions ?? '', 'Cleanup instructions');
+      if (!Number.isFinite(id)) throw new Error('Snippet id is required.');
+      if (!trigger) throw new Error('Trigger cannot be empty');
+      if (!expansion.trim()) throw new Error('Expansion cannot be empty');
+      if ([...trigger].length > 300) throw new Error('Trigger must be 300 characters or fewer');
+
+      const rows = readDevList<DevSnippet>(DEV_SNIPPETS_KEY);
+      if (rows.some((row) => row.id !== id && row.trigger === trigger)) {
+        throw new Error('UNIQUE constraint failed: snippets.trigger');
+      }
+      const index = rows.findIndex((row) => row.id === id);
+      if (index === -1) throw new Error(`Snippet ${id} was not found`);
+      rows[index] = { ...rows[index], trigger, expansion, instructions };
+      writeDevList(DEV_SNIPPETS_KEY, rows);
+      return undefined as T;
+    }
+    case 'remove_snippet': {
+      const id = Number(args?.id);
+      const rows = readDevList<DevSnippet>(DEV_SNIPPETS_KEY);
+      const next = rows.filter((row) => row.id !== id);
+      if (next.length === rows.length) throw new Error(`Snippet ${id} was not found`);
+      writeDevList(DEV_SNIPPETS_KEY, next);
+      return undefined as T;
+    }
+    case 'create_dictionary_entry': {
+      const term = assertDevText(args?.term, 'Term').trim();
+      const mistakeText = typeof args?.mistake === 'string' ? args.mistake.trim() : '';
+      const mistake = mistakeText || null;
+      if (!term) throw new Error('Term cannot be empty');
+      if ([...term].length > 120) throw new Error('Term must be 120 characters or fewer');
+      if (mistake && [...mistake].length > 120) {
+        throw new Error('Often mistranscribed as must be 120 characters or fewer');
+      }
+
+      const rows = readDevList<DevDictionaryEntry>(DEV_DICTIONARY_KEY);
+      if (rows.some((row) => row.term === term)) {
+        throw new Error('UNIQUE constraint failed: dictionary.term');
+      }
+      const id = nextDevId(rows);
+      const created = devCreated(id);
+      rows.unshift({
+        id,
+        term,
+        mistake,
+        auto_learned: false,
+        correction_count: 0,
+        confidence_tier: 'manual',
+        last_seen_at: null,
+        created_at: created.created_at,
+      });
+      writeDevList(DEV_DICTIONARY_KEY, rows);
+      return created as T;
+    }
+    case 'edit_dictionary_entry': {
+      const id = Number(args?.id);
+      const term = assertDevText(args?.term, 'Term').trim();
+      const mistakeText = typeof args?.mistake === 'string' ? args.mistake.trim() : '';
+      const mistake = mistakeText || null;
+      if (!Number.isFinite(id)) throw new Error('Dictionary entry id is required.');
+      if (!term) throw new Error('Term cannot be empty');
+      if ([...term].length > 120) throw new Error('Term must be 120 characters or fewer');
+      if (mistake && [...mistake].length > 120) {
+        throw new Error('Often mistranscribed as must be 120 characters or fewer');
+      }
+
+      const rows = readDevList<DevDictionaryEntry>(DEV_DICTIONARY_KEY);
+      if (rows.some((row) => row.id !== id && row.term === term)) {
+        throw new Error('UNIQUE constraint failed: dictionary.term');
+      }
+      const index = rows.findIndex((row) => row.id === id);
+      if (index === -1) throw new Error(`Dictionary entry ${id} was not found`);
+      rows[index] = { ...rows[index], term, mistake };
+      writeDevList(DEV_DICTIONARY_KEY, rows);
+      return undefined as T;
+    }
+    case 'remove_dictionary_entry': {
+      const id = Number(args?.id);
+      const rows = readDevList<DevDictionaryEntry>(DEV_DICTIONARY_KEY);
+      const next = rows.filter((row) => row.id !== id);
+      if (next.length === rows.length) throw new Error(`Dictionary entry ${id} was not found`);
+      writeDevList(DEV_DICTIONARY_KEY, next);
+      return undefined as T;
+    }
+    case 'log_frontend':
       return undefined as T;
     case 'check_accessibility_permission':
       if (args?.prompt) {
@@ -208,6 +374,10 @@ export function emit<T>(event: string, payload?: T): Promise<void> {
     return tauriEmit(event, payload);
   }
   return Promise.resolve();
+}
+
+export function flog(level: 'info' | 'warn' | 'error', message: string): void {
+  invoke('log_frontend', { level, message }).catch(() => {});
 }
 
 export function getVersion(): Promise<string> {
