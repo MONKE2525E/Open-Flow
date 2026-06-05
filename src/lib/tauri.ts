@@ -1,6 +1,7 @@
 import { getVersion as getTauriVersion } from '@tauri-apps/api/app';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit, listen as tauriListen } from '@tauri-apps/api/event';
+import { defaultHotkey } from './platform';
 
 declare const __APP_VERSION__: string;
 
@@ -79,7 +80,7 @@ const defaultSettings: Record<string, unknown> = {
   microphone_device: null,
   update_dismissed_version: null,
   advanced_model_ui: false,
-  hotkey: ['ControlLeft', 'MetaLeft'],
+  hotkey: defaultHotkey,
 };
 
 function hasTauriInternals(): boolean {

@@ -1207,7 +1207,7 @@ impl FocusedTextReader {
             InjectionContextProbe {
                 context,
                 source,
-                context_tail: caret_context.clone().unwrap_or_default(),
+                context_tail: caret_context.unwrap_or_default(),
                 control_type,
                 selection_state,
                 control_identity_hash,
