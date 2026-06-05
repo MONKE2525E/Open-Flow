@@ -22,7 +22,7 @@ pub fn measure() -> u64 {
 
             loop {
                 let mut buf = vec![0 as libc::pid_t; capacity];
-                let bytes = unsafe {
+                let num_pids = unsafe {
                     extern "C" {
                         fn proc_listchildpids(
                             ppid: libc::pid_t,
@@ -37,12 +37,12 @@ pub fn measure() -> u64 {
                     )
                 };
 
-                if bytes <= 0 {
+                if num_pids <= 0 {
                     break;
                 }
 
-                let bytes = bytes as usize;
-                let count = bytes.min(buf.len());
+                let num_pids = num_pids as usize;
+                let count = num_pids.min(buf.len());
                 for pid in buf.into_iter().take(count) {
                     if pid > 0 && pid != ppid {
                         found.insert(pid);

@@ -363,7 +363,8 @@ where
             match result {
                 Ok(t) => break t,
                 Err(()) => {
-                    if attempt.is_multiple_of(10) {
+                    #[allow(clippy::manual_is_multiple_of)]
+                    if attempt % 10 == 0 {
                         log::error!(
                             "CGEventTap not created — grant Open Flow Accessibility permission (System Settings → Privacy & Security → Accessibility). Retrying…"
                         );
