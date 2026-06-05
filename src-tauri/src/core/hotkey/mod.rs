@@ -4,7 +4,8 @@
 //! `commands`:
 //!   `start(on_press, on_release, on_handless, on_cancel, on_escape)`,
 //!   `update_keys`, `map_code_to_vk`, `is_hotkey_available`,
-//!   `reset_chord_state`, `set_handless_active`.
+//!   `reset_chord_state`, `set_handless_active`,
+//!   `begin_synthetic_paste_suppression`.
 //!
 //! Windows uses a `WH_KEYBOARD_LL` hook; macOS uses a `CGEventTap`. The numeric
 //! key ids produced by `map_code_to_vk` are platform-private — only the matching
@@ -31,6 +32,7 @@ mod noop {
     pub fn update_keys(_k1: u32, _k2: u32) {}
     pub fn reset_chord_state() {}
     pub fn set_handless_active(_v: bool) {}
+    pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
     pub fn map_code_to_vk(_code: &str) -> u32 {
         0
     }

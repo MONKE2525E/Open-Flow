@@ -31,45 +31,36 @@
   async function saveKey(provider: ProviderId) {
     const key = draftKeys[provider].trim();
     if (!key) return;
-    keyErrors = { ...keyErrors, [provider]: '' };
-    keySaving = { ...keySaving, [provider]: true };
+    keyErrors[provider] = '';
+    keySaving[provider] = true;
     try {
       await invoke('save_api_key', { provider, key });
       const status = await loadKeyStatus();
       if (status[provider]) {
-        draftKeys = { ...draftKeys, [provider]: '' };
+        draftKeys[provider] = '';
       } else {
-        keyErrors = {
-          ...keyErrors,
-          [provider]: 'The key did not persist after saving. Please try again.',
-        };
+        keyErrors[provider] = 'The key did not persist after saving. Please try again.';
       }
     } catch (e) {
       console.error('save_api_key failed', e);
-      keyErrors = {
-        ...keyErrors,
-        [provider]: 'Could not save this key locally. Please try again.',
-      };
+      keyErrors[provider] = 'Could not save this key locally. Please try again.';
     } finally {
-      keySaving = { ...keySaving, [provider]: false };
+      keySaving[provider] = false;
     }
   }
 
   async function clearKey(provider: ProviderId) {
-    keyErrors = { ...keyErrors, [provider]: '' };
-    keySaving = { ...keySaving, [provider]: true };
+    keyErrors[provider] = '';
+    keySaving[provider] = true;
     try {
       await invoke('delete_api_key', { provider });
       await loadKeyStatus();
-      draftKeys = { ...draftKeys, [provider]: '' };
+      draftKeys[provider] = '';
     } catch (e) {
       console.error('delete_api_key failed', e);
-      keyErrors = {
-        ...keyErrors,
-        [provider]: 'Could not remove this key locally. Please try again.',
-      };
+      keyErrors[provider] = 'Could not remove this key locally. Please try again.';
     } finally {
-      keySaving = { ...keySaving, [provider]: false };
+      keySaving[provider] = false;
     }
   }
 

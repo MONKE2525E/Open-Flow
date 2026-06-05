@@ -1,5 +1,5 @@
 #[cfg(windows)]
-use windows::Win32::Foundation::MAX_PATH;
+use windows::Win32::Foundation::{HWND, MAX_PATH};
 #[cfg(windows)]
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -28,6 +28,10 @@ const BROWSER_EXES: &[(&str, &str)] = &[
     ("arc.app", "Arc"),
 ];
 
+#[allow(dead_code)]
+pub fn is_browser_process_name(process_name: &str) -> bool {
+    BROWSER_EXES.iter().any(|(exe, _)| *exe == process_name)
+}
 /// The focus target to refocus before paste. On Windows this is the foreground
 /// `HWND`; on macOS it is the frontmost application's PID (both fit in a `usize`).
 pub fn get_foreground_hwnd() -> usize {
@@ -38,18 +42,22 @@ pub fn get_foreground_hwnd() -> usize {
     }
     #[cfg(target_os = "macos")]
     {
-        crate::system::mac_app::frontmost_pid()
-            .map(|p| p as usize)
-            .unwrap_or(0)
+        let (window_id, pid) = crate::system::mac_app::get_active_window_id_and_pid();
+        ((window_id as usize) << 32) | (pid as u32 as usize)
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     0
 }
 
 pub fn get_active_process_name() -> Option<String> {
+    get_process_name_for_hwnd(get_foreground_hwnd())
+}
+
+#[cfg_attr(not(windows), allow(unused_variables))]
+pub fn get_process_name_for_hwnd(hwnd: usize) -> Option<String> {
     #[cfg(windows)]
     unsafe {
-        let hwnd = GetForegroundWindow();
+        let hwnd = HWND(hwnd as *mut core::ffi::c_void);
         if hwnd.0.is_null() {
             return None;
         }

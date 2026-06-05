@@ -311,6 +311,42 @@ pub fn activate_pid(pid: i32) -> bool {
     })
 }
 
+/// Returns true if the general pasteboard contains non-text or rich-text formats
+/// that would be lost if we cleared and wrote back only plain text.
+pub fn pasteboard_has_non_text_formats() -> bool {
+    autoreleasepool(|_| unsafe {
+        let pb: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
+        if pb.is_null() {
+            return false;
+        }
+        let types: *mut AnyObject = msg_send![pb, types];
+        if types.is_null() {
+            return false;
+        }
+        let count: usize = msg_send![types, count];
+        for i in 0..count {
+            let item_type: *mut AnyObject = msg_send![types, objectAtIndex: i];
+            if let Some(type_str) = nsstring_to_string(item_type) {
+                let type_lower = type_str.to_lowercase();
+                if type_lower.contains("html")
+                    || type_lower.contains("rtf")
+                    || type_lower.contains("image")
+                    || type_lower.contains("pdf")
+                    || type_lower.contains("file-url")
+                    || type_lower == "public.tiff"
+                    || type_lower == "public.png"
+                    || type_lower == "public.jpeg"
+                    || type_lower == "public.url"
+                    || type_lower == "com.apple.webarchive"
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+}
+
 /// Current plain-text contents of the general pasteboard, if any.
 pub fn pasteboard_get_string() -> Option<String> {
     autoreleasepool(|_| unsafe {
@@ -349,3 +385,115 @@ unsafe fn nsstring_to_string(ns: *mut AnyObject) -> Option<String> {
     }
     Some(CStr::from_ptr(utf8).to_string_lossy().into_owned())
 }
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGWindowListCopyWindowInfo(option: u32, relativeToWindow: u32) -> core_foundation_sys::array::CFArrayRef;
+    static kCGWindowNumber: core_foundation_sys::string::CFStringRef;
+    static kCGWindowOwnerPID: core_foundation_sys::string::CFStringRef;
+    static kCGWindowLayer: core_foundation_sys::string::CFStringRef;
+}
+
+/// Returns the frontmost window ID and the frontmost application PID.
+pub fn get_active_window_id_and_pid() -> (u32, i32) {
+    use core_foundation::base::TCFType;
+
+    let target_pid = frontmost_pid().unwrap_or(0);
+    if target_pid <= 0 {
+        return (0, 0);
+    }
+
+    unsafe {
+        // kCGWindowListOptionOnScreenOnly = (1 << 0)
+        // kCGWindowListOptionExcludeDesktopElements = (1 << 1)
+        let array_ref = CGWindowListCopyWindowInfo(3, 0);
+        if array_ref.is_null() {
+            return (0, target_pid);
+        }
+
+        let count = core_foundation_sys::array::CFArrayGetCount(array_ref);
+        let mut found_window_id = None;
+
+        for i in 0..count {
+            let dict_ref = core_foundation_sys::array::CFArrayGetValueAtIndex(array_ref, i)
+                as core_foundation_sys::dictionary::CFDictionaryRef;
+            if dict_ref.is_null() {
+                continue;
+            }
+
+            // Get owner PID
+            let pid_ref = core_foundation_sys::dictionary::CFDictionaryGetValue(
+                dict_ref,
+                kCGWindowOwnerPID as *const std::ffi::c_void,
+            );
+            if pid_ref.is_null() {
+                continue;
+            }
+            let pid_num = core_foundation::number::CFNumber::wrap_under_get_rule(
+                pid_ref as core_foundation_sys::number::CFNumberRef,
+            );
+            let pid = match pid_num.to_i32() {
+                Some(p) => p,
+                None => continue,
+            };
+
+            if pid != target_pid {
+                continue;
+            }
+
+            // Get Layer
+            let layer_ref = core_foundation_sys::dictionary::CFDictionaryGetValue(
+                dict_ref,
+                kCGWindowLayer as *const std::ffi::c_void,
+            );
+            if layer_ref.is_null() {
+                continue;
+            }
+            let layer_num = core_foundation::number::CFNumber::wrap_under_get_rule(
+                layer_ref as core_foundation_sys::number::CFNumberRef,
+            );
+            let layer = match layer_num.to_i32() {
+                Some(l) => l,
+                None => continue,
+            };
+
+            // We only care about normal window layer (0)
+            if layer != 0 {
+                continue;
+            }
+
+            // Get Window Number
+            let win_num_ref = core_foundation_sys::dictionary::CFDictionaryGetValue(
+                dict_ref,
+                kCGWindowNumber as *const std::ffi::c_void,
+            );
+            if win_num_ref.is_null() {
+                continue;
+            }
+            let win_num = core_foundation::number::CFNumber::wrap_under_get_rule(
+                win_num_ref as core_foundation_sys::number::CFNumberRef,
+            );
+            if let Some(w) = win_num.to_i64() {
+                found_window_id = Some(w as u32);
+                break;
+            }
+        }
+
+        // Release the array returned by Copy function
+        core_foundation_sys::base::CFRelease(array_ref as *const std::ffi::c_void);
+
+        (found_window_id.unwrap_or(0), target_pid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_active_window_id_and_pid() {
+        let (win_id, pid) = get_active_window_id_and_pid();
+        println!("Active window ID: {}, PID: {}", win_id, pid);
+    }
+}
+

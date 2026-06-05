@@ -33,6 +33,7 @@ pub const APPEARANCE_MODE: &str = "appearance_mode";
 pub const FORCE_SETUP_ON_LAUNCH: &str = "force_setup_on_launch";
 pub const ADVANCED_MODEL_UI: &str = "advanced_model_ui";
 pub const CREDENTIALS_MIGRATED: &str = "credentials_migrated_v1";
+pub const MACOS_CLIPBOARD_SNIFF: &str = "macos_clipboard_sniff_enabled";
 
 // ---------- pipeline config ----------
 
@@ -55,6 +56,7 @@ pub struct PipelineConfig {
     pub auto_learn_enabled: bool,
     pub contextual_caps_enabled: bool,
     pub auto_spacing_enabled: bool,
+    pub macos_clipboard_sniff_enabled: bool,
 }
 
 pub const GROQ: &str = "groq";
@@ -277,6 +279,10 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             .get(AUTO_SPACING)
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
+        macos_clipboard_sniff_enabled: store
+            .get(MACOS_CLIPBOARD_SNIFF)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     }
 }
 
