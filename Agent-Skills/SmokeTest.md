@@ -22,7 +22,9 @@ description: Minimal guide to run and fix Open Flow smoke tests by changing app 
   - General: `button.badge.key-badge` contains `Ctrl`
   - About: `button.btn-ghost` contains `github.com/MONKE2525E/Open-Flow`
 - `playwright-test-state.cjs` (1420): model and advanced-toggle persistence survive close/reopen.
-- `playwright-test-pipeline.cjs` (no server): WAV + API pipeline checks, `SKIP` when keys are absent.
+- `playwright-test-pipeline.cjs` (no server): live API smoke checks, `SKIP` when keys are absent.
+- `tests/integration/*`: browser-dev coverage for onboarding, settings/state surfaces, and offline handling.
+- Rust pipeline fixture tests: deterministic fallback, cleanup, cache, history, and injection behavior in `cargo test`.
 
 ## Required class/selector contracts
 
@@ -40,26 +42,36 @@ description: Minimal guide to run and fix Open Flow smoke tests by changing app 
 ## Run commands
 
 ```bash
-# Recommended unified run
-python tests/OnePyFone.py --suite all --fresh-server
+# Recommended default PR-grade gate
+python tests/OnePyFone.py
+
+# Explicit profiles
+python tests/OnePyFone.py --profile fast
+python tests/OnePyFone.py --profile live
+python tests/OnePyFone.py --profile native
+python tests/OnePyFone.py --profile full
 
 # Parallel-safe suites only
 python tests/OnePyFone.py --suite ui,animation --parallel --workers 3 --fresh-server
 
-# Direct runs
-npm run dev
-node tests/smoke/test.cjs
-node tests/smoke/test-app.cjs
+# npm entrypoints
+npm test
+npm run test:all
+npm run test:live
+npm run test:native
 
-npm run tauri dev
+# Direct frozen smoke runs
+npm run dev
 node tests/smoke/playwright-test-ui.cjs
 node tests/smoke/playwright-test-fixes.cjs
 node tests/smoke/playwright-test-state.cjs
-
-node tests/smoke/playwright-test-pipeline.cjs
 ```
 
 ## Notes
 
+- `tests/smoke/*` stays frozen. Add new coverage in `tests/integration/` or Rust tests.
+- The `fast` profile is the default and should stay deterministic: no live APIs, no microphone capture, no clipboard injection, no OS permission prompts.
+- The `live` profile is opt-in and must never print API keys, clipboard contents, or real dictated text.
+- The `native` profile is opt-in for platform/manual-adjacent checks and should explain skip reasons clearly.
 - Use `--fresh-server` to avoid stale listener/process false failures.
 - OnePyFone now shows live elapsed seconds while tests run.

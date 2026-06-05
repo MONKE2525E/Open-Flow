@@ -386,6 +386,7 @@ unsafe fn nsstring_to_string(ns: *mut AnyObject) -> Option<String> {
     Some(CStr::from_ptr(utf8).to_string_lossy().into_owned())
 }
 
+#[allow(dead_code)]
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGWindowListCopyWindowInfo(
@@ -398,6 +399,7 @@ extern "C" {
 }
 
 /// Returns the frontmost window ID and the frontmost application PID.
+#[allow(dead_code)]
 pub fn get_active_window_id_and_pid() -> (u32, i32) {
     use core_foundation::base::TCFType;
 

@@ -426,10 +426,6 @@
                 class:simple-active={isActive}
                 class:simple-fallback={isFallback}
                 class:chain-row={isFallback}
-                role="button"
-                tabindex="0"
-                onclick={() => toggleModelSelection(type, section.storeProvider, custom)}
-                onkeydown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { if (e.key === ' ') e.preventDefault(); toggleModelSelection(type, section.storeProvider, custom); } }}
               >
                 <button
                   class="remove-dot"
@@ -439,13 +435,32 @@
                   aria-label="Remove {custom}"
                   onclick={(e) => { e.stopPropagation(); removeCustomModel(type, section.storeProvider, custom); }}
                 ></button>
-                <span class="simple-name model-name">{custom}</span>
+                <button
+                  type="button"
+                  class="simple-name model-name custom-toggle-btn"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    toggleModelSelection(type, section.storeProvider, custom);
+                  }}
+                  aria-label="Toggle selection for {custom}"
+                >
+                  {custom}
+                </button>
                 {#if isActive}
                   <span transition:pillScale class="state-pill active">Active</span>
                 {:else if isFallback}
                   <span transition:pillScale class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, custom)) + 1}</span>
                 {:else}
-                  <span transition:pillScale class="state-pill muted">Add fallback</span>
+                  <button
+                    type="button"
+                    class="state-pill muted add-fallback-btn"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      toggleModelSelection(type, section.storeProvider, custom);
+                    }}
+                  >
+                    Add fallback
+                  </button>
                 {/if}
               </div>
             {/each}
@@ -787,6 +802,40 @@
     color: var(--ink-soft);
     border-color: var(--line-strong);
     background: color-mix(in srgb, var(--paper) 50%, var(--bg-elev));
+  }
+
+  .simple-row:hover .state-pill.muted {
+    color: var(--ink-soft);
+    border-color: var(--line-strong);
+    background: color-mix(in srgb, var(--paper) 50%, var(--bg-elev));
+  }
+
+  .add-fallback-btn {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--line);
+    padding: 2px 7px;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+  .add-fallback-btn:focus-visible {
+    outline: 2px solid var(--accent, #d97757);
+    outline-offset: 2px;
+  }
+
+  .custom-toggle-btn {
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    outline: none;
+    text-align: left;
+  }
+  .custom-toggle-btn:focus-visible {
+    outline: 2px solid var(--accent, #d97757);
+    outline-offset: 2px;
   }
 
   /* ── Tier pill (Accurate/Efficient → Add fallback on hover) ── */

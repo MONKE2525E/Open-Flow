@@ -47,6 +47,25 @@
     indicatorStyle = `left:${btn.offsetLeft}px;width:${btn.offsetWidth}px`;
   });
 
+  const readableMac: Record<string, string> = {
+    MetaLeft: 'Cmd',
+    MetaRight: 'Cmd',
+    ControlLeft: 'Ctrl',
+    ControlRight: 'Ctrl',
+    AltLeft: 'Option',
+    AltRight: 'Option',
+    ShiftLeft: 'Shift',
+    ShiftRight: 'Shift',
+    Fn: 'Fn',
+  };
+
+  function formatHotkeyBadgeLabel(code: string): string {
+    if (isMac && readableMac[code]) {
+      return readableMac[code];
+    }
+    return formatKeyLabel(code);
+  }
+
   let buttonText = $derived(
     recordingHotkey
       ? capturedKeys[0] === '__bad__'
@@ -54,7 +73,7 @@
         : capturedKeys.length === 0
           ? isMac ? 'Press modifier key...' : 'Press Alt/Ctrl/Shift/Win...'
           : 'Press 2nd key...'
-      : `${formatKeyLabel(hotkey[0])} + ${formatKeyLabel(hotkey[1])}`
+      : `${formatHotkeyBadgeLabel(hotkey[0])} + ${formatHotkeyBadgeLabel(hotkey[1])}`
   );
 
   $effect.pre(() => {

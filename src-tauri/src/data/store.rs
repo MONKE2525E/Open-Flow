@@ -34,10 +34,12 @@ pub const FORCE_SETUP_ON_LAUNCH: &str = "force_setup_on_launch";
 pub const ADVANCED_MODEL_UI: &str = "advanced_model_ui";
 pub const CREDENTIALS_MIGRATED: &str = "credentials_migrated_v1";
 pub const MACOS_CLIPBOARD_SNIFF: &str = "macos_clipboard_sniff_enabled";
+pub const UPDATE_DISMISSED_VERSION: &str = "update_dismissed_version";
 
 // ---------- pipeline config ----------
 
 /// All settings values needed by run_pipeline, loaded in one place.
+#[derive(Clone, Debug)]
 pub struct PipelineConfig {
     pub transcription_provider: String,
     pub transcription_language: String,

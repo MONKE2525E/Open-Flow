@@ -24,6 +24,11 @@ pub async fn cleanup(
     app_context: Option<&str>,
 ) -> Result<String> {
     let provider_id = provider_id(&provider);
+    #[cfg(any(test, debug_assertions))]
+    if let Some(result) = crate::testing::resolve_provider_fixture("cleanup", provider_id, model) {
+        return result;
+    }
+
     let prompt = get_cleanup_prompt_with_extras(
         provider_id,
         model,

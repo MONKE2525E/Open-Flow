@@ -840,6 +840,24 @@ pub async fn inject_text(
     profile: &str,
     clipboard_sniff_enabled: bool,
 ) -> anyhow::Result<InjectionOutcome> {
+    #[cfg(any(test, debug_assertions))]
+    if crate::testing::is_enabled() {
+        crate::testing::record_injection(crate::testing::InjectionRecord {
+            text: text.to_string(),
+            target_hwnd,
+            contextual_caps,
+            auto_spacing,
+            profile: profile.to_string(),
+        });
+        return Ok(InjectionOutcome {
+            text: text.to_string(),
+            context_state: "test_mode",
+            case_decision: "test_mode_passthrough",
+            probe_source: "test_harness",
+            selection_state: "unknown",
+        });
+    }
+
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::Foundation::HWND;

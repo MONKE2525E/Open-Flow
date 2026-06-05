@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from '../../tauri';
+  import { invoke, listen } from '../../tauri';
   import { onMount } from 'svelte';
   import Toggle from '../Toggle.svelte';
 
@@ -80,7 +80,6 @@
     loadDevFlags();
     (async () => {
       try {
-        const { listen } = await import('@tauri-apps/api/event');
         unlisten = await listen<string>('open-flow:log', (ev) => {
           if (!active) return;
           logs = [...logs.slice(-499), ev.payload];

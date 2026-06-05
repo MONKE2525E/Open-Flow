@@ -50,3 +50,36 @@ jobs:
 
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  all-in-one-fast:
+    name: All-in-one fast profile
+    needs: [frontend, rust]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare report directory
+        run: mkdir -p tests/reports
+
+      - name: Run unified fast profile
+        run: npm test -- --json-report tests/reports/fast-profile.json --junit-report tests/reports/fast-profile.junit.xml
+
+      - name: Upload fast-profile reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-profile-reports
+          path: tests/reports/

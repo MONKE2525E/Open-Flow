@@ -878,9 +878,36 @@ async fn run_cleanup_and_snippets(
     profile: &str,
     app_context: Option<&str>,
 ) -> Option<(String, Vec<db::DictionaryEntry>, String)> {
-    let db = app.state::<DbHandle>();
-    let mut db_snippets = db::query_snippets(&db).unwrap_or_default();
-    let dict_entries = db::query_dictionary(&db).unwrap_or_default();
+    let db_handle = app.state::<DbHandle>();
+    match run_cleanup_and_snippets_for_db(db_handle.inner(), raw, cfg, profile, app_context).await {
+        Ok(result) => Some(result),
+        Err(e) => {
+            let mut user_msg = format!("Cleanup failed: {}", trim_err(&e.to_string()));
+            if let Some(parsed) = crate::api::parse_auth_401_error(&e.to_string()) {
+                user_msg = format!(
+                    "Cleanup failed: {}",
+                    crate::api::auth_401_display_message(&parsed)
+                );
+            }
+            log::error!(
+                "pipeline: cleanup failed error={}",
+                trim_err(&e.to_string())
+            );
+            show_error_pill(app, &user_msg).await;
+            None
+        }
+    }
+}
+
+async fn run_cleanup_and_snippets_for_db(
+    db: &DbHandle,
+    raw: &str,
+    cfg: &store::PipelineConfig,
+    profile: &str,
+    app_context: Option<&str>,
+) -> anyhow::Result<(String, Vec<db::DictionaryEntry>, String)> {
+    let mut db_snippets = db::query_snippets(db).unwrap_or_default();
+    let dict_entries = db::query_dictionary(db).unwrap_or_default();
     log::debug!(
         "pipeline: cleanup inputs snippets={} dict_entries={}",
         db_snippets.len(),
@@ -909,13 +936,13 @@ async fn run_cleanup_and_snippets(
 
     // Fast path: entire transcription was a single snippet trigger — skip the LLM.
     let pure_expansion = if snippet_instructions.is_empty() {
-        snippets::try_pure_snippet_expand_from(raw, &db_snippets, &db)
+        snippets::try_pure_snippet_expand_from(raw, &db_snippets, db)
     } else {
         None
     };
     let expanded = pure_expansion
         .clone()
-        .unwrap_or_else(|| snippets::expand_snippets_from(raw, &mut db_snippets, &db));
+        .unwrap_or_else(|| snippets::expand_snippets_from(raw, &mut db_snippets, db));
     log::debug!(
         "pipeline: snippets expanded pure_fast_path={} expanded_chars={}",
         pure_expansion.is_some(),
@@ -943,7 +970,7 @@ async fn run_cleanup_and_snippets(
         };
         if !cache_key.is_empty() {
             used_cache_key = cache_key.clone();
-            if let Ok(Some(entry)) = db::cleanup_cache_get_active(&db, &cache_key) {
+            if let Ok(Some(entry)) = db::cleanup_cache_get_active(db, &cache_key) {
                 log::debug!(
                     "pipeline: cleanup cache hit key_len={} hit_count={}",
                     cache_key.len(),
@@ -955,7 +982,7 @@ async fn run_cleanup_and_snippets(
                 let new_expires_at =
                     next_cache_expiry(new_hit_count, &entry.created_at, &entry.expires_at, now);
                 let _ = db::cleanup_cache_touch_hit(
-                    &db,
+                    db,
                     &cache_key,
                     new_hit_count,
                     &now_str,
@@ -970,7 +997,7 @@ async fn run_cleanup_and_snippets(
                     &entry.clean_text,
                     &snippet_instructions,
                 );
-                return Some((overridden, dict_entries, cache_key));
+                return Ok((overridden, dict_entries, cache_key));
             }
         }
         log::debug!(
@@ -1051,7 +1078,7 @@ async fn run_cleanup_and_snippets(
                 if !cache_key.is_empty() {
                     let expires = sqlite_utc_plus(7);
                     match db::cleanup_cache_insert_new(
-                        &db,
+                        db,
                         &cache_key,
                         &cleaned,
                         &expires,
@@ -1065,29 +1092,14 @@ async fn run_cleanup_and_snippets(
                 }
                 overridden
             }
-            None if last_cleanup_err.is_some() => {
-                let e = last_cleanup_err.expect("checked is_some");
-                let mut user_msg = format!("Cleanup failed: {}", trim_err(&e.to_string()));
-                if let Some(parsed) = crate::api::parse_auth_401_error(&e.to_string()) {
-                    user_msg = format!(
-                        "Cleanup failed: {}",
-                        crate::api::auth_401_display_message(&parsed)
-                    );
-                }
-                log::error!(
-                    "pipeline: cleanup failed error={}",
-                    trim_err(&e.to_string())
-                );
-                show_error_pill(app, &user_msg).await;
-                return None;
-            }
+            None if last_cleanup_err.is_some() => return Err(last_cleanup_err.expect("checked")),
             None => snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions),
         }
     } else {
         snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
     };
 
-    Some((final_text, dict_entries, used_cache_key))
+    Ok((final_text, dict_entries, used_cache_key))
 }
 
 fn should_run_cleanup_llm(
@@ -1114,12 +1126,171 @@ fn style_scoped_cleanup_cache_key(
     format!("{base_key}|profile:{profile}|intensity:{cleanup_intensity}")
 }
 
+#[cfg(any(test, debug_assertions))]
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct PipelineTestSnippet {
+    pub trigger: String,
+    pub expansion: String,
+    pub instructions: String,
+}
+
+#[cfg(any(test, debug_assertions))]
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct PipelineTestDictionaryEntry {
+    pub term: String,
+    pub mistake: Option<String>,
+}
+
+#[cfg(any(test, debug_assertions))]
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct PipelineTestRequest {
+    pub db: Option<DbHandle>,
+    pub wav: bytes::Bytes,
+    pub duration_ms: u64,
+    pub rms: f32,
+    pub config: store::PipelineConfig,
+    pub profile: String,
+    pub target_hwnd: usize,
+    pub app_context: Option<String>,
+    pub snippets: Vec<PipelineTestSnippet>,
+    pub dictionary: Vec<PipelineTestDictionaryEntry>,
+}
+
+#[cfg(any(test, debug_assertions))]
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct PipelineTestResult {
+    pub raw_text: String,
+    pub final_text_before_dictionary: String,
+    pub injected_text: String,
+    pub api_used: String,
+    pub cleanup_cache_key: String,
+    pub history_entry: db::RecentEntry,
+    pub recent: Vec<db::RecentEntry>,
+    pub stats: db::Stats,
+}
+
+#[cfg(any(test, debug_assertions))]
+#[allow(dead_code)]
+pub async fn run_pipeline_fixture(
+    request: PipelineTestRequest,
+) -> anyhow::Result<PipelineTestResult> {
+    if request.duration_ms < MIN_RECORDING_MS {
+        anyhow::bail!("Recording too short");
+    }
+    if request.rms < MIN_RECORDING_RMS {
+        anyhow::bail!("Audio too quiet - check your mic");
+    }
+    if !has_transcription_key_in_chain(&request.config) {
+        anyhow::bail!("No API key configured for any model in the transcription chain");
+    }
+
+    let db_handle = match request.db {
+        Some(d) => d,
+        None => db::open(":memory:")?,
+    };
+    for snippet in &request.snippets {
+        db::insert_snippet_returning(&db_handle, &snippet.trigger, &snippet.expansion, &snippet.instructions)?;
+    }
+    for entry in &request.dictionary {
+        db::insert_dictionary_entry_returning(&db_handle, &entry.term, entry.mistake.as_deref())?;
+    }
+
+    let mut transcribed: Option<(String, String)> = None;
+    let mut last_err: Option<anyhow::Error> = None;
+    for (provider_id, model) in transcription_model_chain(&request.config) {
+        let key = request.config.key_for(&provider_id).to_owned();
+        if key.is_empty() {
+            continue;
+        }
+        let provider = transcription_provider_from_str(&provider_id);
+        match transcription::transcribe(
+            request.wav.clone(),
+            provider,
+            &key,
+            &request.config.transcription_language,
+            &model,
+        )
+        .await
+        {
+            Ok(raw) if !raw.is_empty() => {
+                transcribed = Some((normalize_transcription_math_artifacts(&raw), format!("{provider_id}/{model}/transcription")));
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                if crate::api::is_retryable_provider_error(&e) {
+                    last_err = Some(e);
+                    continue;
+                }
+                last_err = Some(e);
+                break;
+            }
+        }
+    }
+
+    let (raw_text, api_used) =
+        transcribed.ok_or_else(|| last_err.unwrap_or_else(|| anyhow::anyhow!("Transcription failed: no model in chain produced output")))?;
+
+    let (final_text_before_dictionary, dict_entries, cleanup_cache_key) =
+        run_cleanup_and_snippets_for_db(
+            &db_handle,
+            &raw_text,
+            &request.config,
+            &request.profile,
+            request.app_context.as_deref(),
+        )
+        .await?;
+    let (injected_text, _applied_dict_ids) =
+        dictionary::apply_substitutions_from(&final_text_before_dictionary, &dict_entries);
+    let words = raw_text.split_whitespace().count() as i64;
+    let history_entry = db::insert_transcription_returning(
+        &db_handle,
+        &raw_text,
+        &final_text_before_dictionary,
+        words,
+        request.duration_ms as i64,
+        &api_used,
+    )?;
+    let injected = injection::inject_text(
+        &injected_text,
+        request.target_hwnd,
+        request.config.contextual_caps_enabled,
+        request.config.auto_spacing_enabled,
+        &request.profile,
+        request.config.macos_clipboard_sniff_enabled,
+    )
+    .await?;
+    let recent = db::query_recent(&db_handle)?;
+    let stats = db::query_stats(&db_handle)?;
+
+    Ok(PipelineTestResult {
+        raw_text,
+        final_text_before_dictionary,
+        injected_text: injected.text,
+        api_used,
+        cleanup_cache_key,
+        history_entry,
+        recent,
+        stats,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_transcription_math_artifacts, should_run_cleanup_llm, should_use_cleanup_cache,
-        style_scoped_cleanup_cache_key,
+        normalize_transcription_math_artifacts, run_pipeline_fixture, should_run_cleanup_llm,
+        should_use_cleanup_cache, style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry,
+        PipelineTestRequest, PipelineTestSnippet,
     };
+    use crate::data::store;
+    use crate::testing::{
+        fixture_hit_count, register_fixture, reset, set_enabled, take_injections, FixtureSpec,
+    };
+    use bytes::Bytes;
 
     #[test]
     fn cleanup_cache_bypasses_math_like_queries() {
@@ -1179,6 +1350,394 @@ mod tests {
     #[test]
     fn style_scoped_cache_key_preserves_empty_base_key() {
         assert_eq!(style_scoped_cleanup_cache_key("", "casual", "medium"), "");
+    }
+
+    fn base_config() -> store::PipelineConfig {
+        store::PipelineConfig {
+            transcription_provider: "groq".into(),
+            transcription_language: "en".into(),
+            cleanup_provider: "groq".into(),
+            transcription_default_model: "groq/whisper-large-v3-turbo".into(),
+            cleanup_default_model: "groq/llama-3.3-70b-versatile".into(),
+            transcription_fallback_models: Vec::new(),
+            cleanup_fallback_models: Vec::new(),
+            cleanup_enabled: true,
+            key_groq: "fixture-groq-key".into(),
+            key_openai: "fixture-openai-key".into(),
+            key_google: "fixture-google-key".into(),
+            default_tone: "casual".into(),
+            cleanup_intensity: "medium".into(),
+            app_context_hint: false,
+            auto_learn_enabled: false,
+            contextual_caps_enabled: true,
+            auto_spacing_enabled: true,
+            macos_clipboard_sniff_enabled: false,
+        }
+    }
+
+    fn base_request(config: store::PipelineConfig) -> PipelineTestRequest {
+        PipelineTestRequest {
+            db: None,
+            wav: Bytes::from_static(b"fixture-wav"),
+            duration_ms: 1200,
+            rms: 0.2,
+            config,
+            profile: "casual".into(),
+            target_hwnd: 77,
+            app_context: None,
+            snippets: Vec::new(),
+            dictionary: Vec::new(),
+        }
+    }
+
+    fn harness_test_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_rejects_short_recordings_before_provider_calls() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("should never be used".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let mut request = base_request(base_config());
+        request.duration_ms = 300;
+        let err = run_pipeline_fixture(request).await.expect_err("short recording should fail");
+        assert!(err.to_string().contains("Recording too short"));
+        assert_eq!(
+            fixture_hit_count("transcription", "groq", "whisper-large-v3-turbo"),
+            0
+        );
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_rejects_quiet_recordings_before_provider_calls() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("should never be used".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let mut request = base_request(base_config());
+        request.rms = 0.001;
+        let err = run_pipeline_fixture(request).await.expect_err("quiet recording should fail");
+        assert!(err.to_string().contains("Audio too quiet"));
+        assert_eq!(
+            fixture_hit_count("transcription", "groq", "whisper-large-v3-turbo"),
+            0
+        );
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_requires_transcription_key_before_provider_calls() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        let mut config = base_config();
+        config.key_groq.clear();
+        config.key_openai.clear();
+        config.key_google.clear();
+        let err = run_pipeline_fixture(base_request(config))
+            .await
+            .expect_err("missing key should fail");
+        assert!(err.to_string().contains("No API key configured"));
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_uses_transcription_fallback_for_retryable_errors() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        let mut config = base_config();
+        config.transcription_fallback_models = vec!["openai/gpt-4o-transcribe".into()];
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: None,
+            error_kind: Some("timeout".into()),
+            error_message: Some("groq timed out".into()),
+        });
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "openai".into(),
+            model: "gpt-4o-transcribe".into(),
+            response: Some("fallback transcript".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("fallback transcript".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let result = run_pipeline_fixture(base_request(config))
+            .await
+            .expect("fallback should succeed");
+        assert_eq!(result.raw_text, "fallback transcript");
+        assert_eq!(result.api_used, "openai/gpt-4o-transcribe/transcription");
+        assert_eq!(
+            fixture_hit_count("transcription", "groq", "whisper-large-v3-turbo"),
+            1
+        );
+        assert_eq!(
+            fixture_hit_count("transcription", "openai", "gpt-4o-transcribe"),
+            1
+        );
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_stops_on_non_retryable_transcription_error() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        let mut config = base_config();
+        config.transcription_fallback_models = vec!["openai/gpt-4o-transcribe".into()];
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: None,
+            error_kind: Some("auth_invalid".into()),
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "openai".into(),
+            model: "gpt-4o-transcribe".into(),
+            response: Some("should not be used".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let err = run_pipeline_fixture(base_request(config))
+            .await
+            .expect_err("auth error should stop fallback");
+        assert!(err.to_string().starts_with("AUTH_401|provider=Groq"));
+        assert_eq!(
+            fixture_hit_count("transcription", "openai", "gpt-4o-transcribe"),
+            0
+        );
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_uses_cleanup_fallback_and_persists_history() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        let mut config = base_config();
+        config.cleanup_fallback_models = vec!["openai/gpt-4o-mini".into()];
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("raw fallback cleanup test".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: None,
+            error_kind: Some("status_503".into()),
+            error_message: Some("temporary overload".into()),
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "openai".into(),
+            model: "gpt-4o-mini".into(),
+            response: Some("clean fallback result".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let result = run_pipeline_fixture(base_request(config))
+            .await
+            .expect("cleanup fallback should succeed");
+        assert_eq!(result.final_text_before_dictionary, "clean fallback result");
+        assert_eq!(result.history_entry.clean_text, "clean fallback result");
+        assert_eq!(result.stats.total_words, 4);
+        assert_eq!(result.recent.len(), 1);
+        assert_eq!(
+            fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+            1
+        );
+        assert_eq!(fixture_hit_count("cleanup", "openai", "gpt-4o-mini"), 1);
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_skips_cleanup_for_pure_snippet_fast_path() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("sig".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("should not be called".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let mut request = base_request(base_config());
+        request.snippets.push(PipelineTestSnippet {
+            trigger: "sig".into(),
+            expansion: "Best regards, Noah".into(),
+            instructions: String::new(),
+        });
+
+        let result = run_pipeline_fixture(request)
+            .await
+            .expect("pure snippet fast path should succeed");
+        assert_eq!(result.final_text_before_dictionary, "Best regards, Noah");
+        assert_eq!(fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"), 0);
+        assert_eq!(take_injections().len(), 1);
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_applies_instruction_snippets_and_dictionary_last() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("say acme alert".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("acme alert".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let mut request = base_request(base_config());
+        request.snippets.push(PipelineTestSnippet {
+            trigger: "alert".into(),
+            expansion: "alert".into(),
+            instructions: "all capitals".into(),
+        });
+        request.dictionary.push(PipelineTestDictionaryEntry {
+            term: "OpenFlow".into(),
+            mistake: Some("ACME".into()),
+        });
+
+        let result = run_pipeline_fixture(request)
+            .await
+            .expect("instruction and dictionary path should succeed");
+        assert_eq!(result.final_text_before_dictionary, "ACME ALERT");
+        assert_eq!(result.injected_text, "OpenFlow ALERT");
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_honors_formal_cleanup_even_with_none_intensity() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        let mut config = base_config();
+        config.cleanup_intensity = "none".into();
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("im sending the note".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("I am sending the note.".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let mut request = base_request(config);
+        request.profile = "formal".into();
+        let result = run_pipeline_fixture(request)
+            .await
+            .expect("formal none intensity should still run cleanup");
+        assert_eq!(result.final_text_before_dictionary, "I am sending the note.");
+        assert_eq!(fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"), 1);
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_uses_cleanup_cache_on_repeat_runs() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("cache me please".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("cache me please".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let mut request = base_request(base_config());
+        request.db = Some(crate::data::db::open(":memory:").expect("shared test db"));
+        let first = run_pipeline_fixture(request.clone())
+            .await
+            .expect("first run should succeed");
+        let second = run_pipeline_fixture(request)
+            .await
+            .expect("second run should succeed");
+        assert!(!first.cleanup_cache_key.is_empty());
+        assert_eq!(first.cleanup_cache_key, second.cleanup_cache_key);
+        assert_eq!(fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"), 1);
+        reset();
     }
 }
 
@@ -1294,9 +1853,9 @@ async fn finalize_pipeline_completion(
         );
     }
 
-    let db = app.state::<DbHandle>();
+    let db_handle = app.state::<DbHandle>();
     let words = ctx.raw.split_whitespace().count() as i64;
-    let db_for_insert = db.inner().clone();
+    let db_for_insert = db_handle.inner().clone();
     let raw_for_insert = ctx.raw.to_string();
     let clean_for_insert = ctx.final_text_before_dict.to_string();
     let api_used_for_insert = ctx.api_used.to_string();
@@ -1378,7 +1937,7 @@ async fn finalize_pipeline_completion(
             injected_text.clone(),
             ctx.cleanup_cache_key,
             ctx.target_hwnd,
-            db.inner().clone(),
+            db_handle.inner().clone(),
             app.clone(),
         );
     }
@@ -1388,14 +1947,14 @@ async fn finalize_pipeline_completion(
                 injected_text.clone(),
                 applied_dict_ids,
                 ctx.target_hwnd,
-                db.inner().clone(),
+                db_handle.inner().clone(),
                 app.clone(),
             );
         }
         auto_learn::start_monitor(
             injected_text,
             ctx.process_name,
-            db.inner().clone(),
+            db_handle.inner().clone(),
             app.clone(),
         );
     }

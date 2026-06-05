@@ -51,7 +51,7 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::CLEANUP_INTENSITY
         | store::MICROPHONE_DEVICE
         | "history_retention"
-        | "update_dismissed_version" => value.is_string() || value.is_null(),
+        | store::UPDATE_DISMISSED_VERSION => value.is_string() || value.is_null(),
         store::TRANSCRIPTION_MODELS_BY_PROVIDER | store::CLEANUP_MODELS_BY_PROVIDER => {
             is_model_map(value)
         }
@@ -146,8 +146,10 @@ pub async fn get_setting(app: AppHandle, key: String) -> Result<Option<serde_jso
 
 #[derive(serde::Serialize)]
 pub struct AllSettings {
+    pub transcription_provider: Option<String>,
     pub transcription_model: Option<String>,
     pub transcription_language: Option<String>,
+    pub cleanup_provider: Option<String>,
     pub cleanup_model: Option<String>,
     pub transcription_models_by_provider: Option<serde_json::Value>,
     pub cleanup_models_by_provider: Option<serde_json::Value>,
@@ -167,6 +169,7 @@ pub struct AllSettings {
     pub mic_gain: Option<f64>,
     pub history_retention: Option<String>,
     pub microphone_device: Option<String>,
+    pub update_dismissed_version: Option<String>,
     pub hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
 }
@@ -195,8 +198,10 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         })
     };
     Ok(AllSettings {
+        transcription_provider: str_val(store::TRANSCRIPTION_PROVIDER),
         transcription_model: str_val(store::TRANSCRIPTION_MODEL),
         transcription_language: str_val(store::TRANSCRIPTION_LANGUAGE),
+        cleanup_provider: str_val(store::CLEANUP_PROVIDER),
         cleanup_model: str_val(store::CLEANUP_MODEL),
         transcription_models_by_provider: json_val(store::TRANSCRIPTION_MODELS_BY_PROVIDER),
         cleanup_models_by_provider: json_val(store::CLEANUP_MODELS_BY_PROVIDER),
@@ -216,6 +221,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         mic_gain: f64_val(store::MIC_GAIN),
         history_retention: str_val("history_retention"),
         microphone_device: str_val(store::MICROPHONE_DEVICE),
+        update_dismissed_version: str_val(store::UPDATE_DISMISSED_VERSION),
         hotkey: s.get(store::HOTKEY).and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
@@ -1118,4 +1124,48 @@ pub async fn download_logs(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn set_dev_logging_enabled(enabled: bool) {
     crate::system::logger::set_verbose(enabled);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_setting;
+    use serde_json::json;
+
+    #[test]
+    fn validate_setting_rejects_unknown_keys() {
+        let err = validate_setting("not_a_setting", &json!(true)).expect_err("unknown key");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_accepts_provider_model_maps() {
+        let value = json!({
+            "groq": ["whisper-large-v3-turbo"],
+            "openai": ["gpt-4o-transcribe"],
+            "google": ["gemini-3.5-flash"]
+        });
+        assert!(validate_setting(crate::data::store::TRANSCRIPTION_MODELS_BY_PROVIDER, &value).is_ok());
+    }
+
+    #[test]
+    fn validate_setting_rejects_empty_fallback_entries() {
+        let value = json!(["groq/whisper-large-v3-turbo", ""]);
+        let err = validate_setting(crate::data::store::TRANSCRIPTION_FALLBACK_MODELS, &value)
+            .expect_err("empty fallback should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_invalid_language_codes() {
+        let err = validate_setting(crate::data::store::TRANSCRIPTION_LANGUAGE, &json!("xx"))
+            .expect_err("invalid language should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_requires_two_hotkey_parts() {
+        let err = validate_setting(crate::data::store::HOTKEY, &json!(["ControlLeft"]))
+            .expect_err("single hotkey part should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
 }
