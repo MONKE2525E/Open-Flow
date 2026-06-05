@@ -41,6 +41,7 @@
   let draftTerm     = $state('');
   let draftMistake  = $state('');
   let termInput     = $state<HTMLInputElement | null>(null);
+  let mistakeInput  = $state<HTMLInputElement | null>(null);
   let inspectorDir  = $state<1 | -1>(1);
   let sortWrapEl    = $state<HTMLDivElement | null>(null);
   let sortButtonEls = $state<Record<SortKey, HTMLButtonElement | null>>({
@@ -137,6 +138,11 @@
   }
 
   async function saveModal() {
+    // Read directly from DOM elements at click time to bypass WKWebView
+    // bind:value paste-sync lag, matching the pattern in Snippets.svelte.
+    if (termInput) draftTerm = termInput.value;
+    if (mistakeInput) draftMistake = mistakeInput.value;
+
     const term = draftTerm.trim();
     const mistakeValue = draftMistake.trim();
     const mistake = mistakeValue || null;
@@ -492,6 +498,7 @@
           type="text"
           placeholder="e.g. koobernetes, byork"
           bind:value={draftMistake}
+          bind:this={mistakeInput}
           autocomplete="off"
           spellcheck="false"
         />

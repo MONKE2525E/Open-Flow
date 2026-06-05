@@ -571,8 +571,20 @@ pub fn insert_dictionary_entry_returning(
     term: &str,
     mistake: Option<&str>,
 ) -> Result<CreatedRecordMeta> {
-    insert_dictionary_entry(db, term, mistake)?;
+    let normalized_term = require_nonempty_trimmed("Term", term)?;
+    let normalized_mistake = normalize_optional_trimmed(mistake);
+    validate_char_limit("Term", &normalized_term, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    if let Some(m) = normalized_mistake.as_deref() {
+        validate_char_limit("Often mistranscribed as", m, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    }
+
+    // Insert and read last_insert_rowid under a single lock to prevent another
+    // thread's insert racing between the two acquisitions and returning the wrong id.
     let conn = lock_conn(db)?;
+    conn.execute(
+        "INSERT INTO dictionary (term, mistake, confidence_tier, last_seen_at) VALUES (?1, ?2, 'manual', datetime('now'))",
+        params![normalized_term, normalized_mistake],
+    )?;
     let id = conn.last_insert_rowid();
     let created_at = conn.query_row(
         "SELECT created_at FROM dictionary WHERE id=?1",
@@ -868,8 +880,21 @@ pub fn insert_snippet_returning(
     expansion: &str,
     instructions: &str,
 ) -> Result<CreatedRecordMeta> {
-    insert_snippet(db, trigger, expansion, instructions)?;
+    let normalized_trigger = require_nonempty_trimmed("Trigger", trigger)?;
+    validate_char_limit("Trigger", &normalized_trigger, SNIPPET_TRIGGER_CHAR_LIMIT)?;
+    let normalized_expansion = normalize_multiline(expansion);
+    if normalized_expansion.is_empty() {
+        return Err(anyhow::anyhow!("Expansion cannot be empty"));
+    }
+    let normalized_instructions = normalize_multiline(instructions);
+
+    // Insert and read last_insert_rowid under a single lock to prevent another
+    // thread's insert racing between the two acquisitions and returning the wrong id.
     let conn = lock_conn(db)?;
+    conn.execute(
+        "INSERT INTO snippets (trigger, expansion, instructions) VALUES (?1, ?2, ?3)",
+        params![normalized_trigger, normalized_expansion, normalized_instructions],
+    )?;
     let id = conn.last_insert_rowid();
     let created_at = conn.query_row(
         "SELECT created_at FROM snippets WHERE id=?1",
