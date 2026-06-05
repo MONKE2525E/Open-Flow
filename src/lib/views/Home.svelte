@@ -7,11 +7,11 @@
   import { icons } from '../icons';
   import { appStore, type UpdateInfo } from '../stores';
   import { saveSetting } from '../settings';
-  import { isMac } from '../platform';
+  import { formatKeyLabel, defaultHotkey } from '../platform';
 
-  // Hotkey labels reflect each platform's default dictation chord.
-  const hk1 = 'Ctrl';
-  const hk2 = isMac ? 'fn' : 'Windows';
+  let hotkey = defaultHotkey;
+  $: hk1 = formatKeyLabel(hotkey[0]);
+  $: hk2 = formatKeyLabel(hotkey[1]);
 
   interface Entry { id: number; clean_text: string; words: number; created_at: string; }
   interface Stats { total_words: number; avg_wpm: number; day_streak: number; }
@@ -190,6 +190,9 @@
 
   onMount(() => {
     getVersion().then(v => currentVersion = v);
+    invoke<string[] | null>('get_setting', { key: 'hotkey' }).then(hk => {
+      if (hk?.length === 2) hotkey = hk;
+    });
     load();
     let mounted = true;
     const unlisteners: (() => void)[] = [];
