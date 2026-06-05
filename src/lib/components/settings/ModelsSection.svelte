@@ -419,53 +419,41 @@
               {@const state = selectionState(type, section.storeProvider, custom)}
               {@const isActive = state === 'active'}
               {@const isFallback = state === 'fallback'}
-              {#if isActive || isFallback}
-                <div
-                  in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: cubicOut }}
-                  out:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: cubicOut }}
-                  class="simple-row model-row"
-                  class:simple-active={isActive}
-                  class:simple-fallback={isFallback}
-                  class:chain-row={isFallback}
-                  role="button"
-                  tabindex="0"
-                  onclick={() => toggleModelSelection(type, section.storeProvider, custom)}
-                  onkeydown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { if (e.key === ' ') e.preventDefault(); toggleModelSelection(type, section.storeProvider, custom); } }}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: cubicOut }}
+                out:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: cubicOut }}
+                class="simple-row model-row"
+                class:simple-active={isActive}
+                class:simple-fallback={isFallback}
+                class:chain-row={isFallback}
+                onclick={() => toggleModelSelection(type, section.storeProvider, custom)}
+              >
+                <button
+                  class="remove-dot"
+                  class:dot-active={isActive}
+                  class:dot-fallback={isFallback}
+                  type="button"
+                  aria-label="Remove {custom}"
+                  onclick={(e) => { e.stopPropagation(); removeCustomModel(type, section.storeProvider, custom); }}
+                ></button>
+                <button
+                  type="button"
+                  class="simple-name model-name custom-toggle-btn"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    toggleModelSelection(type, section.storeProvider, custom);
+                  }}
+                  aria-label="Toggle selection for {custom}"
                 >
-                  <button
-                    class="remove-dot"
-                    class:dot-active={isActive}
-                    class:dot-fallback={isFallback}
-                    type="button"
-                    aria-label="Remove {custom}"
-                    onclick={(e) => { e.stopPropagation(); removeCustomModel(type, section.storeProvider, custom); }}
-                  ></button>
-                  <span class="simple-name model-name">{custom}</span>
-                  {#if isActive}
-                    <span transition:pillScale class="state-pill active">Active</span>
-                  {:else}
-                    <span transition:pillScale class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, custom)) + 1}</span>
-                  {/if}
-                </div>
-              {:else}
-                <div
-                  in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: cubicOut }}
-                  out:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: cubicOut }}
-                  class="simple-row model-row"
-                  role="button"
-                  tabindex="0"
-                  onclick={() => toggleModelSelection(type, section.storeProvider, custom)}
-                  onkeydown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { if (e.key === ' ') e.preventDefault(); toggleModelSelection(type, section.storeProvider, custom); } }}
-                >
-                  <button
-                    class="remove-dot"
-                    class:dot-active={isActive}
-                    class:dot-fallback={isFallback}
-                    type="button"
-                    aria-label="Remove {custom}"
-                    onclick={(e) => { e.stopPropagation(); removeCustomModel(type, section.storeProvider, custom); }}
-                  ></button>
-                  <span class="simple-name model-name">{custom}</span>
+                  {custom}
+                </button>
+                {#if isActive}
+                  <span transition:pillScale class="state-pill active">Active</span>
+                {:else if isFallback}
+                  <span transition:pillScale class="state-pill fallback">F{taskFallbacks(type).indexOf(modelId(section.storeProvider, custom)) + 1}</span>
+                {:else}
                   <button
                     type="button"
                     class="state-pill muted add-fallback-btn"
@@ -476,8 +464,8 @@
                   >
                     Add fallback
                   </button>
-                </div>
-              {/if}
+                {/if}
+              </div>
             {/each}
 
             {#if advancedModelUi}
@@ -832,6 +820,19 @@
     color: inherit;
   }
   .add-fallback-btn:focus-visible {
+    outline: 2px solid var(--accent, #d97757);
+    outline-offset: 2px;
+  }
+
+  .custom-toggle-btn {
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    outline: none;
+  }
+  .custom-toggle-btn:focus-visible {
     outline: 2px solid var(--accent, #d97757);
     outline-offset: 2px;
   }

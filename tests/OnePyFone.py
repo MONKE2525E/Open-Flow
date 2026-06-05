@@ -86,6 +86,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from xml.sax.saxutils import escape as xml_escape
 
+_global_fails = 0
+
 # Force UTF-8 output on Windows so box-drawing and tick characters render correctly.
 if sys.platform == "win32":
     try:
@@ -907,9 +909,11 @@ def _run_sequential(entries: List[TestEntry], verbose: bool, start_idx: int, tot
             _print_result_line(entry.desc, result, verbose, idx, total)
         if not result.passed:
             n_fail += 1
+            global _global_fails
+            _global_fails += 1
         results[entry.report_name] = result
         with _PRINT_LOCK:
-            _draw_bottom_bar(idx, total, n_fail)
+            _draw_bottom_bar(idx, total, _global_fails)
     return results
 
 
@@ -929,10 +933,12 @@ def _run_parallel(entries: List[TestEntry], verbose: bool, start_idx: int, total
                 _print_result_line(desc, result, verbose, idx, total)
             if not result.passed:
                 n_fail += 1
+                global _global_fails
+                _global_fails += 1
             results[report_name] = result
             done = len(results)
             with _PRINT_LOCK:
-                _draw_bottom_bar(start_idx + done - 1, total, n_fail)
+                _draw_bottom_bar(start_idx + done - 1, total, _global_fails)
     return results
 
 
@@ -1049,6 +1055,8 @@ def main() -> int:
             _print_banner(loop, loops, suites, server_label)
             t0      = time.monotonic()
             workers = max(1, args.workers)
+            global _global_fails
+            _global_fails = 0
             results: Dict[str, TestResult] = {}
 
             if no_server_entries:
