@@ -92,7 +92,7 @@ export async function fetchSnippets(): Promise<void> {
     const data = await invoke<Snippet[]>('get_snippets');
     if (token !== snippetsFetchToken) return;
     appStore.snippets = data ?? [];
-    appStore.snippetsFetchStatus = 'idle';
+    appStore.snippetsFetchStatus = 'loaded';
   } catch (err) {
     if (token !== snippetsFetchToken) return;
     console.error('IPC fetchSnippets failed:', err);
@@ -109,7 +109,7 @@ export async function fetchDictionary(): Promise<void> {
     const data = await invoke<DictionaryEntry[]>('get_dictionary');
     if (token !== dictionaryFetchToken) return;
     appStore.dictionary = data ?? [];
-    appStore.dictionaryFetchStatus = 'idle';
+    appStore.dictionaryFetchStatus = 'loaded';
   } catch (err) {
     if (token !== dictionaryFetchToken) return;
     console.error('IPC fetchDictionary failed:', err);
