@@ -2,7 +2,7 @@
   import { emit, invoke } from '../../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { isMac, formatKeyLabel } from '../../platform';
+  import { isMac, formatKeyLabel, defaultHotkey } from '../../platform';
   import Toggle from '../Toggle.svelte';
   import { appStore } from '../../stores';
   import { saveSetting, type AppearanceMode } from '../../settings';
@@ -26,7 +26,7 @@
   let cleanup = $state(true);
   let contextualCaps = $state(true);
   let autoSpacing = $state(true);
-  let hotkey = $state(['ControlLeft', 'MetaLeft']);
+  let hotkey = $state(defaultHotkey);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
   let hotkeyState = $state<'idle' | 'armed' | 'first' | 'saving' | 'success' | 'error'>('idle');
