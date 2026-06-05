@@ -7,6 +7,8 @@ mod data;
 mod media;
 mod pipeline;
 mod system;
+#[cfg(any(test, debug_assertions))]
+mod testing;
 
 use crate::data::db;
 use crate::pipeline::{hide_pill, start_recording_session, AppState, SharedState};

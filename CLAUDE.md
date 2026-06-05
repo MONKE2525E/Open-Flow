@@ -59,14 +59,18 @@ npm run test:rust
 # Run a single Rust test
 cargo test --manifest-path src-tauri/Cargo.toml <test_name>
 
-# Smoke tests — unified runner (preferred)
-python tests/OnePyFone.py                    # full suite, auto-starts Tauri dev server
-python tests/OnePyFone.py --suite ui         # ui suite only
-python tests/OnePyFone.py --suite rust       # Rust unit tests only (no server needed)
-python tests/OnePyFone.py --vite             # use Vite :5173 instead of Tauri :1420
+# Unified tests — preferred entrypoint
+npm test                                     # fast profile
+npm run test:all                             # same fast profile explicitly
+npm run test:live                            # live API checks, skips when keys are absent
+npm run test:native                          # platform/manual-adjacent checks
+python tests/OnePyFone.py                    # fast profile, auto-starts Vite :1420
+python tests/OnePyFone.py --profile full     # fast + live + native
+python tests/OnePyFone.py --suite ui,state   # targeted suites
 
-# Available suites: preflight | rust | pipeline | ui | state | animation
-# pipeline suite calls live APIs — skipped automatically when API keys are absent
+# Available profiles: fast | live | native | full
+# Available suites: preflight | frontend | rust | contract | ui | state | animation | pipeline | native
+# fast is deterministic and CI-friendly; live/native are opt-in
 ```
 
 ## Agent Skills
@@ -79,7 +83,8 @@ When executing tasks, refer to the guidelines in the `Agent-Skills/` directory:
 
 ## CI/CD & Review
 
-- **PR checks workflow** (`.github/workflows/pr-checks.yml`) runs: `npm run check && npm run lint && npm run test:rust`
+- **PR checks workflow** (`.github/workflows/pr-checks.yml`) keeps frontend and OS-matrix Rust jobs, then runs the unified fast profile with JSON/JUnit reports
+- **Extended profiles workflow** (`.github/workflows/extended-test-profiles.yml`) runs opt-in live/native profiles on schedule or manual dispatch
 - **Dependency review** (`.github/workflows/dependency-review.yml`) gates new dependencies for supply-chain risk
 - **Copilot review instructions** (`.github/copilot-instructions.md`) contain guidance on Rust Windows integration, frontend patterns, and smoke-test contracts — read these before major changes
 
