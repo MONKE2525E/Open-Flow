@@ -564,7 +564,13 @@ pub async fn save_app_mappings(app: AppHandle, mappings: Vec<AppMapping>) -> Res
 #[tauri::command]
 pub async fn get_snippets(app: AppHandle) -> Result<Vec<db::Snippet>, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || db::query_snippets(&db).map_err(|e| e.to_string()))
+    tokio::task::spawn_blocking(move || {
+        let rows = db::query_snippets(&db).map_err(|e| e.to_string())?;
+        if crate::system::logger::is_verbose() {
+            log::info!("snippets:get count={}", rows.len());
+        }
+        Ok(rows)
+    })
         .await
         .map_err(|e| e.to_string())?
 }
@@ -575,10 +581,22 @@ pub async fn create_snippet(
     trigger: String,
     expansion: String,
     instructions: String,
-) -> Result<(), String> {
+) -> Result<db::CreatedRecordMeta, String> {
     let db = app.state::<DbHandle>().inner().clone();
     tokio::task::spawn_blocking(move || {
-        db::insert_snippet(&db, &trigger, &expansion, &instructions).map_err(|e| e.to_string())
+        log::info!(
+            "snippets:create trigger_chars={} expansion_chars={} instructions_chars={}",
+            trigger.chars().count(),
+            expansion.chars().count(),
+            instructions.chars().count()
+        );
+        let created = db::insert_snippet_returning(&db, &trigger, &expansion, &instructions)
+            .map_err(|e| {
+                log::warn!("snippets:create failed: {e}");
+                e.to_string()
+            })?;
+        log::info!("snippets:create ok id={}", created.id);
+        Ok(created)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -623,10 +641,19 @@ pub async fn create_dictionary_entry(
     app: AppHandle,
     term: String,
     mistake: Option<String>,
-) -> Result<(), String> {
+) -> Result<db::CreatedRecordMeta, String> {
     let db = app.state::<DbHandle>().inner().clone();
     tokio::task::spawn_blocking(move || {
-        db::insert_dictionary_entry(&db, &term, mistake.as_deref()).map_err(|e| e.to_string())
+        log::info!(
+            "dictionary:create term_chars={} mistake_chars={}",
+            term.chars().count(),
+            mistake.as_deref().map_or(0, |m| m.chars().count())
+        );
+        db::insert_dictionary_entry_returning(&db, &term, mistake.as_deref())
+            .map_err(|e| {
+                log::warn!("dictionary:create failed: {e}");
+                e.to_string()
+            })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1066,6 +1093,15 @@ pub async fn check_connectivity() -> bool {
 }
 
 // ---------- developer logs ----------
+
+#[tauri::command]
+pub fn log_frontend(level: String, message: String) {
+    match level.as_str() {
+        "warn"  => log::warn!("fe: {message}"),
+        "error" => log::error!("fe: {message}"),
+        _       => log::info!("fe: {message}"),
+    }
+}
 
 #[tauri::command]
 pub fn get_recent_logs(limit: Option<usize>) -> Vec<String> {

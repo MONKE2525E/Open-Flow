@@ -8,6 +8,7 @@
   import MicInputButton from '../components/MicInputButton.svelte';
 
   type SortKey = 'newest' | 'oldest' | 'alpha' | 'most_corrected';
+  type CreatedRecordMeta = { id: number; created_at: string };
 
   function fmtDate(iso: string): string {
     try {
@@ -47,17 +48,22 @@
   });
   let sortIndicatorStyle = $state('opacity:0;');
 
-  const TERM_LIMIT    = 50;
-  const MISTAKE_LIMIT = 50;
+  const TERM_LIMIT    = 120;
+  const MISTAKE_LIMIT = 120;
 
-  const clamp = (value: string, limit: number): string => {
-    const trimmed = value.trim();
-    if (trimmed.length <= limit) return trimmed;
-    return [...trimmed].slice(0, limit).join('');
-  };
   const countCodePoints = (value: string): number => [...value].length;
-  const clampTerm = (value: string): string => clamp(value, TERM_LIMIT);
-  const clampMistake = (value: string): string => clamp(value, MISTAKE_LIMIT);
+
+  function requireCreatedRecordMeta(value: unknown, command: string): CreatedRecordMeta {
+    console.info(`${command} result:`, value);
+    if (typeof value !== 'object' || value === null) {
+      throw new Error('Save returned no record metadata. Relaunch the Tauri app and try again.');
+    }
+    const meta = value as Partial<CreatedRecordMeta>;
+    if (typeof meta.id !== 'number' || !Number.isFinite(meta.id) || typeof meta.created_at !== 'string' || !meta.created_at.trim()) {
+      throw new Error('Save returned invalid record metadata. Check the app logs before retrying.');
+    }
+    return { id: meta.id, created_at: meta.created_at };
+  }
 
   const sortLabels: { key: SortKey; label: string }[] = [
     { key: 'newest',         label: 'Newest'         },
@@ -125,6 +131,11 @@
 
   function closeModal() { modal = null; saveError = ''; }
 
+  function upsertDictionaryEntry(entry: DictionaryEntry) {
+    const next = appStore.dictionary.filter((item) => item.id !== entry.id);
+    appStore.dictionary = [entry, ...next];
+  }
+
   async function saveModal() {
     const term = draftTerm.trim();
     const mistakeValue = draftMistake.trim();
@@ -142,18 +153,39 @@
     try {
       const editedId = modal?.mode === 'edit' ? modal.entry?.id : undefined;
       if (modal?.mode === 'add') {
-        await invoke('create_dictionary_entry', { term, mistake });
+        const created = requireCreatedRecordMeta(
+          await invoke<unknown>('create_dictionary_entry', { term, mistake }),
+          'create_dictionary_entry',
+        );
+        const entry: DictionaryEntry = {
+          id: created.id,
+          term,
+          mistake,
+          auto_learned: false,
+          correction_count: 0,
+          confidence_tier: 'manual',
+          last_seen_at: null,
+          created_at: created.created_at,
+        };
+        upsertDictionaryEntry(entry);
+        selected = entry;
       } else if (modal?.mode === 'edit' && modal.entry) {
         await invoke('edit_dictionary_entry', { id: modal.entry.id, term, mistake });
+        const entry: DictionaryEntry = {
+          ...modal.entry,
+          term,
+          mistake,
+        };
+        upsertDictionaryEntry(entry);
+        selected = entry;
       }
-      await fetchDictionary();
       if (editedId !== undefined) {
         selected = appStore.dictionary.find(e => e.id === editedId) ?? null;
       }
       closeModal();
     } catch (err) {
       const msg = String(err);
-      saveError = msg.includes('UNIQUE') ? 'That term already exists.' : 'Failed to save.';
+      saveError = msg.includes('UNIQUE') ? 'That term already exists.' : (msg || 'Failed to save.');
     } finally { saving = false; }
   }
 
@@ -161,8 +193,8 @@
     if (deleteTarget === id) {
       try {
         await invoke('remove_dictionary_entry', { id });
+        appStore.dictionary = appStore.dictionary.filter((entry) => entry.id !== id);
         if (selected?.id === id) selected = null;
-        await fetchDictionary();
       } catch (err) { console.error(err); }
       deleteTarget = null;
     } else {
@@ -423,7 +455,7 @@
     out:fly={{ y: 8, duration: 150, easing: expoOut }}
   >
     <div class="modal-header">
-      <h2 class="modal-title">{modal.mode === 'add' ? 'Add term' : 'Edit term'}</h2>
+      <h2 class="modal-title">{modal?.mode === 'add' ? 'Add term' : 'Edit term'}</h2>
       <button class="icon-btn" onclick={closeModal} aria-label="Close">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
@@ -442,11 +474,10 @@
           placeholder="e.g. Kubernetes, Björk, ChatGPT"
           bind:value={draftTerm}
           bind:this={termInput}
-          maxlength={TERM_LIMIT}
           autocomplete="off"
           spellcheck="false"
         />
-        <MicInputButton onResult={(t) => draftTerm = clampTerm(t)} />
+        <MicInputButton onResult={(t) => draftTerm = t} />
       </div>
       <p class="field-hint">The exact word or phrase you want the AI to use.</p>
 
@@ -461,11 +492,10 @@
           type="text"
           placeholder="e.g. koobernetes, byork"
           bind:value={draftMistake}
-          maxlength={MISTAKE_LIMIT}
           autocomplete="off"
           spellcheck="false"
         />
-        <MicInputButton onResult={(t) => draftMistake = clampMistake(t)} />
+        <MicInputButton onResult={(t) => draftMistake = t} />
       </div>
       <p class="field-hint">What the transcription model typically writes instead. Skip if the term just needs to be in the AI's awareness.</p>
     </div>
@@ -490,7 +520,7 @@
           disabled={saving || !draftTerm.trim()}
         >
           {#if saving}<span class="spinner"></span>{/if}
-          {modal.mode === 'add' ? 'Add term' : 'Save changes'}
+          {modal?.mode === 'add' ? 'Add term' : 'Save changes'}
         </button>
       </div>
     </div>
@@ -987,8 +1017,9 @@
     appearance: none;
     background: var(--overlay);
     z-index: 50;
-    backdrop-filter: blur(2px);
     outline: none;
+    /* NOTE: no backdrop-filter — on WKWebView it repaints on layout changes and
+       captures pointer events over the modal card, killing the dialog controls. */
   }
 
   .modal-card {
@@ -997,6 +1028,7 @@
     left: 50%;
     translate: -50% -50%;
     z-index: 51;
+    isolation: isolate;
     background: var(--bg-elev);
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
