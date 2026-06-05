@@ -419,8 +419,6 @@
               {@const state = selectionState(type, section.storeProvider, custom)}
               {@const isActive = state === 'active'}
               {@const isFallback = state === 'fallback'}
-              <!-- svelte-ignore a11y_click_events_have_key_events -->
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base), easing: cubicOut }}
                 out:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: cubicOut }}
@@ -428,7 +426,6 @@
                 class:simple-active={isActive}
                 class:simple-fallback={isFallback}
                 class:chain-row={isFallback}
-                onclick={() => toggleModelSelection(type, section.storeProvider, custom)}
               >
                 <button
                   class="remove-dot"
@@ -831,6 +828,7 @@
     padding: 0;
     cursor: pointer;
     outline: none;
+    text-align: left;
   }
   .custom-toggle-btn:focus-visible {
     outline: 2px solid var(--accent, #d97757);
