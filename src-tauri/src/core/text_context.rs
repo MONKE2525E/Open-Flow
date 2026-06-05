@@ -170,10 +170,15 @@ pub fn classify_leading_prefix(text: &str) -> InjectionPrefixClass {
 
 pub fn classify_context_tail(text: &str) -> SentenceContext {
     for ch in text.chars().rev() {
+        // Check newlines before is_invisible_prefix_char: is_control() includes \n/\r,
+        // so they would be skipped by the continue below and never reach the \n/\r arm.
+        if matches!(ch, '\n' | '\r') {
+            return SentenceContext::NewSentence;
+        }
         if is_invisible_prefix_char(ch) || is_context_tail_wrapper_char(ch) {
             continue;
         }
-        if matches!(ch, '.' | '!' | '?' | '\n' | '\r') {
+        if matches!(ch, '.' | '!' | '?') {
             return SentenceContext::NewSentence;
         }
         if ch.is_alphanumeric() || matches!(ch, ',' | ';' | ':' | '-' | '–' | '—' | '/' | '\\')
@@ -359,6 +364,15 @@ mod tests {
             classify_context_tail("\u{200B}  "),
             SentenceContext::Unknown
         );
+    }
+
+    #[test]
+    fn context_tail_newline_is_sentence_boundary() {
+        // Newlines must be checked before is_invisible_prefix_char because
+        // is_control() returns true for \n/\r and would otherwise skip them.
+        assert_eq!(classify_context_tail("hello\n"), SentenceContext::NewSentence);
+        assert_eq!(classify_context_tail("hello\r\n"), SentenceContext::NewSentence);
+        assert_eq!(classify_context_tail("hello,\n"), SentenceContext::NewSentence);
     }
 
     #[test]

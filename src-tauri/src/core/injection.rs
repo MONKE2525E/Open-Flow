@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn lowercase_first_word_blocked_for_i_acronyms_and_camelcase() {
-        // Common words are lowercased in continuation context.
+        // Common grammatical words are lowercased in continuation context.
         assert_eq!(
             lowercase_first_word_if_safe("The fix is ready"),
             ("the fix is ready".into(), true)
@@ -115,7 +115,16 @@ mod tests {
             lowercase_first_word_if_safe("Make sure to do this"),
             ("make sure to do this".into(), true)
         );
-        // Structural guards must still block "I", acronyms, and CamelCase.
+        // Proper nouns must NOT be lowercased (not in the safe list).
+        assert_eq!(
+            lowercase_first_word_if_safe("London is a city"),
+            ("London is a city".into(), false)
+        );
+        assert_eq!(
+            lowercase_first_word_if_safe("Monday meeting"),
+            ("Monday meeting".into(), false)
+        );
+        // "I", CamelCase, and acronyms are always blocked.
         assert_eq!(
             lowercase_first_word_if_safe("OpenAI ships model updates"),
             ("OpenAI ships model updates".into(), false)
@@ -243,36 +252,34 @@ fn classify_context(tail: &str) -> ContextKind {
         ContextKind::Continuation
     }
 }
+// Common grammatical function words that are never proper nouns.
+// Lowercasing is only applied to words in this list so that Title-Case proper
+// nouns (London, Monday, Google) are preserved in continuation context.
+const SAFE_TO_LOWERCASE: &[&str] = &[
+    "the", "a", "an",
+    "this", "that", "these", "those",
+    "it", "he", "she", "we", "they", "you",
+    "is", "was", "are", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did",
+    "will", "would", "could", "should", "may", "might", "must", "can",
+    "and", "or", "but", "if", "so", "then", "because", "though", "although",
+    "my", "your", "his", "her", "our", "their", "its",
+    "let", "just", "not", "also", "even", "now", "here", "there",
+    "make", "get", "go", "see", "think", "say", "tell", "look", "seem",
+    "all", "some", "any", "no", "more", "most", "very", "well", "still",
+    "when", "where", "how", "what", "which",
+    "please", "yes", "no", "ok", "okay",
+    "actually", "basically", "honestly", "literally", "really", "totally",
+    "with", "into", "onto", "upon", "about",
+];
+
 fn is_safe_lowercase_candidate(word: &str) -> bool {
-    if word.is_empty() || word == "I" || word.contains(|c: char| c.is_ascii_digit()) {
+    if word.is_empty() || word == "I" {
         return false;
     }
-    if word
-        .chars()
-        .any(|c| !c.is_alphabetic() && c != '\'' && c != '-')
-    {
-        return false;
-    }
-    let lower = word.to_lowercase();
-    let upper = word.to_uppercase();
-    if word == upper || word == lower {
-        return false;
-    }
-    let mut chars = word.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !first.is_uppercase() {
-        return false;
-    }
-    if chars.any(|c| c.is_uppercase()) {
-        return false;
-    }
-    // All structural guards above already block "I", acronyms (all-caps), and
-    // CamelCase proper nouns (OpenAI, iPhone). Any Title-Case word that passes
-    // those checks is safe to lowercase in a confirmed continuation context.
-    let _ = lower;
-    true
+    // Only lowercase words from the explicit safe list; Title-Case proper nouns
+    // (London, Monday, Google) must never be lowercased.
+    SAFE_TO_LOWERCASE.contains(&word.to_lowercase().as_str())
 }
 fn find_first_alpha_span(text: &str) -> Option<(usize, usize)> {
     let mut start = None;
@@ -423,7 +430,10 @@ fn apply_probe_adjustments(
             | text_context::InjectionPrefixClass::InvisibleOrAmbiguousPrefix => {
                 match context_kind {
                     ContextKind::Unknown => CaseDecision::UnknownContextPreserved,
-                    ContextKind::SentenceBoundary => CaseDecision::SentenceBoundaryCapitalized,
+                    ContextKind::SentenceBoundary => {
+                        adjusted = text_context::apply_contextual_casing(text, probe.context);
+                        CaseDecision::SentenceBoundaryCapitalized
+                    }
                     ContextKind::Continuation => CaseDecision::ContinuationPreserved,
                 }
             }
@@ -936,8 +946,9 @@ pub async fn inject_text(
 
         tokio::time::sleep(Duration::from_millis(120)).await;
 
-        if let Some(prev) = saved {
-            crate::system::mac_app::pasteboard_set_string(&prev);
+        match saved {
+            Some(prev) => crate::system::mac_app::pasteboard_set_string(&prev),
+            None => crate::system::mac_app::pasteboard_set_string(""),
         }
 
         if posted.is_none() {
