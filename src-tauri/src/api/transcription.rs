@@ -3,12 +3,21 @@ use bytes::Bytes;
 use reqwest::multipart;
 
 use super::gemini_types::GeminiResp;
+use super::prompts::{gemini_generation_config, get_transcription_prompt};
 
 #[derive(Clone, Debug)]
 pub enum Provider {
     Groq,
     OpenAI,
     Google,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WhisperFormFields {
+    model: String,
+    response_format: String,
+    language: String,
+    prompt: String,
 }
 
 /// Single Gemini call that both transcribes the audio and applies the cleanup
@@ -28,7 +37,7 @@ pub async fn transcribe_and_cleanup_gemini(
          transcription output.\n\n{profile_prompt}\n\nReturn ONLY the final cleaned text, \
          no commentary, no quotes, no explanation."
     );
-    transcribe_gemini_with_prompt(wav, api_key, &instruction, true, "gemini-3.5-flash").await
+    transcribe_gemini_with_prompt(wav, api_key, &instruction, "gemini-3.5-flash").await
 }
 
 pub async fn transcribe(
@@ -51,6 +60,7 @@ pub async fn transcribe(
                 api_key,
                 "https://api.groq.com/openai/v1/audio/transcriptions",
                 "Groq",
+                "groq",
                 model,
                 language,
             )
@@ -63,6 +73,7 @@ pub async fn transcribe(
                 api_key,
                 "https://api.openai.com/v1/audio/transcriptions",
                 "OpenAI",
+                "openai",
                 model,
                 language,
             )
@@ -78,6 +89,7 @@ async fn transcribe_whisper(
     api_key: &str,
     url: &str,
     provider_label: &str,
+    provider_id: &str,
     model: &str,
     language: &str,
 ) -> Result<String> {
@@ -86,23 +98,19 @@ async fn transcribe_whisper(
         text: String,
     }
 
+    let language_label = crate::data::store::transcription_language_label(language);
+    let prompt = get_transcription_prompt(provider_id, model, language_label);
+    let fields = build_whisper_form_fields(model, language, &prompt);
     log::debug!(
-        "transcription: whisper request provider={} model={} url={} language={} wav_bytes={}",
+        "transcription: whisper request provider={} model={} url={} language={} wav_bytes={} prompt_chars={}",
         provider_label,
         model,
         url,
         language,
-        wav.len()
+        wav.len(),
+        fields.prompt.chars().count()
     );
-    let part =
-        multipart::Part::stream_with_length(reqwest::Body::from(wav.clone()), wav.len() as u64)
-            .file_name("audio.wav")
-            .mime_str("audio/wav")?;
-    let form = multipart::Form::new()
-        .part("file", part)
-        .text("model", model.to_owned())
-        .text("response_format", "json")
-        .text("language", language.to_owned());
+    let form = build_whisper_form(wav, &fields)?;
 
     let request_started = std::time::Instant::now();
     let resp = super::client::get()
@@ -182,52 +190,24 @@ async fn transcribe_gemini(
     model: &str,
 ) -> Result<String> {
     let language_label = crate::data::store::transcription_language_label(language);
-    let prompt = format!(
-        "Transcribe this audio exactly as spoken in {language_label}. \
-         Return only the spoken words, no commentary, no formatting, no explanation."
-    );
-    transcribe_gemini_with_prompt(wav, api_key, &prompt, true, model).await
+    let prompt = get_transcription_prompt("google", model, language_label);
+    transcribe_gemini_with_prompt(wav, api_key, &prompt, model).await
 }
 
 async fn transcribe_gemini_with_prompt(
     wav: Bytes,
     api_key: &str,
     prompt: &str,
-    disable_thinking: bool,
     model: &str,
 ) -> Result<String> {
     log::debug!(
-        "transcription: gemini request disable_thinking={} wav_bytes={} prompt_chars={}",
-        disable_thinking,
+        "transcription: gemini request wav_bytes={} prompt_chars={}",
         wav.len(),
         prompt.chars().count()
     );
     let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &wav);
 
-    let body = super::gemini_types::GeminiTranscribeReq {
-        contents: vec![super::gemini_types::GeminiReqContent {
-            parts: vec![
-                super::gemini_types::GeminiReqPart {
-                    inline_data: Some(super::gemini_types::GeminiInlineData {
-                        mime_type: "audio/wav".to_string(),
-                        data: encoded,
-                    }),
-                    text: None,
-                },
-                super::gemini_types::GeminiReqPart {
-                    inline_data: None,
-                    text: Some(prompt.to_string()),
-                },
-            ],
-        }],
-        generation_config: if disable_thinking {
-            Some(super::gemini_types::GeminiGenConfig {
-                thinking_config: super::gemini_types::GeminiThinkingConfig { thinking_budget: 0 },
-            })
-        } else {
-            None
-        },
-    };
+    let body = build_gemini_transcription_request(encoded, prompt, model);
 
     super::validate_model_for_url(model)?;
     let url =
@@ -305,4 +285,79 @@ async fn transcribe_gemini_with_prompt(
     );
 
     Ok(text)
+}
+
+fn build_whisper_form_fields(model: &str, language: &str, prompt: &str) -> WhisperFormFields {
+    WhisperFormFields {
+        model: model.to_owned(),
+        response_format: "json".to_string(),
+        language: language.to_owned(),
+        prompt: prompt.to_owned(),
+    }
+}
+
+fn build_whisper_form(wav: Bytes, fields: &WhisperFormFields) -> Result<multipart::Form> {
+    let part =
+        multipart::Part::stream_with_length(reqwest::Body::from(wav.clone()), wav.len() as u64)
+            .file_name("audio.wav")
+            .mime_str("audio/wav")?;
+    Ok(multipart::Form::new()
+        .part("file", part)
+        .text("model", fields.model.clone())
+        .text("response_format", fields.response_format.clone())
+        .text("language", fields.language.clone())
+        .text("prompt", fields.prompt.clone()))
+}
+
+fn build_gemini_transcription_request(
+    encoded_audio: String,
+    prompt: &str,
+    model: &str,
+) -> super::gemini_types::GeminiTranscribeReq {
+    super::gemini_types::GeminiTranscribeReq {
+        contents: vec![super::gemini_types::GeminiReqContent {
+            parts: vec![
+                super::gemini_types::GeminiReqPart {
+                    inline_data: Some(super::gemini_types::GeminiInlineData {
+                        mime_type: "audio/wav".to_string(),
+                        data: encoded_audio,
+                    }),
+                    text: None,
+                },
+                super::gemini_types::GeminiReqPart {
+                    inline_data: None,
+                    text: Some(prompt.to_string()),
+                },
+            ],
+        }],
+        generation_config: Some(gemini_generation_config(model, 2048)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_gemini_transcription_request, build_whisper_form_fields};
+
+    #[test]
+    fn whisper_form_fields_include_prompt() {
+        let fields = build_whisper_form_fields("gpt-4o-transcribe", "en", "prompt text");
+        assert_eq!(fields.prompt, "prompt text");
+        assert_eq!(fields.response_format, "json");
+    }
+
+    #[test]
+    fn gemini_transcription_request_includes_generation_config() {
+        let body = build_gemini_transcription_request(
+            "ZmFrZQ==".to_string(),
+            "prompt text",
+            "gemini-3.5-flash",
+        );
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(
+            json["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "minimal"
+        );
+        assert_eq!(json["generationConfig"]["maxOutputTokens"], 2048);
+        assert_eq!(json["generationConfig"]["temperature"], 0.0);
+    }
 }

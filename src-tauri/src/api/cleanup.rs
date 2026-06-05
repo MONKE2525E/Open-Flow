@@ -1,7 +1,9 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use super::prompts::get_system_prompt_with_extras;
+use super::prompts::{
+    cleanup_max_output_tokens, gemini_generation_config, get_cleanup_prompt_with_extras,
+};
 
 #[derive(Clone, Debug)]
 pub enum CleanupProvider {
@@ -21,15 +23,26 @@ pub async fn cleanup(
     snippet_instructions: &str,
     app_context: Option<&str>,
 ) -> Result<String> {
-    let prompt =
-        get_system_prompt_with_extras(profile, intensity, snippet_instructions, app_context, text);
+    let provider_id = provider_id(&provider);
+    let prompt = get_cleanup_prompt_with_extras(
+        provider_id,
+        model,
+        profile,
+        intensity,
+        snippet_instructions,
+        app_context,
+        text,
+    );
+    let max_output_tokens = cleanup_max_output_tokens(intensity, text);
     log::debug!(
-        "cleanup: start provider={:?} profile={} intensity={} input_chars={} prompt_chars={} snippet_rule_lines={} app_context={}",
+        "cleanup: start provider={:?} model={} profile={} intensity={} input_chars={} prompt_chars={} max_output_tokens={} snippet_rule_lines={} app_context={}",
         provider,
+        model,
         profile,
         intensity,
         text.chars().count(),
         prompt.chars().count(),
+        max_output_tokens,
         snippet_instructions.lines().filter(|l| !l.trim().is_empty()).count(),
         app_context.is_some()
     );
@@ -52,6 +65,7 @@ pub async fn cleanup(
                 "Groq",
                 model,
                 &prompt,
+                max_output_tokens,
             )
             .await
         }
@@ -63,10 +77,21 @@ pub async fn cleanup(
                 "OpenAI",
                 model,
                 &prompt,
+                max_output_tokens,
             )
             .await
         }
-        CleanupProvider::Google => google_cleanup(text, api_key, &prompt, model).await,
+        CleanupProvider::Google => {
+            google_cleanup(text, api_key, &prompt, model, max_output_tokens).await
+        }
+    }
+}
+
+fn provider_id(provider: &CleanupProvider) -> &'static str {
+    match provider {
+        CleanupProvider::Groq => "groq",
+        CleanupProvider::OpenAI => "openai",
+        CleanupProvider::Google => "google",
     }
 }
 
@@ -106,22 +131,9 @@ async fn openai_compat(
     provider_label: &str,
     model: &str,
     prompt: &str,
+    max_tokens: u32,
 ) -> Result<String> {
-    let body = ChatReq {
-        model: model.to_owned(),
-        messages: vec![
-            Msg {
-                role: "system".into(),
-                content: prompt.to_owned(),
-            },
-            Msg {
-                role: "user".into(),
-                content: format!("<raw_dictation>\n{text}\n</raw_dictation>"),
-            },
-        ],
-        max_tokens: 4096,
-        temperature: 0.0,
-    };
+    let body = build_openai_compat_request(text, model, prompt, max_tokens);
 
     log::debug!(
         "cleanup: openai_compat request provider={} model={} url={} input_chars={} prompt_chars={}",
@@ -210,60 +222,41 @@ async fn openai_compat(
     Ok(output)
 }
 
-async fn google_cleanup(text: &str, api_key: &str, prompt: &str, model: &str) -> Result<String> {
+#[derive(Serialize)]
+struct GoogleCleanupReq {
+    contents: Vec<GContent>,
+    #[serde(rename = "systemInstruction")]
+    system_instruction: GContent,
+    #[serde(rename = "generationConfig")]
+    generation_config: super::gemini_types::GeminiGenConfig,
+}
+
+#[derive(Serialize)]
+struct GContent {
+    parts: Vec<GPart>,
+}
+
+#[derive(Serialize)]
+struct GPart {
+    text: String,
+}
+
+async fn google_cleanup(
+    text: &str,
+    api_key: &str,
+    prompt: &str,
+    model: &str,
+    max_output_tokens: u32,
+) -> Result<String> {
     use super::gemini_types::GeminiResp;
 
-    #[derive(Serialize)]
-    struct Req {
-        contents: Vec<GContent>,
-        #[serde(rename = "systemInstruction")]
-        system_instruction: GContent,
-        #[serde(rename = "generationConfig")]
-        generation_config: GenerationConfig,
-    }
-
-    #[derive(Serialize)]
-    struct GenerationConfig {
-        #[serde(rename = "thinkingConfig")]
-        thinking_config: ThinkingConfig,
-    }
-
-    #[derive(Serialize)]
-    struct ThinkingConfig {
-        #[serde(rename = "thinkingBudget")]
-        thinking_budget: u32,
-    }
-
-    #[derive(Serialize)]
-    struct GContent {
-        parts: Vec<GPart>,
-    }
-
-    #[derive(Serialize)]
-    struct GPart {
-        text: String,
-    }
-
     log::debug!(
-        "cleanup: google request input_chars={} prompt_chars={}",
+        "cleanup: google request input_chars={} prompt_chars={} max_output_tokens={}",
         text.chars().count(),
-        prompt.chars().count()
+        prompt.chars().count(),
+        max_output_tokens
     );
-    let req = Req {
-        contents: vec![GContent {
-            parts: vec![GPart {
-                text: format!("<raw_dictation>\n{text}\n</raw_dictation>"),
-            }],
-        }],
-        system_instruction: GContent {
-            parts: vec![GPart {
-                text: prompt.to_owned(),
-            }],
-        },
-        generation_config: GenerationConfig {
-            thinking_config: ThinkingConfig { thinking_budget: 0 },
-        },
-    };
+    let req = build_google_cleanup_request(text, prompt, model, max_output_tokens);
 
     super::validate_model_for_url(model)?;
     let url =
@@ -321,4 +314,69 @@ async fn google_cleanup(text: &str, api_key: &str, prompt: &str, model: &str) ->
         log::debug!("cleanup: google output_full=\"{}\"", output);
     }
     Ok(output)
+}
+
+fn build_openai_compat_request(text: &str, model: &str, prompt: &str, max_tokens: u32) -> ChatReq {
+    ChatReq {
+        model: model.to_owned(),
+        messages: vec![
+            Msg {
+                role: "system".into(),
+                content: prompt.to_owned(),
+            },
+            Msg {
+                role: "user".into(),
+                content: format!("<raw_dictation>\n{text}\n</raw_dictation>"),
+            },
+        ],
+        max_tokens,
+        temperature: 0.0,
+    }
+}
+
+fn build_google_cleanup_request(
+    text: &str,
+    prompt: &str,
+    model: &str,
+    max_output_tokens: u32,
+) -> GoogleCleanupReq {
+    GoogleCleanupReq {
+        contents: vec![GContent {
+            parts: vec![GPart {
+                text: format!("<raw_dictation>\n{text}\n</raw_dictation>"),
+            }],
+        }],
+        system_instruction: GContent {
+            parts: vec![GPart {
+                text: prompt.to_owned(),
+            }],
+        },
+        generation_config: gemini_generation_config(model, max_output_tokens),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_google_cleanup_request, build_openai_compat_request};
+
+    #[test]
+    fn openai_compat_request_uses_dynamic_max_tokens() {
+        let body = build_openai_compat_request("hello", "gpt-4o-mini", "prompt", 128);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["max_tokens"], 128);
+        assert_eq!(json["temperature"], 0.0);
+        assert_eq!(json["messages"][0]["content"], "prompt");
+    }
+
+    #[test]
+    fn google_cleanup_request_includes_gemini_config() {
+        let body = build_google_cleanup_request("hello", "prompt", "gemini-2.5-flash", 256);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(
+            json["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            0
+        );
+        assert_eq!(json["generationConfig"]["maxOutputTokens"], 256);
+        assert_eq!(json["generationConfig"]["temperature"], 0.0);
+    }
 }
