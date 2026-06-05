@@ -147,7 +147,7 @@
     const term = draftTerm.trim();
     const mistakeValue = draftMistake.trim();
     const mistake = mistakeValue || null;
-    if (!term) return;
+    if (!term) { saveError = 'Term is required.'; return; }
     if (countCodePoints(term) > TERM_LIMIT) {
       saveError = `Term must be ${TERM_LIMIT} characters or fewer.`;
       return;
@@ -526,7 +526,7 @@
         <button
           class="btn-primary"
           onclick={saveModal}
-          disabled={saving || !draftTerm.trim()}
+          disabled={saving}
         >
           {#if saving}<span class="spinner"></span>{/if}
           {modal?.mode === 'add' ? 'Add term' : 'Save changes'}
