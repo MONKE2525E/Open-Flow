@@ -804,9 +804,35 @@ pub fn update_dictionary_entry(db: &Db, id: i64, term: &str, mistake: Option<&st
 }
 
 pub fn delete_dictionary_entry(db: &Db, id: i64) -> Result<()> {
-    let conn = lock_conn(db)?;
-    let changed = conn.execute("DELETE FROM dictionary WHERE id=?1", params![id])?;
+    let mut conn = lock_conn(db)?;
+    let tx = conn.transaction()?;
+
+    // Capture metadata before deleting so we can clean up auto-learn history.
+    let info: Option<(String, Option<String>, i64)> = tx
+        .query_row(
+            "SELECT term, mistake, auto_learned FROM dictionary WHERE id=?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .ok();
+
+    let changed = tx.execute("DELETE FROM dictionary WHERE id=?1", params![id])?;
     require_row_changed(changed, "Dictionary entry", id)?;
+
+    // If this was an auto-learned entry, remove its pending corrections and
+    // candidates so the auto-learn system cannot immediately re-promote it.
+    if let Some((term, Some(mistake), 1)) = info {
+        tx.execute(
+            "DELETE FROM pending_corrections WHERE wrong_word = ?1 AND correct_word = ?2",
+            params![mistake, term],
+        )?;
+        tx.execute(
+            "DELETE FROM auto_learn_candidates WHERE wrong_word = ?1 AND correct_word = ?2",
+            params![mistake, term],
+        )?;
+    }
+
+    tx.commit()?;
     Ok(())
 }
 
@@ -1586,6 +1612,34 @@ mod tests {
         assert!(
             snippet_err.to_string().contains("Snippet 999 was not found"),
             "unexpected snippet error: {snippet_err}"
+        );
+    }
+
+    #[test]
+    fn manual_delete_of_auto_learned_entry_purges_pending_corrections() {
+        let db = test_db();
+
+        insert_dictionary_entry_auto_learned(&db, "Tauri", Some("Tari"), "low").expect("insert");
+        let id = query_dictionary(&db)
+            .expect("query")
+            .into_iter()
+            .next()
+            .expect("entry")
+            .id;
+
+        insert_pending_correction(&db, "Tari", "Tauri").expect("pending");
+        assert_eq!(
+            count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count before"),
+            1
+        );
+
+        delete_dictionary_entry(&db, id).expect("delete");
+
+        assert_eq!(query_dictionary(&db).expect("query after").len(), 0);
+        assert_eq!(
+            count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count after"),
+            0,
+            "pending corrections must be purged when the auto-learned entry is manually deleted"
         );
     }
 }
