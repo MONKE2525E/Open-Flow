@@ -52,11 +52,15 @@ let dictionaryFetchToken = 0;
 
 export function cancelSnippetsFetch() {
   snippetsFetchToken++;
-  if (appStore.snippetsFetchStatus === 'loading') appStore.snippetsFetchStatus = 'idle';
+  if (appStore.snippetsFetchStatus === 'loading') {
+    appStore.snippetsFetchStatus = appStore.snippets.length > 0 ? 'loaded' : 'idle';
+  }
 }
 export function cancelDictionaryFetch() {
   dictionaryFetchToken++;
-  if (appStore.dictionaryFetchStatus === 'loading') appStore.dictionaryFetchStatus = 'idle';
+  if (appStore.dictionaryFetchStatus === 'loading') {
+    appStore.dictionaryFetchStatus = appStore.dictionary.length > 0 ? 'loaded' : 'idle';
+  }
 }
 
 export function formatIpcError(err: unknown): string {
