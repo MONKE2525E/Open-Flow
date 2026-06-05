@@ -196,7 +196,7 @@ fn transform_first_cased_char(text: &str, capitalize: bool) -> String {
     let mut transformed = false;
 
     for ch in text.chars() {
-        if !transformed && ch.is_alphabetic() {
+        if !transformed && (ch.is_lowercase() || ch.is_uppercase()) {
             if capitalize {
                 out.extend(ch.to_uppercase());
             } else {

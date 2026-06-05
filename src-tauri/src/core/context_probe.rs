@@ -140,6 +140,15 @@ pub(crate) fn describe_selection_state(range_seen: bool, range_collapsed: bool) 
 const MACOS_PROBE_TIMEOUT_MS: u64 = 45;
 
 #[cfg(target_os = "macos")]
+static BASE_INSTANT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn get_monotonic_ms() -> u64 {
+    let base = *BASE_INSTANT.get_or_init(std::time::Instant::now);
+    std::time::Instant::now().duration_since(base).as_millis() as u64
+}
+
+#[cfg(target_os = "macos")]
 static MACOS_PROBE_START_TIME: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
@@ -153,10 +162,7 @@ impl MacosProbeGuard {
     fn acquire() -> Option<Self> {
         use std::sync::atomic::Ordering;
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let now = get_monotonic_ms();
 
         let active_time = MACOS_PROBE_START_TIME.load(Ordering::SeqCst);
         if active_time != 0 {
