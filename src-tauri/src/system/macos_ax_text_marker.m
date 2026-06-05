@@ -60,7 +60,9 @@ static void of_write_cf_string(CFStringRef value, char *dest, size_t capacity) {
     if (value == NULL) {
         return;
     }
-    CFStringGetCString(value, dest, (CFIndex)capacity, kCFStringEncodingUTF8);
+    if (!CFStringGetCString(value, dest, (CFIndex)capacity, kCFStringEncodingUTF8)) {
+        dest[0] = '\0';
+    }
 }
 
 static void of_set_timeout(AXUIElementRef element) {
@@ -274,8 +276,11 @@ static bool of_try_public_text_range(
         return true;
     }
 
-    CFRange lookbehind = CFRangeMake(range.location - lookbehind_chars < 0 ? 0 : range.location - lookbehind_chars,
-                                     range.location - (range.location - lookbehind_chars < 0 ? 0 : range.location - lookbehind_chars));
+    CFIndex start = range.location - lookbehind_chars;
+    if (start < 0) {
+        start = 0;
+    }
+    CFRange lookbehind = CFRangeMake(start, range.location - start);
     AXValueRef lookbehind_value = AXValueCreate(kAXValueTypeCFRange, &lookbehind);
     if (lookbehind_value != NULL) {
         CFTypeRef substring = of_copy_parameterized_attribute(
