@@ -311,6 +311,31 @@ pub fn activate_pid(pid: i32) -> bool {
     })
 }
 
+/// Returns true if the general pasteboard contains non-text or rich-text formats
+/// that would be lost if we cleared and wrote back only plain text.
+pub fn pasteboard_has_non_text_formats() -> bool {
+    autoreleasepool(|_| unsafe {
+        let pb: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
+        if pb.is_null() {
+            return false;
+        }
+        let types: *mut AnyObject = msg_send![pb, types];
+        if types.is_null() {
+            return false;
+        }
+        let count: usize = msg_send![types, count];
+        for i in 0..count {
+            let item_type: *mut AnyObject = msg_send![types, objectAtIndex: i];
+            if let Some(type_str) = nsstring_to_string(item_type) {
+                if type_str != "public.utf8-plain-text" && type_str != "NSStringPboardType" {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+}
+
 /// Current plain-text contents of the general pasteboard, if any.
 pub fn pasteboard_get_string() -> Option<String> {
     autoreleasepool(|_| unsafe {

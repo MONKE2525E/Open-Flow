@@ -54,6 +54,7 @@ pub fn get_active_process_name() -> Option<String> {
     get_process_name_for_hwnd(get_foreground_hwnd())
 }
 
+#[cfg_attr(not(windows), allow(unused_variables))]
 pub fn get_process_name_for_hwnd(hwnd: usize) -> Option<String> {
     #[cfg(windows)]
     unsafe {

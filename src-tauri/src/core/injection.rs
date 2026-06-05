@@ -1,5 +1,5 @@
 use std::sync::{Mutex, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::core::context_probe::{ContextProbeSource, InjectionContextProbe, SelectionState};
 use crate::core::text_context;
@@ -7,6 +7,11 @@ use crate::core::text_context;
 // Maximum bytes stored for backspace-tracking. Covers any practical editing sequence
 // while keeping the per-injection allocation bounded.
 const HISTORY_TAIL: usize = 512;
+
+// How long a previous injection stays relevant for spacing and capitalization decisions.
+// The keyboard hook resets this early whenever the user types, so the timeout is mainly
+// a safety net for inactivity (e.g. the user idle for a minute then dictates again).
+const INJECTION_STALE: Duration = Duration::from_secs(60);
 
 // Retry gap between successive OpenClipboard attempts when the clipboard is held
 // by another process.
@@ -364,8 +369,8 @@ fn fallback_probe_from_history(target_hwnd: usize) -> Option<InjectionContextPro
                     control_identity_hash: "history_tail".to_string(),
                 })
             }
-            CursorContextState::Unknown { instant } => {
-                let _ = instant.elapsed();
+            CursorContextState::Unknown { _instant } => {
+                let _ = _instant.elapsed();
                 None
             }
             _ => None,
@@ -685,6 +690,11 @@ async fn macos_clipboard_sniff_context(target_hwnd: usize) -> Option<InjectionCo
     const VK_ANSI_C: CGKeyCode = 8;
 
     if crate::core::window_context::get_foreground_hwnd() != target_hwnd {
+        return None;
+    }
+
+    if crate::system::mac_app::pasteboard_has_non_text_formats() {
+        log::info!("bypassing macOS clipboard sniff fallback because pasteboard contains non-text or rich-text formats");
         return None;
     }
 
