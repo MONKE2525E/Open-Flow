@@ -50,8 +50,14 @@ export const appStore = $state({
 let snippetsFetchToken = 0;
 let dictionaryFetchToken = 0;
 
-export function cancelSnippetsFetch() { snippetsFetchToken++; }
-export function cancelDictionaryFetch() { dictionaryFetchToken++; }
+export function cancelSnippetsFetch() {
+  snippetsFetchToken++;
+  if (appStore.snippetsFetchStatus === 'loading') appStore.snippetsFetchStatus = 'loaded';
+}
+export function cancelDictionaryFetch() {
+  dictionaryFetchToken++;
+  if (appStore.dictionaryFetchStatus === 'loading') appStore.dictionaryFetchStatus = 'loaded';
+}
 
 export function formatIpcError(err: unknown): string {
   if (typeof err === 'object' && err !== null) {
