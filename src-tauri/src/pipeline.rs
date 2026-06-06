@@ -68,6 +68,51 @@ fn emit_pipeline_failed(app: &AppHandle) {
     .ok();
 }
 
+/// Returns true if our own process currently owns the foreground window.
+/// Catches the case where the user opened the Open Flow main window while
+/// transcribing — if we tried to Ctrl+V in that state the paste would land
+/// in our own WebView2 and silently disappear.
+fn foreground_is_own_process() -> bool {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, GetWindowThreadProcessId,
+        };
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return false;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        pid == std::process::id()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Returns true if `hwnd` belongs to our own process.
+/// Catches the case where recording was started while Open Flow itself had focus.
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn hwnd_is_own_process(hwnd: usize) -> bool {
+    if hwnd == 0 {
+        return false;
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(HWND(hwnd as *mut _), Some(&mut pid));
+        pid == std::process::id()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 // ---------- pill helpers ----------
 
 fn create_pill_if_needed(app: &AppHandle) {
@@ -1667,19 +1712,34 @@ async fn finalize_pipeline_completion(
 
     hide_pill(app);
     let inject_stage = std::time::Instant::now();
-    let injected_text = match injection::inject_text(
-        &final_text_substituted,
-        ctx.target_hwnd,
-        ctx.cfg.contextual_caps_enabled,
-        ctx.cfg.auto_spacing_enabled,
-    )
-    .await
-    {
-        Ok(text) => text,
-        Err(e) => {
-            log::error!("inject: {e}");
-            show_error_pill(app, "Failed to paste - text saved to history").await;
-            final_text_substituted.clone()
+
+    // If Open Flow itself has foreground focus, a Ctrl+V paste would land in our
+    // own WebView2 with no active text field and silently disappear. Detect this
+    // by PID and fall back to clipboard-only so the user can paste manually.
+    let self_inject = foreground_is_own_process() || hwnd_is_own_process(ctx.target_hwnd);
+
+    let injected_text = if self_inject {
+        log::info!("pipeline: self-inject detected — clipboard fallback");
+        if let Err(e) = injection::copy_to_clipboard(&final_text_substituted).await {
+            log::warn!("pipeline: clipboard fallback write failed: {e}");
+        }
+        app.emit("open-flow:error", "Text copied — press Ctrl+V to paste").ok();
+        final_text_substituted.clone()
+    } else {
+        match injection::inject_text(
+            &final_text_substituted,
+            ctx.target_hwnd,
+            ctx.cfg.contextual_caps_enabled,
+            ctx.cfg.auto_spacing_enabled,
+        )
+        .await
+        {
+            Ok(text) => text,
+            Err(e) => {
+                log::error!("inject: {e}");
+                show_error_pill(app, "Failed to paste - text saved to history").await;
+                final_text_substituted.clone()
+            }
         }
     };
     log::debug!(
