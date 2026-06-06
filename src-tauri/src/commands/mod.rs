@@ -1137,11 +1137,11 @@ pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
 pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), String> {
     #[cfg(not(windows))]
     {
-        let _ = (&app, &download_url);
-        Err(
-            "In-app update is only available on Windows. Download the latest release from GitHub."
-                .into(),
-        )
+        use tauri_plugin_shell::ShellExt;
+        app.shell()
+            .open(&download_url, None)
+            .map_err(|e| format!("Failed to open download link: {e}"))?;
+        Ok(())
     }
 
     #[cfg(windows)]
