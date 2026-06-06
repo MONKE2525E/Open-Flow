@@ -2,20 +2,25 @@ import { writable, get } from 'svelte/store';
 import { invoke, listen } from './tauri';
 import { saveSetting } from './settings';
 
-export const TARGET_CALIBRATION_FACTOR = 2.25;
-export const MIN_CALIBRATION_LEVEL = 0.04;
+// The setup meter intentionally boosts raw RMS by 15x for readability.
+// Calibration now uses the raw mic RMS, so convert the historical thresholds
+// and targets back to their raw equivalents.
+const CALIBRATION_DISPLAY_GAIN = 15;
+
+export const TARGET_CALIBRATION_FACTOR = 2.25 / CALIBRATION_DISPLAY_GAIN;
+export const MIN_CALIBRATION_LEVEL = 0.04 / CALIBRATION_DISPLAY_GAIN;
 export const MAX_CALIBRATION_GAIN = 8.0;
 export const MIN_CALIBRATION_GAIN = 1.0;
 export const DEFAULT_CALIBRATION_GAIN = 3.5;
-export const SPEECH_DETECTION_THRESHOLD = 0.07;
+export const SPEECH_DETECTION_THRESHOLD = 0.07 / CALIBRATION_DISPLAY_GAIN;
 
 const PHASE_LOUD_DURATION_MS = 3000;
 const PHASE_WHISPER_DURATION_MS = 2000;
 const PHASE_LOUD_SECONDS = 3;
 const PHASE_WHISPER_SECONDS = 2;
 const COUNTDOWN_TICK_MS = 100;
-const WHISPER_DETECTION_THRESHOLD = 0.015;
-const WHISPER_MIN_TRANSCRIBABLE = 0.05;
+const WHISPER_DETECTION_THRESHOLD = 0.015 / CALIBRATION_DISPLAY_GAIN;
+const WHISPER_TARGET_LEVEL = 0.32 / CALIBRATION_DISPLAY_GAIN;
 
 export type CalibrationPhase = 'loud' | 'whisper';
 
@@ -67,12 +72,16 @@ export async function startCalibration() {
   const sessionId = crypto.randomUUID();
   currentCalibrationSession = sessionId;
 
-  let unlisten: () => void;
+  let unlistenDisplay: (() => void) | undefined;
+  let unlistenRaw: (() => void) | undefined;
   try {
-    unlisten = await listen<number>('audio-level', (ev) => {
+    unlistenDisplay = await listen<number>('audio-level', (ev) => {
+      if (sessionId !== currentCalibrationSession || !get(isCalibrating)) return;
+      micLevel.set(ev.payload ?? 0);
+    });
+    unlistenRaw = await listen<number>('audio-level-raw', (ev) => {
       if (sessionId !== currentCalibrationSession || !get(isCalibrating)) return;
       const level = ev.payload ?? 0;
-      micLevel.set(level);
       if (currentPhase === 'loud' && level > loudMaxLevel) {
         loudMaxLevel = level;
       } else if (currentPhase === 'whisper' && level > whisperMaxLevel) {
@@ -80,15 +89,21 @@ export async function startCalibration() {
       }
     });
   } catch (e) {
+    unlistenDisplay?.();
+    unlistenRaw?.();
     console.error('Failed to subscribe to audio-level events:', e);
     void cancelCalibration();
     return;
   }
 
   if (sessionId === currentCalibrationSession && get(isCalibrating)) {
-    calibrationUnlisten = unlisten;
+    calibrationUnlisten = () => {
+      unlistenDisplay();
+      unlistenRaw();
+    };
   } else {
-    unlisten();
+    unlistenDisplay();
+    unlistenRaw();
   }
 
   try {
@@ -154,10 +169,10 @@ export async function stopCalibration() {
     const whisperPresent = whisperMaxLevel >= WHISPER_DETECTION_THRESHOLD;
     if (whisperPresent) {
       const whisperPostGain = whisperMaxLevel * gainFromLoud;
-      if (whisperPostGain < WHISPER_MIN_TRANSCRIBABLE) {
+      if (whisperPostGain < WHISPER_TARGET_LEVEL) {
         const gainFromWhisper = Math.max(
           MIN_CALIBRATION_GAIN,
-          Math.min(MAX_CALIBRATION_GAIN, WHISPER_MIN_TRANSCRIBABLE / whisperMaxLevel)
+          Math.min(MAX_CALIBRATION_GAIN, WHISPER_TARGET_LEVEL / whisperMaxLevel)
         );
         finalGain = Math.min(MAX_CALIBRATION_GAIN, Math.max(gainFromLoud, gainFromWhisper));
       } else {

@@ -25,9 +25,23 @@
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
 
+  // Track whether calibration has run during this mount so a stale value from
+  // a previous session cannot override the user's saved manual gain.
+  let calibrationRanThisMount = false;
+
   $effect(() => {
-    if ($calibratedGain !== null) {
-      micGain = $calibratedGain;
+    if ($isCalibrating) {
+      calibrationRanThisMount = true;
+    }
+  });
+
+  $effect(() => {
+    const gain = $calibratedGain;
+    if (gain !== null && calibrationRanThisMount) {
+      micGain = gain;
+    }
+    if (!$isCalibrating && gain === null) {
+      calibrationRanThisMount = false;
     }
   });
 
@@ -67,7 +81,7 @@
   }
 
   onDestroy(() => {
-    cancelCalibration();
+    void cancelCalibration();
   });
 
   loadSettings();
