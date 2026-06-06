@@ -245,6 +245,7 @@ fn main() {
             commands::get_accessibility_permission_status,
             commands::get_microphone_permission_status,
             commands::open_microphone_settings,
+            commands::check_keychain_access,
             commands::show_main,
             commands::hide_main,
             commands::get_recent,

@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Open Flow is an open-source AI dictation desktop app for Windows — a free, API-key-based alternative to the paid "Wispr Flow" app. Users supply their own API keys; there is no subscription. Target RAM usage is ~200MB idle.
+Open Flow is an open-source AI dictation desktop app for Windows and macOS — a free, API-key-based alternative to the paid "Wispr Flow" app. Users supply their own API keys; there is no subscription. Target RAM usage is ~200MB idle.
 
 ## Stack
 
@@ -22,6 +22,7 @@ Open Flow is an open-source AI dictation desktop app for Windows — a free, API
 - **Settings store:** `tauri-plugin-store`
 - **Audio capture:** `cpal` + `hound` for WAV encoding + `nnnoiseless` for noise reduction
 - **Windows native APIs:** `windows` crate (hotkey hook, active window, SendInput, UI Automation)
+- **macOS native APIs:** `CGEventTap` (global hotkey), `Security` framework (Keychain), Accessibility API
 - **HTTP:** `reqwest` (async API calls to AI providers)
 - **Async runtime:** `tokio`
 - **Utilities:** `chrono` (timestamps), `anyhow` (error handling)
@@ -79,7 +80,6 @@ When executing tasks, refer to the guidelines in the `Agent-Skills/` directory:
 - **Updating version**: See [`Agent-Skills/Updating_version.md`](Agent-Skills/Updating_version.md) for the required files to modify when bumping the application version.
 - **Smoke Tests**: See [`Agent-Skills/SmokeTest.md`](Agent-Skills/SmokeTest.md) for testing procedures.
 - **Release descriptions**: See [`Agent-Skills/Release_Description_Writing.md`](Agent-Skills/Release_Description_Writing.md) for the canonical format — always wrap output in a ` ```markdown ` code block.
-- **Multi-agent parallel work**: See [`Agent-Skills/Multi_Agent_Parallel.md`](Agent-Skills/Multi_Agent_Parallel.md) for the permanent worktree slot workflow (`G:\Open Flow\worktrees\worktree-{1,2,3}`) used to run agents in parallel without port or branch conflicts.
 
 ## CI/CD & Review
 
@@ -96,18 +96,26 @@ src/                        # Svelte 5 frontend
   PillApp.svelte            # Floating pill window (recording state display)
   main.ts / pill-main.ts    # Vite entry points for each window
   lib/
-    stores.ts               # All Svelte writable stores (single file)
+    stores.ts               # Svelte writable stores (legacy; most stores are still here)
+    stores.svelte.ts        # Svelte 5 runes-based stores (new additions go here)
     settings.ts             # Typed settings registry: SettingsValueMap, saveSetting() helper, shared types (ProviderId, AppearanceMode, etc.)
     transcriptionLanguages.ts  # ISO 639-1 language list + TranscriptionLanguageCode type (frontend mirror of store.rs validation)
+    calibration.ts          # Mic gain auto-calibration state machine (loud/whisper phases)
+    appMappings.ts          # App-to-profile mapping store helpers
+    platform.ts             # Runtime platform detection (Windows vs macOS)
+    motion.ts               # Animation/transition utilities
+    tauri.ts                # Typed wrapper around @tauri-apps/api invoke/listen
     icons.ts                # SVG icon definitions
     components/layout/      # TitleBar, Sidebar, DictationPill
     components/             # Shared: Toggle, Dropdown, MicInputButton
-    components/settings/    # Settings sections: General, Models, ApiKeys, AppMappings, Privacy, Advanced, About
+    components/settings/    # Settings sections: General, Models, ApiKeys, AppMappings, Privacy, Audio, Advanced, About
     views/                  # Home (main flow), Dictionary, Snippets, Settings, Setup (first-run API key entry), Style pages
 src-tauri/
   src/
-    main.rs                 # Tauri setup, command registration
+    main.rs                 # Tauri setup, state initialization, command registration
     pipeline.rs             # run_pipeline() orchestration, quality gates
+    commands/mod.rs         # All #[tauri::command] handlers (extracted from main.rs)
+    testing.rs              # Test fixture infrastructure — cfg(test)/debug_assertions only
     api/
       transcription.rs      # POST audio to Groq/OpenAI/Google → raw text
       cleanup.rs            # POST raw text to LLM with profile system prompt
@@ -190,10 +198,10 @@ The `transcription_language` setting (ISO 639-1, default `en`) is sent to Groq/O
 
 ## Global Hotkey Behavior
 
-- **Ctrl+Windows (hold)** → start recording
-- **Ctrl+Windows (release)** → stop and process
+- **Windows:** Ctrl+Windows (hold) → start recording; release → stop and process
+- **macOS:** Fn+Control (hold/release) via `CGEventTap`
 
-The hotkey uses a raw `SetWindowsHookExW(WH_KEYBOARD_LL)` hook in `core/hotkey.rs`, not `tauri-plugin-global-shortcut`, because that plugin only fires on keydown — hold/release state requires the low-level hook.
+The Windows hotkey uses a raw `SetWindowsHookExW(WH_KEYBOARD_LL)` hook in `core/hotkey.rs`, not `tauri-plugin-global-shortcut`, because that plugin only fires on keydown — hold/release state requires the low-level hook. The macOS equivalent uses `CGEventTap` for the same reason.
 
 ## Formatting Profiles
 

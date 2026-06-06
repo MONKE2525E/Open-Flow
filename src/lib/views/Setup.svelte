@@ -15,8 +15,8 @@
   import { isMac } from '../platform';
 
   // Platform-aware labels for the dictation hotkey and copy.
-  const hkKey1 = 'Ctrl';
-  const hkKey2 = isMac ? 'fn' : 'Windows';
+  const hkKey1 = isMac ? 'fn' : 'Ctrl';
+  const hkKey2 = isMac ? 'Control' : 'Windows';
   const platformTagline = isMac ? 'macOS' : 'Windows';
   const TOTAL_STEPS = isMac ? 8 : 7; // steps 1–8 show progress dots (done is step 8 on Windows / 9 on macOS)
   const permissionStep = isMac ? 3 : -1;
@@ -31,7 +31,7 @@
     minimize: () => Promise<void>;
   };
 
-  let win: AppWindow | null = null;
+  let win = $state<AppWindow | null>(null);
   onMount(async () => {
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
@@ -49,8 +49,8 @@
         selectedLanguage = savedLanguage;
       }
     } catch {}
-    if (isMac) {
-      void refreshMacPermissions();
+    if (isMac && step === permissionStep) {
+      onEnterPermissionStep();
     }
     setTimeout(() => { introReady = true; }, 60);
   });
@@ -61,7 +61,7 @@
   }
 
   // ── Step state ──────────────────────────────────────────────────────────────
-  let step = 0;
+  let step = $state(0);
 
   // ── Microphone Calibration ──────────────────────────────────────────────────
   import {
@@ -77,15 +77,23 @@
 
   onDestroy(() => {
     cancelCalibration();
+    stopPermissionPolling();
   });
 
-  let direction: 'forward' | 'back' = 'forward';
-  let animating = false;
-  let visible = true;
+  let direction = $state<'forward' | 'back'>('forward');
+  let animating = $state(false);
+  let visible = $state(true);
 
   // ── Quick Settings ──────────────────────────────────────────────────────────
-  let quickPrefs = { cleanup: true, noise: true, caps: true, autoLearn: false, autostart: false, muteAudio: false };
-  let quickSettingsReady = false;
+  let quickPrefs = $state({
+    cleanup: true,
+    noise: true,
+    caps: true,
+    autoLearn: false,
+    autostart: false,
+    muteAudio: false,
+  });
+  let quickSettingsReady = $state(false);
   type QuickPrefKey = keyof typeof quickPrefs;
   function toggleQuickPref(key: QuickPrefKey) {
     quickPrefs = { ...quickPrefs, [key]: !quickPrefs[key] };
@@ -101,14 +109,13 @@
       toggleQuickPref(key);
     }
   }
-  let selectedLanguage = 'en' as TranscriptionLanguageCode;
-  let setupCalibrationCopy = getSetupCalibrationCopy(selectedLanguage);
-  $: setupCalibrationCopy = getSetupCalibrationCopy(selectedLanguage);
+  let selectedLanguage = $state<TranscriptionLanguageCode>('en');
+  let setupCalibrationCopy = $derived(getSetupCalibrationCopy(selectedLanguage));
   const onboardingLanguageSet = new Set<TranscriptionLanguageCode>(['en', 'es', 'fr', 'de', 'pt', 'zh']);
   const onboardingLanguages = transcriptionLanguages.filter((option) => onboardingLanguageSet.has(option.code));
 
   // ── Provider ─────────────────────────────────────────────────────────────────
-  let selectedProvider: 'groq' | 'openai' | 'google' = 'groq';
+  let selectedProvider = $state<'groq' | 'openai' | 'google'>('groq');
 
   const providers = [
     {
@@ -153,21 +160,25 @@
   };
 
   // ── API key ───────────────────────────────────────────────────────────────────
-  let apiKeyDraft = '';
-  let keySaved = false;
-  let keySaving = false;
-  let keyError = '';
-  let showKey = false;
+  let apiKeyDraft = $state('');
+  let keySaved = $state(false);
+  let keySaving = $state(false);
+  let keyError = $state('');
+  let showKey = $state(false);
 
   type MacPermissionStatus = 'authorized' | 'needs_permission' | 'not_determined' | 'denied' | 'restricted' | 'unknown';
-  let accessibilityPermission: MacPermissionStatus = isMac ? 'unknown' : 'authorized';
-  let microphonePermission: MacPermissionStatus = isMac ? 'unknown' : 'authorized';
-  let permissionsLoading = false;
-  let permissionsError = '';
-  let accessibilityPrompting = false;
+  type KeychainStatus = 'authorized' | 'not_configured' | 'denied' | 'unknown';
+  let accessibilityPermission = $state<MacPermissionStatus>(isMac ? 'unknown' : 'authorized');
+  let microphonePermission = $state<MacPermissionStatus>(isMac ? 'unknown' : 'authorized');
+  let keychainStatus = $state<KeychainStatus>(isMac ? 'unknown' : 'authorized');
+  let permissionsLoading = $state(false);
+  let permissionsError = $state('');
+  let accessibilityPrompting = $state(false);
+  let keychainLoading = $state(false);
+  let permissionsRefreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
   // ── Cleanup intensity ─────────────────────────────────────────────────────────
-  let selectedIntensity = 'medium';
+  let selectedIntensity = $state('medium');
   const cleanupCards = [
     { id: 'none',   name: 'Verbatim', desc: 'Raw transcription. No AI cleanup at all.' },
     { id: 'light',  name: 'Light',    desc: 'Removes filler words and repeated phrases. Keeps everything else.' },
@@ -176,7 +187,7 @@
   ];
 
   // ── Personal tone ─────────────────────────────────────────────────────────────
-  let selectedTone = 'casual';
+  let selectedTone = $state('casual');
   const toneCards = [
     { id: 'casual',      name: 'Casual',      desc: 'Conversational. Light caps and punctuation — reads like a Slack message.' },
     { id: 'formal',      name: 'Formal',      desc: 'Professional prose. Full punctuation, expanded contractions, formal vocabulary. No em dashes.' },
@@ -184,7 +195,7 @@
   ];
 
   // ── Appearance ──────────────────────────────────────────────────────────────
-  let selectedAppearance: AppearanceMode = 'system';
+  let selectedAppearance = $state<AppearanceMode>('system');
   const appearanceModes: { id: AppearanceMode; name: string; desc: string }[] = [
     { id: 'system', name: 'System', desc: 'Match your system theme automatically.' },
     { id: 'dark', name: 'Dark', desc: 'Lower glare for night work and dark desktops.' },
@@ -197,23 +208,44 @@
 
   function permissionLabel(status: MacPermissionStatus) {
     switch (status) {
-      case 'authorized':
-        return 'Granted';
-      case 'not_determined':
-        return 'Not yet asked';
-      case 'denied':
-        return 'Blocked';
-      case 'restricted':
-        return 'Restricted';
-      case 'needs_permission':
-        return 'Needs access';
-      default:
-        return 'Unknown';
+      case 'authorized':     return 'Granted';
+      case 'not_determined': return 'Not yet asked';
+      case 'denied':         return 'Blocked';
+      case 'restricted':     return 'Restricted by org';
+      case 'needs_permission': return 'Needs access';
+      default:               return 'Checking…';
+    }
+  }
+
+  function keychainLabel(status: KeychainStatus) {
+    switch (status) {
+      case 'authorized':     return 'Granted';
+      case 'not_configured': return 'No key saved';
+      case 'denied':         return 'Access denied';
+      default:               return 'Checking…';
+    }
+  }
+
+  function startPermissionPolling() {
+    stopPermissionPolling();
+    permissionsRefreshInterval = setInterval(async () => {
+      if (permissionsLoading) return;
+      await refreshMacPermissions();
+      if (accessibilityPermission === 'authorized' && microphonePermission === 'authorized') {
+        stopPermissionPolling();
+      }
+    }, 5000);
+  }
+
+  function stopPermissionPolling() {
+    if (permissionsRefreshInterval !== null) {
+      clearInterval(permissionsRefreshInterval);
+      permissionsRefreshInterval = null;
     }
   }
 
   async function refreshMacPermissions() {
-    if (!isMac) return;
+    if (!isMac || permissionsLoading) return;
     permissionsLoading = true;
     permissionsError = '';
     try {
@@ -230,6 +262,19 @@
     }
   }
 
+  async function triggerKeychainAccess() {
+    if (!isMac || keychainLoading) return;
+    keychainLoading = true;
+    try {
+      const result = await invoke<string>('check_keychain_access', { provider: selectedProvider });
+      keychainStatus = (result as KeychainStatus) || 'unknown';
+    } catch {
+      keychainStatus = 'denied';
+    } finally {
+      keychainLoading = false;
+    }
+  }
+
   async function requestAccessibilityPrompt() {
     if (!isMac) return;
     accessibilityPrompting = true;
@@ -239,28 +284,43 @@
     } catch {}
     await refreshMacPermissions();
     accessibilityPrompting = false;
+    startPermissionPolling();
   }
 
   async function openPermissionSettings(kind: 'accessibility' | 'microphone') {
     try {
       await invoke(kind === 'accessibility' ? 'open_accessibility_settings' : 'open_microphone_settings');
+      startPermissionPolling();
     } catch {
       permissionsError = 'Could not open System Settings.';
     }
   }
 
+  let allCoreGranted = $derived(
+    accessibilityPermission === 'authorized' && microphonePermission === 'authorized'
+  );
+
   // ── Navigation ────────────────────────────────────────────────────────────────
+  function onEnterPermissionStep() {
+    void refreshMacPermissions();
+    void triggerKeychainAccess();
+    startPermissionPolling();
+  }
+
+  function onLeavePermissionStep() {
+    stopPermissionPolling();
+  }
+
   async function goNext() {
     if (animating) return;
     if (step === doneStep) { await finish(); return; }
+    if (isMac && step === permissionStep) onLeavePermissionStep();
     direction = 'forward';
     animating = true;
     visible = false;
     await delay(220);
     step++;
-    if (isMac && step === permissionStep) {
-      void refreshMacPermissions();
-    }
+    if (isMac && step === permissionStep) onEnterPermissionStep();
     if (step === quickSettingsStep) setTimeout(() => { quickSettingsReady = true; }, 60);
     visible = true;
     await delay(220);
@@ -270,14 +330,13 @@
   async function goBack() {
     if (animating || step === 0) return;
     if (step === quickSettingsStep || step === doneStep) quickSettingsReady = false;
+    if (isMac && step === permissionStep) onLeavePermissionStep();
     direction = 'back';
     animating = true;
     visible = false;
     await delay(220);
     step--;
-    if (isMac && step === permissionStep) {
-      void refreshMacPermissions();
-    }
+    if (isMac && step === permissionStep) onEnterPermissionStep();
     if (step === quickSettingsStep) setTimeout(() => { quickSettingsReady = true; }, 60);
     visible = true;
     await delay(220);
@@ -285,14 +344,13 @@
   }
 
   async function skip() {
+    if (isMac && step === permissionStep) onLeavePermissionStep();
     direction = 'forward';
     animating = true;
     visible = false;
     await delay(220);
     step++;
-    if (isMac && step === permissionStep) {
-      void refreshMacPermissions();
-    }
+    if (isMac && step === permissionStep) onEnterPermissionStep();
     visible = true;
     await delay(220);
     animating = false;
@@ -343,11 +401,22 @@
   function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
   // ── Intro animation ───────────────────────────────────────────────────────────
-  let introReady = false;
+  let introReady = $state(false);
 
   // ── Done animation ────────────────────────────────────────────────────────────
-  let checkAnimating = false;
-  $: if (step === doneStep) { setTimeout(() => { checkAnimating = true; }, 200); }
+  let checkAnimating = $state(false);
+  $effect(() => {
+    if (step !== doneStep) {
+      checkAnimating = false;
+      return;
+    }
+
+    checkAnimating = false;
+    const timeout = setTimeout(() => {
+      checkAnimating = true;
+    }, 200);
+    return () => clearTimeout(timeout);
+  });
 </script>
 
 <!-- Full-screen overlay -->
@@ -560,76 +629,142 @@
     {:else if isMac && step === permissionStep}
       <div class="step">
         <div class="step-header">
-          <h2>Check your macOS permissions</h2>
-          <p class="step-sub">Open Flow works best when macOS trusts it for both the mic and the global hotkey.</p>
+          <h2>Grant macOS permissions</h2>
+          <p class="step-sub">Open Flow needs these to hear your voice and type for you.</p>
         </div>
 
-        <div class="permission-panel">
-          <div class="permission-panel-head">
-            <div>
-              <p class="guide-label">What this screen is for</p>
-              <p class="permission-panel-copy">
-                Accessibility lets Open Flow listen for the hotkey, paste text for you, and read local caret context when an editor exposes it.
-                Microphone access lets it hear your voice in the first place.
-              </p>
-            </div>
-            <button class="copy-btn" onclick={refreshMacPermissions} disabled={permissionsLoading}>
-              {permissionsLoading ? 'Refreshing…' : 'Refresh status'}
-            </button>
+        {#if allCoreGranted}
+          <div class="permission-success" in:fly={{ y: -8, duration: motionMs(220), easing: expoOut }}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="display:inline;vertical-align:-1px;margin-right:5px"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Core permissions granted — you're ready to continue.
           </div>
+        {/if}
 
-          <div class="permission-grid">
-            <article class="permission-card">
-              <div class="permission-card-top">
-                <div>
-                  <p class="permission-title">Accessibility</p>
-                  <p class="permission-desc">Needed for the global hotkey, Cmd+V injection, and the best capitalization and spacing accuracy in supported editors.</p>
-                </div>
-                <span class="permission-badge" class:warn={accessibilityPermission !== 'authorized'}>
+        <div class="perm-rows">
+          <!-- Accessibility -->
+          <div class="perm-row" class:perm-granted={accessibilityPermission === 'authorized'}>
+            <div class="perm-row-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.5" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="7" r="1.5" fill="currentColor"/><path d="M7 10.5h6M10 10.5V14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="perm-row-body">
+              <p class="perm-row-title">Accessibility</p>
+              <p class="perm-row-desc">Lets Open Flow listen for the global hotkey and inject text into any app.</p>
+            </div>
+            <div class="perm-row-right">
+              {#key accessibilityPermission}
+                <span class="permission-badge" class:warn={accessibilityPermission !== 'authorized'} in:fly={{ y: -4, duration: motionMs(160), easing: expoOut }}>
                   {permissionLabel(accessibilityPermission)}
                 </span>
-              </div>
-              <div class="permission-actions">
-                <button class="btn-ghost permission-btn" onclick={requestAccessibilityPrompt} disabled={accessibilityPrompting}>
-                  {accessibilityPrompting ? 'Prompting…' : 'Show system prompt'}
-                </button>
-                <button class="btn-ghost permission-btn" onclick={() => openPermissionSettings('accessibility')}>
-                  Open Settings
-                </button>
-              </div>
-            </article>
-
-            <article class="permission-card">
-              <div class="permission-card-top">
-                <div>
-                  <p class="permission-title">Microphone</p>
-                  <p class="permission-desc">Needed to capture speech and calibrate your mic gain.</p>
+              {/key}
+              {#if accessibilityPermission !== 'authorized'}
+                <div class="permission-actions">
+                  {#if accessibilityPermission === 'needs_permission' || accessibilityPermission === 'unknown'}
+                    <button class="btn-ghost permission-btn" onclick={requestAccessibilityPrompt} disabled={accessibilityPrompting}>
+                      {accessibilityPrompting ? 'Prompting…' : 'Show system prompt'}
+                    </button>
+                  {/if}
+                  {#if accessibilityPermission !== 'restricted'}
+                    <button class="btn-ghost permission-btn" onclick={() => openPermissionSettings('accessibility')}>
+                      Open Settings
+                    </button>
+                  {:else}
+                    <p class="permission-restricted-note">Managed by your organization.</p>
+                  {/if}
                 </div>
-                <span class="permission-badge" class:warn={microphonePermission !== 'authorized'}>
+              {/if}
+            </div>
+          </div>
+
+          <!-- Microphone -->
+          <div class="perm-row" class:perm-granted={microphonePermission === 'authorized'}>
+            <div class="perm-row-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M4.5 10a5.5 5.5 0 0 0 11 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="10" y1="15.5" x2="10" y2="17.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="perm-row-body">
+              <p class="perm-row-title">Microphone</p>
+              <p class="perm-row-desc">Needed to capture your voice. macOS will prompt on first use if not yet granted.</p>
+            </div>
+            <div class="perm-row-right">
+              {#key microphonePermission}
+                <span class="permission-badge" class:warn={microphonePermission !== 'authorized'} in:fly={{ y: -4, duration: motionMs(160), easing: expoOut }}>
                   {permissionLabel(microphonePermission)}
                 </span>
-              </div>
-              <div class="permission-actions">
-                <button class="btn-ghost permission-btn" onclick={() => openPermissionSettings('microphone')}>
-                  Open Settings
-                </button>
-              </div>
-            </article>
+              {/key}
+              {#if microphonePermission !== 'authorized'}
+                <div class="permission-actions">
+                  {#if microphonePermission === 'restricted'}
+                    <p class="permission-restricted-note">Managed by your organization.</p>
+                  {:else}
+                    <button class="btn-ghost permission-btn" onclick={() => openPermissionSettings('microphone')}>
+                      Open Settings
+                    </button>
+                  {/if}
+                </div>
+              {/if}
+            </div>
           </div>
 
-          {#if permissionsError}
-            <p class="permission-error">{permissionsError}</p>
-          {/if}
-
-          <div class="permission-note">
-            <strong>Tip:</strong> If a macOS permission prompt appears, choose <span>Allow</span> or <span>Always Allow</span>.
-            If you miss it, use the buttons above to jump to System Settings and try again.
+          <!-- Keychain Access -->
+          <div class="perm-row" class:perm-granted={keychainStatus === 'authorized'}>
+            <div class="perm-row-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none"><rect x="4" y="9" width="12" height="9" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M7 9V7a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="perm-row-body">
+              <p class="perm-row-title">Keychain Access</p>
+              <p class="perm-row-desc">
+                {#if keychainStatus === 'not_configured'}
+                  No API key saved yet. Go back to step 2 to add one.
+                {:else if keychainStatus === 'denied'}
+                  Access denied. Click <strong>Unlock access</strong> below or allow Open Flow in Keychain Access.app.
+                {:else if keychainStatus === 'authorized'}
+                  Secures your API key and keeps it in your Keychain.
+                {:else}
+                  Secures your API key. Open Flow will prompt for access when it needs it.
+                {/if}
+              </p>
+            </div>
+            <div class="perm-row-right">
+              {#key keychainStatus}
+                <span class="permission-badge" class:warn={keychainStatus !== 'authorized'} in:fly={{ y: -4, duration: motionMs(160), easing: expoOut }}>
+                  {keychainLabel(keychainStatus)}
+                </span>
+              {/key}
+              {#if keychainStatus !== 'authorized' && keychainStatus !== 'not_configured'}
+                <div class="permission-actions">
+                  <button class="btn-ghost permission-btn" onclick={triggerKeychainAccess} disabled={keychainLoading}>
+                    {keychainLoading ? 'Checking…' : 'Unlock access'}
+                  </button>
+                </div>
+              {/if}
+            </div>
           </div>
+        </div>
+
+        {#if permissionsError}
+          <p class="permission-error">{permissionsError}</p>
+        {/if}
+
+        <div class="permission-note">
+          <strong>Tip:</strong> Grant permissions in System Settings and this page refreshes automatically within 5 seconds.
         </div>
 
         <div class="step-footer">
           <button class="btn-skip" onclick={skip}>Skip for now</button>
-          <button class="btn-primary" onclick={goNext}>Next</button>
+          <div style="display:flex;align-items:center;gap:12px">
+            <button
+              class="permission-refresh-btn"
+              onclick={() => {
+                void refreshMacPermissions();
+                void triggerKeychainAccess();
+              }}
+              disabled={permissionsLoading || keychainLoading}
+              title="Refresh permission status"
+            >
+              <span class:refresh-spin={permissionsLoading || keychainLoading} aria-hidden="true">↻</span>
+              {permissionsLoading || keychainLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+            <button class="btn-primary" class:btn-primary--glow={allCoreGranted} onclick={goNext}>Next</button>
+          </div>
         </div>
       </div>
 
@@ -1863,66 +1998,88 @@
   }
 
   /* ── macOS permissions step ───────────────────────────── */
-  .permission-panel {
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    border-radius: var(--r-lg);
-    padding: 16px 18px 18px;
+  .permission-success {
+    display: flex;
+    align-items: center;
+    background: color-mix(in srgb, var(--accent-soft) 65%, var(--paper));
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+    border-radius: var(--r-sm);
+    padding: 9px 13px;
+    font-size: 13px;
+    color: var(--accent-ink);
+    font-weight: 500;
+  }
+
+  /* Three stacked permission rows — same visual language as provider cards */
+  .perm-rows {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 10px;
   }
 
-  .permission-panel-head {
+  .perm-row {
     display: flex;
     align-items: flex-start;
-    justify-content: space-between;
-    gap: 14px;
-  }
-
-  .permission-panel-copy {
-    font-size: 13px;
-    color: var(--ink-soft);
-    margin: 5px 0 0;
-    line-height: 1.5;
-    max-width: 520px;
-  }
-
-  .permission-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .permission-card {
+    gap: 13px;
     background: var(--bg-elev);
     border: 1.5px solid var(--line);
     border-radius: var(--r-md);
-    padding: 14px 14px 13px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+    padding: 14px 16px;
+    transition: border-color 0.25s, background 0.25s;
   }
 
-  .permission-card-top {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
+  .perm-row.perm-granted {
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
 
-  .permission-title {
+  .perm-row-icon {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    color: var(--ink-mute);
+    margin-top: 1px;
+  }
+
+  .perm-row.perm-granted .perm-row-icon {
+    color: var(--accent-ink);
+  }
+
+  .perm-row-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .perm-row-title {
     font-size: 13.5px;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--ink-strong);
-    margin: 0 0 4px;
+    margin: 0 0 3px;
   }
 
-  .permission-desc {
-    font-size: 12.5px;
+  .perm-row-desc {
+    font-size: 12px;
     color: var(--ink-mute);
     margin: 0;
     line-height: 1.45;
+  }
+
+  .perm-row-desc strong {
+    color: var(--accent-ink);
+    font-weight: 600;
+  }
+
+  .perm-row-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 7px;
+    flex-shrink: 0;
+  }
+
+  @keyframes badge-pop {
+    from { transform: scale(0.82); opacity: 0.5; }
+    to   { transform: scale(1);    opacity: 1;   }
   }
 
   .permission-badge {
@@ -1933,7 +2090,13 @@
     letter-spacing: 0.02em;
     background: var(--accent-soft);
     color: var(--accent-ink);
-    flex-shrink: 0;
+    white-space: nowrap;
+    animation: badge-pop 0.2s ease-out;
+    transition: background 0.2s, color 0.2s;
+  }
+
+  .perm-row.perm-granted .permission-badge {
+    background: color-mix(in srgb, var(--accent) 15%, var(--accent-soft));
   }
 
   .permission-badge.warn {
@@ -1944,14 +2107,23 @@
   .permission-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .permission-restricted-note {
+    font-size: 11.5px;
+    color: var(--ink-mute);
+    margin: 0;
+    font-style: italic;
+    text-align: right;
   }
 
   .permission-btn {
-    padding: 7px 12px;
+    padding: 5px 11px;
     border-radius: 999px;
-    font-size: 12.5px;
+    font-size: 11.5px;
   }
 
   .permission-error {
@@ -1960,24 +2132,49 @@
     font-size: 12px;
   }
 
+  .permission-refresh-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-size: 12px;
+    color: var(--ink-faint);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: color 0.15s;
+    font-family: inherit;
+  }
+
+  .permission-refresh-btn:hover { color: var(--ink-soft); }
+  .permission-refresh-btn:disabled { cursor: default; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .refresh-spin {
+    animation: spin 0.75s linear infinite;
+    display: inline-block;
+  }
+
   .permission-note {
     background: color-mix(in srgb, var(--accent-soft) 55%, var(--paper));
     border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
     border-radius: var(--r-sm);
-    padding: 10px 12px;
-    font-size: 12.5px;
+    padding: 9px 12px;
+    font-size: 12px;
     color: var(--ink-soft);
     line-height: 1.45;
   }
 
-  .permission-note strong {
-    color: var(--ink-strong);
+  .permission-note strong { color: var(--ink-strong); }
+
+  @keyframes glow-pulse {
+    0%   { box-shadow: 0 0 0 0   color-mix(in srgb, var(--accent) 45%, transparent); }
+    55%  { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%,  transparent); }
+    100% { box-shadow: 0 0 0 0   transparent; }
   }
 
-  .permission-note span {
-    color: var(--accent-ink);
-    font-weight: 600;
-  }
+  .btn-primary--glow { animation: glow-pulse 0.85s ease-out forwards; }
 
   .btn-ghost {
     background: transparent;
@@ -2197,13 +2394,15 @@
       grid-template-columns: 1fr;
     }
 
-    .permission-grid {
-      grid-template-columns: 1fr;
+    .perm-row {
+      flex-wrap: wrap;
     }
 
-    .permission-panel-head {
-      flex-direction: column;
-      align-items: stretch;
+    .perm-row-right {
+      width: 100%;
+      flex-direction: row;
+      align-items: center;
+      justify-content: flex-start;
     }
   }
   /* Done step */

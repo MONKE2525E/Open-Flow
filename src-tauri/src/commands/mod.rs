@@ -577,8 +577,8 @@ pub async fn get_snippets(app: AppHandle) -> Result<Vec<db::Snippet>, String> {
         }
         Ok(rows)
     })
-        .await
-        .map_err(|e| e.to_string())?
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -655,11 +655,10 @@ pub async fn create_dictionary_entry(
             term.chars().count(),
             mistake.as_deref().map_or(0, |m| m.chars().count())
         );
-        db::insert_dictionary_entry_returning(&db, &term, mistake.as_deref())
-            .map_err(|e| {
-                log::warn!("dictionary:create failed: {e}");
-                e.to_string()
-            })
+        db::insert_dictionary_entry_returning(&db, &term, mistake.as_deref()).map_err(|e| {
+            log::warn!("dictionary:create failed: {e}");
+            e.to_string()
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1002,6 +1001,30 @@ pub fn open_microphone_settings() -> Result<(), String> {
     Ok(())
 }
 
+/// Reads the stored API key for `provider` from the system credential store to check
+/// whether the app has been granted Keychain access. On macOS this triggers the native
+/// Keychain dialog if the app hasn't been granted "Always Allow" yet.
+/// Returns "authorized" | "not_configured" | "denied".
+#[tauri::command]
+pub async fn check_keychain_access(provider: String) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        match tokio::task::spawn_blocking(move || {
+            crate::data::credentials::read_for_status(&provider)
+        })
+        .await
+        {
+            Ok(Ok(true)) => "authorized".to_string(),
+            Ok(Ok(false)) => "not_configured".to_string(),
+            _ => "denied".to_string(),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "authorized".to_string()
+    }
+}
+
 // ---------- updates ----------
 
 #[tauri::command]
@@ -1103,9 +1126,9 @@ pub async fn check_connectivity() -> bool {
 #[tauri::command]
 pub fn log_frontend(level: String, message: String) {
     match level.as_str() {
-        "warn"  => log::warn!("fe: {message}"),
+        "warn" => log::warn!("fe: {message}"),
         "error" => log::error!("fe: {message}"),
-        _       => log::info!("fe: {message}"),
+        _ => log::info!("fe: {message}"),
     }
 }
 
@@ -1144,7 +1167,9 @@ mod tests {
             "openai": ["gpt-4o-transcribe"],
             "google": ["gemini-3.5-flash"]
         });
-        assert!(validate_setting(crate::data::store::TRANSCRIPTION_MODELS_BY_PROVIDER, &value).is_ok());
+        assert!(
+            validate_setting(crate::data::store::TRANSCRIPTION_MODELS_BY_PROVIDER, &value).is_ok()
+        );
     }
 
     #[test]
