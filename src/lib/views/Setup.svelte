@@ -103,8 +103,7 @@
     }
   }
   let selectedLanguage = 'en' as TranscriptionLanguageCode;
-  let setupCalibrationCopy = getSetupCalibrationCopy(selectedLanguage);
-  $: setupCalibrationCopy = getSetupCalibrationCopy(selectedLanguage);
+  let setupCalibrationCopy = $derived(getSetupCalibrationCopy(selectedLanguage));
   const onboardingLanguageSet = new Set<TranscriptionLanguageCode>(['en', 'es', 'fr', 'de', 'pt', 'zh']);
   const onboardingLanguages = transcriptionLanguages.filter((option) => onboardingLanguageSet.has(option.code));
 
@@ -290,7 +289,9 @@
     }
   }
 
-  $: allCoreGranted = accessibilityPermission === 'authorized' && microphonePermission === 'authorized';
+  let allCoreGranted = $derived(
+    accessibilityPermission === 'authorized' && microphonePermission === 'authorized'
+  );
 
   // ── Navigation ────────────────────────────────────────────────────────────────
   function onEnterPermissionStep() {
@@ -396,8 +397,19 @@
   let introReady = false;
 
   // ── Done animation ────────────────────────────────────────────────────────────
-  let checkAnimating = false;
-  $: if (step === doneStep) { setTimeout(() => { checkAnimating = true; }, 200); }
+  let checkAnimating = $state(false);
+  $effect(() => {
+    if (step !== doneStep) {
+      checkAnimating = false;
+      return;
+    }
+
+    checkAnimating = false;
+    const timeout = setTimeout(() => {
+      checkAnimating = true;
+    }, 200);
+    return () => clearTimeout(timeout);
+  });
 </script>
 
 <!-- Full-screen overlay -->
@@ -695,8 +707,12 @@
               <p class="perm-row-desc">
                 {#if keychainStatus === 'not_configured'}
                   No API key saved yet. Go back to step 2 to add one.
+                {:else if keychainStatus === 'denied'}
+                  Access denied. Click <strong>Unlock access</strong> below or allow Open Flow in Keychain Access.app.
+                {:else if keychainStatus === 'authorized'}
+                  Secures your API key and keeps it in your Keychain.
                 {:else}
-                  Secures your API key. When the dialog appears, press <strong>Always Allow</strong>.
+                  Secures your API key. Open Flow will prompt for access when it needs it.
                 {/if}
               </p>
             </div>
@@ -728,9 +744,17 @@
         <div class="step-footer">
           <button class="btn-skip" onclick={skip}>Skip for now</button>
           <div style="display:flex;align-items:center;gap:12px">
-            <button class="permission-refresh-btn" onclick={refreshMacPermissions} disabled={permissionsLoading} title="Refresh permission status">
-              <span class:refresh-spin={permissionsLoading} aria-hidden="true">↻</span>
-              {permissionsLoading ? 'Refreshing…' : 'Refresh'}
+            <button
+              class="permission-refresh-btn"
+              onclick={() => {
+                void refreshMacPermissions();
+                void triggerKeychainAccess();
+              }}
+              disabled={permissionsLoading || keychainLoading}
+              title="Refresh permission status"
+            >
+              <span class:refresh-spin={permissionsLoading || keychainLoading} aria-hidden="true">↻</span>
+              {permissionsLoading || keychainLoading ? 'Refreshing…' : 'Refresh'}
             </button>
             <button class="btn-primary" class:btn-primary--glow={allCoreGranted} onclick={goNext}>Next</button>
           </div>

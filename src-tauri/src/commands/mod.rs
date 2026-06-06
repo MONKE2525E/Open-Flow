@@ -577,8 +577,8 @@ pub async fn get_snippets(app: AppHandle) -> Result<Vec<db::Snippet>, String> {
         }
         Ok(rows)
     })
-        .await
-        .map_err(|e| e.to_string())?
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -655,11 +655,10 @@ pub async fn create_dictionary_entry(
             term.chars().count(),
             mistake.as_deref().map_or(0, |m| m.chars().count())
         );
-        db::insert_dictionary_entry_returning(&db, &term, mistake.as_deref())
-            .map_err(|e| {
-                log::warn!("dictionary:create failed: {e}");
-                e.to_string()
-            })
+        db::insert_dictionary_entry_returning(&db, &term, mistake.as_deref()).map_err(|e| {
+            log::warn!("dictionary:create failed: {e}");
+            e.to_string()
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1127,9 +1126,9 @@ pub async fn check_connectivity() -> bool {
 #[tauri::command]
 pub fn log_frontend(level: String, message: String) {
     match level.as_str() {
-        "warn"  => log::warn!("fe: {message}"),
+        "warn" => log::warn!("fe: {message}"),
         "error" => log::error!("fe: {message}"),
-        _       => log::info!("fe: {message}"),
+        _ => log::info!("fe: {message}"),
     }
 }
 
@@ -1168,7 +1167,9 @@ mod tests {
             "openai": ["gpt-4o-transcribe"],
             "google": ["gemini-3.5-flash"]
         });
-        assert!(validate_setting(crate::data::store::TRANSCRIPTION_MODELS_BY_PROVIDER, &value).is_ok());
+        assert!(
+            validate_setting(crate::data::store::TRANSCRIPTION_MODELS_BY_PROVIDER, &value).is_ok()
+        );
     }
 
     #[test]

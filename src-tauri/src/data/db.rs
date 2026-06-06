@@ -28,12 +28,18 @@ fn normalize_optional_trimmed(value: Option<&str>) -> Option<String> {
 }
 
 fn normalize_multiline(value: &str) -> String {
-    value.replace("\r\n", "\n").replace('\r', "\n").trim().to_string()
+    value
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim()
+        .to_string()
 }
 
 fn validate_char_limit(field: &str, value: &str, limit: usize) -> Result<()> {
     if value.chars().count() > limit {
-        return Err(anyhow::anyhow!("{field} must be {limit} characters or fewer"));
+        return Err(anyhow::anyhow!(
+            "{field} must be {limit} characters or fewer"
+        ));
     }
     Ok(())
 }
@@ -556,7 +562,11 @@ pub fn insert_dictionary_entry(db: &Db, term: &str, mistake: Option<&str>) -> Re
     let normalized_mistake = normalize_optional_trimmed(mistake);
     validate_char_limit("Term", &normalized_term, DICTIONARY_ENTRY_CHAR_LIMIT)?;
     if let Some(mistake) = normalized_mistake.as_deref() {
-        validate_char_limit("Often mistranscribed as", mistake, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+        validate_char_limit(
+            "Often mistranscribed as",
+            mistake,
+            DICTIONARY_ENTRY_CHAR_LIMIT,
+        )?;
     }
 
     let conn = lock_conn(db)?;
@@ -605,7 +615,11 @@ pub fn insert_dictionary_entry_auto_learned(
     let normalized_mistake = normalize_optional_trimmed(mistake);
     validate_char_limit("Term", &normalized_term, DICTIONARY_ENTRY_CHAR_LIMIT)?;
     if let Some(mistake) = normalized_mistake.as_deref() {
-        validate_char_limit("Often mistranscribed as", mistake, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+        validate_char_limit(
+            "Often mistranscribed as",
+            mistake,
+            DICTIONARY_ENTRY_CHAR_LIMIT,
+        )?;
     }
 
     let conn = lock_conn(db)?;
@@ -792,7 +806,11 @@ pub fn update_dictionary_entry(db: &Db, id: i64, term: &str, mistake: Option<&st
     let normalized_mistake = normalize_optional_trimmed(mistake);
     validate_char_limit("Term", &normalized_term, DICTIONARY_ENTRY_CHAR_LIMIT)?;
     if let Some(mistake) = normalized_mistake.as_deref() {
-        validate_char_limit("Often mistranscribed as", mistake, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+        validate_char_limit(
+            "Often mistranscribed as",
+            mistake,
+            DICTIONARY_ENTRY_CHAR_LIMIT,
+        )?;
     }
 
     let conn = lock_conn(db)?;
@@ -897,7 +915,11 @@ pub fn insert_snippet(db: &Db, trigger: &str, expansion: &str, instructions: &st
     let conn = lock_conn(db)?;
     conn.execute(
         "INSERT INTO snippets (trigger, expansion, instructions) VALUES (?1, ?2, ?3)",
-        params![normalized_trigger, normalized_expansion, normalized_instructions],
+        params![
+            normalized_trigger,
+            normalized_expansion,
+            normalized_instructions
+        ],
     )?;
     Ok(())
 }
@@ -921,7 +943,11 @@ pub fn insert_snippet_returning(
     let conn = lock_conn(db)?;
     conn.execute(
         "INSERT INTO snippets (trigger, expansion, instructions) VALUES (?1, ?2, ?3)",
-        params![normalized_trigger, normalized_expansion, normalized_instructions],
+        params![
+            normalized_trigger,
+            normalized_expansion,
+            normalized_instructions
+        ],
     )?;
     let id = conn.last_insert_rowid();
     let created_at = conn.query_row(
@@ -950,7 +976,12 @@ pub fn update_snippet(
     let conn = lock_conn(db)?;
     let changed = conn.execute(
         "UPDATE snippets SET trigger=?2, expansion=?3, instructions=?4 WHERE id=?1",
-        params![id, normalized_trigger, normalized_expansion, normalized_instructions],
+        params![
+            id,
+            normalized_trigger,
+            normalized_expansion,
+            normalized_instructions
+        ],
     )?;
     require_row_changed(changed, "Snippet", id)?;
     Ok(())
@@ -1555,11 +1586,16 @@ mod tests {
     #[test]
     fn manual_dictionary_entries_trim_and_keep_longer_phrases() {
         let db = test_db();
-        let long_term = "A longer dictionary phrase that still fits inside the supported limit exactly fine";
+        let long_term =
+            "A longer dictionary phrase that still fits inside the supported limit exactly fine";
         let long_mistake = "A slightly mangled version of that longer phrase for recognition";
 
-        insert_dictionary_entry(&db, &format!("  {long_term}  "), Some(&format!("  {long_mistake}  ")))
-            .expect("insert trimmed long entry");
+        insert_dictionary_entry(
+            &db,
+            &format!("  {long_term}  "),
+            Some(&format!("  {long_mistake}  ")),
+        )
+        .expect("insert trimmed long entry");
 
         let entry = query_dictionary(&db)
             .expect("query")
@@ -1606,13 +1642,17 @@ mod tests {
         let db = test_db();
         let dict_err = delete_dictionary_entry(&db, 999).expect_err("missing dictionary entry");
         assert!(
-            dict_err.to_string().contains("Dictionary entry 999 was not found"),
+            dict_err
+                .to_string()
+                .contains("Dictionary entry 999 was not found"),
             "unexpected dictionary error: {dict_err}"
         );
 
         let snippet_err = delete_snippet(&db, 999).expect_err("missing snippet");
         assert!(
-            snippet_err.to_string().contains("Snippet 999 was not found"),
+            snippet_err
+                .to_string()
+                .contains("Snippet 999 was not found"),
             "unexpected snippet error: {snippet_err}"
         );
     }
