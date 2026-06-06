@@ -25,6 +25,10 @@
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
 
+  // Reset any stale calibrated gain on mount so it cannot override the saved
+  // manual gain before the next calibration run starts.
+  calibratedGain.set(null);
+
   $effect(() => {
     if ($calibratedGain !== null) {
       micGain = $calibratedGain;
@@ -67,7 +71,7 @@
   }
 
   onDestroy(() => {
-    cancelCalibration();
+    void cancelCalibration();
   });
 
   loadSettings();
