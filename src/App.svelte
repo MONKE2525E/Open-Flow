@@ -14,7 +14,7 @@
   import { invoke, listen } from './lib/tauri';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx } from './lib/motion';
+  import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
 
   type EffectiveTheme = 'light' | 'dark';
 
@@ -41,11 +41,19 @@
   let toastTimer: ReturnType<typeof setTimeout>;
   let pageDir = $state<1 | -1>(1);
   let prevPage = $state<string>('home');
+  let contentEl = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
     const next = appStore.currentPage;
     pageDir = directionFromOrder(prevPage, next, NAV_ORDER);
     prevPage = next;
+  });
+
+  $effect(() => {
+    appStore.currentPage;
+    requestAnimationFrame(() => {
+      contentEl?.scrollTo({ top: 0, behavior: reducedMotionEnabled() ? 'auto' : 'smooth' });
+    });
   });
 
   async function pingConnectivity() {
@@ -122,12 +130,12 @@
   {/if}
   <div class="body">
     <Sidebar />
-    <div class="content scroll-styled">
+    <div class="content scroll-styled" bind:this={contentEl}>
       {#key appStore.currentPage}
         <div
           class="page-wrapper"
-          in:fly={{ y: pageDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.page + 120), easing: expoOut }}
-          out:fly={{ y: -pageDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.base + 100), easing: expoOut }}
+          in:pageSwap={{ axis: 'y', distance: pageDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.panel) }}
+          out:pageSwap={{ axis: 'y', distance: -pageDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.base + 40) }}
         >
           {#if appStore.currentPage === 'home'}
             <Home />

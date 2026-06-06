@@ -1,3 +1,5 @@
+import { cubicOut } from 'svelte/easing';
+
 export const MOTION_MS = {
   fast: 150,
   base: 220,
@@ -33,6 +35,99 @@ export function motionMs(ms: number): number {
 
 export function motionPx(px: number): number {
   return reducedMotionEnabled() ? Math.max(2, Math.round(px * 0.5)) : px;
+}
+
+export interface MotionTransitionParams {
+  duration?: number;
+  distance?: number;
+  axis?: 'x' | 'y';
+  scaleFrom?: number;
+}
+
+interface TransitionOptions {
+  direction?: 'in' | 'out' | 'both';
+}
+
+export function modalBackdrop(_node: Element, params: MotionTransitionParams = {}) {
+  const duration = motionMs(params.duration ?? 180);
+  return {
+    duration,
+    easing: cubicOut,
+    css: (t: number) => `opacity:${t};`,
+  };
+}
+
+export function modalCard(_node: Element, params: MotionTransitionParams = {}) {
+  const duration = motionMs(params.duration ?? 220);
+  const distance = params.distance ?? motionPx(MOTION_PX.panel);
+  const scaleFrom = params.scaleFrom ?? 0.97;
+
+  return {
+    duration,
+    easing: cubicOut,
+    css: (t: number) => {
+      const u = 1 - t;
+      const scale = scaleFrom + (1 - scaleFrom) * t;
+      return `opacity:${t}; transform: translate3d(0, ${u * distance}px, 0) scale(${scale});`;
+    },
+  };
+}
+
+export function pageSwap(node: HTMLElement, params: MotionTransitionParams = {}, options: TransitionOptions = {}) {
+  const duration = motionMs(params.duration ?? 260);
+  const axis = params.axis ?? 'y';
+  const distance = params.distance ?? motionPx(MOTION_PX.page);
+  const isOutro = options.direction === 'out';
+
+  return {
+    duration,
+    easing: cubicOut,
+    tick: () => {
+      if (isOutro) {
+        node.inert = true;
+        node.setAttribute('aria-hidden', 'true');
+        node.style.pointerEvents = 'none';
+      } else {
+        node.inert = false;
+        node.removeAttribute('aria-hidden');
+        node.style.pointerEvents = '';
+      }
+    },
+    css: (t: number) => {
+      const u = 1 - t;
+      const x = axis === 'x' ? u * distance : 0;
+      const y = axis === 'y' ? u * distance : 0;
+      return `opacity:${0.001 + t * 0.999}; transform: translate3d(${x}px, ${y}px, 0);`;
+    },
+  };
+}
+
+export function listItemCollapse(node: HTMLElement, params: MotionTransitionParams = {}) {
+  const duration = motionMs(params.duration ?? 200);
+  const style = getComputedStyle(node);
+  const height = node.offsetHeight;
+  const paddingTop = parseFloat(style.paddingTop) || 0;
+  const paddingBottom = parseFloat(style.paddingBottom) || 0;
+  const marginTop = parseFloat(style.marginTop) || 0;
+  const marginBottom = parseFloat(style.marginBottom) || 0;
+  const borderTopWidth = parseFloat(style.borderTopWidth) || 0;
+  const borderBottomWidth = parseFloat(style.borderBottomWidth) || 0;
+
+  return {
+    duration,
+    easing: cubicOut,
+    css: (t: number) => `
+      overflow: hidden;
+      opacity: ${t};
+      height: ${Math.max(0, height * t)}px;
+      padding-top: ${paddingTop * t}px;
+      padding-bottom: ${paddingBottom * t}px;
+      margin-top: ${marginTop * t}px;
+      margin-bottom: ${marginBottom * t}px;
+      border-top-width: ${borderTopWidth * t}px;
+      border-bottom-width: ${borderBottomWidth * t}px;
+    `,
+  };
 }
 
 export interface AnimateWidthParams {

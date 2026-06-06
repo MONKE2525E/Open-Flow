@@ -109,7 +109,7 @@ function tauriMock() {
     if (cmd === 'plugin:event|emit')     return null;
 
     // App plugin (getVersion / getName called by Settings and Home)
-    if (cmd === 'plugin:app|version')       return '0.5.1';
+    if (cmd === 'plugin:app|version')       return '0.11.0';
     if (cmd === 'plugin:app|name')          return 'Open Flow';
     if (cmd === 'plugin:app|tauri_version') return '2.0.0';
 

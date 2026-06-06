@@ -6,6 +6,21 @@ const { tauriMock } = require('./_tauri-mock.cjs');
 const TARGET_URL = 'http://localhost:1420';
 const TIMEOUT = 10_000;
 
+async function waitForMappingRowOpacity(page, exe, timeout = 1_000) {
+  const handle = await page.waitForFunction(
+    ({ exe }) => {
+      const rows = Array.from(document.querySelectorAll('.mapping-row'));
+      const row = rows.find((el) => el.textContent?.includes(exe));
+      if (!row) return false;
+      const opacity = Number.parseFloat(getComputedStyle(row).opacity);
+      return opacity > 0 && opacity < 1 ? opacity : false;
+    },
+    { exe },
+    { timeout },
+  );
+  return Number(await handle.jsonValue());
+}
+
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
@@ -61,6 +76,20 @@ const TIMEOUT = 10_000;
     // Mapping must appear in the list
     await page.locator('.mapping-exe-pill:has-text("chrome.exe")').waitFor({ state: 'visible', timeout: 3_000 });
     console.log('chrome.exe mapping visible in list.');
+
+    // Deleting should animate out instead of disappearing in a single frame
+    const mappingRow = page.locator('.mapping-row').filter({ hasText: 'chrome.exe' }).first();
+    const deleteBtn = mappingRow.locator('.mapping-delete-btn');
+    await deleteBtn.click();
+    try {
+      const rowOpacity = await waitForMappingRowOpacity(page, 'chrome.exe');
+      const rowsDuringDelete = await page.locator('.mapping-row').count();
+      console.log(`chrome.exe mapping animating out with ${rowsDuringDelete} row in DOM at opacity ${rowOpacity.toFixed(2)}.`);
+    } catch (err) {
+      errors.push(`Mapping row should pass through a mid-animation opacity after delete click: ${err.message}`);
+    }
+    await mappingRow.waitFor({ state: 'hidden', timeout: 3_000 });
+    console.log('chrome.exe mapping removed after animation.');
 
     if (errors.length > 0) {
       console.error('FAIL — JS errors during test:');
