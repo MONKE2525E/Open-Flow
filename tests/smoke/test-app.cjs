@@ -62,6 +62,25 @@ const TIMEOUT = 10_000;
     await page.locator('.mapping-exe-pill:has-text("chrome.exe")').waitFor({ state: 'visible', timeout: 3_000 });
     console.log('chrome.exe mapping visible in list.');
 
+    // Deleting should animate out instead of disappearing in a single frame
+    const mappingRow = page.locator('.mapping-row').filter({ hasText: 'chrome.exe' }).first();
+    const deleteBtn = mappingRow.locator('.mapping-delete-btn');
+    await deleteBtn.click();
+    await page.waitForTimeout(40);
+    const rowsDuringDelete = await page.locator('.mapping-row').count();
+    if (rowsDuringDelete < 1) {
+      errors.push('Mapping row unmounted immediately after delete click');
+    } else {
+      const rowOpacity = await mappingRow.evaluate((el) => Number.parseFloat(getComputedStyle(el).opacity)).catch(() => NaN);
+      if (!Number.isNaN(rowOpacity) && !(rowOpacity > 0 && rowOpacity < 1)) {
+        errors.push(`Mapping row should be mid-animation after delete click, got opacity ${rowOpacity}`);
+      } else {
+        console.log(`chrome.exe mapping animating out with ${rowsDuringDelete} row in DOM.`);
+      }
+    }
+    await mappingRow.waitFor({ state: 'hidden', timeout: 3_000 });
+    console.log('chrome.exe mapping removed after animation.');
+
     if (errors.length > 0) {
       console.error('FAIL — JS errors during test:');
       errors.forEach(e => console.error('  ' + e));

@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { invoke, listen } from '../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
+  import { flip } from 'svelte/animate';
+  import { listItemCollapse, modalBackdrop, modalCard, MOTION_MS, MOTION_PX, motionMs, motionPx, pageSwap } from '../motion';
   import { appStore, fetchDictionary, cancelDictionaryFetch, formatIpcError, type DictionaryEntry } from '../stores';
   import MicInputButton from '../components/MicInputButton.svelte';
 
@@ -195,10 +196,14 @@
   async function confirmDelete(id: number) {
     if (deleteTarget === id) {
       try {
+        if (selected?.id === id) {
+          inspectorDir = -1;
+          selected = null;
+          await tick();
+        }
         await invoke('remove_dictionary_entry', { id });
         cancelDictionaryFetch();
         appStore.dictionary = appStore.dictionary.filter((entry) => entry.id !== id);
-        if (selected?.id === id) selected = null;
       } catch (err) { console.error(err); }
       deleteTarget = null;
     } else {
@@ -329,6 +334,8 @@
                 class="dict-row"
                 class:is-selected={selected?.id === e.id}
                 aria-pressed={selected?.id === e.id}
+                animate:flip={{ duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+                out:listItemCollapse={{ duration: 200 }}
                 onclick={() => selectRow(e)}
               >
                 <span class="dict-left">
@@ -367,8 +374,8 @@
           {#key selected.id}
             <div
               class="inspector"
-              in:fly={{ x: inspectorDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
-              out:fade={{ duration: 0 }}
+              in:pageSwap={{ axis: 'x', distance: inspectorDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel) }}
+              out:pageSwap={{ axis: 'x', distance: -inspectorDir * motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast + 40) }}
             >
               <div class="insp-trigger">{selected.term}</div>
 
@@ -450,13 +457,13 @@
 
 {#if modal}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <button class="modal-backdrop" aria-label="Close dialog" onclick={closeModal} in:fade={{ duration: 150 }} out:fade={{ duration: 100 }}></button>
+  <button class="modal-backdrop" aria-label="Close dialog" onclick={closeModal} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
   <div
     class="modal-card"
     role="dialog"
     aria-modal="true"
-    in:fly={{ y: 14, duration: 260, easing: expoOut }}
-    out:fly={{ y: 8, duration: 150, easing: expoOut }}
+    in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel), scaleFrom: 0.97 }}
+    out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}
   >
     <div class="modal-header">
       <h2 class="modal-title">{modal?.mode === 'add' ? 'Add term' : 'Edit term'}</h2>

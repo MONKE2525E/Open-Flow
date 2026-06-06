@@ -13,7 +13,7 @@
     type AppMapping,
     type InstalledApp,
   } from '../appMappings';
-  import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
+  import { animateWidth, listItemCollapse, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
 
   let {
     showHeading = true,
@@ -37,10 +37,12 @@
   let appPickerOpen = $state(false);
   let profileDropdownOpen = $state(false);
   let mappingError = $state('');
+  let leavingExes = $state<Set<string>>(new Set());
 
   const pendingExe = $derived(addExe || (appSearch.trim() ? customExeFromSearch(appSearch) : ''));
   const pendingName = $derived(cleanAppName(addName || appSearch || pendingExe));
   const mappedExes = $derived(new Set(mappings.map((mapping) => normalizeExe(mapping.exe))));
+  const visibleMappings = $derived(mappings.filter((mapping) => !leavingExes.has(mapping.exe)));
   const filteredApps = $derived(
     installedApps
       .filter((app) => !mappedExes.has(normalizeExe(app.exe)))
@@ -87,7 +89,19 @@
   }
 
   async function deleteMapping(exe: string) {
-    await saveMappings(mappings.filter((mapping) => normalizeExe(mapping.exe) !== normalizeExe(exe)));
+    const normalizedExe = normalizeExe(exe);
+    if (leavingExes.has(normalizedExe)) return;
+
+    leavingExes = new Set(leavingExes).add(normalizedExe);
+    window.setTimeout(async () => {
+      try {
+        await saveMappings(mappings.filter((mapping) => normalizeExe(mapping.exe) !== normalizedExe));
+      } finally {
+        const nextLeaving = new Set(leavingExes);
+        nextLeaving.delete(normalizedExe);
+        leavingExes = nextLeaving;
+      }
+    }, motionMs(200));
   }
 
   function customExeFromSearch(s: string): string {
@@ -205,31 +219,33 @@
 {/if}
 <p class="panel-note">{intro}</p>
 
-{#if mappings.length > 0}
-  <div class="mapping-list">
-    {#each mappings as mapping (mapping.exe)}
-      <div
-        class="mapping-row"
-        animate:flip={{ duration: motionMs(300), easing: expoOut }}
-        in:fly={{ y: motionPx(10), duration: motionMs(300), easing: expoOut }}
-        out:slide={{ duration: motionMs(200), easing: expoOut }}
-      >
-        <div class="mapping-app-info">
-          <span class="mapping-app-name">{getAppDisplayName(mapping, installedApps)}</span>
-          <span class="mapping-exe-pill" aria-hidden="true">{mapping.exe}</span>
+<div class="mapping-region">
+  {#if mappings.length > 0}
+    <div class="mapping-list">
+      {#each visibleMappings as mapping (mapping.exe)}
+        <div
+          class="mapping-row"
+          animate:flip={{ duration: motionMs(300), easing: expoOut }}
+          in:fly={{ y: motionPx(10), duration: motionMs(300), easing: expoOut }}
+          out:listItemCollapse={{ duration: 200 }}
+        >
+          <div class="mapping-app-info">
+            <span class="mapping-app-name">{getAppDisplayName(mapping, installedApps)}</span>
+            <span class="mapping-exe-pill" aria-hidden="true">{mapping.exe}</span>
+          </div>
+          <span class="mapping-profile-badge">{getProfileLabel(mapping.profile)}</span>
+          <button class="mapping-delete-btn" onclick={() => deleteMapping(mapping.exe)} title="Remove {getAppDisplayName(mapping, installedApps)}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
         </div>
-        <span class="mapping-profile-badge">{getProfileLabel(mapping.profile)}</span>
-        <button class="mapping-delete-btn" onclick={() => deleteMapping(mapping.exe)} title="Remove {getAppDisplayName(mapping, installedApps)}">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-            <path d="M18 6 6 18M6 6l12 12"/>
-          </svg>
-        </button>
-      </div>
-    {/each}
-  </div>
-{:else}
-  <div class="mapping-empty">{emptyText}</div>
-{/if}
+      {/each}
+    </div>
+  {:else}
+    <div class="mapping-empty" in:fade={{ duration: motionMs(MOTION_MS.fast) }} out:fade={{ duration: motionMs(MOTION_MS.fast) }}>{emptyText}</div>
+  {/if}
+</div>
 
 {#if mappingError}
   <div class="mapping-error">{mappingError}</div>
@@ -365,8 +381,12 @@
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
     overflow: hidden;
-    margin-bottom: 20px;
     max-width: 640px;
+  }
+
+  .mapping-region {
+    max-width: 640px;
+    margin-bottom: 20px;
   }
 
   .mapping-row {

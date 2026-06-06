@@ -1,11 +1,9 @@
 <script lang="ts">
   import { appStore } from '../stores';
   import { icons } from '../icons';
-  import { onDestroy, onMount } from 'svelte';
-  import { fly, fade } from 'svelte/transition';
-  import { expoOut } from 'svelte/easing';
+  import { onMount } from 'svelte';
   import { getVersion } from '../tauri';
-  import { MOTION_MS, MOTION_PX, SETTINGS_SECTION_ORDER, directionFromOrder, motionMs, motionPx } from '../motion';
+  import { MOTION_MS, MOTION_PX, SETTINGS_SECTION_ORDER, directionFromOrder, modalBackdrop, modalCard, motionMs, motionPx, pageSwap } from '../motion';
 
   import GeneralSection from '../components/settings/GeneralSection.svelte';
   import AppMappingsSection from '../components/settings/AppMappingsSection.svelte';
@@ -72,16 +70,17 @@
 <svelte:window onkeydown={onWindowKeydown} />
 
 {#if appStore.settingsOpen}
-  <div class="settings-overlay-wrap" transition:fade={{ duration: 200 }}>
+  <div class="settings-overlay-wrap">
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="settings-overlay" aria-hidden="true" onclick={close}></div>
+    <div class="settings-overlay" aria-hidden="true" onclick={close} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></div>
     <div
       class="settings-modal"
       role="dialog"
       aria-modal="true"
       aria-label="Settings"
       tabindex="-1"
-      transition:fly={{ y: 40, duration: 400, easing: expoOut }}
+      in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel + 6), scaleFrom: 0.97 }}
+      out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}
     >
       <button type="button" class="settings-close" aria-label="Close settings" onclick={close}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -113,8 +112,8 @@
         {#key section}
           <div
             class="panel scroll-styled scroll-thumb-elev"
-            in:fly={{ y: animDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.page + 120), easing: expoOut }}
-            out:fly={{ y: -animDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.base + 100), easing: expoOut }}
+            in:pageSwap={{ axis: 'y', distance: animDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.panel) }}
+            out:pageSwap={{ axis: 'y', distance: -animDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.base + 40) }}
           >
             {#if section === 'general'}
               <GeneralSection />
@@ -144,7 +143,7 @@
   .settings-overlay-wrap {
     position: absolute;
     inset: 0;
-    z-index: 5;
+    z-index: 60;
     display: grid;
     place-items: center;
   }
@@ -248,11 +247,13 @@
     flex: 1;
     position: relative;
     overflow: hidden;
+    display: grid;
   }
 
   .panel {
-    position: absolute;
-    inset: 0;
+    grid-area: 1 / 1;
+    width: 100%;
+    height: 100%;
     padding: 26px 30px;
     overflow-y: auto;
     scrollbar-gutter: stable;
