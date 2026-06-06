@@ -16,7 +16,8 @@
     micLevel,
     startCalibration,
     cancelCalibration,
-    speechDetected
+    speechDetected,
+    calibrationPhase
   } from '../../calibration';
 
   let noiseReduction = $state(true);
@@ -141,8 +142,21 @@
     {:else}
       <div class="cal-active-panel"
         in:fly={{ x: motionPx(MOTION_PX.lift), duration: motionMs(180), delay: motionMs(100), easing: expoOut }}>
+        {#key $calibrationPhase}
+          <span class="cal-phase-badge"
+            in:fade={{ duration: motionMs(180), delay: motionMs(50) }}
+            out:fade={{ duration: 1 }}>
+            {$calibrationPhase === 'loud' ? audioCopy.phase1Label : audioCopy.phase2Label}
+          </span>
+        {/key}
         <span class="cal-timer">{$calibrationCountdown}s</span>
-        <span class="cal-phrase-hint">{audioCopy.speakingHint}</span>
+        {#key $calibrationPhase}
+          <span class="cal-phrase-hint"
+            in:fade={{ duration: motionMs(180), delay: motionMs(50) }}
+            out:fade={{ duration: 1 }}>
+            {$calibrationPhase === 'loud' ? audioCopy.speakingHint : audioCopy.whisperHint}
+          </span>
+        {/key}
         <div class="cal-level-bar">
           <div class="cal-level-fill" style="width: {($micLevel * 100).toFixed(0)}%"></div>
         </div>
@@ -229,6 +243,13 @@
     padding: 4px 12px;
     height: 32px;
     width: 100%;
+  }
+  .cal-phase-badge {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--ink-faint);
+    flex-shrink: 0;
+    letter-spacing: 0.02em;
   }
   .cal-timer {
     font-family: var(--mono);

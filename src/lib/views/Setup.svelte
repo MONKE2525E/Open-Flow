@@ -1,8 +1,10 @@
 <script lang="ts">
   import { invoke } from '../tauri';
   import { onMount, onDestroy } from 'svelte';
+  import { fly, fade, slide } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
   import { appStore } from '../stores';
-  import { animateWidth } from '../motion';
+  import { animateWidth, motionMs } from '../motion';
   import { getSetupCalibrationCopy } from '../calibrationCopy';
   import { saveSetting, type AppearanceMode, type CleanupIntensity, type ToneId } from '../settings';
   import {
@@ -69,7 +71,8 @@
     micLevel,
     startCalibration,
     cancelCalibration,
-    speechDetected
+    speechDetected,
+    calibrationPhase
   } from '../calibration';
 
   onDestroy(() => {
@@ -729,37 +732,67 @@
 
         <div class="calibration-box">
           {#if !$isCalibrating && $calibratedGain === null}
-            <div class="cal-start-state">
-              <div class="cal-mic-icon">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                  <line x1="12" x2="12" y1="19" y2="22"/>
-                </svg>
+            <div class="cal-start-state"
+              out:slide={{ duration: motionMs(260), easing: expoOut }}>
+              <div class="cal-steps-preview">
+                <div class="cal-step-row">
+                  <span class="cal-step-num">1</span>
+                  <span class="cal-step-text">{setupCalibrationCopy.step1Text}</span>
+                </div>
+                <div class="cal-step-row">
+                  <span class="cal-step-num">2</span>
+                  <span class="cal-step-text">{setupCalibrationCopy.step2Text}</span>
+                </div>
               </div>
-              <p class="cal-instruction">{setupCalibrationCopy.startInstruction}</p>
-              <button class="btn-primary btn-lg" onclick={startCalibration}>{setupCalibrationCopy.startButton}</button>
+              <button class="btn-primary" onclick={startCalibration}>{setupCalibrationCopy.startButton}</button>
             </div>
           {:else if $isCalibrating}
-            <div class="cal-active-state">
-              <div class="cal-timer-ring">
-                <span class="cal-countdown">{$calibrationCountdown}s</span>
+            <div class="cal-active-state"
+              in:slide={{ duration: motionMs(260), easing: expoOut }}
+              out:slide={{ duration: motionMs(240) }}>
+              <div class="cal-phase-header">
+                <div class="cal-label-stack">
+                  {#key $calibrationPhase}
+                    <span class="cal-phase-label"
+                      in:fade={{ duration: motionMs(200), delay: motionMs(80) }}
+                      out:fade={{ duration: motionMs(80) }}>
+                      {$calibrationPhase === 'loud' ? setupCalibrationCopy.phase1Label : setupCalibrationCopy.phase2Label}
+                    </span>
+                  {/key}
+                </div>
+                <div class="cal-timer-ring">
+                  <span class="cal-countdown">{$calibrationCountdown}s</span>
+                </div>
               </div>
-              <p class="cal-prompt">{setupCalibrationCopy.readPrompt}</p>
-              <blockquote class="cal-phrase">"{setupCalibrationCopy.readPhrase}"</blockquote>
-              
+              <div class="cal-content-stack">
+                {#key $calibrationPhase}
+                  <div class="cal-phase-content"
+                    in:fade={{ duration: motionMs(200), delay: motionMs(80) }}
+                    out:fade={{ duration: motionMs(80) }}>
+                    <p class="cal-prompt">
+                      {$calibrationPhase === 'loud' ? setupCalibrationCopy.readPrompt : setupCalibrationCopy.whisperPrompt}
+                    </p>
+                    <blockquote class="cal-phrase">
+                      "{$calibrationPhase === 'loud' ? setupCalibrationCopy.readPhrase : setupCalibrationCopy.whisperPhrase}"
+                    </blockquote>
+                  </div>
+                {/key}
+              </div>
+
               <!-- Live Level Visualizer -->
               <div class="cal-meter-container">
                 <div class="cal-meter-track">
                   <div class="cal-meter-fill" style="width: {($micLevel * 100).toFixed(0)}%"></div>
                 </div>
               </div>
-              <button class="btn-ghost cal-cancel-btn" onclick={cancelCalibration}>
+              <button class="cal-cancel-btn" onclick={cancelCalibration}
+                in:fly={{ y: 6, duration: motionMs(200), delay: motionMs(240), easing: expoOut }}>
                 {setupCalibrationCopy.cancelButton}
               </button>
             </div>
           {:else if $calibratedGain !== null}
-            <div class="cal-result-state">
+            <div class="cal-result-state"
+              in:slide={{ duration: motionMs(280), easing: expoOut }}>
               {#if $speechDetected === false}
                 <div class="cal-warning-icon">
                   <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -785,17 +818,21 @@
                   {setupCalibrationCopy.successTail}
                 </p>
               {/if}
-              
-              <div class="cal-actions">
-                <button class="btn-ghost" onclick={startCalibration}>{setupCalibrationCopy.recalibrateButton}</button>
-              </div>
             </div>
           {/if}
         </div>
 
         <div class="step-footer">
-          <button class="btn-skip" onclick={skip} disabled={$isCalibrating}>{setupCalibrationCopy.skipButton}</button>
-          <button class="btn-primary" onclick={goNext} disabled={$isCalibrating}>
+          {#if $calibratedGain !== null}
+            <button class="cal-recalibrate-btn" onclick={startCalibration}
+              in:fade={{ duration: motionMs(200) }}>
+              {setupCalibrationCopy.recalibrateButton}
+            </button>
+          {:else}
+            <button class="btn-skip" onclick={skip} disabled={$isCalibrating}>{setupCalibrationCopy.skipButton}</button>
+          {/if}
+          <button class="btn-primary" onclick={goNext} disabled={$isCalibrating}
+            style="min-width: 128px; text-align: center;">
             {$calibratedGain !== null ? setupCalibrationCopy.continueButton : setupCalibrationCopy.skipCalibrationButton}
           </button>
         </div>
@@ -1010,14 +1047,26 @@
     background: var(--paper-2);
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
-    padding: 32px 24px;
-    min-height: 220px;
+    padding: 20px 24px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     text-align: center;
     width: 100%;
+    overflow: hidden;
+  }
+
+  /* Grid-stacking: lets keyed children overlap so height stays stable during crossfade */
+  .cal-label-stack,
+  .cal-content-stack {
+    display: grid;
+    width: 100%;
+  }
+  .cal-label-stack > *,
+  .cal-content-stack > * {
+    grid-column: 1;
+    grid-row: 1;
   }
 
   .cal-start-state, .cal-active-state, .cal-result-state {
@@ -1028,27 +1077,83 @@
     width: 100%;
   }
 
-  .cal-mic-icon {
-    width: 56px;
-    height: 56px;
+  .cal-steps-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+  }
+
+  .cal-step-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: calStepIn 0.28s ease both;
+  }
+
+  .cal-step-row:nth-child(2) {
+    animation-delay: 0.07s;
+  }
+
+  @keyframes calStepIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cal-step-row,
+    .cal-success-icon,
+    .cal-warning-icon { animation: none; }
+  }
+
+  .cal-phase-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .cal-step-num {
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     background: var(--accent-soft);
     color: var(--accent-ink);
+    font-size: 11px;
+    font-weight: 600;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 4px;
+    flex-shrink: 0;
   }
 
-  .cal-instruction {
-    font-size: 13.5px;
+  .cal-step-text {
+    font-size: 13px;
     color: var(--ink-soft);
-    margin: 0;
+  }
+
+  .cal-phase-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .cal-phase-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
   }
 
   .cal-timer-ring {
-    width: 56px;
-    height: 56px;
+    width: 44px;
+    height: 44px;
+    aspect-ratio: 1;
+    flex-shrink: 0;
     border-radius: 50%;
     border: 3px solid var(--accent);
     display: flex;
@@ -1063,10 +1168,12 @@
   }
 
   .cal-countdown {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--accent-ink);
     font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
   }
 
   .cal-prompt {
@@ -1120,6 +1227,7 @@
     align-items: center;
     justify-content: center;
     margin-bottom: 4px;
+    animation: iconPop 0.38s 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   .cal-warning-icon {
@@ -1132,6 +1240,20 @@
     align-items: center;
     justify-content: center;
     margin-bottom: 4px;
+    animation: iconShake 0.42s 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes iconPop {
+    0%   { transform: scale(0.5); opacity: 0; }
+    60%  { transform: scale(1.08); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  @keyframes iconShake {
+    0%   { transform: translateY(-10px) scale(0.8); opacity: 0; }
+    45%  { transform: translateY(4px) scale(1.02); opacity: 1; }
+    70%  { transform: translateY(-2px) scale(1); }
+    100% { transform: translateY(0) scale(1); opacity: 1; }
   }
 
   .cal-result-title {
@@ -1156,8 +1278,23 @@
     font-size: 13.5px;
   }
 
-  .cal-actions {
-    margin-top: 8px;
+  .cal-recalibrate-btn {
+    padding: 7px 18px;
+    border-radius: var(--r-md);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--sans);
+    border: 1px solid var(--line-strong);
+    color: var(--ink-mute);
+    background: transparent;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .cal-recalibrate-btn:hover {
+    background: var(--paper-2);
+    color: var(--ink-strong);
+    border-color: var(--accent);
   }
 
   .cal-cancel-btn {
@@ -1166,15 +1303,17 @@
     border-radius: var(--r-md);
     font-size: 13px;
     font-weight: 500;
-    color: var(--ink-soft);
+    font-family: var(--sans);
+    color: var(--ink-mute);
     cursor: pointer;
     background: transparent;
-    border: none;
-    transition: all 0.15s ease;
+    border: 1px solid var(--line-strong);
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
   .cal-cancel-btn:hover {
     color: var(--ink-strong);
     background: var(--paper-3);
+    border-color: var(--line-strong);
   }
 
   /* ── Overlay ───────────────────────────────────────────────────────── */
