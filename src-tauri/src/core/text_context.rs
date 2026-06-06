@@ -100,6 +100,10 @@ fn is_context_tail_wrapper_char(ch: char) -> bool {
             | '\u{00BB}'
             | '\u{2039}'
             | '\u{203A}'
+            | '*'
+            | '_'
+            | '~'
+            | '\u{0060}'
     )
 }
 
@@ -355,7 +359,11 @@ mod tests {
         assert_eq!(classify_context_tail("hi "), SentenceContext::MidSentence);
         assert_eq!(classify_context_tail("hi\""), SentenceContext::MidSentence);
         assert_eq!(classify_context_tail("hi)"), SentenceContext::MidSentence);
+        assert_eq!(classify_context_tail("hi*"), SentenceContext::MidSentence);
+        assert_eq!(classify_context_tail("hi_"), SentenceContext::MidSentence);
+        assert_eq!(classify_context_tail("hi`"), SentenceContext::MidSentence);
         assert_eq!(classify_context_tail("hi.\""), SentenceContext::NewSentence);
+        assert_eq!(classify_context_tail("hi.*"), SentenceContext::NewSentence);
         assert_eq!(
             classify_context_tail("hi.\u{200B} "),
             SentenceContext::NewSentence

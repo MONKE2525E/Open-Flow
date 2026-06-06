@@ -69,7 +69,6 @@ pub fn validate_model_for_url(model: &str) -> anyhow::Result<()> {
 
 pub fn sanitize_error_body_preview(body: &str) -> String {
     let compact = body
-        .replace(['\r', '\n', '\t'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
