@@ -98,12 +98,12 @@ export async function startCalibration() {
 
   if (sessionId === currentCalibrationSession && get(isCalibrating)) {
     calibrationUnlisten = () => {
-      unlistenDisplay();
-      unlistenRaw();
+      unlistenDisplay?.();
+      unlistenRaw?.();
     };
   } else {
-    unlistenDisplay();
-    unlistenRaw();
+    unlistenDisplay?.();
+    unlistenRaw?.();
   }
 
   try {
