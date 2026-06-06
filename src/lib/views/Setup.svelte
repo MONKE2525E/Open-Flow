@@ -31,7 +31,7 @@
     minimize: () => Promise<void>;
   };
 
-  let win: AppWindow | null = null;
+  let win = $state<AppWindow | null>(null);
   onMount(async () => {
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
@@ -61,7 +61,7 @@
   }
 
   // ── Step state ──────────────────────────────────────────────────────────────
-  let step = 0;
+  let step = $state(0);
 
   // ── Microphone Calibration ──────────────────────────────────────────────────
   import {
@@ -80,13 +80,20 @@
     stopPermissionPolling();
   });
 
-  let direction: 'forward' | 'back' = 'forward';
-  let animating = false;
-  let visible = true;
+  let direction = $state<'forward' | 'back'>('forward');
+  let animating = $state(false);
+  let visible = $state(true);
 
   // ── Quick Settings ──────────────────────────────────────────────────────────
-  let quickPrefs = { cleanup: true, noise: true, caps: true, autoLearn: false, autostart: false, muteAudio: false };
-  let quickSettingsReady = false;
+  let quickPrefs = $state({
+    cleanup: true,
+    noise: true,
+    caps: true,
+    autoLearn: false,
+    autostart: false,
+    muteAudio: false,
+  });
+  let quickSettingsReady = $state(false);
   type QuickPrefKey = keyof typeof quickPrefs;
   function toggleQuickPref(key: QuickPrefKey) {
     quickPrefs = { ...quickPrefs, [key]: !quickPrefs[key] };
@@ -102,13 +109,13 @@
       toggleQuickPref(key);
     }
   }
-  let selectedLanguage = 'en' as TranscriptionLanguageCode;
+  let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   let setupCalibrationCopy = $derived(getSetupCalibrationCopy(selectedLanguage));
   const onboardingLanguageSet = new Set<TranscriptionLanguageCode>(['en', 'es', 'fr', 'de', 'pt', 'zh']);
   const onboardingLanguages = transcriptionLanguages.filter((option) => onboardingLanguageSet.has(option.code));
 
   // ── Provider ─────────────────────────────────────────────────────────────────
-  let selectedProvider: 'groq' | 'openai' | 'google' = 'groq';
+  let selectedProvider = $state<'groq' | 'openai' | 'google'>('groq');
 
   const providers = [
     {
@@ -153,25 +160,25 @@
   };
 
   // ── API key ───────────────────────────────────────────────────────────────────
-  let apiKeyDraft = '';
-  let keySaved = false;
-  let keySaving = false;
-  let keyError = '';
-  let showKey = false;
+  let apiKeyDraft = $state('');
+  let keySaved = $state(false);
+  let keySaving = $state(false);
+  let keyError = $state('');
+  let showKey = $state(false);
 
   type MacPermissionStatus = 'authorized' | 'needs_permission' | 'not_determined' | 'denied' | 'restricted' | 'unknown';
   type KeychainStatus = 'authorized' | 'not_configured' | 'denied' | 'unknown';
-  let accessibilityPermission: MacPermissionStatus = isMac ? 'unknown' : 'authorized';
-  let microphonePermission: MacPermissionStatus = isMac ? 'unknown' : 'authorized';
-  let keychainStatus: KeychainStatus = isMac ? 'unknown' : 'authorized';
-  let permissionsLoading = false;
-  let permissionsError = '';
-  let accessibilityPrompting = false;
-  let keychainLoading = false;
-  let permissionsRefreshInterval: ReturnType<typeof setInterval> | null = null;
+  let accessibilityPermission = $state<MacPermissionStatus>(isMac ? 'unknown' : 'authorized');
+  let microphonePermission = $state<MacPermissionStatus>(isMac ? 'unknown' : 'authorized');
+  let keychainStatus = $state<KeychainStatus>(isMac ? 'unknown' : 'authorized');
+  let permissionsLoading = $state(false);
+  let permissionsError = $state('');
+  let accessibilityPrompting = $state(false);
+  let keychainLoading = $state(false);
+  let permissionsRefreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
   // ── Cleanup intensity ─────────────────────────────────────────────────────────
-  let selectedIntensity = 'medium';
+  let selectedIntensity = $state('medium');
   const cleanupCards = [
     { id: 'none',   name: 'Verbatim', desc: 'Raw transcription. No AI cleanup at all.' },
     { id: 'light',  name: 'Light',    desc: 'Removes filler words and repeated phrases. Keeps everything else.' },
@@ -180,7 +187,7 @@
   ];
 
   // ── Personal tone ─────────────────────────────────────────────────────────────
-  let selectedTone = 'casual';
+  let selectedTone = $state('casual');
   const toneCards = [
     { id: 'casual',      name: 'Casual',      desc: 'Conversational. Light caps and punctuation — reads like a Slack message.' },
     { id: 'formal',      name: 'Formal',      desc: 'Professional prose. Full punctuation, expanded contractions, formal vocabulary. No em dashes.' },
@@ -188,7 +195,7 @@
   ];
 
   // ── Appearance ──────────────────────────────────────────────────────────────
-  let selectedAppearance: AppearanceMode = 'system';
+  let selectedAppearance = $state<AppearanceMode>('system');
   const appearanceModes: { id: AppearanceMode; name: string; desc: string }[] = [
     { id: 'system', name: 'System', desc: 'Match your system theme automatically.' },
     { id: 'dark', name: 'Dark', desc: 'Lower glare for night work and dark desktops.' },
@@ -394,7 +401,7 @@
   function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
   // ── Intro animation ───────────────────────────────────────────────────────────
-  let introReady = false;
+  let introReady = $state(false);
 
   // ── Done animation ────────────────────────────────────────────────────────────
   let checkAnimating = $state(false);
