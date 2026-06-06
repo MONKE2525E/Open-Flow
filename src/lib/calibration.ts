@@ -2,25 +2,33 @@ import { writable, get } from 'svelte/store';
 import { invoke, listen } from './tauri';
 import { saveSetting } from './settings';
 
-// TARGET_CALIBRATION_FACTOR is set to 2.25 as specified by the system design to optimize input levels for the downstream transcription model.
 export const TARGET_CALIBRATION_FACTOR = 2.25;
 export const MIN_CALIBRATION_LEVEL = 0.04;
 export const MAX_CALIBRATION_GAIN = 8.0;
 export const MIN_CALIBRATION_GAIN = 1.0;
 export const DEFAULT_CALIBRATION_GAIN = 3.5;
+export const SPEECH_DETECTION_THRESHOLD = 0.07;
+
+const PHASE_LOUD_DURATION_MS = 3000;
+const PHASE_WHISPER_DURATION_MS = 2000;
+const PHASE_LOUD_SECONDS = 3;
+const PHASE_WHISPER_SECONDS = 2;
+const COUNTDOWN_TICK_MS = 100;
+const WHISPER_DETECTION_THRESHOLD = 0.015;
+const WHISPER_MIN_TRANSCRIBABLE = 0.05;
+
+export type CalibrationPhase = 'loud' | 'whisper';
 
 export const isCalibrating = writable(false);
-export const calibrationCountdown = writable(3);
+export const calibrationCountdown = writable(PHASE_LOUD_SECONDS);
 export const micLevel = writable(0);
 export const calibratedGain = writable<number | null>(null);
 export const speechDetected = writable<boolean | null>(null);
+export const calibrationPhase = writable<CalibrationPhase | null>(null);
 
-export const SPEECH_DETECTION_THRESHOLD = 0.07;
-const CALIBRATION_DURATION_MS = 3000;
-const COUNTDOWN_TICK_MS = 100;
-const COUNTDOWN_SECONDS = 3;
-
-let calibrationMaxLevel = MIN_CALIBRATION_LEVEL;
+let loudMaxLevel = MIN_CALIBRATION_LEVEL;
+let whisperMaxLevel = 0;
+let currentPhase: CalibrationPhase | null = null;
 let calibrationTimer: ReturnType<typeof setTimeout> | null = null;
 let calibrationUnlisten: (() => void) | null = null;
 let currentCalibrationSession = '';
@@ -39,7 +47,7 @@ async function cleanupCalibrationResources() {
   try {
     await invoke('stop_calibration_monitoring');
   } catch (e) {
-    // Suppress warning if not active or failing silently
+    // Suppress — may not be active
   }
 }
 
@@ -47,8 +55,11 @@ export async function startCalibration() {
   await cleanupCalibrationResources();
 
   isCalibrating.set(true);
-  calibrationMaxLevel = MIN_CALIBRATION_LEVEL;
-  calibrationCountdown.set(COUNTDOWN_SECONDS);
+  loudMaxLevel = MIN_CALIBRATION_LEVEL;
+  whisperMaxLevel = 0;
+  currentPhase = 'loud';
+  calibrationPhase.set('loud');
+  calibrationCountdown.set(PHASE_LOUD_SECONDS);
   calibratedGain.set(null);
   speechDetected.set(null);
   micLevel.set(0);
@@ -62,8 +73,10 @@ export async function startCalibration() {
       if (sessionId !== currentCalibrationSession || !get(isCalibrating)) return;
       const level = ev.payload ?? 0;
       micLevel.set(level);
-      if (level > calibrationMaxLevel) {
-        calibrationMaxLevel = level;
+      if (currentPhase === 'loud' && level > loudMaxLevel) {
+        loudMaxLevel = level;
+      } else if (currentPhase === 'whisper' && level > whisperMaxLevel) {
+        whisperMaxLevel = level;
       }
     });
   } catch (e) {
@@ -86,38 +99,78 @@ export async function startCalibration() {
     return;
   }
 
-  calibrationDeadlineMs = performance.now() + CALIBRATION_DURATION_MS;
+  calibrationDeadlineMs = performance.now() + PHASE_LOUD_DURATION_MS;
+
   const tickCountdown = () => {
     if (!get(isCalibrating) || currentCalibrationSession !== sessionId || calibrationDeadlineMs === null) {
       return;
     }
 
     const remainingMs = calibrationDeadlineMs - performance.now();
+
     if (remainingMs <= 0) {
-      calibrationCountdown.set(0);
-      void stopCalibration();
+      if (currentPhase === 'loud') {
+        // Transition to whisper phase — audio stream stays open
+        currentPhase = 'whisper';
+        calibrationPhase.set('whisper');
+        calibrationDeadlineMs = performance.now() + PHASE_WHISPER_DURATION_MS;
+        calibrationCountdown.set(PHASE_WHISPER_SECONDS);
+        micLevel.set(0);
+        calibrationTimer = setTimeout(tickCountdown, COUNTDOWN_TICK_MS);
+      } else {
+        calibrationCountdown.set(0);
+        void stopCalibration();
+      }
       return;
     }
 
     calibrationCountdown.set(Math.max(1, Math.ceil(remainingMs / 1000)));
     calibrationTimer = setTimeout(tickCountdown, COUNTDOWN_TICK_MS);
   };
+
   tickCountdown();
 }
 
 export async function stopCalibration() {
   currentCalibrationSession = '';
+  currentPhase = null;
   await cleanupCalibrationResources();
 
   isCalibrating.set(false);
+  calibrationPhase.set(null);
   micLevel.set(0);
 
-  const detected = calibrationMaxLevel >= SPEECH_DETECTION_THRESHOLD;
-  speechDetected.set(detected);
+  const loudDetected = loudMaxLevel >= SPEECH_DETECTION_THRESHOLD;
+  speechDetected.set(loudDetected);
 
-  const finalGain = detected
-    ? Math.max(MIN_CALIBRATION_GAIN, Math.min(MAX_CALIBRATION_GAIN, Math.round((TARGET_CALIBRATION_FACTOR / calibrationMaxLevel) * 10) / 10))
-    : DEFAULT_CALIBRATION_GAIN;
+  let finalGain: number;
+
+  if (loudDetected) {
+    const gainFromLoud = Math.max(
+      MIN_CALIBRATION_GAIN,
+      Math.min(MAX_CALIBRATION_GAIN, TARGET_CALIBRATION_FACTOR / loudMaxLevel)
+    );
+
+    const whisperPresent = whisperMaxLevel >= WHISPER_DETECTION_THRESHOLD;
+    if (whisperPresent) {
+      const whisperPostGain = whisperMaxLevel * gainFromLoud;
+      if (whisperPostGain < WHISPER_MIN_TRANSCRIBABLE) {
+        const gainFromWhisper = Math.max(
+          MIN_CALIBRATION_GAIN,
+          Math.min(MAX_CALIBRATION_GAIN, WHISPER_MIN_TRANSCRIBABLE / whisperMaxLevel)
+        );
+        finalGain = Math.min(MAX_CALIBRATION_GAIN, Math.max(gainFromLoud, gainFromWhisper));
+      } else {
+        finalGain = gainFromLoud;
+      }
+    } else {
+      finalGain = gainFromLoud;
+    }
+  } else {
+    finalGain = DEFAULT_CALIBRATION_GAIN;
+  }
+
+  finalGain = Math.round(finalGain * 10) / 10;
   calibratedGain.set(finalGain);
 
   try {
@@ -129,9 +182,11 @@ export async function stopCalibration() {
 
 export async function cancelCalibration() {
   currentCalibrationSession = '';
+  currentPhase = null;
   await cleanupCalibrationResources();
 
   isCalibrating.set(false);
+  calibrationPhase.set(null);
   micLevel.set(0);
   calibratedGain.set(null);
   speechDetected.set(null);
