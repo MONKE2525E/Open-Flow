@@ -32,12 +32,28 @@ fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_' || ch == '\'' || ch == '\u{2019}' || ch == '-'
 }
 
-/// If the entire transcription is just a snippet trigger (ignoring trailing punctuation
+/// Strip all non-alphanumeric characters and collapse whitespace for fuzzy trigger matching.
+fn strip_punctuation_for_matching(s: &str) -> String {
+    let raw: String = s
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect();
+    raw.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Split a trigger field into individual trigger phrases.
+/// A trigger field may contain multiple phrases separated by commas,
+/// e.g. "Gemini Goal, Gemini Gold". Empty segments are filtered out.
+fn parse_triggers(trigger: &str) -> impl Iterator<Item = &str> {
+    trigger.split(',').map(|t| t.trim()).filter(|t| !t.is_empty())
+}
+
+/// If the entire transcription is just a snippet trigger (ignoring punctuation
 /// added by the transcription model), return the expansion directly.
 ///
 /// The transcription model always appends a period — "roblox" becomes "roblox." —
 /// which `expand_snippets` would leave as an orphaned "." after replacing the trigger.
-/// This function strips that punctuation before matching and returns the raw expansion
+/// This function strips all punctuation before matching and returns the raw expansion
 /// text, so no period bleeds through. Also increments the snippet's use_count.
 ///
 pub fn try_pure_snippet_expand_from(
@@ -45,24 +61,28 @@ pub fn try_pure_snippet_expand_from(
     snippets: &[db::Snippet],
     db: &Db,
 ) -> Option<String> {
-    let normalized = text
-        .trim()
-        .trim_end_matches(['.', ',', '?', '!'])
-        .to_lowercase();
-    let matched = snippets
-        .iter()
-        .find(|s| s.trigger.to_lowercase() == normalized)?;
+    let normalized = strip_punctuation_for_matching(&text.to_lowercase());
+    let matched = snippets.iter().find(|s| {
+        parse_triggers(&s.trigger)
+            .any(|t| strip_punctuation_for_matching(&t.to_lowercase()) == normalized)
+    })?;
     let _ = db::increment_snippet_use(db, matched.id);
     Some(matched.expansion.clone())
 }
 
 pub fn collect_snippet_instructions_from(text: &str, snippets: &[db::Snippet]) -> String {
     let text_lower = text.to_lowercase();
+    let text_stripped = strip_punctuation_for_matching(&text_lower);
     let mut active_instructions: Vec<String> = Vec::new();
 
     for snippet in snippets.iter() {
-        let needle = snippet.trigger.to_lowercase();
-        if text_lower.contains(&needle) && !snippet.instructions.is_empty() {
+        let found = parse_triggers(&snippet.trigger).any(|t| {
+            let needle = t.to_lowercase();
+            let needle_stripped = strip_punctuation_for_matching(&needle);
+            text_lower.contains(&needle)
+                || (!needle_stripped.is_empty() && text_stripped.contains(&needle_stripped))
+        });
+        if found && !snippet.instructions.is_empty() {
             active_instructions.push(snippet.instructions.clone());
         }
     }
@@ -82,53 +102,61 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
         snippet_idx: usize,
     }
 
-    // Longest triggers first — prevents short prefix matches shadowing longer ones.
-    snippets.sort_by_key(|snippet| Reverse(snippet.trigger.len()));
+    // Longest individual alias first — prevents short aliases shadowing longer ones.
+    snippets.sort_by_key(|snippet| {
+        Reverse(
+            parse_triggers(&snippet.trigger)
+                .map(|t| t.len())
+                .max()
+                .unwrap_or(0),
+        )
+    });
 
     let mut result = text.to_string();
     let (haystack, source_map) = lowercase_with_source_map(&result);
     let mut all_matches: Vec<Match> = Vec::new();
 
     for (snippet_idx, snippet) in snippets.iter().enumerate() {
-        let needle = snippet.trigger.to_lowercase();
-        if needle.is_empty() {
-            continue;
-        }
-
-        let mut search_from = 0;
-        while let Some(pos) = haystack[search_from..].find(&needle) {
-            let abs = search_from + pos;
-            let before_ok = abs == 0
-                || !haystack[..abs]
-                    .chars()
-                    .next_back()
-                    .map(is_word_char)
-                    .unwrap_or(false);
-            let after_ok = abs + needle.len() >= haystack.len()
-                || !haystack[abs + needle.len()..]
-                    .chars()
-                    .next()
-                    .map(is_word_char)
-                    .unwrap_or(false);
-            if before_ok && after_ok {
-                let start = source_map[abs];
-                let end_lower = abs + needle.len();
-                let mut end = if end_lower >= haystack.len() {
-                    result.len()
-                } else {
-                    source_map[end_lower]
-                };
-                if end <= start {
-                    let last_src = source_map[end_lower.saturating_sub(1)];
-                    end = end_of_char_at(&result, last_src);
-                }
-                all_matches.push(Match {
-                    start,
-                    end,
-                    snippet_idx,
-                });
+        for needle in parse_triggers(&snippet.trigger).map(|t| t.to_lowercase()) {
+            if needle.is_empty() {
+                continue;
             }
-            search_from = abs + needle.len();
+
+            let mut search_from = 0;
+            while let Some(pos) = haystack[search_from..].find(&needle) {
+                let abs = search_from + pos;
+                let before_ok = abs == 0
+                    || !haystack[..abs]
+                        .chars()
+                        .next_back()
+                        .map(is_word_char)
+                        .unwrap_or(false);
+                let after_ok = abs + needle.len() >= haystack.len()
+                    || !haystack[abs + needle.len()..]
+                        .chars()
+                        .next()
+                        .map(is_word_char)
+                        .unwrap_or(false);
+                if before_ok && after_ok {
+                    let start = source_map[abs];
+                    let end_lower = abs + needle.len();
+                    let mut end = if end_lower >= haystack.len() {
+                        result.len()
+                    } else {
+                        source_map[end_lower]
+                    };
+                    if end <= start {
+                        let last_src = source_map[end_lower.saturating_sub(1)];
+                        end = end_of_char_at(&result, last_src);
+                    }
+                    all_matches.push(Match {
+                        start,
+                        end,
+                        snippet_idx,
+                    });
+                }
+                search_from = abs + needle.len();
+            }
         }
     }
 
