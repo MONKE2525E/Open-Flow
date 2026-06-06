@@ -455,6 +455,11 @@ pub fn has(_provider: &str) -> bool {
     false
 }
 
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn delete(_provider: &str) -> Result<(), String> {
+    Ok(())
+}
+
 /// Moves any plaintext API keys from settings.json or legacy macOS
 /// credentials.json files into the OS secret store, then keeps retrying cleanup
 /// until plaintext remnants are gone.
