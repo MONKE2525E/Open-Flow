@@ -219,6 +219,7 @@ pub fn set_handless_active(v: bool) {
     HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
 }
 
+#[allow(dead_code)]
 pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
 
 pub fn map_code_to_vk(code: &str) -> u32 {

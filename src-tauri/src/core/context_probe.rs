@@ -18,6 +18,7 @@ impl SelectionState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ContextProbeSource {
     CaretLocal,
     EmptyField,

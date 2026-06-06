@@ -18,6 +18,7 @@ const MIN_RECORDING_RMS: f32 = 0.008;
 const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
 const PILL_WIDTH_POINTS: f64 = 140.0;
 const PILL_HEIGHT_POINTS: f64 = 44.0;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const PILL_BOTTOM_GAP_POINTS: f64 = 16.0;
 
 fn transcription_provider_from_str(s: &str) -> transcription::Provider {

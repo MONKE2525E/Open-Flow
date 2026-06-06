@@ -932,11 +932,11 @@ pub async fn inject_text(
             } else {
                 unavailable_injection_probe()
             };
-            if contextual_caps || auto_spacing {
-                if injection_probe.source.allows_history_fallback() {
-                    if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
-                        injection_probe = history_probe;
-                    }
+            if (contextual_caps || auto_spacing)
+                && injection_probe.source.allows_history_fallback()
+            {
+                if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
+                    injection_probe = history_probe;
                 }
             }
             let (adjusted, context_kind, case_decision) = apply_probe_adjustments(

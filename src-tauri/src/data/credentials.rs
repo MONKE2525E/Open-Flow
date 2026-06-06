@@ -419,6 +419,7 @@ pub fn read_for_status(provider: &str) -> Result<bool, String> {
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
 pub fn read_for_status(_provider: &str) -> Result<bool, String> {
     Ok(true)
 }

@@ -203,12 +203,12 @@ fn main() {
                         }
                     }
                     #[cfg(target_os = "macos")]
-                    tauri::WindowEvent::Resized(_) => {
-                        if window.is_minimized().unwrap_or(false) {
-                            crate::system::mac_app::set_regular_activation_policy_on_main_thread(
-                                window.app_handle(),
-                            );
-                        }
+                    tauri::WindowEvent::Resized(_)
+                        if window.is_minimized().unwrap_or(false) =>
+                    {
+                        crate::system::mac_app::set_regular_activation_policy_on_main_thread(
+                            window.app_handle(),
+                        );
                     }
                     tauri::WindowEvent::Focused(true) => {
                         #[cfg(target_os = "macos")]
