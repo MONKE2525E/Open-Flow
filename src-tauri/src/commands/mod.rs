@@ -230,6 +230,12 @@ pub struct ImportSummary {
     pub snippets_skipped: usize,
 }
 
+// Keys intentionally absent from this list (validated by validate_setting but never exported):
+//   MIC_GAIN            — device-specific calibration
+//   MICROPHONE_DEVICE   — device-specific hardware identifier
+//   SETUP_COMPLETE / FORCE_SETUP_ON_LAUNCH — one-time setup flags
+//   UPDATE_DISMISSED_VERSION — transient UI state
+// When adding a new setting to validate_setting, decide here whether it should also be exported.
 const EXPORTABLE_SETTINGS: &[&str] = &[
     store::TRANSCRIPTION_PROVIDER,
     store::TRANSCRIPTION_MODEL,
@@ -1247,10 +1253,11 @@ pub async fn export_data(
         let dictionary = db::query_dictionary(&db).map_err(|e| e.to_string())?;
         let snippets = db::query_snippets(&db).map_err(|e| e.to_string())?;
 
+        let now = chrono::Local::now();
         let payload = ExportPayload {
             version: "1".to_string(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
-            exported_at: chrono::Utc::now().to_rfc3339(),
+            exported_at: now.to_rfc3339(),
             stats: ExportStats {
                 total_words: stats.total_words,
                 avg_wpm: stats.avg_wpm,
@@ -1287,8 +1294,7 @@ pub async fn export_data(
             .map_err(|e| format!("Failed to resolve Downloads directory: {e}"))?;
         std::fs::create_dir_all(&downloads)
             .map_err(|e| format!("Failed to create Downloads path: {e}"))?;
-        let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
-        let path = downloads.join(format!("open-flow-backup-{ts}.json"));
+        let path = downloads.join(format!("open-flow-backup-{}.json", now.format("%Y%m%d-%H%M%S")));
         std::fs::write(&path, json)
             .map_err(|e| format!("Failed to write backup file: {e}"))?;
 
@@ -1322,6 +1328,9 @@ pub async fn import_data(
         let mut settings_skipped = 0usize;
         let mut appearance_mode_applied = false;
 
+        if !payload.settings.is_object() {
+            log::warn!("import_data: 'settings' field is not a JSON object — skipping settings restore");
+        }
         if let Some(obj) = payload.settings.as_object() {
             for (key, value) in obj {
                 if !EXPORTABLE_SETTINGS.contains(&key.as_str()) {
@@ -1360,7 +1369,7 @@ pub async fn import_data(
                 Ok(_) => dictionary_inserted += 1,
                 Err(e) => {
                     let msg = e.to_string();
-                    if msg.contains("UNIQUE constraint failed") || msg.contains("unique") {
+                    if msg.contains("UNIQUE constraint failed") {
                         dictionary_skipped += 1;
                     } else {
                         log::warn!("import_data: dictionary insert error for '{}': {msg}", entry.term);
@@ -1381,7 +1390,7 @@ pub async fn import_data(
                 Ok(_) => snippets_inserted += 1,
                 Err(e) => {
                     let msg = e.to_string();
-                    if msg.contains("UNIQUE constraint failed") || msg.contains("unique") {
+                    if msg.contains("UNIQUE constraint failed") {
                         snippets_skipped += 1;
                     } else {
                         log::warn!("import_data: snippet insert error for '{}': {msg}", snippet.trigger);
