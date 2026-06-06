@@ -392,7 +392,6 @@
             <div
               class="inspector"
               in:pageSwap={{ axis: 'x', distance: inspectorDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel) }}
-              out:pageSwap={{ axis: 'x', distance: -inspectorDir * motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast + 40) }}
             >
               <div class="insp-trigger">{selected.term}</div>
 
