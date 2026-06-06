@@ -88,6 +88,7 @@ pub struct RecordingSession {
     stop_tx: mpsc::SyncSender<()>,
     result_rx: mpsc::Receiver<Result<(Vec<u8>, u64, f32)>>,
     pub level: Arc<AtomicU32>,
+    pub raw_level: Arc<AtomicU32>,
     pub active: Arc<AtomicBool>,
 }
 
@@ -115,9 +116,11 @@ impl RecordingSession {
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<()>>(1);
 
         let level = Arc::new(AtomicU32::new(0f32.to_bits()));
+        let raw_level = Arc::new(AtomicU32::new(0f32.to_bits()));
         let active = Arc::new(AtomicBool::new(true));
 
         let level_w = Arc::clone(&level);
+        let raw_level_w = Arc::clone(&raw_level);
         let active_w = Arc::clone(&active);
 
         std::thread::spawn(move || {
@@ -169,13 +172,21 @@ impl RecordingSession {
             let level_cb = Arc::clone(&level_w);
             let queue_cb = Arc::clone(&queue);
             let dropped_cb = Arc::clone(&dropped_samples);
+            let raw_level_cb = Arc::clone(&raw_level_w);
             let err_fn = |e| log::error!("Audio stream error: {e}");
 
             let stream = match config.sample_format() {
                 cpal::SampleFormat::F32 => device.build_input_stream(
                     &config.into(),
                     move |data: &[f32], _| {
-                        enqueue_f32_buffer(data, channels, &queue_cb, &dropped_cb, &level_cb)
+                        enqueue_f32_buffer(
+                            data,
+                            channels,
+                            &queue_cb,
+                            &dropped_cb,
+                            &level_cb,
+                            &raw_level_cb,
+                        )
                     },
                     err_fn,
                     None,
@@ -183,7 +194,14 @@ impl RecordingSession {
                 cpal::SampleFormat::I16 => device.build_input_stream(
                     &config.into(),
                     move |data: &[i16], _| {
-                        enqueue_i16_buffer(data, channels, &queue_cb, &dropped_cb, &level_cb)
+                        enqueue_i16_buffer(
+                            data,
+                            channels,
+                            &queue_cb,
+                            &dropped_cb,
+                            &level_cb,
+                            &raw_level_cb,
+                        )
                     },
                     err_fn,
                     None,
@@ -214,6 +232,7 @@ impl RecordingSession {
 
             active_w.store(false, Ordering::Relaxed);
             level_w.store(0f32.to_bits(), Ordering::Relaxed);
+            raw_level_w.store(0f32.to_bits(), Ordering::Relaxed);
             stop_processing.store(true, Ordering::Relaxed);
 
             let data = match worker.join() {
@@ -247,6 +266,7 @@ impl RecordingSession {
             stop_tx,
             result_rx,
             level,
+            raw_level,
             active,
         })
     }
@@ -265,9 +285,11 @@ fn enqueue_f32_buffer(
     queue: &ArrayQueue<f32>,
     dropped: &AtomicU64,
     level: &AtomicU32,
+    raw_level: &AtomicU32,
 ) {
     if data.is_empty() {
         level.store(0f32.to_bits(), Ordering::Relaxed);
+        raw_level.store(0f32.to_bits(), Ordering::Relaxed);
         return;
     }
 
@@ -295,6 +317,7 @@ fn enqueue_f32_buffer(
     } else {
         (sum / count as f32).sqrt()
     };
+    raw_level.store(rms.to_bits(), Ordering::Relaxed);
     let display = (rms * DISPLAY_GAIN).min(1.0);
     level.store(display.to_bits(), Ordering::Relaxed);
 }
@@ -305,9 +328,11 @@ fn enqueue_i16_buffer(
     queue: &ArrayQueue<f32>,
     dropped: &AtomicU64,
     level: &AtomicU32,
+    raw_level: &AtomicU32,
 ) {
     if data.is_empty() {
         level.store(0f32.to_bits(), Ordering::Relaxed);
+        raw_level.store(0f32.to_bits(), Ordering::Relaxed);
         return;
     }
 
@@ -335,6 +360,7 @@ fn enqueue_i16_buffer(
     } else {
         (sum / count as f32).sqrt()
     };
+    raw_level.store(rms.to_bits(), Ordering::Relaxed);
     let display = (rms * DISPLAY_GAIN).min(1.0);
     level.store(display.to_bits(), Ordering::Relaxed);
 }
@@ -422,14 +448,16 @@ mod tests {
         let q = ArrayQueue::<f32>::new(8);
         let dropped = AtomicU64::new(0);
         let level = AtomicU32::new(0f32.to_bits());
+        let raw_level = AtomicU32::new(0f32.to_bits());
         let data = [i16::MAX, i16::MAX, 0, 0];
 
-        enqueue_i16_buffer(&data, 2, &q, &dropped, &level);
+        enqueue_i16_buffer(&data, 2, &q, &dropped, &level, &raw_level);
 
         let first = q.pop().expect("first sample");
         let second = q.pop().expect("second sample");
         assert!((first - 1.0).abs() < 1e-6);
         assert!(second.abs() < 1e-6);
         assert_eq!(dropped.load(Ordering::Relaxed), 0);
+        assert!((f32::from_bits(raw_level.load(Ordering::Relaxed)) - 0.7071).abs() < 0.001);
     }
 }

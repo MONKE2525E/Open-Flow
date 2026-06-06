@@ -229,6 +229,7 @@ pub fn start_recording_session_ex(
                 std::thread::spawn(crate::system::volume::mute);
             }
             let level_arc = session.level.clone();
+            let raw_level_arc = session.raw_level.clone();
             let active_arc = session.active.clone();
             {
                 let mut st = match lock_state(state) {
@@ -241,7 +242,13 @@ pub fn start_recording_session_ex(
             if show_recording_pill {
                 show_pill(app, pill_state);
             }
-            spawn_level_emitter(app.clone(), level_arc, active_arc, emit_globally);
+            spawn_level_emitter(
+                app.clone(),
+                level_arc,
+                raw_level_arc,
+                active_arc,
+                emit_globally,
+            );
             Ok(())
         }
         Err(e) => Err(e.to_string()),
@@ -253,6 +260,7 @@ pub fn start_recording_session_ex(
 pub fn spawn_level_emitter(
     app: AppHandle,
     level: Arc<std::sync::atomic::AtomicU32>,
+    raw_level: Arc<std::sync::atomic::AtomicU32>,
     active: Arc<std::sync::atomic::AtomicBool>,
     emit_globally: bool,
 ) {
@@ -274,12 +282,19 @@ pub fn spawn_level_emitter(
                 break;
             }
             let level_val = f32::from_bits(level.load(Ordering::Relaxed));
+            let raw_level_val = f32::from_bits(raw_level.load(Ordering::Relaxed));
             emit_level(level_val);
+            if emit_globally {
+                let _ = app.emit("audio-level-raw", raw_level_val);
+            }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
         // Emit final reset to ensure level goes to 0 regardless of timing
         emit_level(0.0);
+        if emit_globally {
+            let _ = app.emit("audio-level-raw", 0.0f32);
+        }
     });
 }
 
@@ -333,6 +348,15 @@ fn trim_err(s: &str) -> String {
         format!("{}…", s.chars().take(117).collect::<String>())
     } else {
         s.to_string()
+    }
+}
+
+fn recording_gate_rms(active_gain: f32) -> f32 {
+    let gain = active_gain.clamp(store::MIN_MIC_GAIN, store::MAX_MIC_GAIN);
+    if gain <= store::DEFAULT_MIC_GAIN {
+        MIN_RECORDING_RMS * gain / store::DEFAULT_MIC_GAIN
+    } else {
+        MIN_RECORDING_RMS * store::DEFAULT_MIC_GAIN / gain
     }
 }
 
@@ -511,15 +535,6 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     std::thread::spawn(crate::system::volume::unmute);
     show_pill(&app, "processing");
 
-    let stop_result = tokio::task::spawn_blocking(move || session.stop()).await?;
-    let (wav, duration_ms, rms) = stop_result?;
-
-    if duration_ms < MIN_RECORDING_MS || rms < MIN_RECORDING_RMS {
-        hide_pill(&app);
-        anyhow::bail!("Recording too short");
-    }
-    let wav = bytes::Bytes::from(wav);
-
     let settings_store = match app.store("settings.json") {
         Ok(s) => s,
         Err(e) => {
@@ -527,6 +542,19 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
             return Err(anyhow::anyhow!(e.to_string()));
         }
     };
+    let active_gain = store::load_audio_config(&settings_store).mic_gain;
+    let min_rms = recording_gate_rms(active_gain);
+    log::debug!("pipeline: input gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
+
+    let stop_result = tokio::task::spawn_blocking(move || session.stop()).await?;
+    let (wav, duration_ms, rms) = stop_result?;
+
+    if duration_ms < MIN_RECORDING_MS || rms < min_rms {
+        hide_pill(&app);
+        anyhow::bail!("Recording too short");
+    }
+    let wav = bytes::Bytes::from(wav);
+
     let cfg = store::load_pipeline_config(&settings_store);
 
     if !has_transcription_key_in_chain(&cfg) {
@@ -593,8 +621,20 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     std::thread::spawn(crate::system::volume::unmute);
     show_pill(&app, "processing");
 
+    // Keep the quiet-audio gate permissive at high gain. Whisper recordings can
+    // still have low post-denoise RMS, even after amplification.
+    let active_gain = match app.store("settings.json") {
+        Ok(s) => store::load_audio_config(&s).mic_gain,
+        Err(e) => {
+            log::warn!("pipeline: failed to load audio config, using default gain: {e}");
+            store::DEFAULT_MIC_GAIN
+        }
+    };
+    let min_rms = recording_gate_rms(active_gain);
+    log::debug!("pipeline: audio gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
+
     let stage_audio = std::time::Instant::now();
-    let Some((wav, duration_ms)) = stop_and_validate_audio(&app, session).await else {
+    let Some((wav, duration_ms)) = stop_and_validate_audio(&app, session, min_rms).await else {
         return;
     };
     log::debug!(
@@ -723,6 +763,7 @@ fn take_pipeline_session(state: &SharedState) -> Option<(audio::RecordingSession
 async fn stop_and_validate_audio(
     app: &AppHandle,
     session: audio::RecordingSession,
+    min_rms: f32,
 ) -> Option<(bytes::Bytes, u64)> {
     let stop_result = tokio::task::spawn_blocking(move || session.stop()).await;
     let (wav, duration_ms, rms) = match stop_result {
@@ -738,13 +779,15 @@ async fn stop_and_validate_audio(
             return None;
         }
     };
-    if duration_ms < MIN_RECORDING_MS || rms < MIN_RECORDING_RMS {
+    if duration_ms < MIN_RECORDING_MS || rms < min_rms {
         let msg = if duration_ms < MIN_RECORDING_MS {
             "Recording too short"
         } else {
             "Audio too quiet — check your mic"
         };
-        log::debug!("pipeline: rejected — duration={duration_ms}ms rms={rms:.4}");
+        log::debug!(
+            "pipeline: rejected — duration={duration_ms}ms rms={rms:.4} min_rms={min_rms:.4}"
+        );
         reject_with_pill(app, msg);
         return None;
     }
@@ -1193,7 +1236,12 @@ pub async fn run_pipeline_fixture(
         None => db::open(":memory:")?,
     };
     for snippet in &request.snippets {
-        db::insert_snippet_returning(&db_handle, &snippet.trigger, &snippet.expansion, &snippet.instructions)?;
+        db::insert_snippet_returning(
+            &db_handle,
+            &snippet.trigger,
+            &snippet.expansion,
+            &snippet.instructions,
+        )?;
     }
     for entry in &request.dictionary {
         db::insert_dictionary_entry_returning(&db_handle, &entry.term, entry.mistake.as_deref())?;
@@ -1217,7 +1265,10 @@ pub async fn run_pipeline_fixture(
         .await
         {
             Ok(raw) if !raw.is_empty() => {
-                transcribed = Some((normalize_transcription_math_artifacts(&raw), format!("{provider_id}/{model}/transcription")));
+                transcribed = Some((
+                    normalize_transcription_math_artifacts(&raw),
+                    format!("{provider_id}/{model}/transcription"),
+                ));
                 break;
             }
             Ok(_) => {}
@@ -1232,8 +1283,11 @@ pub async fn run_pipeline_fixture(
         }
     }
 
-    let (raw_text, api_used) =
-        transcribed.ok_or_else(|| last_err.unwrap_or_else(|| anyhow::anyhow!("Transcription failed: no model in chain produced output")))?;
+    let (raw_text, api_used) = transcribed.ok_or_else(|| {
+        last_err.unwrap_or_else(|| {
+            anyhow::anyhow!("Transcription failed: no model in chain produced output")
+        })
+    })?;
 
     let (final_text_before_dictionary, dict_entries, cleanup_cache_key) =
         run_cleanup_and_snippets_for_db(
@@ -1282,9 +1336,9 @@ pub async fn run_pipeline_fixture(
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_transcription_math_artifacts, run_pipeline_fixture, should_run_cleanup_llm,
-        should_use_cleanup_cache, style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry,
-        PipelineTestRequest, PipelineTestSnippet,
+        normalize_transcription_math_artifacts, recording_gate_rms, run_pipeline_fixture,
+        should_run_cleanup_llm, should_use_cleanup_cache, style_scoped_cleanup_cache_key,
+        PipelineTestDictionaryEntry, PipelineTestRequest, PipelineTestSnippet,
     };
     use crate::data::store;
     use crate::testing::{
@@ -1352,6 +1406,16 @@ mod tests {
         assert_eq!(style_scoped_cleanup_cache_key("", "casual", "medium"), "");
     }
 
+    #[test]
+    fn recording_gate_gets_more_permissive_at_high_gain() {
+        let default_gate = recording_gate_rms(store::DEFAULT_MIC_GAIN);
+        let high_gain_gate = recording_gate_rms(store::MAX_MIC_GAIN);
+
+        assert!((default_gate - 0.008).abs() < f32::EPSILON);
+        assert!(high_gain_gate < default_gate);
+        assert!((high_gain_gate - 0.0035).abs() < 0.0001);
+    }
+
     fn base_config() -> store::PipelineConfig {
         store::PipelineConfig {
             transcription_provider: "groq".into(),
@@ -1411,7 +1475,9 @@ mod tests {
 
         let mut request = base_request(base_config());
         request.duration_ms = 300;
-        let err = run_pipeline_fixture(request).await.expect_err("short recording should fail");
+        let err = run_pipeline_fixture(request)
+            .await
+            .expect_err("short recording should fail");
         assert!(err.to_string().contains("Recording too short"));
         assert_eq!(
             fixture_hit_count("transcription", "groq", "whisper-large-v3-turbo"),
@@ -1436,7 +1502,9 @@ mod tests {
 
         let mut request = base_request(base_config());
         request.rms = 0.001;
-        let err = run_pipeline_fixture(request).await.expect_err("quiet recording should fail");
+        let err = run_pipeline_fixture(request)
+            .await
+            .expect_err("quiet recording should fail");
         assert!(err.to_string().contains("Audio too quiet"));
         assert_eq!(
             fixture_hit_count("transcription", "groq", "whisper-large-v3-turbo"),
@@ -1624,7 +1692,10 @@ mod tests {
             .await
             .expect("pure snippet fast path should succeed");
         assert_eq!(result.final_text_before_dictionary, "Best regards, Noah");
-        assert_eq!(fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"), 0);
+        assert_eq!(
+            fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+            0
+        );
         assert_eq!(take_injections().len(), 1);
         reset();
     }
@@ -1699,8 +1770,14 @@ mod tests {
         let result = run_pipeline_fixture(request)
             .await
             .expect("formal none intensity should still run cleanup");
-        assert_eq!(result.final_text_before_dictionary, "I am sending the note.");
-        assert_eq!(fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"), 1);
+        assert_eq!(
+            result.final_text_before_dictionary,
+            "I am sending the note."
+        );
+        assert_eq!(
+            fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+            1
+        );
         reset();
     }
 
@@ -1736,7 +1813,10 @@ mod tests {
             .expect("second run should succeed");
         assert!(!first.cleanup_cache_key.is_empty());
         assert_eq!(first.cleanup_cache_key, second.cleanup_cache_key);
-        assert_eq!(fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"), 1);
+        assert_eq!(
+            fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+            1
+        );
         reset();
     }
 }
