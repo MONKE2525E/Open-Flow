@@ -1,4 +1,6 @@
 use tauri::{AppHandle, Wry};
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 use tauri_plugin_store::Store;
 
 #[cfg(windows)]
