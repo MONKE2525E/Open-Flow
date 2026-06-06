@@ -49,6 +49,7 @@
     newest: null, oldest: null, alpha: null, most_corrected: null,
   });
   let sortIndicatorStyle = $state('opacity:0;');
+  let leavingIds = $state<Set<number>>(new Set());
 
   const TERM_LIMIT    = 120;
   const MISTAKE_LIMIT = 120;
@@ -96,6 +97,7 @@
 
     return list;
   });
+  const visibleFiltered = $derived(filtered.filter((entry) => !leavingIds.has(entry.id)));
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
@@ -196,14 +198,26 @@
   async function confirmDelete(id: number) {
     if (deleteTarget === id) {
       try {
+        if (leavingIds.has(id)) return;
         if (selected?.id === id) {
           inspectorDir = -1;
           selected = null;
           await tick();
         }
-        await invoke('remove_dictionary_entry', { id });
-        cancelDictionaryFetch();
-        appStore.dictionary = appStore.dictionary.filter((entry) => entry.id !== id);
+        leavingIds = new Set(leavingIds).add(id);
+        window.setTimeout(async () => {
+          try {
+            await invoke('remove_dictionary_entry', { id });
+            cancelDictionaryFetch();
+            appStore.dictionary = appStore.dictionary.filter((entry) => entry.id !== id);
+          } catch (err) {
+            console.error(err);
+          } finally {
+            const nextLeaving = new Set(leavingIds);
+            nextLeaving.delete(id);
+            leavingIds = nextLeaving;
+          }
+        }, motionMs(200));
       } catch (err) { console.error(err); }
       deleteTarget = null;
     } else {
@@ -326,9 +340,11 @@
             <p class="empty-sub">Nothing matches "{search}".</p>
             <button class="btn-ghost" onclick={() => search = ''}>Clear search</button>
           </div>
+        {:else if visibleFiltered.length === 0}
+          <div class="dict-list" aria-hidden="true"></div>
         {:else}
           <div class="dict-list">
-            {#each filtered as e (e.id)}
+            {#each visibleFiltered as e (e.id)}
               <button
                 type="button"
                 class="dict-row"

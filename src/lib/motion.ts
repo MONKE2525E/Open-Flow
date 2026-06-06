@@ -90,12 +90,12 @@ export function listItemCollapse(node: HTMLElement, params: MotionTransitionPara
   const duration = motionMs(params.duration ?? 200);
   const style = getComputedStyle(node);
   const height = node.offsetHeight;
-  const paddingTop = parseFloat(style.paddingTop);
-  const paddingBottom = parseFloat(style.paddingBottom);
-  const marginTop = parseFloat(style.marginTop);
-  const marginBottom = parseFloat(style.marginBottom);
-  const borderTopWidth = parseFloat(style.borderTopWidth);
-  const borderBottomWidth = parseFloat(style.borderBottomWidth);
+  const paddingTop = parseFloat(style.paddingTop) || 0;
+  const paddingBottom = parseFloat(style.paddingBottom) || 0;
+  const marginTop = parseFloat(style.marginTop) || 0;
+  const marginBottom = parseFloat(style.marginBottom) || 0;
+  const borderTopWidth = parseFloat(style.borderTopWidth) || 0;
+  const borderBottomWidth = parseFloat(style.borderBottomWidth) || 0;
 
   return {
     duration,

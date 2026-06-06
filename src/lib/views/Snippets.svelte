@@ -46,6 +46,7 @@
     most_used: null,
   });
   let sortIndicatorStyle = $state('opacity:0;');
+  let leavingIds = $state<Set<number>>(new Set());
 
   const TRIGGER_LIMIT = 300;
   const countCodePoints = (value: string): number => [...value].length;
@@ -81,6 +82,7 @@
 
     return list;
   });
+  const visibleFiltered = $derived(filtered.filter((snippet) => !leavingIds.has(snippet.id)));
 
 
 
@@ -185,14 +187,26 @@
   async function confirmDelete(id: number) {
     if (deleteTarget === id) {
       try {
+        if (leavingIds.has(id)) return;
         if (selected?.id === id) {
           inspectorDir = -1;
           selected = null;
           await tick();
         }
-        await invoke('remove_snippet', { id });
-        cancelSnippetsFetch();
-        appStore.snippets = appStore.snippets.filter((entry) => entry.id !== id);
+        leavingIds = new Set(leavingIds).add(id);
+        window.setTimeout(async () => {
+          try {
+            await invoke('remove_snippet', { id });
+            cancelSnippetsFetch();
+            appStore.snippets = appStore.snippets.filter((entry) => entry.id !== id);
+          } catch (err) {
+            console.error(err);
+          } finally {
+            const nextLeaving = new Set(leavingIds);
+            nextLeaving.delete(id);
+            leavingIds = nextLeaving;
+          }
+        }, motionMs(200));
       } catch (err) { console.error(err); }
       deleteTarget = null;
     } else {
@@ -357,9 +371,11 @@
             <p class="empty-sub">Nothing matches "{search}".</p>
             <button class="btn-ghost" onclick={() => search = ''}>Clear search</button>
           </div>
+        {:else if visibleFiltered.length === 0}
+          <div class="snip-list" aria-hidden="true"></div>
         {:else}
           <div class="snip-list">
-            {#each filtered as s (s.id)}
+            {#each visibleFiltered as s (s.id)}
               <button
                 type="button"
                 class="snip-row"

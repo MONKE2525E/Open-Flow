@@ -14,7 +14,7 @@
   import { invoke, listen } from './lib/tauri';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap } from './lib/motion';
+  import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
 
   type EffectiveTheme = 'light' | 'dark';
 
@@ -52,13 +52,9 @@
   $effect(() => {
     appStore.currentPage;
     requestAnimationFrame(() => {
-      contentEl?.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
+      contentEl?.scrollTo({ top: 0, behavior: reducedMotionEnabled() ? 'auto' : 'smooth' });
     });
   });
-
-  function reducedMotion() {
-    return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
-  }
 
   async function pingConnectivity() {
     try {
