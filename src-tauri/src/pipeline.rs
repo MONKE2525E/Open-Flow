@@ -1047,13 +1047,19 @@ async fn run_cleanup_and_snippets_for_db(
         profile,
     ) {
         let has_snippets = !snippet_instructions.is_empty();
-        let (cache_tokens, cache_separators) = number_parser::tokenize_cache_key_parts(raw);
+        let (cache_tokens, cache_separators) = number_parser::tokenize_cache_key_parts(&expanded);
         let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens)
-            && (raw.chars().count() <= 200 || has_snippets);
+            && (expanded.chars().count() <= 200 || has_snippets);
         let cache_key = if allow_cache {
             let base_cache_key =
                 number_parser::normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators);
-            style_scoped_cleanup_cache_key(&base_cache_key, profile, &cfg.cleanup_intensity)
+            let mut key =
+                style_scoped_cleanup_cache_key(&base_cache_key, profile, &cfg.cleanup_intensity);
+            if !key.is_empty() && has_snippets {
+                let fp = snippet_instructions_fingerprint(&snippet_instructions);
+                key = format!("{key}|snip:{fp:x}");
+            }
+            key
         } else {
             String::new()
         };
@@ -1213,6 +1219,15 @@ fn style_scoped_cleanup_cache_key(
         return String::new();
     }
     format!("{base_key}|profile:{profile}|intensity:{cleanup_intensity}")
+}
+
+fn snippet_instructions_fingerprint(instructions: &str) -> u64 {
+    // djb2 hash — deterministic across runs, no external dep
+    let mut h: u64 = 5381;
+    for b in instructions.bytes() {
+        h = h.wrapping_shl(5).wrapping_add(h).wrapping_add(b as u64);
+    }
+    h
 }
 
 #[cfg(any(test, debug_assertions))]

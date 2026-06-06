@@ -517,7 +517,7 @@
           id="trigger-input"
           class="field-input"
           type="text"
-          placeholder="e.g. my email"
+          placeholder="e.g. my email, my e-mail"
           bind:value={draftTrigger}
           bind:this={triggerInput}
           autocomplete="off"
@@ -525,7 +525,7 @@
         />
         <MicInputButton onResult={(t) => draftTrigger = t} />
       </div>
-      <p class="field-hint">Speak this phrase to trigger the expansion.</p>
+      <p class="field-hint">Speak any of these phrases to trigger the expansion. Separate multiple triggers with commas.</p>
 
       <label class="field-label" for="expansion-input">Expansion</label>
       <div class="input-row input-row--top">

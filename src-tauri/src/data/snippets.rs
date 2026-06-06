@@ -32,12 +32,38 @@ fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_' || ch == '\'' || ch == '\u{2019}' || ch == '-'
 }
 
-/// If the entire transcription is just a snippet trigger (ignoring trailing punctuation
+/// Strip all non-alphanumeric characters and collapse whitespace for fuzzy trigger matching.
+fn strip_punctuation_for_matching(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut last_was_space = true;
+    for c in s.chars() {
+        if c.is_alphanumeric() {
+            result.push(c);
+            last_was_space = false;
+        } else if !last_was_space {
+            result.push(' ');
+            last_was_space = true;
+        }
+    }
+    if last_was_space && !result.is_empty() {
+        result.pop();
+    }
+    result
+}
+
+/// Split a trigger field into individual trigger phrases.
+/// A trigger field may contain multiple phrases separated by commas,
+/// e.g. "Gemini Goal, Gemini Gold". Empty segments are filtered out.
+fn parse_triggers(trigger: &str) -> impl Iterator<Item = &str> {
+    trigger.split(',').map(|t| t.trim()).filter(|t| !t.is_empty())
+}
+
+/// If the entire transcription is just a snippet trigger (ignoring punctuation
 /// added by the transcription model), return the expansion directly.
 ///
 /// The transcription model always appends a period — "roblox" becomes "roblox." —
 /// which `expand_snippets` would leave as an orphaned "." after replacing the trigger.
-/// This function strips that punctuation before matching and returns the raw expansion
+/// This function strips all punctuation before matching and returns the raw expansion
 /// text, so no period bleeds through. Also increments the snippet's use_count.
 ///
 pub fn try_pure_snippet_expand_from(
@@ -45,24 +71,28 @@ pub fn try_pure_snippet_expand_from(
     snippets: &[db::Snippet],
     db: &Db,
 ) -> Option<String> {
-    let normalized = text
-        .trim()
-        .trim_end_matches(['.', ',', '?', '!'])
-        .to_lowercase();
-    let matched = snippets
-        .iter()
-        .find(|s| s.trigger.to_lowercase() == normalized)?;
+    let normalized = strip_punctuation_for_matching(&text.to_lowercase());
+    let matched = snippets.iter().find(|s| {
+        parse_triggers(&s.trigger)
+            .any(|t| strip_punctuation_for_matching(&t.to_lowercase()) == normalized)
+    })?;
     let _ = db::increment_snippet_use(db, matched.id);
     Some(matched.expansion.clone())
 }
 
 pub fn collect_snippet_instructions_from(text: &str, snippets: &[db::Snippet]) -> String {
     let text_lower = text.to_lowercase();
+    let text_stripped = strip_punctuation_for_matching(&text_lower);
     let mut active_instructions: Vec<String> = Vec::new();
 
     for snippet in snippets.iter() {
-        let needle = snippet.trigger.to_lowercase();
-        if text_lower.contains(&needle) && !snippet.instructions.is_empty() {
+        let found = parse_triggers(&snippet.trigger).any(|t| {
+            let needle = t.to_lowercase();
+            let needle_stripped = strip_punctuation_for_matching(&needle);
+            text_lower.contains(&needle)
+                || (!needle_stripped.is_empty() && text_stripped.contains(&needle_stripped))
+        });
+        if found && !snippet.instructions.is_empty() {
             active_instructions.push(snippet.instructions.clone());
         }
     }
@@ -82,21 +112,35 @@ pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -
         snippet_idx: usize,
     }
 
-    // Longest triggers first — prevents short prefix matches shadowing longer ones.
-    snippets.sort_by_key(|snippet| Reverse(snippet.trigger.len()));
+    struct TriggerTarget {
+        needle: String,
+        snippet_idx: usize,
+    }
+
+    // Flatten all aliases into individual targets sorted by needle length descending.
+    // This prevents a shorter alias from one snippet shadowing a longer trigger from another
+    // snippet, which snippet-level sorting by max-length cannot guarantee.
+    let mut targets: Vec<TriggerTarget> = Vec::new();
+    for (snippet_idx, snippet) in snippets.iter().enumerate() {
+        for t in parse_triggers(&snippet.trigger) {
+            let needle = t.to_lowercase();
+            if !needle.is_empty() {
+                targets.push(TriggerTarget { needle, snippet_idx });
+            }
+        }
+    }
+    targets.sort_by_key(|t| Reverse(t.needle.len()));
 
     let mut result = text.to_string();
     let (haystack, source_map) = lowercase_with_source_map(&result);
     let mut all_matches: Vec<Match> = Vec::new();
 
-    for (snippet_idx, snippet) in snippets.iter().enumerate() {
-        let needle = snippet.trigger.to_lowercase();
-        if needle.is_empty() {
-            continue;
-        }
+    for target in &targets {
+        let needle = &target.needle;
+        let snippet_idx = target.snippet_idx;
 
         let mut search_from = 0;
-        while let Some(pos) = haystack[search_from..].find(&needle) {
+        while let Some(pos) = haystack[search_from..].find(needle.as_str()) {
             let abs = search_from + pos;
             let before_ok = abs == 0
                 || !haystack[..abs]
