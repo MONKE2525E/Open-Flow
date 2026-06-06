@@ -130,7 +130,7 @@ async function waitForSingleSettingsPanel(page) {
     }
 
     // ── Settings sections: each click must show the correct h2 ────────────────
-    const sections = ['General', 'API Keys', 'Models', 'Privacy', 'Advanced', 'About'];
+    const sections = ['General', 'API Keys', 'Models', 'Privacy', 'Microphone', 'About'];
     for (const sec of sections) {
       console.log(`  Clicking Settings section: ${sec}`);
       const secBtn = page.locator(`.settings-nav-item:has-text("${sec}")`);
