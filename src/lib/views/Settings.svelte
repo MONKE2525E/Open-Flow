@@ -32,7 +32,7 @@
       { id: 'advanced', label: 'Advanced',    icon: 'mic'      as keyof typeof icons },
       ...(appStore.devModeEnabled ? [{ id: 'developer', label: 'Developer', icon: 'command' as keyof typeof icons }] : []),
     ]},
-    { group: 'Account', items: [
+    { group: 'Open Flow', items: [
       { id: 'about', label: 'About', icon: 'help' as keyof typeof icons },
     ]},
   ]);

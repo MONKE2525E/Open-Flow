@@ -181,6 +181,85 @@ pub struct CleanupCacheStatus {
     pub free_bytes: u64,
 }
 
+// ---------- import / export ----------
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ExportStats {
+    pub total_words: i64,
+    pub avg_wpm: f64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ExportDictionaryEntry {
+    pub term: String,
+    pub mistake: Option<String>,
+    pub auto_learned: bool,
+    pub confidence_tier: String,
+    pub correction_count: i64,
+    pub created_at: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ExportSnippet {
+    pub trigger: String,
+    pub expansion: String,
+    pub instructions: String,
+    pub created_at: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ExportPayload {
+    pub version: String,
+    pub app_version: String,
+    pub exported_at: String,
+    pub stats: ExportStats,
+    pub settings: serde_json::Value,
+    #[serde(default)]
+    pub dictionary: Vec<ExportDictionaryEntry>,
+    #[serde(default)]
+    pub snippets: Vec<ExportSnippet>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ImportSummary {
+    pub settings_applied: usize,
+    pub settings_skipped: usize,
+    pub dictionary_inserted: usize,
+    pub dictionary_skipped: usize,
+    pub snippets_inserted: usize,
+    pub snippets_skipped: usize,
+}
+
+const EXPORTABLE_SETTINGS: &[&str] = &[
+    store::TRANSCRIPTION_PROVIDER,
+    store::TRANSCRIPTION_MODEL,
+    store::TRANSCRIPTION_LANGUAGE,
+    store::TRANSCRIPTION_DEFAULT_MODEL,
+    store::TRANSCRIPTION_MODELS_BY_PROVIDER,
+    store::TRANSCRIPTION_FALLBACK_MODELS,
+    store::CLEANUP_PROVIDER,
+    store::CLEANUP_MODEL,
+    store::CLEANUP_DEFAULT_MODEL,
+    store::CLEANUP_MODELS_BY_PROVIDER,
+    store::CLEANUP_FALLBACK_MODELS,
+    store::CLEANUP_ENABLED,
+    store::CLEANUP_INTENSITY,
+    store::DEFAULT_TONE,
+    store::APPEARANCE_MODE,
+    store::ADVANCED_MODEL_UI,
+    store::HOTKEY,
+    "history_retention",
+    store::NOISE_REDUCTION,
+    store::MUTE_AUDIO,
+    store::APP_CONTEXT_HINT,
+    store::AUTO_LEARN_ENABLED,
+    store::AUTO_LEARN_EVENT_MODE,
+    store::CONTEXTUAL_CAPS,
+    store::AUTO_SPACING,
+    "autostart_enabled",
+    store::APP_MAPPINGS,
+];
+
 #[tauri::command]
 pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
     let s = app.store("settings.json").map_err(|e| e.to_string())?;
@@ -1147,6 +1226,189 @@ pub async fn download_logs(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn set_dev_logging_enabled(enabled: bool) {
     crate::system::logger::set_verbose(enabled);
+}
+
+#[tauri::command]
+pub async fn export_data(
+    app: AppHandle,
+    db: tauri::State<'_, crate::DbHandle>,
+) -> Result<String, String> {
+    let db = db.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let store = app.store("settings.json").map_err(|e| e.to_string())?;
+        let mut settings_map = serde_json::Map::new();
+        for &key in EXPORTABLE_SETTINGS {
+            if let Some(value) = store.get(key) {
+                settings_map.insert(key.to_string(), value);
+            }
+        }
+
+        let stats = db::query_stats(&db).map_err(|e| e.to_string())?;
+        let dictionary = db::query_dictionary(&db).map_err(|e| e.to_string())?;
+        let snippets = db::query_snippets(&db).map_err(|e| e.to_string())?;
+
+        let payload = ExportPayload {
+            version: "1".to_string(),
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+            exported_at: chrono::Utc::now().to_rfc3339(),
+            stats: ExportStats {
+                total_words: stats.total_words,
+                avg_wpm: stats.avg_wpm,
+            },
+            settings: serde_json::Value::Object(settings_map),
+            dictionary: dictionary
+                .into_iter()
+                .map(|e| ExportDictionaryEntry {
+                    term: e.term,
+                    mistake: e.mistake,
+                    auto_learned: e.auto_learned,
+                    confidence_tier: e.confidence_tier,
+                    correction_count: e.correction_count,
+                    created_at: e.created_at,
+                })
+                .collect(),
+            snippets: snippets
+                .into_iter()
+                .map(|s| ExportSnippet {
+                    trigger: s.trigger,
+                    expansion: s.expansion,
+                    instructions: s.instructions,
+                    created_at: s.created_at,
+                })
+                .collect(),
+        };
+
+        let json = serde_json::to_string_pretty(&payload)
+            .map_err(|e| format!("Serialization failed: {e}"))?;
+
+        let downloads = app
+            .path()
+            .download_dir()
+            .map_err(|e| format!("Failed to resolve Downloads directory: {e}"))?;
+        std::fs::create_dir_all(&downloads)
+            .map_err(|e| format!("Failed to create Downloads path: {e}"))?;
+        let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let path = downloads.join(format!("open-flow-backup-{ts}.json"));
+        std::fs::write(&path, json)
+            .map_err(|e| format!("Failed to write backup file: {e}"))?;
+
+        log::info!("export_data: wrote {}", path.display());
+        Ok(path.display().to_string())
+    })
+    .await
+    .map_err(|e| format!("export_data task panicked: {e}"))?
+}
+
+#[tauri::command]
+pub async fn import_data(
+    app: AppHandle,
+    db: tauri::State<'_, crate::DbHandle>,
+    json: String,
+) -> Result<ImportSummary, String> {
+    let db = db.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let payload: ExportPayload = serde_json::from_str(&json)
+            .map_err(|e| format!("Invalid backup file: {e}"))?;
+
+        if payload.version != "1" {
+            return Err(format!(
+                "Unsupported backup version '{}'. Only version '1' is supported.",
+                payload.version
+            ));
+        }
+
+        let store = app.store("settings.json").map_err(|e| e.to_string())?;
+        let mut settings_applied = 0usize;
+        let mut settings_skipped = 0usize;
+        let mut appearance_mode_applied = false;
+
+        if let Some(obj) = payload.settings.as_object() {
+            for (key, value) in obj {
+                if !EXPORTABLE_SETTINGS.contains(&key.as_str()) {
+                    settings_skipped += 1;
+                    continue;
+                }
+                match validate_setting(key, value) {
+                    Ok(()) => {
+                        store.set(key.clone(), value.clone());
+                        if key == store::APPEARANCE_MODE {
+                            appearance_mode_applied = true;
+                        }
+                        settings_applied += 1;
+                    }
+                    Err(_) => {
+                        log::warn!("import_data: skipping invalid setting '{key}'");
+                        settings_skipped += 1;
+                    }
+                }
+            }
+            store.save().map_err(|e| e.to_string())?;
+        }
+
+        if appearance_mode_applied {
+            crate::apply_runtime_icons(&app, None);
+        }
+
+        let mut dictionary_inserted = 0usize;
+        let mut dictionary_skipped = 0usize;
+        for entry in &payload.dictionary {
+            if entry.term.trim().is_empty() {
+                dictionary_skipped += 1;
+                continue;
+            }
+            match db::insert_dictionary_entry_returning(&db, &entry.term, entry.mistake.as_deref()) {
+                Ok(_) => dictionary_inserted += 1,
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("UNIQUE constraint failed") || msg.contains("unique") {
+                        dictionary_skipped += 1;
+                    } else {
+                        log::warn!("import_data: dictionary insert error for '{}': {msg}", entry.term);
+                        dictionary_skipped += 1;
+                    }
+                }
+            }
+        }
+
+        let mut snippets_inserted = 0usize;
+        let mut snippets_skipped = 0usize;
+        for snippet in &payload.snippets {
+            if snippet.trigger.trim().is_empty() || snippet.expansion.trim().is_empty() {
+                snippets_skipped += 1;
+                continue;
+            }
+            match db::insert_snippet_returning(&db, &snippet.trigger, &snippet.expansion, &snippet.instructions) {
+                Ok(_) => snippets_inserted += 1,
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("UNIQUE constraint failed") || msg.contains("unique") {
+                        snippets_skipped += 1;
+                    } else {
+                        log::warn!("import_data: snippet insert error for '{}': {msg}", snippet.trigger);
+                        snippets_skipped += 1;
+                    }
+                }
+            }
+        }
+
+        log::info!(
+            "import_data: settings={}/skip={} dict={}/skip={} snip={}/skip={}",
+            settings_applied, settings_skipped,
+            dictionary_inserted, dictionary_skipped,
+            snippets_inserted, snippets_skipped,
+        );
+
+        Ok(ImportSummary {
+            settings_applied,
+            settings_skipped,
+            dictionary_inserted,
+            dictionary_skipped,
+            snippets_inserted,
+            snippets_skipped,
+        })
+    })
+    .await
+    .map_err(|e| format!("import_data task panicked: {e}"))?
 }
 
 #[cfg(test)]

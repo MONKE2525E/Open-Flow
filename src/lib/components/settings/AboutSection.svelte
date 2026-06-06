@@ -5,6 +5,7 @@
 
   let { appVersion }: { appVersion: string } = $props();
 
+
   type UpdateCheckState = 'idle' | 'checking' | 'up-to-date' | 'available';
   let updateCheckState: UpdateCheckState = $state('idle');
   let installingFromAbout = $state(false);
