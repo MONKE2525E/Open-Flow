@@ -1002,6 +1002,30 @@ pub fn open_microphone_settings() -> Result<(), String> {
     Ok(())
 }
 
+/// Reads the stored API key for `provider` from the system credential store to check
+/// whether the app has been granted Keychain access. On macOS this triggers the native
+/// Keychain dialog if the app hasn't been granted "Always Allow" yet.
+/// Returns "authorized" | "not_configured" | "denied".
+#[tauri::command]
+pub async fn check_keychain_access(provider: String) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        match tokio::task::spawn_blocking(move || {
+            crate::data::credentials::read_for_status(&provider)
+        })
+        .await
+        {
+            Ok(Ok(true)) => "authorized".to_string(),
+            Ok(Ok(false)) => "not_configured".to_string(),
+            _ => "denied".to_string(),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "authorized".to_string()
+    }
+}
+
 // ---------- updates ----------
 
 #[tauri::command]
