@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, Wry};
+use tauri::{AppHandle, Wry};
 use tauri_plugin_store::Store;
 
 #[cfg(windows)]
