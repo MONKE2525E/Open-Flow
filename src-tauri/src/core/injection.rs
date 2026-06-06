@@ -190,6 +190,40 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
     }
 }
 
+/// Write `text` to the OS clipboard without injecting. Used as a fallback
+/// when Open Flow itself holds foreground focus and a normal Ctrl+V paste
+/// would land in our own WebView.
+pub async fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
+    #[cfg(windows)]
+    {
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        for attempt in 0..3u32 {
+            if unsafe { write_clipboard_unicode(&wide) }.is_ok() {
+                return Ok(());
+            }
+            if attempt < 2 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            }
+        }
+        anyhow::bail!("copy_to_clipboard: clipboard held after 3 attempts")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut child = tokio::process::Command::new("pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(text.as_bytes()).await?;
+        }
+        child.wait().await?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        anyhow::bail!("copy_to_clipboard: unsupported platform")
+    }
+}
 
 pub async fn inject_text(
     text: &str,
