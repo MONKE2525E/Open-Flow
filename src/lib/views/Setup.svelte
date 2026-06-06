@@ -629,7 +629,7 @@
     {:else if isMac && step === permissionStep}
       <div class="step">
         <div class="step-header">
-          <h2>Grant macOS permissions</h2>
+          <h2>Check your macOS permissions</h2>
           <p class="step-sub">Open Flow needs these to hear your voice and type for you.</p>
         </div>
 

@@ -754,6 +754,35 @@ fn post_key_event(
     }
 }
 
+/// Write `text` to the OS clipboard without injecting. Used as a fallback
+/// when Open Flow itself holds foreground focus and a normal paste would
+/// land in our own WebView.
+pub async fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
+    #[cfg(windows)]
+    {
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        for attempt in 0..3u32 {
+            if unsafe { write_clipboard_unicode(&wide) }.is_ok() {
+                return Ok(());
+            }
+            if attempt < 2 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            }
+        }
+        anyhow::bail!("copy_to_clipboard: clipboard held after 3 attempts")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        crate::system::mac_app::pasteboard_set_string(text);
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = text;
+        anyhow::bail!("copy_to_clipboard: unsupported platform")
+    }
+}
+
 #[cfg(target_os = "macos")]
 async fn macos_clipboard_sniff_context(target_hwnd: usize) -> Option<InjectionContextProbe> {
     use core_graphics::event::{CGEventFlags, CGKeyCode};
@@ -903,11 +932,11 @@ pub async fn inject_text(
             } else {
                 unavailable_injection_probe()
             };
-            if contextual_caps || auto_spacing {
-                if injection_probe.source.allows_history_fallback() {
-                    if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
-                        injection_probe = history_probe;
-                    }
+            if (contextual_caps || auto_spacing)
+                && injection_probe.source.allows_history_fallback()
+            {
+                if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
+                    injection_probe = history_probe;
                 }
             }
             let (adjusted, context_kind, case_decision) = apply_probe_adjustments(

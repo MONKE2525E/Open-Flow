@@ -29,7 +29,7 @@
       { id: 'keys',     label: 'API Keys',     icon: 'key'      as keyof typeof icons },
       { id: 'models',   label: 'Models',       icon: 'command'  as keyof typeof icons },
       { id: 'privacy',  label: 'Privacy',      icon: 'lock'     as keyof typeof icons },
-      { id: 'advanced', label: 'Microphone',  icon: 'mic'      as keyof typeof icons },
+      { id: 'advanced', label: 'Advanced',    icon: 'mic'      as keyof typeof icons },
       ...(appStore.devModeEnabled ? [{ id: 'developer', label: 'Developer', icon: 'command' as keyof typeof icons }] : []),
     ]},
     { group: 'Open Flow', items: [

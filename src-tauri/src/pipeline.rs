@@ -18,6 +18,7 @@ const MIN_RECORDING_RMS: f32 = 0.008;
 const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
 const PILL_WIDTH_POINTS: f64 = 140.0;
 const PILL_HEIGHT_POINTS: f64 = 44.0;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const PILL_BOTTOM_GAP_POINTS: f64 = 16.0;
 
 fn transcription_provider_from_str(s: &str) -> transcription::Provider {
@@ -71,6 +72,51 @@ fn emit_pipeline_failed(app: &AppHandle) {
         Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
     )
     .ok();
+}
+
+/// Returns true if our own process currently owns the foreground window.
+/// Catches the case where the user opened the Open Flow main window while
+/// transcribing — if we tried to Ctrl+V / Cmd+V in that state the paste would
+/// land in our own WebView and silently disappear.
+fn foreground_is_own_process() -> bool {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, GetWindowThreadProcessId,
+        };
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return false;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        pid == std::process::id()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Returns true if `hwnd` belongs to our own process.
+/// Catches the case where recording was started while Open Flow itself had focus.
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn hwnd_is_own_process(hwnd: usize) -> bool {
+    if hwnd == 0 {
+        return false;
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(HWND(hwnd as *mut _), Some(&mut pid));
+        pid == std::process::id()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 // ---------- pill helpers ----------
@@ -1975,26 +2021,47 @@ async fn finalize_pipeline_completion(
 
     hide_pill(app);
     let inject_stage = std::time::Instant::now();
-    let injected = match injection::inject_text(
-        &final_text_substituted,
-        ctx.target_hwnd,
-        ctx.cfg.contextual_caps_enabled,
-        ctx.cfg.auto_spacing_enabled,
-        ctx.profile,
-        ctx.cfg.macos_clipboard_sniff_enabled,
-    )
-    .await
-    {
-        Ok(outcome) => outcome,
-        Err(e) => {
-            log::error!("inject: {e}");
-            show_error_pill(app, "Failed to paste - text saved to history").await;
-            injection::InjectionOutcome {
-                text: final_text_substituted.clone(),
-                context_state: "unknown",
-                case_decision: "inject_failed",
-                probe_source: "unavailable",
-                selection_state: "unknown",
+
+    // If Open Flow itself has foreground focus, a Ctrl+V / Cmd+V paste would
+    // land in our own WebView with no active text field and silently disappear.
+    // Detect this by PID and fall back to clipboard-only so the user can paste manually.
+    let self_inject = foreground_is_own_process() || hwnd_is_own_process(ctx.target_hwnd);
+
+    let injected = if self_inject {
+        log::info!("pipeline: self-inject detected — clipboard fallback");
+        if let Err(e) = injection::copy_to_clipboard(&final_text_substituted).await {
+            log::warn!("pipeline: clipboard fallback write failed: {e}");
+        }
+        app.emit("open-flow:error", "Text copied — press Ctrl+V to paste").ok();
+        injection::InjectionOutcome {
+            text: final_text_substituted.clone(),
+            context_state: "self_inject",
+            case_decision: "clipboard_fallback",
+            probe_source: "unavailable",
+            selection_state: "unknown",
+        }
+    } else {
+        match injection::inject_text(
+            &final_text_substituted,
+            ctx.target_hwnd,
+            ctx.cfg.contextual_caps_enabled,
+            ctx.cfg.auto_spacing_enabled,
+            ctx.profile,
+            ctx.cfg.macos_clipboard_sniff_enabled,
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                log::error!("inject: {e}");
+                show_error_pill(app, "Failed to paste - text saved to history").await;
+                injection::InjectionOutcome {
+                    text: final_text_substituted.clone(),
+                    context_state: "unknown",
+                    case_decision: "inject_failed",
+                    probe_source: "unavailable",
+                    selection_state: "unknown",
+                }
             }
         }
     };
