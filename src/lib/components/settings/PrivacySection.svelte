@@ -334,7 +334,7 @@
 />
 
 <style>
-  .data-h { margin-top: 52px; margin-bottom: 2px !important; }
+  .data-h { --settings-h-mb: 2px; margin-top: 52px; }
 
   .data-ok { color: var(--success); }
   .data-err { color: var(--accent); }

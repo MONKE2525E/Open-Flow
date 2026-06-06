@@ -605,6 +605,29 @@ pub fn insert_dictionary_entry_returning(
     Ok(CreatedRecordMeta { id, created_at })
 }
 
+pub fn insert_dictionary_entry_from_backup(
+    db: &Db,
+    term: &str,
+    mistake: Option<&str>,
+    auto_learned: bool,
+    confidence_tier: &str,
+    correction_count: i64,
+) -> Result<()> {
+    let normalized_term = require_nonempty_trimmed("Term", term)?;
+    let normalized_mistake = normalize_optional_trimmed(mistake);
+    validate_char_limit("Term", &normalized_term, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    if let Some(m) = normalized_mistake.as_deref() {
+        validate_char_limit("Often mistranscribed as", m, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+    }
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "INSERT INTO dictionary (term, mistake, auto_learned, correction_count, confidence_tier, last_seen_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
+        params![normalized_term, normalized_mistake, auto_learned as i64, correction_count, confidence_tier],
+    )?;
+    Ok(())
+}
+
 pub fn insert_dictionary_entry_auto_learned(
     db: &Db,
     term: &str,

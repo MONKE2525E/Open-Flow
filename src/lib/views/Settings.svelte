@@ -328,7 +328,7 @@
     font-family: var(--serif);
     font-size: 19px;
     font-weight: 500;
-    margin: 0 0 14px;
+    margin: 0 0 var(--settings-h-mb, 14px);
     letter-spacing: -0.015em;
     color: var(--ink);
   }

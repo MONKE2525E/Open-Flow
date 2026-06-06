@@ -50,7 +50,7 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::DEFAULT_TONE
         | store::CLEANUP_INTENSITY
         | store::MICROPHONE_DEVICE
-        | "history_retention"
+        | store::HISTORY_RETENTION
         | store::UPDATE_DISMISSED_VERSION => value.is_string() || value.is_null(),
         store::TRANSCRIPTION_MODELS_BY_PROVIDER | store::CLEANUP_MODELS_BY_PROVIDER => {
             is_model_map(value)
@@ -72,7 +72,7 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::SETUP_COMPLETE
         | store::FORCE_SETUP_ON_LAUNCH
         | store::ADVANCED_MODEL_UI
-        | "autostart_enabled" => value.is_boolean(),
+        | store::AUTOSTART_ENABLED => value.is_boolean(),
         store::MIC_GAIN => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
         store::APP_MAPPINGS => serde_json::from_value::<Vec<AppMapping>>(value.clone()).is_ok(),
         store::HOTKEY => value
@@ -183,7 +183,9 @@ pub struct CleanupCacheStatus {
 
 // ---------- import / export ----------
 
-#[derive(serde::Serialize, serde::Deserialize)]
+// Stats are included in the backup for informational reference only; they derive
+// from transcription history which is not backed up and cannot be restored.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
 pub struct ExportStats {
     pub total_words: i64,
     pub avg_wpm: f64,
@@ -212,6 +214,7 @@ pub struct ExportPayload {
     pub version: String,
     pub app_version: String,
     pub exported_at: String,
+    #[serde(default, skip_deserializing)]
     pub stats: ExportStats,
     pub settings: serde_json::Value,
     #[serde(default)]
@@ -254,7 +257,7 @@ const EXPORTABLE_SETTINGS: &[&str] = &[
     store::APPEARANCE_MODE,
     store::ADVANCED_MODEL_UI,
     store::HOTKEY,
-    "history_retention",
+    store::HISTORY_RETENTION,
     store::NOISE_REDUCTION,
     store::MUTE_AUDIO,
     store::APP_CONTEXT_HINT,
@@ -262,7 +265,7 @@ const EXPORTABLE_SETTINGS: &[&str] = &[
     store::AUTO_LEARN_EVENT_MODE,
     store::CONTEXTUAL_CAPS,
     store::AUTO_SPACING,
-    "autostart_enabled",
+    store::AUTOSTART_ENABLED,
     store::APP_MAPPINGS,
 ];
 
@@ -298,13 +301,13 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         cleanup_enabled: bool_val(store::CLEANUP_ENABLED),
         noise_reduction: bool_val(store::NOISE_REDUCTION),
         mute_audio: bool_val(store::MUTE_AUDIO),
-        autostart_enabled: bool_val("autostart_enabled"),
+        autostart_enabled: bool_val(store::AUTOSTART_ENABLED),
         app_context_hint: bool_val(store::APP_CONTEXT_HINT),
         auto_learn_enabled: bool_val(store::AUTO_LEARN_ENABLED),
         contextual_caps_enabled: bool_val(store::CONTEXTUAL_CAPS),
         auto_spacing_enabled: bool_val(store::AUTO_SPACING),
         mic_gain: f64_val(store::MIC_GAIN),
-        history_retention: str_val("history_retention"),
+        history_retention: str_val(store::HISTORY_RETENTION),
         microphone_device: str_val(store::MICROPHONE_DEVICE),
         update_dismissed_version: str_val(store::UPDATE_DISMISSED_VERSION),
         hotkey: s.get(store::HOTKEY).and_then(|v| {
@@ -958,7 +961,7 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
     }
 
     let store = _app.store("settings.json").map_err(|e| e.to_string())?;
-    store.set("autostart_enabled", serde_json::json!(enabled));
+    store.set(store::AUTOSTART_ENABLED, serde_json::json!(enabled));
     store.save().map_err(|e| e.to_string())
 }
 
@@ -1345,8 +1348,8 @@ pub async fn import_data(
                         }
                         settings_applied += 1;
                     }
-                    Err(_) => {
-                        log::warn!("import_data: skipping invalid setting '{key}'");
+                    Err(e) => {
+                        log::warn!("import_data: skipping invalid setting '{key}': {e}");
                         settings_skipped += 1;
                     }
                 }
@@ -1365,16 +1368,14 @@ pub async fn import_data(
                 dictionary_skipped += 1;
                 continue;
             }
-            match db::insert_dictionary_entry_returning(&db, &entry.term, entry.mistake.as_deref()) {
-                Ok(_) => dictionary_inserted += 1,
+            match db::insert_dictionary_entry_from_backup(&db, &entry.term, entry.mistake.as_deref(), entry.auto_learned, &entry.confidence_tier, entry.correction_count) {
+                Ok(()) => dictionary_inserted += 1,
                 Err(e) => {
                     let msg = e.to_string();
-                    if msg.contains("UNIQUE constraint failed") {
-                        dictionary_skipped += 1;
-                    } else {
+                    if !msg.contains("UNIQUE constraint failed") {
                         log::warn!("import_data: dictionary insert error for '{}': {msg}", entry.term);
-                        dictionary_skipped += 1;
                     }
+                    dictionary_skipped += 1;
                 }
             }
         }
@@ -1390,12 +1391,10 @@ pub async fn import_data(
                 Ok(_) => snippets_inserted += 1,
                 Err(e) => {
                     let msg = e.to_string();
-                    if msg.contains("UNIQUE constraint failed") {
-                        snippets_skipped += 1;
-                    } else {
+                    if !msg.contains("UNIQUE constraint failed") {
                         log::warn!("import_data: snippet insert error for '{}': {msg}", snippet.trigger);
-                        snippets_skipped += 1;
                     }
+                    snippets_skipped += 1;
                 }
             }
         }
