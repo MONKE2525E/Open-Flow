@@ -15,6 +15,16 @@ src-tauri/target/release/bundle/*
 !src-tauri/target/release/bundle/nsis/*.exe
 !src-tauri/target/release/bundle/dmg/*.dmg
 
+# Universal macOS build exceptions
+!src-tauri/target/universal-apple-darwin/
+src-tauri/target/universal-apple-darwin/*
+!src-tauri/target/universal-apple-darwin/release/
+src-tauri/target/universal-apple-darwin/release/*
+!src-tauri/target/universal-apple-darwin/release/bundle/
+src-tauri/target/universal-apple-darwin/release/bundle/*
+!src-tauri/target/universal-apple-darwin/release/bundle/dmg/
+!src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+
 # Generated screenshots
 screenshot.png
 setup_step6.png
