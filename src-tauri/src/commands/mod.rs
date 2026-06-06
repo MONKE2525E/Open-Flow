@@ -229,8 +229,10 @@ pub struct ImportSummary {
     pub settings_skipped: usize,
     pub dictionary_inserted: usize,
     pub dictionary_skipped: usize,
+    pub dictionary_already_existed: usize,
     pub snippets_inserted: usize,
     pub snippets_skipped: usize,
+    pub snippets_already_existed: usize,
 }
 
 // Keys intentionally absent from this list (validated by validate_setting but never exported):
@@ -1364,6 +1366,7 @@ pub async fn import_data(
 
         let mut dictionary_inserted = 0usize;
         let mut dictionary_skipped = 0usize;
+        let mut dictionary_already_existed = 0usize;
         for entry in &payload.dictionary {
             if entry.term.trim().is_empty() {
                 dictionary_skipped += 1;
@@ -1373,16 +1376,19 @@ pub async fn import_data(
                 Ok(()) => dictionary_inserted += 1,
                 Err(e) => {
                     let msg = e.to_string();
-                    if !msg.contains("UNIQUE constraint failed") {
+                    if msg.contains("UNIQUE constraint failed") {
+                        dictionary_already_existed += 1;
+                    } else {
                         log::warn!("import_data: dictionary insert error for '{}': {msg}", entry.term);
+                        dictionary_skipped += 1;
                     }
-                    dictionary_skipped += 1;
                 }
             }
         }
 
         let mut snippets_inserted = 0usize;
         let mut snippets_skipped = 0usize;
+        let mut snippets_already_existed = 0usize;
         for snippet in &payload.snippets {
             if snippet.trigger.trim().is_empty() || snippet.expansion.trim().is_empty() {
                 snippets_skipped += 1;
@@ -1392,19 +1398,21 @@ pub async fn import_data(
                 Ok(_) => snippets_inserted += 1,
                 Err(e) => {
                     let msg = e.to_string();
-                    if !msg.contains("UNIQUE constraint failed") {
+                    if msg.contains("UNIQUE constraint failed") {
+                        snippets_already_existed += 1;
+                    } else {
                         log::warn!("import_data: snippet insert error for '{}': {msg}", snippet.trigger);
+                        snippets_skipped += 1;
                     }
-                    snippets_skipped += 1;
                 }
             }
         }
 
         log::info!(
-            "import_data: settings={}/skip={} dict={}/skip={} snip={}/skip={}",
+            "import_data: settings={}/skip={} dict={}/skip={}/existed={} snip={}/skip={}/existed={}",
             settings_applied, settings_skipped,
-            dictionary_inserted, dictionary_skipped,
-            snippets_inserted, snippets_skipped,
+            dictionary_inserted, dictionary_skipped, dictionary_already_existed,
+            snippets_inserted, snippets_skipped, snippets_already_existed,
         );
 
         Ok(ImportSummary {
@@ -1412,8 +1420,10 @@ pub async fn import_data(
             settings_skipped,
             dictionary_inserted,
             dictionary_skipped,
+            dictionary_already_existed,
             snippets_inserted,
             snippets_skipped,
+            snippets_already_existed,
         })
     })
     .await
