@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { invoke } from '../tauri';
+  import { emit, invoke } from '../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { flip } from 'svelte/animate';
@@ -201,6 +201,7 @@
             appStore.snippets = appStore.snippets.filter((entry) => entry.id !== id);
           } catch (err) {
             console.error(err);
+            await emit('open-flow:error', 'Could not delete snippet.');
           } finally {
             const nextLeaving = new Set(leavingIds);
             nextLeaving.delete(id);
@@ -495,11 +496,12 @@
     class="modal-card"
     role="dialog"
     aria-modal="true"
+    aria-labelledby="snippet-modal-title"
     in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel), scaleFrom: 0.97 }}
     out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}
   >
     <div class="modal-header">
-      <h2 class="modal-title">{modal?.mode === 'add' ? 'New snippet' : 'Edit snippet'}</h2>
+      <h2 id="snippet-modal-title" class="modal-title">{modal?.mode === 'add' ? 'New snippet' : 'Edit snippet'}</h2>
       <button class="icon-btn" onclick={closeModal} aria-label="Close">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>

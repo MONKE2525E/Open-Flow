@@ -17,6 +17,8 @@
   let section = $state('general');
   let animDir: 1 | -1 = $state(1);
   let appVersion = $state('');
+  let settingsModalEl = $state<HTMLDivElement | null>(null);
+  let previousFocusEl: HTMLElement | null = null;
 
   const sectionOrder = SETTINGS_SECTION_ORDER;
 
@@ -53,6 +55,43 @@
     }
   });
 
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+
+    if (!appStore.settingsOpen) {
+      const target = previousFocusEl;
+      previousFocusEl = null;
+      if (target?.isConnected) {
+        requestAnimationFrame(() => target.focus());
+      }
+      return;
+    }
+
+    if (!previousFocusEl && document.activeElement instanceof HTMLElement) {
+      previousFocusEl = document.activeElement;
+    }
+
+    requestAnimationFrame(() => {
+      const [first] = getFocusableElements();
+      (first ?? settingsModalEl)?.focus();
+    });
+  });
+
+  function getFocusableElements(): HTMLElement[] {
+    if (!settingsModalEl) return [];
+    const selector = [
+      'button:not([disabled])',
+      'input:not([disabled])',
+      'select:not([disabled])',
+      'textarea:not([disabled])',
+      'a[href]',
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(',');
+
+    return Array.from(settingsModalEl.querySelectorAll<HTMLElement>(selector))
+      .filter((el) => !el.hasAttribute('inert') && el.offsetParent !== null);
+  }
+
   function onWindowKeydown(e: KeyboardEvent) {
     if (appStore.settingsOpen && e.key === 'Escape') {
       const target = e.target as HTMLElement | null;
@@ -65,6 +104,29 @@
       close();
     }
   }
+
+  function onModalKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Tab') return;
+
+    const focusable = getFocusableElements();
+    if (focusable.length === 0) {
+      e.preventDefault();
+      settingsModalEl?.focus();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+
+    if (e.shiftKey && (active === first || active === settingsModalEl)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
@@ -74,11 +136,13 @@
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div class="settings-overlay" aria-hidden="true" onclick={close} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></div>
     <div
+      bind:this={settingsModalEl}
       class="settings-modal"
       role="dialog"
       aria-modal="true"
       aria-label="Settings"
       tabindex="-1"
+      onkeydown={onModalKeydown}
       in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel + 6), scaleFrom: 0.97 }}
       out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}
     >

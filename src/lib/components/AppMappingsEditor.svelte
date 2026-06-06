@@ -77,14 +77,16 @@
     }
   }
 
-  async function saveMappings(updated: AppMapping[]) {
+  async function saveMappings(updated: AppMapping[]): Promise<boolean> {
     mappings = normalizeMappings(updated);
     try {
       await invoke('save_app_mappings', { mappings });
       mappingError = '';
+      return true;
     } catch (err) {
       console.error('save_app_mappings failed:', err);
       mappingError = 'Could not save app tones.';
+      return false;
     }
   }
 
@@ -92,10 +94,14 @@
     const normalizedExe = normalizeExe(exe);
     if (leavingExes.has(normalizedExe)) return;
 
+    const previousMappings = mappings;
     leavingExes = new Set(leavingExes).add(normalizedExe);
     window.setTimeout(async () => {
       try {
-        await saveMappings(mappings.filter((mapping) => normalizeExe(mapping.exe) !== normalizedExe));
+        const saved = await saveMappings(mappings.filter((mapping) => normalizeExe(mapping.exe) !== normalizedExe));
+        if (!saved) {
+          mappings = normalizeMappings(previousMappings);
+        }
       } finally {
         const nextLeaving = new Set(leavingExes);
         nextLeaving.delete(normalizedExe);

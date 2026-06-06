@@ -44,6 +44,10 @@ export interface MotionTransitionParams {
   scaleFrom?: number;
 }
 
+interface TransitionOptions {
+  direction?: 'in' | 'out' | 'both';
+}
+
 export function modalBackdrop(_node: Element, params: MotionTransitionParams = {}) {
   const duration = motionMs(params.duration ?? 180);
   return {
@@ -69,14 +73,26 @@ export function modalCard(_node: Element, params: MotionTransitionParams = {}) {
   };
 }
 
-export function pageSwap(_node: Element, params: MotionTransitionParams = {}) {
+export function pageSwap(node: HTMLElement, params: MotionTransitionParams = {}, options: TransitionOptions = {}) {
   const duration = motionMs(params.duration ?? 260);
   const axis = params.axis ?? 'y';
   const distance = params.distance ?? motionPx(MOTION_PX.page);
+  const isOutro = options.direction === 'out';
 
   return {
     duration,
     easing: cubicOut,
+    tick: () => {
+      if (isOutro) {
+        node.inert = true;
+        node.setAttribute('aria-hidden', 'true');
+        node.style.pointerEvents = 'none';
+      } else {
+        node.inert = false;
+        node.removeAttribute('aria-hidden');
+        node.style.pointerEvents = '';
+      }
+    },
     css: (t: number) => {
       const u = 1 - t;
       const x = axis === 'x' ? u * distance : 0;
