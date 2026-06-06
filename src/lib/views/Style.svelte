@@ -1,11 +1,11 @@
 <script lang="ts">
   import { invoke } from '../tauri';
   import { onMount } from 'svelte';
-  import { fly, crossfade } from 'svelte/transition';
+  import { crossfade, fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { saveSetting, type CleanupIntensity, type ToneId } from '../settings';
   import AppMappingsEditor from '../components/AppMappingsEditor.svelte';
-  import { MOTION_MS, MOTION_PX, STYLE_TAB_ORDER, directionFromOrder, motionMs, motionPx } from '../motion';
+  import { MOTION_MS, MOTION_PX, STYLE_TAB_ORDER, directionFromOrder, motionMs, motionPx, pageSwap } from '../motion';
 
   const [send, receive] = crossfade({
     duration: motionMs(MOTION_MS.base),
@@ -95,8 +95,8 @@
     {#key tab}
       <div
         class="tab-wrapper"
-        in:fly={{ x: tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel + 140), easing: expoOut }}
-        out:fly={{ x: -tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.base + 120), easing: expoOut }}
+        in:pageSwap={{ axis: 'x', distance: tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel) }}
+        out:pageSwap={{ axis: 'x', distance: -tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.base + 40) }}
       >
         {#if tab === 'cleanup'}
           <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Open Flow does.</span></p>

@@ -6,6 +6,30 @@ const { tauriMock } = require('./_tauri-mock.cjs');
 const TARGET_URL = 'http://localhost:1420';
 const TIMEOUT = 8_000;
 
+async function waitForIntermediateOpacity(page, selector, label, timeout = 1_000) {
+  const handle = await page.waitForFunction(
+    ({ selector }) => {
+      const el = document.querySelector(selector);
+      if (!el) return false;
+      const opacity = Number.parseFloat(getComputedStyle(el).opacity);
+      return opacity > 0 && opacity < 1 ? opacity : false;
+    },
+    { selector },
+    { timeout },
+  );
+  const opacity = await handle.jsonValue();
+  console.log(`  ✓ ${label} (${Number(opacity).toFixed(2)})`);
+  return opacity;
+}
+
+async function waitForSingleSettingsPanel(page) {
+  await page.waitForFunction(
+    () => document.querySelectorAll('.settings-body .panel').length === 1,
+    null,
+    { timeout: 2_000 },
+  );
+}
+
 (async () => {
   console.log('Starting UI interaction tests...');
   const browser = await chromium.launch({ headless: true });
@@ -22,6 +46,30 @@ const TIMEOUT = 8_000;
   try {
     await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: TIMEOUT });
     console.log('Page loaded.');
+
+    // ── Navigation: page swaps should overlap during transition ───────────────
+    await page.locator('h1.page-h:has-text("Welcome back")').waitFor({ state: 'visible', timeout: 3_000 });
+    await page.locator('.nav-item:has-text("Dictionary")').click();
+    const wrapperCountHandle = await page.waitForFunction(
+      () => document.querySelectorAll('.page-wrapper').length >= 2
+        ? document.querySelectorAll('.page-wrapper').length
+        : false,
+      null,
+      { timeout: 1_000 },
+    ).catch(() => null);
+    const wrapperCount = wrapperCountHandle ? await wrapperCountHandle.jsonValue() : 0;
+    if (wrapperCount < 2) {
+      errors.push(`Expected overlapping page wrappers during nav transition, saw ${wrapperCount}`);
+    } else {
+      const outgoingHidden = await page.locator('.page-wrapper').first().evaluate((el) => el.inert && el.getAttribute('aria-hidden') === 'true');
+      if (!outgoingHidden) {
+        errors.push('Outgoing page wrapper should be inert and aria-hidden during nav transition');
+      } else {
+        const incomingOpacity = await waitForIntermediateOpacity(page, '.page-wrapper:last-child', 'Incoming page fades in during nav transition');
+        console.log(`  ✓ Outgoing page wrapper is inert during transition; incoming opacity ${Number(incomingOpacity).toFixed(2)}`);
+      }
+    }
+    await page.locator('h1.page-h:has-text("Dictionary")').waitFor({ state: 'visible', timeout: 3_000 });
 
     // ── Navigation: each click must actually change the visible view ──────────
     const navMap = [
@@ -49,9 +97,37 @@ const TIMEOUT = 8_000;
     await settingsBtn.waitFor({ state: 'visible', timeout: TIMEOUT });
     await settingsBtn.click();
 
+    await waitForIntermediateOpacity(page, '.settings-overlay', 'Settings backdrop fades in').catch((err) => {
+      errors.push(`Settings backdrop should pass through a mid-fade opacity on open: ${err.message}`);
+    });
+
     const modal = page.locator('.settings-modal');
     await modal.waitFor({ state: 'visible', timeout: 3_000 });
     console.log('  ✓ Settings modal opened');
+    const activeInModal = await modal.evaluate((el) => el.contains(document.activeElement));
+    if (!activeInModal) {
+      errors.push('Settings modal did not move focus inside the dialog on open');
+    }
+
+    const versionFoot = await page.locator('.settings-foot').textContent();
+    if (!versionFoot?.includes('0.11.0')) {
+      errors.push(`Settings footer version mismatch: "${versionFoot?.trim()}"`);
+    } else {
+      console.log(`  ✓ Settings footer shows ${versionFoot.trim()}`);
+    }
+
+    const offlineToast = page.locator('.offline-toast');
+    if (await offlineToast.isVisible().catch(() => false)) {
+      const [overlayZ, toastZ] = await Promise.all([
+        page.locator('.settings-overlay-wrap').evaluate((el) => Number(getComputedStyle(el).zIndex) || 0),
+        offlineToast.evaluate((el) => Number(getComputedStyle(el).zIndex) || 0),
+      ]);
+      if (overlayZ <= toastZ) {
+        errors.push(`Settings overlay z-index (${overlayZ}) should sit above offline toast (${toastZ})`);
+      } else {
+        console.log(`  ✓ Settings overlay stacks above offline toast (${overlayZ} > ${toastZ})`);
+      }
+    }
 
     // ── Settings sections: each click must show the correct h2 ────────────────
     const sections = ['General', 'API Keys', 'Models', 'Privacy', 'Advanced', 'About'];
@@ -66,13 +142,28 @@ const TIMEOUT = 8_000;
       console.log(`    ✓ "${sec}" panel rendered`);
     }
 
+    // ── General language should not localize unrelated UI copy ───────────────
+    await page.locator('.settings-nav-item:has-text("General")').click();
+    await page.locator('h2.settings-h:has-text("General")').waitFor({ state: 'visible', timeout: 3_000 });
+    await waitForSingleSettingsPanel(page);
+    await page.locator('.language-btn').click();
+    await page.locator('.language-menu').waitFor({ state: 'visible', timeout: 2_000 });
+    await page.locator('.language-item').filter({ hasText: 'Chinese' }).first().click();
+    await page.locator('.language-btn:has-text("Chinese")').waitFor({ state: 'visible', timeout: 2_000 });
+    if (!(await page.locator('.label', { hasText: 'Input device' }).isVisible().catch(() => false))) {
+      errors.push('Input device label disappeared after changing Spoken Language to Chinese');
+    } else {
+      console.log('  ✓ Input device label stays in English after language change');
+    }
+    if (await page.locator('text=输入设备').isVisible().catch(() => false)) {
+      errors.push('Chinese microphone label leaked into General settings after Spoken Language change');
+    }
+
     // ── Privacy toggles: verify state actually changes on click ───────────────
     console.log('  Testing Privacy toggles...');
     await page.locator('.settings-nav-item:has-text("Privacy")').click();
     await page.locator('h2.settings-h:has-text("Privacy")').waitFor({ state: 'visible', timeout: 3_000 });
-    // Wait for the previous section's out-transition (350 ms) to fully complete
-    // so we don't grab toggles that are animating out and about to detach.
-    await page.waitForTimeout(450);
+    await waitForSingleSettingsPanel(page);
 
     const toggles = await page.locator('.toggle').all();
     if (toggles.length === 0) {
@@ -96,6 +187,9 @@ const TIMEOUT = 8_000;
     // ── Settings: close by clicking outside (10, 10) ─────────────────────────
     console.log('  Closing Settings via outside click...');
     await page.mouse.click(10, 10);
+    await waitForIntermediateOpacity(page, '.settings-overlay', 'Settings backdrop fades out').catch((err) => {
+      errors.push(`Settings backdrop should pass through a mid-fade opacity on close: ${err.message}`);
+    });
     await modal.waitFor({ state: 'hidden', timeout: 3_000 });
     console.log('  ✓ Settings modal closed');
 

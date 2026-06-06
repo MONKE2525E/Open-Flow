@@ -12,7 +12,6 @@
     transcriptionLanguages,
     type TranscriptionLanguageCode,
   } from '../../transcriptionLanguages';
-  import { getAudioCalibrationCopy } from '../../calibrationCopy';
 
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   let languageDropdownOpen = $state(false);
@@ -20,7 +19,12 @@
   let microphones = $state<string[]>([]);
   let selectedMic = $state('');
   let micDropdownOpen = $state(false);
-  const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
+  const microphoneCopy = {
+    inputDeviceLabel: 'Input device',
+    inputDeviceDescription: 'Choose which microphone Open Flow should record from',
+    defaultDevice: 'Default Device',
+    noDevicesFound: 'No devices found',
+  };
   let muteAudio = $state(false);
   let autostart = $state(false);
   let cleanup = $state(true);
@@ -386,21 +390,21 @@
 </div>
 <div class="setting-row">
   <div>
-    <div class="label">{audioCopy.inputDeviceLabel}</div>
-    <div class="desc">{audioCopy.inputDeviceDescription}</div>
+    <div class="label">{microphoneCopy.inputDeviceLabel}</div>
+    <div class="desc">{microphoneCopy.inputDeviceDescription}</div>
   </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="mic-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && micDropdownOpen) { micDropdownOpen = false; e.stopPropagation(); } }}>
     <button
       class="btn-ghost mic-btn"
-      use:animateWidth={{ text: selectedMic || audioCopy.defaultDevice, max: 180 }}
+      use:animateWidth={{ text: selectedMic || microphoneCopy.defaultDevice, max: 180 }}
       onclick={() => (micDropdownOpen = !micDropdownOpen)}
       aria-haspopup="true"
       aria-expanded={micDropdownOpen}
       aria-controls={MIC_MENU_ID}
       aria-label="Microphone device"
     >
-      <span class="mic-btn-label">{selectedMic || audioCopy.defaultDevice}</span>
+      <span class="mic-btn-label">{selectedMic || microphoneCopy.defaultDevice}</span>
       <svg class:open={micDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="m6 9 6 6 6-6"/>
       </svg>
@@ -415,12 +419,12 @@
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
-        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{audioCopy.defaultDevice}</button>
+        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{microphoneCopy.defaultDevice}</button>
         {#each microphones as m}
           <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>{m}</button>
         {/each}
         {#if microphones.length === 0}
-          <div class="mic-empty">{audioCopy.noDevicesFound}</div>
+          <div class="mic-empty">{microphoneCopy.noDevicesFound}</div>
         {/if}
       </div>
     {/if}
