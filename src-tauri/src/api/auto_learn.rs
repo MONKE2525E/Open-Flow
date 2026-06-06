@@ -151,6 +151,18 @@ fn evidence_session_id(seed: &str, app_context: &str) -> String {
     format!("{seed_hash}:{app_hash}:{now_nanos}")
 }
 
+fn dedupe_candidate_pairs(candidates: Vec<CandidateCorrection>) -> Vec<CandidateCorrection> {
+    let mut recorded_this_session = HashSet::new();
+    let mut deduped = Vec::new();
+    for candidate in candidates {
+        let key = (candidate.mistake.clone(), candidate.correction.clone());
+        if recorded_this_session.insert(key) {
+            deduped.push(candidate);
+        }
+    }
+    deduped
+}
+
 fn monitor_key(injected_text: &str, app_context: &str) -> String {
     let (lhs, rhs) = pair_hash(injected_text, app_context);
     format!("{rhs}:{lhs}")
@@ -461,7 +473,7 @@ pub fn record_cleanup_divergence(
         return;
     }
 
-    let candidates = detect_span_corrections(raw, clean);
+    let candidates = dedupe_candidate_pairs(detect_span_corrections(raw, clean));
     if candidates.is_empty() {
         return;
     }
@@ -2001,6 +2013,33 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].mistake.as_deref(), Some("manual typo"));
         assert!(!entries[0].auto_learned);
+    }
+
+    #[test]
+    fn cleanup_divergence_deduplicates_identical_pairs_in_one_session() {
+        let deduped = dedupe_candidate_pairs(vec![
+            CandidateCorrection {
+                mistake: "Koobernetes".into(),
+                correction: "Kubernetes".into(),
+                confidence: 0.9,
+            },
+            CandidateCorrection {
+                mistake: "Koobernetes".into(),
+                correction: "Kubernetes".into(),
+                confidence: 0.7,
+            },
+            CandidateCorrection {
+                mistake: "rock".into(),
+                correction: "qroq".into(),
+                confidence: 0.8,
+            },
+        ]);
+
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].mistake, "Koobernetes");
+        assert_eq!(deduped[0].correction, "Kubernetes");
+        assert_eq!(deduped[1].mistake, "rock");
+        assert_eq!(deduped[1].correction, "qroq");
     }
 
     #[test]

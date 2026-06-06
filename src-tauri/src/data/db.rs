@@ -913,7 +913,7 @@ pub fn compute_evidence_score(
     let mut sources = std::collections::HashSet::new();
 
     for row in &evidence {
-        let decay = (-row.age_days / half_life_days.max(0.1)).exp();
+        let decay = (-row.age_days.max(0.0) / half_life_days.max(0.1)).exp();
         score += row.weight * row.confidence * decay;
         if !row.session_id.is_empty() {
             sessions.insert(row.session_id.clone());
@@ -1133,6 +1133,10 @@ pub fn delete_dictionary_entry(db: &Db, id: i64) -> Result<()> {
             "DELETE FROM auto_learn_candidates WHERE wrong_word = ?1 AND correct_word = ?2",
             params![mistake, term],
         )?;
+        tx.execute(
+            "DELETE FROM correction_evidence WHERE wrong_word = ?1 AND correct_word = ?2",
+            params![mistake, term],
+        )?;
     }
 
     tx.commit()?;
@@ -1154,6 +1158,9 @@ pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
         )?;
         let mut del_candidate_stmt = tx.prepare(
             "DELETE FROM auto_learn_candidates WHERE wrong_word = ?1 AND correct_word = ?2",
+        )?;
+        let mut del_evidence_stmt = tx.prepare(
+            "DELETE FROM correction_evidence WHERE wrong_word = ?1 AND correct_word = ?2",
         )?;
 
         for chunk in ids.chunks(SQL_BATCH_SIZE) {
@@ -1177,6 +1184,7 @@ pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
             for (term, mistake) in pairs {
                 del_pending_stmt.execute(params![mistake, term])?;
                 del_candidate_stmt.execute(params![mistake, term])?;
+                del_evidence_stmt.execute(params![mistake, term])?;
             }
         }
     }
@@ -1803,6 +1811,28 @@ mod tests {
         // Simulate pending correction records that led to the promotion.
         insert_pending_correction(&db, "Tari", "Tauri").expect("pending 1");
         insert_pending_correction(&db, "Tari", "Tauri").expect("pending 2");
+        insert_correction_evidence(
+            &db,
+            "Tari",
+            "Tauri",
+            "post_edit",
+            1.0,
+            0.9,
+            "sess-a",
+            "test",
+        )
+        .expect("evidence 1");
+        insert_correction_evidence(
+            &db,
+            "Tari",
+            "Tauri",
+            "post_edit",
+            1.0,
+            0.9,
+            "sess-b",
+            "test",
+        )
+        .expect("evidence 2");
         assert_eq!(
             count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count"),
             2
@@ -1817,6 +1847,11 @@ mod tests {
         assert_eq!(
             count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count after"),
             0
+        );
+        let evidence_score = compute_evidence_score(&db, "Tari", "Tauri", 7, 1.5).expect("score");
+        assert_eq!(
+            evidence_score.score, 0.0,
+            "rejection must also purge evidence"
         );
     }
 
@@ -1954,6 +1989,17 @@ mod tests {
             .id;
 
         insert_pending_correction(&db, "Tari", "Tauri").expect("pending");
+        insert_correction_evidence(
+            &db,
+            "Tari",
+            "Tauri",
+            "post_edit",
+            1.0,
+            0.9,
+            "sess-a",
+            "test",
+        )
+        .expect("evidence");
         assert_eq!(
             count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count before"),
             1
@@ -1966,6 +2012,11 @@ mod tests {
             count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count after"),
             0,
             "pending corrections must be purged when the auto-learned entry is manually deleted"
+        );
+        let evidence_score = compute_evidence_score(&db, "Tari", "Tauri", 7, 1.5).expect("score");
+        assert_eq!(
+            evidence_score.score, 0.0,
+            "manual delete must also purge evidence to prevent immediate re-promotion"
         );
     }
 
@@ -2142,6 +2193,26 @@ mod tests {
         assert!(
             ev14.score > 0.0,
             "evidence inside 14-day window must contribute"
+        );
+    }
+
+    #[test]
+    fn evidence_score_clamps_future_dated_rows() {
+        let db = test_db();
+        {
+            let conn = db.lock().expect("lock");
+            conn.execute(
+                "INSERT INTO correction_evidence (wrong_word, correct_word, source, weight, confidence, session_id, app_context, created_at) \
+                 VALUES ('rock', 'qroq', 'post_edit', 1.0, 0.9, 'future-session', 'test', datetime('now', '+10 days'))",
+                [],
+            )
+            .expect("future insert");
+        }
+
+        let ev = compute_evidence_score(&db, "rock", "qroq", 30, 1.5).expect("score");
+        assert!(
+            (ev.score - 0.9).abs() < 1e-6,
+            "future-dated evidence must not amplify score above its raw weight*confidence"
         );
     }
 }
