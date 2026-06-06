@@ -203,12 +203,12 @@ fn main() {
                         }
                     }
                     #[cfg(target_os = "macos")]
-                    tauri::WindowEvent::Resized(_) => {
-                        if window.is_minimized().unwrap_or(false) {
-                            crate::system::mac_app::set_regular_activation_policy_on_main_thread(
-                                window.app_handle(),
-                            );
-                        }
+                    tauri::WindowEvent::Resized(_)
+                        if window.is_minimized().unwrap_or(false) =>
+                    {
+                        crate::system::mac_app::set_regular_activation_policy_on_main_thread(
+                            window.app_handle(),
+                        );
                     }
                     tauri::WindowEvent::Focused(true) => {
                         #[cfg(target_os = "macos")]
@@ -286,10 +286,10 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error building Open Flow")
-        .run(|app, event| {
+        .run(|_app, _event| {
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = event {
-                show_main_window(app);
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                show_main_window(_app);
             }
         });
 }

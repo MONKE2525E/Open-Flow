@@ -1,4 +1,6 @@
-use tauri::{AppHandle, Manager, Wry};
+use tauri::{AppHandle, Wry};
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 use tauri_plugin_store::Store;
 
 #[cfg(windows)]
@@ -419,6 +421,7 @@ pub fn read_for_status(provider: &str) -> Result<bool, String> {
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
 pub fn read_for_status(_provider: &str) -> Result<bool, String> {
     Ok(true)
 }
@@ -450,6 +453,11 @@ pub fn get(_provider: &str) -> String {
 #[cfg(not(any(windows, target_os = "macos")))]
 pub fn has(_provider: &str) -> bool {
     false
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn delete(_provider: &str) -> Result<(), String> {
+    Ok(())
 }
 
 /// Moves any plaintext API keys from settings.json or legacy macOS

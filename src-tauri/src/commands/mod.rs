@@ -1094,6 +1094,7 @@ pub fn open_microphone_settings() -> Result<(), String> {
 /// Keychain dialog if the app hasn't been granted "Always Allow" yet.
 /// Returns "authorized" | "not_configured" | "denied".
 #[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub async fn check_keychain_access(provider: String) -> String {
     #[cfg(target_os = "macos")]
     {

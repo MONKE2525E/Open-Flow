@@ -9,6 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
 };
 
+#[cfg(windows)]
 const BROWSER_EXES: &[(&str, &str)] = &[
     ("chrome.exe", "Google Chrome"),
     ("msedge.exe", "Microsoft Edge"),
@@ -19,7 +20,11 @@ const BROWSER_EXES: &[(&str, &str)] = &[
     ("arc.exe", "Arc"),
     ("waterfox.exe", "Waterfox"),
     ("librewolf.exe", "LibreWolf"),
-    // macOS app names (process name is "<localized name>.app", lowercased)
+];
+
+// Process name convention on macOS: "<localized name>.app" lowercased.
+#[cfg(target_os = "macos")]
+const BROWSER_EXES: &[(&str, &str)] = &[
     ("google chrome.app", "Google Chrome"),
     ("safari.app", "Safari"),
     ("microsoft edge.app", "Microsoft Edge"),
@@ -30,7 +35,14 @@ const BROWSER_EXES: &[(&str, &str)] = &[
 
 #[allow(dead_code)]
 pub fn is_browser_process_name(process_name: &str) -> bool {
-    BROWSER_EXES.iter().any(|(exe, _)| *exe == process_name)
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        BROWSER_EXES.iter().any(|(exe, _)| *exe == process_name)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        false
+    }
 }
 /// The focus target to refocus before paste. On Windows this is the foreground
 /// `HWND`; on macOS it is the frontmost application's PID (both fit in a `usize`).
@@ -108,29 +120,35 @@ pub fn get_process_name_for_hwnd(hwnd: usize) -> Option<String> {
 }
 
 /// Returns a human-readable context hint for the cleanup prompt, e.g.
-/// "Google Chrome — GitHub · Build software better, together" or "slack.exe".
+/// "Google Chrome — GitHub · Build software better, together" or "Slack".
 /// Returns `None` if there is no useful context to add.
 pub fn get_app_context_hint(process_name: &str) -> Option<String> {
-    let browser = BROWSER_EXES
-        .iter()
-        .find(|(exe, _)| *exe == process_name)
-        .map(|(_, name)| *name);
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        let browser = BROWSER_EXES
+            .iter()
+            .find(|(exe, _)| *exe == process_name)
+            .map(|(_, name)| *name);
 
-    if let Some(browser_name) = browser {
-        let title = get_active_window_title().unwrap_or_default();
-        if title.is_empty() {
-            return Some(browser_name.to_string());
+        if let Some(browser_name) = browser {
+            let title = get_active_window_title().unwrap_or_default();
+            if title.is_empty() {
+                return Some(browser_name.to_string());
+            }
+            let page = strip_browser_suffix(&title, browser_name);
+            if page.is_empty() {
+                return Some(browser_name.to_string());
+            }
+            return Some(format!("{browser_name} — {page}"));
         }
-        let page = strip_browser_suffix(&title, browser_name);
-        if page.is_empty() {
-            return Some(browser_name.to_string());
-        }
-        return Some(format!("{browser_name} — {page}"));
     }
 
-    // For non-browsers just return the process name so the model at least knows
-    // which app the user is in.
-    Some(process_name.to_string())
+    // For non-browsers strip the platform suffix so the model sees "Slack"
+    // rather than "slack.exe" / "slack.app".
+    let friendly = process_name
+        .trim_end_matches(".exe")
+        .trim_end_matches(".app");
+    Some(friendly.to_string())
 }
 
 fn get_active_window_title() -> Option<String> {
