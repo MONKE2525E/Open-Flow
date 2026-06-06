@@ -42,7 +42,10 @@ jobs:
       - name: Build Tauri release app
         run: |
           if [ "${{ matrix.os-name }}" = "macos" ]; then
-            npm run tauri build -- --target universal-apple-darwin
+            npm run tauri build -- --target aarch64-apple-darwin
+            mv "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_aarch64.dmg" "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_Apple_Silicon.dmg"
+            npm run tauri build -- --target x86_64-apple-darwin
+            mv "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_x86_64.dmg" "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_Intel.dmg"
           else
             npm run tauri build
           fi
@@ -64,18 +67,18 @@ jobs:
           path: src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
-      - name: Upload macOS DMG installer (.dmg)
+      - name: Upload macOS Apple Silicon DMG (.dmg)
         if: matrix.os-name == 'macos'
         uses: actions/upload-artifact@v4
         with:
-          name: Open-Flow-macOS-dmg
-          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          name: Open-Flow-macOS-Apple-Silicon-dmg
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_Apple_Silicon.dmg
           if-no-files-found: error
 
-      - name: Upload macOS App bundle (.app)
+      - name: Upload macOS Intel DMG (.dmg)
         if: matrix.os-name == 'macos'
         uses: actions/upload-artifact@v4
         with:
-          name: Open-Flow-macOS-app
-          path: src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+          name: Open-Flow-macOS-Intel-dmg
+          path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_Intel.dmg
           if-no-files-found: error

@@ -15,15 +15,25 @@ src-tauri/target/release/bundle/*
 !src-tauri/target/release/bundle/nsis/*.exe
 !src-tauri/target/release/bundle/dmg/*.dmg
 
-# Universal macOS build exceptions
-!src-tauri/target/universal-apple-darwin/
-src-tauri/target/universal-apple-darwin/*
-!src-tauri/target/universal-apple-darwin/release/
-src-tauri/target/universal-apple-darwin/release/*
-!src-tauri/target/universal-apple-darwin/release/bundle/
-src-tauri/target/universal-apple-darwin/release/bundle/*
-!src-tauri/target/universal-apple-darwin/release/bundle/dmg/
-!src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+# Intel macOS build exceptions
+!src-tauri/target/x86_64-apple-darwin/
+src-tauri/target/x86_64-apple-darwin/*
+!src-tauri/target/x86_64-apple-darwin/release/
+src-tauri/target/x86_64-apple-darwin/release/*
+!src-tauri/target/x86_64-apple-darwin/release/bundle/
+src-tauri/target/x86_64-apple-darwin/release/bundle/*
+!src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/
+!src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+
+# Apple Silicon macOS build exceptions
+!src-tauri/target/aarch64-apple-darwin/
+src-tauri/target/aarch64-apple-darwin/*
+!src-tauri/target/aarch64-apple-darwin/release/
+src-tauri/target/aarch64-apple-darwin/release/*
+!src-tauri/target/aarch64-apple-darwin/release/bundle/
+src-tauri/target/aarch64-apple-darwin/release/bundle/*
+!src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/
+!src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
 
 # Generated screenshots
 screenshot.png
