@@ -129,6 +129,65 @@
   });
 
   loadSettings();
+
+  // ---------- import / export ----------
+
+  type ImportSummary = {
+    settings_applied: number;
+    settings_skipped: number;
+    dictionary_inserted: number;
+    dictionary_skipped: number;
+    snippets_inserted: number;
+    snippets_skipped: number;
+  };
+
+  let exporting = $state(false);
+  let exportMsg = $state('');
+  let exportMsgKind = $state<'ok' | 'err' | ''>('');
+  let importing = $state(false);
+  let importMsg = $state('');
+  let importMsgKind = $state<'ok' | 'err' | ''>('');
+  let fileInput: HTMLInputElement | null = $state(null);
+
+  async function handleExport() {
+    exporting = true;
+    exportMsg = '';
+    exportMsgKind = '';
+    try {
+      const path = await invoke<string>('export_data');
+      exportMsg = `Saved to ${path}`;
+      exportMsgKind = 'ok';
+    } catch {
+      exportMsg = 'Export failed.';
+      exportMsgKind = 'err';
+    } finally {
+      exporting = false;
+    }
+  }
+
+  async function handleFileSelected(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    importing = true;
+    importMsg = '';
+    importMsgKind = '';
+    try {
+      const json = await file.text();
+      const s = await invoke<ImportSummary>('import_data', { json });
+      importMsg = `Applied ${s.settings_applied} settings, ${s.dictionary_inserted} dictionary entries, ${s.snippets_inserted} snippets.`;
+      importMsgKind = 'ok';
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      importMsg =
+        msg.startsWith('Invalid backup') || msg.startsWith('Unsupported backup')
+          ? msg
+          : 'Import failed.';
+      importMsgKind = 'err';
+    } finally {
+      importing = false;
+      if (fileInput) fileInput.value = '';
+    }
+  }
 </script>
 
 <h2 class="settings-h">Privacy</h2>
@@ -235,7 +294,58 @@
   </button>
 </div>
 
+<h2 class="settings-h data-h">Data</h2>
+<div class="setting-row">
+  <div>
+    <div class="label">Export Backup</div>
+    {#if exportMsg}
+      <div
+        class="desc data-status"
+        class:data-ok={exportMsgKind === 'ok'}
+        class:data-err={exportMsgKind === 'err'}
+      >{exportMsg}</div>
+    {/if}
+  </div>
+  <button class="btn-ghost" onclick={handleExport} disabled={exporting}>
+    {exporting ? 'Exporting…' : 'Export'}
+  </button>
+</div>
+<div class="setting-row">
+  <div>
+    <div class="label">Import Backup</div>
+    {#if importMsg}
+      <div
+        class="desc data-status"
+        class:data-ok={importMsgKind === 'ok'}
+        class:data-err={importMsgKind === 'err'}
+      >{importMsg}</div>
+    {/if}
+  </div>
+  <button class="btn-ghost" onclick={() => fileInput?.click()} disabled={importing}>
+    {importing ? 'Importing…' : 'Import'}
+  </button>
+</div>
+<input
+  bind:this={fileInput}
+  type="file"
+  accept=".json"
+  style="display:none"
+  onchange={handleFileSelected}
+/>
+
 <style>
+  .data-h { --settings-h-mb: 2px; margin-top: 52px; }
+
+  .data-ok { color: var(--success); }
+  .data-err { color: var(--accent); }
+  .data-status {
+    animation: data-drop 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes data-drop {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
   .history-dropdown { position: relative; flex-shrink: 0; }
   .mic-btn { display: flex; align-items: center; gap: 6px; max-width: 180px; }
   .mic-btn svg { transition: transform 150ms; }
