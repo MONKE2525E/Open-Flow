@@ -179,10 +179,12 @@
       const dictParts = [
         s.dictionary_inserted > 0 ? `${s.dictionary_inserted} added` : '',
         s.dictionary_already_existed > 0 ? `${s.dictionary_already_existed} already on device` : '',
+        s.dictionary_skipped > 0 ? `${s.dictionary_skipped} skipped` : '',
       ].filter(Boolean).join(', ') || 'none';
       const snipParts = [
         s.snippets_inserted > 0 ? `${s.snippets_inserted} added` : '',
         s.snippets_already_existed > 0 ? `${s.snippets_already_existed} already on device` : '',
+        s.snippets_skipped > 0 ? `${s.snippets_skipped} skipped` : '',
       ].filter(Boolean).join(', ') || 'none';
       importMsg = `Applied ${s.settings_applied} settings. Dictionary: ${dictParts}. Snippets: ${snipParts}.`;
       importMsgKind = 'ok';
