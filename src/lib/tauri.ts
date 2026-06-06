@@ -74,6 +74,7 @@ const defaultSettings: Record<string, unknown> = {
   mic_gain: 3.5,
   app_context_hint: false,
   auto_learn_enabled: false,
+  auto_learn_window_days: 3,
   contextual_caps_enabled: true,
   auto_spacing_enabled: true,
   history_retention: '30 days',
@@ -171,6 +172,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return readDevList<DevDictionaryEntry>(DEV_DICTIONARY_KEY) as T;
     case 'get_recent':
     case 'get_recent_auto_learn_activity':
+    case 'get_dictionary_suggestions':
     case 'get_microphones':
     case 'get_recent_logs':
     case 'get_installed_apps':
@@ -219,6 +221,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'set_dev_logging_enabled':
     case 'start_calibration_monitoring':
     case 'stop_calibration_monitoring':
+    case 'approve_dictionary_suggestion':
+    case 'dismiss_dictionary_suggestion':
       return undefined as T;
     case 'create_snippet': {
       const trigger = assertDevText(args?.trigger, 'Trigger').trim();

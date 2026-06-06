@@ -1494,6 +1494,7 @@ mod tests {
             cleanup_intensity: "medium".into(),
             app_context_hint: false,
             auto_learn_enabled: false,
+            auto_learn_window_days: 3,
             contextual_caps_enabled: true,
             auto_spacing_enabled: true,
             macos_clipboard_sniff_enabled: false,
@@ -2047,7 +2048,8 @@ async fn finalize_pipeline_completion(
         if let Err(e) = injection::copy_to_clipboard(&final_text_substituted).await {
             log::warn!("pipeline: clipboard fallback write failed: {e}");
         }
-        app.emit("open-flow:error", "Text copied — press Ctrl+V to paste").ok();
+        app.emit("open-flow:error", "Text copied — press Ctrl+V to paste")
+            .ok();
         injection::InjectionOutcome {
             text: final_text_substituted.clone(),
             context_state: "self_inject",
@@ -2113,11 +2115,23 @@ async fn finalize_pipeline_completion(
                 app.clone(),
             );
         }
+
+        // Source A: raw↔clean divergence (cross-platform, zero accessibility).
+        auto_learn::record_cleanup_divergence(
+            ctx.raw,
+            ctx.final_text_before_dict,
+            &ctx.process_name,
+            db_handle.inner().clone(),
+            app.clone(),
+            ctx.cfg.auto_learn_window_days,
+        );
+
         auto_learn::start_monitor(
             injected_text,
             ctx.process_name,
             db_handle.inner().clone(),
             app.clone(),
+            ctx.cfg.auto_learn_window_days,
         );
     }
 

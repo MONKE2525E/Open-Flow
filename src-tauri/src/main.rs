@@ -203,9 +203,7 @@ fn main() {
                         }
                     }
                     #[cfg(target_os = "macos")]
-                    tauri::WindowEvent::Resized(_)
-                        if window.is_minimized().unwrap_or(false) =>
-                    {
+                    tauri::WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) => {
                         crate::system::mac_app::set_regular_activation_policy_on_main_thread(
                             window.app_handle(),
                         );
@@ -273,6 +271,9 @@ fn main() {
             commands::remove_dictionary_entry,
             commands::get_auto_learn_status_summary,
             commands::get_recent_auto_learn_activity,
+            commands::get_dictionary_suggestions,
+            commands::approve_dictionary_suggestion,
+            commands::dismiss_dictionary_suggestion,
             commands::retry_transcription,
             commands::check_for_update,
             commands::install_update,

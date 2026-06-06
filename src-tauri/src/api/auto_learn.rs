@@ -13,6 +13,7 @@ use crate::core::context_probe::{ContextProbeSource, InjectionContextProbe};
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
+use crate::core::correction_diff::{detect_span_corrections, CandidateCorrection};
 use crate::core::text_context::is_invisible_prefix_char as is_invisible_probe_char;
 #[cfg(any(windows, test))]
 use crate::core::text_context::SentenceContext;
@@ -30,10 +31,6 @@ const CACHE_REJECTION_WINDOW_SECS: u64 = 10;
 const PENDING_RETENTION_DAYS: i64 = 2;
 const PROMOTION_THRESHOLD: i64 = 2;
 const STABLE_TEXT_OBSERVATIONS_REQUIRED: usize = 2;
-const MIN_CANDIDATE_NORM_LEN: usize = 2;
-const MAX_SPAN_GROWTH_WORDS: usize = 5;
-const MAX_REPLACEMENTS_PER_SPAN: usize = 2;
-const MAX_CHANGED_OPS_PER_SPAN: usize = 4;
 const MIN_CANDIDATE_CONFIDENCE: f64 = 0.45;
 const PAIR_COOLDOWN_MINUTES: i64 = 0;
 
@@ -93,39 +90,10 @@ impl Drop for EventModeHookGuard {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct WordToken {
-    raw: String,
-    norm: String,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct CandidateCorrection {
-    mistake: String,
-    correction: String,
-    confidence: f64,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct CorrectionMetrics {
-    a_len: usize,
-    b_len: usize,
-    max_len: usize,
-    distance: usize,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TextAnchor {
     start: usize,
     end: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AlignOp {
-    Equal,
-    Replace,
-    Insert,
-    Delete,
 }
 
 #[derive(Debug, Default)]
@@ -158,220 +126,6 @@ impl StableTextGate {
     }
 }
 
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let (m, n) = (a.len(), b.len());
-    let mut row: Vec<usize> = (0..=n).collect();
-    for i in 1..=m {
-        let mut prev = row[0];
-        row[0] = i;
-        for j in 1..=n {
-            let old = row[j];
-            row[j] = if a[i - 1] == b[j - 1] {
-                prev
-            } else {
-                1 + prev.min(row[j]).min(row[j - 1])
-            };
-            prev = old;
-        }
-    }
-    row[n]
-}
-
-fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || matches!(c, '\'' | '-' | '_')
-}
-
-fn normalize_word(word: &str) -> String {
-    word.chars()
-        .filter(|c| is_word_char(*c))
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
-fn tokenize_words(text: &str) -> Vec<WordToken> {
-    let mut tokens = Vec::new();
-    let mut start = None;
-
-    for (idx, ch) in text.char_indices() {
-        if is_word_char(ch) {
-            if start.is_none() {
-                start = Some(idx);
-            }
-        } else if let Some(s) = start.take() {
-            let raw = &text[s..idx];
-            let norm = normalize_word(raw);
-            if !norm.is_empty() {
-                tokens.push(WordToken {
-                    raw: raw.to_string(),
-                    norm,
-                });
-            }
-        }
-    }
-
-    if let Some(s) = start {
-        let raw = &text[s..];
-        let norm = normalize_word(raw);
-        if !norm.is_empty() {
-            tokens.push(WordToken {
-                raw: raw.to_string(),
-                norm,
-            });
-        }
-    }
-
-    tokens
-}
-
-fn has_distinctive_features(token: &str) -> bool {
-    if !token.is_ascii() {
-        return true;
-    }
-    if token.len() >= 4
-        && token
-            .chars()
-            .any(|c| matches!(c.to_ascii_lowercase(), 'q' | 'x' | 'z'))
-    {
-        return true;
-    }
-    if token
-        .chars()
-        .any(|c| c.is_ascii_digit() || matches!(c, '\'' | '-' | '_'))
-    {
-        return true;
-    }
-
-    let uppercase_count = token.chars().filter(|c| c.is_uppercase()).count();
-    uppercase_count > 1 || token.chars().skip(1).any(|c| c.is_uppercase())
-}
-
-fn is_common_word(word: &str) -> bool {
-    matches!(
-        word,
-        "a" | "about"
-            | "after"
-            | "all"
-            | "also"
-            | "am"
-            | "an"
-            | "and"
-            | "are"
-            | "as"
-            | "ask"
-            | "at"
-            | "be"
-            | "but"
-            | "by"
-            | "can"
-            | "do"
-            | "for"
-            | "from"
-            | "get"
-            | "go"
-            | "had"
-            | "has"
-            | "have"
-            | "he"
-            | "her"
-            | "him"
-            | "his"
-            | "i"
-            | "if"
-            | "in"
-            | "is"
-            | "it"
-            | "its"
-            | "just"
-            | "me"
-            | "my"
-            | "no"
-            | "not"
-            | "of"
-            | "on"
-            | "or"
-            | "our"
-            | "out"
-            | "so"
-            | "ship"
-            | "shop"
-            | "that"
-            | "the"
-            | "them"
-            | "then"
-            | "there"
-            | "their"
-            | "they"
-            | "this"
-            | "to"
-            | "up"
-            | "us"
-            | "was"
-            | "we"
-            | "what"
-            | "when"
-            | "with"
-            | "you"
-            | "your"
-    )
-}
-
-fn compute_correction_metrics(original: &WordToken, corrected: &WordToken) -> CorrectionMetrics {
-    let a_len = original.norm.chars().count();
-    let b_len = corrected.norm.chars().count();
-    let max_len = a_len.max(b_len);
-    let distance = edit_distance(&original.norm, &corrected.norm);
-    CorrectionMetrics {
-        a_len,
-        b_len,
-        max_len,
-        distance,
-    }
-}
-
-fn is_candidate_correction(
-    original: &WordToken,
-    corrected: &WordToken,
-    metrics: CorrectionMetrics,
-) -> bool {
-    if original.norm.is_empty() || corrected.norm.is_empty() {
-        return false;
-    }
-    if original.norm == corrected.norm {
-        return false;
-    }
-    if metrics.a_len < MIN_CANDIDATE_NORM_LEN || metrics.b_len < MIN_CANDIDATE_NORM_LEN {
-        return false;
-    }
-
-    let original_distinct = has_distinctive_features(&original.raw);
-    let corrected_distinct = has_distinctive_features(&corrected.raw);
-    if metrics.max_len <= 3 && !original_distinct && !corrected_distinct {
-        return false;
-    }
-
-    if is_common_word(&original.norm)
-        && is_common_word(&corrected.norm)
-        && !original_distinct
-        && !corrected_distinct
-    {
-        return false;
-    }
-
-    if is_plain_suffix_completion(&original.norm, &corrected.norm)
-        && !original_distinct
-        && !corrected_distinct
-    {
-        return false;
-    }
-
-    metrics.distance <= 2_usize.max(metrics.max_len / 2)
-        || ((original_distinct || corrected_distinct)
-            && metrics.max_len >= 4
-            && metrics.distance <= 3)
-}
-
 fn pair_hash(left: &str, right: &str) -> (String, String) {
     // FNV-1a 64-bit with a fixed offset/prime gives stable hashes across
     // app versions and process runs. This is telemetry bucketing, not crypto.
@@ -388,51 +142,18 @@ fn pair_hash(left: &str, right: &str) -> (String, String) {
     (hash_str(left), hash_str(right))
 }
 
+fn evidence_session_id(seed: &str, app_context: &str) -> String {
+    let (seed_hash, app_hash) = pair_hash(seed, app_context);
+    let now_nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    format!("{seed_hash}:{app_hash}:{now_nanos}")
+}
+
 fn monitor_key(injected_text: &str, app_context: &str) -> String {
     let (lhs, rhs) = pair_hash(injected_text, app_context);
     format!("{rhs}:{lhs}")
-}
-
-fn candidate_confidence(
-    original: &WordToken,
-    corrected: &WordToken,
-    metrics: CorrectionMetrics,
-    changed_ops: usize,
-    replacements_len: usize,
-) -> f64 {
-    let distance = metrics.distance as f64;
-    let max_len = metrics.max_len.max(1) as f64;
-    let ratio_score = 1.0 - (distance / max_len).min(1.0);
-
-    let mut score = ratio_score * 0.55;
-    if has_distinctive_features(&original.raw) || has_distinctive_features(&corrected.raw) {
-        score += 0.25;
-    }
-    if is_common_word(&original.norm) && is_common_word(&corrected.norm) {
-        score -= 0.2;
-    }
-    score -= (changed_ops.saturating_sub(1) as f64) * 0.07;
-    score -= (replacements_len.saturating_sub(1) as f64) * 0.08;
-    score.clamp(0.0, 1.0)
-}
-
-fn is_plain_suffix_completion(original: &str, corrected: &str) -> bool {
-    if let Some(suffix) = corrected.strip_prefix(original) {
-        return is_low_signal_suffix(suffix);
-    }
-
-    if let Some(suffix) = original.strip_prefix(corrected) {
-        return is_low_signal_suffix(suffix);
-    }
-
-    false
-}
-
-fn is_low_signal_suffix(suffix: &str) -> bool {
-    matches!(suffix, "s" | "d" | "e" | "g" | "ed" | "er" | "es" | "ing")
-        || suffix
-            .chars()
-            .all(|ch| matches!(ch, 'a' | 'e' | 'i' | 'o' | 'u'))
 }
 
 fn find_unique_anchor(haystack: &str, needle: &str) -> Option<TextAnchor> {
@@ -552,135 +273,6 @@ fn capture_baseline_text_any(injected_text: &str) -> Option<String> {
     } else {
         None
     }
-}
-
-fn align_word_ops(
-    original: &[WordToken],
-    current: &[WordToken],
-) -> Vec<(AlignOp, Option<usize>, Option<usize>)> {
-    let m = original.len();
-    let n = current.len();
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
-
-    for (i, row) in dp.iter_mut().enumerate().take(m + 1) {
-        row[0] = i;
-    }
-    for (j, cell) in dp[0].iter_mut().enumerate().take(n + 1) {
-        *cell = j;
-    }
-
-    for i in 1..=m {
-        for j in 1..=n {
-            let replace_cost = if original[i - 1].norm == current[j - 1].norm {
-                0
-            } else {
-                1
-            };
-            dp[i][j] = (dp[i - 1][j - 1] + replace_cost)
-                .min(dp[i - 1][j] + 1)
-                .min(dp[i][j - 1] + 1);
-        }
-    }
-
-    let mut ops = Vec::new();
-    let (mut i, mut j) = (m, n);
-    while i > 0 || j > 0 {
-        if i > 0 && j > 0 {
-            let replace_cost = if original[i - 1].norm == current[j - 1].norm {
-                0
-            } else {
-                1
-            };
-            if dp[i][j] == dp[i - 1][j - 1] + replace_cost {
-                let op = if replace_cost == 0 {
-                    AlignOp::Equal
-                } else {
-                    AlignOp::Replace
-                };
-                ops.push((op, Some(i - 1), Some(j - 1)));
-                i -= 1;
-                j -= 1;
-                continue;
-            }
-        }
-        if i > 0 && dp[i][j] == dp[i - 1][j] + 1 {
-            ops.push((AlignOp::Delete, Some(i - 1), None));
-            i -= 1;
-        } else {
-            ops.push((AlignOp::Insert, None, Some(j - 1)));
-            j -= 1;
-        }
-    }
-
-    ops.reverse();
-    ops
-}
-
-fn detect_span_corrections(original_span: &str, current_span: &str) -> Vec<CandidateCorrection> {
-    let original = tokenize_words(original_span);
-    let current = tokenize_words(current_span);
-
-    if original.is_empty() || current.is_empty() {
-        return vec![];
-    }
-    if current.len() > original.len() * 2 + MAX_SPAN_GROWTH_WORDS {
-        return vec![];
-    }
-
-    let ops = align_word_ops(&original, &current);
-    let changed_ops = ops
-        .iter()
-        .filter(|(op, _, _)| *op != AlignOp::Equal)
-        .count();
-    if changed_ops > MAX_CHANGED_OPS_PER_SPAN {
-        log::debug!("auto-learn: rejected span with too many changed word operations");
-        return vec![];
-    }
-
-    let replacements: Vec<_> = ops
-        .iter()
-        .filter_map(|(op, old_idx, new_idx)| {
-            if *op == AlignOp::Replace {
-                Some((old_idx.unwrap(), new_idx.unwrap()))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if replacements.len() > MAX_REPLACEMENTS_PER_SPAN {
-        log::debug!("auto-learn: rejected span with too many replacements");
-        return vec![];
-    }
-
-    let replacements_len = replacements.len();
-    replacements
-        .into_iter()
-        .filter_map(|(old_idx, new_idx)| {
-            let old = &original[old_idx];
-            let new = &current[new_idx];
-            if old.norm.is_empty() || new.norm.is_empty() || old.norm == new.norm {
-                return None;
-            }
-            let metrics = compute_correction_metrics(old, new);
-            if is_candidate_correction(old, new, metrics) {
-                Some(CandidateCorrection {
-                    mistake: old.raw.clone(),
-                    correction: new.raw.clone(),
-                    confidence: candidate_confidence(
-                        old,
-                        new,
-                        metrics,
-                        changed_ops,
-                        replacements_len,
-                    ),
-                })
-            } else {
-                log::debug!("auto-learn: rejected low-confidence candidate");
-                None
-            }
-        })
-        .collect()
 }
 
 fn detect_corrections_from_anchored_text(
@@ -850,6 +442,217 @@ fn record_candidate(
             false
         }
     }
+}
+
+/// Source A: diff raw vs clean LLM output and feed divergence as evidence.
+/// Called from the pipeline immediately after cleanup, before injection.
+/// Works cross-platform (no accessibility required).
+pub fn record_cleanup_divergence(
+    raw: &str,
+    clean: &str,
+    app_context: &str,
+    db: DbHandle,
+    app: tauri::AppHandle,
+    window_days: i64,
+) {
+    use crate::core::correction_diff::is_plausible_transcription_confusion;
+
+    if raw.trim().is_empty() || clean.trim().is_empty() || raw == clean {
+        return;
+    }
+
+    let candidates = detect_span_corrections(raw, clean);
+    if candidates.is_empty() {
+        return;
+    }
+
+    let session_id = evidence_session_id(raw, app_context);
+    for candidate in candidates {
+        // Gate: must be a plausible transcription confusion, not a grammar fix.
+        if !is_plausible_transcription_confusion(&candidate.mistake, &candidate.correction) {
+            log::debug!(
+                "auto-learn: divergence candidate rejected by phonetic gate: {:?} → {:?}",
+                candidate.mistake,
+                candidate.correction
+            );
+            continue;
+        }
+        record_evidence_and_promote(
+            &db,
+            &app,
+            &candidate.mistake,
+            &candidate.correction,
+            "cleanup_divergence",
+            SOURCE_WEIGHT_CLEANUP_DIVERGENCE,
+            candidate.confidence,
+            &session_id,
+            app_context,
+            window_days,
+        );
+    }
+}
+
+// Thresholds for the evidence scoring engine.
+const SCORE_AUTO: f64 = 1.6;
+const SCORE_SUGGEST: f64 = 0.7;
+const EVIDENCE_HALF_LIFE_DAYS: f64 = 1.5;
+// Source weights: post-edit (user typed it themselves) is stronger than cleanup divergence.
+pub const SOURCE_WEIGHT_POST_EDIT: f64 = 1.0;
+pub const SOURCE_WEIGHT_CLEANUP_DIVERGENCE: f64 = 0.6;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EvidenceRecordOutcome {
+    Ignored,
+    Recorded,
+    Suggested,
+    Promoted,
+    PromotionSkipped,
+}
+
+/// Insert one evidence observation and run the scoring engine.
+/// Returns true if a new dictionary entry was auto-promoted.
+/// source: "post_edit" | "cleanup_divergence"
+/// window_days: from PipelineConfig.auto_learn_window_days
+pub fn record_evidence_and_promote(
+    db: &DbHandle,
+    app: &tauri::AppHandle,
+    wrong: &str,
+    correct: &str,
+    source: &str,
+    weight: f64,
+    confidence: f64,
+    session_id: &str,
+    app_context: &str,
+    window_days: i64,
+) -> bool {
+    match record_evidence_and_maybe_promote(
+        db,
+        wrong,
+        correct,
+        source,
+        weight,
+        confidence,
+        session_id,
+        app_context,
+        window_days,
+    ) {
+        EvidenceRecordOutcome::Promoted => {
+            app.emit("open-flow:dictionary-updated", ()).ok();
+            true
+        }
+        EvidenceRecordOutcome::Suggested => {
+            app.emit("open-flow:suggestion-added", ()).ok();
+            false
+        }
+        _ => false,
+    }
+}
+
+fn record_evidence_and_maybe_promote(
+    db: &DbHandle,
+    wrong: &str,
+    correct: &str,
+    source: &str,
+    weight: f64,
+    confidence: f64,
+    session_id: &str,
+    app_context: &str,
+    window_days: i64,
+) -> EvidenceRecordOutcome {
+    // Skip pairs in the never-learn list.
+    if db::is_never_learn_pair(db, wrong, correct).unwrap_or(false) {
+        return EvidenceRecordOutcome::Ignored;
+    }
+
+    if confidence < MIN_CANDIDATE_CONFIDENCE {
+        return EvidenceRecordOutcome::Ignored;
+    }
+
+    if let Err(e) = db::insert_correction_evidence(
+        db,
+        wrong,
+        correct,
+        source,
+        weight,
+        confidence,
+        session_id,
+        app_context,
+    ) {
+        log::warn!("auto-learn: evidence insert failed: {e}");
+        return EvidenceRecordOutcome::Ignored;
+    }
+
+    let ev = match db::compute_evidence_score(
+        db,
+        wrong,
+        correct,
+        window_days,
+        EVIDENCE_HALF_LIFE_DAYS,
+    ) {
+        Ok(ev) => ev,
+        Err(e) => {
+            log::warn!("auto-learn: score computation failed: {e}");
+            return EvidenceRecordOutcome::Recorded;
+        }
+    };
+
+    let corroborated = ev.distinct_sessions >= 2 || ev.distinct_sources >= 2;
+    if !corroborated {
+        return EvidenceRecordOutcome::Recorded;
+    }
+
+    if ev.score >= SCORE_AUTO {
+        // Auto-add.
+        let tier = if ev.score >= SCORE_AUTO * 1.5 {
+            "high"
+        } else {
+            "medium"
+        };
+        match db::insert_dictionary_entry_auto_learned(db, correct, Some(wrong), tier) {
+            Ok(true) => {
+                let _ = db::delete_dictionary_suggestion(db, wrong, correct);
+                let _ = db::log_auto_learn_event(
+                    db,
+                    "promotion",
+                    "promoted",
+                    app_context,
+                    "",
+                    "",
+                    ev.score,
+                );
+                log::info!(
+                    "auto-learn: auto-promoted {wrong:?} → {correct:?} (score={:.2})",
+                    ev.score
+                );
+                return EvidenceRecordOutcome::Promoted;
+            }
+            Ok(false) => {
+                log::debug!("auto-learn: auto-promote skipped (manual entry or mismatch)");
+                return EvidenceRecordOutcome::PromotionSkipped;
+            }
+            Err(e) => {
+                log::warn!("auto-learn: auto-promote failed: {e}");
+                return EvidenceRecordOutcome::PromotionSkipped;
+            }
+        }
+    } else if ev.score >= SCORE_SUGGEST {
+        let summary = format!(
+            "sessions={} sources={} score={:.2}",
+            ev.distinct_sessions, ev.distinct_sources, ev.score
+        );
+        if let Err(e) = db::upsert_dictionary_suggestion(db, wrong, correct, ev.score, &summary) {
+            log::warn!("auto-learn: suggestion upsert failed: {e}");
+            return EvidenceRecordOutcome::Recorded;
+        } else {
+            log::debug!(
+                "auto-learn: suggestion upserted {wrong:?} → {correct:?} (score={:.2})",
+                ev.score
+            );
+            return EvidenceRecordOutcome::Suggested;
+        }
+    }
+
+    EvidenceRecordOutcome::Recorded
 }
 
 #[cfg(windows)]
@@ -1441,7 +1244,12 @@ pub fn read_focused_text_probe() -> FocusedTextProbe {
     FocusedTextProbe::Unavailable
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn read_focused_text() -> Option<String> {
+    crate::core::context_probe_macos::read_focused_text_sync()
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn read_focused_text() -> Option<String> {
     None
 }
@@ -1471,7 +1279,13 @@ fn event_mode_poll_sleep_duration(hook_ready: bool) -> std::time::Duration {
     }
 }
 
-pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, app: AppHandle) {
+pub fn start_monitor(
+    injected_text: String,
+    app_context: String,
+    db: DbHandle,
+    app: AppHandle,
+    window_days: i64,
+) {
     if injected_text.split_whitespace().count() < 2 {
         let _ = db::log_auto_learn_event(&db, "monitor", "too_short", &app_context, "", "", 0.0);
         return;
@@ -1536,6 +1350,8 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
         let deadline =
             std::time::Instant::now() + std::time::Duration::from_secs(MONITOR_WINDOW_SECS);
         let mut recorded_this_session: HashSet<(String, String)> = HashSet::new();
+        // Stable within this monitor, unique across repeated identical dictations.
+        let session_id = evidence_session_id(&injected_text, &app_context);
         #[cfg(windows)]
         let mut last_event_seq = VALUE_CHANGE_SEQ.load(Ordering::Relaxed);
 
@@ -1594,17 +1410,23 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
                 detect_corrections_from_anchored_text(&injected_text, &baseline_text, stable_text);
 
             for candidate in diffs {
-                if record_candidate(
-                    &db,
-                    &mut recorded_this_session,
-                    &app_context,
-                    candidate.mistake,
-                    candidate.correction,
-                    candidate.confidence,
-                ) {
-                    log::info!("auto-learn: promoted candidate pair");
-                    app.emit("open-flow:dictionary-updated", ()).ok();
+                let key = (candidate.mistake.clone(), candidate.correction.clone());
+                if recorded_this_session.contains(&key) {
+                    continue;
                 }
+                recorded_this_session.insert(key);
+                record_evidence_and_promote(
+                    &db,
+                    &app,
+                    &candidate.mistake,
+                    &candidate.correction,
+                    "post_edit",
+                    SOURCE_WEIGHT_POST_EDIT,
+                    candidate.confidence,
+                    &session_id,
+                    &app_context,
+                    window_days,
+                );
             }
         }
         let _ = db::log_auto_learn_event(&db, "monitor", "timeout", &app_context, "", "", 0.0);
@@ -2001,6 +1823,184 @@ mod tests {
         assert_eq!(entries[0].term, "qroq");
         assert_eq!(entries[0].mistake.as_deref(), Some("rock"));
         assert!(entries[0].auto_learned);
+    }
+
+    #[test]
+    fn evidence_path_creates_suggestion_after_corroborated_score() {
+        let db = db::open(":memory:").expect("test db");
+
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.5,
+                "session-1",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Recorded
+        );
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.5,
+                "session-2",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Suggested
+        );
+
+        let suggestions = db::query_dictionary_suggestions(&db).expect("suggestions");
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].wrong_word, "Koobernetes");
+        assert_eq!(suggestions[0].correct_word, "Kubernetes");
+    }
+
+    #[test]
+    fn evidence_path_promotes_after_corroborated_auto_score() {
+        let db = db::open(":memory:").expect("test db");
+
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.9,
+                "session-1",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Recorded
+        );
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.9,
+                "session-2",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Promoted
+        );
+
+        let entries = db::query_dictionary(&db).expect("dictionary");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].term, "Kubernetes");
+        assert_eq!(entries[0].mistake.as_deref(), Some("Koobernetes"));
+        assert!(entries[0].auto_learned);
+    }
+
+    #[test]
+    fn evidence_path_corroborates_two_sources_in_one_session() {
+        let db = db::open(":memory:").expect("test db");
+
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "cleanup_divergence",
+                SOURCE_WEIGHT_CLEANUP_DIVERGENCE,
+                0.8,
+                "session-1",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Recorded
+        );
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.8,
+                "session-1",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Suggested
+        );
+    }
+
+    #[test]
+    fn evidence_path_respects_never_learn_pairs() {
+        let db = db::open(":memory:").expect("test db");
+        db::insert_never_learn_pair(&db, "Koobernetes", "Kubernetes").expect("never learn");
+
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.9,
+                "session-1",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Ignored
+        );
+
+        let score =
+            db::compute_evidence_score(&db, "Koobernetes", "Kubernetes", 3, 1.5).expect("score");
+        assert_eq!(score.score, 0.0);
+    }
+
+    #[test]
+    fn evidence_path_keeps_manual_conflict_as_suggestion_problem() {
+        let db = db::open(":memory:").expect("test db");
+        db::insert_dictionary_entry(&db, "Kubernetes", Some("manual typo")).expect("manual");
+
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.9,
+                "session-1",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Recorded
+        );
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.9,
+                "session-2",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::PromotionSkipped
+        );
+
+        let entries = db::query_dictionary(&db).expect("dictionary");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].mistake.as_deref(), Some("manual typo"));
+        assert!(!entries[0].auto_learned);
     }
 
     #[test]

@@ -38,6 +38,7 @@ type SettingsValueMap = {
   force_setup_on_launch: boolean;
   app_context_hint: boolean;
   auto_learn_enabled: boolean;
+  auto_learn_window_days: number;
   contextual_caps_enabled: boolean;
   auto_spacing_enabled: boolean;
   history_retention: HistoryRetention;

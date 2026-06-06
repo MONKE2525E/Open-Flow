@@ -11,6 +11,16 @@
   type SortKey = 'newest' | 'oldest' | 'alpha' | 'most_corrected';
   type CreatedRecordMeta = { id: number; created_at: string };
 
+  type DictionarySuggestion = {
+    id: number;
+    wrong_word: string;
+    correct_word: string;
+    score: number;
+    source_summary: string;
+    created_at: string;
+    updated_at: string;
+  };
+
   function fmtDate(iso: string): string {
     try {
       const MS_PER_DAY = 86_400_000;
@@ -30,6 +40,10 @@
     if (tier === 'manual') return 'Manual';
     return 'Unknown confidence';
   }
+
+  let suggestions     = $state<DictionarySuggestion[]>([]);
+  let dismissingKeys  = $state<Set<string>>(new Set());
+  let approvingKeys   = $state<Set<string>>(new Set());
 
   let search        = $state('');
   let debouncedSearch = $state('');
@@ -99,16 +113,65 @@
   });
   const visibleFiltered = $derived(filtered.filter((entry) => !leavingIds.has(entry.id)));
 
+  async function fetchSuggestions() {
+    try {
+      suggestions = (await invoke<DictionarySuggestion[] | null>('get_dictionary_suggestions')) ?? [];
+    } catch {
+      // unavailable in browser dev mode — leave suggestions as-is
+    }
+  }
+
+  async function approveSuggestion(s: DictionarySuggestion) {
+    const key = `${s.wrong_word}:${s.correct_word}`;
+    if (approvingKeys.has(key)) return;
+    approvingKeys = new Set(approvingKeys).add(key);
+    try {
+      await invoke('approve_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word });
+      suggestions = suggestions.filter(x => !(x.wrong_word === s.wrong_word && x.correct_word === s.correct_word));
+    } catch (err) {
+      console.error(err);
+      await emit('open-flow:error', 'Could not approve suggestion.');
+    } finally {
+      const next = new Set(approvingKeys);
+      next.delete(key);
+      approvingKeys = next;
+    }
+  }
+
+  async function dismissSuggestion(s: DictionarySuggestion) {
+    const key = `${s.wrong_word}:${s.correct_word}`;
+    if (dismissingKeys.has(key)) return;
+    dismissingKeys = new Set(dismissingKeys).add(key);
+    window.setTimeout(async () => {
+      try {
+        await invoke('dismiss_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word });
+        suggestions = suggestions.filter(x => !(x.wrong_word === s.wrong_word && x.correct_word === s.correct_word));
+      } catch (err) {
+        console.error(err);
+        await emit('open-flow:error', 'Could not dismiss suggestion.');
+      } finally {
+        const next = new Set(dismissingKeys);
+        next.delete(key);
+        dismissingKeys = next;
+      }
+    }, motionMs(200));
+  }
+
   onMount(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenSuggestion: (() => void) | undefined;
     fetchDictionary();
+    fetchSuggestions();
     listen('open-flow:dictionary-updated', () => fetchDictionary())
       .then((cleanup) => { unlisten = cleanup; })
+      .catch(() => {});
+    listen('open-flow:suggestion-added', () => fetchSuggestions())
+      .then((cleanup) => { unlistenSuggestion = cleanup; })
       .catch(() => {});
     updateSortIndicator();
     const onResize = () => updateSortIndicator();
     window.addEventListener('resize', onResize);
-    return () => { unlisten?.(); window.removeEventListener('resize', onResize); };
+    return () => { unlisten?.(); unlistenSuggestion?.(); window.removeEventListener('resize', onResize); };
   });
 
   function selectRow(e: DictionaryEntry) {
@@ -264,6 +327,43 @@
     <div class="load-warning" role="alert" aria-live="assertive">
       <span>{appStore.dictionaryFetchError || 'Unable to load dictionary terms.'} Check backend connection and retry.</span>
       <button type="button" class="load-warning-retry" onclick={() => fetchDictionary()}>Retry</button>
+    </div>
+  {/if}
+
+  {#if suggestions != null && suggestions.length > 0}
+    {@const visibleSuggestions = suggestions.filter(s => !dismissingKeys.has(`${s.wrong_word}:${s.correct_word}`))}
+    <div class="suggested-section" in:fade={{ duration: 180 }}>
+      <div class="suggested-header">
+        <span class="suggested-label">Suggested corrections</span>
+        <span class="suggested-count">{suggestions.length}</span>
+      </div>
+      <div class="suggested-list">
+        {#each visibleSuggestions as s (s.id)}
+          {@const key = `${s.wrong_word}:${s.correct_word}`}
+          <div
+            class="suggested-row"
+            animate:flip={{ duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+            out:listItemCollapse={{ duration: 200 }}
+          >
+            <span class="suggested-pair">
+              <span class="suggested-wrong">"{s.wrong_word}"</span>
+              <svg class="suggested-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+              <span class="suggested-correct">{s.correct_word}</span>
+            </span>
+            <div class="suggested-actions">
+              <button
+                class="btn-approve"
+                disabled={approvingKeys.has(key)}
+                onclick={() => approveSuggestion(s)}
+              >
+                {#if approvingKeys.has(key)}<span class="spinner-sm"></span>{/if}
+                Approve
+              </button>
+              <button class="btn-dismiss" onclick={() => dismissSuggestion(s)}>Dismiss</button>
+            </div>
+          </div>
+        {/each}
+      </div>
     </div>
   {/if}
 
@@ -575,6 +675,144 @@
   }
 
   .page-sub { color: var(--ink-mute); font-size: 12.5px; margin: 0 0 22px; max-width: 560px; line-height: 1.5; }
+
+  /* ── suggested section ── */
+
+  .suggested-section {
+    margin-bottom: 18px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm, 8px);
+    overflow: hidden;
+  }
+
+  .suggested-header {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-elev);
+  }
+
+  .suggested-label {
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: var(--sans);
+    color: var(--ink-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .suggested-count {
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font-size: 11px;
+    font-family: var(--sans);
+    font-weight: 600;
+    border-radius: 20px;
+    padding: 1px 7px;
+    line-height: 1.6;
+  }
+
+  .suggested-list {
+    background: var(--bg);
+  }
+
+  .suggested-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .suggested-row:last-child {
+    border-bottom: 0;
+  }
+
+  .suggested-pair {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    font-family: var(--sans);
+    font-size: 13px;
+  }
+
+  .suggested-wrong {
+    color: var(--ink-mute);
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
+  }
+
+  .suggested-arrow {
+    flex-shrink: 0;
+    color: var(--arm-300);
+  }
+
+  .suggested-correct {
+    color: var(--ink-strong);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .suggested-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .btn-approve {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--ink);
+    color: var(--amber-50);
+    border: 0;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--sans);
+    cursor: pointer;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+  }
+  .btn-approve:disabled { opacity: 0.4; cursor: default; }
+  .btn-approve:not(:disabled):hover { opacity: 0.82; }
+
+  .btn-dismiss {
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-family: var(--sans);
+    color: var(--ink-mute);
+    cursor: pointer;
+    transition: border-color 0.12s, color 0.12s;
+    white-space: nowrap;
+  }
+  .btn-dismiss:hover { border-color: var(--arm-300); color: var(--ink); }
+
+  .spinner-sm {
+    width: 9px;
+    height: 9px;
+    border: 1.5px solid rgba(255,255,255,0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  /* ── end suggested section ── */
 
   .fetch-status {
     margin: 0 0 10px;

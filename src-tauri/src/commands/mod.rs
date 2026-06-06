@@ -74,6 +74,7 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::ADVANCED_MODEL_UI
         | store::AUTOSTART_ENABLED => value.is_boolean(),
         store::MIC_GAIN => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
+        store::AUTO_LEARN_WINDOW_DAYS => value.as_i64().is_some_and(|v| (1..=30).contains(&v)),
         store::APP_MAPPINGS => serde_json::from_value::<Vec<AppMapping>>(value.clone()).is_ok(),
         store::HOTKEY => value
             .as_array()
@@ -164,6 +165,7 @@ pub struct AllSettings {
     pub autostart_enabled: Option<bool>,
     pub app_context_hint: Option<bool>,
     pub auto_learn_enabled: Option<bool>,
+    pub auto_learn_window_days: Option<i64>,
     pub contextual_caps_enabled: Option<bool>,
     pub auto_spacing_enabled: Option<bool>,
     pub mic_gain: Option<f64>,
@@ -306,6 +308,9 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         autostart_enabled: bool_val(store::AUTOSTART_ENABLED),
         app_context_hint: bool_val(store::APP_CONTEXT_HINT),
         auto_learn_enabled: bool_val(store::AUTO_LEARN_ENABLED),
+        auto_learn_window_days: s
+            .get(store::AUTO_LEARN_WINDOW_DAYS)
+            .and_then(|v| v.as_i64()),
         contextual_caps_enabled: bool_val(store::CONTEXTUAL_CAPS),
         auto_spacing_enabled: bool_val(store::AUTO_SPACING),
         mic_gain: f64_val(store::MIC_GAIN),
@@ -799,6 +804,58 @@ pub async fn get_recent_auto_learn_activity(
     let db = app.state::<DbHandle>().inner().clone();
     tokio::task::spawn_blocking(move || {
         db::get_recent_auto_learn_activity(&db, limit.unwrap_or(20)).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ---------- dictionary suggestions ----------
+
+#[tauri::command]
+pub async fn get_dictionary_suggestions(
+    app: AppHandle,
+) -> Result<Vec<db::DictionarySuggestion>, String> {
+    let db = app.state::<DbHandle>().inner().clone();
+    tokio::task::spawn_blocking(move || {
+        db::query_dictionary_suggestions(&db).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn approve_dictionary_suggestion(
+    app: AppHandle,
+    wrong: String,
+    correct: String,
+) -> Result<(), String> {
+    let db = app.state::<DbHandle>().inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let inserted = db::insert_dictionary_entry_auto_learned(&db, &correct, Some(&wrong), "medium")
+            .map_err(|e| e.to_string())?;
+        if !inserted {
+            return Err("Could not approve suggestion because it conflicts with an existing dictionary entry.".to_string());
+        }
+        db::delete_dictionary_suggestion(&db, &wrong, &correct).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map(|()| {
+        app.emit("open-flow:dictionary-updated", ()).ok();
+    })
+}
+
+#[tauri::command]
+pub async fn dismiss_dictionary_suggestion(
+    app: AppHandle,
+    wrong: String,
+    correct: String,
+) -> Result<(), String> {
+    let db = app.state::<DbHandle>().inner().clone();
+    tokio::task::spawn_blocking(move || {
+        db::insert_never_learn_pair(&db, &wrong, &correct).map_err(|e| e.to_string())?;
+        db::delete_dictionary_suggestion(&db, &wrong, &correct).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1300,9 +1357,11 @@ pub async fn export_data(
             .map_err(|e| format!("Failed to resolve Downloads directory: {e}"))?;
         std::fs::create_dir_all(&downloads)
             .map_err(|e| format!("Failed to create Downloads path: {e}"))?;
-        let path = downloads.join(format!("open-flow-backup-{}.json", now.format("%Y%m%d-%H%M%S")));
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Failed to write backup file: {e}"))?;
+        let path = downloads.join(format!(
+            "open-flow-backup-{}.json",
+            now.format("%Y%m%d-%H%M%S")
+        ));
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write backup file: {e}"))?;
 
         log::info!("export_data: wrote {}", path.display());
         Ok(path.display().to_string())

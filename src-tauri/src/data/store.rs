@@ -27,6 +27,7 @@ pub const SETUP_COMPLETE: &str = "setup_complete";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
 pub const AUTO_LEARN_EVENT_MODE: &str = "auto_learn_event_mode";
+pub const AUTO_LEARN_WINDOW_DAYS: &str = "auto_learn_window_days";
 pub const CONTEXTUAL_CAPS: &str = "contextual_caps_enabled";
 pub const AUTO_SPACING: &str = "auto_spacing_enabled";
 pub const APPEARANCE_MODE: &str = "appearance_mode";
@@ -58,6 +59,7 @@ pub struct PipelineConfig {
     pub cleanup_intensity: String,
     pub app_context_hint: bool,
     pub auto_learn_enabled: bool,
+    pub auto_learn_window_days: i64,
     pub contextual_caps_enabled: bool,
     pub auto_spacing_enabled: bool,
     pub macos_clipboard_sniff_enabled: bool,
@@ -275,6 +277,11 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             .get(AUTO_LEARN_ENABLED)
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        auto_learn_window_days: store
+            .get(AUTO_LEARN_WINDOW_DAYS)
+            .and_then(|v| v.as_i64())
+            .unwrap_or(3)
+            .clamp(1, 30),
         contextual_caps_enabled: store
             .get(CONTEXTUAL_CAPS)
             .and_then(|v| v.as_bool())

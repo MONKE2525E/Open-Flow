@@ -587,3 +587,51 @@ int openflow_macos_read_context_probe(
     CFRelease(system);
     return 1;
 }
+
+// Read the full kAXValue text of the currently focused UI element into buf.
+// buf_len: size of caller-allocated buffer (recommend >= 65536).
+// Returns 1 on success (buf may be empty string if field is empty),
+// 0 if AX is unavailable or the element has no text pattern.
+int openflow_macos_read_focused_text(char *buf, size_t buf_len) {
+    if (buf == NULL || buf_len == 0) {
+        return 0;
+    }
+    buf[0] = '\0';
+
+    if (!AXIsProcessTrusted()) {
+        return 0;
+    }
+
+    AXUIElementRef system = AXUIElementCreateSystemWide();
+    if (system == NULL) {
+        return 0;
+    }
+    of_set_timeout(system);
+
+    AXUIElementRef focused_element = NULL;
+    if (!of_copy_ax_element_attribute(system, kAXFocusedUIElementAttribute, &focused_element)) {
+        CFRelease(system);
+        return 0;
+    }
+    of_set_timeout(focused_element);
+
+    // Try the highest editable ancestor first (catches web areas in browsers).
+    AXUIElementRef target_element = focused_element;
+    AXUIElementRef editable_ancestor = NULL;
+    if (of_copy_ax_element_attribute(focused_element, kOFAXHighestEditableAncestorAttribute, &editable_ancestor)) {
+        if (editable_ancestor != NULL) {
+            target_element = editable_ancestor;
+            of_set_timeout(target_element);
+        }
+    }
+
+    bool ok = of_copy_string_attribute(target_element, kAXValueAttribute, buf, buf_len);
+
+    if (editable_ancestor != NULL) {
+        CFRelease(editable_ancestor);
+    }
+    CFRelease(focused_element);
+    CFRelease(system);
+
+    return ok ? 1 : 0;
+}

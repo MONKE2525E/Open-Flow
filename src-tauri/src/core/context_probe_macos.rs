@@ -38,6 +38,8 @@ unsafe extern "C" {
         lookbehind_chars: i32,
         out_result: *mut MacosContextProbeResult,
     ) -> i32;
+
+    fn openflow_macos_read_focused_text(buf: *mut c_char, buf_len: usize) -> i32;
 }
 
 fn c_buf_to_string(buf: &[c_char]) -> String {
@@ -66,6 +68,29 @@ fn map_selection_state(selection_state: i32) -> SelectionState {
         SELECTION_NON_COLLAPSED => SelectionState::NonCollapsedSelection,
         SELECTION_UNKNOWN => SelectionState::Unknown,
         _ => SelectionState::Unknown,
+    }
+}
+
+const FULL_TEXT_BUF_LEN: usize = 65536;
+
+/// Read the full kAXValue text of the currently focused UI element.
+/// Returns None if AX is unavailable, permissions are missing, or the element
+/// has no text pattern.
+pub fn read_focused_text_sync() -> Option<String> {
+    let mut buf: Vec<c_char> = vec![0; FULL_TEXT_BUF_LEN];
+    // SAFETY: buf is valid for FULL_TEXT_BUF_LEN bytes; the shim writes at most
+    // buf_len - 1 characters and always null-terminates.
+    let ok = unsafe { openflow_macos_read_focused_text(buf.as_mut_ptr(), FULL_TEXT_BUF_LEN) };
+    if ok == 0 {
+        return None;
+    }
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    let u8_bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, len) };
+    let text = String::from_utf8_lossy(u8_bytes).into_owned();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
     }
 }
 

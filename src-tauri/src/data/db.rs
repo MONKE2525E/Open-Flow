@@ -201,6 +201,36 @@ CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at
   ON cleanup_cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
   ON cleanup_cache(last_hit_at);
+CREATE TABLE IF NOT EXISTS correction_evidence (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  wrong_word  TEXT    NOT NULL,
+  correct_word TEXT   NOT NULL,
+  source      TEXT    NOT NULL DEFAULT 'post_edit',
+  weight      REAL    NOT NULL DEFAULT 1.0,
+  confidence  REAL    NOT NULL DEFAULT 0.0,
+  session_id  TEXT    NOT NULL DEFAULT '',
+  app_context TEXT    NOT NULL DEFAULT '',
+  created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_correction_evidence_pair
+  ON correction_evidence(wrong_word, correct_word, created_at);
+CREATE TABLE IF NOT EXISTS dictionary_suggestions (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  wrong_word    TEXT    NOT NULL,
+  correct_word  TEXT    NOT NULL,
+  score         REAL    NOT NULL DEFAULT 0.0,
+  source_summary TEXT   NOT NULL DEFAULT '',
+  created_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+  updated_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(wrong_word, correct_word)
+);
+CREATE TABLE IF NOT EXISTS never_learn_pairs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  wrong_word  TEXT    NOT NULL,
+  correct_word TEXT   NOT NULL,
+  created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(wrong_word, correct_word)
+);
 ";
 
 pub fn open(path: &str) -> Result<Db> {
@@ -355,6 +385,53 @@ pub fn open(path: &str) -> Result<Db> {
         if let Err(err) = (|| -> Result<()> {
             ensure_cleanup_cache_schema(&conn)?;
             conn.execute_batch("PRAGMA user_version = 6;")?;
+            Ok(())
+        })() {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err);
+        }
+        conn.execute_batch("COMMIT;")?;
+    }
+    if user_version < 7 {
+        conn.execute_batch("BEGIN;")?;
+        if let Err(err) = (|| -> Result<()> {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS correction_evidence (
+                   id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                   wrong_word   TEXT    NOT NULL,
+                   correct_word TEXT    NOT NULL,
+                   source       TEXT    NOT NULL DEFAULT 'post_edit',
+                   weight       REAL    NOT NULL DEFAULT 1.0,
+                   confidence   REAL    NOT NULL DEFAULT 0.0,
+                   session_id   TEXT    NOT NULL DEFAULT '',
+                   app_context  TEXT    NOT NULL DEFAULT '',
+                   created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_correction_evidence_pair
+                   ON correction_evidence(wrong_word, correct_word, created_at);
+                 INSERT OR IGNORE INTO correction_evidence
+                   (wrong_word, correct_word, source, weight, confidence, session_id, created_at)
+                   SELECT wrong_word, correct_word, 'post_edit', 1.0, 0.6, 'legacy-' || id, created_at
+                   FROM pending_corrections;
+                 CREATE TABLE IF NOT EXISTS dictionary_suggestions (
+                   id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                   wrong_word    TEXT    NOT NULL,
+                   correct_word  TEXT    NOT NULL,
+                   score         REAL    NOT NULL DEFAULT 0.0,
+                   source_summary TEXT   NOT NULL DEFAULT '',
+                   created_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+                   updated_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+                   UNIQUE(wrong_word, correct_word)
+                 );
+                 CREATE TABLE IF NOT EXISTS never_learn_pairs (
+                   id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                   wrong_word   TEXT    NOT NULL,
+                   correct_word TEXT    NOT NULL,
+                   created_at   DATETIME NOT NULL DEFAULT (datetime('now')),
+                   UNIQUE(wrong_word, correct_word)
+                 );
+                 PRAGMA user_version = 7;",
+            )?;
             Ok(())
         })() {
             let _ = conn.execute_batch("ROLLBACK;");
@@ -733,6 +810,189 @@ pub fn mark_auto_learn_candidate_promoted(db: &Db, wrong: &str, correct: &str) -
     Ok(())
 }
 
+// ---------- correction evidence ledger ----------
+
+pub fn insert_correction_evidence(
+    db: &Db,
+    wrong: &str,
+    correct: &str,
+    source: &str,
+    weight: f64,
+    confidence: f64,
+    session_id: &str,
+    app_context: &str,
+) -> Result<()> {
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "INSERT INTO correction_evidence
+         (wrong_word, correct_word, source, weight, confidence, session_id, app_context)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            wrong,
+            correct,
+            source,
+            weight,
+            confidence,
+            session_id,
+            app_context
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn is_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<bool> {
+    let conn = lock_conn(db)?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2",
+        params![wrong, correct],
+        |r| r.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+pub fn insert_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()> {
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "INSERT OR IGNORE INTO never_learn_pairs (wrong_word, correct_word) VALUES (?1, ?2)",
+        params![wrong, correct],
+    )?;
+    Ok(())
+}
+
+/// Promotion score = Σ (weight × confidence × recency_decay) over all evidence in the window.
+/// Decay is exponential: evidence from N days ago scores exp(-N / half_life).
+/// Requires evidence from ≥2 distinct sessions OR ≥2 distinct sources for corroboration.
+pub struct EvidenceScore {
+    pub score: f64,
+    pub distinct_sessions: i64,
+    pub distinct_sources: i64,
+}
+
+pub fn compute_evidence_score(
+    db: &Db,
+    wrong: &str,
+    correct: &str,
+    window_days: i64,
+    half_life_days: f64,
+) -> Result<EvidenceScore> {
+    let conn = lock_conn(db)?;
+    let window_arg = format!("-{} days", window_days.max(1));
+
+    // Single query that returns weight, confidence, age_days, session_id, source per row.
+    let mut stmt = conn.prepare(
+        "SELECT weight, confidence,
+                (julianday('now') - julianday(created_at)) AS age_days,
+                session_id, source
+         FROM correction_evidence
+         WHERE wrong_word=?1 AND correct_word=?2
+           AND created_at >= datetime('now', ?3)",
+    )?;
+
+    struct Row {
+        weight: f64,
+        confidence: f64,
+        age_days: f64,
+        session_id: String,
+        source: String,
+    }
+
+    let evidence: Vec<Row> = stmt
+        .query_map(params![wrong, correct, window_arg], |r| {
+            Ok(Row {
+                weight: r.get(0)?,
+                confidence: r.get(1)?,
+                age_days: r.get(2)?,
+                session_id: r.get(3)?,
+                source: r.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut score = 0.0f64;
+    let mut sessions = std::collections::HashSet::new();
+    let mut sources = std::collections::HashSet::new();
+
+    for row in &evidence {
+        let decay = (-row.age_days / half_life_days.max(0.1)).exp();
+        score += row.weight * row.confidence * decay;
+        if !row.session_id.is_empty() {
+            sessions.insert(row.session_id.clone());
+        }
+        sources.insert(row.source.clone());
+    }
+
+    Ok(EvidenceScore {
+        score,
+        distinct_sessions: sessions.len() as i64,
+        distinct_sources: sources.len() as i64,
+    })
+}
+
+// ---------- dictionary suggestions ----------
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DictionarySuggestion {
+    pub id: i64,
+    pub wrong_word: String,
+    pub correct_word: String,
+    pub score: f64,
+    pub source_summary: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+pub fn upsert_dictionary_suggestion(
+    db: &Db,
+    wrong: &str,
+    correct: &str,
+    score: f64,
+    source_summary: &str,
+) -> Result<()> {
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "INSERT INTO dictionary_suggestions (wrong_word, correct_word, score, source_summary)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(wrong_word, correct_word) DO UPDATE SET
+           score = excluded.score,
+           source_summary = excluded.source_summary,
+           updated_at = datetime('now')",
+        params![wrong, correct, score, source_summary],
+    )?;
+    Ok(())
+}
+
+pub fn query_dictionary_suggestions(db: &Db) -> Result<Vec<DictionarySuggestion>> {
+    let conn = lock_conn(db)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, wrong_word, correct_word, score, source_summary, created_at, updated_at
+         FROM dictionary_suggestions
+         ORDER BY score DESC, updated_at DESC",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(DictionarySuggestion {
+                id: r.get(0)?,
+                wrong_word: r.get(1)?,
+                correct_word: r.get(2)?,
+                score: r.get(3)?,
+                source_summary: r.get(4)?,
+                created_at: r.get(5)?,
+                updated_at: r.get(6)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+pub fn delete_dictionary_suggestion(db: &Db, wrong: &str, correct: &str) -> Result<()> {
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "DELETE FROM dictionary_suggestions WHERE wrong_word=?1 AND correct_word=?2",
+        params![wrong, correct],
+    )?;
+    Ok(())
+}
+
 pub fn get_auto_learn_status_summary(db: &Db) -> Result<AutoLearnStatusSummary> {
     let conn = lock_conn(db)?;
     let count_by = |event_type: &str, reason_code: &str| -> Result<i64> {
@@ -749,7 +1009,8 @@ pub fn get_auto_learn_status_summary(db: &Db) -> Result<AutoLearnStatusSummary> 
         |r| r.get(0),
     )?;
     let promotions: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM auto_learn_events WHERE event_type = 'promotion' AND reason_code = 'promoted'",
+        "SELECT COUNT(*) FROM auto_learn_events
+         WHERE event_type = 'promotion' AND reason_code IN ('promoted', 'auto_promoted')",
         [],
         |r| r.get(0),
     )?;
@@ -1705,6 +1966,182 @@ mod tests {
             count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count after"),
             0,
             "pending corrections must be purged when the auto-learned entry is manually deleted"
+        );
+    }
+
+    #[test]
+    fn auto_learn_status_counts_legacy_and_new_promotion_reasons() {
+        let db = test_db();
+        log_auto_learn_event(&db, "promotion", "promoted", "test", "", "", 1.0)
+            .expect("legacy event");
+        log_auto_learn_event(&db, "promotion", "auto_promoted", "test", "", "", 1.0)
+            .expect("new event");
+
+        let summary = get_auto_learn_status_summary(&db).expect("summary");
+        assert_eq!(summary.promotions, 2);
+    }
+
+    // ── evidence scoring engine ──────────────────────────────────────────────
+
+    #[test]
+    fn evidence_score_empty_returns_zero() {
+        let db = test_db();
+        let ev = compute_evidence_score(&db, "rock", "qroq", 3, 1.5).expect("score");
+        assert_eq!(ev.score, 0.0);
+        assert_eq!(ev.distinct_sessions, 0);
+        assert_eq!(ev.distinct_sources, 0);
+    }
+
+    #[test]
+    fn evidence_score_single_observation_accumulates() {
+        let db = test_db();
+        insert_correction_evidence(
+            &db,
+            "rock",
+            "qroq",
+            "post_edit",
+            1.0,
+            0.8,
+            "session-1",
+            "test",
+        )
+        .expect("insert");
+        let ev = compute_evidence_score(&db, "rock", "qroq", 3, 1.5).expect("score");
+        assert!(
+            ev.score > 0.0,
+            "score should be positive after one observation"
+        );
+        assert_eq!(ev.distinct_sessions, 1);
+        assert_eq!(ev.distinct_sources, 1);
+    }
+
+    #[test]
+    fn evidence_score_two_sessions_increases_distinct_sessions() {
+        let db = test_db();
+        insert_correction_evidence(&db, "rock", "qroq", "post_edit", 1.0, 0.9, "sess-a", "test")
+            .expect("1");
+        insert_correction_evidence(&db, "rock", "qroq", "post_edit", 1.0, 0.9, "sess-b", "test")
+            .expect("2");
+        let ev = compute_evidence_score(&db, "rock", "qroq", 3, 1.5).expect("score");
+        assert_eq!(ev.distinct_sessions, 2);
+        assert_eq!(ev.distinct_sources, 1);
+    }
+
+    #[test]
+    fn evidence_score_two_sources_increases_distinct_sources() {
+        let db = test_db();
+        insert_correction_evidence(&db, "rock", "qroq", "post_edit", 1.0, 0.9, "sess-a", "test")
+            .expect("1");
+        insert_correction_evidence(
+            &db,
+            "rock",
+            "qroq",
+            "cleanup_divergence",
+            0.6,
+            0.9,
+            "sess-a",
+            "test",
+        )
+        .expect("2");
+        let ev = compute_evidence_score(&db, "rock", "qroq", 3, 1.5).expect("score");
+        assert_eq!(ev.distinct_sources, 2);
+    }
+
+    #[test]
+    fn evidence_score_same_session_and_source_deduplicated_in_session_count() {
+        let db = test_db();
+        // Same session_id → still counts as 1 distinct session.
+        for _ in 0..5 {
+            insert_correction_evidence(
+                &db,
+                "rock",
+                "qroq",
+                "post_edit",
+                1.0,
+                0.9,
+                "sess-same",
+                "test",
+            )
+            .expect("insert");
+        }
+        let ev = compute_evidence_score(&db, "rock", "qroq", 3, 1.5).expect("score");
+        assert_eq!(ev.distinct_sessions, 1);
+    }
+
+    #[test]
+    fn never_learn_pair_roundtrip() {
+        let db = test_db();
+        assert!(!is_never_learn_pair(&db, "rock", "qroq").expect("check"));
+        insert_never_learn_pair(&db, "rock", "qroq").expect("insert");
+        assert!(is_never_learn_pair(&db, "rock", "qroq").expect("after insert"));
+        // Idempotent.
+        insert_never_learn_pair(&db, "rock", "qroq").expect("second insert");
+        assert!(is_never_learn_pair(&db, "rock", "qroq").expect("after second insert"));
+    }
+
+    #[test]
+    fn never_learn_pair_is_directional() {
+        let db = test_db();
+        insert_never_learn_pair(&db, "rock", "qroq").expect("insert");
+        // Reversed direction is NOT blocked.
+        assert!(!is_never_learn_pair(&db, "qroq", "rock").expect("reverse"));
+    }
+
+    #[test]
+    fn dictionary_suggestions_upsert_and_query() {
+        let db = test_db();
+        upsert_dictionary_suggestion(&db, "rock", "qroq", 0.8, "sessions=2 sources=1").expect("1");
+        let suggestions = query_dictionary_suggestions(&db).expect("query");
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].wrong_word, "rock");
+        assert_eq!(suggestions[0].correct_word, "qroq");
+        assert!((suggestions[0].score - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn dictionary_suggestions_upsert_updates_score() {
+        let db = test_db();
+        upsert_dictionary_suggestion(&db, "rock", "qroq", 0.8, "v1").expect("1");
+        upsert_dictionary_suggestion(&db, "rock", "qroq", 1.2, "v2").expect("2");
+        let suggestions = query_dictionary_suggestions(&db).expect("query");
+        assert_eq!(suggestions.len(), 1);
+        assert!((suggestions[0].score - 1.2).abs() < 1e-6);
+        assert_eq!(suggestions[0].source_summary, "v2");
+    }
+
+    #[test]
+    fn dictionary_suggestion_delete_removes_entry() {
+        let db = test_db();
+        upsert_dictionary_suggestion(&db, "rock", "qroq", 0.9, "x").expect("insert");
+        assert_eq!(query_dictionary_suggestions(&db).expect("before").len(), 1);
+        delete_dictionary_suggestion(&db, "rock", "qroq").expect("delete");
+        assert!(query_dictionary_suggestions(&db).expect("after").is_empty());
+    }
+
+    #[test]
+    fn evidence_score_respects_window_days() {
+        let db = test_db();
+        // Insert evidence with a backdated timestamp (simulate old evidence).
+        {
+            let conn = db.lock().expect("lock");
+            conn.execute(
+                "INSERT INTO correction_evidence (wrong_word, correct_word, source, weight, confidence, session_id, app_context, created_at) \
+                 VALUES ('rock', 'qroq', 'post_edit', 1.0, 0.9, 'old-session', 'test', datetime('now', '-10 days'))",
+                [],
+            ).expect("backdated insert");
+        }
+        // Window of 3 days: the 10-day-old evidence is excluded.
+        let ev3 = compute_evidence_score(&db, "rock", "qroq", 3, 1.5).expect("3d score");
+        assert_eq!(
+            ev3.score, 0.0,
+            "10-day-old evidence should be outside the 3-day window"
+        );
+
+        // Window of 14 days: the evidence should now be included.
+        let ev14 = compute_evidence_score(&db, "rock", "qroq", 14, 1.5).expect("14d score");
+        assert!(
+            ev14.score > 0.0,
+            "evidence inside 14-day window must contribute"
         );
     }
 }
