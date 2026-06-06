@@ -733,7 +733,7 @@
         <div class="calibration-box">
           {#if !$isCalibrating && $calibratedGain === null}
             <div class="cal-start-state"
-              out:slide={{ duration: motionMs(260), easing: expoOut }}>
+              out:fade={{ duration: motionMs(160) }}>
               <div class="cal-steps-preview">
                 <div class="cal-step-row">
                   <span class="cal-step-num">1</span>
@@ -749,7 +749,7 @@
           {:else if $isCalibrating}
             <div class="cal-active-state"
               in:slide={{ duration: motionMs(260), easing: expoOut }}
-              out:slide={{ duration: motionMs(240) }}>
+              out:fade={{ duration: motionMs(160) }}>
               <div class="cal-phase-header">
                 <div class="cal-label-stack">
                   {#key $calibrationPhase}
@@ -1048,13 +1048,19 @@
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
     padding: 20px 24px;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 1fr;
     align-items: center;
-    justify-content: center;
+    justify-items: center;
     text-align: center;
     width: 100%;
     overflow: hidden;
+  }
+
+  /* All direct children stack in the same grid cell — overlap during transitions */
+  .calibration-box > * {
+    grid-column: 1;
+    grid-row: 1;
   }
 
   /* Grid-stacking: lets keyed children overlap so height stays stable during crossfade */
