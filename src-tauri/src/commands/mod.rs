@@ -1239,6 +1239,7 @@ pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
 }
 
 #[tauri::command]
+#[allow(deprecated)]
 pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), String> {
     #[cfg(not(windows))]
     {

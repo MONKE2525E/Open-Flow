@@ -601,7 +601,7 @@ fn handle_event(event: HotkeyEvent) {
         // global events — mark Input Monitoring as effectively granted.
         if !GLOBAL_INPUT_SEEN.load(Ordering::SeqCst) {
             let our_pid = std::process::id() as i32;
-            if crate::system::mac_app::frontmost_pid().map_or(false, |p| p != our_pid) {
+            if crate::system::mac_app::frontmost_pid().is_some_and(|p| p != our_pid) {
                 GLOBAL_INPUT_SEEN.store(true, Ordering::SeqCst);
             }
         }
