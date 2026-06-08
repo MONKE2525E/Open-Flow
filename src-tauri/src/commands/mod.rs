@@ -571,11 +571,16 @@ pub async fn start_calibration_monitoring(
         let msg_lower = msg.to_lowercase();
         // Surface a user-readable message for the most common production failure:
         // microphone permission denied by TCC or missing audio entitlement.
+
+        // OSStatus codes for permission-related errors. See: https://www.osstatus.com/
+        const AUDIO_HARDWARE_ILLEGAL_OPERATION_ERROR: &str = "1852797029"; // 'op??' (kAudioHardwareIllegalOperationError)
+        const AUDIO_HARDWARE_PERMISSION_DENIED: &str = "1853319013"; // 'nuoe' (kAudioHardwarePermissionDenied)
+
         if msg_lower.contains("permissiondenied")
             || msg_lower.contains("permission denied")
-            || msg.contains("1852797029") // 'noue' (No User Consent) OSStatus error code
-            || msg.contains("1853319013") // 'nuoe' (No User Consent) OSStatus error code
-            || msg_lower.contains("noue")
+            || msg.contains(AUDIO_HARDWARE_ILLEGAL_OPERATION_ERROR)
+            || msg.contains(AUDIO_HARDWARE_PERMISSION_DENIED)
+            || msg_lower.contains("noue") // 'noue' (No User Consent)
             || msg_lower.contains("nuoe")
             || msg_lower.contains("6e6f7565") // 'noue' hex
             || msg_lower.contains("6e756f65") // 'nuoe' hex
