@@ -44,7 +44,6 @@
   let accessibilityPromptAttemptedAtMs = $state<number | null>(null);
   let inputMonitoringActionTaken = $state(false);
   let showRestartHint = $state(false);
-  let permissionsPollingStartMs = $state<number | null>(null);
   let pollInterval: ReturnType<typeof setInterval> | null = null;
 
   // Keep the bindable flag in sync with the three core OS permissions.
@@ -126,7 +125,6 @@
 
   function startPolling() {
     stopPolling();
-    permissionsPollingStartMs = Date.now();
     pollInterval = setInterval(async () => {
       if (permissionsLoading) return;
       await refreshMacPermissions(true);
@@ -161,7 +159,6 @@
       clearInterval(pollInterval);
       pollInterval = null;
     }
-    permissionsPollingStartMs = null;
   }
 
   async function requestAccessibilityPrompt() {
@@ -207,13 +204,15 @@
 
   async function relaunchApp() {
     restarting = true;
-    try {
-      await invoke('restart_app');
-    } catch {
-      // restart_app does not return on success; reaching here means it failed.
-      restarting = false;
-      permissionsError = 'Could not relaunch automatically — please quit and reopen Open Flow.';
-    }
+    permissionsError = '';
+    void invoke('restart_app').catch(() => {
+      // Ignore immediate IPC disconnection errors during restart.
+      // Set a timeout to show the error only if the app fails to exit after 2 seconds.
+      setTimeout(() => {
+        restarting = false;
+        permissionsError = 'Could not relaunch automatically — please quit and reopen Open Flow.';
+      }, 2000);
+    });
   }
 
   async function openPermissionSettings(kind: 'accessibility' | 'microphone' | 'input_monitoring') {
