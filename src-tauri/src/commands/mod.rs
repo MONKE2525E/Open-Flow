@@ -1133,8 +1133,8 @@ pub async fn request_microphone_permission() -> String {
 /// granted Input Monitoring permission after a restart — so a one-click relaunch
 /// is the reliable way to apply permission changes.
 #[tauri::command]
-pub fn restart_app(app: tauri::AppHandle) {
-    app.restart();
+pub fn restart_app(handle: tauri::AppHandle) {
+    handle.restart();
 }
 
 /// Opens the macOS Microphone privacy pane so the user can grant permission.
