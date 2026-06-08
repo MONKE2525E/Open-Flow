@@ -574,6 +574,11 @@ pub async fn start_calibration_monitoring(
         if msg_lower.contains("permissiondenied")
             || msg_lower.contains("permission denied")
             || msg.contains("1852797029") // 'noue' (No User Consent) OSStatus error code
+            || msg.contains("1853319013") // 'nuoe' (No User Consent) OSStatus error code
+            || msg_lower.contains("noue")
+            || msg_lower.contains("nuoe")
+            || msg_lower.contains("6e6f7565") // 'noue' hex
+            || msg_lower.contains("6e756f65") // 'nuoe' hex
             || msg_lower.contains("access denied")
         {
             "Microphone access denied — grant Open Flow permission in System Settings → Privacy & Security → Microphone, then try again.".to_string()
