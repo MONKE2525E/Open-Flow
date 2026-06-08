@@ -341,19 +341,25 @@ pub fn microphone_permission_status() -> &'static str {
 /// permission is undetermined. The completion handler is a no-op — callers read
 /// the resulting status separately via `microphone_permission_status()` once the
 /// user responds. Safe to call when already authorized (no prompt is shown).
-pub fn request_microphone() {
+pub async fn request_microphone() -> bool {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = std::sync::Mutex::new(Some(tx));
     autoreleasepool(|_| unsafe {
         let media_type = NSString::from_str("soun");
-        // `requestAccessForMediaType:completionHandler:` invokes the block on an
-        // arbitrary queue after the user responds, so it must outlive this call —
-        // use a heap (Rc) block rather than a stack block.
-        let handler = block2::RcBlock::new(|_granted: objc2::runtime::Bool| {});
+        let handler = block2::RcBlock::new(move |granted: objc2::runtime::Bool| {
+            if let Ok(mut guard) = tx.lock() {
+                if let Some(tx) = guard.take() {
+                    let _ = tx.send(granted.as_bool());
+                }
+            }
+        });
         let _: () = msg_send![
             class!(AVCaptureDevice),
             requestAccessForMediaType: &*media_type,
             completionHandler: &*handler
         ];
-    })
+    });
+    rx.await.unwrap_or(false)
 }
 
 // UTI for plain UTF-8 text — the value of `NSPasteboardTypeString`.

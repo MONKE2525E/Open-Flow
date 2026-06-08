@@ -1111,10 +1111,10 @@ pub fn get_microphone_permission_status() -> String {
 /// then returns the resulting status. Lets the permissions UI request the mic
 /// directly instead of waiting for the first recording. No-op off macOS.
 #[tauri::command]
-pub fn request_microphone_permission() -> String {
+pub async fn request_microphone_permission() -> String {
     #[cfg(target_os = "macos")]
     {
-        crate::system::mac_app::request_microphone();
+        let _ = crate::system::mac_app::request_microphone().await;
         crate::system::mac_app::microphone_permission_status().to_string()
     }
     #[cfg(not(target_os = "macos"))]
