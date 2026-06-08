@@ -1126,9 +1126,8 @@ pub async fn inject_text(
         .flatten();
 
         log::info!(
-            "inject_text(macos): target_pid={} frontmost_pid={:?} text_len={} posted={} tap_active={}",
+            "inject_text(macos): target_pid={} text_len={} posted={} tap_active={}",
             (target_hwnd & 0xFFFFFFFF) as i32,
-            crate::system::mac_app::frontmost_pid(),
             adjusted.len(),
             posted.is_some(),
             crate::core::hotkey::is_tap_active()

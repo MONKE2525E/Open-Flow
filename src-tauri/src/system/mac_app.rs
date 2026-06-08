@@ -373,8 +373,8 @@ const PASTEBOARD_TYPE_STRING: &str = "public.utf8-plain-text";
 pub fn frontmost_pid() -> Option<i32> {
     use core_foundation::base::TCFType;
     unsafe {
-        // kCGWindowListOptionOnScreenOnly (1<<0) | kCGWindowListExcludeDesktopElements (1<<1)
-        let array_ref = CGWindowListCopyWindowInfo(3, 0);
+        // kCGWindowListOptionOnScreenOnly (1<<0) | kCGWindowListExcludeDesktopElements (1<<4)
+        let array_ref = CGWindowListCopyWindowInfo(17, 0);
         if array_ref.is_null() {
             return None;
         }
@@ -556,8 +556,8 @@ pub fn get_active_window_id_and_pid() -> (u32, i32) {
 
     unsafe {
         // kCGWindowListOptionOnScreenOnly = (1 << 0)
-        // kCGWindowListOptionExcludeDesktopElements = (1 << 1)
-        let array_ref = CGWindowListCopyWindowInfo(3, 0);
+        // kCGWindowListOptionExcludeDesktopElements = (1 << 4)
+        let array_ref = CGWindowListCopyWindowInfo(17, 0);
         if array_ref.is_null() {
             return (0, target_pid);
         }
