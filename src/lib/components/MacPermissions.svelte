@@ -74,10 +74,10 @@
     }
   }
 
-  async function refreshMacPermissions() {
+  async function refreshMacPermissions(silent = false) {
     if (!isMac || permissionsLoading) return;
     permissionsLoading = true;
-    permissionsError = '';
+    if (!silent) permissionsError = '';
     try {
       const [accessibility, microphone, inputMonitoring] = await Promise.all([
         invoke<string>('get_accessibility_permission_status'),
@@ -94,7 +94,9 @@
       microphonePermission = (microphone as MacPermissionStatus) || 'unknown';
       inputMonitoringPermission = (inputMonitoring as MacPermissionStatus) || 'unknown';
     } catch {
-      permissionsError = 'Could not refresh permission status right now.';
+      if (!silent) {
+        permissionsError = 'Could not refresh permission status right now.';
+      }
     } finally {
       permissionsLoading = false;
     }
@@ -118,7 +120,7 @@
     permissionsPollingStartMs = Date.now();
     pollInterval = setInterval(async () => {
       if (permissionsLoading) return;
-      await refreshMacPermissions();
+      await refreshMacPermissions(true);
       // Compute synchronously from the freshly-updated state variables rather
       // than from the `allGranted` bindable, which is set via a $effect and may
       // not have re-run yet after the await above.

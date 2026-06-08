@@ -263,11 +263,12 @@ pub fn start_recording_session_ex(
     #[cfg(target_os = "macos")]
     {
         // `AXIsProcessTrustedWithOptions` can return a stale cached `false` for the
-        // lifetime of the process even after the user grants Accessibility. The
-        // CGEventTap, however, only becomes active once permission is actually
-        // granted — so an active tap is authoritative proof we have access. Trust
-        // it over the stale TCC cache to avoid blocking recording wrongly.
-        if !crate::core::hotkey::is_tap_active() && !crate::commands::check_accessibility_permission(false) {
+        // Check Accessibility strictly rather than using is_tap_active() as a proxy.
+        // The CGEventTap can be active on Input Monitoring alone — so a running tap
+        // does NOT prove Accessibility is granted. Without Accessibility, synthetic
+        // Cmd+V (posting events to the HID tap) silently fails. Using the real TCC
+        // check ensures we surface the error instead of recording and never pasting.
+        if !crate::commands::check_accessibility_permission(false) {
             return Err(
                 "Accessibility permission is required for Open Flow on macOS. Open System Settings > Privacy & Security > Accessibility and enable Open Flow."
                     .to_string(),

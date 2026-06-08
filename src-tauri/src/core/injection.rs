@@ -1072,9 +1072,9 @@ pub async fn inject_text(
         crate::system::mac_app::pasteboard_set_string(&adjusted);
         tokio::time::sleep(Duration::from_millis(20)).await;
 
-        if !crate::core::hotkey::is_tap_active() {
+        if !crate::commands::check_accessibility_permission(false) {
             log::error!(
-                "inject_text: Cmd+V injection attempted but the CGEventTap is not active — \
+                "inject_text: Cmd+V injection attempted but Accessibility is not granted — \
                  grant Open Flow Accessibility permission in System Settings → Privacy & Security → Accessibility"
             );
         }
