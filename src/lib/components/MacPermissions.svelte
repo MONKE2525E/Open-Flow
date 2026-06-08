@@ -539,6 +539,22 @@
     padding: 5px 11px;
     border-radius: 999px;
     font-size: 11.5px;
+    background: transparent;
+    border: 1px solid var(--line-strong);
+    color: var(--ink-mute);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .permission-btn:hover {
+    background: var(--paper-2);
+    color: var(--ink-strong);
+    border-color: var(--accent);
+  }
+
+  .permission-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .permission-error {
