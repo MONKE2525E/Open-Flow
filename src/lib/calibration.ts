@@ -112,12 +112,16 @@ export async function startCalibration() {
     await invoke('start_calibration_monitoring');
   } catch (e) {
     console.error('Failed to start calibration monitoring:', e);
-    const msg = String(e);
-    if (msg.includes('Microphone access denied')) {
+    const msg = e ? String(e) : "";
+    if (msg && msg.includes("Microphone access denied")) {
       // Backend already emits a detailed, user-friendly message — pass it through.
       calibrationError.set(msg);
     } else {
-      calibrationError.set(msg || 'Could not start calibration. Make sure no other app is using the microphone and try again.');
+      calibrationError.set(
+        msg && msg !== "undefined" && msg !== "[object Object]"
+          ? msg
+          : "Could not start calibration. Make sure no other app is using the microphone and try again."
+      );
     }
     void cancelCalibration();
     return;
