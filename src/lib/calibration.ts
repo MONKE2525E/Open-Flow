@@ -112,7 +112,7 @@ export async function startCalibration() {
     await invoke('start_calibration_monitoring');
   } catch (e) {
     console.error('Failed to start calibration monitoring:', e);
-    const msg = typeof e === 'string' ? e : '';
+    const msg = String(e);
     if (msg.toLowerCase().includes('microphone') || msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('denied') || msg.toLowerCase().includes('access')) {
       calibrationError.set('Microphone access denied. Go to System Settings → Privacy & Security → Microphone and grant Open Flow access, then try again.');
     } else {

@@ -1081,7 +1081,10 @@ pub async fn inject_text(
 
         // macOS keycode for the left Command key.
         const VK_COMMAND: CGKeyCode = 55;
-        let posted = (|| -> Option<()> {
+        // Run the key-event sequence on a blocking thread so the 3×8ms sleeps
+        // do not stall the Tokio async runtime. The closure captures nothing from
+        // the outer scope, so it is Send even though CGEvent/CGEventSource are not.
+        let posted = tokio::task::spawn_blocking(move || -> Option<()> {
             use std::{thread::sleep, time::Duration as Std};
             let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
             crate::core::hotkey::begin_synthetic_paste_suppression(400);
@@ -1107,7 +1110,10 @@ pub async fn inject_text(
             cmd_up.set_flags(CGEventFlags::empty());
             cmd_up.post(CGEventTapLocation::HID);
             Some(())
-        })();
+        })
+        .await
+        .ok()
+        .flatten();
 
         log::info!(
             "inject_text(macos): target_pid={} frontmost_pid={:?} text_len={} posted={} tap_active={}",

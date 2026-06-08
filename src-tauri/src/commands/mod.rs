@@ -568,12 +568,13 @@ pub async fn start_calibration_monitoring(
     let start_result = start_result.map_err(|e| format!("Calibration task panicked: {e}"))?;
     start_result.map_err(|e| {
         let msg = e.to_string();
+        let msg_lower = msg.to_lowercase();
         // Surface a user-readable message for the most common production failure:
         // microphone permission denied by TCC or missing audio entitlement.
-        if msg.contains("PermissionDenied")
-            || msg.contains("permission denied")
+        if msg_lower.contains("permissiondenied")
+            || msg_lower.contains("permission denied")
             || msg.contains("1852797029")
-            || msg.to_lowercase().contains("access denied")
+            || msg_lower.contains("access denied")
         {
             "Microphone access denied — grant Open Flow permission in System Settings → Privacy & Security → Microphone, then try again.".to_string()
         } else {
@@ -1187,7 +1188,7 @@ pub fn request_input_monitoring_permission() -> String {
 pub fn open_input_monitoring_settings() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
+        let _ = std::process::Command::new("open")
             .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
             .spawn()
             .map_err(|e| e.to_string())?;
