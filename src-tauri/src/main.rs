@@ -183,18 +183,25 @@ fn main() {
                 if !commands::check_accessibility_permission(false) {
                     let _ = commands::check_accessibility_permission(true);
                 }
-                if crate::system::mac_app::input_monitoring_status() != "authorized" {
+                let input_status = crate::system::mac_app::input_monitoring_status();
+                if input_status != "authorized" {
                     let _ = crate::system::mac_app::request_input_monitoring();
-                    let app_h = app.handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
-                        app_h
-                            .emit(
-                                "open-flow:error",
-                                "On macOS, Open Flow needs Input Monitoring to hear the hotkey while other apps are focused. Without it, dictation only works when Open Flow is frontmost. Grant it in System Settings, then fully relaunch the app.",
-                            )
-                            .ok();
-                    });
+                    // Only surface the error banner when the user has explicitly denied
+                    // the permission. On first launch ("not_determined") the system
+                    // consent prompt is already showing; a simultaneous error banner
+                    // would be confusing and redundant.
+                    if input_status == "denied" {
+                        let app_h = app.handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                            app_h
+                                .emit(
+                                    "open-flow:error",
+                                    "On macOS, Open Flow needs Input Monitoring to hear the hotkey while other apps are focused. Without it, dictation only works when Open Flow is frontmost. Grant it in System Settings, then fully relaunch the app.",
+                                )
+                                .ok();
+                        });
+                    }
                 }
             }
             crate::pipeline::show_pill(app.handle(), "idle");

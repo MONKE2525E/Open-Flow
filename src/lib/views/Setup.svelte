@@ -338,7 +338,7 @@
 
   <!-- Step content -->
   <div
-    class="step-wrap"
+    class="step-wrap scroll-styled"
     class:visible
     class:slide-left={direction === 'forward'}
     class:slide-right={direction === 'back'}
@@ -1298,11 +1298,11 @@
     flex: 1;
     min-height: 0;
     display: flex;
-    /* `safe center` keeps short steps vertically centered, but when a step (the
-       permissions step) is taller than the viewport it aligns to the top instead
-       of clipping both ends — so the content can scroll and the footer/Next
-       button stay reachable. */
-    align-items: safe center;
+    /* align-items: safe center is not supported on macOS 11/12 WebKit — use
+       margin: auto on the .step child instead for vertical centering that
+       gracefully degrades to top-aligned when the step is taller than the
+       viewport, keeping the footer and Next button reachable. */
+    align-items: flex-start;
     justify-content: center;
     width: 100%;
     padding: 24px 0 32px;
@@ -1330,6 +1330,7 @@
     width: 100%;
     max-width: 560px;
     padding: 0 28px;
+    margin: auto;
     display: flex;
     flex-direction: column;
     gap: 24px;

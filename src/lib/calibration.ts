@@ -113,10 +113,11 @@ export async function startCalibration() {
   } catch (e) {
     console.error('Failed to start calibration monitoring:', e);
     const msg = String(e);
-    if (msg.toLowerCase().includes('microphone') || msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('denied') || msg.toLowerCase().includes('access')) {
-      calibrationError.set('Microphone access denied. Go to System Settings → Privacy & Security → Microphone and grant Open Flow access, then try again.');
+    if (msg.includes('Microphone access denied')) {
+      // Backend already emits a detailed, user-friendly message — pass it through.
+      calibrationError.set(msg);
     } else {
-      calibrationError.set('Could not start calibration. Make sure no other app is using the microphone and try again.');
+      calibrationError.set(msg || 'Could not start calibration. Make sure no other app is using the microphone and try again.');
     }
     void cancelCalibration();
     return;
