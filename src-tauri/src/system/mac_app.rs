@@ -360,23 +360,61 @@ pub fn request_microphone() {
 const PASTEBOARD_TYPE_STRING: &str = "public.utf8-plain-text";
 
 /// PID of the frontmost (active) application, or `None` if unavailable.
+///
+/// Uses CoreGraphics (`CGWindowListCopyWindowInfo`) instead of AppKit so that
+/// this function is safe to call from background threads (e.g. the CGEventTap
+/// callback). AppKit's `NSWorkspace` APIs are strictly main-thread-only.
 pub fn frontmost_pid() -> Option<i32> {
-    autoreleasepool(|_| unsafe {
-        let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
-        if workspace.is_null() {
+    use core_foundation::base::TCFType;
+    unsafe {
+        // kCGWindowListOptionOnScreenOnly (1<<0) | kCGWindowListExcludeDesktopElements (1<<1)
+        let array_ref = CGWindowListCopyWindowInfo(3, 0);
+        if array_ref.is_null() {
             return None;
         }
-        let app: *mut AnyObject = msg_send![workspace, frontmostApplication];
-        if app.is_null() {
-            return None;
+        let count = core_foundation_sys::array::CFArrayGetCount(array_ref);
+        let mut result = None;
+        for i in 0..count {
+            let dict_ref = core_foundation_sys::array::CFArrayGetValueAtIndex(array_ref, i)
+                as core_foundation_sys::dictionary::CFDictionaryRef;
+            if dict_ref.is_null() {
+                continue;
+            }
+            // Skip windows not on the normal layer (layer 0 = regular app windows).
+            // The list is front-to-back, so the first layer-0 window owns the frontmost app.
+            let layer_ref = core_foundation_sys::dictionary::CFDictionaryGetValue(
+                dict_ref,
+                kCGWindowLayer as *const std::ffi::c_void,
+            );
+            if layer_ref.is_null() {
+                continue;
+            }
+            let layer_num = core_foundation::number::CFNumber::wrap_under_get_rule(
+                layer_ref as core_foundation_sys::number::CFNumberRef,
+            );
+            if layer_num.to_i32() != Some(0) {
+                continue;
+            }
+            let pid_ref = core_foundation_sys::dictionary::CFDictionaryGetValue(
+                dict_ref,
+                kCGWindowOwnerPID as *const std::ffi::c_void,
+            );
+            if pid_ref.is_null() {
+                continue;
+            }
+            let pid_num = core_foundation::number::CFNumber::wrap_under_get_rule(
+                pid_ref as core_foundation_sys::number::CFNumberRef,
+            );
+            if let Some(p) = pid_num.to_i32() {
+                if p > 0 {
+                    result = Some(p);
+                    break;
+                }
+            }
         }
-        let pid: i32 = msg_send![app, processIdentifier];
-        if pid <= 0 {
-            None
-        } else {
-            Some(pid)
-        }
-    })
+        core_foundation_sys::base::CFRelease(array_ref as *const std::ffi::c_void);
+        result
+    }
 }
 
 /// Localized display name of the frontmost application (e.g. "Google Chrome").
