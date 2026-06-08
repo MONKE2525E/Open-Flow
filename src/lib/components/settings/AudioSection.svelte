@@ -29,6 +29,7 @@
   // Reset any stale calibrated gain on mount so it cannot override the saved
   // manual gain before the next calibration run starts.
   calibratedGain.set(null);
+  calibrationError.set(null);
 
   $effect(() => {
     if ($calibratedGain !== null) {
@@ -73,6 +74,7 @@
 
   onDestroy(() => {
     void cancelCalibration();
+    calibrationError.set(null);
   });
 
   loadSettings();

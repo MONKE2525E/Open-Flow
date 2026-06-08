@@ -573,7 +573,7 @@ pub async fn start_calibration_monitoring(
         // microphone permission denied by TCC or missing audio entitlement.
         if msg_lower.contains("permissiondenied")
             || msg_lower.contains("permission denied")
-            || msg.contains("1852797029") // 'nuoe' (No User Consent) OSStatus error code
+            || msg.contains("1852797029") // 'noue' (No User Consent) OSStatus error code
             || msg_lower.contains("access denied")
         {
             "Microphone access denied — grant Open Flow permission in System Settings → Privacy & Security → Microphone, then try again.".to_string()
