@@ -1096,20 +1096,30 @@ pub async fn inject_text(
             cmd_down.set_flags(CGEventFlags::CGEventFlagCommand);
             cmd_down.post(CGEventTapLocation::HID);
             sleep(Std::from_millis(8));
+            // Send V down/up in an inner closure so that if either event fails the
+            // outer closure can still guarantee cmd_up is posted. Without this, a
+            // failed v_down/v_up would leave the synthetic Command key stuck "down",
+            // causing every subsequent physical keypress to be interpreted as a
+            // Command shortcut until the user relaunches their app.
             // core-graphics 0.24.x exposes the Command modifier under the
             // CGEventFlagCommand name.
-            let v_down = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, true).ok()?;
-            v_down.set_flags(CGEventFlags::CGEventFlagCommand);
-            v_down.post(CGEventTapLocation::HID);
-            sleep(Std::from_millis(8));
-            let v_up = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, false).ok()?;
-            v_up.set_flags(CGEventFlags::CGEventFlagCommand);
-            v_up.post(CGEventTapLocation::HID);
-            sleep(Std::from_millis(8));
-            let cmd_up = CGEvent::new_keyboard_event(src, VK_COMMAND, false).ok()?;
-            cmd_up.set_flags(CGEventFlags::empty());
-            cmd_up.post(CGEventTapLocation::HID);
-            Some(())
+            let result = (|| -> Option<()> {
+                let v_down = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, true).ok()?;
+                v_down.set_flags(CGEventFlags::CGEventFlagCommand);
+                v_down.post(CGEventTapLocation::HID);
+                sleep(Std::from_millis(8));
+                let v_up = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, false).ok()?;
+                v_up.set_flags(CGEventFlags::CGEventFlagCommand);
+                v_up.post(CGEventTapLocation::HID);
+                sleep(Std::from_millis(8));
+                Some(())
+            })();
+            // Always release Command regardless of whether the V events succeeded.
+            if let Ok(cmd_up) = CGEvent::new_keyboard_event(src, VK_COMMAND, false) {
+                cmd_up.set_flags(CGEventFlags::empty());
+                cmd_up.post(CGEventTapLocation::HID);
+            }
+            result
         })
         .await
         .ok()

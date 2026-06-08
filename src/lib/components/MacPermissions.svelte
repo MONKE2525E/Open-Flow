@@ -119,12 +119,16 @@
     pollInterval = setInterval(async () => {
       if (permissionsLoading) return;
       await refreshMacPermissions();
-      if (allGranted) {
-        stopPolling();
-        return;
-      }
+      // Compute synchronously from the freshly-updated state variables rather
+      // than from the `allGranted` bindable, which is set via a $effect and may
+      // not have re-run yet after the await above.
+      const currentlyAllGranted =
+        accessibilityPermission === 'authorized' &&
+        inputMonitoringPermission === 'authorized' &&
+        microphonePermission === 'authorized';
       // Input Monitoring granted mid-session needs a relaunch before the event
       // tap sees global keystrokes — surface the hint once the user acted on it.
+      // Must run before the stopPolling() return so it is never skipped.
       if (inputMonitoringActionTaken && inputMonitoringPermission === 'authorized') {
         showRestartHint = true;
       } else if (
@@ -134,6 +138,9 @@
         Date.now() - permissionsPollingStartMs > 20_000
       ) {
         showRestartHint = true;
+      }
+      if (currentlyAllGranted) {
+        stopPolling();
       }
     }, 2000);
   }
