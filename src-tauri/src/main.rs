@@ -174,11 +174,35 @@ fn main() {
                     app.handle(),
                 );
             }
-            // macOS requires Accessibility permission for the global hotkey, Cmd+V
-            // injection, and auto-learn. Prompt on launch when not yet trusted.
+            // macOS requires Accessibility permission for Cmd+V injection and
+            // auto-learn, and Input Monitoring for the global keyboard tap to see
+            // keystrokes while other apps are frontmost. Prompt for both on launch
+            // when not yet granted.
             #[cfg(target_os = "macos")]
-            if !commands::check_accessibility_permission(false) {
-                let _ = commands::check_accessibility_permission(true);
+            {
+                if !commands::check_accessibility_permission(false) {
+                    let _ = commands::check_accessibility_permission(true);
+                }
+                let input_status = crate::system::mac_app::input_monitoring_status();
+                if input_status != "authorized" {
+                    let _ = crate::system::mac_app::request_input_monitoring();
+                    // Only surface the error banner when the user has explicitly denied
+                    // the permission. On first launch ("not_determined") the system
+                    // consent prompt is already showing; a simultaneous error banner
+                    // would be confusing and redundant.
+                    if input_status == "denied" {
+                        let app_h = app.handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                            app_h
+                                .emit(
+                                    "open-flow:error",
+                                    "On macOS, Open Flow needs Input Monitoring to hear the hotkey while other apps are focused. Without it, dictation only works when Open Flow is frontmost. Grant it in System Settings, then fully relaunch the app.",
+                                )
+                                .ok();
+                        });
+                    }
+                }
             }
             crate::pipeline::show_pill(app.handle(), "idle");
 
@@ -243,8 +267,14 @@ fn main() {
             commands::check_accessibility_permission,
             commands::open_accessibility_settings,
             commands::get_accessibility_permission_status,
+            commands::is_hotkey_tap_active,
             commands::get_microphone_permission_status,
+            commands::request_microphone_permission,
             commands::open_microphone_settings,
+            commands::restart_app,
+            commands::get_input_monitoring_permission_status,
+            commands::request_input_monitoring_permission,
+            commands::open_input_monitoring_settings,
             commands::check_keychain_access,
             commands::show_main,
             commands::hide_main,

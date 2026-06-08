@@ -165,6 +165,22 @@ pub fn show_pill(app: &AppHandle, state: &str) {
         #[cfg(not(target_os = "windows"))]
         pill.show().ok();
 
+        // macOS: `show()` (orderFront:) is ignored for a background app, so the
+        // pill only appeared when Open Flow was frontmost. Force it above the
+        // active app's windows without stealing focus. AppKit window calls must
+        // run on the main thread — show_pill is invoked from pipeline worker
+        // threads, so dispatch there (a raw msg_send off-thread raises an ObjC
+        // exception and aborts the process).
+        #[cfg(target_os = "macos")]
+        {
+            let pill_for_main = pill.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Ok(ns_window) = pill_for_main.ns_window() {
+                    crate::system::mac_app::float_pill_window(ns_window);
+                }
+            });
+        }
+
         if let Ok(Some(m)) = pill.primary_monitor() {
             let sz = m.size();
             let sf = m.scale_factor();
@@ -246,6 +262,12 @@ pub fn start_recording_session_ex(
 
     #[cfg(target_os = "macos")]
     {
+        // `AXIsProcessTrustedWithOptions` can return a stale cached `false` for the
+        // Check Accessibility strictly rather than using is_tap_active() as a proxy.
+        // The CGEventTap can be active on Input Monitoring alone — so a running tap
+        // does NOT prove Accessibility is granted. Without Accessibility, synthetic
+        // Cmd+V (posting events to the HID tap) silently fails. Using the real TCC
+        // check ensures we surface the error instead of recording and never pasting.
         if !crate::commands::check_accessibility_permission(false) {
             return Err(
                 "Accessibility permission is required for Open Flow on macOS. Open System Settings > Privacy & Security > Accessibility and enable Open Flow."

@@ -112,6 +112,26 @@ static CHORD_DOWN_MS: AtomicU64 = AtomicU64::new(0);
 static HANDLESS_PENDING: AtomicBool = AtomicBool::new(false);
 static HANDLESS_PENDING_MS: AtomicU64 = AtomicU64::new(0);
 static EVENT_TAP_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static TAP_ACTIVE: AtomicBool = AtomicBool::new(false);
+// Latched once the chord fires while another app is frontmost — empirical proof
+// that the tap receives global keystrokes (i.e. Input Monitoring is effectively
+// granted), independent of the per-process-cached IOHIDCheckAccess result.
+static GLOBAL_INPUT_SEEN: AtomicBool = AtomicBool::new(false);
+
+/// True once the hotkey has fired while another application was frontmost, which
+/// can only happen when the tap is receiving global input — i.e. Input Monitoring
+/// is working. Authoritative override for the unreliable `IOHIDCheckAccess` cache.
+pub fn has_seen_global_input() -> bool {
+    GLOBAL_INPUT_SEEN.load(Ordering::SeqCst)
+}
+
+/// Returns `true` once the CGEventTap has been successfully created and enabled.
+/// The tap polls until Accessibility permission is granted, so this becomes `true`
+/// only after the user has authorized the app — useful as a permission signal when
+/// `AXIsProcessTrustedWithOptions` returns a stale cached result.
+pub fn is_tap_active() -> bool {
+    TAP_ACTIVE.load(Ordering::SeqCst)
+}
 
 // Down-state for the (rare) case where a configured chord key is a regular key
 // rather than a modifier. Modifiers are read from CGEventFlags instead.
@@ -369,7 +389,7 @@ where
                             "CGEventTap not created — grant Open Flow Accessibility permission (System Settings → Privacy & Security → Accessibility). Retrying…"
                         );
                         if HOTKEY_DEBUG {
-                            eprintln!("[hotkey] CGEventTap::new failed (attempt {attempt}) — Accessibility not granted yet");
+                            log::debug!("[hotkey] CGEventTap::new failed (attempt {attempt}) — Accessibility not granted yet");
                         }
                     }
                     attempt += 1;
@@ -394,9 +414,10 @@ where
             Ordering::SeqCst,
         );
         tap.enable();
+        TAP_ACTIVE.store(true, Ordering::SeqCst);
         log::info!("macOS hotkey event tap installed");
         if HOTKEY_DEBUG {
-            eprintln!("[hotkey] event tap installed — listening for Fn+Control");
+            log::debug!("[hotkey] event tap installed — listening for Fn+Control");
         }
         CFRunLoop::run_current();
     });
@@ -535,9 +556,10 @@ fn handle_event(event: HotkeyEvent) {
     let held2 = held(k2, &K2_REGULAR_DOWN);
     let both = held1 && held2;
 
-    if HOTKEY_DEBUG && matches!(etype, CGEventType::FlagsChanged) {
-        eprintln!(
-            "[hotkey] flagsChanged flags={flags:#010x} keycode={keycode} k1={k1} k2={k2} held1={held1} held2={held2} both={both}"
+    if HOTKEY_DEBUG && matches!(etype, CGEventType::FlagsChanged | CGEventType::KeyDown | CGEventType::KeyUp) {
+        log::debug!(
+            "[hotkey] {:?} flags={flags:#010x} keycode={keycode} k1={k1} k2={k2} held1={held1} held2={held2} both={both}",
+            etype
         );
     }
 
@@ -575,15 +597,23 @@ fn handle_event(event: HotkeyEvent) {
         CHORD_ACTIVE.store(true, Ordering::SeqCst);
         CHORD_DOWN_MS.store(now, Ordering::SeqCst);
         ESCAPE_CANCELLED.store(false, Ordering::SeqCst);
+        // If the chord fired while another app was frontmost, the tap is seeing
+        // global events — mark Input Monitoring as effectively granted.
+        if !GLOBAL_INPUT_SEEN.load(Ordering::SeqCst) {
+            let our_pid = std::process::id() as i32;
+            if crate::system::mac_app::frontmost_pid().is_some_and(|p| p != our_pid) {
+                GLOBAL_INPUT_SEEN.store(true, Ordering::SeqCst);
+            }
+        }
         if HOTKEY_DEBUG {
-            eprintln!("[hotkey] PRESS (chord engaged) → start recording");
+            log::debug!("[hotkey] PRESS (chord engaged) → start recording");
         }
         if let Some(cb) = PRESS_CB.get() {
             cb();
         }
     } else if active && !both {
         if HOTKEY_DEBUG {
-            eprintln!("[hotkey] RELEASE (chord released)");
+            log::debug!("[hotkey] RELEASE (chord released)");
         }
         CHORD_ACTIVE.store(false, Ordering::SeqCst);
         let held_ms = now.saturating_sub(CHORD_DOWN_MS.load(Ordering::SeqCst));

@@ -566,7 +566,31 @@ pub async fn start_calibration_monitoring(
     }
 
     let start_result = start_result.map_err(|e| format!("Calibration task panicked: {e}"))?;
-    start_result.map_err(|e| e.to_string())
+    start_result.map_err(|e| {
+        let msg = e.to_string();
+        let msg_lower = msg.to_lowercase();
+        // Surface a user-readable message for the most common production failure:
+        // microphone permission denied by TCC or missing audio entitlement.
+
+        // OSStatus codes for permission-related errors. See: https://www.osstatus.com/
+        const AUDIO_HARDWARE_ILLEGAL_OPERATION_ERROR: &str = "1852797029"; // 'op??' (kAudioHardwareIllegalOperationError)
+        const AUDIO_HARDWARE_PERMISSION_DENIED: &str = "1853319013"; // 'nuoe' (kAudioHardwarePermissionDenied)
+
+        if msg_lower.contains("permissiondenied")
+            || msg_lower.contains("permission denied")
+            || msg.contains(AUDIO_HARDWARE_ILLEGAL_OPERATION_ERROR)
+            || msg.contains(AUDIO_HARDWARE_PERMISSION_DENIED)
+            || msg_lower.contains("noue") // 'noue' (No User Consent)
+            || msg_lower.contains("nuoe")
+            || msg_lower.contains("6e6f7565") // 'noue' hex
+            || msg_lower.contains("6e756f65") // 'nuoe' hex
+            || msg_lower.contains("access denied")
+        {
+            "Microphone access denied — grant Open Flow permission in System Settings → Privacy & Security → Microphone, then try again.".to_string()
+        } else {
+            msg
+        }
+    })
 }
 
 #[tauri::command]
@@ -1064,6 +1088,22 @@ pub fn get_accessibility_permission_status() -> String {
     }
 }
 
+/// Returns `true` once the macOS CGEventTap has been successfully created and
+/// enabled. Useful as a permission signal when `AXIsProcessTrustedWithOptions`
+/// returns a stale cached result after the user grants Accessibility access.
+/// Always returns `true` on non-macOS platforms.
+#[tauri::command]
+pub fn is_hotkey_tap_active() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        crate::core::hotkey::is_tap_active()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 #[tauri::command]
 pub fn get_microphone_permission_status() -> String {
     #[cfg(target_os = "macos")]
@@ -1077,6 +1117,31 @@ pub fn get_microphone_permission_status() -> String {
     }
 }
 
+/// Triggers the macOS microphone consent prompt when access is undetermined,
+/// then returns the resulting status. Lets the permissions UI request the mic
+/// directly instead of waiting for the first recording. No-op off macOS.
+#[tauri::command]
+pub async fn request_microphone_permission() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = crate::system::mac_app::request_microphone().await;
+        crate::system::mac_app::microphone_permission_status().to_string()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "authorized".to_string()
+    }
+}
+
+/// Relaunches the app. macOS caches Input Monitoring (and other TCC) decisions
+/// for the life of the process, and the global event tap only picks up a newly
+/// granted Input Monitoring permission after a restart — so a one-click relaunch
+/// is the reliable way to apply permission changes.
+#[tauri::command]
+pub fn restart_app(handle: tauri::AppHandle) {
+    handle.restart();
+}
+
 /// Opens the macOS Microphone privacy pane so the user can grant permission.
 /// No-op on other platforms.
 #[tauri::command]
@@ -1085,6 +1150,56 @@ pub fn open_microphone_settings() -> Result<(), String> {
     {
         std::process::Command::new("open")
             .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Current Input Monitoring permission status (`authorized`, `denied`, or
+/// `not_determined`). Required for the global keyboard tap to see keystrokes
+/// while other apps are frontmost. Always `authorized` on non-macOS platforms.
+#[tauri::command]
+pub fn get_input_monitoring_permission_status() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        // If the hotkey has fired from another app, the tap is receiving global
+        // input — trust that over IOHIDCheckAccess, which caches a stale value
+        // for the life of the process and lies after the user grants access.
+        if crate::core::hotkey::has_seen_global_input() {
+            return "authorized".to_string();
+        }
+        crate::system::mac_app::input_monitoring_status().to_string()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "authorized".to_string()
+    }
+}
+
+/// Requests Input Monitoring access, showing the macOS consent prompt when the
+/// permission is undetermined. Returns the resulting status. No-op elsewhere.
+#[tauri::command]
+pub fn request_input_monitoring_permission() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = crate::system::mac_app::request_input_monitoring();
+        crate::system::mac_app::input_monitoring_status().to_string()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "authorized".to_string()
+    }
+}
+
+/// Opens the macOS Input Monitoring privacy pane so the user can grant access.
+/// No-op on other platforms.
+#[tauri::command]
+pub fn open_input_monitoring_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -1134,6 +1249,7 @@ pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
 }
 
 #[tauri::command]
+#[allow(deprecated)]
 pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), String> {
     #[cfg(not(windows))]
     {

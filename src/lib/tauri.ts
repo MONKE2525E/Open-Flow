@@ -185,6 +185,14 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return String(getDevSetting('accessibility_permission_status') ?? 'authorized') as T;
     case 'get_microphone_permission_status':
       return String(getDevSetting('microphone_permission_status') ?? 'authorized') as T;
+    case 'get_input_monitoring_permission_status':
+      return String(getDevSetting('input_monitoring_permission_status') ?? 'authorized') as T;
+    case 'request_input_monitoring_permission':
+      return 'authorized' as T;
+    case 'request_microphone_permission':
+      return 'authorized' as T;
+    case 'check_keychain_access':
+      return 'authorized' as T;
     case 'check_for_update':
       return null as T;
     case 'check_connectivity':

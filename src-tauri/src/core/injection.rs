@@ -1072,19 +1072,69 @@ pub async fn inject_text(
         crate::system::mac_app::pasteboard_set_string(&adjusted);
         tokio::time::sleep(Duration::from_millis(20)).await;
 
-        let posted = (|| -> Option<()> {
+        if !crate::commands::check_accessibility_permission(false) {
+            log::error!(
+                "inject_text: Cmd+V injection attempted but Accessibility is not granted — \
+                 grant Open Flow Accessibility permission in System Settings → Privacy & Security → Accessibility"
+            );
+        }
+
+        // macOS keycode for the left Command key.
+        const VK_COMMAND: CGKeyCode = 55;
+        // Run the key-event sequence on a blocking thread so the 3×8ms sleeps
+        // do not stall the Tokio async runtime. The closure captures nothing from
+        // the outer scope, so it is Send even though CGEvent/CGEventSource are not.
+        let posted = tokio::task::spawn_blocking(move || -> Option<()> {
+            use std::{thread::sleep, time::Duration as Std};
             let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
             crate::core::hotkey::begin_synthetic_paste_suppression(400);
-            let down = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, true).ok()?;
+            // Press Command as a real key, not just a flag on the V event.
+            // Chromium/Electron apps (Chrome, VS Code, Electron editors) ignore
+            // flag-only modifiers and drop the paste; pressing the actual Command
+            // key makes the synthetic Cmd+V work in those apps and native ones.
+            let cmd_down = CGEvent::new_keyboard_event(src.clone(), VK_COMMAND, true).ok()?;
+            cmd_down.set_flags(CGEventFlags::CGEventFlagCommand);
+            cmd_down.post(CGEventTapLocation::HID);
+            sleep(Std::from_millis(8));
+            // Send V down/up in an inner closure so that if either event fails the
+            // outer closure can still guarantee cmd_up is posted. Without this, a
+            // failed v_down/v_up would leave the synthetic Command key stuck "down",
+            // causing every subsequent physical keypress to be interpreted as a
+            // Command shortcut until the user relaunches their app.
             // core-graphics 0.24.x exposes the Command modifier under the
             // CGEventFlagCommand name.
-            down.set_flags(CGEventFlags::CGEventFlagCommand);
-            down.post(CGEventTapLocation::HID);
-            let up = CGEvent::new_keyboard_event(src, VK_ANSI_V, false).ok()?;
-            up.set_flags(CGEventFlags::CGEventFlagCommand);
-            up.post(CGEventTapLocation::HID);
-            Some(())
-        })();
+            let result = (|| -> Option<()> {
+                let v_down = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, true).ok()?;
+                v_down.set_flags(CGEventFlags::CGEventFlagCommand);
+                v_down.post(CGEventTapLocation::HID);
+                sleep(Std::from_millis(8));
+                if let Ok(v_up) = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, false) {
+                    v_up.set_flags(CGEventFlags::CGEventFlagCommand);
+                    v_up.post(CGEventTapLocation::HID);
+                    sleep(Std::from_millis(8));
+                    Some(())
+                } else {
+                    None
+                }
+            })();
+            // Always release Command regardless of whether the V events succeeded.
+            if let Ok(cmd_up) = CGEvent::new_keyboard_event(src, VK_COMMAND, false) {
+                cmd_up.set_flags(CGEventFlags::empty());
+                cmd_up.post(CGEventTapLocation::HID);
+            }
+            result
+        })
+        .await
+        .ok()
+        .flatten();
+
+        log::info!(
+            "inject_text(macos): target_pid={} text_len={} posted={} tap_active={}",
+            (target_hwnd & 0xFFFFFFFF) as i32,
+            adjusted.len(),
+            posted.is_some(),
+            crate::core::hotkey::is_tap_active()
+        );
 
         tokio::time::sleep(Duration::from_millis(120)).await;
 
