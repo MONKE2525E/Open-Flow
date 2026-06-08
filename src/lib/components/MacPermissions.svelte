@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { fly, slide } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { invoke } from '../tauri';
@@ -52,6 +52,14 @@
       accessibilityPermission === 'authorized' &&
       inputMonitoringPermission === 'authorized' &&
       microphonePermission === 'authorized';
+  });
+
+  $effect(() => {
+    if (provider) {
+      untrack(() => {
+        void triggerKeychainAccess();
+      });
+    }
   });
 
   function permissionLabel(status: MacPermissionStatus) {

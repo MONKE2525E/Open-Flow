@@ -523,7 +523,7 @@
             class:btn-primary--glow={permsGranted}
             onclick={goNext}
           >
-            {permsGranted ? 'Continue' : 'Next'}
+            Next
           </button>
         </div>
       </div>
