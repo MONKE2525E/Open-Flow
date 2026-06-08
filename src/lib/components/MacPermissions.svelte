@@ -45,6 +45,7 @@
   let inputMonitoringActionTaken = $state(false);
   let showRestartHint = $state(false);
   let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let restartTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Keep the bindable flag in sync with the three core OS permissions.
   $effect(() => {
@@ -208,7 +209,7 @@
     void invoke('restart_app').catch(() => {
       // Ignore immediate IPC disconnection errors during restart.
       // Set a timeout to show the error only if the app fails to exit after 5 seconds.
-      setTimeout(() => {
+      restartTimeout = setTimeout(() => {
         restarting = false;
         permissionsError = 'Could not relaunch automatically — please quit and reopen Open Flow.';
       }, 5000);
@@ -251,6 +252,7 @@
 
   onDestroy(() => {
     stopPolling();
+    if (restartTimeout) clearTimeout(restartTimeout);
     if (isMac) window.removeEventListener('focus', onWindowFocus);
   });
 </script>
