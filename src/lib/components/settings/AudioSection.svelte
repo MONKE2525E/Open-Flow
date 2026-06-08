@@ -401,7 +401,9 @@
     margin-top: 8px;
     padding: 9px 11px;
     border-radius: var(--r-sm);
+    background: var(--warning-bg, #fff3cd);
     background: color-mix(in srgb, var(--warning, oklch(72% 0.13 55)) 10%, var(--paper));
+    border: 1px solid var(--line);
     border: 1px solid color-mix(in srgb, var(--warning, oklch(72% 0.13 55)) 28%, var(--line));
     font-size: 12px;
     color: var(--ink-soft);

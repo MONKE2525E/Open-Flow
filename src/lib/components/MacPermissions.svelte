@@ -423,7 +423,9 @@
   .permission-success {
     display: flex;
     align-items: center;
+    background: var(--accent-soft);
     background: color-mix(in srgb, var(--accent-soft) 65%, var(--paper));
+    border: 1px solid var(--line);
     border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
     border-radius: var(--r-sm);
     padding: 9px 13px;
@@ -500,6 +502,7 @@
   }
 
   .perm-row.perm-granted .permission-badge {
+    background: var(--accent-soft);
     background: color-mix(in srgb, var(--accent) 15%, var(--accent-soft));
   }
 
@@ -539,7 +542,9 @@
     display: flex;
     align-items: center;
     gap: 12px;
+    background: var(--bg-elev);
     background: color-mix(in srgb, oklch(75% 0.12 60) 12%, var(--paper));
+    border: 1px solid var(--line);
     border: 1px solid color-mix(in srgb, oklch(75% 0.12 60) 30%, var(--line));
     border-radius: var(--r-sm);
     padding: 10px 12px;
@@ -586,7 +591,9 @@
 
   .permission-note {
     flex: 1;
+    background: var(--accent-soft);
     background: color-mix(in srgb, var(--accent-soft) 55%, var(--paper));
+    border: 1px solid var(--line);
     border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
     border-radius: var(--r-sm);
     padding: 9px 12px;
