@@ -262,6 +262,11 @@ impl RecordingSession {
             .recv()
             .context("recording thread exited before signalling ready")??;
 
+        // A working capture stream proves the macOS microphone permission is
+        // granted — latch it so status checks don't report a stale AV cache.
+        #[cfg(target_os = "macos")]
+        crate::system::mac_app::mark_microphone_verified();
+
         Ok(RecordingSession {
             stop_tx,
             result_rx,

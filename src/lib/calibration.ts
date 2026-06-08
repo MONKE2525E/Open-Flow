@@ -30,6 +30,7 @@ export const micLevel = writable(0);
 export const calibratedGain = writable<number | null>(null);
 export const speechDetected = writable<boolean | null>(null);
 export const calibrationPhase = writable<CalibrationPhase | null>(null);
+export const calibrationError = writable<string | null>(null);
 
 let loudMaxLevel = MIN_CALIBRATION_LEVEL;
 let whisperMaxLevel = 0;
@@ -59,6 +60,7 @@ async function cleanupCalibrationResources() {
 export async function startCalibration() {
   await cleanupCalibrationResources();
 
+  calibrationError.set(null);
   isCalibrating.set(true);
   loudMaxLevel = MIN_CALIBRATION_LEVEL;
   whisperMaxLevel = 0;
@@ -110,6 +112,12 @@ export async function startCalibration() {
     await invoke('start_calibration_monitoring');
   } catch (e) {
     console.error('Failed to start calibration monitoring:', e);
+    const msg = typeof e === 'string' ? e : '';
+    if (msg.toLowerCase().includes('microphone') || msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('denied') || msg.toLowerCase().includes('access')) {
+      calibrationError.set('Microphone access denied. Go to System Settings → Privacy & Security → Microphone and grant Open Flow access, then try again.');
+    } else {
+      calibrationError.set('Could not start calibration. Make sure no other app is using the microphone and try again.');
+    }
     void cancelCalibration();
     return;
   }
@@ -205,4 +213,5 @@ export async function cancelCalibration() {
   micLevel.set(0);
   calibratedGain.set(null);
   speechDetected.set(null);
+  // Do NOT clear calibrationError here — it should persist so the UI can display it.
 }

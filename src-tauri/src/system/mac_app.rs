@@ -19,6 +19,41 @@ use tauri::AppHandle;
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {}
 
+// Input Monitoring (HID listen) permission. A keyboard `CGEventTap` only receives
+// events from *other* applications when the app is granted Input Monitoring —
+// without it the tap only sees keystrokes while the app is frontmost. This is
+// distinct from Accessibility (which authorizes posting events / Cmd+V).
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    fn IOHIDCheckAccess(request_type: u32) -> u32;
+    fn IOHIDRequestAccess(request_type: u32) -> bool;
+}
+
+// IOHIDRequestType: kIOHIDRequestTypeListenEvent is the first variant (= 0).
+const IOHID_REQUEST_TYPE_LISTEN_EVENT: u32 = 0;
+// IOHIDAccessType return values from IOHIDCheckAccess.
+const IOHID_ACCESS_TYPE_GRANTED: u32 = 0;
+const IOHID_ACCESS_TYPE_DENIED: u32 = 1;
+
+/// Current Input Monitoring (HID listen) permission for the app.
+///
+/// Returns `authorized`, `denied`, or `not_determined`.
+pub fn input_monitoring_status() -> &'static str {
+    match unsafe { IOHIDCheckAccess(IOHID_REQUEST_TYPE_LISTEN_EVENT) } {
+        IOHID_ACCESS_TYPE_GRANTED => "authorized",
+        IOHID_ACCESS_TYPE_DENIED => "denied",
+        _ => "not_determined",
+    }
+}
+
+/// Request Input Monitoring access. If undetermined, macOS shows the consent
+/// prompt and adds the app to System Settings → Privacy & Security → Input
+/// Monitoring. Returns `true` if already granted. Changes generally require an
+/// app relaunch before an existing event tap sees global events.
+pub fn request_input_monitoring() -> bool {
+    unsafe { IOHIDRequestAccess(IOHID_REQUEST_TYPE_LISTEN_EVENT) }
+}
+
 const APP_ICON_ICNS: &[u8] = include_bytes!("../../icons/icon.icns");
 
 const POLICY_UNKNOWN: u8 = 0;
@@ -150,6 +185,35 @@ pub fn set_regular_activation_policy_on_main_thread(app: &AppHandle) {
     });
 }
 
+/// Float the pill window above other apps' windows *without* activating Open
+/// Flow. Tauri's `show()` maps to `-[NSWindow orderFront:]`, which AppKit
+/// suppresses for a background (non-active) app — so the pill only appeared
+/// while Open Flow was frontmost. We instead:
+///   1. raise the window level above normal windows (NSStatusWindowLevel = 25),
+///   2. let it appear on every Space and over full-screen apps,
+///   3. order it front with `orderFrontRegardless`, which ignores active state.
+///
+/// `ns_window` is the `*mut NSWindow` obtained from `WebviewWindow::ns_window()`.
+pub fn float_pill_window(ns_window: *mut std::ffi::c_void) {
+    if ns_window.is_null() {
+        return;
+    }
+    autoreleasepool(|_| unsafe {
+        let win = ns_window as *mut AnyObject;
+        // NSStatusWindowLevel keeps the pill above ordinary app windows while
+        // staying below system menus.
+        let level: isize = 25;
+        let _: () = msg_send![win, setLevel: level];
+        // NSWindowCollectionBehaviorCanJoinAllSpaces (1<<0) |
+        // NSWindowCollectionBehaviorFullScreenAuxiliary (1<<8): show on the
+        // active Space and over full-screen apps without switching Spaces.
+        let behavior: usize = (1 << 0) | (1 << 8);
+        let _: () = msg_send![win, setCollectionBehavior: behavior];
+        // Order front even though Open Flow is not the active application.
+        let _: () = msg_send![win, orderFrontRegardless];
+    })
+}
+
 /// Ask macOS to activate the current app and bring its windows forward.
 pub fn activate_current_app() -> bool {
     autoreleasepool(|_| unsafe {
@@ -235,11 +299,30 @@ pub fn refresh_dock_icon() {
     })
 }
 
+/// Latched once a `cpal` input stream opens successfully. macOS only hands out a
+/// working audio stream when the microphone permission is actually granted, so a
+/// successful capture is authoritative proof — unlike
+/// `AVCaptureDevice authorizationStatusForMediaType:`, which can return a value
+/// cached at first call for the lifetime of the process and never refresh after
+/// the user grants access mid-session.
+static MIC_VERIFIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Record that the microphone was successfully opened for capture. Call this from
+/// the audio backend once a recording stream is confirmed playing.
+pub fn mark_microphone_verified() {
+    MIC_VERIFIED.store(true, Ordering::SeqCst);
+}
+
 /// Current macOS microphone permission status for the app.
 ///
 /// Returns one of: `authorized`, `not_determined`, `denied`, `restricted`,
 /// or `unknown`.
 pub fn microphone_permission_status() -> &'static str {
+    // A previously successful capture is proof the permission is granted, even if
+    // the cached AV authorization status is stale.
+    if MIC_VERIFIED.load(Ordering::SeqCst) {
+        return "authorized";
+    }
     autoreleasepool(|_| unsafe {
         let media_type = NSString::from_str("soun");
         let status: isize =
@@ -251,6 +334,25 @@ pub fn microphone_permission_status() -> &'static str {
             2 => "denied",
             _ => "unknown",
         }
+    })
+}
+
+/// Request microphone access, showing the macOS consent prompt when the
+/// permission is undetermined. The completion handler is a no-op — callers read
+/// the resulting status separately via `microphone_permission_status()` once the
+/// user responds. Safe to call when already authorized (no prompt is shown).
+pub fn request_microphone() {
+    autoreleasepool(|_| unsafe {
+        let media_type = NSString::from_str("soun");
+        // `requestAccessForMediaType:completionHandler:` invokes the block on an
+        // arbitrary queue after the user responds, so it must outlive this call —
+        // use a heap (Rc) block rather than a stack block.
+        let handler = block2::RcBlock::new(|_granted: objc2::runtime::Bool| {});
+        let _: () = msg_send![
+            class!(AVCaptureDevice),
+            requestAccessForMediaType: &*media_type,
+            completionHandler: &*handler
+        ];
     })
 }
 

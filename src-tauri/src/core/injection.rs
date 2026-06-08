@@ -1072,19 +1072,51 @@ pub async fn inject_text(
         crate::system::mac_app::pasteboard_set_string(&adjusted);
         tokio::time::sleep(Duration::from_millis(20)).await;
 
+        if !crate::core::hotkey::is_tap_active() {
+            log::error!(
+                "inject_text: Cmd+V injection attempted but the CGEventTap is not active — \
+                 grant Open Flow Accessibility permission in System Settings → Privacy & Security → Accessibility"
+            );
+        }
+
+        // macOS keycode for the left Command key.
+        const VK_COMMAND: CGKeyCode = 55;
         let posted = (|| -> Option<()> {
+            use std::{thread::sleep, time::Duration as Std};
             let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
             crate::core::hotkey::begin_synthetic_paste_suppression(400);
-            let down = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, true).ok()?;
+            // Press Command as a real key, not just a flag on the V event.
+            // Chromium/Electron apps (Chrome, VS Code, Electron editors) ignore
+            // flag-only modifiers and drop the paste; pressing the actual Command
+            // key makes the synthetic Cmd+V work in those apps and native ones.
+            let cmd_down = CGEvent::new_keyboard_event(src.clone(), VK_COMMAND, true).ok()?;
+            cmd_down.set_flags(CGEventFlags::CGEventFlagCommand);
+            cmd_down.post(CGEventTapLocation::HID);
+            sleep(Std::from_millis(8));
             // core-graphics 0.24.x exposes the Command modifier under the
             // CGEventFlagCommand name.
-            down.set_flags(CGEventFlags::CGEventFlagCommand);
-            down.post(CGEventTapLocation::HID);
-            let up = CGEvent::new_keyboard_event(src, VK_ANSI_V, false).ok()?;
-            up.set_flags(CGEventFlags::CGEventFlagCommand);
-            up.post(CGEventTapLocation::HID);
+            let v_down = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, true).ok()?;
+            v_down.set_flags(CGEventFlags::CGEventFlagCommand);
+            v_down.post(CGEventTapLocation::HID);
+            sleep(Std::from_millis(8));
+            let v_up = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, false).ok()?;
+            v_up.set_flags(CGEventFlags::CGEventFlagCommand);
+            v_up.post(CGEventTapLocation::HID);
+            sleep(Std::from_millis(8));
+            let cmd_up = CGEvent::new_keyboard_event(src, VK_COMMAND, false).ok()?;
+            cmd_up.set_flags(CGEventFlags::empty());
+            cmd_up.post(CGEventTapLocation::HID);
             Some(())
         })();
+
+        log::info!(
+            "inject_text(macos): target_pid={} frontmost_pid={:?} text_len={} posted={} tap_active={}",
+            (target_hwnd & 0xFFFFFFFF) as i32,
+            crate::system::mac_app::frontmost_pid(),
+            adjusted.len(),
+            posted.is_some(),
+            crate::core::hotkey::is_tap_active()
+        );
 
         tokio::time::sleep(Duration::from_millis(120)).await;
 
