@@ -1108,11 +1108,14 @@ pub async fn inject_text(
                 v_down.set_flags(CGEventFlags::CGEventFlagCommand);
                 v_down.post(CGEventTapLocation::HID);
                 sleep(Std::from_millis(8));
-                let v_up = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, false).ok()?;
-                v_up.set_flags(CGEventFlags::CGEventFlagCommand);
-                v_up.post(CGEventTapLocation::HID);
-                sleep(Std::from_millis(8));
-                Some(())
+                if let Ok(v_up) = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, false) {
+                    v_up.set_flags(CGEventFlags::CGEventFlagCommand);
+                    v_up.post(CGEventTapLocation::HID);
+                    sleep(Std::from_millis(8));
+                    Some(())
+                } else {
+                    None
+                }
             })();
             // Always release Command regardless of whether the V events succeeded.
             if let Ok(cmd_up) = CGEvent::new_keyboard_event(src, VK_COMMAND, false) {

@@ -41,6 +41,7 @@
   let restarting = $state(false);
 
   let accessibilityPromptAttempted = $state(false);
+  let accessibilityPromptAttemptedAtMs = $state<number | null>(null);
   let inputMonitoringActionTaken = $state(false);
   let showRestartHint = $state(false);
   let permissionsPollingStartMs = $state<number | null>(null);
@@ -144,8 +145,8 @@
       } else if (
         accessibilityPromptAttempted &&
         accessibilityPermission !== 'authorized' &&
-        permissionsPollingStartMs !== null &&
-        Date.now() - permissionsPollingStartMs > 20_000
+        accessibilityPromptAttemptedAtMs !== null &&
+        Date.now() - accessibilityPromptAttemptedAtMs > 20_000
       ) {
         showRestartHint = true;
       }
@@ -167,6 +168,7 @@
     if (!isMac) return;
     accessibilityPrompting = true;
     accessibilityPromptAttempted = true;
+    accessibilityPromptAttemptedAtMs = Date.now();
     permissionsError = '';
     try {
       await invoke('check_accessibility_permission', { prompt: true });
