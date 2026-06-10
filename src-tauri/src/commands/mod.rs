@@ -869,53 +869,64 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
             .to_string_lossy()
             .to_string();
 
-        let subkey: Vec<u16> =
-            std::ffi::OsStr::new("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
-        let value_name: Vec<u16> = std::ffi::OsStr::new("OpenFlow")
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-
-        unsafe {
-            let mut hkey = HKEY::default();
-            let status = RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                PCWSTR(subkey.as_ptr()),
-                None,
-                KEY_WRITE,
-                std::ptr::addr_of_mut!(hkey),
+        // Debug builds live under `target/debug`, lack the `windows_subsystem =
+        // "windows"` attribute, and go stale every time they're rebuilt. Registering
+        // one for Windows startup leaves a visible console window behind on every
+        // boot once the binary no longer matches the running app's database/schema.
+        if enabled && cfg!(debug_assertions) {
+            log::warn!(
+                "set_autostart: skipping registry write for debug build at {app_path}; \
+                 enable \"Start with Windows\" from an installed release build instead"
             );
-
-            if status.is_err() {
-                return Err("Failed to open registry key".to_string());
-            }
-
-            let result = if enabled {
-                let app_path_wide: Vec<u16> = std::ffi::OsStr::new(&app_path)
+        } else {
+            let subkey: Vec<u16> =
+                std::ffi::OsStr::new("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
                     .encode_wide()
                     .chain(std::iter::once(0))
                     .collect();
-                RegSetValueExW(
-                    hkey,
-                    PCWSTR(value_name.as_ptr()),
+            let value_name: Vec<u16> = std::ffi::OsStr::new("OpenFlow")
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+            unsafe {
+                let mut hkey = HKEY::default();
+                let status = RegOpenKeyExW(
+                    HKEY_CURRENT_USER,
+                    PCWSTR(subkey.as_ptr()),
                     None,
-                    REG_SZ,
-                    Some(std::slice::from_raw_parts(
-                        app_path_wide.as_ptr() as *const u8,
-                        (app_path_wide.len() - 1) * 2,
-                    )),
-                )
-            } else {
-                RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()))
-            };
+                    KEY_WRITE,
+                    std::ptr::addr_of_mut!(hkey),
+                );
 
-            let _ = RegCloseKey(hkey);
+                if status.is_err() {
+                    return Err("Failed to open registry key".to_string());
+                }
 
-            if result.is_err() {
-                return Err("Failed to set registry value".to_string());
+                let result = if enabled {
+                    let app_path_wide: Vec<u16> = std::ffi::OsStr::new(&app_path)
+                        .encode_wide()
+                        .chain(std::iter::once(0))
+                        .collect();
+                    RegSetValueExW(
+                        hkey,
+                        PCWSTR(value_name.as_ptr()),
+                        None,
+                        REG_SZ,
+                        Some(std::slice::from_raw_parts(
+                            app_path_wide.as_ptr() as *const u8,
+                            (app_path_wide.len() - 1) * 2,
+                        )),
+                    )
+                } else {
+                    RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()))
+                };
+
+                let _ = RegCloseKey(hkey);
+
+                if result.is_err() {
+                    return Err("Failed to set registry value".to_string());
+                }
             }
         }
     }
