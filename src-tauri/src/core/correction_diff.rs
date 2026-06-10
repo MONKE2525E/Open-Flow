@@ -439,7 +439,9 @@ pub fn consonant_skeleton(word: &str) -> String {
     let mut out = String::new();
     let mut prev: Option<char> = None;
     for ch in word.chars().flat_map(char::to_lowercase) {
-        if !VOWELS.contains(&ch) && ch.is_alphabetic() {
+        if VOWELS.contains(&ch) {
+            prev = None;
+        } else if ch.is_alphabetic() {
             if prev != Some(ch) {
                 out.push(ch);
             }
@@ -607,5 +609,14 @@ mod tests {
         // "y" acts as a vowel in words like "type"/"rhythm" — treating it as a
         // consonant would make phonetically similar words diverge unnecessarily.
         assert_eq!(consonant_skeleton("typo"), consonant_skeleton("tipo"));
+    }
+
+    #[test]
+    fn consonant_skeleton_keeps_consonants_separated_by_vowels() {
+        // A repeated consonant separated by a vowel (e.g. "state") must not be
+        // collapsed into a single occurrence — only directly-adjacent
+        // duplicates (from the same letter, e.g. "koobernetes") collapse.
+        assert_eq!(consonant_skeleton("state"), "stt");
+        assert_ne!(consonant_skeleton("state"), consonant_skeleton("sat"));
     }
 }
