@@ -1136,7 +1136,7 @@ pub fn delete_dictionary_entry(db: &Db, id: i64) -> Result<()> {
             params![mistake, term],
         )?;
         tx.execute(
-            "DELETE FROM correction_evidence WHERE wrong_word = ?1 AND correct_word = ?2",
+            "DELETE FROM correction_evidence WHERE wrong_word = ?1 COLLATE NOCASE AND correct_word = ?2 COLLATE NOCASE",
             params![mistake, term],
         )?;
     }
@@ -1162,7 +1162,7 @@ pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
             "DELETE FROM auto_learn_candidates WHERE wrong_word = ?1 AND correct_word = ?2",
         )?;
         let mut del_evidence_stmt = tx.prepare(
-            "DELETE FROM correction_evidence WHERE wrong_word = ?1 AND correct_word = ?2",
+            "DELETE FROM correction_evidence WHERE wrong_word = ?1 COLLATE NOCASE AND correct_word = ?2 COLLATE NOCASE",
         )?;
 
         for chunk in ids.chunks(SQL_BATCH_SIZE) {

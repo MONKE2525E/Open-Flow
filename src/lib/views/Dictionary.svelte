@@ -193,20 +193,22 @@
   }
 
   onMount(() => {
+    let destroyed = false;
     let unlisten: (() => void) | undefined;
     let unlistenSuggestion: (() => void) | undefined;
     fetchDictionary();
     fetchSuggestions();
     listen('open-flow:dictionary-updated', () => { fetchDictionary(); fetchSuggestions(); })
-      .then((cleanup) => { unlisten = cleanup; })
+      .then((cleanup) => { if (destroyed) cleanup(); else unlisten = cleanup; })
       .catch(() => {});
     listen('open-flow:suggestion-added', () => fetchSuggestions())
-      .then((cleanup) => { unlistenSuggestion = cleanup; })
+      .then((cleanup) => { if (destroyed) cleanup(); else unlistenSuggestion = cleanup; })
       .catch(() => {});
     updateSortIndicator();
     const onResize = () => updateSortIndicator();
     window.addEventListener('resize', onResize);
     return () => {
+      destroyed = true;
       unlisten?.();
       unlistenSuggestion?.();
       window.removeEventListener('resize', onResize);

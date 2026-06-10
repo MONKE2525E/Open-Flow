@@ -296,7 +296,7 @@
       class="window-slider"
       min="1" max="30" step="1"
       bind:value={autoLearnWindowDays}
-      oninput={saveAutoLearnWindowDays}
+      onchange={saveAutoLearnWindowDays}
       style="--pct: {((autoLearnWindowDays - 1) / 29 * 100).toFixed(1)}%"
       aria-label="Auto-learn window in days"
     />
