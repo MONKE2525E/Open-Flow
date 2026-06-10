@@ -411,7 +411,7 @@ pub fn open(path: &str) -> Result<Db> {
                    ON correction_evidence(wrong_word, correct_word, created_at);
                  INSERT OR IGNORE INTO correction_evidence
                    (wrong_word, correct_word, source, weight, confidence, session_id, created_at)
-                   SELECT wrong_word, correct_word, 'post_edit', 1.0, 0.6, 'legacy-' || id, created_at
+                   SELECT lower(wrong_word), correct_word, 'post_edit', 1.0, 0.6, 'legacy-' || id, created_at
                    FROM pending_corrections;
                  CREATE TABLE IF NOT EXISTS dictionary_suggestions (
                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -886,7 +886,7 @@ pub fn compute_evidence_score(
                 (julianday('now') - julianday(created_at)) AS age_days,
                 session_id, source
          FROM correction_evidence
-         WHERE wrong_word=?1 AND correct_word=?2
+         WHERE wrong_word=?1 COLLATE NOCASE AND correct_word=?2
            AND created_at >= datetime('now', ?3)",
     )?;
 
@@ -1561,6 +1561,43 @@ mod tests {
         let conn = lock_conn(&db).expect("lock");
         assert!(table_has_column(&conn, "cleanup_cache", "expires_at_epoch").expect("column"));
         assert!(table_has_column(&conn, "cleanup_cache", "last_hit_at_epoch").expect("column"));
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn open_migrates_legacy_pending_corrections_with_lowercased_wrong_word() {
+        let path = temp_db_path("legacy_pending_corrections");
+        {
+            let conn = Connection::open(&path).expect("create legacy db");
+            conn.execute_batch(
+                "CREATE TABLE pending_corrections (
+                   id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                   wrong_word   TEXT    NOT NULL,
+                   correct_word TEXT    NOT NULL,
+                   created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 INSERT INTO pending_corrections (wrong_word, correct_word)
+                   VALUES ('Koobernetes', 'Kubernetes');
+                 PRAGMA user_version = 6;",
+            )
+            .expect("seed legacy db");
+        }
+
+        let db = open(path.to_str().expect("path string")).expect("open migrates legacy db");
+
+        let conn = lock_conn(&db).expect("lock");
+        let wrong_word: String = conn
+            .query_row(
+                "SELECT wrong_word FROM correction_evidence WHERE correct_word = 'Kubernetes'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("migrated evidence row");
+        assert_eq!(wrong_word, "koobernetes");
         drop(conn);
         drop(db);
         let _ = std::fs::remove_file(&path);

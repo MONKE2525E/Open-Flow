@@ -1037,10 +1037,11 @@ async fn run_cleanup_and_snippets_for_db(
     } else {
         None
     };
-    let snippet_active = pure_expansion.is_some() || !snippet_instructions.is_empty();
     let expanded = pure_expansion
         .clone()
         .unwrap_or_else(|| snippets::expand_snippets_from(raw, &mut db_snippets, db_handle));
+    let snippet_active =
+        pure_expansion.is_some() || !snippet_instructions.is_empty() || expanded != raw;
     log::debug!(
         "pipeline: snippets expanded pure_fast_path={} expanded_chars={}",
         pure_expansion.is_some(),
@@ -1284,6 +1285,7 @@ pub struct PipelineTestResult {
     pub history_entry: db::RecentEntry,
     pub recent: Vec<db::RecentEntry>,
     pub stats: db::Stats,
+    pub snippet_active: bool,
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -1359,7 +1361,7 @@ pub async fn run_pipeline_fixture(
         })
     })?;
 
-    let (final_text_before_dictionary, dict_entries, cleanup_cache_key, _snippet_active) =
+    let (final_text_before_dictionary, dict_entries, cleanup_cache_key, snippet_active) =
         run_cleanup_and_snippets_for_db(
             &db_handle,
             &raw_text,
@@ -1400,6 +1402,7 @@ pub async fn run_pipeline_fixture(
         history_entry,
         recent,
         stats,
+        snippet_active,
     })
 }
 
@@ -1768,6 +1771,46 @@ mod tests {
             0
         );
         assert_eq!(take_injections().len(), 1);
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_marks_snippet_active_for_inline_expansion_without_instructions() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("remind them btw to call back".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("remind them by the way to call back".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let mut request = base_request(base_config());
+        request.snippets.push(PipelineTestSnippet {
+            trigger: "btw".into(),
+            expansion: "by the way".into(),
+            instructions: String::new(),
+        });
+
+        let result = run_pipeline_fixture(request)
+            .await
+            .expect("inline snippet expansion should succeed");
+        assert!(result.snippet_active);
+        assert_eq!(
+            result.final_text_before_dictionary,
+            "remind them by the way to call back"
+        );
         reset();
     }
 
