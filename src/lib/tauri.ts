@@ -221,9 +221,11 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'set_dev_logging_enabled':
     case 'start_calibration_monitoring':
     case 'stop_calibration_monitoring':
-    case 'approve_dictionary_suggestion':
     case 'dismiss_dictionary_suggestion':
+    case 'restore_never_learn_pair':
       return undefined as T;
+    case 'approve_dictionary_suggestion':
+      return true as T;
     case 'create_snippet': {
       const trigger = assertDevText(args?.trigger, 'Trigger').trim();
       const expansion = assertDevText(args?.expansion, 'Expansion');

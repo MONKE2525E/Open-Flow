@@ -44,6 +44,8 @@
   let suggestions     = $state<DictionarySuggestion[]>([]);
   let dismissingKeys  = $state<Set<string>>(new Set());
   let approvingKeys   = $state<Set<string>>(new Set());
+  let lastDismissed   = $state<{ wrong_word: string; correct_word: string } | null>(null);
+  let undoTimer: ReturnType<typeof window.setTimeout> | undefined;
 
   let search        = $state('');
   let debouncedSearch = $state('');
@@ -116,8 +118,8 @@
   async function fetchSuggestions() {
     try {
       suggestions = (await invoke<DictionarySuggestion[] | null>('get_dictionary_suggestions')) ?? [];
-    } catch {
-      // unavailable in browser dev mode — leave suggestions as-is
+    } catch (err) {
+      console.error('fetchSuggestions failed', err);
     }
   }
 
@@ -126,8 +128,11 @@
     if (approvingKeys.has(key)) return;
     approvingKeys = new Set(approvingKeys).add(key);
     try {
-      await invoke('approve_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word });
+      const applied = await invoke<boolean>('approve_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word });
       suggestions = suggestions.filter(x => !(x.wrong_word === s.wrong_word && x.correct_word === s.correct_word));
+      if (applied === false) {
+        await emit('open-flow:error', `"${s.correct_word}" already has a different dictionary entry — suggestion removed.`);
+      }
     } catch (err) {
       console.error(err);
       await emit('open-flow:error', 'Could not approve suggestion.');
@@ -146,6 +151,7 @@
       try {
         await invoke('dismiss_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word });
         suggestions = suggestions.filter(x => !(x.wrong_word === s.wrong_word && x.correct_word === s.correct_word));
+        showUndoBanner(s);
       } catch (err) {
         console.error(err);
         await emit('open-flow:error', 'Could not dismiss suggestion.');
@@ -157,12 +163,38 @@
     }, motionMs(200));
   }
 
+  function showUndoBanner(s: DictionarySuggestion) {
+    if (undoTimer !== undefined) window.clearTimeout(undoTimer);
+    lastDismissed = { wrong_word: s.wrong_word, correct_word: s.correct_word };
+    undoTimer = window.setTimeout(() => {
+      lastDismissed = null;
+      undoTimer = undefined;
+    }, 6000);
+  }
+
+  async function undoDismiss() {
+    const target = lastDismissed;
+    if (!target) return;
+    if (undoTimer !== undefined) {
+      window.clearTimeout(undoTimer);
+      undoTimer = undefined;
+    }
+    lastDismissed = null;
+    try {
+      await invoke('restore_never_learn_pair', { wrong: target.wrong_word, correct: target.correct_word });
+      await fetchSuggestions();
+    } catch (err) {
+      console.error(err);
+      await emit('open-flow:error', 'Could not undo dismissal.');
+    }
+  }
+
   onMount(() => {
     let unlisten: (() => void) | undefined;
     let unlistenSuggestion: (() => void) | undefined;
     fetchDictionary();
     fetchSuggestions();
-    listen('open-flow:dictionary-updated', () => fetchDictionary())
+    listen('open-flow:dictionary-updated', () => { fetchDictionary(); fetchSuggestions(); })
       .then((cleanup) => { unlisten = cleanup; })
       .catch(() => {});
     listen('open-flow:suggestion-added', () => fetchSuggestions())
@@ -171,7 +203,12 @@
     updateSortIndicator();
     const onResize = () => updateSortIndicator();
     window.addEventListener('resize', onResize);
-    return () => { unlisten?.(); unlistenSuggestion?.(); window.removeEventListener('resize', onResize); };
+    return () => {
+      unlisten?.();
+      unlistenSuggestion?.();
+      window.removeEventListener('resize', onResize);
+      if (undoTimer !== undefined) window.clearTimeout(undoTimer);
+    };
   });
 
   function selectRow(e: DictionaryEntry) {
@@ -335,7 +372,7 @@
     <div class="suggested-section" in:fade={{ duration: 180 }}>
       <div class="suggested-header">
         <span class="suggested-label">Suggested corrections</span>
-        <span class="suggested-count">{suggestions.length}</span>
+        <span class="suggested-count">{visibleSuggestions.length}</span>
       </div>
       <div class="suggested-list">
         {#each visibleSuggestions as s (s.id)}
@@ -345,11 +382,16 @@
             animate:flip={{ duration: motionMs(MOTION_MS.panel), easing: expoOut }}
             out:listItemCollapse={{ duration: 200 }}
           >
-            <span class="suggested-pair">
-              <span class="suggested-wrong">"{s.wrong_word}"</span>
-              <svg class="suggested-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-              <span class="suggested-correct">{s.correct_word}</span>
-            </span>
+            <div class="suggested-info">
+              <span class="suggested-pair">
+                <span class="suggested-wrong">"{s.wrong_word}"</span>
+                <svg class="suggested-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                <span class="suggested-correct">{s.correct_word}</span>
+              </span>
+              {#if s.source_summary}
+                <span class="suggested-meta">{s.source_summary}</span>
+              {/if}
+            </div>
             <div class="suggested-actions">
               <button
                 class="btn-approve"
@@ -364,6 +406,12 @@
           </div>
         {/each}
       </div>
+      {#if lastDismissed}
+        <div class="undo-banner" in:fly={{ y: -6, duration: motionMs(MOTION_MS.fast), easing: expoOut }} out:fade={{ duration: motionMs(MOTION_MS.fast) }}>
+          <span>Won't suggest "{lastDismissed.wrong_word}" → {lastDismissed.correct_word} again.</span>
+          <button class="btn-undo" onclick={undoDismiss}>Undo</button>
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -730,14 +778,30 @@
     border-bottom: 0;
   }
 
-  .suggested-pair {
+  .suggested-info {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .suggested-pair {
     display: flex;
     align-items: center;
     gap: 7px;
     min-width: 0;
     font-family: var(--sans);
     font-size: 13px;
+  }
+
+  .suggested-meta {
+    font-size: 10.5px;
+    font-family: var(--mono);
+    color: var(--ink-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .suggested-wrong {
@@ -811,6 +875,34 @@
     display: inline-block;
     flex-shrink: 0;
   }
+
+  .undo-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--line);
+    background: var(--bg-elev);
+    font-size: 12px;
+    color: var(--ink-soft);
+  }
+
+  .btn-undo {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--sans);
+    color: var(--accent-ink);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .btn-undo:hover { opacity: 0.8; }
 
   /* ── end suggested section ── */
 

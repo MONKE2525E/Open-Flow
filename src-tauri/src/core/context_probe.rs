@@ -153,13 +153,13 @@ fn get_monotonic_ms() -> u64 {
 static MACOS_PROBE_START_TIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[cfg(target_os = "macos")]
-struct MacosProbeGuard {
+pub(crate) struct MacosProbeGuard {
     start_time: u64,
 }
 
 #[cfg(target_os = "macos")]
 impl MacosProbeGuard {
-    fn acquire() -> Option<Self> {
+    pub(crate) fn acquire() -> Option<Self> {
         use std::sync::atomic::Ordering;
 
         let now = get_monotonic_ms();

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '../../tauri';
-  import { fly, fade } from 'svelte/transition';
+  import { fly, fade, slide } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
   import { saveSetting, type HistoryRetention } from '../../settings';
@@ -18,6 +18,7 @@
   let historyDropdownOpen = $state(false);
   let appContextHint = $state(false);
   let autoLearn = $state(false);
+  let autoLearnWindowDays = $state(3);
   let cleanupCacheEntries = $state(0);
   let cleanupCacheSpaceConstrained = $state(false);
   let cleanupCacheFreeBytes = $state<number | null>(null);
@@ -34,10 +35,11 @@
 
   async function loadSettings() {
     try {
-      const [retention, hint, learn, cacheStatus, summary, recent] = await Promise.all([
+      const [retention, hint, learn, windowDays, cacheStatus, summary, recent] = await Promise.all([
         invoke<string | null>('get_setting', { key: 'history_retention' }),
         invoke<boolean | null>('get_setting', { key: 'app_context_hint' }),
         invoke<boolean | null>('get_setting', { key: 'auto_learn_enabled' }),
+        invoke<number | null>('get_setting', { key: 'auto_learn_window_days' }),
         invoke<CleanupCacheStatus>('get_cleanup_cache_status'),
         invoke<typeof autoLearnSummary>('get_auto_learn_status_summary'),
         invoke<typeof recentAutoLearn>('get_recent_auto_learn_activity', { limit: 5 }),
@@ -45,6 +47,9 @@
       if (retention) historyRetention = retention;
       appContextHint = hint ?? false;
       autoLearn = learn ?? false;
+      if (windowDays !== null && windowDays !== undefined) {
+        autoLearnWindowDays = Math.max(1, Math.min(30, windowDays));
+      }
       cleanupCacheEntries = cacheStatus?.entry_count ?? 0;
       cleanupCacheSpaceConstrained = cacheStatus?.is_space_constrained ?? false;
       cleanupCacheFreeBytes = cacheStatus?.free_bytes ?? null;
@@ -82,6 +87,14 @@
     } catch (err) {
       autoLearn = !value;
       console.error('save auto_learn_enabled failed:', err);
+    }
+  }
+
+  async function saveAutoLearnWindowDays() {
+    try {
+      await saveSetting('auto_learn_window_days', autoLearnWindowDays);
+    } catch (err) {
+      console.error('saveAutoLearnWindowDays failed:', err);
     }
   }
 
@@ -269,6 +282,26 @@
   </div>
   <Toggle checked={autoLearn} onchange={handleAutoLearn} label="Auto-learn corrections" />
 </div>
+{#if autoLearn}
+  <div class="setting-row window-row" transition:slide={{ duration: motionMs(MOTION_MS.base) }}>
+    <div class="window-header">
+      <div>
+        <div class="label">Learning window</div>
+        <div class="desc">How long evidence is remembered before it stops counting toward a suggestion</div>
+      </div>
+      <span class="window-value">{autoLearnWindowDays} day{autoLearnWindowDays === 1 ? '' : 's'}</span>
+    </div>
+    <input
+      type="range"
+      class="window-slider"
+      min="1" max="30" step="1"
+      bind:value={autoLearnWindowDays}
+      oninput={saveAutoLearnWindowDays}
+      style="--pct: {((autoLearnWindowDays - 1) / 29 * 100).toFixed(1)}%"
+      aria-label="Auto-learn window in days"
+    />
+  </div>
+{/if}
 <div class="setting-row">
   <div>
     <div class="label">Auto-learn activity</div>
@@ -419,4 +452,56 @@
     transition: opacity 0.16s ease, transform 0.16s ease;
   }
   .privacy-eye-wrap:hover .privacy-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .window-row { flex-direction: column; align-items: stretch; gap: 0; }
+  .window-header { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+  .window-value {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent);
+    min-width: 52px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .window-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    margin-top: 10px;
+    background: linear-gradient(
+      to right,
+      var(--accent) 0%, var(--accent) var(--pct),
+      var(--line-strong) var(--pct), var(--line-strong) 100%
+    );
+    outline: none;
+    cursor: pointer;
+    border: none;
+    display: block;
+  }
+  .window-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--bg-elev);
+    border: 2px solid var(--accent);
+    box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 35%, transparent);
+    cursor: pointer;
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+  }
+  .window-slider::-webkit-slider-thumb:hover { box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 45%, transparent); transform: scale(1.1); }
+  .window-slider::-webkit-slider-thumb:active { box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 55%, transparent); transform: scale(1.15); }
+  .window-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--bg-elev);
+    border: 2px solid var(--accent);
+    box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 35%, transparent);
+    cursor: pointer;
+  }
 </style>

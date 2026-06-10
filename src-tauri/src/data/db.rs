@@ -763,55 +763,11 @@ pub fn log_auto_learn_event(
     Ok(())
 }
 
-pub fn upsert_auto_learn_candidate(
-    db: &Db,
-    wrong: &str,
-    correct: &str,
-    confidence: f64,
-    cooldown_minutes: i64,
-) -> Result<bool> {
-    let conn = lock_conn(db)?;
-    let blocked: i64 = conn.query_row(
-        "SELECT COUNT(*)
-         FROM auto_learn_candidates
-         WHERE wrong_word = ?1
-           AND correct_word = ?2
-           AND cooldown_until IS NOT NULL
-           AND cooldown_until > datetime('now')",
-        params![wrong, correct],
-        |r| r.get(0),
-    )?;
-    if blocked > 0 {
-        return Ok(false);
-    }
-    conn.execute(
-        "INSERT INTO auto_learn_candidates
-         (wrong_word, correct_word, confidence_sum, confidence_avg, seen_count, last_seen_at, cooldown_until)
-         VALUES (?1, ?2, ?3, ?3, 1, datetime('now'), datetime('now', ?4))
-         ON CONFLICT(wrong_word, correct_word) DO UPDATE SET
-           confidence_sum = auto_learn_candidates.confidence_sum + excluded.confidence_sum,
-           seen_count = auto_learn_candidates.seen_count + 1,
-           confidence_avg = (auto_learn_candidates.confidence_sum + excluded.confidence_sum) / (auto_learn_candidates.seen_count + 1),
-           last_seen_at = datetime('now'),
-           cooldown_until = datetime('now', ?4)",
-        params![wrong, correct, confidence, format!("+{} minutes", cooldown_minutes.max(0))],
-    )?;
-    Ok(true)
-}
-
-pub fn mark_auto_learn_candidate_promoted(db: &Db, wrong: &str, correct: &str) -> Result<()> {
-    let conn = lock_conn(db)?;
-    conn.execute(
-        "UPDATE auto_learn_candidates
-         SET promoted_at = datetime('now')
-         WHERE wrong_word = ?1 AND correct_word = ?2",
-        params![wrong, correct],
-    )?;
-    Ok(())
-}
-
 // ---------- correction evidence ledger ----------
 
+// One argument per evidence-observation field (who/what/where/how-confident);
+// grouping into a struct would just move the same fields one layer out.
+#[allow(clippy::too_many_arguments)]
 pub fn insert_correction_evidence(
     db: &Db,
     wrong: &str,
@@ -857,6 +813,52 @@ pub fn insert_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()
         params![wrong, correct],
     )?;
     Ok(())
+}
+
+pub fn delete_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()> {
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "DELETE FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2",
+        params![wrong, correct],
+    )?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NeverLearnPair {
+    pub wrong_word: String,
+    pub correct_word: String,
+}
+
+pub fn query_never_learn_pairs(db: &Db) -> Result<Vec<NeverLearnPair>> {
+    let conn = lock_conn(db)?;
+    let mut stmt =
+        conn.prepare("SELECT wrong_word, correct_word FROM never_learn_pairs ORDER BY wrong_word")?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(NeverLearnPair {
+                wrong_word: r.get(0)?,
+                correct_word: r.get(1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// True if `(term, mistake)` already has an auto-learned dictionary entry —
+/// used to avoid re-emitting promotion events/logs for evidence that arrives
+/// after a pair is already in the dictionary.
+pub fn is_already_auto_learned(db: &Db, term: &str, mistake: &str) -> Result<bool> {
+    let conn = lock_conn(db)?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM dictionary
+         WHERE term = ?1 COLLATE NOCASE
+           AND COALESCE(mistake,'') = ?2 COLLATE NOCASE
+           AND auto_learned = 1",
+        params![term, mistake],
+        |r| r.get(0),
+    )?;
+    Ok(count > 0)
 }
 
 /// Promotion score = Σ (weight × confidence × recency_decay) over all evidence in the window.
@@ -964,9 +966,14 @@ pub fn upsert_dictionary_suggestion(
 pub fn query_dictionary_suggestions(db: &Db) -> Result<Vec<DictionarySuggestion>> {
     let conn = lock_conn(db)?;
     let mut stmt = conn.prepare(
-        "SELECT id, wrong_word, correct_word, score, source_summary, created_at, updated_at
-         FROM dictionary_suggestions
-         ORDER BY score DESC, updated_at DESC",
+        "SELECT s.id, s.wrong_word, s.correct_word, s.score, s.source_summary, s.created_at, s.updated_at
+         FROM dictionary_suggestions s
+         WHERE NOT EXISTS (
+           SELECT 1 FROM never_learn_pairs n
+           WHERE n.wrong_word = s.wrong_word AND n.correct_word = s.correct_word
+         )
+         ORDER BY s.score DESC, s.updated_at DESC
+         LIMIT 50",
     )?;
     let rows = stmt
         .query_map([], |r| {
@@ -993,6 +1000,27 @@ pub fn delete_dictionary_suggestion(db: &Db, wrong: &str, correct: &str) -> Resu
     Ok(())
 }
 
+// Retention windows for the evidence ledger and suggestion queue. Evidence
+// retention exceeds the max `auto_learn_window_days` (30) plus a buffer so a
+// user with a long window doesn't have evidence pruned out from under them.
+const EVIDENCE_RETENTION_DAYS: i64 = 45;
+const SUGGESTION_RETENTION_DAYS: i64 = 14;
+
+/// Prunes stale rows from the append-only evidence ledger and the suggestion
+/// queue. Called once at startup.
+pub fn prune_correction_evidence_and_suggestions(db: &Db) -> Result<()> {
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "DELETE FROM correction_evidence WHERE created_at < datetime('now', ?1)",
+        params![format!("-{EVIDENCE_RETENTION_DAYS} days")],
+    )?;
+    conn.execute(
+        "DELETE FROM dictionary_suggestions WHERE updated_at < datetime('now', ?1)",
+        params![format!("-{SUGGESTION_RETENTION_DAYS} days")],
+    )?;
+    Ok(())
+}
+
 pub fn get_auto_learn_status_summary(db: &Db) -> Result<AutoLearnStatusSummary> {
     let conn = lock_conn(db)?;
     let count_by = |event_type: &str, reason_code: &str| -> Result<i64> {
@@ -1010,7 +1038,7 @@ pub fn get_auto_learn_status_summary(db: &Db) -> Result<AutoLearnStatusSummary> 
     )?;
     let promotions: i64 = conn.query_row(
         "SELECT COUNT(*) FROM auto_learn_events
-         WHERE event_type = 'promotion' AND reason_code IN ('promoted', 'auto_promoted')",
+         WHERE event_type = 'promotion' AND reason_code IN ('promoted', 'auto_promoted', 'approved')",
         [],
         |r| r.get(0),
     )?;
@@ -1047,32 +1075,6 @@ pub fn get_recent_auto_learn_activity(db: &Db, limit: i64) -> Result<Vec<AutoLea
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
-}
-
-pub fn insert_pending_correction(db: &Db, wrong: &str, correct: &str) -> Result<()> {
-    let conn = lock_conn(db)?;
-    conn.execute(
-        "INSERT INTO pending_corrections (wrong_word, correct_word) VALUES (?1, ?2)",
-        params![wrong, correct],
-    )?;
-    Ok(())
-}
-
-pub fn count_pending_corrections_recent(
-    db: &Db,
-    wrong: &str,
-    correct: &str,
-    max_age_days: i64,
-) -> Result<i64> {
-    let conn = lock_conn(db)?;
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM pending_corrections \
-         WHERE wrong_word=?1 AND correct_word=?2 \
-         AND created_at >= datetime('now', ?3)",
-        params![wrong, correct, format!("-{} days", max_age_days.max(1))],
-        |r| r.get(0),
-    )?;
-    Ok(count)
 }
 
 pub fn prune_pending_corrections(db: &Db, max_age_days: i64) -> Result<usize> {
@@ -1491,6 +1493,27 @@ mod tests {
         open(":memory:").expect("test db")
     }
 
+    fn insert_pending_correction_for_test(db: &Db, wrong: &str, correct: &str) {
+        lock_conn(db)
+            .expect("conn")
+            .execute(
+                "INSERT INTO pending_corrections (wrong_word, correct_word) VALUES (?1, ?2)",
+                params![wrong, correct],
+            )
+            .expect("pending insert");
+    }
+
+    fn pending_corrections_count(db: &Db, wrong: &str, correct: &str) -> i64 {
+        lock_conn(db)
+            .expect("conn")
+            .query_row(
+                "SELECT COUNT(*) FROM pending_corrections WHERE wrong_word=?1 AND correct_word=?2",
+                params![wrong, correct],
+                |r| r.get(0),
+            )
+            .expect("count")
+    }
+
     fn temp_db_path(name: &str) -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1809,8 +1832,8 @@ mod tests {
             .id;
 
         // Simulate pending correction records that led to the promotion.
-        insert_pending_correction(&db, "Tari", "Tauri").expect("pending 1");
-        insert_pending_correction(&db, "Tari", "Tauri").expect("pending 2");
+        insert_pending_correction_for_test(&db, "Tari", "Tauri");
+        insert_pending_correction_for_test(&db, "Tari", "Tauri");
         insert_correction_evidence(
             &db,
             "Tari",
@@ -1833,21 +1856,15 @@ mod tests {
             "test",
         )
         .expect("evidence 2");
-        assert_eq!(
-            count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count"),
-            2
-        );
+        assert_eq!(pending_corrections_count(&db, "Tari", "Tauri"), 2);
 
         // Rejection monitor fires.
         delete_auto_learned_entries_by_ids(&db, &[id]).expect("reject");
 
         // Dictionary entry gone.
         assert_eq!(query_dictionary(&db).expect("query after").len(), 0);
-        // Pending corrections also purged â€” prevents immediate re-promotion.
-        assert_eq!(
-            count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count after"),
-            0
-        );
+        // Pending corrections also purged — prevents immediate re-promotion.
+        assert_eq!(pending_corrections_count(&db, "Tari", "Tauri"), 0);
         let evidence_score = compute_evidence_score(&db, "Tari", "Tauri", 7, 1.5).expect("score");
         assert_eq!(
             evidence_score.score, 0.0,
@@ -1988,7 +2005,7 @@ mod tests {
             .expect("entry")
             .id;
 
-        insert_pending_correction(&db, "Tari", "Tauri").expect("pending");
+        insert_pending_correction_for_test(&db, "Tari", "Tauri");
         insert_correction_evidence(
             &db,
             "Tari",
@@ -2000,16 +2017,13 @@ mod tests {
             "test",
         )
         .expect("evidence");
-        assert_eq!(
-            count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count before"),
-            1
-        );
+        assert_eq!(pending_corrections_count(&db, "Tari", "Tauri"), 1);
 
         delete_dictionary_entry(&db, id).expect("delete");
 
         assert_eq!(query_dictionary(&db).expect("query after").len(), 0);
         assert_eq!(
-            count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count after"),
+            pending_corrections_count(&db, "Tari", "Tauri"),
             0,
             "pending corrections must be purged when the auto-learned entry is manually deleted"
         );
@@ -2030,6 +2044,20 @@ mod tests {
 
         let summary = get_auto_learn_status_summary(&db).expect("summary");
         assert_eq!(summary.promotions, 2);
+    }
+
+    #[test]
+    fn auto_learn_status_counts_approved_promotion_reason() {
+        let db = test_db();
+        log_auto_learn_event(&db, "promotion", "promoted", "test", "", "", 1.0)
+            .expect("legacy event");
+        log_auto_learn_event(&db, "promotion", "auto_promoted", "test", "", "", 1.0)
+            .expect("new event");
+        log_auto_learn_event(&db, "promotion", "approved", "test", "", "", 1.0)
+            .expect("approved event");
+
+        let summary = get_auto_learn_status_summary(&db).expect("summary");
+        assert_eq!(summary.promotions, 3);
     }
 
     // ── evidence scoring engine ──────────────────────────────────────────────
@@ -2167,6 +2195,80 @@ mod tests {
         assert_eq!(query_dictionary_suggestions(&db).expect("before").len(), 1);
         delete_dictionary_suggestion(&db, "rock", "qroq").expect("delete");
         assert!(query_dictionary_suggestions(&db).expect("after").is_empty());
+    }
+
+    #[test]
+    fn dictionary_suggestions_hide_never_learn_pairs_until_restored() {
+        let db = test_db();
+        upsert_dictionary_suggestion(&db, "rock", "qroq", 0.9, "x").expect("insert");
+        assert_eq!(query_dictionary_suggestions(&db).expect("before dismiss").len(), 1);
+
+        // Soft-dismiss: suggestion row stays, but is hidden by the filter.
+        insert_never_learn_pair(&db, "rock", "qroq").expect("dismiss");
+        assert!(query_dictionary_suggestions(&db)
+            .expect("after dismiss")
+            .is_empty());
+
+        // Undo: restoring the pair brings the suggestion back.
+        delete_never_learn_pair(&db, "rock", "qroq").expect("restore");
+        assert_eq!(query_dictionary_suggestions(&db).expect("after restore").len(), 1);
+    }
+
+    #[test]
+    fn query_never_learn_pairs_roundtrip() {
+        let db = test_db();
+        assert!(query_never_learn_pairs(&db).expect("empty").is_empty());
+        insert_never_learn_pair(&db, "rock", "qroq").expect("insert");
+        let pairs = query_never_learn_pairs(&db).expect("query");
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].wrong_word, "rock");
+        assert_eq!(pairs[0].correct_word, "qroq");
+    }
+
+    #[test]
+    fn is_already_auto_learned_detects_existing_entry() {
+        let db = test_db();
+        assert!(!is_already_auto_learned(&db, "Tauri", "Tari").expect("before"));
+        insert_dictionary_entry_auto_learned(&db, "Tauri", Some("Tari"), "medium")
+            .expect("insert");
+        assert!(is_already_auto_learned(&db, "Tauri", "Tari").expect("after"));
+        // Case-insensitive match.
+        assert!(is_already_auto_learned(&db, "tauri", "tari").expect("case-insensitive"));
+    }
+
+    #[test]
+    fn prune_correction_evidence_and_suggestions_removes_stale_rows() {
+        let db = test_db();
+        {
+            let conn = db.lock().expect("lock");
+            conn.execute(
+                "INSERT INTO correction_evidence (wrong_word, correct_word, source, weight, confidence, session_id, app_context, created_at) \
+                 VALUES ('old', 'fresh', 'post_edit', 1.0, 0.9, 'sess', 'test', datetime('now', '-100 days'))",
+                [],
+            ).expect("backdated evidence insert");
+        }
+        insert_correction_evidence(&db, "rock", "qroq", "post_edit", 1.0, 0.9, "sess", "test")
+            .expect("recent evidence insert");
+        upsert_dictionary_suggestion(&db, "old", "fresh", 0.8, "stale").expect("stale suggestion");
+        {
+            let conn = db.lock().expect("lock");
+            conn.execute(
+                "UPDATE dictionary_suggestions SET updated_at = datetime('now', '-30 days') WHERE wrong_word='old'",
+                [],
+            ).expect("backdate suggestion");
+        }
+        upsert_dictionary_suggestion(&db, "rock", "qroq", 0.8, "fresh").expect("fresh suggestion");
+
+        prune_correction_evidence_and_suggestions(&db).expect("prune");
+
+        let recent_score = compute_evidence_score(&db, "rock", "qroq", 365, 1.5).expect("recent score");
+        assert!(recent_score.score > 0.0, "recent evidence must survive pruning");
+        let old_score = compute_evidence_score(&db, "old", "fresh", 365, 1.5).expect("old score");
+        assert_eq!(old_score.score, 0.0, "stale evidence must be pruned");
+
+        let suggestions = query_dictionary_suggestions(&db).expect("suggestions after prune");
+        assert!(suggestions.iter().any(|s| s.wrong_word == "rock"));
+        assert!(!suggestions.iter().any(|s| s.wrong_word == "old"));
     }
 
     #[test]

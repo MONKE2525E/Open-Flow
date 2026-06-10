@@ -212,6 +212,12 @@ pub struct ExportSnippet {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
+pub struct ExportNeverLearnPair {
+    pub wrong: String,
+    pub correct: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ExportPayload {
     pub version: String,
     pub app_version: String,
@@ -223,6 +229,8 @@ pub struct ExportPayload {
     pub dictionary: Vec<ExportDictionaryEntry>,
     #[serde(default)]
     pub snippets: Vec<ExportSnippet>,
+    #[serde(default)]
+    pub never_learn_pairs: Vec<ExportNeverLearnPair>,
 }
 
 #[derive(serde::Serialize)]
@@ -235,6 +243,8 @@ pub struct ImportSummary {
     pub snippets_inserted: usize,
     pub snippets_skipped: usize,
     pub snippets_already_existed: usize,
+    pub never_learn_pairs_inserted: usize,
+    pub never_learn_pairs_skipped: usize,
 }
 
 // Keys intentionally absent from this list (validated by validate_setting but never exported):
@@ -823,29 +833,36 @@ pub async fn get_dictionary_suggestions(
     .map_err(|e| e.to_string())?
 }
 
+/// Returns true if the suggestion was applied to the dictionary, false if it
+/// conflicted with an existing manual entry. Either way the suggestion is
+/// resolved (removed from the queue) so it never gets permanently stuck.
 #[tauri::command]
 pub async fn approve_dictionary_suggestion(
     app: AppHandle,
     wrong: String,
     correct: String,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || {
+    let applied = tokio::task::spawn_blocking(move || -> Result<bool, String> {
         let inserted = db::insert_dictionary_entry_auto_learned(&db, &correct, Some(&wrong), "medium")
             .map_err(|e| e.to_string())?;
-        if !inserted {
-            return Err("Could not approve suggestion because it conflicts with an existing dictionary entry.".to_string());
-        }
         db::delete_dictionary_suggestion(&db, &wrong, &correct).map_err(|e| e.to_string())?;
-        Ok(())
+        if inserted {
+            let _ = db::log_auto_learn_event(&db, "promotion", "approved", "", "", "", 0.0);
+        }
+        Ok(inserted)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map(|()| {
+    .map_err(|e| e.to_string())??;
+    if applied {
         app.emit("open-flow:dictionary-updated", ()).ok();
-    })
+    }
+    Ok(applied)
 }
 
+/// Soft-dismiss: records the pair in `never_learn_pairs` so it's hidden from
+/// future suggestion queries, but leaves the `dictionary_suggestions` row in
+/// place so `restore_never_learn_pair` can bring it back via undo.
 #[tauri::command]
 pub async fn dismiss_dictionary_suggestion(
     app: AppHandle,
@@ -854,8 +871,21 @@ pub async fn dismiss_dictionary_suggestion(
 ) -> Result<(), String> {
     let db = app.state::<DbHandle>().inner().clone();
     tokio::task::spawn_blocking(move || {
-        db::insert_never_learn_pair(&db, &wrong, &correct).map_err(|e| e.to_string())?;
-        db::delete_dictionary_suggestion(&db, &wrong, &correct).map_err(|e| e.to_string())
+        db::insert_never_learn_pair(&db, &wrong, &correct).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn restore_never_learn_pair(
+    app: AppHandle,
+    wrong: String,
+    correct: String,
+) -> Result<(), String> {
+    let db = app.state::<DbHandle>().inner().clone();
+    tokio::task::spawn_blocking(move || {
+        db::delete_never_learn_pair(&db, &wrong, &correct).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1315,6 +1345,7 @@ pub async fn export_data(
         let stats = db::query_stats(&db).map_err(|e| e.to_string())?;
         let dictionary = db::query_dictionary(&db).map_err(|e| e.to_string())?;
         let snippets = db::query_snippets(&db).map_err(|e| e.to_string())?;
+        let never_learn_pairs = db::query_never_learn_pairs(&db).map_err(|e| e.to_string())?;
 
         let now = chrono::Local::now();
         let payload = ExportPayload {
@@ -1344,6 +1375,13 @@ pub async fn export_data(
                     expansion: s.expansion,
                     instructions: s.instructions,
                     created_at: s.created_at,
+                })
+                .collect(),
+            never_learn_pairs: never_learn_pairs
+                .into_iter()
+                .map(|p| ExportNeverLearnPair {
+                    wrong: p.wrong_word,
+                    correct: p.correct_word,
                 })
                 .collect(),
         };
@@ -1467,11 +1505,28 @@ pub async fn import_data(
             }
         }
 
+        let mut never_learn_pairs_inserted = 0usize;
+        let mut never_learn_pairs_skipped = 0usize;
+        for pair in &payload.never_learn_pairs {
+            if pair.wrong.trim().is_empty() || pair.correct.trim().is_empty() {
+                never_learn_pairs_skipped += 1;
+                continue;
+            }
+            match db::insert_never_learn_pair(&db, &pair.wrong, &pair.correct) {
+                Ok(()) => never_learn_pairs_inserted += 1,
+                Err(e) => {
+                    log::warn!("import_data: never_learn_pair insert error for '{}': {e}", pair.wrong);
+                    never_learn_pairs_skipped += 1;
+                }
+            }
+        }
+
         log::info!(
-            "import_data: settings={}/skip={} dict={}/skip={}/existed={} snip={}/skip={}/existed={}",
+            "import_data: settings={}/skip={} dict={}/skip={}/existed={} snip={}/skip={}/existed={} never_learn={}/skip={}",
             settings_applied, settings_skipped,
             dictionary_inserted, dictionary_skipped, dictionary_already_existed,
             snippets_inserted, snippets_skipped, snippets_already_existed,
+            never_learn_pairs_inserted, never_learn_pairs_skipped,
         );
 
         Ok(ImportSummary {
@@ -1483,6 +1538,8 @@ pub async fn import_data(
             snippets_inserted,
             snippets_skipped,
             snippets_already_existed,
+            never_learn_pairs_inserted,
+            never_learn_pairs_skipped,
         })
     })
     .await

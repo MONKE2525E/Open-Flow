@@ -129,6 +129,7 @@ fn main() {
     let db_handle: DbHandle =
         db::open(db_dir.join("openflow.db").to_str().unwrap()).expect("failed to open database");
     let _ = db::cleanup_cache_prune_expired(&db_handle);
+    let _ = db::prune_correction_evidence_and_suggestions(&db_handle);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -274,6 +275,7 @@ fn main() {
             commands::get_dictionary_suggestions,
             commands::approve_dictionary_suggestion,
             commands::dismiss_dictionary_suggestion,
+            commands::restore_never_learn_pair,
             commands::retry_transcription,
             commands::check_for_update,
             commands::install_update,

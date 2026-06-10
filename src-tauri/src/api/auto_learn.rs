@@ -29,10 +29,8 @@ const REJECTION_WINDOW_SECS: u64 = 8;
 const REJECTION_POLL_MS: u64 = 500;
 const CACHE_REJECTION_WINDOW_SECS: u64 = 10;
 const PENDING_RETENTION_DAYS: i64 = 2;
-const PROMOTION_THRESHOLD: i64 = 2;
 const STABLE_TEXT_OBSERVATIONS_REQUIRED: usize = 2;
 const MIN_CANDIDATE_CONFIDENCE: f64 = 0.45;
-const PAIR_COOLDOWN_MINUTES: i64 = 0;
 
 static ACTIVE_MONITORS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -149,6 +147,17 @@ fn evidence_session_id(seed: &str, app_context: &str) -> String {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     format!("{seed_hash}:{app_hash}:{now_nanos}")
+}
+
+/// Day-bucketed session id for the cleanup-divergence source. Every dictation
+/// runs this source automatically, so a per-call timestamp would let two
+/// back-to-back dictations trivially satisfy the "distinct sessions" check.
+/// Bucketing by calendar day requires the same divergence to recur on a
+/// different day (or be corroborated by the post-edit source) to count twice.
+fn evidence_session_id_daily(seed: &str, app_context: &str) -> String {
+    let (seed_hash, app_hash) = pair_hash(seed, app_context);
+    let day = chrono::Local::now().format("%Y-%m-%d");
+    format!("{seed_hash}:{app_hash}:{day}")
 }
 
 fn dedupe_candidate_pairs(candidates: Vec<CandidateCorrection>) -> Vec<CandidateCorrection> {
@@ -314,155 +323,13 @@ fn diff_words(original: &str, current: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn record_candidate(
-    db: &DbHandle,
-    recorded_this_session: &mut HashSet<(String, String)>,
-    app_context: &str,
-    mistake: String,
-    correction: String,
-    confidence: f64,
-) -> bool {
-    let key = (mistake.clone(), correction.clone());
-    if recorded_this_session.contains(&key) {
-        let _ = db::log_auto_learn_event(
-            db,
-            "candidate",
-            "duplicate_in_session",
-            app_context,
-            "",
-            "",
-            confidence,
-        );
-        return false;
-    }
-    recorded_this_session.insert(key);
-    let (mistake_hash, correction_hash) = pair_hash(&mistake, &correction);
-
-    if confidence < MIN_CANDIDATE_CONFIDENCE {
-        let _ = db::log_auto_learn_event(
-            db,
-            "candidate",
-            "low_confidence",
-            app_context,
-            &mistake_hash,
-            &correction_hash,
-            confidence,
-        );
-        return false;
-    }
-
-    if !db::upsert_auto_learn_candidate(
-        db,
-        &mistake,
-        &correction,
-        confidence,
-        PAIR_COOLDOWN_MINUTES,
-    )
-    .unwrap_or(false)
-    {
-        let _ = db::log_auto_learn_event(
-            db,
-            "candidate",
-            "cooldown_skip",
-            app_context,
-            &mistake_hash,
-            &correction_hash,
-            confidence,
-        );
-        return false;
-    }
-
-    if let Err(e) = db::insert_pending_correction(db, &mistake, &correction) {
-        log::warn!("auto-learn pending insert failed: {e}");
-        let _ = db::log_auto_learn_event(
-            db,
-            "candidate",
-            "pending_insert_failed",
-            app_context,
-            &mistake_hash,
-            &correction_hash,
-            confidence,
-        );
-        return false;
-    }
-
-    let count =
-        db::count_pending_corrections_recent(db, &mistake, &correction, PENDING_RETENTION_DAYS)
-            .unwrap_or(0);
-
-    if count < PROMOTION_THRESHOLD {
-        let _ = db::log_auto_learn_event(
-            db,
-            "candidate",
-            "below_threshold",
-            app_context,
-            &mistake_hash,
-            &correction_hash,
-            confidence,
-        );
-        return false;
-    }
-
-    let tier = if confidence >= 0.85 {
-        "high"
-    } else if confidence >= 0.72 {
-        "medium"
-    } else {
-        "low"
-    };
-
-    match db::insert_dictionary_entry_auto_learned(db, &correction, Some(&mistake), tier) {
-        Ok(true) => {
-            let _ = db::mark_auto_learn_candidate_promoted(db, &mistake, &correction);
-            let _ = db::log_auto_learn_event(
-                db,
-                "promotion",
-                "promoted",
-                app_context,
-                &mistake_hash,
-                &correction_hash,
-                confidence,
-            );
-            true
-        }
-        Ok(false) => {
-            log::debug!(
-                "auto-learn: promotion skipped because dictionary entry is manual or mismatched"
-            );
-            let _ = db::log_auto_learn_event(
-                db,
-                "promotion",
-                "promotion_skipped",
-                app_context,
-                &mistake_hash,
-                &correction_hash,
-                confidence,
-            );
-            false
-        }
-        Err(e) => {
-            log::warn!("auto-learn dictionary promotion failed: {e}");
-            let _ = db::log_auto_learn_event(
-                db,
-                "promotion",
-                "promotion_failed",
-                app_context,
-                &mistake_hash,
-                &correction_hash,
-                confidence,
-            );
-            false
-        }
-    }
-}
-
 /// Source A: diff raw vs clean LLM output and feed divergence as evidence.
 /// Called from the pipeline immediately after cleanup, before injection.
 /// Works cross-platform (no accessibility required).
 pub fn record_cleanup_divergence(
-    raw: &str,
-    clean: &str,
-    app_context: &str,
+    raw: String,
+    clean: String,
+    app_context: String,
     db: DbHandle,
     app: tauri::AppHandle,
     window_days: i64,
@@ -473,35 +340,37 @@ pub fn record_cleanup_divergence(
         return;
     }
 
-    let candidates = dedupe_candidate_pairs(detect_span_corrections(raw, clean));
-    if candidates.is_empty() {
-        return;
-    }
-
-    let session_id = evidence_session_id(raw, app_context);
-    for candidate in candidates {
-        // Gate: must be a plausible transcription confusion, not a grammar fix.
-        if !is_plausible_transcription_confusion(&candidate.mistake, &candidate.correction) {
-            log::debug!(
-                "auto-learn: divergence candidate rejected by phonetic gate: {:?} → {:?}",
-                candidate.mistake,
-                candidate.correction
-            );
-            continue;
+    tokio::task::spawn_blocking(move || {
+        let candidates = dedupe_candidate_pairs(detect_span_corrections(&raw, &clean));
+        if candidates.is_empty() {
+            return;
         }
-        record_evidence_and_promote(
-            &db,
-            &app,
-            &candidate.mistake,
-            &candidate.correction,
-            "cleanup_divergence",
-            SOURCE_WEIGHT_CLEANUP_DIVERGENCE,
-            candidate.confidence,
-            &session_id,
-            app_context,
-            window_days,
-        );
-    }
+
+        let session_id = evidence_session_id_daily(&raw, &app_context);
+        for candidate in candidates {
+            // Gate: must be a plausible transcription confusion, not a grammar fix.
+            if !is_plausible_transcription_confusion(&candidate.mistake, &candidate.correction) {
+                log::debug!(
+                    "auto-learn: divergence candidate rejected by phonetic gate: {:?} → {:?}",
+                    candidate.mistake,
+                    candidate.correction
+                );
+                continue;
+            }
+            record_evidence_and_promote(
+                &db,
+                &app,
+                &candidate.mistake,
+                &candidate.correction,
+                "cleanup_divergence",
+                SOURCE_WEIGHT_CLEANUP_DIVERGENCE,
+                candidate.confidence,
+                &session_id,
+                &app_context,
+                window_days,
+            );
+        }
+    });
 }
 
 // Thresholds for the evidence scoring engine.
@@ -525,6 +394,9 @@ enum EvidenceRecordOutcome {
 /// Returns true if a new dictionary entry was auto-promoted.
 /// source: "post_edit" | "cleanup_divergence"
 /// window_days: from PipelineConfig.auto_learn_window_days
+// Each argument is an independent piece of the evidence observation (who/what/where/how-confident);
+// grouping them into a struct would just move the same fields one layer out without reducing complexity.
+#[allow(clippy::too_many_arguments)]
 pub fn record_evidence_and_promote(
     db: &DbHandle,
     app: &tauri::AppHandle,
@@ -560,6 +432,8 @@ pub fn record_evidence_and_promote(
     }
 }
 
+// See record_evidence_and_promote: one argument per evidence-observation field.
+#[allow(clippy::too_many_arguments)]
 fn record_evidence_and_maybe_promote(
     db: &DbHandle,
     wrong: &str,
@@ -571,6 +445,14 @@ fn record_evidence_and_maybe_promote(
     app_context: &str,
     window_days: i64,
 ) -> EvidenceRecordOutcome {
+    // Whisper's capitalization of a mistranscribed word is inconsistent
+    // ("Koobernetes" vs "koobernetes"); normalize so identical mistakes
+    // corroborate against each other instead of fragmenting across rows.
+    // `correct` keeps its casing — it's the dictionary term and may be a
+    // proper noun.
+    let wrong = wrong.to_lowercase();
+    let wrong = wrong.as_str();
+
     // Skip pairs in the never-learn list.
     if db::is_never_learn_pair(db, wrong, correct).unwrap_or(false) {
         return EvidenceRecordOutcome::Ignored;
@@ -620,13 +502,19 @@ fn record_evidence_and_maybe_promote(
         } else {
             "medium"
         };
+        let already_learned = db::is_already_auto_learned(db, correct, wrong).unwrap_or(false);
         match db::insert_dictionary_entry_auto_learned(db, correct, Some(wrong), tier) {
             Ok(true) => {
                 let _ = db::delete_dictionary_suggestion(db, wrong, correct);
+                if already_learned {
+                    // Already promoted previously — bump correction_count quietly,
+                    // but don't re-log/re-emit on every subsequent observation.
+                    return EvidenceRecordOutcome::Recorded;
+                }
                 let _ = db::log_auto_learn_event(
                     db,
                     "promotion",
-                    "promoted",
+                    "auto_promoted",
                     app_context,
                     "",
                     "",
@@ -1258,6 +1146,7 @@ pub fn read_focused_text_probe() -> FocusedTextProbe {
 
 #[cfg(target_os = "macos")]
 pub fn read_focused_text() -> Option<String> {
+    let _guard = crate::core::context_probe::MacosProbeGuard::acquire()?;
     crate::core::context_probe_macos::read_focused_text_sync()
 }
 
@@ -1754,90 +1643,6 @@ mod tests {
     }
 
     #[test]
-    fn repeated_candidate_counts_once_per_session() {
-        let db = db::open(":memory:").expect("test db");
-        let mut recorded = HashSet::new();
-
-        assert!(!record_candidate(
-            &db,
-            &mut recorded,
-            "test-app",
-            "Koobernetes".to_string(),
-            "Kubernetes".to_string(),
-            0.9,
-        ));
-        assert!(!record_candidate(
-            &db,
-            &mut recorded,
-            "test-app",
-            "Koobernetes".to_string(),
-            "Kubernetes".to_string(),
-            0.9,
-        ));
-
-        let count = db::count_pending_corrections_recent(
-            &db,
-            "Koobernetes",
-            "Kubernetes",
-            PENDING_RETENTION_DAYS,
-        )
-        .expect("pending count");
-        assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn candidate_promotes_after_two_sessions() {
-        let db = db::open(":memory:").expect("test db");
-
-        for expected in [false, true] {
-            let mut recorded = HashSet::new();
-            assert_eq!(
-                record_candidate(
-                    &db,
-                    &mut recorded,
-                    "test-app",
-                    "Koobernetes".to_string(),
-                    "Kubernetes".to_string(),
-                    0.9,
-                ),
-                expected
-            );
-        }
-
-        let entries = db::query_dictionary(&db).expect("dictionary");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].term, "Kubernetes");
-        assert_eq!(entries[0].mistake.as_deref(), Some("Koobernetes"));
-        assert!(entries[0].auto_learned);
-    }
-
-    #[test]
-    fn short_technical_term_promotes_only_after_two_sessions() {
-        let db = db::open(":memory:").expect("test db");
-
-        for expected in [false, true] {
-            let mut recorded = HashSet::new();
-            assert_eq!(
-                record_candidate(
-                    &db,
-                    &mut recorded,
-                    "test-app",
-                    "rock".to_string(),
-                    "qroq".to_string(),
-                    0.9,
-                ),
-                expected
-            );
-        }
-
-        let entries = db::query_dictionary(&db).expect("dictionary");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].term, "qroq");
-        assert_eq!(entries[0].mistake.as_deref(), Some("rock"));
-        assert!(entries[0].auto_learned);
-    }
-
-    #[test]
     fn evidence_path_creates_suggestion_after_corroborated_score() {
         let db = db::open(":memory:").expect("test db");
 
@@ -1872,8 +1677,59 @@ mod tests {
 
         let suggestions = db::query_dictionary_suggestions(&db).expect("suggestions");
         assert_eq!(suggestions.len(), 1);
-        assert_eq!(suggestions[0].wrong_word, "Koobernetes");
+        // `wrong` is normalized to lowercase before storage (see record_evidence_and_maybe_promote).
+        assert_eq!(suggestions[0].wrong_word, "koobernetes");
         assert_eq!(suggestions[0].correct_word, "Kubernetes");
+    }
+
+    #[test]
+    fn evidence_path_merges_case_variants_of_wrong_word() {
+        let db = db::open(":memory:").expect("test db");
+
+        // Whisper's casing of a mistranscribed word is inconsistent across
+        // dictations; both variants must corroborate as the same pair.
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.5,
+                "session-1",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Recorded
+        );
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.5,
+                "session-2",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Suggested
+        );
+
+        let suggestions = db::query_dictionary_suggestions(&db).expect("suggestions");
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].wrong_word, "koobernetes");
+    }
+
+    #[test]
+    fn evidence_session_id_daily_is_stable_within_a_day() {
+        let a = evidence_session_id_daily("some raw text", "notepad.exe");
+        let b = evidence_session_id_daily("some raw text", "notepad.exe");
+        assert_eq!(a, b, "same seed/context on the same day must bucket together");
+
+        let c = evidence_session_id_daily("different text", "notepad.exe");
+        assert_ne!(a, c, "different seeds must not collide");
     }
 
     #[test]
@@ -1912,8 +1768,58 @@ mod tests {
         let entries = db::query_dictionary(&db).expect("dictionary");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].term, "Kubernetes");
-        assert_eq!(entries[0].mistake.as_deref(), Some("Koobernetes"));
+        // `wrong` is normalized to lowercase before storage (see record_evidence_and_maybe_promote).
+        assert_eq!(entries[0].mistake.as_deref(), Some("koobernetes"));
         assert!(entries[0].auto_learned);
+    }
+
+    #[test]
+    fn evidence_path_does_not_repromote_already_learned_pair() {
+        let db = db::open(":memory:").expect("test db");
+
+        for session in ["session-1", "session-2"] {
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.9,
+                session,
+                "test-app",
+                3,
+            );
+        }
+
+        // A third corroborated observation after the pair is already learned
+        // must not re-emit a promotion event or re-trigger Promoted.
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.9,
+                "session-3",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Recorded
+        );
+
+        let summary = db::get_auto_learn_status_summary(&db).expect("summary");
+        assert_eq!(
+            summary.promotions, 1,
+            "repeated evidence for an already-learned pair must not inflate the promotion count"
+        );
+
+        let entries = db::query_dictionary(&db).expect("dictionary");
+        assert_eq!(entries.len(), 1);
+        // First corroborated call (session-2) inserts the row (count=1); the
+        // third call bumps correction_count via ON CONFLICT but is reported
+        // as `Recorded`, not a fresh `Promoted`.
+        assert_eq!(entries[0].correction_count, 2);
     }
 
     #[test]
@@ -1953,7 +1859,8 @@ mod tests {
     #[test]
     fn evidence_path_respects_never_learn_pairs() {
         let db = db::open(":memory:").expect("test db");
-        db::insert_never_learn_pair(&db, "Koobernetes", "Kubernetes").expect("never learn");
+        // `wrong` is normalized to lowercase before the never-learn lookup.
+        db::insert_never_learn_pair(&db, "koobernetes", "Kubernetes").expect("never learn");
 
         assert_eq!(
             record_evidence_and_maybe_promote(
@@ -2157,18 +2064,23 @@ mod tests {
                 let db = db::open(":memory:").expect("test db");
                 let (mistake, correction) = expected[0].clone();
 
-                for expected_promoted in [false, true] {
-                    let mut recorded = HashSet::new();
+                for (session_id, expected_outcome) in [
+                    ("session-1", EvidenceRecordOutcome::Recorded),
+                    ("session-2", EvidenceRecordOutcome::Promoted),
+                ] {
                     assert_eq!(
-                        record_candidate(
+                        record_evidence_and_maybe_promote(
                             &db,
-                            &mut recorded,
-                            "test-app",
-                            mistake.clone(),
-                            correction.clone(),
+                            &mistake,
+                            &correction,
+                            "post_edit",
+                            SOURCE_WEIGHT_POST_EDIT,
                             0.9,
+                            session_id,
+                            "test-app",
+                            3,
                         ),
-                        expected_promoted,
+                        expected_outcome,
                         "case {} promotion threshold",
                         case.name
                     );

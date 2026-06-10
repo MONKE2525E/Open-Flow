@@ -449,12 +449,45 @@ pub fn consonant_skeleton(word: &str) -> String {
     out
 }
 
+/// Casual contraction → formal-rewrite pairs that the cleanup LLM routinely
+/// applies (e.g. "gonna" → "going"). These are style normalizations, not
+/// transcription mistakes, so they must never be treated as plausible
+/// transcription confusions even though they're phonetically close.
+const COLLOQUIAL_NORMALIZATIONS: &[(&str, &str)] = &[
+    ("gonna", "going"),
+    ("wanna", "want"),
+    ("gotta", "got"),
+    ("kinda", "kind"),
+    ("sorta", "sort"),
+    ("lemme", "let"),
+    ("gimme", "give"),
+    ("dunno", "know"),
+    ("hafta", "have"),
+    ("cuz", "because"),
+    ("cause", "because"),
+    ("til", "until"),
+    ("yall", "you"),
+    ("aint", "isn't"),
+];
+
+fn is_known_colloquial_pair(a: &str, b: &str) -> bool {
+    COLLOQUIAL_NORMALIZATIONS
+        .iter()
+        .any(|&(c, f)| (a == c && b == f) || (a == f && b == c))
+}
+
 /// Returns true when the pair looks like a plausible transcription confusion
 /// (same consonant skeleton, or edit-distance close enough relative to length).
 /// This gates Source A (cleanup divergence) from learning grammar/filler rewrites.
 pub fn is_plausible_transcription_confusion(mistake: &str, correction: &str) -> bool {
     let m_norm: String = mistake.chars().flat_map(char::to_lowercase).collect();
     let c_norm: String = correction.chars().flat_map(char::to_lowercase).collect();
+
+    let m_apos_stripped: String = m_norm.chars().filter(|&c| c != '\'').collect();
+    let c_apos_stripped: String = c_norm.chars().filter(|&c| c != '\'').collect();
+    if is_known_colloquial_pair(&m_apos_stripped, &c_apos_stripped) {
+        return false;
+    }
 
     let skel_m = consonant_skeleton(&m_norm);
     let skel_c = consonant_skeleton(&c_norm);
@@ -475,7 +508,7 @@ pub fn is_plausible_transcription_confusion(mistake: &str, correction: &str) -> 
     let dist = edit_distance(&m_norm, &c_norm);
     let max_len = m_norm.chars().count().max(c_norm.chars().count()).max(1);
     if max_len <= 5 {
-        dist + 1 <= max_len
+        dist < max_len
     } else {
         dist <= max_len / 3 + 1
     }
@@ -550,6 +583,17 @@ mod tests {
     fn phonetic_confusion_rejects_grammar_rewrite() {
         // "running" → "sprint" is not a transcription confusion
         assert!(!is_plausible_transcription_confusion("running", "sprint"));
+    }
+
+    #[test]
+    fn phonetic_confusion_rejects_gonna_going() {
+        // "gonna" → "going" is a cleanup style normalization, not a mistranscription.
+        assert!(!is_plausible_transcription_confusion("gonna", "going"));
+    }
+
+    #[test]
+    fn phonetic_confusion_rejects_wanna_want() {
+        assert!(!is_plausible_transcription_confusion("wanna", "want"));
     }
 
     #[test]

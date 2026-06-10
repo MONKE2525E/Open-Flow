@@ -725,7 +725,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     }
 
     let stage_transcribe = std::time::Instant::now();
-    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
+    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key, snippet_active)) =
         run_transcription_and_cleanup(&app, &wav, &cfg, &profile, app_context.as_deref()).await
     else {
         emit_pipeline_failed(&app);
@@ -776,6 +776,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
             process_name,
             cleanup_cache_key,
             captured_at: retry_captured_at,
+            snippet_active,
         },
     )
     .await
@@ -948,13 +949,20 @@ async fn run_transcription_and_cleanup(
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
-) -> Option<(String, String, String, Vec<db::DictionaryEntry>, String)> {
+) -> Option<(String, String, String, Vec<db::DictionaryEntry>, String, bool)> {
     let (raw, api_used) = run_transcription(app, wav, cfg).await?;
     let raw = normalize_transcription_math_artifacts(&raw);
 
-    let (final_text, dict_entries, cleanup_cache_key) =
+    let (final_text, dict_entries, cleanup_cache_key, snippet_active) =
         run_cleanup_and_snippets(app, &raw, cfg, profile, app_context).await?;
-    Some((raw, api_used, final_text, dict_entries, cleanup_cache_key))
+    Some((
+        raw,
+        api_used,
+        final_text,
+        dict_entries,
+        cleanup_cache_key,
+        snippet_active,
+    ))
 }
 
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
@@ -966,7 +974,7 @@ async fn run_cleanup_and_snippets(
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
-) -> Option<(String, Vec<db::DictionaryEntry>, String)> {
+) -> Option<(String, Vec<db::DictionaryEntry>, String, bool)> {
     let db_handle = app.state::<DbHandle>();
     match run_cleanup_and_snippets_for_db(db_handle.inner(), raw, cfg, profile, app_context).await {
         Ok(result) => Some(result),
@@ -994,7 +1002,7 @@ async fn run_cleanup_and_snippets_for_db(
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
-) -> anyhow::Result<(String, Vec<db::DictionaryEntry>, String)> {
+) -> anyhow::Result<(String, Vec<db::DictionaryEntry>, String, bool)> {
     let mut db_snippets = db::query_snippets(db_handle).unwrap_or_default();
     let dict_entries = db::query_dictionary(db_handle).unwrap_or_default();
     log::debug!(
@@ -1029,6 +1037,7 @@ async fn run_cleanup_and_snippets_for_db(
     } else {
         None
     };
+    let snippet_active = pure_expansion.is_some() || !snippet_instructions.is_empty();
     let expanded = pure_expansion
         .clone()
         .unwrap_or_else(|| snippets::expand_snippets_from(raw, &mut db_snippets, db_handle));
@@ -1092,7 +1101,7 @@ async fn run_cleanup_and_snippets_for_db(
                     &entry.clean_text,
                     &snippet_instructions,
                 );
-                return Ok((overridden, dict_entries, cache_key));
+                return Ok((overridden, dict_entries, cache_key, snippet_active));
             }
         }
         log::debug!(
@@ -1194,7 +1203,7 @@ async fn run_cleanup_and_snippets_for_db(
         snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
     };
 
-    Ok((final_text, dict_entries, used_cache_key))
+    Ok((final_text, dict_entries, used_cache_key, snippet_active))
 }
 
 fn should_run_cleanup_llm(
@@ -1350,7 +1359,7 @@ pub async fn run_pipeline_fixture(
         })
     })?;
 
-    let (final_text_before_dictionary, dict_entries, cleanup_cache_key) =
+    let (final_text_before_dictionary, dict_entries, cleanup_cache_key, _snippet_active) =
         run_cleanup_and_snippets_for_db(
             &db_handle,
             &raw_text,
@@ -1921,7 +1930,7 @@ pub async fn retry_transcription_impl(
         anyhow::bail!("No API key configured");
     }
 
-    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
+    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key, snippet_active)) =
         run_transcription_and_cleanup(
             app,
             &capture.wav,
@@ -1949,6 +1958,7 @@ pub async fn retry_transcription_impl(
             process_name: capture.process_name,
             cleanup_cache_key,
             captured_at: capture.captured_at,
+            snippet_active,
         },
     )
     .await
@@ -1966,6 +1976,7 @@ struct PipelineCompletionContext<'a> {
     process_name: String,
     cleanup_cache_key: String,
     captured_at: std::time::Instant,
+    snippet_active: bool,
 }
 
 async fn finalize_pipeline_completion(
@@ -2117,14 +2128,18 @@ async fn finalize_pipeline_completion(
         }
 
         // Source A: raw↔clean divergence (cross-platform, zero accessibility).
-        auto_learn::record_cleanup_divergence(
-            ctx.raw,
-            ctx.final_text_before_dict,
-            &ctx.process_name,
-            db_handle.inner().clone(),
-            app.clone(),
-            ctx.cfg.auto_learn_window_days,
-        );
+        // Skipped when a snippet fired — the divergence is the snippet expansion,
+        // not a transcription correction.
+        if !ctx.snippet_active {
+            auto_learn::record_cleanup_divergence(
+                ctx.raw.to_string(),
+                ctx.final_text_before_dict.to_string(),
+                ctx.process_name.clone(),
+                db_handle.inner().clone(),
+                app.clone(),
+                ctx.cfg.auto_learn_window_days,
+            );
+        }
 
         auto_learn::start_monitor(
             injected_text,
