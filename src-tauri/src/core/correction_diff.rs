@@ -497,7 +497,7 @@ pub fn is_plausible_transcription_confusion(mistake: &str, correction: &str) -> 
     }
 
     let skel_dist = edit_distance(&skel_m, &skel_c);
-    let skel_max = skel_m.len().max(skel_c.len()).max(1);
+    let skel_max = skel_m.chars().count().max(skel_c.chars().count()).max(1);
     if skel_dist <= skel_max / 3 + 1 {
         return true;
     }

@@ -971,6 +971,9 @@ pub fn query_dictionary_suggestions(db: &Db) -> Result<Vec<DictionarySuggestion>
          WHERE NOT EXISTS (
            SELECT 1 FROM never_learn_pairs n
            WHERE n.wrong_word = s.wrong_word AND n.correct_word = s.correct_word
+         ) AND NOT EXISTS (
+           SELECT 1 FROM dictionary d
+           WHERE d.term = s.correct_word COLLATE NOCASE AND d.mistake = s.wrong_word COLLATE NOCASE
          )
          ORDER BY s.score DESC, s.updated_at DESC
          LIMIT 50",
@@ -2206,6 +2209,18 @@ mod tests {
         upsert_dictionary_suggestion(&db, "rock", "qroq", 0.9, "x").expect("insert");
         assert_eq!(query_dictionary_suggestions(&db).expect("before").len(), 1);
         delete_dictionary_suggestion(&db, "rock", "qroq").expect("delete");
+        assert!(query_dictionary_suggestions(&db).expect("after").is_empty());
+    }
+
+    #[test]
+    fn dictionary_suggestions_hide_pairs_already_in_dictionary() {
+        let db = test_db();
+        upsert_dictionary_suggestion(&db, "rock", "qroq", 0.9, "x").expect("insert");
+        assert_eq!(query_dictionary_suggestions(&db).expect("before").len(), 1);
+
+        // Term was added manually (or already auto-learned) — the suggestion
+        // is now redundant and should be hidden, even with mismatched casing.
+        insert_dictionary_entry(&db, "Qroq", Some("Rock")).expect("manual add");
         assert!(query_dictionary_suggestions(&db).expect("after").is_empty());
     }
 

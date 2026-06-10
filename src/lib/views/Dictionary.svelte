@@ -374,7 +374,7 @@
     </div>
   {/if}
 
-  {#if suggestions != null && suggestions.length > 0}
+  {#if suggestions != null && suggestions.filter(s => !dismissingKeys.has(`${s.wrong_word}:${s.correct_word}`)).length > 0}
     {@const visibleSuggestions = suggestions.filter(s => !dismissingKeys.has(`${s.wrong_word}:${s.correct_word}`))}
     <div class="suggested-section" in:fade={{ duration: 180 }}>
       <div class="suggested-header">
