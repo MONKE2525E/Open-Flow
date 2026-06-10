@@ -451,7 +451,7 @@ pub fn consonant_skeleton(word: &str) -> String {
     for ch in word.chars().flat_map(char::to_lowercase) {
         if VOWELS.contains(&ch) {
             prev = None;
-        } else if ch.is_alphabetic() {
+        } else if ch.is_alphanumeric() {
             if prev != Some(ch) {
                 out.push(ch);
             }
@@ -492,6 +492,12 @@ fn is_known_colloquial_pair(a: &str, b: &str) -> bool {
 /// (same consonant skeleton, or edit-distance close enough relative to length).
 /// This gates Source A (cleanup divergence) from learning grammar/filler rewrites.
 pub fn is_plausible_transcription_confusion(mistake: &str, correction: &str) -> bool {
+    let m_digits: String = mistake.chars().filter(|c| c.is_ascii_digit()).collect();
+    let c_digits: String = correction.chars().filter(|c| c.is_ascii_digit()).collect();
+    if m_digits != c_digits {
+        return false;
+    }
+
     let m_norm: String = mistake.chars().flat_map(char::to_lowercase).collect();
     let c_norm: String = correction.chars().flat_map(char::to_lowercase).collect();
 
@@ -609,6 +615,14 @@ mod tests {
     }
 
     #[test]
+    fn phonetic_confusion_rejects_differing_digits() {
+        // "IPv4" vs "IPv6" / "100" vs "200" are distinct values, not
+        // transcription confusions, even though their skeletons match.
+        assert!(!is_plausible_transcription_confusion("IPv4", "IPv6"));
+        assert!(!is_plausible_transcription_confusion("100", "200"));
+    }
+
+    #[test]
     fn consonant_skeleton_basic() {
         assert_eq!(consonant_skeleton("kubernetes"), "kbrnts");
         assert_eq!(consonant_skeleton("koobernetes"), "kbrnts");
@@ -636,5 +650,14 @@ mod tests {
         // duplicates (from the same letter, e.g. "koobernetes") collapse.
         assert_eq!(consonant_skeleton("state"), "stt");
         assert_ne!(consonant_skeleton("state"), consonant_skeleton("sat"));
+    }
+
+    #[test]
+    fn consonant_skeleton_preserves_digits() {
+        // Purely numeric words must not collapse to an empty skeleton, or
+        // distinct numbers (e.g. "100" vs "200") would look identical.
+        assert_eq!(consonant_skeleton("100"), "10");
+        assert_ne!(consonant_skeleton("100"), consonant_skeleton("200"));
+        assert!(!consonant_skeleton("100").is_empty());
     }
 }

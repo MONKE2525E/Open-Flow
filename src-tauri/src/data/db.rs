@@ -818,7 +818,7 @@ pub fn insert_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()
 pub fn delete_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()> {
     let conn = lock_conn(db)?;
     conn.execute(
-        "DELETE FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2",
+        "DELETE FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2 COLLATE NOCASE",
         params![wrong.to_lowercase(), correct],
     )?;
     Ok(())
@@ -2207,6 +2207,16 @@ mod tests {
         assert!(is_never_learn_pair(&db, "koobernetes", "Kubernetes").expect("lookup"));
 
         delete_never_learn_pair(&db, "KOOBERNETES", "Kubernetes").expect("delete");
+        assert!(!is_never_learn_pair(&db, "koobernetes", "Kubernetes").expect("after delete"));
+    }
+
+    #[test]
+    fn delete_never_learn_pair_is_case_insensitive_on_correct_word() {
+        let db = test_db();
+        insert_never_learn_pair(&db, "Koobernetes", "Kubernetes").expect("insert");
+        // A casing mismatch on `correct` (e.g. from a stored suggestion using
+        // different capitalization) must still allow deletion/restore.
+        delete_never_learn_pair(&db, "koobernetes", "kubernetes").expect("delete");
         assert!(!is_never_learn_pair(&db, "koobernetes", "Kubernetes").expect("after delete"));
     }
 
