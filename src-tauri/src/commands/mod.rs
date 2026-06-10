@@ -873,60 +873,65 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
         // "windows"` attribute, and go stale every time they're rebuilt. Registering
         // one for Windows startup leaves a visible console window behind on every
         // boot once the binary no longer matches the running app's database/schema.
+        // Bail out before the setting is persisted so the UI doesn't show autostart
+        // as enabled when no registry entry was actually written.
         if enabled && cfg!(debug_assertions) {
             log::warn!(
-                "set_autostart: skipping registry write for debug build at {app_path}; \
+                "set_autostart: refusing to register debug build at {app_path}; \
                  enable \"Start with Windows\" from an installed release build instead"
             );
-        } else {
-            let subkey: Vec<u16> =
-                std::ffi::OsStr::new("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
-                    .encode_wide()
-                    .chain(std::iter::once(0))
-                    .collect();
-            let value_name: Vec<u16> = std::ffi::OsStr::new("OpenFlow")
+            return Err(
+                "Autostart registration is disabled in debug builds. Enable it from an installed release build instead.".to_string(),
+            );
+        }
+
+        let subkey: Vec<u16> =
+            std::ffi::OsStr::new("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
                 .encode_wide()
                 .chain(std::iter::once(0))
                 .collect();
+        let value_name: Vec<u16> = std::ffi::OsStr::new("OpenFlow")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
 
-            unsafe {
-                let mut hkey = HKEY::default();
-                let status = RegOpenKeyExW(
-                    HKEY_CURRENT_USER,
-                    PCWSTR(subkey.as_ptr()),
+        unsafe {
+            let mut hkey = HKEY::default();
+            let status = RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                PCWSTR(subkey.as_ptr()),
+                None,
+                KEY_WRITE,
+                std::ptr::addr_of_mut!(hkey),
+            );
+
+            if status.is_err() {
+                return Err("Failed to open registry key".to_string());
+            }
+
+            let result = if enabled {
+                let app_path_wide: Vec<u16> = std::ffi::OsStr::new(&app_path)
+                    .encode_wide()
+                    .chain(std::iter::once(0))
+                    .collect();
+                RegSetValueExW(
+                    hkey,
+                    PCWSTR(value_name.as_ptr()),
                     None,
-                    KEY_WRITE,
-                    std::ptr::addr_of_mut!(hkey),
-                );
+                    REG_SZ,
+                    Some(std::slice::from_raw_parts(
+                        app_path_wide.as_ptr() as *const u8,
+                        (app_path_wide.len() - 1) * 2,
+                    )),
+                )
+            } else {
+                RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()))
+            };
 
-                if status.is_err() {
-                    return Err("Failed to open registry key".to_string());
-                }
+            let _ = RegCloseKey(hkey);
 
-                let result = if enabled {
-                    let app_path_wide: Vec<u16> = std::ffi::OsStr::new(&app_path)
-                        .encode_wide()
-                        .chain(std::iter::once(0))
-                        .collect();
-                    RegSetValueExW(
-                        hkey,
-                        PCWSTR(value_name.as_ptr()),
-                        None,
-                        REG_SZ,
-                        Some(std::slice::from_raw_parts(
-                            app_path_wide.as_ptr() as *const u8,
-                            (app_path_wide.len() - 1) * 2,
-                        )),
-                    )
-                } else {
-                    RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()))
-                };
-
-                let _ = RegCloseKey(hkey);
-
-                if result.is_err() {
-                    return Err("Failed to set registry value".to_string());
-                }
+            if result.is_err() {
+                return Err("Failed to set registry value".to_string());
             }
         }
     }
