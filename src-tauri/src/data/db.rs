@@ -821,8 +821,11 @@ pub fn insert_correction_evidence(
 
 pub fn is_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<bool> {
     let conn = lock_conn(db)?;
+    // `wrong_word` is always stored lowercase (see insert_never_learn_pair) and
+    // `wrong` is lowercased above, so a plain `=` match here can use
+    // idx-friendly lookups instead of forcing a per-row COLLATE NOCASE scan.
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM never_learn_pairs WHERE wrong_word=?1 COLLATE NOCASE AND correct_word=?2 COLLATE NOCASE",
+        "SELECT COUNT(*) FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2 COLLATE NOCASE",
         params![wrong.to_lowercase(), correct],
         |r| r.get(0),
     )?;
