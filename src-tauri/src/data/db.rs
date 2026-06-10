@@ -799,7 +799,7 @@ pub fn insert_correction_evidence(
 pub fn is_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<bool> {
     let conn = lock_conn(db)?;
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2",
+        "SELECT COUNT(*) FROM never_learn_pairs WHERE wrong_word=?1 COLLATE NOCASE AND correct_word=?2 COLLATE NOCASE",
         params![wrong.to_lowercase(), correct],
         |r| r.get(0),
     )?;
@@ -970,7 +970,7 @@ pub fn query_dictionary_suggestions(db: &Db) -> Result<Vec<DictionarySuggestion>
          FROM dictionary_suggestions s
          WHERE NOT EXISTS (
            SELECT 1 FROM never_learn_pairs n
-           WHERE n.wrong_word = s.wrong_word AND n.correct_word = s.correct_word
+           WHERE n.wrong_word = s.wrong_word COLLATE NOCASE AND n.correct_word = s.correct_word COLLATE NOCASE
          ) AND NOT EXISTS (
            SELECT 1 FROM dictionary d
            WHERE d.term = s.correct_word COLLATE NOCASE AND d.mistake = s.wrong_word COLLATE NOCASE

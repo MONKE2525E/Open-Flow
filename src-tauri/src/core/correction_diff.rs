@@ -435,7 +435,17 @@ pub fn detect_span_corrections(
 /// "Kubernetes" and "Koobernetes" share a similar skeleton while
 /// "running" and "ran" do not.
 pub fn consonant_skeleton(word: &str) -> String {
-    const VOWELS: &[char] = &['a', 'e', 'i', 'o', 'u', 'y'];
+    const VOWELS: &[char] = &[
+        'a', 'e', 'i', 'o', 'u', 'y',
+        // Common accented Latin vowels (e.g. "café", "naïve") so they are
+        // treated as vowels rather than unrelated consonants.
+        'à', 'á', 'â', 'ã', 'ä', 'å', 'ā',
+        'è', 'é', 'ê', 'ë', 'ē',
+        'ì', 'í', 'î', 'ï', 'ī',
+        'ò', 'ó', 'ô', 'õ', 'ö', 'ō', 'ø',
+        'ù', 'ú', 'û', 'ü', 'ū',
+        'ý', 'ÿ',
+    ];
     let mut out = String::new();
     let mut prev: Option<char> = None;
     for ch in word.chars().flat_map(char::to_lowercase) {
@@ -609,6 +619,14 @@ mod tests {
         // "y" acts as a vowel in words like "type"/"rhythm" — treating it as a
         // consonant would make phonetically similar words diverge unnecessarily.
         assert_eq!(consonant_skeleton("typo"), consonant_skeleton("tipo"));
+    }
+
+    #[test]
+    fn consonant_skeleton_treats_accented_vowels_as_vowels() {
+        // Accented vowels (e.g. "café"/"naïve") must not be treated as
+        // consonants, or their skeletons would diverge from the unaccented form.
+        assert_eq!(consonant_skeleton("café"), consonant_skeleton("cafe"));
+        assert_eq!(consonant_skeleton("naïve"), consonant_skeleton("naive"));
     }
 
     #[test]
