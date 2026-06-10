@@ -47,6 +47,7 @@
   let lastDismissed   = $state<{ wrong_word: string; correct_word: string } | null>(null);
   let undoTimer: ReturnType<typeof window.setTimeout> | undefined;
   let dismissTimers: ReturnType<typeof window.setTimeout>[] = [];
+  let destroyed = false;
 
   let search        = $state('');
   let debouncedSearch = $state('');
@@ -118,7 +119,9 @@
 
   async function fetchSuggestions() {
     try {
-      suggestions = (await invoke<DictionarySuggestion[] | null>('get_dictionary_suggestions')) ?? [];
+      const result = (await invoke<DictionarySuggestion[] | null>('get_dictionary_suggestions')) ?? [];
+      if (destroyed) return;
+      suggestions = result;
     } catch (err) {
       console.error('fetchSuggestions failed', err);
     }
@@ -130,17 +133,20 @@
     approvingKeys = new Set(approvingKeys).add(key);
     try {
       const applied = await invoke<boolean>('approve_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word });
+      if (destroyed) return;
       suggestions = suggestions.filter(x => !(x.wrong_word === s.wrong_word && x.correct_word === s.correct_word));
       if (applied === false) {
         await emit('open-flow:error', `"${s.correct_word}" already has a different dictionary entry — suggestion removed.`);
       }
     } catch (err) {
       console.error(err);
-      await emit('open-flow:error', 'Could not approve suggestion.');
+      if (!destroyed) await emit('open-flow:error', 'Could not approve suggestion.');
     } finally {
-      const next = new Set(approvingKeys);
-      next.delete(key);
-      approvingKeys = next;
+      if (!destroyed) {
+        const next = new Set(approvingKeys);
+        next.delete(key);
+        approvingKeys = next;
+      }
     }
   }
 
@@ -152,15 +158,18 @@
       dismissTimers = dismissTimers.filter((t) => t !== timer);
       try {
         await invoke('dismiss_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word });
+        if (destroyed) return;
         suggestions = suggestions.filter(x => !(x.wrong_word === s.wrong_word && x.correct_word === s.correct_word));
         showUndoBanner(s);
       } catch (err) {
         console.error(err);
-        await emit('open-flow:error', 'Could not dismiss suggestion.');
+        if (!destroyed) await emit('open-flow:error', 'Could not dismiss suggestion.');
       } finally {
-        const next = new Set(dismissingKeys);
-        next.delete(key);
-        dismissingKeys = next;
+        if (!destroyed) {
+          const next = new Set(dismissingKeys);
+          next.delete(key);
+          dismissingKeys = next;
+        }
       }
     }, motionMs(200));
     dismissTimers.push(timer);
@@ -185,15 +194,15 @@
     lastDismissed = null;
     try {
       await invoke('restore_never_learn_pair', { wrong: target.wrong_word, correct: target.correct_word });
+      if (destroyed) return;
       await fetchSuggestions();
     } catch (err) {
       console.error(err);
-      await emit('open-flow:error', 'Could not undo dismissal.');
+      if (!destroyed) await emit('open-flow:error', 'Could not undo dismissal.');
     }
   }
 
   onMount(() => {
-    let destroyed = false;
     let unlisten: (() => void) | undefined;
     let unlistenSuggestion: (() => void) | undefined;
     fetchDictionary();

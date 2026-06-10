@@ -409,10 +409,6 @@ pub fn open(path: &str) -> Result<Db> {
                  );
                  CREATE INDEX IF NOT EXISTS idx_correction_evidence_pair
                    ON correction_evidence(wrong_word, correct_word, created_at);
-                 INSERT OR IGNORE INTO correction_evidence
-                   (wrong_word, correct_word, source, weight, confidence, session_id, created_at)
-                   SELECT lower(wrong_word), correct_word, 'post_edit', 1.0, 0.6, 'legacy-' || id, created_at
-                   FROM pending_corrections;
                  CREATE TABLE IF NOT EXISTS dictionary_suggestions (
                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
                    wrong_word    TEXT    NOT NULL,
@@ -429,9 +425,36 @@ pub fn open(path: &str) -> Result<Db> {
                    correct_word TEXT    NOT NULL,
                    created_at   DATETIME NOT NULL DEFAULT (datetime('now')),
                    UNIQUE(wrong_word, correct_word)
-                 );
-                 PRAGMA user_version = 7;",
+                 );",
             )?;
+
+            // Migrate legacy pending_corrections into correction_evidence,
+            // lowercasing wrong_word with Rust's Unicode-aware to_lowercase()
+            // (SQLite's lower() only handles ASCII A-Z).
+            let legacy_rows: Vec<(i64, String, String, String)> = {
+                let mut stmt = conn.prepare(
+                    "SELECT id, wrong_word, correct_word, created_at FROM pending_corrections",
+                )?;
+                let rows = stmt
+                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                rows
+            };
+            for (id, wrong_word, correct_word, created_at) in legacy_rows {
+                conn.execute(
+                    "INSERT OR IGNORE INTO correction_evidence
+                       (wrong_word, correct_word, source, weight, confidence, session_id, created_at)
+                       VALUES (?1, ?2, 'post_edit', 1.0, 0.6, ?3, ?4)",
+                    params![
+                        wrong_word.to_lowercase(),
+                        correct_word,
+                        format!("legacy-{id}"),
+                        created_at
+                    ],
+                )?;
+            }
+
+            conn.execute_batch("PRAGMA user_version = 7;")?;
             Ok(())
         })() {
             let _ = conn.execute_batch("ROLLBACK;");
@@ -880,13 +903,16 @@ pub fn compute_evidence_score(
     let conn = lock_conn(db)?;
     let window_arg = format!("-{} days", window_days.max(1));
 
+    // `wrong` is always lowercased by the caller before insertion and lookup
+    // (see record_evidence_and_maybe_promote), so a plain `=` match here uses
+    // idx_correction_evidence_pair instead of forcing a table scan via COLLATE NOCASE.
     // Single query that returns weight, confidence, age_days, session_id, source per row.
     let mut stmt = conn.prepare(
         "SELECT weight, confidence,
                 (julianday('now') - julianday(created_at)) AS age_days,
                 session_id, source
          FROM correction_evidence
-         WHERE wrong_word=?1 COLLATE NOCASE AND correct_word=?2
+         WHERE wrong_word=?1 AND correct_word=?2
            AND created_at >= datetime('now', ?3)",
     )?;
 
@@ -1581,7 +1607,7 @@ mod tests {
                    created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
                  );
                  INSERT INTO pending_corrections (wrong_word, correct_word)
-                   VALUES ('Koobernetes', 'Kubernetes');
+                   VALUES ('Koobernetes', 'Kubernetes'), ('Über', 'Ueber');
                  PRAGMA user_version = 6;",
             )
             .expect("seed legacy db");
@@ -1598,6 +1624,16 @@ mod tests {
             )
             .expect("migrated evidence row");
         assert_eq!(wrong_word, "koobernetes");
+        // SQLite's lower() is ASCII-only and would leave 'Ü' untouched; the
+        // migration must use Rust's Unicode-aware to_lowercase() instead.
+        let wrong_word_unicode: String = conn
+            .query_row(
+                "SELECT wrong_word FROM correction_evidence WHERE correct_word = 'Ueber'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("migrated unicode evidence row");
+        assert_eq!(wrong_word_unicode, "über");
         drop(conn);
         drop(db);
         let _ = std::fs::remove_file(&path);
