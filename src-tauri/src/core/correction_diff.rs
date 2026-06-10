@@ -435,7 +435,7 @@ pub fn detect_span_corrections(
 /// "Kubernetes" and "Koobernetes" share a similar skeleton while
 /// "running" and "ran" do not.
 pub fn consonant_skeleton(word: &str) -> String {
-    const VOWELS: &[char] = &['a', 'e', 'i', 'o', 'u'];
+    const VOWELS: &[char] = &['a', 'e', 'i', 'o', 'u', 'y'];
     let mut out = String::new();
     let mut prev: Option<char> = None;
     for ch in word.chars().flat_map(char::to_lowercase) {
@@ -600,5 +600,12 @@ mod tests {
     fn consonant_skeleton_basic() {
         assert_eq!(consonant_skeleton("kubernetes"), "kbrnts");
         assert_eq!(consonant_skeleton("koobernetes"), "kbrnts");
+    }
+
+    #[test]
+    fn consonant_skeleton_treats_y_as_vowel() {
+        // "y" acts as a vowel in words like "type"/"rhythm" — treating it as a
+        // consonant would make phonetically similar words diverge unnecessarily.
+        assert_eq!(consonant_skeleton("typo"), consonant_skeleton("tipo"));
     }
 }

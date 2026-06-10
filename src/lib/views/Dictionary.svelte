@@ -46,6 +46,7 @@
   let approvingKeys   = $state<Set<string>>(new Set());
   let lastDismissed   = $state<{ wrong_word: string; correct_word: string } | null>(null);
   let undoTimer: ReturnType<typeof window.setTimeout> | undefined;
+  let dismissTimers: ReturnType<typeof window.setTimeout>[] = [];
 
   let search        = $state('');
   let debouncedSearch = $state('');
@@ -147,7 +148,8 @@
     const key = `${s.wrong_word}:${s.correct_word}`;
     if (dismissingKeys.has(key)) return;
     dismissingKeys = new Set(dismissingKeys).add(key);
-    window.setTimeout(async () => {
+    const timer = window.setTimeout(async () => {
+      dismissTimers = dismissTimers.filter((t) => t !== timer);
       try {
         await invoke('dismiss_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word });
         suggestions = suggestions.filter(x => !(x.wrong_word === s.wrong_word && x.correct_word === s.correct_word));
@@ -161,6 +163,7 @@
         dismissingKeys = next;
       }
     }, motionMs(200));
+    dismissTimers.push(timer);
   }
 
   function showUndoBanner(s: DictionarySuggestion) {
@@ -208,6 +211,8 @@
       unlistenSuggestion?.();
       window.removeEventListener('resize', onResize);
       if (undoTimer !== undefined) window.clearTimeout(undoTimer);
+      dismissTimers.forEach(window.clearTimeout);
+      dismissTimers = [];
     };
   });
 

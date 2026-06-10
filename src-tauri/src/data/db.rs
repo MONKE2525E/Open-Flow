@@ -800,7 +800,7 @@ pub fn is_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<bool> 
     let conn = lock_conn(db)?;
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2",
-        params![wrong, correct],
+        params![wrong.to_lowercase(), correct],
         |r| r.get(0),
     )?;
     Ok(count > 0)
@@ -810,7 +810,7 @@ pub fn insert_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()
     let conn = lock_conn(db)?;
     conn.execute(
         "INSERT OR IGNORE INTO never_learn_pairs (wrong_word, correct_word) VALUES (?1, ?2)",
-        params![wrong, correct],
+        params![wrong.to_lowercase(), correct],
     )?;
     Ok(())
 }
@@ -819,7 +819,7 @@ pub fn delete_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()
     let conn = lock_conn(db)?;
     conn.execute(
         "DELETE FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2",
-        params![wrong, correct],
+        params![wrong.to_lowercase(), correct],
     )?;
     Ok(())
 }
@@ -2156,6 +2156,18 @@ mod tests {
         // Idempotent.
         insert_never_learn_pair(&db, "rock", "qroq").expect("second insert");
         assert!(is_never_learn_pair(&db, "rock", "qroq").expect("after second insert"));
+    }
+
+    #[test]
+    fn never_learn_pair_lookup_is_case_insensitive_on_wrong_word() {
+        let db = test_db();
+        // A mixed-case `wrong` (e.g. from import_data) must still be normalized
+        // so the lowercase lookup in record_evidence_and_maybe_promote matches.
+        insert_never_learn_pair(&db, "Koobernetes", "Kubernetes").expect("insert");
+        assert!(is_never_learn_pair(&db, "koobernetes", "Kubernetes").expect("lookup"));
+
+        delete_never_learn_pair(&db, "KOOBERNETES", "Kubernetes").expect("delete");
+        assert!(!is_never_learn_pair(&db, "koobernetes", "Kubernetes").expect("after delete"));
     }
 
     #[test]
