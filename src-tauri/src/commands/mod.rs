@@ -855,6 +855,26 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
 
 #[tauri::command]
 pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String> {
+    // Debug builds go stale every time they're rebuilt and (on Windows) lack the
+    // `windows_subsystem = "windows"` attribute, so registering one for OS startup
+    // leaves a stale, console-attached (Windows) or broken (macOS LaunchAgent)
+    // binary wired into the user's login items. Bail out before the setting is
+    // persisted so the UI doesn't show autostart as enabled when nothing was
+    // actually registered.
+    if enabled && cfg!(debug_assertions) {
+        let app_path = std::env::current_exe()
+            .map_err(|e| format!("Failed to get executable path: {e}"))?
+            .to_string_lossy()
+            .to_string();
+        log::warn!(
+            "set_autostart: refusing to register debug build at {app_path}; \
+             enable autostart from an installed release build instead"
+        );
+        return Err(
+            "Autostart registration is disabled in debug builds. Enable it from an installed release build instead.".to_string(),
+        );
+    }
+
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -868,22 +888,6 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
             .map_err(|e| format!("Failed to get executable path: {e}"))?
             .to_string_lossy()
             .to_string();
-
-        // Debug builds live under `target/debug`, lack the `windows_subsystem =
-        // "windows"` attribute, and go stale every time they're rebuilt. Registering
-        // one for Windows startup leaves a visible console window behind on every
-        // boot once the binary no longer matches the running app's database/schema.
-        // Bail out before the setting is persisted so the UI doesn't show autostart
-        // as enabled when no registry entry was actually written.
-        if enabled && cfg!(debug_assertions) {
-            log::warn!(
-                "set_autostart: refusing to register debug build at {app_path}; \
-                 enable \"Start with Windows\" from an installed release build instead"
-            );
-            return Err(
-                "Autostart registration is disabled in debug builds. Enable it from an installed release build instead.".to_string(),
-            );
-        }
 
         let subkey: Vec<u16> =
             std::ffi::OsStr::new("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
