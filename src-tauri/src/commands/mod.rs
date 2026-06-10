@@ -863,9 +863,8 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
     // actually registered.
     if enabled && cfg!(debug_assertions) {
         let app_path = std::env::current_exe()
-            .map_err(|e| format!("Failed to get executable path: {e}"))?
-            .to_string_lossy()
-            .to_string();
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string());
         log::warn!(
             "set_autostart: refusing to register debug build at {app_path}; \
              enable autostart from an installed release build instead"
