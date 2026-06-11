@@ -126,7 +126,7 @@ async fn resolve_source_repo_uncached() -> String {
             .header("User-Agent", "verenu")
             .send()
             .await
-            .map(|resp| resp.status().is_success())
+            .map(|resp| resp.status() != reqwest::StatusCode::NOT_FOUND)
             .unwrap_or(false);
         if exists {
             return (*repo).to_string();

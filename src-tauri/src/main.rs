@@ -196,8 +196,8 @@ fn main() {
     let db_dir = app_data_dir();
     std::fs::create_dir_all(&db_dir).ok();
     migrate_legacy_db(&db_dir);
-    let db_handle: DbHandle =
-        db::open(db_dir.join("verenu.db").to_str().unwrap()).expect("failed to open database");
+    let db_handle: DbHandle = db::open(&db_dir.join("verenu.db").to_string_lossy())
+        .expect("failed to open database");
     let _ = db::cleanup_cache_prune_expired(&db_handle);
 
     tauri::Builder::default()
