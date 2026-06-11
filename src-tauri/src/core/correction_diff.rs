@@ -307,12 +307,15 @@ pub fn align_word_ops(
 ) -> Vec<(AlignOp, Option<usize>, Option<usize>)> {
     let m = original.len();
     let n = current.len();
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    // A flat (m+1) x (n+1) table with row stride (n+1) — one allocation
+    // instead of m+1, and better cache locality than Vec<Vec<_>>.
+    let stride = n + 1;
+    let mut dp = vec![0usize; (m + 1) * stride];
 
-    for (i, row) in dp.iter_mut().enumerate().take(m + 1) {
+    for (i, row) in dp.chunks_exact_mut(stride).enumerate().take(m + 1) {
         row[0] = i;
     }
-    for (j, cell) in dp[0].iter_mut().enumerate().take(n + 1) {
+    for (j, cell) in dp[..stride].iter_mut().enumerate() {
         *cell = j;
     }
 
@@ -323,9 +326,10 @@ pub fn align_word_ops(
             } else {
                 1
             };
-            dp[i][j] = (dp[i - 1][j - 1] + replace_cost)
-                .min(dp[i - 1][j] + 1)
-                .min(dp[i][j - 1] + 1);
+            let idx = i * stride + j;
+            dp[idx] = (dp[(i - 1) * stride + (j - 1)] + replace_cost)
+                .min(dp[(i - 1) * stride + j] + 1)
+                .min(dp[i * stride + (j - 1)] + 1);
         }
     }
 
@@ -338,7 +342,7 @@ pub fn align_word_ops(
             } else {
                 1
             };
-            if dp[i][j] == dp[i - 1][j - 1] + replace_cost {
+            if dp[i * stride + j] == dp[(i - 1) * stride + (j - 1)] + replace_cost {
                 let op = if replace_cost == 0 {
                     AlignOp::Equal
                 } else {
@@ -350,7 +354,7 @@ pub fn align_word_ops(
                 continue;
             }
         }
-        if i > 0 && dp[i][j] == dp[i - 1][j] + 1 {
+        if i > 0 && dp[i * stride + j] == dp[(i - 1) * stride + j] + 1 {
             ops.push((AlignOp::Delete, Some(i - 1), None));
             i -= 1;
         } else {

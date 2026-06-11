@@ -227,7 +227,7 @@ CREATE TABLE IF NOT EXISTS dictionary_suggestions (
 CREATE TABLE IF NOT EXISTS never_learn_pairs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   wrong_word  TEXT    NOT NULL,
-  correct_word TEXT   NOT NULL,
+  correct_word TEXT   NOT NULL COLLATE NOCASE,
   created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
   UNIQUE(wrong_word, correct_word)
 );
@@ -422,7 +422,7 @@ pub fn open(path: &str) -> Result<Db> {
                  CREATE TABLE IF NOT EXISTS never_learn_pairs (
                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
                    wrong_word   TEXT    NOT NULL,
-                   correct_word TEXT    NOT NULL,
+                   correct_word TEXT    NOT NULL COLLATE NOCASE,
                    created_at   DATETIME NOT NULL DEFAULT (datetime('now')),
                    UNIQUE(wrong_word, correct_word)
                  );",
@@ -821,10 +821,11 @@ pub fn insert_correction_evidence(
 pub fn is_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<bool> {
     let conn = lock_conn(db)?;
     // `wrong_word` is always stored lowercase (see insert_never_learn_pair) and
-    // `wrong` is lowercased above, so a plain `=` match here can use
-    // idx-friendly lookups instead of forcing a per-row COLLATE NOCASE scan.
+    // `wrong` is lowercased above; `correct_word` is COLLATE NOCASE in the
+    // schema, so a plain `=` match here can use idx-friendly lookups instead
+    // of forcing a per-row COLLATE NOCASE scan.
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2 COLLATE NOCASE",
+        "SELECT COUNT(*) FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2",
         params![wrong.to_lowercase(), correct],
         |r| r.get(0),
     )?;
@@ -847,7 +848,7 @@ pub fn insert_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()
 pub fn delete_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()> {
     let conn = lock_conn(db)?;
     conn.execute(
-        "DELETE FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2 COLLATE NOCASE",
+        "DELETE FROM never_learn_pairs WHERE wrong_word=?1 AND correct_word=?2",
         params![wrong.to_lowercase(), correct],
     )?;
     Ok(())
@@ -1002,7 +1003,7 @@ pub fn query_dictionary_suggestions(db: &Db) -> Result<Vec<DictionarySuggestion>
          FROM dictionary_suggestions s
          WHERE NOT EXISTS (
            SELECT 1 FROM never_learn_pairs n
-           WHERE n.wrong_word = s.wrong_word AND n.correct_word = s.correct_word COLLATE NOCASE
+           WHERE n.wrong_word = s.wrong_word AND n.correct_word = s.correct_word
          ) AND NOT EXISTS (
            SELECT 1 FROM dictionary d
            WHERE d.term = s.correct_word COLLATE NOCASE
