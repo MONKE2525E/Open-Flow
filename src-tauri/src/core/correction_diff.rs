@@ -489,7 +489,7 @@ const COLLOQUIAL_NORMALIZATIONS: &[(&str, &str)] = &[
     ("cause", "because"),
     ("til", "until"),
     ("yall", "you"),
-    ("aint", "isn't"),
+    ("aint", "isnt"),
 ];
 
 fn is_known_colloquial_pair(a: &str, b: &str) -> bool {
