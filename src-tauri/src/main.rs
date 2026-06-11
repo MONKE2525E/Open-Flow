@@ -215,7 +215,9 @@ fn main() {
                 tauri_plugin_store::StoreExt::store(app.handle(), "settings.json")
             {
                 let _ = store.reload();
-                crate::data::credentials::migrate_legacy_service();
+                std::thread::spawn(|| {
+                    crate::data::credentials::migrate_legacy_service();
+                });
                 crate::data::credentials::migrate_from_store(app.handle(), &store);
 
                 let autostart_enabled = store
