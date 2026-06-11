@@ -158,6 +158,7 @@ fn migrate_legacy_db(new_dir: &std::path::Path) {
 
     if let Err(e) = std::fs::copy(&old_db, &new_db) {
         log::warn!("TRANSITION(verenu): failed to migrate {old_db:?}: {e}");
+        let _ = std::fs::remove_file(&new_db);
         return;
     }
 
