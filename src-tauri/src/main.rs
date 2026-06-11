@@ -276,6 +276,7 @@ fn main() {
             commands::retry_transcription,
             commands::check_for_update,
             commands::install_update,
+            commands::get_source_repo,
             commands::check_connectivity,
             commands::get_recent_logs,
             commands::download_logs,
