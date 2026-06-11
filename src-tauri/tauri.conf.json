@@ -3,7 +3,7 @@
   "productName": "Open Flow",
   "mainBinaryName": "Open Flow",
   "identifier": "com.openflow.app",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",

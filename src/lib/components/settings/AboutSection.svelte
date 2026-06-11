@@ -12,16 +12,29 @@
   let versionTapTimer: ReturnType<typeof setTimeout> | null = null;
   let devModeHintVisible = $state(false);
 
+  // Defaults to the current Open-Flow repo and is replaced with
+  // "MONKE2525E/Verenu" once the backend confirms that repo exists.
+  let sourceRepo = $state('MONKE2525E/Open-Flow');
+
   $effect(() => {
     if (appStore.updateInfo) updateCheckState = 'available';
   });
 
+  $effect(() => {
+    invoke<string>('get_source_repo')
+      .then((repo) => {
+        if (repo) sourceRepo = repo;
+      })
+      .catch(() => {});
+  });
+
   async function openRepo() {
+    const url = `https://github.com/${sourceRepo}`;
     try {
       const { open } = await import('@tauri-apps/plugin-shell');
-      await open('https://github.com/MONKE2525E/Open-Flow');
+      await open(url);
     } catch {
-      window.open('https://github.com/MONKE2525E/Open-Flow', '_blank');
+      window.open(url, '_blank');
     }
   }
 
@@ -92,7 +105,7 @@
 </div>
 <div class="setting-row">
   <div><div class="label">Source</div></div>
-  <button class="btn-ghost" onclick={openRepo}>github.com/MONKE2525E/Open-Flow</button>
+  <button class="btn-ghost" onclick={openRepo}>github.com/{sourceRepo}</button>
 </div>
 <div class="setting-row">
   <div>

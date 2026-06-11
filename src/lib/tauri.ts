@@ -187,6 +187,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return String(getDevSetting('microphone_permission_status') ?? 'authorized') as T;
     case 'check_for_update':
       return null as T;
+    case 'get_source_repo':
+      return 'MONKE2525E/Open-Flow' as T;
     case 'check_connectivity':
       return (typeof navigator === 'undefined' ? true : navigator.onLine) as T;
     case 'get_cleanup_cache_status':
