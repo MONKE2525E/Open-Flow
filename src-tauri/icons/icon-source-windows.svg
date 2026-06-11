@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- full-bleed tile (no inset) so the Windows taskbar/exe icon isn't tiny -->
+  <!-- mirrors runtime_icon_image()'s non-macOS background_rect in main.rs -->
+  <rect x="0" y="0" width="512" height="512" rx="96" fill="#f9f7f3"/>
+
+  <!-- 5 bars, baseline-aligned at y=400, mirrors runtime_icon_image()'s non-macOS bar_rects -->
+  <rect x="76"  y="302" width="56" height="98"  rx="28" fill="#d97757"/>
+  <rect x="152" y="204" width="56" height="196" rx="28" fill="#d97757"/>
+  <rect x="228" y="120" width="56" height="280" rx="28" fill="#d97757"/>
+  <rect x="304" y="246" width="56" height="154" rx="28" fill="#d97757"/>
+  <rect x="380" y="330" width="56" height="70"  rx="28" fill="#d97757"/>
+</svg>
