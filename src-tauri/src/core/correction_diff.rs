@@ -6,6 +6,9 @@ pub const MIN_CANDIDATE_NORM_LEN: usize = 2;
 pub const MAX_SPAN_GROWTH_WORDS: usize = 5;
 pub const MAX_REPLACEMENTS_PER_SPAN: usize = 2;
 pub const MAX_CHANGED_OPS_PER_SPAN: usize = 4;
+// align_word_ops runs an O(M*N) DP alignment; cap span lengths so a
+// pathologically long dictation can't blow up CPU/memory.
+pub const MAX_SPAN_TOKENS: usize = 300;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WordToken {
@@ -370,6 +373,9 @@ pub fn detect_span_corrections(
     if original.is_empty() || current.is_empty() {
         return vec![];
     }
+    if original.len() > MAX_SPAN_TOKENS || current.len() > MAX_SPAN_TOKENS {
+        return vec![];
+    }
     if current.len() > original.len() * 2 + MAX_SPAN_GROWTH_WORDS {
         return vec![];
     }
@@ -564,6 +570,16 @@ mod tests {
     fn suffix_completion_rejected() {
         assert!(diff("send the file", "sends the file").is_empty());
         assert!(diff("we should do", "we should doing").is_empty());
+    }
+
+    #[test]
+    fn oversized_spans_rejected_before_alignment() {
+        // align_word_ops is O(M*N); spans longer than MAX_SPAN_TOKENS must be
+        // rejected up front so a pathologically long dictation can't blow up
+        // the alignment matrix.
+        let original = "word ".repeat(MAX_SPAN_TOKENS + 1);
+        let current = "term ".repeat(MAX_SPAN_TOKENS + 1);
+        assert!(diff(original.trim(), current.trim()).is_empty());
     }
 
     #[test]
