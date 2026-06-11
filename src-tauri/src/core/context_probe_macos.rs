@@ -84,9 +84,10 @@ pub fn read_focused_text_sync() -> Option<String> {
     if ok == 0 {
         return None;
     }
-    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    let u8_bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, len) };
-    let text = String::from_utf8_lossy(u8_bytes).into_owned();
+    // SAFETY: the shim always null-terminates buf within its FULL_TEXT_BUF_LEN bytes.
+    let text = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
     if text.is_empty() {
         None
     } else {

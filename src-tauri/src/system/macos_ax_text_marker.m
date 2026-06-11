@@ -609,7 +609,7 @@ int openflow_macos_read_focused_text(char *buf, size_t buf_len) {
     of_set_timeout(system);
 
     AXUIElementRef focused_element = NULL;
-    if (!of_copy_ax_element_attribute(system, kAXFocusedUIElementAttribute, &focused_element)) {
+    if (!of_copy_ax_element_attribute(system, kAXFocusedUIElementAttribute, &focused_element) || focused_element == NULL) {
         CFRelease(system);
         return 0;
     }

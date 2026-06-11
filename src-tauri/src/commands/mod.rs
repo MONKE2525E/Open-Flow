@@ -1461,65 +1461,70 @@ pub async fn import_data(
             crate::apply_runtime_icons(&app, None);
         }
 
-        let mut dictionary_inserted = 0usize;
+        // Pre-filter empty entries, then insert everything else inside a single
+        // transaction (db::import_backup_records) — one INSERT per row would
+        // otherwise force an implicit transaction + disk sync per row.
         let mut dictionary_skipped = 0usize;
-        let mut dictionary_already_existed = 0usize;
-        for entry in &payload.dictionary {
-            if entry.term.trim().is_empty() {
-                dictionary_skipped += 1;
-                continue;
-            }
-            match db::insert_dictionary_entry_from_backup(&db, &entry.term, entry.mistake.as_deref(), entry.auto_learned, &entry.confidence_tier, entry.correction_count) {
-                Ok(()) => dictionary_inserted += 1,
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("UNIQUE constraint failed") {
-                        dictionary_already_existed += 1;
-                    } else {
-                        log::warn!("import_data: dictionary insert error for '{}': {msg}", entry.term);
-                        dictionary_skipped += 1;
-                    }
+        let dictionary_entries: Vec<db::BackupDictionaryEntry> = payload.dictionary.iter()
+            .filter(|entry| {
+                let keep = !entry.term.trim().is_empty();
+                if !keep {
+                    dictionary_skipped += 1;
                 }
-            }
-        }
+                keep
+            })
+            .map(|entry| db::BackupDictionaryEntry {
+                term: &entry.term,
+                mistake: entry.mistake.as_deref(),
+                auto_learned: entry.auto_learned,
+                confidence_tier: &entry.confidence_tier,
+                correction_count: entry.correction_count,
+            })
+            .collect();
 
-        let mut snippets_inserted = 0usize;
         let mut snippets_skipped = 0usize;
-        let mut snippets_already_existed = 0usize;
-        for snippet in &payload.snippets {
-            if snippet.trigger.trim().is_empty() || snippet.expansion.trim().is_empty() {
-                snippets_skipped += 1;
-                continue;
-            }
-            match db::insert_snippet_returning(&db, &snippet.trigger, &snippet.expansion, &snippet.instructions) {
-                Ok(_) => snippets_inserted += 1,
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("UNIQUE constraint failed") {
-                        snippets_already_existed += 1;
-                    } else {
-                        log::warn!("import_data: snippet insert error for '{}': {msg}", snippet.trigger);
-                        snippets_skipped += 1;
-                    }
+        let snippet_entries: Vec<db::BackupSnippet> = payload.snippets.iter()
+            .filter(|snippet| {
+                let keep = !snippet.trigger.trim().is_empty() && !snippet.expansion.trim().is_empty();
+                if !keep {
+                    snippets_skipped += 1;
                 }
-            }
-        }
+                keep
+            })
+            .map(|snippet| db::BackupSnippet {
+                trigger: &snippet.trigger,
+                expansion: &snippet.expansion,
+                instructions: &snippet.instructions,
+            })
+            .collect();
 
-        let mut never_learn_pairs_inserted = 0usize;
         let mut never_learn_pairs_skipped = 0usize;
-        for pair in &payload.never_learn_pairs {
-            if pair.wrong.trim().is_empty() || pair.correct.trim().is_empty() {
-                never_learn_pairs_skipped += 1;
-                continue;
-            }
-            match db::insert_never_learn_pair(&db, &pair.wrong, &pair.correct) {
-                Ok(()) => never_learn_pairs_inserted += 1,
-                Err(e) => {
-                    log::warn!("import_data: never_learn_pair insert error for '{}': {e}", pair.wrong);
+        let never_learn_pair_entries: Vec<db::BackupNeverLearnPair> = payload.never_learn_pairs.iter()
+            .filter(|pair| {
+                let keep = !pair.wrong.trim().is_empty() && !pair.correct.trim().is_empty();
+                if !keep {
                     never_learn_pairs_skipped += 1;
                 }
-            }
-        }
+                keep
+            })
+            .map(|pair| db::BackupNeverLearnPair {
+                wrong: &pair.wrong,
+                correct: &pair.correct,
+            })
+            .collect();
+
+        let import_counts = db::import_backup_records(&db, &dictionary_entries, &snippet_entries, &never_learn_pair_entries)
+            .map_err(|e| e.to_string())?;
+
+        let dictionary_inserted = import_counts.dictionary_inserted;
+        let dictionary_already_existed = import_counts.dictionary_already_existed;
+        dictionary_skipped += import_counts.dictionary_failed;
+
+        let snippets_inserted = import_counts.snippets_inserted;
+        let snippets_already_existed = import_counts.snippets_already_existed;
+        snippets_skipped += import_counts.snippets_failed;
+
+        let never_learn_pairs_inserted = import_counts.never_learn_pairs_inserted;
 
         log::info!(
             "import_data: settings={}/skip={} dict={}/skip={}/existed={} snip={}/skip={}/existed={} never_learn={}/skip={}",

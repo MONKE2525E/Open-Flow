@@ -705,8 +705,8 @@ pub fn insert_dictionary_entry_returning(
     Ok(CreatedRecordMeta { id, created_at })
 }
 
-pub fn insert_dictionary_entry_from_backup(
-    db: &Db,
+fn insert_dictionary_entry_from_backup_conn(
+    conn: &Connection,
     term: &str,
     mistake: Option<&str>,
     auto_learned: bool,
@@ -719,7 +719,6 @@ pub fn insert_dictionary_entry_from_backup(
     if let Some(m) = normalized_mistake.as_deref() {
         validate_char_limit("Often mistranscribed as", m, DICTIONARY_ENTRY_CHAR_LIMIT)?;
     }
-    let conn = lock_conn(db)?;
     conn.execute(
         "INSERT INTO dictionary (term, mistake, auto_learned, correction_count, confidence_tier, last_seen_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
@@ -832,13 +831,17 @@ pub fn is_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<bool> 
     Ok(count > 0)
 }
 
-pub fn insert_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()> {
-    let conn = lock_conn(db)?;
+fn insert_never_learn_pair_conn(conn: &Connection, wrong: &str, correct: &str) -> Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO never_learn_pairs (wrong_word, correct_word) VALUES (?1, ?2)",
         params![wrong.to_lowercase(), correct],
     )?;
     Ok(())
+}
+
+pub fn insert_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()> {
+    let conn = lock_conn(db)?;
+    insert_never_learn_pair_conn(&conn, wrong, correct)
 }
 
 pub fn delete_never_learn_pair(db: &Db, wrong: &str, correct: &str) -> Result<()> {
@@ -1250,8 +1253,8 @@ pub fn insert_snippet(db: &Db, trigger: &str, expansion: &str, instructions: &st
     Ok(())
 }
 
-pub fn insert_snippet_returning(
-    db: &Db,
+fn insert_snippet_returning_conn(
+    conn: &Connection,
     trigger: &str,
     expansion: &str,
     instructions: &str,
@@ -1264,9 +1267,6 @@ pub fn insert_snippet_returning(
     }
     let normalized_instructions = normalize_multiline(instructions);
 
-    // Insert and read last_insert_rowid under a single lock to prevent another
-    // thread's insert racing between the two acquisitions and returning the wrong id.
-    let conn = lock_conn(db)?;
     conn.execute(
         "INSERT INTO snippets (trigger, expansion, instructions) VALUES (?1, ?2, ?3)",
         params![
@@ -1282,6 +1282,105 @@ pub fn insert_snippet_returning(
         |r| r.get(0),
     )?;
     Ok(CreatedRecordMeta { id, created_at })
+}
+
+pub fn insert_snippet_returning(
+    db: &Db,
+    trigger: &str,
+    expansion: &str,
+    instructions: &str,
+) -> Result<CreatedRecordMeta> {
+    // Insert and read last_insert_rowid under a single lock to prevent another
+    // thread's insert racing between the two acquisitions and returning the wrong id.
+    let conn = lock_conn(db)?;
+    insert_snippet_returning_conn(&conn, trigger, expansion, instructions)
+}
+
+pub struct BackupDictionaryEntry<'a> {
+    pub term: &'a str,
+    pub mistake: Option<&'a str>,
+    pub auto_learned: bool,
+    pub confidence_tier: &'a str,
+    pub correction_count: i64,
+}
+
+pub struct BackupSnippet<'a> {
+    pub trigger: &'a str,
+    pub expansion: &'a str,
+    pub instructions: &'a str,
+}
+
+pub struct BackupNeverLearnPair<'a> {
+    pub wrong: &'a str,
+    pub correct: &'a str,
+}
+
+#[derive(Default)]
+pub struct ImportBackupCounts {
+    pub dictionary_inserted: usize,
+    pub dictionary_already_existed: usize,
+    pub dictionary_failed: usize,
+    pub snippets_inserted: usize,
+    pub snippets_already_existed: usize,
+    pub snippets_failed: usize,
+    pub never_learn_pairs_inserted: usize,
+}
+
+/// Inserts backup records inside a single transaction so a large import
+/// doesn't pay a disk sync per row (one INSERT == one implicit transaction
+/// in SQLite's default autocommit mode).
+pub fn import_backup_records(
+    db: &Db,
+    dictionary: &[BackupDictionaryEntry],
+    snippets: &[BackupSnippet],
+    never_learn_pairs: &[BackupNeverLearnPair],
+) -> Result<ImportBackupCounts> {
+    let mut conn = lock_conn(db)?;
+    let tx = conn.transaction()?;
+    let mut counts = ImportBackupCounts::default();
+
+    for entry in dictionary {
+        match insert_dictionary_entry_from_backup_conn(
+            &tx,
+            entry.term,
+            entry.mistake,
+            entry.auto_learned,
+            entry.confidence_tier,
+            entry.correction_count,
+        ) {
+            Ok(()) => counts.dictionary_inserted += 1,
+            Err(e) => {
+                if e.to_string().contains("UNIQUE constraint failed") {
+                    counts.dictionary_already_existed += 1;
+                } else {
+                    log::warn!("import_backup_records: dictionary insert error for '{}': {e}", entry.term);
+                    counts.dictionary_failed += 1;
+                }
+            }
+        }
+    }
+
+    for snippet in snippets {
+        match insert_snippet_returning_conn(&tx, snippet.trigger, snippet.expansion, snippet.instructions) {
+            Ok(_) => counts.snippets_inserted += 1,
+            Err(e) => {
+                if e.to_string().contains("UNIQUE constraint failed") {
+                    counts.snippets_already_existed += 1;
+                } else {
+                    log::warn!("import_backup_records: snippet insert error for '{}': {e}", snippet.trigger);
+                    counts.snippets_failed += 1;
+                }
+            }
+        }
+    }
+
+    for pair in never_learn_pairs {
+        insert_never_learn_pair_conn(&tx, pair.wrong, pair.correct)?;
+        counts.never_learn_pairs_inserted += 1;
+    }
+
+    tx.commit()?;
+    Ok(counts)
 }
 
 pub fn update_snippet(
@@ -2442,5 +2541,61 @@ mod tests {
             (ev.score - 0.9).abs() < 1e-6,
             "future-dated evidence must not amplify score above its raw weight*confidence"
         );
+    }
+
+    #[test]
+    fn import_backup_records_inserts_all_kinds_in_one_transaction() {
+        let db = test_db();
+        let dictionary = vec![BackupDictionaryEntry {
+            term: "Kubernetes",
+            mistake: Some("koobernetes"),
+            auto_learned: true,
+            confidence_tier: "high",
+            correction_count: 3,
+        }];
+        let snippets = vec![BackupSnippet {
+            trigger: "sig",
+            expansion: "Best regards,\nA",
+            instructions: "",
+        }];
+        let never_learn_pairs = vec![BackupNeverLearnPair {
+            wrong: "rock",
+            correct: "qroq",
+        }];
+
+        let counts = import_backup_records(&db, &dictionary, &snippets, &never_learn_pairs)
+            .expect("import");
+        assert_eq!(counts.dictionary_inserted, 1);
+        assert_eq!(counts.dictionary_already_existed, 0);
+        assert_eq!(counts.snippets_inserted, 1);
+        assert_eq!(counts.snippets_already_existed, 0);
+        assert_eq!(counts.never_learn_pairs_inserted, 1);
+        assert!(is_never_learn_pair(&db, "rock", "qroq").expect("check"));
+    }
+
+    #[test]
+    fn import_backup_records_reports_existing_dictionary_and_snippet_conflicts() {
+        let db = test_db();
+        insert_dictionary_entry(&db, "Kubernetes", None).expect("seed dictionary");
+        insert_snippet_returning(&db, "sig", "Best regards,\nA", "").expect("seed snippet");
+
+        let dictionary = vec![BackupDictionaryEntry {
+            term: "Kubernetes",
+            mistake: None,
+            auto_learned: false,
+            confidence_tier: "high",
+            correction_count: 0,
+        }];
+        let snippets = vec![BackupSnippet {
+            trigger: "sig",
+            expansion: "Different expansion",
+            instructions: "",
+        }];
+
+        let counts = import_backup_records(&db, &dictionary, &snippets, &[]).expect("import");
+        assert_eq!(counts.dictionary_inserted, 0);
+        assert_eq!(counts.dictionary_already_existed, 1);
+        assert_eq!(counts.snippets_inserted, 0);
+        assert_eq!(counts.snippets_already_existed, 1);
     }
 }
