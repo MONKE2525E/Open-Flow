@@ -535,8 +535,10 @@ pub fn is_plausible_transcription_confusion(mistake: &str, correction: &str) -> 
     // very different phonetically despite sounding identical (e.g. "rock" / "Groq").
     let dist = edit_distance(&m_norm, &c_norm);
     let max_len = m_norm.chars().count().max(c_norm.chars().count()).max(1);
-    if max_len <= 5 {
-        dist < max_len
+    if max_len <= 3 {
+        dist <= 1
+    } else if max_len <= 5 {
+        dist <= 3
     } else {
         dist <= max_len / 3 + 1
     }
@@ -621,6 +623,14 @@ mod tests {
     fn phonetic_confusion_rejects_grammar_rewrite() {
         // "running" → "sprint" is not a transcription confusion
         assert!(!is_plausible_transcription_confusion("running", "sprint"));
+    }
+
+    #[test]
+    fn phonetic_confusion_rejects_unrelated_short_words() {
+        // The fallback ratio for short words must not be so lenient that
+        // unrelated words are treated as transcription confusions.
+        assert!(!is_plausible_transcription_confusion("cat", "map"));
+        assert!(!is_plausible_transcription_confusion("apple", "alien"));
     }
 
     #[test]
