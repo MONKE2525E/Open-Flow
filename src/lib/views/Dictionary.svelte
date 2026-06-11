@@ -116,6 +116,9 @@
     return list;
   });
   const visibleFiltered = $derived(filtered.filter((entry) => !leavingIds.has(entry.id)));
+  const visibleSuggestions = $derived(
+    suggestions.filter((s) => !dismissingKeys.has(`${s.wrong_word}:${s.correct_word}`))
+  );
 
   async function fetchSuggestions() {
     try {
@@ -388,8 +391,7 @@
     </div>
   {/if}
 
-  {#if suggestions != null && suggestions.filter(s => !dismissingKeys.has(`${s.wrong_word}:${s.correct_word}`)).length > 0}
-    {@const visibleSuggestions = suggestions.filter(s => !dismissingKeys.has(`${s.wrong_word}:${s.correct_word}`))}
+  {#if suggestions != null && visibleSuggestions.length > 0}
     <div class="suggested-section" in:fade={{ duration: 180 }}>
       <div class="suggested-header">
         <span class="suggested-label">Suggested corrections</span>

@@ -502,9 +502,9 @@ fn is_known_colloquial_pair(a: &str, b: &str) -> bool {
 /// (same consonant skeleton, or edit-distance close enough relative to length).
 /// This gates Source A (cleanup divergence) from learning grammar/filler rewrites.
 pub fn is_plausible_transcription_confusion(mistake: &str, correction: &str) -> bool {
-    let m_digits: String = mistake.chars().filter(|c| c.is_ascii_digit()).collect();
-    let c_digits: String = correction.chars().filter(|c| c.is_ascii_digit()).collect();
-    if m_digits != c_digits {
+    let m_digits = mistake.chars().filter(|c| c.is_ascii_digit());
+    let c_digits = correction.chars().filter(|c| c.is_ascii_digit());
+    if !m_digits.eq(c_digits) {
         return false;
     }
 
