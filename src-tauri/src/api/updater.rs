@@ -107,32 +107,44 @@ static RESOLVED_SOURCE_REPO: OnceLock<String> = OnceLock::new();
 /// Resolve which repo to display/link as the project's "Source" by checking
 /// each candidate in order and returning the first that doesn't 404. Falls
 /// back to the last candidate (the current default) if every check fails.
-/// The result is cached for the lifetime of the process.
+/// A successful resolution is cached for the lifetime of the process; a
+/// transient failure (network error or non-404 API error, e.g. rate limit)
+/// is not cached so it can be retried on the next call.
 pub async fn resolve_source_repo() -> String {
     if let Some(repo) = RESOLVED_SOURCE_REPO.get() {
         return repo.clone();
     }
 
-    let resolved = resolve_source_repo_uncached().await;
-    let _ = RESOLVED_SOURCE_REPO.set(resolved.clone());
-    resolved
+    if let Some(resolved) = resolve_source_repo_uncached().await {
+        let _ = RESOLVED_SOURCE_REPO.set(resolved.clone());
+        resolved
+    } else {
+        SOURCE_REPO_CANDIDATES.last().unwrap().to_string()
+    }
 }
 
-async fn resolve_source_repo_uncached() -> String {
+async fn resolve_source_repo_uncached() -> Option<String> {
     for repo in SOURCE_REPO_CANDIDATES {
         let url = format!("https://api.github.com/repos/{repo}");
-        let exists = super::client::get()
+        match super::client::get()
             .get(&url)
             .header("User-Agent", "verenu")
             .send()
             .await
-            .map(|resp| resp.status() != reqwest::StatusCode::NOT_FOUND)
-            .unwrap_or(false);
-        if exists {
-            return (*repo).to_string();
+        {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    return Some((*repo).to_string());
+                } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                    continue;
+                } else {
+                    return None;
+                }
+            }
+            Err(_) => return None,
         }
     }
-    SOURCE_REPO_CANDIDATES.last().unwrap().to_string()
+    Some(SOURCE_REPO_CANDIDATES.last().unwrap().to_string())
 }
 
 /// Extract the first three numeric groups from any version string, return as "major.minor.patch".
