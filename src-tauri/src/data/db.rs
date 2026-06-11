@@ -1199,8 +1199,9 @@ pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
             "DELETE FROM auto_learn_candidates WHERE wrong_word = ?1 AND correct_word = ?2",
         )?;
         // `mistake`/`term` come from `dictionary` and are stored with the same
-        // casing as `correction_evidence.wrong_word`/`correct_word` (both
-        // lowercased via record_evidence_and_maybe_promote's D1 normalization),
+        // casing as `correction_evidence.wrong_word`/`correct_word` (only
+        // `wrong_word`/`mistake` is lowercased via record_evidence_and_maybe_promote's
+        // normalization; `correct_word`/`term` keeps its original casing in both tables),
         // so a binary comparison here lets SQLite use idx_correction_evidence_pair
         // instead of forcing a full table scan via COLLATE NOCASE.
         let mut del_evidence_stmt = tx.prepare(
@@ -1397,7 +1398,11 @@ pub fn import_backup_records(
     )?;
     for pair in never_learn_pairs {
         match never_learn_stmt.execute(params![pair.wrong.to_lowercase(), pair.correct]) {
-            Ok(_) => counts.never_learn_pairs_inserted += 1,
+            Ok(rows) => {
+                if rows > 0 {
+                    counts.never_learn_pairs_inserted += 1;
+                }
+            }
             Err(e) => log::warn!(
                 "import_backup_records: never_learn_pair insert error for '{}' -> '{}': {e}",
                 pair.wrong,
@@ -2606,6 +2611,7 @@ mod tests {
         let db = test_db();
         insert_dictionary_entry(&db, "Kubernetes", None).expect("seed dictionary");
         insert_snippet_returning(&db, "sig", "Best regards,\nA", "").expect("seed snippet");
+        insert_never_learn_pair(&db, "rock", "qroq").expect("seed never-learn pair");
 
         let dictionary = vec![BackupDictionaryEntry {
             term: "Kubernetes",
@@ -2619,11 +2625,19 @@ mod tests {
             expansion: "Different expansion",
             instructions: "",
         }];
+        let never_learn_pairs = vec![BackupNeverLearnPair {
+            wrong: "rock",
+            correct: "qroq",
+        }];
 
-        let counts = import_backup_records(&db, &dictionary, &snippets, &[]).expect("import");
+        let counts = import_backup_records(&db, &dictionary, &snippets, &never_learn_pairs).expect("import");
         assert_eq!(counts.dictionary_inserted, 0);
         assert_eq!(counts.dictionary_already_existed, 1);
         assert_eq!(counts.snippets_inserted, 0);
         assert_eq!(counts.snippets_already_existed, 1);
+        assert_eq!(
+            counts.never_learn_pairs_inserted, 0,
+            "duplicate never-learn pairs ignored by INSERT OR IGNORE must not be counted as inserted"
+        );
     }
 }
