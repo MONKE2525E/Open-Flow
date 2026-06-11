@@ -1172,7 +1172,7 @@ pub fn delete_dictionary_entry(db: &Db, id: i64) -> Result<()> {
             params![mistake, term],
         )?;
         tx.execute(
-            "DELETE FROM correction_evidence WHERE wrong_word = ?1 COLLATE NOCASE AND correct_word = ?2 COLLATE NOCASE",
+            "DELETE FROM correction_evidence WHERE wrong_word = ?1 AND correct_word = ?2",
             params![mistake, term],
         )?;
     }
@@ -1197,8 +1197,13 @@ pub fn delete_auto_learned_entries_by_ids(db: &Db, ids: &[i64]) -> Result<()> {
         let mut del_candidate_stmt = tx.prepare(
             "DELETE FROM auto_learn_candidates WHERE wrong_word = ?1 AND correct_word = ?2",
         )?;
+        // `mistake`/`term` come from `dictionary` and are stored with the same
+        // casing as `correction_evidence.wrong_word`/`correct_word` (both
+        // lowercased via record_evidence_and_maybe_promote's D1 normalization),
+        // so a binary comparison here lets SQLite use idx_correction_evidence_pair
+        // instead of forcing a full table scan via COLLATE NOCASE.
         let mut del_evidence_stmt = tx.prepare(
-            "DELETE FROM correction_evidence WHERE wrong_word = ?1 COLLATE NOCASE AND correct_word = ?2 COLLATE NOCASE",
+            "DELETE FROM correction_evidence WHERE wrong_word = ?1 AND correct_word = ?2",
         )?;
 
         for chunk in ids.chunks(SQL_BATCH_SIZE) {
