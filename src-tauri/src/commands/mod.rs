@@ -845,7 +845,7 @@ pub async fn approve_dictionary_suggestion(
     let db = app.state::<DbHandle>().inner().clone();
     let applied = tokio::task::spawn_blocking(move || -> Result<bool, String> {
         let wrong_lower = wrong.to_lowercase();
-        let inserted = db::insert_dictionary_entry_auto_learned(&db, &correct, Some(&wrong_lower), "medium")
+        let inserted = db::insert_dictionary_entry_auto_learned(&db, &correct, Some(wrong_lower.as_str()), "medium")
             .map_err(|e| e.to_string())?;
         db::delete_dictionary_suggestion(&db, &wrong_lower, &correct).map_err(|e| e.to_string())?;
         if inserted {

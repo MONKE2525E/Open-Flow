@@ -440,19 +440,20 @@ pub fn open(path: &str) -> Result<Db> {
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 rows
             };
+            let mut insert_stmt = conn.prepare(
+                "INSERT OR IGNORE INTO correction_evidence
+                   (wrong_word, correct_word, source, weight, confidence, session_id, created_at)
+                   VALUES (?1, ?2, 'post_edit', 1.0, 0.6, ?3, ?4)",
+            )?;
             for (id, wrong_word, correct_word, created_at) in legacy_rows {
-                conn.execute(
-                    "INSERT OR IGNORE INTO correction_evidence
-                       (wrong_word, correct_word, source, weight, confidence, session_id, created_at)
-                       VALUES (?1, ?2, 'post_edit', 1.0, 0.6, ?3, ?4)",
-                    params![
-                        wrong_word.to_lowercase(),
-                        correct_word,
-                        format!("legacy-{id}"),
-                        created_at
-                    ],
-                )?;
+                insert_stmt.execute(params![
+                    wrong_word.to_lowercase(),
+                    correct_word,
+                    format!("legacy-{id}"),
+                    created_at
+                ])?;
             }
+            drop(insert_stmt);
 
             conn.execute_batch("PRAGMA user_version = 7;")?;
             Ok(())
@@ -1391,9 +1392,12 @@ pub fn import_backup_records(
         }
     }
 
+    let mut never_learn_stmt = tx.prepare(
+        "INSERT OR IGNORE INTO never_learn_pairs (wrong_word, correct_word) VALUES (?1, ?2)",
+    )?;
     for pair in never_learn_pairs {
-        match insert_never_learn_pair_conn(&tx, pair.wrong, pair.correct) {
-            Ok(()) => counts.never_learn_pairs_inserted += 1,
+        match never_learn_stmt.execute(params![pair.wrong.to_lowercase(), pair.correct]) {
+            Ok(_) => counts.never_learn_pairs_inserted += 1,
             Err(e) => log::warn!(
                 "import_backup_records: never_learn_pair insert error for '{}' -> '{}': {e}",
                 pair.wrong,
@@ -1401,6 +1405,7 @@ pub fn import_backup_records(
             ),
         }
     }
+    drop(never_learn_stmt);
 
     tx.commit()?;
     Ok(counts)
