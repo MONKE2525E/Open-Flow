@@ -526,7 +526,7 @@ pub async fn start_input_recording(
         Err(e) => {
             let msg = format!("Failed to start recording: {e}");
             crate::pipeline::hide_pill(&app);
-            app.emit("open-flow:error", msg.clone()).ok();
+            app.emit("verenu:error", msg.clone()).ok();
             Err(msg)
         }
     }
@@ -586,7 +586,7 @@ pub async fn start_calibration_monitoring(
             || msg_lower.contains("6e756f65") // 'nuoe' hex
             || msg_lower.contains("access denied")
         {
-            "Microphone access denied — grant Open Flow permission in System Settings → Privacy & Security → Microphone, then try again.".to_string()
+            "Microphone access denied — grant Verenu permission in System Settings → Privacy & Security → Microphone, then try again.".to_string()
         } else {
             msg
         }
@@ -875,139 +875,252 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
     }
 
     #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows::core::PCWSTR;
-        use windows::Win32::System::Registry::{
-            RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
-            KEY_WRITE, REG_SZ,
-        };
+    set_windows_autostart(enabled)?;
 
-        let app_path = std::env::current_exe()
-            .map_err(|e| format!("Failed to get executable path: {e}"))?
-            .to_string_lossy()
-            .to_string();
-
-        let subkey: Vec<u16> =
-            std::ffi::OsStr::new("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
-        let value_name: Vec<u16> = std::ffi::OsStr::new("OpenFlow")
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-
-        unsafe {
-            let mut hkey = HKEY::default();
-            let status = RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                PCWSTR(subkey.as_ptr()),
-                None,
-                KEY_WRITE,
-                std::ptr::addr_of_mut!(hkey),
-            );
-
-            if status.is_err() {
-                return Err("Failed to open registry key".to_string());
-            }
-
-            let result = if enabled {
-                let app_path_wide: Vec<u16> = std::ffi::OsStr::new(&app_path)
-                    .encode_wide()
-                    .chain(std::iter::once(0))
-                    .collect();
-                RegSetValueExW(
-                    hkey,
-                    PCWSTR(value_name.as_ptr()),
-                    None,
-                    REG_SZ,
-                    Some(std::slice::from_raw_parts(
-                        app_path_wide.as_ptr() as *const u8,
-                        (app_path_wide.len() - 1) * 2,
-                    )),
-                )
-            } else {
-                RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()))
-            };
-
-            let _ = RegCloseKey(hkey);
-
-            if result.is_err() {
-                return Err("Failed to set registry value".to_string());
-            }
-        }
-    }
-
-    // macOS: write/remove a LaunchAgent plist that launches the app at login.
     #[cfg(target_os = "macos")]
-    {
-        let label = "com.openflow.app";
-        let domain = format!("gui/{}", unsafe { libc::getuid() });
-        let service_target = format!("{domain}/{label}");
-        let home = _app
-            .path()
-            .home_dir()
-            .map_err(|e| format!("Failed to get home directory: {e}"))?;
-        let dir = home.join("Library/LaunchAgents");
-        let plist_path = dir.join(format!("{label}.plist"));
-
-        if enabled {
-            let app_path = std::env::current_exe()
-                .map_err(|e| format!("Failed to get executable path: {e}"))?
-                .to_string_lossy()
-                .to_string();
-            let mut use_open = false;
-            let mut target_path = app_path.clone();
-            if let Some(index) = app_path.find(".app/Contents/MacOS/") {
-                target_path = app_path[..index + 4].to_string();
-                use_open = true;
-            }
-
-            let escaped_target_path = target_path
-                .replace('&', "&amp;")
-                .replace('<', "&lt;")
-                .replace('>', "&gt;");
-            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let plist = if use_open {
-                format!(
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-                     <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-                     <plist version=\"1.0\">\n\
-                     <dict>\n\
-                       <key>Label</key><string>{label}</string>\n\
-                       <key>ProgramArguments</key><array><string>open</string><string>-g</string><string>{escaped_target_path}</string></array>\n\
-                       <key>RunAtLoad</key><true/>\n\
-                     </dict>\n\
-                     </plist>\n"
-                )
-            } else {
-                format!(
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-                     <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-                     <plist version=\"1.0\">\n\
-                     <dict>\n\
-                       <key>Label</key><string>{label}</string>\n\
-                       <key>ProgramArguments</key><array><string>{escaped_target_path}</string></array>\n\
-                       <key>RunAtLoad</key><true/>\n\
-                     </dict>\n\
-                     </plist>\n"
-                )
-            };
-            std::fs::write(&plist_path, plist).map_err(|e| e.to_string())?;
-            let _ = launchctl_bootout(&service_target);
-            launchctl_bootstrap(&domain, &plist_path)?;
-        } else {
-            let _ = launchctl_bootout(&service_target);
-            if plist_path.exists() {
-                std::fs::remove_file(&plist_path).map_err(|e| e.to_string())?;
-            }
-        }
-    }
+    set_macos_autostart(&_app, enabled)?;
 
     let store = _app.store("settings.json").map_err(|e| e.to_string())?;
     store.set(store::AUTOSTART_ENABLED, serde_json::json!(enabled));
     store.save().map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn set_windows_autostart(enabled: bool) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
+        KEY_WRITE, REG_SZ,
+    };
+
+    let app_path = std::env::current_exe()
+        .map_err(|e| format!("Failed to get executable path: {e}"))?
+        .to_string_lossy()
+        .to_string();
+
+    let subkey: Vec<u16> =
+        std::ffi::OsStr::new("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+    let value_name: Vec<u16> = std::ffi::OsStr::new("Verenu")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        let mut hkey = HKEY::default();
+        let status = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            None,
+            KEY_WRITE,
+            std::ptr::addr_of_mut!(hkey),
+        );
+
+        if status.is_err() {
+            return Err("Failed to open registry key".to_string());
+        }
+
+        let result = if enabled {
+            let app_path_wide: Vec<u16> = std::ffi::OsStr::new(&app_path)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            RegSetValueExW(
+                hkey,
+                PCWSTR(value_name.as_ptr()),
+                None,
+                REG_SZ,
+                Some(std::slice::from_raw_parts(
+                    app_path_wide.as_ptr() as *const u8,
+                    (app_path_wide.len() - 1) * 2,
+                )),
+            )
+        } else {
+            RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()))
+        };
+
+        let _ = RegCloseKey(hkey);
+
+        if result.is_err() {
+            return Err("Failed to set registry value".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+/// TRANSITION(verenu): on Windows, the autostart Run-key entry was previously
+/// registered under the value name "OpenFlow", pointing at the old binary. On
+/// startup, remove that stale entry and (if autostart is enabled) re-register
+/// under "Verenu" with the current exe path. Remove once all users are on
+/// >=0.12.1. See Agent-Skills/Verenu_Transition_Cleanup.md
+#[cfg(target_os = "windows")]
+pub fn migrate_legacy_autostart(autostart_enabled: bool) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER,
+        KEY_READ, KEY_WRITE,
+    };
+
+    let subkey: Vec<u16> =
+        std::ffi::OsStr::new("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+    let legacy_value: Vec<u16> = std::ffi::OsStr::new("OpenFlow")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let removed = unsafe {
+        let mut hkey = HKEY::default();
+        if RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            None,
+            KEY_READ | KEY_WRITE,
+            std::ptr::addr_of_mut!(hkey),
+        )
+        .is_err()
+        {
+            return;
+        }
+
+        let exists =
+            RegQueryValueExW(hkey, PCWSTR(legacy_value.as_ptr()), None, None, None, None)
+                .is_ok();
+        let removed = exists && RegDeleteValueW(hkey, PCWSTR(legacy_value.as_ptr())).is_ok();
+
+        let _ = RegCloseKey(hkey);
+        removed
+    };
+
+    if !removed {
+        return;
+    }
+
+    log::info!("TRANSITION(verenu): removed legacy OpenFlow autostart entry");
+    if autostart_enabled {
+        match set_windows_autostart(true) {
+            Ok(()) => log::info!("TRANSITION(verenu): re-registered autostart under Verenu"),
+            Err(e) => log::warn!(
+                "TRANSITION(verenu): failed to re-register autostart under Verenu: {e}"
+            ),
+        }
+    }
+}
+
+// macOS: write/remove a LaunchAgent plist that launches the app at login.
+#[cfg(target_os = "macos")]
+fn set_macos_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let label = "com.verenu.app";
+    let domain = format!("gui/{}", unsafe { libc::getuid() });
+    let service_target = format!("{domain}/{label}");
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|e| format!("Failed to get home directory: {e}"))?;
+    let dir = home.join("Library/LaunchAgents");
+    let plist_path = dir.join(format!("{label}.plist"));
+
+    if enabled {
+        let app_path = std::env::current_exe()
+            .map_err(|e| format!("Failed to get executable path: {e}"))?
+            .to_string_lossy()
+            .to_string();
+        let mut use_open = false;
+        let mut target_path = app_path.clone();
+        if let Some(index) = app_path.find(".app/Contents/MacOS/") {
+            target_path = app_path[..index + 4].to_string();
+            use_open = true;
+        }
+
+        let escaped_target_path = target_path
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let plist = if use_open {
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+                 <plist version=\"1.0\">\n\
+                 <dict>\n\
+                   <key>Label</key><string>{label}</string>\n\
+                   <key>ProgramArguments</key><array><string>open</string><string>-g</string><string>{escaped_target_path}</string></array>\n\
+                   <key>RunAtLoad</key><true/>\n\
+                 </dict>\n\
+                 </plist>\n"
+            )
+        } else {
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+                 <plist version=\"1.0\">\n\
+                 <dict>\n\
+                   <key>Label</key><string>{label}</string>\n\
+                   <key>ProgramArguments</key><array><string>{escaped_target_path}</string></array>\n\
+                   <key>RunAtLoad</key><true/>\n\
+                 </dict>\n\
+                 </plist>\n"
+            )
+        };
+        std::fs::write(&plist_path, plist).map_err(|e| e.to_string())?;
+        let _ = launchctl_bootout(&service_target);
+        launchctl_bootstrap(&domain, &plist_path)?;
+    } else {
+        let _ = launchctl_bootout(&service_target);
+        if plist_path.exists() {
+            std::fs::remove_file(&plist_path).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+/// TRANSITION(verenu): on macOS, the autostart LaunchAgent was previously
+/// registered under the label "com.openflow.app". On startup, bootout and
+/// remove that stale plist and (if autostart is enabled) re-register under
+/// "com.verenu.app". Remove once all users are on >=0.12.1. See
+/// Agent-Skills/Verenu_Transition_Cleanup.md
+#[cfg(target_os = "macos")]
+pub fn migrate_legacy_launch_agent(app: &AppHandle, autostart_enabled: bool) {
+    let legacy_label = "com.openflow.app";
+    let domain = format!("gui/{}", unsafe { libc::getuid() });
+    let legacy_service_target = format!("{domain}/{legacy_label}");
+    let Ok(home) = app.path().home_dir() else {
+        return;
+    };
+    let legacy_plist_path = home
+        .join("Library/LaunchAgents")
+        .join(format!("{legacy_label}.plist"));
+
+    if !legacy_plist_path.exists() {
+        return;
+    }
+
+    let _ = launchctl_bootout(&legacy_service_target);
+    match std::fs::remove_file(&legacy_plist_path) {
+        Ok(()) => log::info!("TRANSITION(verenu): removed legacy com.openflow.app LaunchAgent"),
+        Err(e) => {
+            log::warn!("TRANSITION(verenu): failed to remove legacy LaunchAgent plist: {e}")
+        }
+    }
+
+    if autostart_enabled {
+        match set_macos_autostart(app, true) {
+            Ok(()) => log::info!(
+                "TRANSITION(verenu): re-registered LaunchAgent under com.verenu.app"
+            ),
+            Err(e) => log::warn!(
+                "TRANSITION(verenu): failed to re-register LaunchAgent under com.verenu.app: {e}"
+            ),
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1050,7 +1163,7 @@ fn run_launchctl(args: &[&str]) -> Result<(), String> {
 
 // ---------- macOS permissions ----------
 
-/// Whether Open Flow is trusted for the Accessibility API (needed for the global
+/// Whether Verenu is trusted for the Accessibility API (needed for the global
 /// hotkey, Cmd+V injection, and auto-learn). When `prompt` is true, macOS shows
 /// the system permission dialog. Always true on non-macOS platforms.
 #[cfg(target_os = "macos")]
@@ -1287,7 +1400,7 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
 
         // Back up the database before touching anything.
         if let Ok(mut db_path) = app.path().app_data_dir() {
-            db_path.push("openflow.db");
+            db_path.push("verenu.db");
             if db_path.exists() {
                 let _ = std::fs::copy(&db_path, db_path.with_extension("db.bak"));
             }
@@ -1295,7 +1408,7 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
 
         let bytes = crate::api::client::get()
             .get(&download_url)
-            .header("User-Agent", "open-flow")
+            .header("User-Agent", "verenu")
             .send()
             .await
             .and_then(|r| r.error_for_status())
@@ -1304,7 +1417,7 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
             .await
             .map_err(|e| e.to_string())?;
 
-        let installer = std::env::temp_dir().join("open-flow-update.exe");
+        let installer = std::env::temp_dir().join("verenu-update.exe");
         let mut f = std::fs::File::create(&installer).map_err(|e| e.to_string())?;
         f.write_all(&bytes).map_err(|e| e.to_string())?;
         drop(f);
@@ -1318,7 +1431,7 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
             installer.display(),
             current_exe.display()
         );
-        let script_path = std::env::temp_dir().join("open-flow-updater.cmd");
+        let script_path = std::env::temp_dir().join("verenu-updater.cmd");
         std::fs::write(&script_path, &script).map_err(|e| e.to_string())?;
 
         std::process::Command::new("cmd")
@@ -1331,6 +1444,18 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
         // Exit immediately so the binary is free before the installer starts.
         std::process::exit(0)
     }
+}
+
+// ---------- about / source link ----------
+
+/// TRANSITION(verenu): returns which repo to display/link as "Source" on the
+/// About page — checks "MONKE2525E/Verenu" first, falling back to
+/// "MONKE2525E/Open-Flow" if it 404s. Remove once all users are on >=0.12.1
+/// and hardcode "MONKE2525E/Verenu" in AboutSection.svelte instead.
+/// See Agent-Skills/Verenu_Transition_Cleanup.md
+#[tauri::command]
+pub async fn get_source_repo() -> String {
+    crate::api::updater::resolve_source_repo().await
 }
 
 // ---------- connectivity ----------
@@ -1435,7 +1560,7 @@ pub async fn export_data(
             .map_err(|e| format!("Failed to resolve Downloads directory: {e}"))?;
         std::fs::create_dir_all(&downloads)
             .map_err(|e| format!("Failed to create Downloads path: {e}"))?;
-        let path = downloads.join(format!("open-flow-backup-{}.json", now.format("%Y%m%d-%H%M%S")));
+        let path = downloads.join(format!("verenu-backup-{}.json", now.format("%Y%m%d-%H%M%S")));
         std::fs::write(&path, json)
             .map_err(|e| format!("Failed to write backup file: {e}"))?;
 

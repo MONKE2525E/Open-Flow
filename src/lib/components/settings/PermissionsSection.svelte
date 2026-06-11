@@ -13,7 +13,7 @@
 
 <h2 class="settings-h">Permissions</h2>
 <p class="panel-note">
-  Open Flow needs these macOS permissions to capture your voice and type into other
+  Verenu needs these macOS permissions to capture your voice and type into other
   apps. Anything not granted will stop dictation from working everywhere.
 </p>
 

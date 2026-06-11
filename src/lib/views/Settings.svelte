@@ -35,7 +35,7 @@
       ...(isMac ? [{ id: 'permissions', label: 'Permissions', icon: 'shield' as keyof typeof icons }] : []),
       ...(appStore.devModeEnabled ? [{ id: 'developer', label: 'Developer', icon: 'command' as keyof typeof icons }] : []),
     ]},
-    { group: 'Open Flow', items: [
+    { group: 'Verenu', items: [
       { id: 'about', label: 'About', icon: 'help' as keyof typeof icons },
     ]},
   ]);
@@ -171,7 +171,7 @@
           {/each}
         {/each}
         <div style="flex:1"></div>
-        <div class="settings-foot">Open Flow v{appVersion} · MIT</div>
+        <div class="settings-foot">Verenu v{appVersion} · MIT</div>
       </div>
 
       <!-- Right panel -->

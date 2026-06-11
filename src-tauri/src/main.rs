@@ -23,7 +23,7 @@ use tauri_plugin_store::StoreExt;
 
 pub type DbHandle = db::Db;
 
-const TRAY_ID: &str = "open-flow-tray";
+const TRAY_ID: &str = "verenu-tray";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum IconTheme {
@@ -92,28 +92,87 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
 #[cfg(windows)]
 fn app_data_dir() -> std::path::PathBuf {
     std::env::var("APPDATA")
-        .map(|p| std::path::PathBuf::from(p).join("OpenFlow"))
+        .map(|p| std::path::PathBuf::from(p).join("Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 #[cfg(target_os = "macos")]
 fn app_data_dir() -> std::path::PathBuf {
     std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/OpenFlow"))
+        .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
 fn app_data_dir() -> std::path::PathBuf {
     std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".config/Verenu"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+/// TRANSITION(verenu): the pre-rename data directory ("OpenFlow"), used only to
+/// locate the old database for one-time migration. Remove once all users are
+/// on >=0.12.1. See Agent-Skills/Verenu_Transition_Cleanup.md
+#[cfg(windows)]
+fn legacy_app_data_dir() -> std::path::PathBuf {
+    std::env::var("APPDATA")
+        .map(|p| std::path::PathBuf::from(p).join("OpenFlow"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_app_data_dir() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/OpenFlow"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn legacy_app_data_dir() -> std::path::PathBuf {
+    std::env::var("HOME")
         .map(|h| std::path::PathBuf::from(h).join(".config/OpenFlow"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+/// TRANSITION(verenu): one-time migration of the SQLite database from the old
+/// "OpenFlow"/openflow.db location to the new "Verenu"/verenu.db location.
+/// Copies the `-wal`/`-shm` sidecar files first and the main `.db` file last,
+/// so the migrated `verenu.db` is never newer than its own WAL/SHM siblings.
+/// No-op if the new database already exists or no old database is found.
+/// Remove once all users are on >=0.12.1. See Agent-Skills/Verenu_Transition_Cleanup.md
+fn migrate_legacy_db(new_dir: &std::path::Path) {
+    let new_db = new_dir.join("verenu.db");
+    if new_db.exists() {
+        return;
+    }
+
+    let old_dir = legacy_app_data_dir();
+    let old_db = old_dir.join("openflow.db");
+    if !old_db.exists() {
+        return;
+    }
+
+    for ext in ["-wal", "-shm"] {
+        let old_sidecar = old_dir.join(format!("openflow.db{ext}"));
+        if old_sidecar.exists() {
+            let new_sidecar = new_dir.join(format!("verenu.db{ext}"));
+            if let Err(e) = std::fs::copy(&old_sidecar, &new_sidecar) {
+                log::warn!("TRANSITION(verenu): failed to migrate {old_sidecar:?}: {e}");
+                return;
+            }
+        }
+    }
+
+    match std::fs::copy(&old_db, &new_db) {
+        Ok(_) => log::info!("TRANSITION(verenu): migrated database from {old_db:?} to {new_db:?}"),
+        Err(e) => log::warn!("TRANSITION(verenu): failed to migrate {old_db:?}: {e}"),
+    }
 }
 
 fn main() {
     #[cfg(target_os = "macos")]
     {
-        let _ = crate::system::mac_app::set_process_name("Open Flow");
+        let _ = crate::system::mac_app::set_process_name("Verenu");
     }
 
     let shared: SharedState = Arc::new(Mutex::new(AppState {
@@ -126,8 +185,9 @@ fn main() {
 
     let db_dir = app_data_dir();
     std::fs::create_dir_all(&db_dir).ok();
+    migrate_legacy_db(&db_dir);
     let db_handle: DbHandle =
-        db::open(db_dir.join("openflow.db").to_str().unwrap()).expect("failed to open database");
+        db::open(db_dir.join("verenu.db").to_str().unwrap()).expect("failed to open database");
     let _ = db::cleanup_cache_prune_expired(&db_handle);
 
     tauri::Builder::default()
@@ -144,7 +204,17 @@ fn main() {
                 tauri_plugin_store::StoreExt::store(app.handle(), "settings.json")
             {
                 let _ = store.reload();
+                crate::data::credentials::migrate_legacy_service();
                 crate::data::credentials::migrate_from_store(app.handle(), &store);
+
+                let autostart_enabled = store
+                    .get(crate::data::store::AUTOSTART_ENABLED)
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                #[cfg(target_os = "windows")]
+                crate::commands::migrate_legacy_autostart(autostart_enabled);
+                #[cfg(target_os = "macos")]
+                crate::commands::migrate_legacy_launch_agent(app.handle(), autostart_enabled);
                 if let Some(val) = store.get("hotkey") {
                     if let Some(arr) = val.as_array() {
                         if arr.len() == 2 {
@@ -196,8 +266,8 @@ fn main() {
                             tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
                             app_h
                                 .emit(
-                                    "open-flow:error",
-                                    "On macOS, Open Flow needs Input Monitoring to hear the hotkey while other apps are focused. Without it, dictation only works when Open Flow is frontmost. Grant it in System Settings, then fully relaunch the app.",
+                                    "verenu:error",
+                                    "On macOS, Verenu needs Input Monitoring to hear the hotkey while other apps are focused. Without it, dictation only works when Verenu is frontmost. Grant it in System Settings, then fully relaunch the app.",
                                 )
                                 .ok();
                         });
@@ -306,6 +376,7 @@ fn main() {
             commands::retry_transcription,
             commands::check_for_update,
             commands::install_update,
+            commands::get_source_repo,
             commands::check_connectivity,
             commands::get_recent_logs,
             commands::download_logs,
@@ -315,7 +386,7 @@ fn main() {
             commands::log_frontend,
         ])
         .build(tauri::generate_context!())
-        .expect("error building Open Flow")
+        .expect("error building Verenu")
         .run(|_app, _event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {
@@ -325,7 +396,7 @@ fn main() {
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    let title_i = MenuItem::with_id(app, "title", "Open Flow", false, None::<&str>)?;
+    let title_i = MenuItem::with_id(app, "title", "Verenu", false, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let show_i = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -338,7 +409,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .icon(tray_icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("Open Flow - Ctrl+Windows to record")
+        .tooltip("Verenu - Ctrl+Windows to record")
         .on_menu_event(|app, ev| match ev.id.as_ref() {
             "show" => {
                 show_main_window(app);
@@ -644,7 +715,7 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 app_h
                     .emit(
-                        "open-flow:error",
+                        "verenu:error",
                         format!("Keyboard hook failed to install — hotkey unavailable. {e}"),
                     )
                     .ok();

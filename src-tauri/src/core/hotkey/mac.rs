@@ -386,7 +386,7 @@ where
                     #[allow(clippy::manual_is_multiple_of)]
                     if attempt % 10 == 0 {
                         log::error!(
-                            "CGEventTap not created — grant Open Flow Accessibility permission (System Settings → Privacy & Security → Accessibility). Retrying…"
+                            "CGEventTap not created — grant Verenu Accessibility permission (System Settings → Privacy & Security → Accessibility). Retrying…"
                         );
                         if HOTKEY_DEBUG {
                             log::debug!("[hotkey] CGEventTap::new failed (attempt {attempt}) — Accessibility not granted yet");

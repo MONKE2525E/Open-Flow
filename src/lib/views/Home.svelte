@@ -102,7 +102,7 @@
     retrying = true;
     try {
       await invoke('retry_transcription');
-      // success: open-flow:transcribed listener clears failedEntry and calls load()
+      // success: verenu:transcribed listener clears failedEntry and calls load()
     } catch (err) {
       console.error('Retry failed:', err);
       // keep failedEntry so user can try again
@@ -220,13 +220,13 @@
       }
     }).catch(() => {});
 
-    trackListener(listen('open-flow:transcribed', () => {
+    trackListener(listen('verenu:transcribed', () => {
       failedEntry = null;
       if (failedTimer) { clearTimeout(failedTimer); failedTimer = null; }
       load();
     }));
 
-    trackListener(listen<string>('open-flow:pipeline-failed', (ev) => {
+    trackListener(listen<string>('verenu:pipeline-failed', (ev) => {
       failedEntry = { created_at: ev.payload };
       if (failedTimer) clearTimeout(failedTimer);
       failedTimer = setTimeout(() => {
@@ -262,7 +262,7 @@
             Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to dictate
           </h2>
           <p class="hero-photo-sub">
-            Open Flow works in any app. Try it in
+            Verenu works in any app. Try it in
             <em class="hero-em">email, messages, docs</em> — or anywhere else.
           </p>
         </div>

@@ -211,7 +211,7 @@
       // Set a timeout to show the error only if the app fails to exit after 5 seconds.
       restartTimeout = setTimeout(() => {
         restarting = false;
-        permissionsError = 'Could not relaunch automatically — please quit and reopen Open Flow.';
+        permissionsError = 'Could not relaunch automatically — please quit and reopen Verenu.';
       }, 5000);
     });
   }
@@ -276,7 +276,7 @@
           </span>
         {/key}
       </div>
-      <p class="perm-row-desc">Lets Open Flow listen for the global hotkey and inject text into any app.</p>
+      <p class="perm-row-desc">Lets Verenu listen for the global hotkey and inject text into any app.</p>
       {#if accessibilityPermission !== 'authorized'}
         <div class="permission-actions">
           {#if accessibilityPermission === 'needs_permission' || accessibilityPermission === 'not_determined' || accessibilityPermission === 'unknown'}
@@ -305,7 +305,7 @@
           </span>
         {/key}
       </div>
-      <p class="perm-row-desc">Lets the global hotkey work while other apps are focused — without it, it only fires when Open Flow is frontmost.</p>
+      <p class="perm-row-desc">Lets the global hotkey work while other apps are focused — without it, it only fires when Verenu is frontmost.</p>
       {#if inputMonitoringPermission !== 'authorized'}
         <div class="permission-actions">
           {#if inputMonitoringPermission === 'not_determined' || inputMonitoringPermission === 'unknown'}
@@ -368,11 +368,11 @@
           {#if keychainStatus === 'not_configured'}
             No API key saved yet — add one in the API Keys tab.
           {:else if keychainStatus === 'denied'}
-            Access denied. Click <strong>Unlock access</strong> or allow Open Flow in Keychain Access.app.
+            Access denied. Click <strong>Unlock access</strong> or allow Verenu in Keychain Access.app.
           {:else if keychainStatus === 'authorized'}
             Secures your API key and keeps it in your Keychain.
           {:else}
-            Secures your API key. Open Flow prompts for access when it needs it.
+            Secures your API key. Verenu prompts for access when it needs it.
           {/if}
         </p>
         {#if keychainStatus !== 'authorized' && keychainStatus !== 'not_configured'}
@@ -394,7 +394,7 @@
     <div class="permission-restart-hint" transition:slide={{ duration: motionMs(200) }}>
       <span class="restart-hint-text">
         Just changed a permission in System Settings? macOS only applies it — especially
-        <strong>Input Monitoring</strong> — after Open Flow relaunches.
+        <strong>Input Monitoring</strong> — after Verenu relaunches.
       </span>
       <button class="btn-relaunch" onclick={relaunchApp} disabled={restarting}>
         {restarting ? 'Relaunching…' : 'Relaunch now'}
@@ -412,7 +412,7 @@
         class="permission-refresh-btn"
         onclick={relaunchApp}
         disabled={restarting}
-        title="Relaunch Open Flow to apply permission changes"
+        title="Relaunch Verenu to apply permission changes"
       >
         <span aria-hidden="true">⏻</span>
         {restarting ? 'Relaunching…' : 'Relaunch'}

@@ -43,9 +43,9 @@ jobs:
         run: |
           if [ "${{ matrix.os-name }}" = "macos" ]; then
             npm run tauri build -- --target aarch64-apple-darwin
-            mv "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_aarch64.dmg" "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_Apple_Silicon.dmg"
+            mv "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.12.1_aarch64.dmg" "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.12.1_Apple_Silicon.dmg"
             npm run tauri build -- --target x86_64-apple-darwin
-            mv "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_x86_64.dmg" "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_Intel.dmg"
+            mv "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.12.1_x86_64.dmg" "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.12.1_Intel.dmg"
           else
             npm run tauri build
           fi
@@ -55,7 +55,7 @@ jobs:
         if: matrix.os-name == 'windows'
         uses: actions/upload-artifact@v4
         with:
-          name: Open-Flow-Windows-setup
+          name: Verenu-Windows-setup
           path: src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
 
@@ -63,7 +63,7 @@ jobs:
         if: matrix.os-name == 'windows'
         uses: actions/upload-artifact@v4
         with:
-          name: Open-Flow-Windows-msi
+          name: Verenu-Windows-msi
           path: src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
@@ -71,14 +71,14 @@ jobs:
         if: matrix.os-name == 'macos'
         uses: actions/upload-artifact@v4
         with:
-          name: Open-Flow-macOS-Apple-Silicon-dmg
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_Apple_Silicon.dmg
+          name: Verenu-macOS-Apple-Silicon-dmg
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.12.1_Apple_Silicon.dmg
           if-no-files-found: error
 
       - name: Upload macOS Intel DMG (.dmg)
         if: matrix.os-name == 'macos'
         uses: actions/upload-artifact@v4
         with:
-          name: Open-Flow-macOS-Intel-dmg
-          path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Open Flow_0.12.0_Intel.dmg
+          name: Verenu-macOS-Intel-dmg
+          path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.12.1_Intel.dmg
           if-no-files-found: error

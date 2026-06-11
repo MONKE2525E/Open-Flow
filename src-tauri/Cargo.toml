@@ -1,8 +1,8 @@
 [package]
 name = "open-flow"
-version = "0.12.0"
-description = "Open Flow — local-first AI dictation"
-authors = ["Open Flow Team"]
+version = "0.12.1"
+description = "Verenu — local-first AI dictation"
+authors = ["Verenu Team"]
 edition = "2021"
 
 [[bin]]

@@ -1,6 +1,6 @@
-# Contributing to Open Flow
+# Contributing to Verenu
 
-Thanks for helping improve Open Flow. This project is a Windows-first Tauri desktop app, not an Electron app and not a hosted web app. Keep changes focused, lightweight, and privacy-respecting.
+Thanks for helping improve Verenu. This project is a Windows-first Tauri desktop app, not an Electron app and not a hosted web app. Keep changes focused, lightweight, and privacy-respecting.
 
 ## Before You Start
 

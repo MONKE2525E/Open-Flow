@@ -1,7 +1,7 @@
 {
   "name": "open-flow",
-  "version": "0.12.0",
-  "description": "Open Flow - An open-source AI dictation app for Windows",
+  "version": "0.12.1",
+  "description": "Verenu - An open-source AI dictation app for Windows",
   "main": "index.js",
   "type": "module",
   "scripts": {

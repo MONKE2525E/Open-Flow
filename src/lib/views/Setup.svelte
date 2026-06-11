@@ -356,7 +356,7 @@
               <span style="height:25%"></span>
             </div>
             <div class="intro-wordmark">
-              <h1 class="brand-name">Open Flow</h1>
+              <h1 class="brand-name">Verenu</h1>
               <p class="brand-tagline">open-source AI dictation for {platformTagline}</p>
             </div>
           </div>
@@ -511,7 +511,7 @@
       <div class="step">
         <div class="step-header">
           <h2>Check your macOS permissions</h2>
-          <p class="step-sub">Open Flow needs these to hear your voice and type into other apps. This list updates itself as you grant each one.</p>
+          <p class="step-sub">Verenu needs these to hear your voice and type into other apps. This list updates itself as you grant each one.</p>
         </div>
 
         <MacPermissions variant="setup" provider={selectedProvider} bind:allGranted={permsGranted} />
@@ -820,7 +820,7 @@
               <div class="qs-toggle-row">
                 <div>
                   <div class="qs-toggle-label">Start on boot</div>
-                  <div class="qs-toggle-desc">Launch Open Flow at login</div>
+                  <div class="qs-toggle-desc">Launch Verenu at login</div>
                 </div>
                 <div class="qs-toggle" class:on={quickPrefs.autostart} role="switch" aria-checked={quickPrefs.autostart} aria-label="Start on boot" tabindex="0"
                   onclick={() => toggleQuickPref('autostart')}
@@ -905,7 +905,7 @@
         <h2 class="done-title">You're all set.</h2>
         <p class="done-sub">
           Hold <kbd>{hkKey1}</kbd> + <kbd>{hkKey2}</kbd> anywhere to start dictating.
-          Open Flow lives in your system tray and is always ready.
+          Verenu lives in your system tray and is always ready.
         </p>
         <div class="done-summary">
           <div class="summary-item">

@@ -2,12 +2,12 @@
 
 <!--
   Required. Trace your reasoning from the top of the project down to this
-  specific change. Start with what Open Flow is, then narrow through the
+  specific change. Start with what Verenu is, then narrow through the
   subsystem, the problem, and why this PR exists. Use blockquote style.
   Aim for 5–8 steps.
 -->
 
-> - Open Flow is a Windows AI dictation app — hotkey hold → audio capture → transcription → LLM cleanup → text injection
+> - Verenu is a Windows AI dictation app — hotkey hold → audio capture → transcription → LLM cleanup → text injection
 > - [Which subsystem: hotkey / audio / pipeline / injection / settings / UI / data]
 > - [What problem or gap exists]
 > - [Why it needs to be addressed now]
@@ -56,7 +56,7 @@
 
 ## Checklist
 
-- [ ] Thinking path traces from Open Flow context down to this specific change
+- [ ] Thinking path traces from Verenu context down to this specific change
 - [ ] Model used is specified (provider + version)
 - [ ] Checked `docs/ROADMAP.md` — this PR does not duplicate planned work
 - [ ] `npm run check` passes (TypeScript)

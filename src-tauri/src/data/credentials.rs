@@ -14,7 +14,13 @@ use windows::Win32::Security::Credentials::{
 };
 
 #[cfg(windows)]
-const SERVICE: &str = "open-flow";
+const SERVICE: &str = "verenu";
+
+/// TRANSITION(verenu): the pre-rename Credential Manager service name, used
+/// only to migrate existing users' saved keys to `SERVICE`. Remove once all
+/// users are on >=0.12.1. See Agent-Skills/Verenu_Transition_Cleanup.md
+#[cfg(windows)]
+const LEGACY_SERVICE: &str = "open-flow";
 
 // HRESULT_FROM_WIN32(ERROR_NOT_FOUND) — credential entry absent, not an error
 #[cfg(windows)]
@@ -44,54 +50,41 @@ fn wide_null(s: &str) -> Vec<u16> {
 // ============================ Windows: Credential Manager ============================
 
 #[cfg(windows)]
-pub fn set(provider: &str, key: &str) -> Result<(), String> {
-    let key = normalize_key(key);
-    let user = user_for(provider).ok_or_else(|| format!("Unknown provider: {provider}"))?;
-    let target = format!("{user}.{SERVICE}");
-    let mut target_wide = wide_null(&target);
-
-    if key.is_empty() {
-        unsafe {
-            match CredDeleteW(PCWSTR(target_wide.as_ptr()), CRED_TYPE_GENERIC, Some(0)) {
-                Ok(_) => Ok(()),
-                Err(e) if e.code().0 == HRESULT_NOT_FOUND => Ok(()),
-                Err(e) => Err(format!(
-                    "Credential Manager delete failed for {provider}: {e}"
-                )),
-            }
-        }
-    } else {
-        let mut user_wide = wide_null(user);
-        // Encode as UTF-16-LE — Windows-native format for credential blobs
-        let utf16: Vec<u16> = key.encode_utf16().collect();
-        let mut blob: Vec<u8> = utf16.iter().flat_map(|c| c.to_le_bytes()).collect();
-
-        let mut cred: CREDENTIALW = unsafe { std::mem::zeroed() };
-        cred.Type = CRED_TYPE_GENERIC;
-        cred.TargetName = PWSTR(target_wide.as_mut_ptr());
-        cred.CredentialBlobSize = blob.len() as u32;
-        cred.CredentialBlob = blob.as_mut_ptr();
-        cred.Persist = CRED_PERSIST_LOCAL_MACHINE;
-        cred.UserName = PWSTR(user_wide.as_mut_ptr());
-
-        unsafe {
-            CredWriteW(&cred, 0)
-                .map_err(|e| format!("Credential Manager write failed for {provider}: {e}"))
+fn delete_credential(target: &str) -> Result<(), String> {
+    let target_wide = wide_null(target);
+    unsafe {
+        match CredDeleteW(PCWSTR(target_wide.as_ptr()), CRED_TYPE_GENERIC, Some(0)) {
+            Ok(_) => Ok(()),
+            Err(e) if e.code().0 == HRESULT_NOT_FOUND => Ok(()),
+            Err(e) => Err(format!("Credential Manager delete failed for {target}: {e}")),
         }
     }
 }
 
 #[cfg(windows)]
-pub fn get(provider: &str) -> String {
-    let user = match user_for(provider) {
-        Some(u) => u,
-        None => {
-            log::warn!("credentials::get called with unknown provider: {provider}");
-            return String::new();
-        }
-    };
-    let target = format!("{user}.{SERVICE}");
-    let target_wide = wide_null(&target);
+fn write_credential(target: &str, user: &str, key: &str) -> Result<(), String> {
+    let mut target_wide = wide_null(target);
+    let mut user_wide = wide_null(user);
+    // Encode as UTF-16-LE — Windows-native format for credential blobs
+    let utf16: Vec<u16> = key.encode_utf16().collect();
+    let mut blob: Vec<u8> = utf16.iter().flat_map(|c| c.to_le_bytes()).collect();
+
+    let mut cred: CREDENTIALW = unsafe { std::mem::zeroed() };
+    cred.Type = CRED_TYPE_GENERIC;
+    cred.TargetName = PWSTR(target_wide.as_mut_ptr());
+    cred.CredentialBlobSize = blob.len() as u32;
+    cred.CredentialBlob = blob.as_mut_ptr();
+    cred.Persist = CRED_PERSIST_LOCAL_MACHINE;
+    cred.UserName = PWSTR(user_wide.as_mut_ptr());
+
+    unsafe {
+        CredWriteW(&cred, 0).map_err(|e| format!("Credential Manager write failed for {target}: {e}"))
+    }
+}
+
+#[cfg(windows)]
+fn read_credential(target: &str) -> Option<String> {
+    let target_wide = wide_null(target);
 
     unsafe {
         let mut p_cred: *mut CREDENTIALW = ptr::null_mut();
@@ -106,9 +99,9 @@ pub fn get(provider: &str) -> String {
                     Some(c) => c,
                     None => {
                         log::error!(
-                            "Credential Manager read returned success with null pointer for {provider}"
+                            "Credential Manager read returned success with null pointer for {target}"
                         );
-                        return String::new();
+                        return None;
                     }
                 };
 
@@ -118,7 +111,7 @@ pub fn get(provider: &str) -> String {
                     String::new()
                 } else if blob_ptr.is_null() {
                     log::error!(
-                        "Credential Manager read returned non-zero blob size with null blob pointer for {provider}"
+                        "Credential Manager read returned non-zero blob size with null blob pointer for {target}"
                     );
                     String::new()
                 } else {
@@ -131,28 +124,85 @@ pub fn get(provider: &str) -> String {
                     String::from_utf16_lossy(&utf16)
                 };
                 CredFree(p_cred as *const _);
-                let normalized = normalize_key(&pw).to_string();
-                log::debug!(
-                    "credentials: read ok provider={provider} key_len={}",
-                    normalized.len()
-                );
-                normalized
+                Some(normalize_key(&pw).to_string())
             }
             Err(e) => {
                 if e.code().0 != HRESULT_NOT_FOUND {
-                    log::error!("Credential Manager read failed for {provider}: {e}");
+                    log::error!("Credential Manager read failed for {target}: {e}");
                 } else {
-                    log::debug!("credentials: read miss provider={provider} (not found)");
+                    log::debug!("credentials: read miss for {target} (not found)");
                 }
-                String::new()
+                None
             }
         }
     }
 }
 
 #[cfg(windows)]
+pub fn set(provider: &str, key: &str) -> Result<(), String> {
+    let key = normalize_key(key);
+    let user = user_for(provider).ok_or_else(|| format!("Unknown provider: {provider}"))?;
+    let target = format!("{user}.{SERVICE}");
+
+    if key.is_empty() {
+        delete_credential(&target)
+    } else {
+        write_credential(&target, user, key)
+    }
+}
+
+#[cfg(windows)]
+pub fn get(provider: &str) -> String {
+    let user = match user_for(provider) {
+        Some(u) => u,
+        None => {
+            log::warn!("credentials::get called with unknown provider: {provider}");
+            return String::new();
+        }
+    };
+    let target = format!("{user}.{SERVICE}");
+    let result = read_credential(&target).unwrap_or_default();
+    log::debug!("credentials: read provider={provider} key_len={}", result.len());
+    result
+}
+
+#[cfg(windows)]
 pub fn has(provider: &str) -> bool {
     !get(provider).is_empty()
+}
+
+/// TRANSITION(verenu): one-time migration of saved API keys from the old
+/// "open-flow" Credential Manager service name to "verenu". No-op per provider
+/// if the new credential already exists or no legacy credential is found.
+/// Remove once all users are on >=0.12.1. See Agent-Skills/Verenu_Transition_Cleanup.md
+#[cfg(windows)]
+pub fn migrate_legacy_service() {
+    for provider in [
+        crate::data::store::GROQ,
+        crate::data::store::OPENAI,
+        crate::data::store::GOOGLE,
+    ] {
+        let Some(user) = user_for(provider) else {
+            continue;
+        };
+        let new_target = format!("{user}.{SERVICE}");
+        if read_credential(&new_target).is_some_and(|v| !v.is_empty()) {
+            continue;
+        }
+        let old_target = format!("{user}.{LEGACY_SERVICE}");
+        let Some(old_value) = read_credential(&old_target).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        if let Err(e) = write_credential(&new_target, user, &old_value) {
+            log::warn!("TRANSITION(verenu): failed to migrate {provider} credential: {e}");
+            continue;
+        }
+        if let Err(e) = delete_credential(&old_target) {
+            log::warn!("TRANSITION(verenu): failed to remove legacy {provider} credential: {e}");
+        } else {
+            log::info!("TRANSITION(verenu): migrated {provider} credential to new service name");
+        }
+    }
 }
 
 // ================================ macOS: Keychain ================================
@@ -165,7 +215,14 @@ use security_framework::passwords::{
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
-const KEYCHAIN_SERVICE: &str = "com.openflow.app";
+const KEYCHAIN_SERVICE: &str = "com.verenu.app";
+
+/// TRANSITION(verenu): the pre-rename Keychain service name, used only to
+/// migrate existing users' saved keys to `KEYCHAIN_SERVICE`. Remove once all
+/// users are on >=0.12.1. See Agent-Skills/Verenu_Transition_Cleanup.md
+#[cfg(target_os = "macos")]
+const LEGACY_KEYCHAIN_SERVICE: &str = "com.openflow.app";
+
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
 #[cfg(target_os = "macos")]
@@ -286,14 +343,56 @@ fn keychain_user(provider: &str) -> Result<&'static str, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn read_keychain(provider: &str) -> Result<Option<String>, String> {
+fn read_keychain_service(service: &str, provider: &str) -> Result<Option<String>, String> {
     let user = keychain_user(provider)?;
-    match get_generic_password(KEYCHAIN_SERVICE, user) {
+    match get_generic_password(service, user) {
         Ok(bytes) => String::from_utf8(bytes)
             .map(Some)
             .map_err(|e| format!("Keychain value for {provider} was not valid UTF-8: {e}")),
         Err(err) if err.code() == KEYCHAIN_ITEM_NOT_FOUND => Ok(None),
         Err(err) => Err(format!("Keychain read failed for {provider}: {err}")),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn read_keychain(provider: &str) -> Result<Option<String>, String> {
+    read_keychain_service(KEYCHAIN_SERVICE, provider)
+}
+
+/// TRANSITION(verenu): one-time migration of saved API keys from the old
+/// "com.openflow.app" Keychain service to "com.verenu.app". Triggers one
+/// Keychain "Allow" prompt per migrated key (acceptable one-time cost). No-op
+/// per provider if the new item already exists or no legacy item is found.
+/// Remove once all users are on >=0.12.1. See Agent-Skills/Verenu_Transition_Cleanup.md
+#[cfg(target_os = "macos")]
+pub fn migrate_legacy_service() {
+    for provider in [
+        crate::data::store::GROQ,
+        crate::data::store::OPENAI,
+        crate::data::store::GOOGLE,
+    ] {
+        if matches!(read_keychain(provider), Ok(Some(ref v)) if !v.is_empty()) {
+            continue;
+        }
+        let legacy = match read_keychain_service(LEGACY_KEYCHAIN_SERVICE, provider) {
+            Ok(Some(v)) if !v.is_empty() => v,
+            _ => continue,
+        };
+        if let Err(e) = set(provider, &legacy) {
+            log::warn!("TRANSITION(verenu): failed to migrate {provider} keychain item: {e}");
+            continue;
+        }
+        let Ok(user) = keychain_user(provider) else {
+            continue;
+        };
+        match delete_generic_password(LEGACY_KEYCHAIN_SERVICE, user) {
+            Ok(()) => {}
+            Err(err) if err.code() == KEYCHAIN_ITEM_NOT_FOUND => {}
+            Err(err) => log::warn!(
+                "TRANSITION(verenu): failed to remove legacy {provider} keychain item: {err}"
+            ),
+        }
+        log::info!("TRANSITION(verenu): migrated {provider} keychain item to new service name");
     }
 }
 
@@ -459,6 +558,11 @@ pub fn has(_provider: &str) -> bool {
 pub fn delete(_provider: &str) -> Result<(), String> {
     Ok(())
 }
+
+/// TRANSITION(verenu): no-op on platforms without an OS secret store migration.
+/// Remove once all users are on >=0.12.1. See Agent-Skills/Verenu_Transition_Cleanup.md
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn migrate_legacy_service() {}
 
 /// Moves any plaintext API keys from settings.json or legacy macOS
 /// credentials.json files into the OS secret store, then keeps retrying cleanup

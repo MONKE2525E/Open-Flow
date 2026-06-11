@@ -152,7 +152,7 @@ pub fn apply_dock_icon() -> bool {
 
 /// Switch the app to macOS accessory mode so it stays out of the Dock.
 ///
-/// This is the default for Open Flow on macOS when the main window is hidden
+/// This is the default for Verenu on macOS when the main window is hidden
 /// or shown from the menu bar/tray.
 pub fn set_accessory_activation_policy() -> bool {
     set_activation_policy(POLICY_ACCESSORY)
@@ -185,10 +185,10 @@ pub fn set_regular_activation_policy_on_main_thread(app: &AppHandle) {
     });
 }
 
-/// Float the pill window above other apps' windows *without* activating Open
-/// Flow. Tauri's `show()` maps to `-[NSWindow orderFront:]`, which AppKit
+/// Float the pill window above other apps' windows *without* activating
+/// Verenu. Tauri's `show()` maps to `-[NSWindow orderFront:]`, which AppKit
 /// suppresses for a background (non-active) app — so the pill only appeared
-/// while Open Flow was frontmost. We instead:
+/// while Verenu was frontmost. We instead:
 ///   1. raise the window level above normal windows (NSStatusWindowLevel = 25),
 ///   2. let it appear on every Space and over full-screen apps,
 ///   3. order it front with `orderFrontRegardless`, which ignores active state.
@@ -209,7 +209,7 @@ pub fn float_pill_window(ns_window: *mut std::ffi::c_void) {
         // active Space and over full-screen apps without switching Spaces.
         let behavior: usize = (1 << 0) | (1 << 8);
         let _: () = msg_send![win, setCollectionBehavior: behavior];
-        // Order front even though Open Flow is not the active application.
+        // Order front even though Verenu is not the active application.
         let _: () = msg_send![win, orderFrontRegardless];
     })
 }

@@ -1,9 +1,9 @@
 ﻿---
 name: smoke-tests
-description: Minimal guide to run and fix Open Flow smoke tests by changing app code, never smoke tests.
+description: Minimal guide to run and fix Verenu smoke tests by changing app code, never smoke tests.
 ---
 
-# Smoke Tests - Open Flow
+# Smoke Tests - Verenu
 
 ## Non-negotiables
 

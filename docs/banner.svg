@@ -24,7 +24,7 @@
     <rect x="72" y="66" width="13" height="22" rx="6.5" fill="#d97757"/>
   </g>
 
-  <!-- wordmark — "Open Flow" -->
+  <!-- wordmark — "Verenu" -->
   <text
     x="333"
     y="90"
@@ -33,7 +33,7 @@
     font-weight="500"
     fill="#2b2422"
     letter-spacing="-0.5"
-  >Open Flow</text>
+  >Verenu</text>
 
   <!-- tagline -->
   <text

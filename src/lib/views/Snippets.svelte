@@ -201,7 +201,7 @@
             appStore.snippets = appStore.snippets.filter((entry) => entry.id !== id);
           } catch (err) {
             console.error(err);
-            await emit('open-flow:error', 'Could not delete snippet.');
+            await emit('verenu:error', 'Could not delete snippet.');
           } finally {
             const nextLeaving = new Set(leavingIds);
             nextLeaving.delete(id);
@@ -287,7 +287,7 @@
 
 <div class="content-inner">
   <h1 class="page-h">Snippets</h1>
-  <p class="page-sub">Speak a trigger and Open Flow expands it during dictation.</p>
+  <p class="page-sub">Speak a trigger and Verenu expands it during dictation.</p>
   {#if appStore.snippetsFetchStatus === 'error' && appStore.snippets.length > 0}
     <div class="load-warning" role="alert" aria-live="assertive">
       <span>{appStore.snippetsFetchError || 'Unable to load snippets.'} Check backend connection and retry.</span>
@@ -350,7 +350,7 @@
   {:else if appStore.snippets.length === 0}
     <div class="empty-state" in:fade={{ duration: 250 }}>
       <p class="empty-h">No snippets yet</p>
-      <p class="empty-sub">Add a trigger phrase and Open Flow will expand it automatically during dictation.</p>
+      <p class="empty-sub">Add a trigger phrase and Verenu will expand it automatically during dictation.</p>
       <button class="btn-primary" onclick={openAdd}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         New snippet

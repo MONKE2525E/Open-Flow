@@ -2,7 +2,7 @@ use crate::system::text::{is_number_word_token, tokenize_lower_alnum};
 
 use super::gemini_types::{GeminiGenConfig, GeminiThinkingConfig};
 
-const TRANSCRIPTION_GLOSSARY: &str = "Open Flow, Tauri, Svelte, Groq, Gemini, OpenAI";
+const TRANSCRIPTION_GLOSSARY: &str = "Verenu, Tauri, Svelte, Groq, Gemini, OpenAI";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PromptTier {
@@ -146,12 +146,12 @@ Prefer spellings: {TRANSCRIPTION_GLOSSARY}."
         "groq" => {
             if model_lc.contains("whisper-large-v3") && !model_lc.contains("turbo") {
                 format!(
-                    "Open Flow dictation in {language_label}. Return only spoken words. \
+                    "Verenu dictation in {language_label}. Return only spoken words. \
 Preserve exact words, pronouns, punctuation style, and spellings: {TRANSCRIPTION_GLOSSARY}."
                 )
             } else {
                 format!(
-                    "Open Flow dictation in {language_label}. Return only spoken words. \
+                    "Verenu dictation in {language_label}. Return only spoken words. \
 Preserve pronouns exactly. Spell: {TRANSCRIPTION_GLOSSARY}."
                 )
             }

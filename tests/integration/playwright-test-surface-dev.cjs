@@ -78,7 +78,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
     await page.locator('h2.settings-h:has-text("Developer")').waitFor({ state: 'visible', timeout: TIMEOUT });
     await page.getByRole('button', { name: 'Download Logs' }).click();
     const exportStatus = (await page.locator('.export-status').textContent()) || '';
-    if (!exportStatus.includes('browser-dev://open-flow-logs.txt')) {
+    if (!exportStatus.includes('browser-dev://verenu-logs.txt')) {
       errors.push('Developer log export did not report the dev download path');
     }
     await closeSettings(page);
@@ -89,15 +89,15 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
     if (!retentionText.includes('Forever')) errors.push('Privacy retention did not persist across reopen');
     await closeSettings(page);
 
-    const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('open-flow:dev-settings') || '{}'));
+    const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('verenu:dev-settings') || '{}'));
     if (persisted.cleanup_intensity !== 'high') errors.push('Style cleanup choice did not persist');
     if (persisted.default_tone !== 'formal') errors.push('Style tone choice did not persist');
     if (persisted.history_retention !== 'Forever') errors.push('Privacy retention did not persist to dev settings');
     if (persisted.auto_learn_enabled !== true) errors.push('Privacy auto-learn toggle did not persist');
 
-    const storedSnippets = await page.evaluate(() => JSON.parse(localStorage.getItem('open-flow:dev-snippets') || '[]'));
+    const storedSnippets = await page.evaluate(() => JSON.parse(localStorage.getItem('verenu:dev-snippets') || '[]'));
     if (!storedSnippets.some((entry) => entry.trigger === 'sig')) errors.push('Snippet CRUD did not persist to local storage');
-    const storedDictionary = await page.evaluate(() => JSON.parse(localStorage.getItem('open-flow:dev-dictionary') || '[]'));
+    const storedDictionary = await page.evaluate(() => JSON.parse(localStorage.getItem('verenu:dev-dictionary') || '[]'));
     if (!storedDictionary.some((entry) => entry.term === 'OpenFlow')) errors.push('Dictionary CRUD did not persist to local storage');
 
     if (errors.length > 0) {

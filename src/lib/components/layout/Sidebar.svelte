@@ -50,7 +50,7 @@
       <span style="height:55%"></span>
       <span style="height:25%"></span>
     </div>
-    <div class="brand-name">Open Flow</div>
+    <div class="brand-name">Verenu</div>
   </div>
 
   <div class="nav-section">
