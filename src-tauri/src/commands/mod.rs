@@ -962,8 +962,7 @@ pub fn migrate_legacy_autostart(autostart_enabled: bool) {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::System::Registry::{
-        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER,
-        KEY_READ, KEY_WRITE,
+        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_WRITE,
     };
 
     let subkey: Vec<u16> =
@@ -982,7 +981,7 @@ pub fn migrate_legacy_autostart(autostart_enabled: bool) {
             HKEY_CURRENT_USER,
             PCWSTR(subkey.as_ptr()),
             None,
-            KEY_READ | KEY_WRITE,
+            KEY_WRITE,
             std::ptr::addr_of_mut!(hkey),
         )
         .is_err()
@@ -990,10 +989,7 @@ pub fn migrate_legacy_autostart(autostart_enabled: bool) {
             return;
         }
 
-        let exists =
-            RegQueryValueExW(hkey, PCWSTR(legacy_value.as_ptr()), None, None, None, None)
-                .is_ok();
-        let removed = exists && RegDeleteValueW(hkey, PCWSTR(legacy_value.as_ptr())).is_ok();
+        let removed = RegDeleteValueW(hkey, PCWSTR(legacy_value.as_ptr())).is_ok();
 
         let _ = RegCloseKey(hkey);
         removed
