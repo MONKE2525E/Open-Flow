@@ -164,7 +164,11 @@ fn dedupe_candidate_pairs(candidates: Vec<CandidateCorrection>) -> Vec<Candidate
     let mut recorded_this_session = HashSet::new();
     let mut deduped = Vec::new();
     for candidate in candidates {
-        let key = (candidate.mistake.clone(), candidate.correction.clone());
+        // `mistake` is lowercased before being stored as `wrong_word` (see
+        // record_evidence_and_maybe_promote), so dedupe on the same
+        // normalization or differently-cased duplicates within a session
+        // would inflate the evidence score for one pair.
+        let key = (candidate.mistake.to_lowercase(), candidate.correction.clone());
         if recorded_this_session.insert(key) {
             deduped.push(candidate);
         }
@@ -536,6 +540,12 @@ fn record_evidence_and_maybe_promote(
             }
         }
     } else if ev.score >= SCORE_SUGGEST {
+        // If the term is already auto-learned (or otherwise present in the
+        // dictionary for this mistake), query_dictionary_suggestions filters
+        // it out anyway — skip the redundant write.
+        if db::is_already_auto_learned(db, correct, wrong).unwrap_or(false) {
+            return EvidenceRecordOutcome::Recorded;
+        }
         let summary = format!(
             "sessions={} sources={} score={:.2}",
             ev.distinct_sessions, ev.distinct_sources, ev.score
@@ -1723,6 +1733,48 @@ mod tests {
     }
 
     #[test]
+    fn evidence_path_skips_suggestion_for_already_auto_learned_pair() {
+        let db = db::open(":memory:").expect("test db");
+
+        // Simulate a pair that was already auto-learned in a prior session.
+        db::insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("koobernetes"), "high")
+            .expect("seed auto-learned entry");
+
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "Koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.5,
+                "session-1",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Recorded
+        );
+        assert_eq!(
+            record_evidence_and_maybe_promote(
+                &db,
+                "koobernetes",
+                "Kubernetes",
+                "post_edit",
+                SOURCE_WEIGHT_POST_EDIT,
+                0.5,
+                "session-2",
+                "test-app",
+                3,
+            ),
+            EvidenceRecordOutcome::Recorded,
+            "already auto-learned pairs should not be re-queued as suggestions"
+        );
+
+        let suggestions = db::query_dictionary_suggestions(&db).expect("suggestions");
+        assert!(suggestions.is_empty());
+    }
+
+    #[test]
     fn evidence_session_id_daily_is_stable_within_a_day() {
         let a = evidence_session_id_daily("some raw text", "notepad.exe");
         let b = evidence_session_id_daily("some raw text", "notepad.exe");
@@ -1947,6 +1999,26 @@ mod tests {
         assert_eq!(deduped[0].correction, "Kubernetes");
         assert_eq!(deduped[1].mistake, "rock");
         assert_eq!(deduped[1].correction, "qroq");
+    }
+
+    #[test]
+    fn cleanup_divergence_deduplicates_pairs_differing_only_in_mistake_casing() {
+        let deduped = dedupe_candidate_pairs(vec![
+            CandidateCorrection {
+                mistake: "Koobernetes".into(),
+                correction: "Kubernetes".into(),
+                confidence: 0.9,
+            },
+            CandidateCorrection {
+                mistake: "koobernetes".into(),
+                correction: "Kubernetes".into(),
+                confidence: 0.7,
+            },
+        ]);
+
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].mistake, "Koobernetes");
+        assert_eq!(deduped[0].correction, "Kubernetes");
     }
 
     #[test]
