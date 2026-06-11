@@ -45,7 +45,7 @@ jobs:
             npm run tauri build -- --target aarch64-apple-darwin
             mv "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Open Flow_0.12.1_aarch64.dmg" "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Open Flow_0.12.1_Apple_Silicon.dmg"
             npm run tauri build -- --target x86_64-apple-darwin
-            mv "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Open Flow_0.12.1_x86_64.dmg" "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Open Flow_0.12.1_Intel.dmg"
+            mv "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Open Flow_0.12.1_x64.dmg" "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Open Flow_0.12.1_Intel.dmg"
           else
             npm run tauri build
           fi
