@@ -1376,8 +1376,14 @@ pub fn import_backup_records(
     }
 
     for pair in never_learn_pairs {
-        insert_never_learn_pair_conn(&tx, pair.wrong, pair.correct)?;
-        counts.never_learn_pairs_inserted += 1;
+        match insert_never_learn_pair_conn(&tx, pair.wrong, pair.correct) {
+            Ok(()) => counts.never_learn_pairs_inserted += 1,
+            Err(e) => log::warn!(
+                "import_backup_records: never_learn_pair insert error for '{}' -> '{}': {e}",
+                pair.wrong,
+                pair.correct
+            ),
+        }
     }
 
     tx.commit()?;

@@ -156,7 +156,9 @@ fn evidence_session_id(seed: &str, app_context: &str) -> String {
 /// different day (or be corroborated by the post-edit source) to count twice.
 fn evidence_session_id_daily(seed: &str, app_context: &str) -> String {
     let (seed_hash, app_hash) = pair_hash(seed, app_context);
-    let day = chrono::Local::now().format("%Y-%m-%d");
+    // Use UTC rather than local time so the day boundary doesn't shift if the
+    // user's system timezone changes (travel, DST) between dictations.
+    let day = chrono::Utc::now().format("%Y-%m-%d");
     format!("{seed_hash}:{app_hash}:{day}")
 }
 

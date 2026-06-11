@@ -227,7 +227,7 @@
       unlistenSuggestion?.();
       window.removeEventListener('resize', onResize);
       if (undoTimer !== undefined) window.clearTimeout(undoTimer);
-      dismissTimers.forEach(window.clearTimeout);
+      dismissTimers.forEach((t) => window.clearTimeout(t));
       dismissTimers = [];
     };
   });
