@@ -154,10 +154,13 @@
     const key = `${s.wrong_word}:${s.correct_word}`;
     if (dismissingKeys.has(key)) return;
     dismissingKeys = new Set(dismissingKeys).add(key);
+    // Start the DB write immediately so it isn't lost if the user navigates
+    // away before the slide/collapse animation timer below fires.
+    const dbWrite = invoke('dismiss_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word });
     const timer = window.setTimeout(async () => {
       dismissTimers = dismissTimers.filter((t) => t !== timer);
       try {
-        await invoke('dismiss_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word });
+        await dbWrite;
         if (destroyed) return;
         suggestions = suggestions.filter(x => !(x.wrong_word === s.wrong_word && x.correct_word === s.correct_word));
         showUndoBanner(s);

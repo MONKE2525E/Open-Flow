@@ -1002,7 +1002,7 @@ pub fn query_dictionary_suggestions(db: &Db) -> Result<Vec<DictionarySuggestion>
            WHERE n.wrong_word = s.wrong_word AND n.correct_word = s.correct_word COLLATE NOCASE
          ) AND NOT EXISTS (
            SELECT 1 FROM dictionary d
-           WHERE d.term = s.correct_word COLLATE NOCASE AND d.mistake = s.wrong_word COLLATE NOCASE
+           WHERE d.term = s.correct_word COLLATE NOCASE
          )
          ORDER BY s.score DESC, s.updated_at DESC
          LIMIT 50",
@@ -2307,6 +2307,19 @@ mod tests {
         // Term was added manually (or already auto-learned) — the suggestion
         // is now redundant and should be hidden, even with mismatched casing.
         insert_dictionary_entry(&db, "Qroq", Some("Rock")).expect("manual add");
+        assert!(query_dictionary_suggestions(&db).expect("after").is_empty());
+    }
+
+    #[test]
+    fn dictionary_suggestions_hide_when_term_taken_by_unrelated_entry() {
+        let db = test_db();
+        upsert_dictionary_suggestion(&db, "rock", "qroq", 0.9, "x").expect("insert");
+        assert_eq!(query_dictionary_suggestions(&db).expect("before").len(), 1);
+
+        // `term` has a UNIQUE constraint, so any suggestion whose correct_word
+        // already exists as a term — even with an unrelated or absent mistake —
+        // would fail approve_dictionary_suggestion and must be hidden.
+        insert_dictionary_entry(&db, "qroq", None).expect("manual add");
         assert!(query_dictionary_suggestions(&db).expect("after").is_empty());
     }
 
