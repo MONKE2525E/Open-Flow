@@ -136,8 +136,12 @@ fn legacy_app_data_dir() -> std::path::PathBuf {
 
 /// TRANSITION(verenu): one-time migration of the SQLite database from the old
 /// "OpenFlow"/openflow.db location to the new "Verenu"/verenu.db location.
-/// Copies the `-wal`/`-shm` sidecar files first and the main `.db` file last,
-/// so the migrated `verenu.db` is never newer than its own WAL/SHM siblings.
+/// Copies the main `.db` file first, then its `-wal`/`-shm` sidecars. If a
+/// sidecar copy fails, the partially-migrated files are removed so `verenu.db`
+/// does not exist afterward — otherwise `db::open()` would create a fresh
+/// empty `verenu.db` next to a stale `-wal`/`-shm` from the old database,
+/// which SQLite could replay onto the new file. A missing `new_db` also means
+/// the migration retries in full on the next launch.
 /// No-op if the new database already exists or no old database is found.
 /// Remove once all users are on >=0.12.1. See Agent-Skills/Verenu_Transition_Cleanup.md
 fn migrate_legacy_db(new_dir: &std::path::Path) {
@@ -152,21 +156,27 @@ fn migrate_legacy_db(new_dir: &std::path::Path) {
         return;
     }
 
+    if let Err(e) = std::fs::copy(&old_db, &new_db) {
+        log::warn!("TRANSITION(verenu): failed to migrate {old_db:?}: {e}");
+        return;
+    }
+
     for ext in ["-wal", "-shm"] {
         let old_sidecar = old_dir.join(format!("openflow.db{ext}"));
         if old_sidecar.exists() {
             let new_sidecar = new_dir.join(format!("verenu.db{ext}"));
             if let Err(e) = std::fs::copy(&old_sidecar, &new_sidecar) {
                 log::warn!("TRANSITION(verenu): failed to migrate {old_sidecar:?}: {e}");
+                let _ = std::fs::remove_file(&new_db);
+                for cleanup_ext in ["-wal", "-shm"] {
+                    let _ = std::fs::remove_file(new_dir.join(format!("verenu.db{cleanup_ext}")));
+                }
                 return;
             }
         }
     }
 
-    match std::fs::copy(&old_db, &new_db) {
-        Ok(_) => log::info!("TRANSITION(verenu): migrated database from {old_db:?} to {new_db:?}"),
-        Err(e) => log::warn!("TRANSITION(verenu): failed to migrate {old_db:?}: {e}"),
-    }
+    log::info!("TRANSITION(verenu): migrated database from {old_db:?} to {new_db:?}");
 }
 
 fn main() {

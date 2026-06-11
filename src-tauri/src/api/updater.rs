@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::sync::OnceLock;
 
 #[derive(Deserialize)]
 struct GhRelease {
@@ -54,7 +55,7 @@ async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
     let resp = super::client::get()
         .get(&url)
-        .header("User-Agent", "open-flow")
+        .header("User-Agent", "verenu")
         .send()
         .await?;
 
@@ -99,10 +100,25 @@ async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
 /// the `get_source_repo` command. See Agent-Skills/Verenu_Transition_Cleanup.md
 const SOURCE_REPO_CANDIDATES: &[&str] = &["MONKE2525E/Verenu", "MONKE2525E/Open-Flow"];
 
+/// Cache for `resolve_source_repo()` so the GitHub API is only queried once
+/// per app run, regardless of how many times the About page mounts.
+static RESOLVED_SOURCE_REPO: OnceLock<String> = OnceLock::new();
+
 /// Resolve which repo to display/link as the project's "Source" by checking
 /// each candidate in order and returning the first that doesn't 404. Falls
 /// back to the last candidate (the current default) if every check fails.
+/// The result is cached for the lifetime of the process.
 pub async fn resolve_source_repo() -> String {
+    if let Some(repo) = RESOLVED_SOURCE_REPO.get() {
+        return repo.clone();
+    }
+
+    let resolved = resolve_source_repo_uncached().await;
+    let _ = RESOLVED_SOURCE_REPO.set(resolved.clone());
+    resolved
+}
+
+async fn resolve_source_repo_uncached() -> String {
     for repo in SOURCE_REPO_CANDIDATES {
         let url = format!("https://api.github.com/repos/{repo}");
         let exists = super::client::get()
