@@ -1332,6 +1332,17 @@ pub struct ImportBackupCounts {
     pub never_learn_pairs_inserted: usize,
 }
 
+/// Returns true if `e` wraps a SQLite UNIQUE/constraint violation, so
+/// import_backup_records can distinguish "row already exists" from real
+/// insert failures without relying on the error message text.
+fn is_unique_constraint_violation(e: &anyhow::Error) -> bool {
+    matches!(
+        e.downcast_ref::<rusqlite::Error>(),
+        Some(rusqlite::Error::SqliteFailure(err, _))
+            if err.code == rusqlite::ErrorCode::ConstraintViolation
+    )
+}
+
 /// Inserts backup records inside a single transaction so a large import
 /// doesn't pay a disk sync per row (one INSERT == one implicit transaction
 /// in SQLite's default autocommit mode).
@@ -1356,7 +1367,7 @@ pub fn import_backup_records(
         ) {
             Ok(()) => counts.dictionary_inserted += 1,
             Err(e) => {
-                if e.to_string().contains("UNIQUE constraint failed") {
+                if is_unique_constraint_violation(&e) {
                     counts.dictionary_already_existed += 1;
                 } else {
                     log::warn!("import_backup_records: dictionary insert error for '{}': {e}", entry.term);
@@ -1370,7 +1381,7 @@ pub fn import_backup_records(
         match insert_snippet_returning_conn(&tx, snippet.trigger, snippet.expansion, snippet.instructions) {
             Ok(_) => counts.snippets_inserted += 1,
             Err(e) => {
-                if e.to_string().contains("UNIQUE constraint failed") {
+                if is_unique_constraint_violation(&e) {
                     counts.snippets_already_existed += 1;
                 } else {
                     log::warn!("import_backup_records: snippet insert error for '{}': {e}", snippet.trigger);
