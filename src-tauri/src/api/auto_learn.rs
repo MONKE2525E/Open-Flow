@@ -456,8 +456,8 @@ fn record_evidence_and_maybe_promote(
     // corroborate against each other instead of fragmenting across rows.
     // `correct` keeps its casing — it's the dictionary term and may be a
     // proper noun.
-    let wrong = wrong.to_lowercase();
-    let wrong = wrong.as_str();
+    let wrong_lower = wrong.to_lowercase();
+    let wrong = wrong_lower.as_str();
 
     // Skip pairs in the never-learn list.
     if db::is_never_learn_pair(db, wrong, correct).unwrap_or(false) {

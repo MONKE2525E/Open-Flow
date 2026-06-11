@@ -84,10 +84,7 @@ pub fn read_focused_text_sync() -> Option<String> {
     if ok == 0 {
         return None;
     }
-    // SAFETY: the shim always null-terminates buf within its FULL_TEXT_BUF_LEN bytes.
-    let text = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
-        .to_string_lossy()
-        .into_owned();
+    let text = c_buf_to_string(&buf);
     if text.is_empty() {
         None
     } else {
