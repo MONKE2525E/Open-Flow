@@ -155,25 +155,27 @@
     if (dismissingKeys.has(key)) return;
     dismissingKeys = new Set(dismissingKeys).add(key);
     // Start the DB write immediately so it isn't lost if the user navigates
-    // away before the slide/collapse animation timer below fires.
-    const dbWrite = invoke('dismiss_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word });
+    // away before the slide/collapse animation timer below fires. Attach the
+    // catch handler now so a rejection is never left unhandled if the timer
+    // is cleared (component destroyed) before it settles.
+    let failed = false;
+    const dbWrite = invoke('dismiss_dictionary_suggestion', { wrong: s.wrong_word, correct: s.correct_word })
+      .catch((err) => {
+        console.error(err);
+        failed = true;
+        if (!destroyed) emit('open-flow:error', 'Could not dismiss suggestion.').catch(() => {});
+      });
     const timer = window.setTimeout(async () => {
       dismissTimers = dismissTimers.filter((t) => t !== timer);
-      try {
-        await dbWrite;
-        if (destroyed) return;
+      await dbWrite;
+      if (destroyed) return;
+      if (!failed) {
         suggestions = suggestions.filter(x => !(x.wrong_word === s.wrong_word && x.correct_word === s.correct_word));
         showUndoBanner(s);
-      } catch (err) {
-        console.error(err);
-        if (!destroyed) await emit('open-flow:error', 'Could not dismiss suggestion.');
-      } finally {
-        if (!destroyed) {
-          const next = new Set(dismissingKeys);
-          next.delete(key);
-          dismissingKeys = next;
-        }
       }
+      const next = new Set(dismissingKeys);
+      next.delete(key);
+      dismissingKeys = next;
     }, motionMs(200));
     dismissTimers.push(timer);
   }
