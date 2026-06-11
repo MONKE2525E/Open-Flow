@@ -999,7 +999,7 @@ pub fn query_dictionary_suggestions(db: &Db) -> Result<Vec<DictionarySuggestion>
          FROM dictionary_suggestions s
          WHERE NOT EXISTS (
            SELECT 1 FROM never_learn_pairs n
-           WHERE n.wrong_word = s.wrong_word COLLATE NOCASE AND n.correct_word = s.correct_word COLLATE NOCASE
+           WHERE n.wrong_word = s.wrong_word AND n.correct_word = s.correct_word COLLATE NOCASE
          ) AND NOT EXISTS (
            SELECT 1 FROM dictionary d
            WHERE d.term = s.correct_word COLLATE NOCASE AND d.mistake = s.wrong_word COLLATE NOCASE
