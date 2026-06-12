@@ -486,13 +486,12 @@ pub fn query_stats(db: &Db) -> Result<Stats> {
 
     let mut transcription_stmt =
         conn.prepare("SELECT raw_text, duration_ms FROM transcriptions WHERE duration_ms > 0")?;
-    let transcription_rows = transcription_stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-
     let mut wpm_sum = 0.0_f64;
     let mut wpm_count = 0_i64;
-    for (raw_text, duration_ms) in transcription_rows {
+    let transcription_rows =
+        transcription_stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    for row in transcription_rows {
+        let (raw_text, duration_ms) = row?;
         let spoken_words = snippets::count_words_without_snippet_triggers(&raw_text, &snippet_rows);
         if spoken_words == 0 {
             continue;
@@ -1581,6 +1580,33 @@ mod tests {
         let stats = query_stats(&db).expect("stats");
 
         assert_eq!(stats.avg_wpm, 120.0);
+    }
+
+    #[test]
+    fn stats_avg_wpm_streams_large_transcription_sets() {
+        let db = test_db();
+        insert_snippet(&db, "sig", "signature block", "").expect("snippet");
+
+        for idx in 0..500 {
+            insert_transcription_returning(
+                &db,
+                if idx % 2 == 0 {
+                    "hello world"
+                } else {
+                    "hello sig world"
+                },
+                "clean",
+                3,
+                1000,
+                "test",
+            )
+            .expect("transcription");
+        }
+
+        let stats = query_stats(&db).expect("stats");
+
+        assert_eq!(stats.total_words, 1500);
+        assert!(stats.avg_wpm > 0.0);
     }
 
     #[test]

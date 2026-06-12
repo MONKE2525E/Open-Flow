@@ -180,21 +180,33 @@ fn tauri_legacy_creds_path(app: &AppHandle) -> PathBuf {
 }
 
 #[cfg(target_os = "macos")]
-fn manual_legacy_creds_path_from_home(home: &Path) -> PathBuf {
-    home.join("Library/Application Support/Verenu/credentials.json")
+fn manual_legacy_creds_path_from_home(home: &Path, app_dir: &str) -> PathBuf {
+    home.join(format!("Library/Application Support/{app_dir}/credentials.json"))
 }
 
 #[cfg(target_os = "macos")]
-fn manual_legacy_creds_path(app: &AppHandle) -> PathBuf {
-    app.path()
+fn manual_legacy_creds_paths(app: &AppHandle) -> Vec<PathBuf> {
+    let home = app
+        .path()
         .home_dir()
-        .map(|home| manual_legacy_creds_path_from_home(Path::new(&home)))
-        .unwrap_or_else(|_| PathBuf::from("Library/Application Support/Verenu/credentials.json"))
+        .map(|home| PathBuf::from(home))
+        .unwrap_or_else(|_| PathBuf::from("."));
+
+    ["Verenu", "OpenFlow"]
+        .into_iter()
+        .map(|app_dir| manual_legacy_creds_path_from_home(Path::new(&home), app_dir))
+        .collect()
 }
 
 #[cfg(target_os = "macos")]
 fn legacy_creds_paths(app: &AppHandle) -> Vec<PathBuf> {
-    vec![tauri_legacy_creds_path(app), manual_legacy_creds_path(app)]
+    let mut paths = vec![tauri_legacy_creds_path(app)];
+    for path in manual_legacy_creds_paths(app) {
+        if !paths.iter().any(|existing| existing == &path) {
+            paths.push(path);
+        }
+    }
+    paths
 }
 
 #[cfg(target_os = "macos")]
@@ -625,11 +637,21 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn manual_legacy_creds_path_uses_verenu_directory() {
-        let path = manual_legacy_creds_path_from_home(Path::new("/Users/tester"));
+    fn manual_legacy_creds_path_supports_verenu_directory() {
+        let path = manual_legacy_creds_path_from_home(Path::new("/Users/tester"), "Verenu");
         assert_eq!(
             path,
             Path::new("/Users/tester/Library/Application Support/Verenu/credentials.json")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn manual_legacy_creds_path_supports_openflow_directory() {
+        let path = manual_legacy_creds_path_from_home(Path::new("/Users/tester"), "OpenFlow");
+        assert_eq!(
+            path,
+            Path::new("/Users/tester/Library/Application Support/OpenFlow/credentials.json")
         );
     }
 

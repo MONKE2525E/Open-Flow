@@ -110,6 +110,71 @@ fn app_data_dir() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
+#[cfg(windows)]
+fn legacy_app_data_dir() -> std::path::PathBuf {
+    std::env::var("APPDATA")
+        .map(|p| std::path::PathBuf::from(p).join("OpenFlow"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_app_data_dir() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/OpenFlow"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn legacy_app_data_dir() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".config/OpenFlow"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+fn migrate_db_file_if_needed(new_db: &std::path::Path, old_db: &std::path::Path) -> std::io::Result<()> {
+    if new_db.exists() || !old_db.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = new_db.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    std::fs::copy(old_db, new_db)?;
+    for suffix in ["-wal", "-shm"] {
+        let old_sidecar = std::path::PathBuf::from(format!("{}{suffix}", old_db.display()));
+        if !old_sidecar.exists() {
+            continue;
+        }
+
+        let new_sidecar = std::path::PathBuf::from(format!("{}{suffix}", new_db.display()));
+        if let Err(err) = std::fs::copy(&old_sidecar, &new_sidecar) {
+            let _ = std::fs::remove_file(new_db);
+            let _ = std::fs::remove_file(&new_sidecar);
+            let cleanup_wal = std::path::PathBuf::from(format!("{}-wal", new_db.display()));
+            let cleanup_shm = std::path::PathBuf::from(format!("{}-shm", new_db.display()));
+            let _ = std::fs::remove_file(cleanup_wal);
+            let _ = std::fs::remove_file(cleanup_shm);
+            return Err(err);
+        }
+    }
+
+    Ok(())
+}
+
+fn migrate_legacy_db(new_dir: &std::path::Path) {
+    let new_db = new_dir.join("verenu.db");
+    let old_db = legacy_app_data_dir().join("openflow.db");
+    if let Err(err) = migrate_db_file_if_needed(&new_db, &old_db) {
+        log::warn!(
+            "Could not migrate legacy database from {} to {}: {}",
+            old_db.display(),
+            new_db.display(),
+            err
+        );
+    }
+}
+
 fn main() {
     #[cfg(target_os = "macos")]
     {
@@ -126,6 +191,7 @@ fn main() {
 
     let db_dir = app_data_dir();
     std::fs::create_dir_all(&db_dir).ok();
+    migrate_legacy_db(&db_dir);
     let db_handle: DbHandle =
         db::open(db_dir.join("verenu.db").to_str().unwrap()).expect("failed to open database");
     let _ = db::cleanup_cache_prune_expired(&db_handle);
@@ -415,6 +481,71 @@ mod tests {
             runtime_tray_icon_color(IconTheme::Dark),
             [255, 255, 255, 255]
         );
+    }
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::migrate_db_file_if_needed;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "verenu-{name}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn migrate_db_file_if_needed_copies_legacy_db_and_sidecars() {
+        let root = temp_dir("db-migration");
+        let old_dir = root.join("OpenFlow");
+        let new_dir = root.join("Verenu");
+        std::fs::create_dir_all(&old_dir).expect("create old dir");
+
+        let old_db = old_dir.join("openflow.db");
+        let old_wal = old_dir.join("openflow.db-wal");
+        let old_shm = old_dir.join("openflow.db-shm");
+        std::fs::write(&old_db, b"db").expect("write old db");
+        std::fs::write(&old_wal, b"wal").expect("write old wal");
+        std::fs::write(&old_shm, b"shm").expect("write old shm");
+
+        let new_db = new_dir.join("verenu.db");
+        migrate_db_file_if_needed(&new_db, &old_db).expect("migrate db");
+
+        assert_eq!(std::fs::read(&new_db).expect("new db"), b"db");
+        assert_eq!(
+            std::fs::read(new_dir.join("verenu.db-wal")).expect("new wal"),
+            b"wal"
+        );
+        assert_eq!(
+            std::fs::read(new_dir.join("verenu.db-shm")).expect("new shm"),
+            b"shm"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn migrate_db_file_if_needed_keeps_existing_new_db() {
+        let root = temp_dir("db-migration-existing");
+        let old_dir = root.join("OpenFlow");
+        let new_dir = root.join("Verenu");
+        std::fs::create_dir_all(&old_dir).expect("create old dir");
+        std::fs::create_dir_all(&new_dir).expect("create new dir");
+
+        let old_db = old_dir.join("openflow.db");
+        let new_db = new_dir.join("verenu.db");
+        std::fs::write(&old_db, b"old").expect("write old db");
+        std::fs::write(&new_db, b"new").expect("write new db");
+
+        migrate_db_file_if_needed(&new_db, &old_db).expect("skip migration");
+
+        assert_eq!(std::fs::read(&new_db).expect("new db"), b"new");
+        let _ = std::fs::remove_dir_all(root);
     }
 }
 

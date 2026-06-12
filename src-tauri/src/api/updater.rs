@@ -18,11 +18,10 @@ pub struct UpdateInfo {
     pub download_url: String,
 }
 
-/// Repos to check for releases, in priority order. MONKE2525E/Verenu is the
-/// planned future home of this project's GitHub repo; MONKE2525E/Verenu
-/// is the current one. Checking both lets releases published under either
-/// name be picked up without another code change once the rename happens.
-const RELEASE_REPOS: &[&str] = &["MONKE2525E/Verenu", "MONKE2525E/Verenu"];
+/// Repos to check for releases. Prefer the renamed repo first, but keep the
+/// old repo as a fallback during the transition so update checks still work for
+/// releases published there.
+const RELEASE_REPOS: &[&str] = &["MONKE2525E/Verenu", "MONKE2525E/Open-Flow"];
 
 /// Check all configured repos for a release newer than the current version,
 /// returning the highest version found. A 404 (repo has no releases yet, or
@@ -83,7 +82,7 @@ async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
 }
 
 /// Repos to check, in priority order, for the About page "Source" link.
-const SOURCE_REPO_CANDIDATES: &[&str] = &["MONKE2525E/Verenu", "MONKE2525E/Verenu"];
+const SOURCE_REPO_CANDIDATES: &[&str] = &["MONKE2525E/Verenu", "MONKE2525E/Open-Flow"];
 
 /// Cache for `resolve_source_repo()` so the About page only queries the
 /// GitHub API once per app run, regardless of how many times it mounts.
