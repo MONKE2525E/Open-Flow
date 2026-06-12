@@ -438,7 +438,9 @@ pub fn open(path: &str) -> Result<Db> {
         "spoken_words",
         "ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;",
     )? {
-        backfill_spoken_words(&conn)?;
+        if let Err(err) = backfill_spoken_words(&conn) {
+            log::warn!("Failed to backfill spoken_words column: {err}");
+        }
     }
 
     Ok(Arc::new(Mutex::new(conn)))
