@@ -427,13 +427,6 @@ pub fn open(path: &str) -> Result<Db> {
         conn.execute_batch("COMMIT;")?;
     }
     ensure_cleanup_cache_schema(&conn)?;
-    ensure_table_column(
-        &conn,
-        "transcriptions",
-        "spoken_words",
-        "ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;",
-    )?;
-    backfill_spoken_words(&conn)?;
 
     Ok(Arc::new(Mutex::new(conn)))
 }

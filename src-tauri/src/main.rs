@@ -149,13 +149,12 @@ fn migrate_db_file_if_needed(new_db: &std::path::Path, old_db: &std::path::Path)
 
         let new_sidecar = std::path::PathBuf::from(format!("{}{suffix}", new_db.display()));
         if let Err(err) = std::fs::copy(&old_sidecar, &new_sidecar) {
-            let _ = std::fs::remove_file(new_db);
-            let _ = std::fs::remove_file(&new_sidecar);
-            let cleanup_wal = std::path::PathBuf::from(format!("{}-wal", new_db.display()));
-            let cleanup_shm = std::path::PathBuf::from(format!("{}-shm", new_db.display()));
-            let _ = std::fs::remove_file(cleanup_wal);
-            let _ = std::fs::remove_file(cleanup_shm);
-            return Err(err);
+            log::warn!(
+                "Could not copy legacy sidecar {} to {}: {}",
+                old_sidecar.display(),
+                new_sidecar.display(),
+                err
+            );
         }
     }
 

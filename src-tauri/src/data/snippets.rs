@@ -484,4 +484,17 @@ mod tests {
 
         assert_eq!(count, 2);
     }
+
+    #[test]
+    fn expand_snippets_increments_use_count_for_each_match() {
+        let db = db::open(":memory:").expect("test db");
+        db::insert_snippet(&db, "sig", "Best regards", "").expect("insert snippet");
+        let mut snippets = db::query_snippets(&db).expect("query snippets");
+
+        let out = expand_snippets_from("sig and sig", &mut snippets, &db);
+        assert_eq!(out, "Best regards and Best regards");
+
+        let persisted = db::query_snippets(&db).expect("query persisted");
+        assert_eq!(persisted[0].use_count, 2);
+    }
 }
