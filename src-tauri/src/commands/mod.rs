@@ -1203,6 +1203,7 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
     }
 }
 
+#[cfg(windows)]
 fn backup_sqlite_database(db_path: &std::path::Path) -> std::io::Result<()> {
     std::fs::copy(db_path, db_path.with_extension("db.bak"))?;
 
@@ -1214,6 +1215,7 @@ fn backup_sqlite_database(db_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
 fn path_with_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
     let mut path_with_suffix = path.to_path_buf().into_os_string();
     path_with_suffix.push(suffix);

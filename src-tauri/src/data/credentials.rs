@@ -191,7 +191,6 @@ fn manual_legacy_creds_paths(app: &AppHandle) -> Vec<PathBuf> {
     let home = app
         .path()
         .home_dir()
-        .map(|home| home)
         .unwrap_or_else(|_| PathBuf::from("."));
 
     ["Verenu", "OpenFlow"]
