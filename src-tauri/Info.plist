@@ -5,10 +5,10 @@
 	<key>CFBundleIconFile</key>
 	<string>icon</string>
 	<key>CFBundleDisplayName</key>
-	<string>Open Flow</string>
+	<string>Verenu</string>
 	<key>CFBundleName</key>
-	<string>Open Flow</string>
+	<string>Verenu</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Open Flow uses the microphone to transcribe your dictation into text.</string>
+	<string>Verenu uses the microphone to transcribe your dictation into text.</string>
 </dict>
 </plist>

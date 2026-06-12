@@ -526,7 +526,7 @@ pub async fn start_input_recording(
         Err(e) => {
             let msg = format!("Failed to start recording: {e}");
             crate::pipeline::hide_pill(&app);
-            app.emit("open-flow:error", msg.clone()).ok();
+            app.emit("verenu:error", msg.clone()).ok();
             Err(msg)
         }
     }
@@ -850,7 +850,7 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
                 .encode_wide()
                 .chain(std::iter::once(0))
                 .collect();
-        let value_name: Vec<u16> = std::ffi::OsStr::new("OpenFlow")
+        let value_name: Vec<u16> = std::ffi::OsStr::new("Verenu")
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
@@ -899,7 +899,7 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
     // macOS: write/remove a LaunchAgent plist that launches the app at login.
     #[cfg(target_os = "macos")]
     {
-        let label = "com.openflow.app";
+        let label = "com.verenu.app";
         let domain = format!("gui/{}", unsafe { libc::getuid() });
         let service_target = format!("{domain}/{label}");
         let home = _app
@@ -1007,7 +1007,7 @@ fn run_launchctl(args: &[&str]) -> Result<(), String> {
 
 // ---------- macOS permissions ----------
 
-/// Whether Open Flow is trusted for the Accessibility API (needed for the global
+/// Whether Verenu is trusted for the Accessibility API (needed for the global
 /// hotkey, Cmd+V injection, and auto-learn). When `prompt` is true, macOS shows
 /// the system permission dialog. Always true on non-macOS platforms.
 #[cfg(target_os = "macos")]
@@ -1157,7 +1157,7 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
 
         // Back up the database before touching anything.
         if let Ok(mut db_path) = app.path().app_data_dir() {
-            db_path.push("openflow.db");
+            db_path.push("verenu.db");
             if db_path.exists() {
                 let _ = std::fs::copy(&db_path, db_path.with_extension("db.bak"));
             }
@@ -1165,7 +1165,7 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
 
         let bytes = crate::api::client::get()
             .get(&download_url)
-            .header("User-Agent", "open-flow")
+            .header("User-Agent", "verenu")
             .send()
             .await
             .and_then(|r| r.error_for_status())
@@ -1174,7 +1174,7 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
             .await
             .map_err(|e| e.to_string())?;
 
-        let installer = std::env::temp_dir().join("open-flow-update.exe");
+        let installer = std::env::temp_dir().join("verenu-update.exe");
         let mut f = std::fs::File::create(&installer).map_err(|e| e.to_string())?;
         f.write_all(&bytes).map_err(|e| e.to_string())?;
         drop(f);
@@ -1188,7 +1188,7 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
             installer.display(),
             current_exe.display()
         );
-        let script_path = std::env::temp_dir().join("open-flow-updater.cmd");
+        let script_path = std::env::temp_dir().join("verenu-updater.cmd");
         std::fs::write(&script_path, &script).map_err(|e| e.to_string())?;
 
         std::process::Command::new("cmd")
@@ -1305,9 +1305,11 @@ pub async fn export_data(
             .map_err(|e| format!("Failed to resolve Downloads directory: {e}"))?;
         std::fs::create_dir_all(&downloads)
             .map_err(|e| format!("Failed to create Downloads path: {e}"))?;
-        let path = downloads.join(format!("open-flow-backup-{}.json", now.format("%Y%m%d-%H%M%S")));
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Failed to write backup file: {e}"))?;
+        let path = downloads.join(format!(
+            "verenu-backup-{}.json",
+            now.format("%Y%m%d-%H%M%S")
+        ));
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write backup file: {e}"))?;
 
         log::info!("export_data: wrote {}", path.display());
         Ok(path.display().to_string())

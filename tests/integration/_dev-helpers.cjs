@@ -9,9 +9,9 @@ async function seedDevState(page, {
   dictionary = [],
 } = {}) {
   await page.addInitScript(({ settings, snippets, dictionary }) => {
-    localStorage.setItem('open-flow:dev-settings', JSON.stringify(settings));
-    localStorage.setItem('open-flow:dev-snippets', JSON.stringify(snippets));
-    localStorage.setItem('open-flow:dev-dictionary', JSON.stringify(dictionary));
+    localStorage.setItem('verenu:dev-settings', JSON.stringify(settings));
+    localStorage.setItem('verenu:dev-snippets', JSON.stringify(snippets));
+    localStorage.setItem('verenu:dev-dictionary', JSON.stringify(dictionary));
   }, { settings, snippets, dictionary });
 }
 

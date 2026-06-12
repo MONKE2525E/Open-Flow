@@ -143,7 +143,7 @@
       if (!mounted) { l1(); return; }
       unlisteners.push(l1);
 
-      const l2 = await listen<string>('open-flow:error', (ev) => {
+      const l2 = await listen<string>('verenu:error', (ev) => {
         errorMsg = ev.payload ?? 'Failed';
       });
       if (!mounted) { l2(); return; }

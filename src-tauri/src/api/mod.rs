@@ -68,10 +68,7 @@ pub fn validate_model_for_url(model: &str) -> anyhow::Result<()> {
 }
 
 pub fn sanitize_error_body_preview(body: &str) -> String {
-    let compact = body
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let compact = body.split_whitespace().collect::<Vec<_>>().join(" ");
     if compact.chars().count() > 180 {
         format!("{}...", compact.chars().take(177).collect::<String>())
     } else {

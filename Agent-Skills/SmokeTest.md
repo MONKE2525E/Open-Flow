@@ -1,9 +1,9 @@
-﻿---
+---
 name: smoke-tests
-description: Minimal guide to run and fix Open Flow smoke tests by changing app code, never smoke tests.
+description: Minimal guide to run and fix Verenu smoke tests by changing app code, never smoke tests.
 ---
 
-# Smoke Tests - Open Flow
+# Smoke Tests - Verenu
 
 ## Non-negotiables
 
@@ -20,7 +20,7 @@ description: Minimal guide to run and fix Open Flow smoke tests by changing app 
   - Advanced: `.toggle` exists
   - Advanced: `span.gain-value` exists
   - General: `button.badge.key-badge` contains `Ctrl`
-  - About: `button.btn-ghost` contains `github.com/MONKE2525E/Open-Flow`
+  - About: `button.btn-ghost` contains `github.com/MONKE2525E/Verenu`
 - `playwright-test-state.cjs` (1420): model and advanced-toggle persistence survive close/reopen.
 - `playwright-test-pipeline.cjs` (no server): live API smoke checks, `SKIP` when keys are absent.
 - `tests/integration/*`: browser-dev coverage for onboarding, settings/state surfaces, and offline handling.

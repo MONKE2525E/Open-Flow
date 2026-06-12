@@ -1,6 +1,6 @@
-# Open Flow Color Palette
+# Verenu Color Palette
 
-The Open Flow design system uses a carefully curated palette of warm, earthy tones with minimal accent color usage.
+The Verenu design system uses a carefully curated palette of warm, earthy tones with minimal accent color usage.
 
 ## Color System
 

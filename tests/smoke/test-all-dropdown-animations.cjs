@@ -18,7 +18,7 @@ const { tauriMock } = require('./_tauri-mock.cjs');
 
 const TARGET_URL = 'http://localhost:1420';
 const TIMEOUT = 12_000;
-const SCREENSHOT_DIR = 'G:\\Open Flow';
+const SCREENSHOT_DIR = 'G:\\Verenu';
 
 async function checkDropdown(page, selector, label) {
   const btn = page.locator(selector).first();

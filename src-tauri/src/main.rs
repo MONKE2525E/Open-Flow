@@ -23,7 +23,7 @@ use tauri_plugin_store::StoreExt;
 
 pub type DbHandle = db::Db;
 
-const TRAY_ID: &str = "open-flow-tray";
+const TRAY_ID: &str = "verenu-tray";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum IconTheme {
@@ -92,28 +92,28 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
 #[cfg(windows)]
 fn app_data_dir() -> std::path::PathBuf {
     std::env::var("APPDATA")
-        .map(|p| std::path::PathBuf::from(p).join("OpenFlow"))
+        .map(|p| std::path::PathBuf::from(p).join("Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 #[cfg(target_os = "macos")]
 fn app_data_dir() -> std::path::PathBuf {
     std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/OpenFlow"))
+        .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
 fn app_data_dir() -> std::path::PathBuf {
     std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".config/OpenFlow"))
+        .map(|h| std::path::PathBuf::from(h).join(".config/Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 fn main() {
     #[cfg(target_os = "macos")]
     {
-        let _ = crate::system::mac_app::set_process_name("Open Flow");
+        let _ = crate::system::mac_app::set_process_name("Verenu");
     }
 
     let shared: SharedState = Arc::new(Mutex::new(AppState {
@@ -127,7 +127,7 @@ fn main() {
     let db_dir = app_data_dir();
     std::fs::create_dir_all(&db_dir).ok();
     let db_handle: DbHandle =
-        db::open(db_dir.join("openflow.db").to_str().unwrap()).expect("failed to open database");
+        db::open(db_dir.join("verenu.db").to_str().unwrap()).expect("failed to open database");
     let _ = db::cleanup_cache_prune_expired(&db_handle);
 
     tauri::Builder::default()
@@ -203,9 +203,7 @@ fn main() {
                         }
                     }
                     #[cfg(target_os = "macos")]
-                    tauri::WindowEvent::Resized(_)
-                        if window.is_minimized().unwrap_or(false) =>
-                    {
+                    tauri::WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) => {
                         crate::system::mac_app::set_regular_activation_policy_on_main_thread(
                             window.app_handle(),
                         );
@@ -286,7 +284,7 @@ fn main() {
             commands::log_frontend,
         ])
         .build(tauri::generate_context!())
-        .expect("error building Open Flow")
+        .expect("error building Verenu")
         .run(|_app, _event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {
@@ -296,7 +294,7 @@ fn main() {
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    let title_i = MenuItem::with_id(app, "title", "Open Flow", false, None::<&str>)?;
+    let title_i = MenuItem::with_id(app, "title", "Verenu", false, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let show_i = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -309,7 +307,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .icon(tray_icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("Open Flow - Ctrl+Windows to record")
+        .tooltip("Verenu - Ctrl+Windows to record")
         .on_menu_event(|app, ev| match ev.id.as_ref() {
             "show" => {
                 show_main_window(app);
@@ -615,7 +613,7 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 app_h
                     .emit(
-                        "open-flow:error",
+                        "verenu:error",
                         format!("Keyboard hook failed to install — hotkey unavailable. {e}"),
                     )
                     .ok();

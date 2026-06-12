@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/banner.svg" alt="Open Flow" width="800"/>
+  <img src="docs/banner.svg" alt="Verenu" width="800"/>
 </div>
 
 <p align="center">
@@ -9,7 +9,7 @@
 
 ---
 
-## Why Open Flow?
+## Why Verenu?
 
 **Lightweight & Fast**
 - Uses just ~200MB of RAM idle runs silently in the background without bloat.
@@ -31,7 +31,7 @@
 
 ##  How it Works
 
-Open Flow handles the entire pipeline from your microphone to your active application seamlessly:
+Verenu handles the entire pipeline from your microphone to your active application seamlessly:
 
 1. **Record:** Hold <kbd>Ctrl</kbd>+<kbd>Windows</kbd> to capture audio locally. A floating pill window shows live audio levels in real time.
 2. **Transcribe:** Audio is sent to your chosen transcription model (Groq, OpenAI, or Google) to generate raw text.
@@ -50,10 +50,10 @@ Open Flow handles the entire pipeline from your microphone to your active applic
 
 ### Customization
 - **Formatting Profiles:** Switch between *Casual*, *Formal*, and *Very Casual* modes. Profiles adapt automatically based on the active app.
-- **Cleanup Intensity:** Pick how aggressively Open Flow rewrites your dictation: *Verbatim*, *Light*, *Medium*, or *Direct*.
+- **Cleanup Intensity:** Pick how aggressively Verenu rewrites your dictation: *Verbatim*, *Light*, *Medium*, or *Direct*.
 - **Snippets:** Create custom abbreviations and auto-expand them during dictation.
 - **Snippet Cleanup Instructions:** Add per-snippet cleanup rules like all caps, no ending period, or always ending with an exclamation mark.
-- **Personal Dictionary:** Teach Open Flow names, brands, and jargon so the cleanup model preserves the exact spelling you want.
+- **Personal Dictionary:** Teach Verenu names, brands, and jargon so the cleanup model preserves the exact spelling you want.
 
 ### Privacy & Offline
 - **Local Transcription History:** Every dictation is saved locally in SQLite on your machine, including raw/cleaned text, model used, word count, and duration.
@@ -65,7 +65,7 @@ Open Flow handles the entire pipeline from your microphone to your active applic
 
 ##  Your Choice of AI Provider
 
-Open Flow is provider-agnostic — pick whichever service you trust, use the cheapest, or switch between them on the fly. All API keys stay on your machine.
+Verenu is provider-agnostic — pick whichever service you trust, use the cheapest, or switch between them on the fly. All API keys stay on your machine.
 
 | Provider | Transcription Model | Cleanup Model | Latency | Cost |
 | :--- | :--- | :--- | :--- | :--- |
@@ -80,7 +80,7 @@ Open Flow is provider-agnostic — pick whichever service you trust, use the che
 * **OpenAI:** Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys) → Create secret key.
 * **Google:** Go to [aistudio.google.com](https://aistudio.google.com) → Get API key.
 
-*Paste your key into: Open Flow → Settings → API Keys.*
+*Paste your key into: Verenu → Settings → API Keys.*
 
 ---
 
@@ -92,14 +92,14 @@ Open Flow is provider-agnostic — pick whichever service you trust, use the che
 - [Node.js 18+](https://nodejs.org/)
 
 ### Windows Security Warning
-Because Open Flow is built by a solo developer and the app is not code-signed with an expensive Microsoft-trusted certificate, Windows SmartScreen or your browser may show warnings when downloading or opening the installer. That is expected for unsigned indie software.
+Because Verenu is built by a solo developer and the app is not code-signed with an expensive Microsoft-trusted certificate, Windows SmartScreen or your browser may show warnings when downloading or opening the installer. That is expected for unsigned indie software.
 
 If you want extra reassurance, upload the release file to [VirusTotal](https://www.virustotal.com/) and inspect the results before running it.
 
 ### Run in Development
 ```bash
-git clone https://github.com/MONKE2525E/Open-Flow.git
-cd Open-Flow
+git clone https://github.com/MONKE2525E/Verenu.git
+cd Verenu
 npm install
 npm run tauri dev
 ```
@@ -108,7 +108,7 @@ npm run tauri dev
 
 ## Tech Stack: Built for Efficiency
 
-Open Flow is intentionally lightweight. Here's why:
+Verenu is intentionally lightweight. Here's why:
 
 - **Tauri 2.x** — Native Windows app with a minimal WebView2 bridge. No Electron bloat.
 - **Svelte 5** — Lean, compiler-driven UI framework. Tiny bundle size.

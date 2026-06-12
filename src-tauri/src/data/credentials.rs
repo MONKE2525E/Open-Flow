@@ -1,6 +1,6 @@
-use tauri::{AppHandle, Wry};
 #[cfg(target_os = "macos")]
 use tauri::Manager;
+use tauri::{AppHandle, Wry};
 use tauri_plugin_store::Store;
 
 #[cfg(windows)]
@@ -14,7 +14,7 @@ use windows::Win32::Security::Credentials::{
 };
 
 #[cfg(windows)]
-const SERVICE: &str = "open-flow";
+const SERVICE: &str = "verenu";
 
 // HRESULT_FROM_WIN32(ERROR_NOT_FOUND) — credential entry absent, not an error
 #[cfg(windows)]
@@ -165,7 +165,7 @@ use security_framework::passwords::{
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
-const KEYCHAIN_SERVICE: &str = "com.openflow.app";
+const KEYCHAIN_SERVICE: &str = "com.verenu.app";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
 #[cfg(target_os = "macos")]
@@ -181,7 +181,7 @@ fn tauri_legacy_creds_path(app: &AppHandle) -> PathBuf {
 
 #[cfg(target_os = "macos")]
 fn manual_legacy_creds_path_from_home(home: &Path) -> PathBuf {
-    home.join("Library/Application Support/OpenFlow/credentials.json")
+    home.join("Library/Application Support/Verenu/credentials.json")
 }
 
 #[cfg(target_os = "macos")]
@@ -189,7 +189,7 @@ fn manual_legacy_creds_path(app: &AppHandle) -> PathBuf {
     app.path()
         .home_dir()
         .map(|home| manual_legacy_creds_path_from_home(Path::new(&home)))
-        .unwrap_or_else(|_| PathBuf::from("Library/Application Support/OpenFlow/credentials.json"))
+        .unwrap_or_else(|_| PathBuf::from("Library/Application Support/Verenu/credentials.json"))
 }
 
 #[cfg(target_os = "macos")]
@@ -625,11 +625,11 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn manual_legacy_creds_path_uses_openflow_directory() {
+    fn manual_legacy_creds_path_uses_verenu_directory() {
         let path = manual_legacy_creds_path_from_home(Path::new("/Users/tester"));
         assert_eq!(
             path,
-            Path::new("/Users/tester/Library/Application Support/OpenFlow/credentials.json")
+            Path::new("/Users/tester/Library/Application Support/Verenu/credentials.json")
         );
     }
 
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn empty_legacy_write_ignores_missing_file() {
         let path = std::env::temp_dir().join(format!(
-            "open-flow-missing-legacy-credentials-{}.json",
+            "verenu-missing-legacy-credentials-{}.json",
             std::process::id()
         ));
         let _ = std::fs::remove_file(&path);
@@ -679,7 +679,7 @@ mod tests {
     #[test]
     fn empty_legacy_write_propagates_delete_errors() {
         let path = std::env::temp_dir().join(format!(
-            "open-flow-legacy-credentials-delete-error-{}",
+            "verenu-legacy-credentials-delete-error-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&path);

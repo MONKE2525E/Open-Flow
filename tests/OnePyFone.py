@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OnePyFone — Open Flow Unified Test Runner
+OnePyFone — Verenu Unified Test Runner
 ==========================================
 
 Runs every test suite in the project with one command. Stdlib only — no pip.
@@ -714,7 +714,7 @@ def _build_entries(suites: List[str]) -> List[TestEntry]:
 def _print_banner(loop: int, loops: int, suites: List[str], server_label: str) -> None:
     print()
     print(bold(BAR))
-    print(f"  {bold('Open Flow')} {dim('·')} {cyan('OnePyFone')} {dim('unified test runner')}")
+    print(f"  {bold('Verenu')} {dim('·')} {cyan('OnePyFone')} {dim('unified test runner')}")
     loop_label = f"loop {loop}/{loops}" if loops > 1 else "single run"
     print(f"  {dim(loop_label)}  ·  suites: {', '.join(suites)}  ·  {dim(server_label)}")
     print(bold(BAR))
@@ -984,7 +984,7 @@ def _run_loop(
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog="OnePyFone",
-        description="Open Flow unified test runner — stdlib only, no pip",
+        description="Verenu unified test runner — stdlib only, no pip",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Profiles: fast | live | native | full · Suites: preflight | frontend | rust | contract | ui | state | animation | pipeline | native | all",
     )

@@ -1,3 +1,4 @@
+use super::snippets;
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -466,12 +467,44 @@ pub fn query_stats(db: &Db) -> Result<Stats> {
         |r| r.get(0),
     )?;
 
-    let avg_wpm: f64 = conn.query_row(
-        "SELECT COALESCE(AVG(CAST(words AS REAL)*60000.0/duration_ms),0.0) \
-         FROM transcriptions WHERE duration_ms > 0",
-        [],
-        |r| r.get(0),
+    let mut snippet_stmt = conn.prepare(
+        "SELECT id, trigger, expansion, instructions, use_count, created_at \
+         FROM snippets",
     )?;
+    let snippet_rows = snippet_stmt
+        .query_map([], |r| {
+            Ok(Snippet {
+                id: r.get(0)?,
+                trigger: r.get(1)?,
+                expansion: r.get(2)?,
+                instructions: r.get(3)?,
+                use_count: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut transcription_stmt =
+        conn.prepare("SELECT raw_text, duration_ms FROM transcriptions WHERE duration_ms > 0")?;
+    let transcription_rows = transcription_stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut wpm_sum = 0.0_f64;
+    let mut wpm_count = 0_i64;
+    for (raw_text, duration_ms) in transcription_rows {
+        let spoken_words = snippets::count_words_without_snippet_triggers(&raw_text, &snippet_rows);
+        if spoken_words == 0 {
+            continue;
+        }
+        wpm_sum += (spoken_words as f64) * 60000.0 / (duration_ms as f64);
+        wpm_count += 1;
+    }
+    let avg_wpm = if wpm_count == 0 {
+        0.0
+    } else {
+        wpm_sum / (wpm_count as f64)
+    };
 
     let day_streak: i64 = conn.query_row(
         "WITH consecutive AS (
@@ -1496,6 +1529,58 @@ mod tests {
         assert!(cleanup_cache_get_active(&db, "k")
             .expect("get after")
             .is_none());
+    }
+
+    #[test]
+    fn stats_avg_wpm_ignores_snippet_triggers_even_when_stored_words_are_inflated() {
+        let db = test_db();
+        insert_snippet(
+            &db,
+            "sig",
+            "A long email signature with a bunch of words",
+            "",
+        )
+        .expect("snippet");
+        insert_transcription_returning(&db, "sig.", "A long email signature", 9, 2000, "test")
+            .expect("transcription");
+
+        let stats = query_stats(&db).expect("stats");
+
+        assert_eq!(stats.total_words, 9);
+        assert_eq!(stats.avg_wpm, 0.0);
+    }
+
+    #[test]
+    fn stats_avg_wpm_counts_only_non_snippet_spoken_words() {
+        let db = test_db();
+        insert_snippet(&db, "sig", "A long email signature", "").expect("snippet");
+        insert_transcription_returning(
+            &db,
+            "please add sig thanks",
+            "Please add signature",
+            4,
+            2000,
+            "test",
+        )
+        .expect("transcription");
+
+        let stats = query_stats(&db).expect("stats");
+
+        assert_eq!(stats.avg_wpm, 90.0);
+    }
+
+    #[test]
+    fn stats_avg_wpm_excludes_pure_snippet_rows_from_average() {
+        let db = test_db();
+        insert_snippet(&db, "sig", "A long email signature", "").expect("snippet");
+        insert_transcription_returning(&db, "hello world", "hello world", 2, 1000, "test")
+            .expect("normal transcription");
+        insert_transcription_returning(&db, "sig.", "A long email signature", 4, 1000, "test")
+            .expect("snippet transcription");
+
+        let stats = query_stats(&db).expect("stats");
+
+        assert_eq!(stats.avg_wpm, 120.0);
     }
 
     #[test]

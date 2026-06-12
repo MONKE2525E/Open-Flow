@@ -81,8 +81,8 @@ async function assert(label, locator, errors) {
     await page.locator('h2.settings-h:has-text("About")').waitFor({ state: 'visible', timeout: 3_000 });
 
     await assert(
-      'button.btn-ghost containing "github.com/MONKE2525E/Open-Flow"',
-      page.locator('button.btn-ghost:has-text("github.com/MONKE2525E/Open-Flow")'),
+      'button.btn-ghost containing "github.com/MONKE2525E/Verenu"',
+      page.locator('button.btn-ghost:has-text("github.com/MONKE2525E/Verenu")'),
       errors,
     );
 

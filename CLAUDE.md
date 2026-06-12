@@ -1,10 +1,10 @@
 # CLAUDE.md
 
 # Notes from user
-- Github Repo: https://github.com/MONKE2525E/Open-Flow
+- Github Repo: https://github.com/MONKE2525E/Verenu
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
 - docs/ROADMAP.md keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
-- currently working towards OpenFlow 0.11.0.
+- currently working towards Verenu 0.11.0.
 - Always add yourself as a co-author  in all commits you make e.g @Claude, @Codex, @google-antigravity, etc but dont add a note at the bottom of the PR description
 
 
@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Open Flow is an open-source AI dictation desktop app for Windows and macOS — a free, API-key-based alternative to the paid "Wispr Flow" app. Users supply their own API keys; there is no subscription. Target RAM usage is ~200MB idle.
+Verenu is an open-source AI dictation desktop app for Windows and macOS — a free, API-key-based alternative to the paid "Wispr Flow" app. Users supply their own API keys; there is no subscription. Target RAM usage is ~200MB idle.
 
 ## Stack
 
@@ -166,7 +166,7 @@ tests/
     8. dictionary.rs apply_substitutions() (applied last, to final text before injection)
     9. db.rs INSERT transcription record
     10. injection.rs: re-focus captured HWND → save clipboard → contextual-cap check → Ctrl+V → restore clipboard
-    11. Emit 'open-flow:transcribed' to frontend
+    11. Emit 'verenu:transcribed' to frontend
     12. auto_learn.rs: monitor focused text for 30s via UI Automation for corrections
 ```
 
@@ -275,7 +275,7 @@ No user-facing feedback is shown when rejected. These are currently magic number
 The foreground window HWND is captured at the very start of `run_pipeline()`, before any async API call. This ensures Ctrl+V is sent to the correct window even if the user switches apps during the transcription/cleanup round-trip. The captured HWND is re-focused just before injection.
 
 ### Error handling convention
-Use `anyhow::Result` throughout Rust. Pipeline errors call `show_error_pill()` which logs, emits `open-flow:error` to the frontend (caught as a toast in `App.svelte`), and returns without crashing. Match this pattern for any new error path in the pipeline.
+Use `anyhow::Result` throughout Rust. Pipeline errors call `show_error_pill()` which logs, emits `verenu:error` to the frontend (caught as a toast in `App.svelte`), and returns without crashing. Match this pattern for any new error path in the pipeline.
 
 ### Version sync — **CRITICAL: all three files must be updated together**
 Version must be updated in exactly three files simultaneously, or the build will break:

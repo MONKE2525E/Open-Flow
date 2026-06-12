@@ -755,7 +755,7 @@ fn post_key_event(
 }
 
 /// Write `text` to the OS clipboard without injecting. Used as a fallback
-/// when Open Flow itself holds foreground focus and a normal paste would
+/// when Verenu itself holds foreground focus and a normal paste would
 /// land in our own WebView.
 pub async fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
     #[cfg(windows)]
@@ -932,8 +932,7 @@ pub async fn inject_text(
             } else {
                 unavailable_injection_probe()
             };
-            if (contextual_caps || auto_spacing)
-                && injection_probe.source.allows_history_fallback()
+            if (contextual_caps || auto_spacing) && injection_probe.source.allows_history_fallback()
             {
                 if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
                     injection_probe = history_probe;
@@ -1095,7 +1094,7 @@ pub async fn inject_text(
 
         if posted.is_none() {
             return Err(anyhow::anyhow!(
-                "inject_text: failed to synthesise Cmd+V — grant Open Flow Accessibility permission"
+                "inject_text: failed to synthesise Cmd+V — grant Verenu Accessibility permission"
             ));
         }
 

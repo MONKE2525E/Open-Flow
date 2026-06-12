@@ -1,12 +1,12 @@
 [package]
-name = "open-flow"
+name = "verenu"
 version = "0.12.1"
-description = "Open Flow — local-first AI dictation"
-authors = ["Open Flow Team"]
+description = "Verenu — local-first AI dictation"
+authors = ["Verenu Team"]
 edition = "2021"
 
 [[bin]]
-name = "open-flow"
+name = "verenu"
 path = "src/main.rs"
 
 [build-dependencies]

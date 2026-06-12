@@ -15,7 +15,7 @@ const os = require('os');
 const WAV_PATH = path.join(__dirname, 'smoke_test.wav');
 const STORE_PATH = path.join(
   process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
-  'com.openflow.app',
+  'com.verenu.app',
   'settings.json',
 );
 
@@ -77,7 +77,7 @@ function buildMultipart(boundary, fields) {
 // ── Groq transcription ────────────────────────────────────────────────────────
 
 async function transcribeGroq(apiKey, wavBuffer) {
-  const boundary = '----OpenFlowSmokeTest' + Date.now();
+  const boundary = '----VerenuSmokeTest' + Date.now();
   const body = buildMultipart(boundary, [
     { name: 'file', value: wavBuffer, filename: 'smoke_test.wav', contentType: 'audio/wav' },
     { name: 'model', value: 'whisper-large-v3-turbo' },
@@ -98,7 +98,7 @@ async function transcribeGroq(apiKey, wavBuffer) {
 // ── OpenAI transcription ──────────────────────────────────────────────────────
 
 async function transcribeOpenAI(apiKey, wavBuffer) {
-  const boundary = '----OpenFlowSmokeTest' + Date.now();
+  const boundary = '----VerenuSmokeTest' + Date.now();
   const body = buildMultipart(boundary, [
     { name: 'file', value: wavBuffer, filename: 'smoke_test.wav', contentType: 'audio/wav' },
     { name: 'model', value: 'gpt-4o-transcribe' },
@@ -185,7 +185,7 @@ async function cleanupOpenAI(apiKey, rawText, profile) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 (async () => {
-  console.log('Open Flow — pipeline smoke test');
+  console.log('Verenu — pipeline smoke test');
   console.log('================================\n');
 
   const errors = [];

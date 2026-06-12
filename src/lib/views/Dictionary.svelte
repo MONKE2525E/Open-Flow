@@ -102,7 +102,7 @@
   onMount(() => {
     let unlisten: (() => void) | undefined;
     fetchDictionary();
-    listen('open-flow:dictionary-updated', () => fetchDictionary())
+    listen('verenu:dictionary-updated', () => fetchDictionary())
       .then((cleanup) => { unlisten = cleanup; })
       .catch(() => {});
     updateSortIndicator();
@@ -212,7 +212,7 @@
             appStore.dictionary = appStore.dictionary.filter((entry) => entry.id !== id);
           } catch (err) {
             console.error(err);
-            await emit('open-flow:error', 'Could not delete dictionary term.');
+            await emit('verenu:error', 'Could not delete dictionary term.');
           } finally {
             const nextLeaving = new Set(leavingIds);
             nextLeaving.delete(id);

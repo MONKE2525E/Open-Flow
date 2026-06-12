@@ -12,9 +12,9 @@
   let versionTapTimer: ReturnType<typeof setTimeout> | null = null;
   let devModeHintVisible = $state(false);
 
-  // Defaults to the current Open-Flow repo and is replaced with
+  // Defaults to the current Verenu repo and is replaced with
   // "MONKE2525E/Verenu" once the backend confirms that repo exists.
-  let sourceRepo = $state('MONKE2525E/Open-Flow');
+  let sourceRepo = $state('MONKE2525E/Verenu');
 
   $effect(() => {
     if (appStore.updateInfo) updateCheckState = 'available';
