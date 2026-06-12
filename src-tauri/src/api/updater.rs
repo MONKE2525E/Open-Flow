@@ -18,10 +18,9 @@ pub struct UpdateInfo {
     pub download_url: String,
 }
 
-/// Repos to check for releases, in priority order. MONKE2525E/Verenu is the
-/// planned future home of this project's GitHub repo; MONKE2525E/Open-Flow
-/// is the current one. Checking both lets releases published under either
-/// name be picked up without another code change once the rename happens.
+/// Repos to check for releases. Prefer the renamed repo first, but keep the
+/// old repo as a fallback during the transition so update checks still work for
+/// releases published there.
 const RELEASE_REPOS: &[&str] = &["MONKE2525E/Verenu", "MONKE2525E/Open-Flow"];
 
 /// Check all configured repos for a release newer than the current version,
@@ -54,7 +53,7 @@ async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
     let resp = super::client::get()
         .get(&url)
-        .header("User-Agent", "open-flow")
+        .header("User-Agent", "verenu")
         .send()
         .await?;
 
@@ -113,7 +112,7 @@ async fn resolve_source_repo_uncached() -> Option<String> {
         let url = format!("https://api.github.com/repos/{repo}");
         match super::client::get()
             .get(&url)
-            .header("User-Agent", "open-flow")
+            .header("User-Agent", "verenu")
             .send()
             .await
         {
@@ -133,7 +132,7 @@ async fn resolve_source_repo_uncached() -> Option<String> {
 }
 
 /// Extract the first three numeric groups from any version string, return as "major.minor.patch".
-/// Handles tags like "vOpen-Flow-0.5.0-beta", "v1.2.3", "0.5.0", etc.
+/// Handles tags like "vVerenu-0.5.0-beta", "v1.2.3", "0.5.0", etc.
 fn normalize_version(tag: &str) -> String {
     let parts: Vec<u32> = tag
         .split(|c: char| !c.is_ascii_digit())

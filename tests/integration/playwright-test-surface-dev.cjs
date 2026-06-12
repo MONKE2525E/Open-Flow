@@ -45,15 +45,15 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
     await page.locator('.nav-item:has-text("Dictionary")').click();
     await page.locator('h1.page-h:has-text("Dictionary")').waitFor({ state: 'visible', timeout: TIMEOUT });
     await page.locator('.toolbar .btn-primary:has-text("Add term")').click();
-    await page.locator('#dict-term').fill('OpenFlow');
-    await page.locator('#dict-mistake').fill('open flow');
+    await page.locator('#dict-term').fill('Verenu');
+    await page.locator('#dict-mistake').fill('verenu');
     await page.locator('.modal-card .btn-primary:has-text("Add term")').click();
-    await page.locator('.dict-row:has-text("OpenFlow")').waitFor({ state: 'visible', timeout: TIMEOUT });
+    await page.locator('.dict-row:has-text("Verenu")').waitFor({ state: 'visible', timeout: TIMEOUT });
     if (!(await page.locator('.insp-often').isVisible().catch(() => false))) {
-      await page.locator('.dict-row:has-text("OpenFlow")').click();
+      await page.locator('.dict-row:has-text("Verenu")').click();
     }
     const dictInspector = (await page.locator('.insp-often').textContent()) || '';
-    if (!dictInspector.includes('open flow')) errors.push('Dictionary inspector did not show mistake text');
+    if (!dictInspector.includes('verenu')) errors.push('Dictionary inspector did not show mistake text');
 
     await page.locator('.nav-item:has-text("Style")').click();
     await page.locator('h1.page-h:has-text("Style")').waitFor({ state: 'visible', timeout: TIMEOUT });
@@ -78,7 +78,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
     await page.locator('h2.settings-h:has-text("Developer")').waitFor({ state: 'visible', timeout: TIMEOUT });
     await page.getByRole('button', { name: 'Download Logs' }).click();
     const exportStatus = (await page.locator('.export-status').textContent()) || '';
-    if (!exportStatus.includes('browser-dev://open-flow-logs.txt')) {
+    if (!exportStatus.includes('browser-dev://verenu-logs.txt')) {
       errors.push('Developer log export did not report the dev download path');
     }
     await closeSettings(page);
@@ -89,16 +89,16 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
     if (!retentionText.includes('Forever')) errors.push('Privacy retention did not persist across reopen');
     await closeSettings(page);
 
-    const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('open-flow:dev-settings') || '{}'));
+    const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('verenu:dev-settings') || '{}'));
     if (persisted.cleanup_intensity !== 'high') errors.push('Style cleanup choice did not persist');
     if (persisted.default_tone !== 'formal') errors.push('Style tone choice did not persist');
     if (persisted.history_retention !== 'Forever') errors.push('Privacy retention did not persist to dev settings');
     if (persisted.auto_learn_enabled !== true) errors.push('Privacy auto-learn toggle did not persist');
 
-    const storedSnippets = await page.evaluate(() => JSON.parse(localStorage.getItem('open-flow:dev-snippets') || '[]'));
+    const storedSnippets = await page.evaluate(() => JSON.parse(localStorage.getItem('verenu:dev-snippets') || '[]'));
     if (!storedSnippets.some((entry) => entry.trigger === 'sig')) errors.push('Snippet CRUD did not persist to local storage');
-    const storedDictionary = await page.evaluate(() => JSON.parse(localStorage.getItem('open-flow:dev-dictionary') || '[]'));
-    if (!storedDictionary.some((entry) => entry.term === 'OpenFlow')) errors.push('Dictionary CRUD did not persist to local storage');
+    const storedDictionary = await page.evaluate(() => JSON.parse(localStorage.getItem('verenu:dev-dictionary') || '[]'));
+    if (!storedDictionary.some((entry) => entry.term === 'Verenu')) errors.push('Dictionary CRUD did not persist to local storage');
 
     if (errors.length > 0) {
       console.error('FAIL');

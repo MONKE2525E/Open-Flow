@@ -2,17 +2,17 @@
 
 <!--
   Required. Trace your reasoning from the top of the project down to this
-  specific change. Start with what Open Flow is, then narrow through the
+  specific change. Start with what Verenu is, then narrow through the
   subsystem, the problem, and why this PR exists. Use blockquote style.
-  Aim for 5–8 steps.
+  Aim for 5-8 steps.
 -->
 
-> - Open Flow is a Windows AI dictation app — hotkey hold → audio capture → transcription → LLM cleanup → text injection
+> - Verenu is a Windows AI dictation app - hotkey hold -> audio capture -> transcription -> LLM cleanup -> text injection
 > - [Which subsystem: hotkey / audio / pipeline / injection / settings / UI / data]
 > - [What problem or gap exists]
 > - [Why it needs to be addressed now]
-> - This pull request …
-> - The benefit is …
+> - This pull request ...
+> - The benefit is ...
 
 ## What Changed
 
@@ -26,7 +26,7 @@
   How can a reviewer confirm this works?
   Include test commands, manual steps, or both.
   For UI changes: before/after screenshots.
-  For pipeline changes: describe the test scenario (hotkey hold → injection).
+  For pipeline changes: describe the test scenario (hotkey hold -> injection).
 -->
 
 -
@@ -41,7 +41,7 @@
 
 -
 
-> Check [`docs/ROADMAP.md`](../docs/ROADMAP.md) before opening feature PRs — work that overlaps with planned core changes may need to be redirected. See [`CLAUDE.md`](../CLAUDE.md) for architecture and contribution guidance.
+> Check [`docs/ROADMAP.md`](../docs/ROADMAP.md) before opening feature PRs - work that overlaps with planned core changes may need to be redirected. See [`CLAUDE.md`](../CLAUDE.md) for architecture and contribution guidance.
 
 ## Model Used
 
@@ -49,16 +49,16 @@
   Required. Which AI model assisted with this change?
   Include provider, model ID/version, and any special modes
   (e.g., extended thinking, tool use, long context).
-  Write "None — human-authored" if no model was used.
+  Write "None - human-authored" if no model was used.
 -->
 
 -
 
 ## Checklist
 
-- [ ] Thinking path traces from Open Flow context down to this specific change
+- [ ] Thinking path traces from Verenu context down to this specific change
 - [ ] Model used is specified (provider + version)
-- [ ] Checked `docs/ROADMAP.md` — this PR does not duplicate planned work
+- [ ] Checked `docs/ROADMAP.md` - this PR does not duplicate planned work
 - [ ] `npm run check` passes (TypeScript)
 - [ ] `npm run lint` passes (ESLint + Clippy)
 - [ ] `npm run test:rust` passes

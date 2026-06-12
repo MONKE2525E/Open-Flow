@@ -1,3 +1,4 @@
+use super::snippets;
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -123,12 +124,57 @@ fn ensure_cleanup_cache_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn load_snippet_rows(conn: &Connection) -> Result<Vec<Snippet>> {
+    let mut snippet_stmt = conn.prepare(
+        "SELECT id, trigger, expansion, instructions, use_count, created_at \
+         FROM snippets",
+    )?;
+    let rows = snippet_stmt
+        .query_map([], |r| {
+            Ok(Snippet {
+                id: r.get(0)?,
+                trigger: r.get(1)?,
+                expansion: r.get(2)?,
+                instructions: r.get(3)?,
+                use_count: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+fn compute_spoken_words(conn: &Connection, raw_text: &str) -> Result<i64> {
+    let snippets = load_snippet_rows(conn)?;
+    Ok(snippets::count_words_without_snippet_triggers(
+        raw_text,
+        &snippets,
+    ))
+}
+
+fn backfill_spoken_words(conn: &Connection) -> Result<()> {
+    let snippets = load_snippet_rows(conn)?;
+    let mut select = conn.prepare("SELECT id, raw_text FROM transcriptions WHERE spoken_words IS NULL")?;
+    let rows = select
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut update = conn.prepare("UPDATE transcriptions SET spoken_words = ?2 WHERE id = ?1")?;
+
+    for (id, raw_text) in rows {
+        let spoken_words = snippets::count_words_without_snippet_triggers(&raw_text, &snippets);
+        update.execute(params![id, spoken_words])?;
+    }
+
+    Ok(())
+}
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS transcriptions (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   raw_text    TEXT    NOT NULL,
   clean_text  TEXT    NOT NULL,
   words       INTEGER NOT NULL DEFAULT 0,
+  spoken_words INTEGER,
   duration_ms INTEGER NOT NULL DEFAULT 0,
   api_used    TEXT    NOT NULL DEFAULT '',
   created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
@@ -362,6 +408,24 @@ pub fn open(path: &str) -> Result<Db> {
         }
         conn.execute_batch("COMMIT;")?;
     }
+    if user_version < 7 {
+        conn.execute_batch("BEGIN;")?;
+        if let Err(err) = (|| -> Result<()> {
+            ensure_table_column(
+                &conn,
+                "transcriptions",
+                "spoken_words",
+                "ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;",
+            )?;
+            backfill_spoken_words(&conn)?;
+            conn.execute_batch("PRAGMA user_version = 7;")?;
+            Ok(())
+        })() {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err);
+        }
+        conn.execute_batch("COMMIT;")?;
+    }
     ensure_cleanup_cache_schema(&conn)?;
 
     Ok(Arc::new(Mutex::new(conn)))
@@ -422,11 +486,12 @@ pub fn insert_transcription_returning(
     api_used: &str,
 ) -> Result<RecentEntry> {
     let conn = lock_conn(db)?;
+    let spoken_words = compute_spoken_words(&conn, raw)?;
     Ok(conn.query_row(
-        "INSERT INTO transcriptions (raw_text, clean_text, words, duration_ms, api_used) \
-         VALUES (?1, ?2, ?3, ?4, ?5) \
+        "INSERT INTO transcriptions (raw_text, clean_text, words, spoken_words, duration_ms, api_used) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
          RETURNING id, clean_text, words, created_at",
-        params![raw, clean, words, duration_ms, api_used],
+        params![raw, clean, words, spoken_words, duration_ms, api_used],
         |r| {
             Ok(RecentEntry {
                 id: r.get(0)?,
@@ -465,10 +530,10 @@ pub fn query_stats(db: &Db) -> Result<Stats> {
         [],
         |r| r.get(0),
     )?;
-
     let avg_wpm: f64 = conn.query_row(
-        "SELECT COALESCE(AVG(CAST(words AS REAL)*60000.0/duration_ms),0.0) \
-         FROM transcriptions WHERE duration_ms > 0",
+        "SELECT COALESCE(AVG(CAST(spoken_words AS REAL) * 60000.0 / duration_ms), 0.0)
+         FROM transcriptions
+         WHERE duration_ms > 0 AND spoken_words > 0",
         [],
         |r| r.get(0),
     )?;
@@ -1274,6 +1339,54 @@ mod tests {
     }
 
     #[test]
+    fn open_backfills_legacy_spoken_words_column() {
+        let path = temp_db_path("legacy_spoken_words");
+        {
+            let conn = Connection::open(&path).expect("create legacy db");
+            conn.execute_batch(
+                "CREATE TABLE transcriptions (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   raw_text TEXT NOT NULL,
+                   clean_text TEXT NOT NULL,
+                   words INTEGER NOT NULL DEFAULT 0,
+                   duration_ms INTEGER NOT NULL DEFAULT 0,
+                   api_used TEXT NOT NULL DEFAULT '',
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE TABLE snippets (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   trigger TEXT NOT NULL UNIQUE,
+                   expansion TEXT NOT NULL,
+                   instructions TEXT NOT NULL DEFAULT '',
+                   use_count INTEGER NOT NULL DEFAULT 0,
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 INSERT INTO snippets (trigger, expansion) VALUES ('sig', 'signature');
+                 INSERT INTO transcriptions (raw_text, clean_text, words, duration_ms, api_used)
+                   VALUES ('hello sig world', 'clean', 3, 1000, 'test');
+                 PRAGMA user_version = 6;",
+            )
+            .expect("seed legacy db");
+        }
+
+        let db = open(path.to_str().expect("path string")).expect("open repairs legacy db");
+        let conn = lock_conn(&db).expect("lock");
+        let spoken_words: i64 = conn
+            .query_row(
+                "SELECT spoken_words FROM transcriptions LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .expect("spoken words");
+        assert_eq!(spoken_words, 2);
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
     fn auto_learn_does_not_overwrite_manual_dictionary_entry() {
         let db = test_db();
 
@@ -1496,6 +1609,85 @@ mod tests {
         assert!(cleanup_cache_get_active(&db, "k")
             .expect("get after")
             .is_none());
+    }
+
+    #[test]
+    fn stats_avg_wpm_ignores_snippet_triggers_even_when_stored_words_are_inflated() {
+        let db = test_db();
+        insert_snippet(
+            &db,
+            "sig",
+            "A long email signature with a bunch of words",
+            "",
+        )
+        .expect("snippet");
+        insert_transcription_returning(&db, "sig.", "A long email signature", 9, 2000, "test")
+            .expect("transcription");
+
+        let stats = query_stats(&db).expect("stats");
+
+        assert_eq!(stats.total_words, 9);
+        assert_eq!(stats.avg_wpm, 0.0);
+    }
+
+    #[test]
+    fn stats_avg_wpm_counts_only_non_snippet_spoken_words() {
+        let db = test_db();
+        insert_snippet(&db, "sig", "A long email signature", "").expect("snippet");
+        insert_transcription_returning(
+            &db,
+            "please add sig thanks",
+            "Please add signature",
+            4,
+            2000,
+            "test",
+        )
+        .expect("transcription");
+
+        let stats = query_stats(&db).expect("stats");
+
+        assert_eq!(stats.avg_wpm, 90.0);
+    }
+
+    #[test]
+    fn stats_avg_wpm_excludes_pure_snippet_rows_from_average() {
+        let db = test_db();
+        insert_snippet(&db, "sig", "A long email signature", "").expect("snippet");
+        insert_transcription_returning(&db, "hello world", "hello world", 2, 1000, "test")
+            .expect("normal transcription");
+        insert_transcription_returning(&db, "sig.", "A long email signature", 4, 1000, "test")
+            .expect("snippet transcription");
+
+        let stats = query_stats(&db).expect("stats");
+
+        assert_eq!(stats.avg_wpm, 120.0);
+    }
+
+    #[test]
+    fn stats_avg_wpm_streams_large_transcription_sets() {
+        let db = test_db();
+        insert_snippet(&db, "sig", "signature block", "").expect("snippet");
+
+        for idx in 0..500 {
+            insert_transcription_returning(
+                &db,
+                if idx % 2 == 0 {
+                    "hello world"
+                } else {
+                    "hello sig world"
+                },
+                "clean",
+                3,
+                1000,
+                "test",
+            )
+            .expect("transcription");
+        }
+
+        let stats = query_stats(&db).expect("stats");
+
+        assert_eq!(stats.total_words, 1500);
+        assert!(stats.avg_wpm > 0.0);
     }
 
     #[test]

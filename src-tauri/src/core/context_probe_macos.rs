@@ -34,7 +34,7 @@ struct MacosContextProbeResult {
 }
 
 unsafe extern "C" {
-    fn openflow_macos_read_context_probe(
+    fn verenu_macos_read_context_probe(
         lookbehind_chars: i32,
         out_result: *mut MacosContextProbeResult,
     ) -> i32;
@@ -83,7 +83,7 @@ pub fn read_injection_context_probe_sync() -> InjectionContextProbe {
     };
 
     // SAFETY: The shim fills the provided POD struct and does not retain Rust memory.
-    let ok = unsafe { openflow_macos_read_context_probe(LOOKBEHIND_CHARS, &mut raw) };
+    let ok = unsafe { verenu_macos_read_context_probe(LOOKBEHIND_CHARS, &mut raw) };
     if ok == 0 {
         return InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "ffi_failed");
     }

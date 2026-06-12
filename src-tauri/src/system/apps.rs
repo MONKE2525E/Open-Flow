@@ -174,7 +174,7 @@ fn is_user_facing_app(app: &InstalledApp) -> bool {
         "dwm.exe",
         "fontdrvhost.exe",
         "lsass.exe",
-        "open-flow.exe",
+        "verenu.exe",
         "registry",
         "runtimebroker.exe",
         "searchhost.exe",

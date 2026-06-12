@@ -2948,45 +2948,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "open-flow"
-version = "0.12.1"
-dependencies = [
- "accessibility-sys",
- "anyhow",
- "base64 0.22.1",
- "bytes",
- "cc",
- "chrono",
- "core-foundation 0.10.1",
- "core-foundation-sys",
- "core-graphics 0.24.0",
- "coreaudio-rs",
- "cpal",
- "crossbeam-queue",
- "foreign-types-shared 0.3.1",
- "hound",
- "libc",
- "libproc",
- "log",
- "nnnoiseless",
- "objc2 0.5.2",
- "objc2-foundation 0.2.2",
- "reqwest 0.12.28",
- "rusqlite",
- "security-framework 2.11.1",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "tokio",
- "windows 0.61.3",
-]
-
-[[package]]
 name = "openssl"
 version = "0.10.79"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5168,6 +5129,45 @@ name = "vec_map"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191"
+
+[[package]]
+name = "verenu"
+version = "0.12.1"
+dependencies = [
+ "accessibility-sys",
+ "anyhow",
+ "base64 0.22.1",
+ "bytes",
+ "cc",
+ "chrono",
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "core-graphics 0.24.0",
+ "coreaudio-rs",
+ "cpal",
+ "crossbeam-queue",
+ "foreign-types-shared 0.3.1",
+ "hound",
+ "libc",
+ "libproc",
+ "log",
+ "nnnoiseless",
+ "objc2 0.5.2",
+ "objc2-foundation 0.2.2",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "security-framework 2.11.1",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "tokio",
+ "windows 0.61.3",
+]
 
 [[package]]
 name = "version-compare"

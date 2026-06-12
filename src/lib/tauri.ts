@@ -33,9 +33,9 @@ type DevDictionaryEntry = {
   created_at: string;
 };
 
-const DEV_STORAGE_KEY = 'open-flow:dev-settings';
-const DEV_SNIPPETS_KEY = 'open-flow:dev-snippets';
-const DEV_DICTIONARY_KEY = 'open-flow:dev-dictionary';
+const DEV_STORAGE_KEY = 'verenu:dev-settings';
+const DEV_SNIPPETS_KEY = 'verenu:dev-snippets';
+const DEV_DICTIONARY_KEY = 'verenu:dev-dictionary';
 
 const defaultProviderModels = {
   groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
@@ -188,7 +188,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'check_for_update':
       return null as T;
     case 'get_source_repo':
-      return 'MONKE2525E/Open-Flow' as T;
+      return 'MONKE2525E/Verenu' as T;
     case 'check_connectivity':
       return (typeof navigator === 'undefined' ? true : navigator.onLine) as T;
     case 'get_cleanup_cache_status':
@@ -345,7 +345,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       writeDevSetting('app_mappings', args?.mappings ?? []);
       return undefined as T;
     case 'download_logs':
-      return 'browser-dev://open-flow-logs.txt' as T;
+      return 'browser-dev://verenu-logs.txt' as T;
     default:
       throw new Error(`Tauri command "${command}" is unavailable in browser dev mode.`);
   }

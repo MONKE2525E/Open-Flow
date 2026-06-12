@@ -83,7 +83,7 @@
         appStore.setupComplete = false;
       }
 
-      const unlisten = await listen<string>('open-flow:error', (ev) => {
+      const unlisten = await listen<string>('verenu:error', (ev) => {
         errorToast = ev.payload ?? 'Something went wrong';
         clearTimeout(toastTimer);
         toastTimer = setTimeout(() => { errorToast = ''; }, 5000);

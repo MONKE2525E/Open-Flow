@@ -68,14 +68,14 @@ fn lock_state(state: &SharedState) -> anyhow::Result<MutexGuard<'_, AppState>> {
 
 fn emit_pipeline_failed(app: &AppHandle) {
     app.emit(
-        "open-flow:pipeline-failed",
+        "verenu:pipeline-failed",
         Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
     )
     .ok();
 }
 
 /// Returns true if our own process currently owns the foreground window.
-/// Catches the case where the user opened the Open Flow main window while
+/// Catches the case where the user opened the Verenu main window while
 /// transcribing — if we tried to Ctrl+V / Cmd+V in that state the paste would
 /// land in our own WebView and silently disappear.
 fn foreground_is_own_process() -> bool {
@@ -99,7 +99,7 @@ fn foreground_is_own_process() -> bool {
 }
 
 /// Returns true if `hwnd` belongs to our own process.
-/// Catches the case where recording was started while Open Flow itself had focus.
+/// Catches the case where recording was started while Verenu itself had focus.
 #[cfg_attr(not(windows), allow(unused_variables))]
 fn hwnd_is_own_process(hwnd: usize) -> bool {
     if hwnd == 0 {
@@ -217,7 +217,7 @@ pub fn start_recording_session(
     {
         log::error!("start recording: {e}");
         hide_pill(app);
-        app.emit("open-flow:error", format!("Failed to start recording: {e}"))
+        app.emit("verenu:error", format!("Failed to start recording: {e}"))
             .ok();
     }
 }
@@ -248,7 +248,7 @@ pub fn start_recording_session_ex(
     {
         if !crate::commands::check_accessibility_permission(false) {
             return Err(
-                "Accessibility permission is required for Open Flow on macOS. Open System Settings > Privacy & Security > Accessibility and enable Open Flow."
+                "Accessibility permission is required for Verenu on macOS. Open System Settings > Privacy & Security > Accessibility and enable Verenu."
                     .to_string(),
             );
         }
@@ -256,7 +256,7 @@ pub fn start_recording_session_ex(
         match crate::system::mac_app::microphone_permission_status() {
             "denied" | "restricted" => {
                 return Err(
-                    "Microphone access is blocked on macOS. Open System Settings > Privacy & Security > Microphone and enable Open Flow."
+                    "Microphone access is blocked on macOS. Open System Settings > Privacy & Security > Microphone and enable Verenu."
                         .to_string(),
                 );
             }
@@ -524,7 +524,7 @@ fn next_cache_expiry(
 
 async fn show_error_pill(app: &AppHandle, msg: &str) {
     log::error!("pipeline error: {msg}");
-    app.emit("open-flow:error", msg).ok();
+    app.emit("verenu:error", msg).ok();
     show_pill(app, "error");
     if let Some(w) = app.get_webview_window("main") {
         w.show().ok();
@@ -537,7 +537,7 @@ async fn show_error_pill(app: &AppHandle, msg: &str) {
 /// Shows the pill in error state for a quality-gate rejection without
 /// focusing the main window or blocking the pipeline task.
 fn reject_with_pill(app: &AppHandle, msg: &str) {
-    app.emit("open-flow:error", msg).ok();
+    app.emit("verenu:error", msg).ok();
     show_pill(app, "error");
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -1790,7 +1790,7 @@ mod tests {
             instructions: "all capitals".into(),
         });
         request.dictionary.push(PipelineTestDictionaryEntry {
-            term: "OpenFlow".into(),
+            term: "Verenu".into(),
             mistake: Some("ACME".into()),
         });
 
@@ -1798,7 +1798,7 @@ mod tests {
             .await
             .expect("instruction and dictionary path should succeed");
         assert_eq!(result.final_text_before_dictionary, "ACME ALERT");
-        assert_eq!(result.injected_text, "OpenFlow ALERT");
+        assert_eq!(result.injected_text, "Verenu ALERT");
         reset();
     }
 
@@ -2037,7 +2037,7 @@ async fn finalize_pipeline_completion(
     hide_pill(app);
     let inject_stage = std::time::Instant::now();
 
-    // If Open Flow itself has foreground focus, a Ctrl+V / Cmd+V paste would
+    // If Verenu itself has foreground focus, a Ctrl+V / Cmd+V paste would
     // land in our own WebView with no active text field and silently disappear.
     // Detect this by PID and fall back to clipboard-only so the user can paste manually.
     let self_inject = foreground_is_own_process() || hwnd_is_own_process(ctx.target_hwnd);
@@ -2047,7 +2047,8 @@ async fn finalize_pipeline_completion(
         if let Err(e) = injection::copy_to_clipboard(&final_text_substituted).await {
             log::warn!("pipeline: clipboard fallback write failed: {e}");
         }
-        app.emit("open-flow:error", "Text copied — press Ctrl+V to paste").ok();
+        app.emit("verenu:error", "Text copied — press Ctrl+V to paste")
+            .ok();
         injection::InjectionOutcome {
             text: final_text_substituted.clone(),
             context_state: "self_inject",
@@ -2092,7 +2093,7 @@ async fn finalize_pipeline_completion(
         injected_text.chars().count(),
         inject_stage.elapsed().as_millis()
     );
-    app.emit("open-flow:transcribed", &injected_text).ok();
+    app.emit("verenu:transcribed", &injected_text).ok();
 
     if !ctx.cleanup_cache_key.is_empty() {
         auto_learn::start_cache_rejection_monitor(

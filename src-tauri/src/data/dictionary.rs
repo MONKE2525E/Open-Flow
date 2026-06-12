@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn relevant_prompt_prefers_matching_entries() {
         let entries = vec![
-            entry(1, "Open Flow", Some("open floor")),
+            entry(1, "Verenu", Some("open floor")),
             entry(2, "UnrelatedTerm", None),
         ];
 
@@ -272,7 +272,7 @@ mod tests {
             "Please mention open floor in this sentence.",
         );
 
-        assert!(prompt.contains("Open Flow"));
+        assert!(prompt.contains("Verenu"));
     }
 
     #[test]
@@ -292,7 +292,7 @@ mod tests {
     fn relevant_prompt_includes_close_spelling_match() {
         let entries = vec![
             entry(1, "unifi", Some("unified")),
-            entry(2, "Open Flow", Some("open floor")),
+            entry(2, "Verenu", Some("open floor")),
         ];
         let prompt =
             build_relevant_dictionary_prompt_from(&entries, "home assistant and unify setup");

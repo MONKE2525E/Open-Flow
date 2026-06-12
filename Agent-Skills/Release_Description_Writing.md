@@ -1,6 +1,6 @@
 # Release Description Writing
 
-This guide documents the canonical format for Open Flow GitHub release descriptions. The style shown here matches the 0.12.0 release, incorporating cross-platform Windows and macOS support. Always wrap your markdown output inside of a ` ```markdown ` code block.
+This guide documents the canonical format for Verenu GitHub release descriptions. The style shown here matches the 0.12.0 release, incorporating cross-platform Windows and macOS support. Always wrap your markdown output inside of a ` ```markdown ` code block.
 
 ## Structure Overview
 
@@ -21,7 +21,7 @@ A release description has seven sections in this order:
 ### 1. Title (H1)
 
 ```
-# Open Flow <version> - <tagline>
+# Verenu <version> - <tagline>
 ```
 
 - Version uses the public-facing number only (e.g., `0.12.0`), not the tag slug.
@@ -31,7 +31,7 @@ A release description has seven sections in this order:
 ### 2. App Blurb
 
 ```
-**Open Flow** is a free, open-source AI dictation app for Windows and macOS. No subscriptions. You bring your own API keys.
+**Verenu** is a free, open-source AI dictation app for Windows and macOS. No subscriptions. You bring your own API keys.
 ```
 
 This anchors new readers who land on a release page without context.
@@ -46,7 +46,7 @@ This anchors new readers who land on a release page without context.
 Rules:
 - One bullet per distinct feature or improvement shipped in this version.
 - Lead with the feature name in bold, then a dash, then a single plain-English sentence.
-- Sentence starts with a verb ("Added", "Reworked", "Refactored", "Reduced") or describes what the app *can now do* ("Open Flow can now…").
+- Sentence starts with a verb ("Added", "Reworked", "Refactored", "Reduced") or describes what the app *can now do* ("Verenu can now…").
 - No trailing period on bullet items — consistent with previous releases.
 - Order: user-facing features first, then infrastructure/reliability, then testing/tooling last.
 - Do not include bug fixes that have no user-visible impact — fold them into the relevant hardening bullet if needed.
@@ -99,17 +99,17 @@ This is static.
 ```
 ## Virustotal Review
 
-- [Open Flow_<version>_x64-setup.exe](<virustotal url>)
-- [Open Flow_<version>_x64_en-US.msi](<virustotal url>)
-- [Open Flow_<version>_Apple_Silicon.dmg](<virustotal url>)
-- [Open Flow_<version>_Intel.dmg](<virustotal url>)
+- [Verenu_<version>_x64-setup.exe](<virustotal url>)
+- [Verenu_<version>_x64_en-US.msi](<virustotal url>)
+- [Verenu_<version>_Apple_Silicon.dmg](<virustotal url>)
+- [Verenu_<version>_Intel.dmg](<virustotal url>)
 ```
 
 Rules:
 - All four installer files (Windows `.exe`/`.msi` and macOS `.dmg` for both Apple Silicon and Intel) must have their own VirusTotal link.
-- Use exact display text formatting for file names (note the space in "Open Flow"):
-  - `Open Flow_<version>_x64-setup.exe`
-  - `Open Flow_<version>_x64_en-US.msi`
-  - `Open Flow_<version>_Apple_Silicon.dmg`
-  - `Open Flow_<version>_Intel.dmg`
+- Use exact display text formatting for file names (note the space in "Verenu"):
+  - `Verenu_<version>_x64-setup.exe`
+  - `Verenu_<version>_x64_en-US.msi`
+  - `Verenu_<version>_Apple_Silicon.dmg`
+  - `Verenu_<version>_Intel.dmg`
 - Upload all files manually at virustotal.com and copy the result URLs.

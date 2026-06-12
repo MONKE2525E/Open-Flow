@@ -8,7 +8,7 @@ use log::{LevelFilter, Log, Metadata, Record};
 use tauri::{AppHandle, Emitter, Manager};
 
 const MAX_LOG_LINES: usize = 1000;
-const LOG_EVENT: &str = "open-flow:log";
+const LOG_EVENT: &str = "verenu:log";
 
 static LOG_BUFFER: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
@@ -68,7 +68,7 @@ pub fn export_to_downloads(app: &AppHandle) -> Result<String, String> {
         .map_err(|e| format!("Failed to create Downloads path: {e}"))?;
 
     let ts = Local::now().format("%Y%m%d-%H%M%S");
-    let file_name = format!("open-flow-logs-{ts}.txt");
+    let file_name = format!("verenu-logs-{ts}.txt");
     let path: PathBuf = downloads.join(file_name);
     let payload = snapshot().join("\n");
     std::fs::write(&path, payload).map_err(|e| format!("Failed to write logs file: {e}"))?;
@@ -195,7 +195,7 @@ impl Log for SessionLogger {
         if !verbose
             && record.level() <= log::Level::Debug
             && !record.target().starts_with("open_flow")
-            && !record.target().starts_with("open-flow")
+            && !record.target().starts_with("verenu")
             && !record.target().starts_with("src_tauri")
         {
             return;

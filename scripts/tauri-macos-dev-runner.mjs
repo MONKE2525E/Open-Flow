@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-const APP_BINARY_NAME = 'open-flow';
+const APP_BINARY_NAME = 'verenu';
 
 const args = process.argv.slice(2);
 

@@ -2,6 +2,13 @@ use crate::data::db::{self, Db};
 use std::cmp::Reverse;
 use std::collections::HashMap;
 
+#[derive(Clone)]
+struct Match {
+    start: usize,
+    end: usize,
+    snippet_idx: usize,
+}
+
 fn lowercase_with_source_map(input: &str) -> (String, Vec<usize>) {
     let mut lowered = String::with_capacity(input.len());
     let mut source_map = Vec::with_capacity(input.len());
@@ -55,7 +62,117 @@ fn strip_punctuation_for_matching(s: &str) -> String {
 /// A trigger field may contain multiple phrases separated by commas,
 /// e.g. "Gemini Goal, Gemini Gold". Empty segments are filtered out.
 fn parse_triggers(trigger: &str) -> impl Iterator<Item = &str> {
-    trigger.split(',').map(|t| t.trim()).filter(|t| !t.is_empty())
+    trigger
+        .split(',')
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+}
+
+fn collect_trigger_matches(text: &str, snippets: &[db::Snippet]) -> Vec<Match> {
+    struct TriggerTarget {
+        needle: String,
+        snippet_idx: usize,
+    }
+
+    // Flatten all aliases into individual targets sorted by needle length descending.
+    // This prevents a shorter alias from one snippet shadowing a longer trigger from another
+    // snippet, which snippet-level sorting by max-length cannot guarantee.
+    let mut targets: Vec<TriggerTarget> = Vec::new();
+    for (snippet_idx, snippet) in snippets.iter().enumerate() {
+        for t in parse_triggers(&snippet.trigger) {
+            let needle = t.to_lowercase();
+            if !needle.is_empty() {
+                targets.push(TriggerTarget {
+                    needle,
+                    snippet_idx,
+                });
+            }
+        }
+    }
+    targets.sort_by_key(|t| Reverse(t.needle.len()));
+
+    let (haystack, source_map) = lowercase_with_source_map(text);
+    let mut all_matches: Vec<Match> = Vec::new();
+
+    for target in &targets {
+        let needle = &target.needle;
+        let snippet_idx = target.snippet_idx;
+
+        let mut search_from = 0;
+        while let Some(pos) = haystack[search_from..].find(needle.as_str()) {
+            let abs = search_from + pos;
+            let before_ok = abs == 0
+                || !haystack[..abs]
+                    .chars()
+                    .next_back()
+                    .map(is_word_char)
+                    .unwrap_or(false);
+            let after_ok = abs + needle.len() >= haystack.len()
+                || !haystack[abs + needle.len()..]
+                    .chars()
+                    .next()
+                    .map(is_word_char)
+                    .unwrap_or(false);
+            if before_ok && after_ok {
+                let start = source_map[abs];
+                let end_lower = abs + needle.len();
+                let mut end = if end_lower >= haystack.len() {
+                    text.len()
+                } else {
+                    source_map[end_lower]
+                };
+                if end <= start {
+                    let last_src = source_map[end_lower.saturating_sub(1)];
+                    end = end_of_char_at(text, last_src);
+                }
+                all_matches.push(Match {
+                    start,
+                    end,
+                    snippet_idx,
+                });
+            }
+            search_from = abs + needle.len();
+        }
+    }
+
+    all_matches.sort_by(|a, b| {
+        a.start
+            .cmp(&b.start)
+            .then_with(|| a.snippet_idx.cmp(&b.snippet_idx))
+            .then_with(|| b.end.cmp(&a.end))
+    });
+
+    let mut selected: Vec<Match> = Vec::new();
+    let mut last_end = 0usize;
+    for m in all_matches {
+        if m.start < last_end {
+            continue;
+        }
+        last_end = m.end;
+        selected.push(m);
+    }
+
+    selected
+}
+
+pub fn count_words_without_snippet_triggers(text: &str, snippets: &[db::Snippet]) -> i64 {
+    let matches = collect_trigger_matches(text, snippets);
+    let mut count = 0_i64;
+
+    for (start, word) in text.split_whitespace().scan(0usize, |search_from, word| {
+        let relative = text[*search_from..].find(word)?;
+        let start = *search_from + relative;
+        *search_from = start + word.len();
+        Some((start, word))
+    }) {
+        let end = start + word.len();
+        let overlaps_snippet = matches.iter().any(|m| start < m.end && end > m.start);
+        if !overlaps_snippet && word.chars().any(char::is_alphanumeric) {
+            count += 1;
+        }
+    }
+
+    count
 }
 
 /// If the entire transcription is just a snippet trigger (ignoring punctuation
@@ -105,103 +222,17 @@ pub fn collect_snippet_instructions_from(text: &str, snippets: &[db::Snippet]) -
 }
 
 pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -> String {
-    #[derive(Clone)]
-    struct Match {
-        start: usize,
-        end: usize,
-        snippet_idx: usize,
-    }
-
-    struct TriggerTarget {
-        needle: String,
-        snippet_idx: usize,
-    }
-
-    // Flatten all aliases into individual targets sorted by needle length descending.
-    // This prevents a shorter alias from one snippet shadowing a longer trigger from another
-    // snippet, which snippet-level sorting by max-length cannot guarantee.
-    let mut targets: Vec<TriggerTarget> = Vec::new();
-    for (snippet_idx, snippet) in snippets.iter().enumerate() {
-        for t in parse_triggers(&snippet.trigger) {
-            let needle = t.to_lowercase();
-            if !needle.is_empty() {
-                targets.push(TriggerTarget { needle, snippet_idx });
-            }
-        }
-    }
-    targets.sort_by_key(|t| Reverse(t.needle.len()));
-
     let mut result = text.to_string();
-    let (haystack, source_map) = lowercase_with_source_map(&result);
-    let mut all_matches: Vec<Match> = Vec::new();
-
-    for target in &targets {
-        let needle = &target.needle;
-        let snippet_idx = target.snippet_idx;
-
-        let mut search_from = 0;
-        while let Some(pos) = haystack[search_from..].find(needle.as_str()) {
-            let abs = search_from + pos;
-            let before_ok = abs == 0
-                || !haystack[..abs]
-                    .chars()
-                    .next_back()
-                    .map(is_word_char)
-                    .unwrap_or(false);
-            let after_ok = abs + needle.len() >= haystack.len()
-                || !haystack[abs + needle.len()..]
-                    .chars()
-                    .next()
-                    .map(is_word_char)
-                    .unwrap_or(false);
-            if before_ok && after_ok {
-                let start = source_map[abs];
-                let end_lower = abs + needle.len();
-                let mut end = if end_lower >= haystack.len() {
-                    result.len()
-                } else {
-                    source_map[end_lower]
-                };
-                if end <= start {
-                    let last_src = source_map[end_lower.saturating_sub(1)];
-                    end = end_of_char_at(&result, last_src);
-                }
-                all_matches.push(Match {
-                    start,
-                    end,
-                    snippet_idx,
-                });
-            }
-            search_from = abs + needle.len();
-        }
-    }
-
-    all_matches.sort_by(|a, b| {
-        a.start
-            .cmp(&b.start)
-            .then_with(|| a.snippet_idx.cmp(&b.snippet_idx))
-            .then_with(|| b.end.cmp(&a.end))
-    });
-
-    let mut selected: Vec<Match> = Vec::new();
-    let mut last_end = 0usize;
-    for m in all_matches {
-        if m.start < last_end {
-            continue;
-        }
-        last_end = m.end;
-        selected.push(m);
-    }
+    let selected = collect_trigger_matches(&result, snippets);
+    let mut usage_counts: HashMap<i64, i64> = HashMap::new();
 
     for m in selected.iter().rev() {
+        let snippet = &mut snippets[m.snippet_idx];
+        snippet.use_count += 1;
+        *usage_counts.entry(snippet.id).or_insert(0) += 1;
         result.replace_range(m.start..m.end, &snippets[m.snippet_idx].expansion);
     }
 
-    let mut usage_counts: HashMap<i64, i64> = HashMap::new();
-    for m in selected {
-        let snippet_id = snippets[m.snippet_idx].id;
-        *usage_counts.entry(snippet_id).or_insert(0) += 1;
-    }
     if !usage_counts.is_empty() {
         let mut batched_counts: Vec<(i64, i64)> = usage_counts.into_iter().collect();
         batched_counts.sort_by_key(|(id, _)| *id);
@@ -332,7 +363,10 @@ fn ensure_final_exclamation(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_cleanup_instruction_overrides, expand_snippets_from};
+    use super::{
+        apply_cleanup_instruction_overrides, count_words_without_snippet_triggers,
+        expand_snippets_from,
+    };
     use crate::data::db;
 
     #[test]
@@ -400,5 +434,67 @@ mod tests {
 
         let out = expand_snippets_from("pre-test run", &mut snippets, &db);
         assert_eq!(out, "pre-test run");
+    }
+
+    #[test]
+    fn word_count_ignores_standalone_snippet_triggers() {
+        let snippets = vec![db::Snippet {
+            id: 1,
+            trigger: "email sig, signature".to_string(),
+            expansion: "A long email signature with many words".to_string(),
+            instructions: String::new(),
+            use_count: 0,
+            created_at: String::new(),
+        }];
+
+        let count = count_words_without_snippet_triggers("please add email sig thanks", &snippets);
+
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn word_count_ignores_pure_snippet_with_terminal_punctuation() {
+        let snippets = vec![db::Snippet {
+            id: 1,
+            trigger: "sig".to_string(),
+            expansion: "A long email signature with many words".to_string(),
+            instructions: String::new(),
+            use_count: 0,
+            created_at: String::new(),
+        }];
+
+        let count = count_words_without_snippet_triggers("sig.", &snippets);
+
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn word_count_keeps_snippet_trigger_inside_hyphenated_word() {
+        let snippets = vec![db::Snippet {
+            id: 1,
+            trigger: "test".to_string(),
+            expansion: "exam".to_string(),
+            instructions: String::new(),
+            use_count: 0,
+            created_at: String::new(),
+        }];
+
+        let count = count_words_without_snippet_triggers("pre-test run", &snippets);
+
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn expand_snippets_increments_use_count_for_each_match() {
+        let db = db::open(":memory:").expect("test db");
+        db::insert_snippet(&db, "sig", "Best regards", "").expect("insert snippet");
+        let mut snippets = db::query_snippets(&db).expect("query snippets");
+
+        let out = expand_snippets_from("sig and sig", &mut snippets, &db);
+        assert_eq!(out, "Best regards and Best regards");
+        assert_eq!(snippets[0].use_count, 2);
+
+        let persisted = db::query_snippets(&db).expect("query persisted");
+        assert_eq!(persisted[0].use_count, 2);
     }
 }

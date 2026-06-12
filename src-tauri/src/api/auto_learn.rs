@@ -1603,7 +1603,7 @@ pub fn start_monitor(injected_text: String, app_context: String, db: DbHandle, a
                     candidate.confidence,
                 ) {
                     log::info!("auto-learn: promoted candidate pair");
-                    app.emit("open-flow:dictionary-updated", ()).ok();
+                    app.emit("verenu:dictionary-updated", ()).ok();
                 }
             }
         }
@@ -1639,15 +1639,14 @@ fn apply_rejection(target: &RejectionTarget, db: &DbHandle, app: &AppHandle, pre
             if let Err(e) = db::delete_auto_learned_entries_by_ids(db, ids) {
                 log::warn!("{prefix}: delete failed: {e}");
             } else {
-                app.emit("open-flow:dictionary-entry-rejected", ids.len())
-                    .ok();
+                app.emit("verenu:dictionary-entry-rejected", ids.len()).ok();
             }
         }
         RejectionTarget::CacheKey { key } => {
             if let Err(e) = db::cleanup_cache_delete_by_key(db, key) {
                 log::warn!("{prefix}: delete failed: {e}");
             } else {
-                app.emit("open-flow:cleanup-cache-invalidated", ()).ok();
+                app.emit("verenu:cleanup-cache-invalidated", ()).ok();
             }
         }
     }

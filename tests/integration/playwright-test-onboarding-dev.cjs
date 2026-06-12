@@ -83,7 +83,7 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     await page.getByRole('button', { name: 'Start dictating' }).click();
     await page.locator('h1.page-h:has-text("Welcome back")').waitFor({ state: 'visible', timeout: TIMEOUT });
 
-    const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('open-flow:dev-settings') || '{}'));
+    const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('verenu:dev-settings') || '{}'));
     if (persisted.transcription_provider !== 'openai') errors.push('Provider did not persist to dev settings');
     if (persisted.cleanup_intensity !== 'high') errors.push('Cleanup intensity did not persist as Direct/high');
     if (persisted.default_tone !== 'formal') errors.push('Tone did not persist');

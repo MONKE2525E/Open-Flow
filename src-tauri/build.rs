@@ -5,7 +5,7 @@ fn main() {
         cc::Build::new()
             .file("src/system/macos_ax_text_marker.m")
             .flag("-fobjc-arc")
-            .compile("openflow_macos_ax_text_marker");
+            .compile("verenu_macos_ax_text_marker");
     }
 
     println!("cargo:rerun-if-changed=Info.plist");

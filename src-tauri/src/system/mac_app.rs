@@ -117,7 +117,7 @@ pub fn apply_dock_icon() -> bool {
 
 /// Switch the app to macOS accessory mode so it stays out of the Dock.
 ///
-/// This is the default for Open Flow on macOS when the main window is hidden
+/// This is the default for Verenu on macOS when the main window is hidden
 /// or shown from the menu bar/tray.
 pub fn set_accessory_activation_policy() -> bool {
     set_activation_policy(POLICY_ACCESSORY)

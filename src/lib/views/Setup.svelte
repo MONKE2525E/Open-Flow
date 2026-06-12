@@ -475,7 +475,7 @@
               <span style="height:25%"></span>
             </div>
             <div class="intro-wordmark">
-              <h1 class="brand-name">Open Flow</h1>
+              <h1 class="brand-name">Verenu</h1>
               <p class="brand-tagline">open-source AI dictation for {platformTagline}</p>
             </div>
           </div>
@@ -630,7 +630,7 @@
       <div class="step">
         <div class="step-header">
           <h2>Check your macOS permissions</h2>
-          <p class="step-sub">Open Flow needs these to hear your voice and type for you.</p>
+          <p class="step-sub">Verenu needs these to hear your voice and type for you.</p>
         </div>
 
         {#if allCoreGranted}
@@ -648,7 +648,7 @@
             </div>
             <div class="perm-row-body">
               <p class="perm-row-title">Accessibility</p>
-              <p class="perm-row-desc">Lets Open Flow listen for the global hotkey and inject text into any app.</p>
+              <p class="perm-row-desc">Lets Verenu listen for the global hotkey and inject text into any app.</p>
             </div>
             <div class="perm-row-right">
               {#key accessibilityPermission}
@@ -715,11 +715,11 @@
                 {#if keychainStatus === 'not_configured'}
                   No API key saved yet. Go back to step 2 to add one.
                 {:else if keychainStatus === 'denied'}
-                  Access denied. Click <strong>Unlock access</strong> below or allow Open Flow in Keychain Access.app.
+                  Access denied. Click <strong>Unlock access</strong> below or allow Verenu in Keychain Access.app.
                 {:else if keychainStatus === 'authorized'}
                   Secures your API key and keeps it in your Keychain.
                 {:else}
-                  Secures your API key. Open Flow will prompt for access when it needs it.
+                  Secures your API key. Verenu will prompt for access when it needs it.
                 {/if}
               </p>
             </div>
@@ -1060,7 +1060,7 @@
               <div class="qs-toggle-row">
                 <div>
                   <div class="qs-toggle-label">Start on boot</div>
-                  <div class="qs-toggle-desc">Launch Open Flow at login</div>
+                  <div class="qs-toggle-desc">Launch Verenu at login</div>
                 </div>
                 <div class="qs-toggle" class:on={quickPrefs.autostart} role="switch" aria-checked={quickPrefs.autostart} aria-label="Start on boot" tabindex="0"
                   onclick={() => toggleQuickPref('autostart')}
@@ -1145,7 +1145,7 @@
         <h2 class="done-title">You're all set.</h2>
         <p class="done-sub">
           Hold <kbd>{hkKey1}</kbd> + <kbd>{hkKey2}</kbd> anywhere to start dictating.
-          Open Flow lives in your system tray and is always ready.
+          Verenu lives in your system tray and is always ready.
         </p>
         <div class="done-summary">
           <div class="summary-item">

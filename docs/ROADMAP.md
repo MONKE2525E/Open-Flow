@@ -23,12 +23,12 @@
 ## 3. Contextual Capitalization Reliability Regression
 - **Goal**: Replace the brittle history-only contextual capitalization path with a deterministic context engine that reliably starts new chat messages with proper casing and preserves punctuation across Gemini, browser chat inputs, normal text boxes, and contenteditable editors.
 - **Current Failure Pattern**:
-    - The existing implementation mostly trusts `LAST_INJECTION`, an internal tail of text injected by Open Flow.
+    - The existing implementation mostly trusts `LAST_INJECTION`, an internal tail of text injected by Verenu.
     - Mouse-click send buttons, browser chat inputs clearing themselves after submit, DOM rewrites, and some Enter/send paths can leave that tail stale.
     - Once stale, the next dictation can be treated as a mid-sentence continuation and the first letter is lowercased even though the target field is empty.
     - Punctuation loss must be debugged separately from casing. Some missing punctuation is likely cleanup/transcription output, not paste-time capitalization.
 - **Design Principle**:
-    - Never lowercase the first letter unless Open Flow has high-confidence evidence that the cursor is still inside the same editable control and immediately follows a non-sentence-ending character.
+    - Never lowercase the first letter unless Verenu has high-confidence evidence that the cursor is still inside the same editable control and immediately follows a non-sentence-ending character.
     - Unknown context must fail closed: preserve the cleanup output casing, or capitalize only through a deterministic sentence-start rule. It must not randomly force lowercase.
     - The old injection tail can remain as a last-resort cache, but it must not be the primary source of truth.
 - **Implementation Plan**:

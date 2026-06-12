@@ -110,7 +110,7 @@ function tauriMock() {
 
     // App plugin (getVersion / getName called by Settings and Home)
     if (cmd === 'plugin:app|version')       return '0.11.0';
-    if (cmd === 'plugin:app|name')          return 'Open Flow';
+    if (cmd === 'plugin:app|name')          return 'Verenu';
     if (cmd === 'plugin:app|tauri_version') return '2.0.0';
 
     // Autostart plugin
@@ -167,7 +167,7 @@ function tauriMock() {
       case 'get_memory_mb':      return 75;   // number required — tweened(0) crashes on null
       case 'check_for_update':   return null;
       case 'get_recent_logs':    return ['[2026-05-17 10:00:00.000] INFO  smoke logger'];
-      case 'download_logs':      return 'C:\\Users\\test\\Downloads\\open-flow-logs-20260517-100000.txt';
+      case 'download_logs':      return 'C:\\Users\\test\\Downloads\\verenu-logs-20260517-100000.txt';
       case 'set_dev_logging_enabled': return null;
       default:                   return null;
     }

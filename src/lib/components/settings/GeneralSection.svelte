@@ -21,7 +21,7 @@
   let micDropdownOpen = $state(false);
   const microphoneCopy = {
     inputDeviceLabel: 'Input device',
-    inputDeviceDescription: 'Choose which microphone Open Flow should record from',
+    inputDeviceDescription: 'Choose which microphone Verenu should record from',
     defaultDevice: 'Default Device',
     noDevicesFound: 'No devices found',
   };
@@ -305,7 +305,7 @@
         }
         if (!available) {
           hotkeyState = 'error';
-          await emit('open-flow:error', 'Hotkey may already be in use by another application');
+          await emit('verenu:error', 'Hotkey may already be in use by another application');
           setTimeout(() => { hotkeyState = 'idle'; }, HOTKEY_ERROR_MS);
           return;
         }
@@ -316,7 +316,7 @@
       } catch (e) {
         console.error('Failed to save hotkey', e);
         hotkeyState = 'error';
-        await emit('open-flow:error', 'Failed to save hotkey - key may not be recognized');
+        await emit('verenu:error', 'Failed to save hotkey - key may not be recognized');
         setTimeout(() => { hotkeyState = 'idle'; }, HOTKEY_ERROR_MS);
       }
     }
@@ -452,7 +452,7 @@
   </div>
 </div>
 <div class="setting-row">
-  <div><div class="label">Start on Boot</div><div class="desc">{isMac ? 'Launch Open Flow when macOS starts' : 'Launch Open Flow when Windows starts'}</div></div>
+  <div><div class="label">Start on Boot</div><div class="desc">{isMac ? 'Launch Verenu when macOS starts' : 'Launch Verenu when Windows starts'}</div></div>
   <Toggle checked={autostart} onchange={handleAutostart} label="Start on boot" />
 </div>
 <div class="setting-row">

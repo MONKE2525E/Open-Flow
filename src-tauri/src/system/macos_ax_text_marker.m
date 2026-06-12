@@ -33,7 +33,7 @@ static const CFStringRef kOFAXStringForTextMarkerRangeParameterizedAttribute = C
 static const CFStringRef kOFAXTextMarkerForIndexParameterizedAttribute = CFSTR("AXTextMarkerForIndex");
 static const CFStringRef kOFAXWebAreaRole = CFSTR("AXWebArea");
 
-typedef struct OpenFlowMacosContextProbeResult {
+typedef struct VerenuMacosContextProbeResult {
     int source;
     int selection_state;
     int pid;
@@ -43,9 +43,9 @@ typedef struct OpenFlowMacosContextProbeResult {
     char identifier[128];
     char title[160];
     char tail[256];
-} OpenFlowMacosContextProbeResult;
+} VerenuMacosContextProbeResult;
 
-static void of_zero_result(OpenFlowMacosContextProbeResult *out_result) {
+static void of_zero_result(VerenuMacosContextProbeResult *out_result) {
     memset(out_result, 0, sizeof(*out_result));
     out_result->source = OF_SOURCE_UNAVAILABLE;
     out_result->selection_state = OF_SELECTION_UNKNOWN;
@@ -211,7 +211,7 @@ static bool of_marker_bytes_equal(AXTextMarkerRef a, AXTextMarkerRef b) {
 }
 
 static void of_set_control_type(
-    OpenFlowMacosContextProbeResult *out_result,
+    VerenuMacosContextProbeResult *out_result,
     const char *mode
 ) {
     if (out_result->role[0] != '\0') {
@@ -266,7 +266,7 @@ static bool of_copy_value_slice(
 static bool of_try_public_text_range(
     AXUIElementRef element,
     int lookbehind_chars,
-    OpenFlowMacosContextProbeResult *out_result
+    VerenuMacosContextProbeResult *out_result
 ) {
     CFRange range;
     if (!of_copy_range_attribute(element, kAXSelectedTextRangeAttribute, &range)) {
@@ -327,7 +327,7 @@ static bool of_try_public_text_range(
 static bool of_try_text_marker_range(
     AXUIElementRef element,
     int lookbehind_chars,
-    OpenFlowMacosContextProbeResult *out_result
+    VerenuMacosContextProbeResult *out_result
 ) {
     CFTypeRef selected_range_value = of_copy_attribute(element, kOFAXSelectedTextMarkerRangeAttribute);
     if (selected_range_value == NULL) {
@@ -475,9 +475,9 @@ static bool of_try_text_marker_range(
     return false;
 }
 
-int openflow_macos_read_context_probe(
+int verenu_macos_read_context_probe(
     int lookbehind_chars,
-    OpenFlowMacosContextProbeResult *out_result
+    VerenuMacosContextProbeResult *out_result
 ) {
     if (out_result == NULL) {
         return 0;

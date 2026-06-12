@@ -80,7 +80,7 @@
     loadDevFlags();
     (async () => {
       try {
-        unlisten = await listen<string>('open-flow:log', (ev) => {
+        unlisten = await listen<string>('verenu:log', (ev) => {
           if (!active) return;
           logs = [...logs.slice(-499), ev.payload];
           queueMicrotask(scrollToBottom);

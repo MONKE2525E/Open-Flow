@@ -1,6 +1,6 @@
-use tauri::{AppHandle, Wry};
 #[cfg(target_os = "macos")]
 use tauri::Manager;
+use tauri::{AppHandle, Wry};
 use tauri_plugin_store::Store;
 
 #[cfg(windows)]
@@ -14,7 +14,7 @@ use windows::Win32::Security::Credentials::{
 };
 
 #[cfg(windows)]
-const SERVICE: &str = "open-flow";
+const SERVICE: &str = "verenu";
 
 // HRESULT_FROM_WIN32(ERROR_NOT_FOUND) — credential entry absent, not an error
 #[cfg(windows)]
@@ -165,7 +165,9 @@ use security_framework::passwords::{
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
-const KEYCHAIN_SERVICE: &str = "com.openflow.app";
+const KEYCHAIN_SERVICE: &str = "com.verenu.app";
+#[cfg(target_os = "macos")]
+const LEGACY_KEYCHAIN_SERVICE: &str = "com.openflow.app";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
 #[cfg(target_os = "macos")]
@@ -180,21 +182,32 @@ fn tauri_legacy_creds_path(app: &AppHandle) -> PathBuf {
 }
 
 #[cfg(target_os = "macos")]
-fn manual_legacy_creds_path_from_home(home: &Path) -> PathBuf {
-    home.join("Library/Application Support/OpenFlow/credentials.json")
+fn manual_legacy_creds_path_from_home(home: &Path, app_dir: &str) -> PathBuf {
+    home.join(format!("Library/Application Support/{app_dir}/credentials.json"))
 }
 
 #[cfg(target_os = "macos")]
-fn manual_legacy_creds_path(app: &AppHandle) -> PathBuf {
-    app.path()
+fn manual_legacy_creds_paths(app: &AppHandle) -> Vec<PathBuf> {
+    let home = app
+        .path()
         .home_dir()
-        .map(|home| manual_legacy_creds_path_from_home(Path::new(&home)))
-        .unwrap_or_else(|_| PathBuf::from("Library/Application Support/OpenFlow/credentials.json"))
+        .unwrap_or_else(|_| PathBuf::from("."));
+
+    ["Verenu", "OpenFlow"]
+        .into_iter()
+        .map(|app_dir| manual_legacy_creds_path_from_home(Path::new(&home), app_dir))
+        .collect()
 }
 
 #[cfg(target_os = "macos")]
 fn legacy_creds_paths(app: &AppHandle) -> Vec<PathBuf> {
-    vec![tauri_legacy_creds_path(app), manual_legacy_creds_path(app)]
+    let mut paths = vec![tauri_legacy_creds_path(app)];
+    for path in manual_legacy_creds_paths(app) {
+        if !paths.iter().any(|existing| existing == &path) {
+            paths.push(path);
+        }
+    }
+    paths
 }
 
 #[cfg(target_os = "macos")]
@@ -286,15 +299,44 @@ fn keychain_user(provider: &str) -> Result<&'static str, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn read_keychain(provider: &str) -> Result<Option<String>, String> {
+fn read_keychain_service(service: &str, provider: &str) -> Result<Option<String>, String> {
     let user = keychain_user(provider)?;
-    match get_generic_password(KEYCHAIN_SERVICE, user) {
+    match get_generic_password(service, user) {
         Ok(bytes) => String::from_utf8(bytes)
             .map(Some)
             .map_err(|e| format!("Keychain value for {provider} was not valid UTF-8: {e}")),
         Err(err) if err.code() == KEYCHAIN_ITEM_NOT_FOUND => Ok(None),
         Err(err) => Err(format!("Keychain read failed for {provider}: {err}")),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn read_keychain(provider: &str) -> Result<Option<String>, String> {
+    if let Some(current) = read_keychain_service(KEYCHAIN_SERVICE, provider)? {
+        return Ok(Some(current));
+    }
+
+    let Some(legacy) = read_keychain_service(LEGACY_KEYCHAIN_SERVICE, provider)? else {
+        return Ok(None);
+    };
+    let normalized = normalize_key(&legacy).to_string();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+
+    if let Err(err) = set(provider, &normalized) {
+        log::warn!("Could not migrate legacy Keychain item for {provider}: {err}");
+        return Ok(Some(normalized));
+    }
+
+    let user = keychain_user(provider)?;
+    match delete_generic_password(LEGACY_KEYCHAIN_SERVICE, user) {
+        Ok(()) => {}
+        Err(err) if err.code() == KEYCHAIN_ITEM_NOT_FOUND => {}
+        Err(err) => log::warn!("Could not delete legacy Keychain item for {provider}: {err}"),
+    }
+
+    Ok(Some(normalized))
 }
 
 #[cfg(target_os = "macos")]
@@ -625,8 +667,18 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn manual_legacy_creds_path_uses_openflow_directory() {
-        let path = manual_legacy_creds_path_from_home(Path::new("/Users/tester"));
+    fn manual_legacy_creds_path_supports_verenu_directory() {
+        let path = manual_legacy_creds_path_from_home(Path::new("/Users/tester"), "Verenu");
+        assert_eq!(
+            path,
+            Path::new("/Users/tester/Library/Application Support/Verenu/credentials.json")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn manual_legacy_creds_path_supports_openflow_directory() {
+        let path = manual_legacy_creds_path_from_home(Path::new("/Users/tester"), "OpenFlow");
         assert_eq!(
             path,
             Path::new("/Users/tester/Library/Application Support/OpenFlow/credentials.json")
@@ -666,7 +718,7 @@ mod tests {
     #[test]
     fn empty_legacy_write_ignores_missing_file() {
         let path = std::env::temp_dir().join(format!(
-            "open-flow-missing-legacy-credentials-{}.json",
+            "verenu-missing-legacy-credentials-{}.json",
             std::process::id()
         ));
         let _ = std::fs::remove_file(&path);
@@ -679,7 +731,7 @@ mod tests {
     #[test]
     fn empty_legacy_write_propagates_delete_errors() {
         let path = std::env::temp_dir().join(format!(
-            "open-flow-legacy-credentials-delete-error-{}",
+            "verenu-legacy-credentials-delete-error-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&path);

@@ -75,7 +75,7 @@
 
 <div class="content-inner">
   <h1 class="page-h">Style</h1>
-  <p class="page-sub">How Open Flow shapes your dictation.</p>
+  <p class="page-sub">How Verenu shapes your dictation.</p>
 
   <div class="tabs">
     {#each tabs as t}
@@ -99,7 +99,7 @@
         out:pageSwap={{ axis: 'x', distance: -tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.base + 40) }}
       >
         {#if tab === 'cleanup'}
-          <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Open Flow does.</span></p>
+          <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Verenu does.</span></p>
           <div class="style-grid four">
             {#each cleanupCards as c}
               <button
@@ -137,7 +137,7 @@
         {:else if tab === 'apps'}
           <AppMappingsEditor
             showHeading={false}
-            intro="Give specific apps their own tone. Open Flow switches automatically while you type."
+            intro="Give specific apps their own tone. Verenu switches automatically while you type."
             emptyText="No app tones yet."
             addLabel="Add App Tone"
           />
