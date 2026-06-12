@@ -1203,7 +1203,6 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
     }
 }
 
-#[cfg(windows)]
 fn backup_sqlite_database(db_path: &std::path::Path) -> std::io::Result<()> {
     std::fs::copy(db_path, db_path.with_extension("db.bak"))?;
 
@@ -1215,7 +1214,6 @@ fn backup_sqlite_database(db_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(windows)]
 fn path_with_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
     let mut path_with_suffix = path.to_path_buf().into_os_string();
     path_with_suffix.push(suffix);
@@ -1458,11 +1456,8 @@ pub async fn import_data(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_setting;
+    use super::{backup_sqlite_database, path_with_suffix, validate_setting};
     use serde_json::json;
-
-    #[cfg(windows)]
-    use super::{backup_sqlite_database, path_with_suffix};
 
     #[test]
     fn validate_setting_rejects_unknown_keys() {
@@ -1504,7 +1499,6 @@ mod tests {
         assert!(err.contains("Invalid or unsupported setting"));
     }
 
-    #[cfg(windows)]
     #[test]
     fn backup_sqlite_database_copies_db_and_wal() {
         let root = std::env::temp_dir().join(format!(
@@ -1533,7 +1527,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    #[cfg(windows)]
     #[test]
     fn path_with_suffix_appends_without_touching_extension() {
         let path = std::path::Path::new("Verenu/verenu.db");

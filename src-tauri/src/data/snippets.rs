@@ -224,16 +224,15 @@ pub fn collect_snippet_instructions_from(text: &str, snippets: &[db::Snippet]) -
 pub fn expand_snippets_from(text: &str, snippets: &mut [db::Snippet], db: &Db) -> String {
     let mut result = text.to_string();
     let selected = collect_trigger_matches(&result, snippets);
+    let mut usage_counts: HashMap<i64, i64> = HashMap::new();
 
     for m in selected.iter().rev() {
+        let snippet = &mut snippets[m.snippet_idx];
+        snippet.use_count += 1;
+        *usage_counts.entry(snippet.id).or_insert(0) += 1;
         result.replace_range(m.start..m.end, &snippets[m.snippet_idx].expansion);
     }
 
-    let mut usage_counts: HashMap<i64, i64> = HashMap::new();
-    for m in selected {
-        let snippet_id = snippets[m.snippet_idx].id;
-        *usage_counts.entry(snippet_id).or_insert(0) += 1;
-    }
     if !usage_counts.is_empty() {
         let mut batched_counts: Vec<(i64, i64)> = usage_counts.into_iter().collect();
         batched_counts.sort_by_key(|(id, _)| *id);
@@ -493,6 +492,7 @@ mod tests {
 
         let out = expand_snippets_from("sig and sig", &mut snippets, &db);
         assert_eq!(out, "Best regards and Best regards");
+        assert_eq!(snippets[0].use_count, 2);
 
         let persisted = db::query_snippets(&db).expect("query persisted");
         assert_eq!(persisted[0].use_count, 2);
