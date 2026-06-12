@@ -144,12 +144,12 @@ fn migrate_db_file_if_needed(new_db: &std::path::Path, old_db: &std::path::Path)
         std::fs::copy(source, destination)
     })?;
     for suffix in ["-wal"] {
-        let old_sidecar = std::path::PathBuf::from(format!("{}{suffix}", old_db.display()));
+        let old_sidecar = path_with_suffix(old_db, suffix);
         if !old_sidecar.exists() {
             continue;
         }
 
-        let new_sidecar = std::path::PathBuf::from(format!("{}{suffix}", new_db.display()));
+        let new_sidecar = path_with_suffix(new_db, suffix);
         if let Err(err) = copy_file_with_cleanup(&old_sidecar, &new_sidecar, |source, destination| {
             std::fs::copy(source, destination)
         }) {
@@ -159,6 +159,12 @@ fn migrate_db_file_if_needed(new_db: &std::path::Path, old_db: &std::path::Path)
     }
 
     Ok(())
+}
+
+fn path_with_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+    let mut path_with_suffix = path.to_path_buf().into_os_string();
+    path_with_suffix.push(suffix);
+    std::path::PathBuf::from(path_with_suffix)
 }
 
 fn copy_file_with_cleanup<F>(
@@ -578,6 +584,15 @@ mod migration_tests {
         assert!(!destination.exists(), "partial destination should be removed");
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn path_with_suffix_appends_without_touching_extension() {
+        let path = std::path::Path::new("Verenu/verenu.db");
+        assert_eq!(
+            super::path_with_suffix(path, "-wal"),
+            std::path::PathBuf::from("Verenu/verenu.db-wal")
+        );
     }
 }
 

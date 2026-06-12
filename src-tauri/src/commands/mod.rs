@@ -1206,12 +1206,18 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
 fn backup_sqlite_database(db_path: &std::path::Path) -> std::io::Result<()> {
     std::fs::copy(db_path, db_path.with_extension("db.bak"))?;
 
-    let wal_path = std::path::PathBuf::from(format!("{}-wal", db_path.display()));
+    let wal_path = path_with_suffix(db_path, "-wal");
     if wal_path.exists() {
-        std::fs::copy(&wal_path, format!("{}-wal.bak", db_path.display()))?;
+        std::fs::copy(&wal_path, path_with_suffix(db_path, "-wal.bak"))?;
     }
 
     Ok(())
+}
+
+fn path_with_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+    let mut path_with_suffix = path.to_path_buf().into_os_string();
+    path_with_suffix.push(suffix);
+    std::path::PathBuf::from(path_with_suffix)
 }
 
 // ---------- connectivity ----------
@@ -1450,7 +1456,7 @@ pub async fn import_data(
 
 #[cfg(test)]
 mod tests {
-    use super::{backup_sqlite_database, validate_setting};
+    use super::{backup_sqlite_database, path_with_suffix, validate_setting};
     use serde_json::json;
 
     #[test]
@@ -1519,5 +1525,14 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn path_with_suffix_appends_without_touching_extension() {
+        let path = std::path::Path::new("Verenu/verenu.db");
+        assert_eq!(
+            path_with_suffix(path, "-wal.bak"),
+            std::path::PathBuf::from("Verenu/verenu.db-wal.bak")
+        );
     }
 }
