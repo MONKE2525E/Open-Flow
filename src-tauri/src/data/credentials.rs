@@ -167,6 +167,8 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "com.verenu.app";
 #[cfg(target_os = "macos")]
+const LEGACY_KEYCHAIN_SERVICE: &str = "com.openflow.app";
+#[cfg(target_os = "macos")]
 const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
 #[cfg(target_os = "macos")]
 const KEYCHAIN_DUPLICATE_ITEM: i32 = -25299;
@@ -298,15 +300,44 @@ fn keychain_user(provider: &str) -> Result<&'static str, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn read_keychain(provider: &str) -> Result<Option<String>, String> {
+fn read_keychain_service(service: &str, provider: &str) -> Result<Option<String>, String> {
     let user = keychain_user(provider)?;
-    match get_generic_password(KEYCHAIN_SERVICE, user) {
+    match get_generic_password(service, user) {
         Ok(bytes) => String::from_utf8(bytes)
             .map(Some)
             .map_err(|e| format!("Keychain value for {provider} was not valid UTF-8: {e}")),
         Err(err) if err.code() == KEYCHAIN_ITEM_NOT_FOUND => Ok(None),
         Err(err) => Err(format!("Keychain read failed for {provider}: {err}")),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn read_keychain(provider: &str) -> Result<Option<String>, String> {
+    if let Some(current) = read_keychain_service(KEYCHAIN_SERVICE, provider)? {
+        return Ok(Some(current));
+    }
+
+    let Some(legacy) = read_keychain_service(LEGACY_KEYCHAIN_SERVICE, provider)? else {
+        return Ok(None);
+    };
+    let normalized = normalize_key(&legacy).to_string();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+
+    if let Err(err) = set(provider, &normalized) {
+        log::warn!("Could not migrate legacy Keychain item for {provider}: {err}");
+        return Ok(Some(normalized));
+    }
+
+    let user = keychain_user(provider)?;
+    match delete_generic_password(LEGACY_KEYCHAIN_SERVICE, user) {
+        Ok(()) => {}
+        Err(err) if err.code() == KEYCHAIN_ITEM_NOT_FOUND => {}
+        Err(err) => log::warn!("Could not delete legacy Keychain item for {provider}: {err}"),
+    }
+
+    Ok(Some(normalized))
 }
 
 #[cfg(target_os = "macos")]

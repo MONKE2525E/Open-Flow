@@ -141,7 +141,7 @@ fn migrate_db_file_if_needed(new_db: &std::path::Path, old_db: &std::path::Path)
     }
 
     std::fs::copy(old_db, new_db)?;
-    for suffix in ["-wal", "-shm"] {
+    for suffix in ["-wal"] {
         let old_sidecar = std::path::PathBuf::from(format!("{}{suffix}", old_db.display()));
         if !old_sidecar.exists() {
             continue;
@@ -499,7 +499,7 @@ mod migration_tests {
     }
 
     #[test]
-    fn migrate_db_file_if_needed_copies_legacy_db_and_sidecars() {
+    fn migrate_db_file_if_needed_copies_legacy_db_and_wal_only() {
         let root = temp_dir("db-migration");
         let old_dir = root.join("OpenFlow");
         let new_dir = root.join("Verenu");
@@ -520,10 +520,7 @@ mod migration_tests {
             std::fs::read(new_dir.join("verenu.db-wal")).expect("new wal"),
             b"wal"
         );
-        assert_eq!(
-            std::fs::read(new_dir.join("verenu.db-shm")).expect("new shm"),
-            b"shm"
-        );
+        assert!(!new_dir.join("verenu.db-shm").exists());
 
         let _ = std::fs::remove_dir_all(root);
     }
