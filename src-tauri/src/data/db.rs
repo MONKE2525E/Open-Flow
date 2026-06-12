@@ -124,12 +124,57 @@ fn ensure_cleanup_cache_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn load_snippet_rows(conn: &Connection) -> Result<Vec<Snippet>> {
+    let mut snippet_stmt = conn.prepare(
+        "SELECT id, trigger, expansion, instructions, use_count, created_at \
+         FROM snippets",
+    )?;
+    let rows = snippet_stmt
+        .query_map([], |r| {
+            Ok(Snippet {
+                id: r.get(0)?,
+                trigger: r.get(1)?,
+                expansion: r.get(2)?,
+                instructions: r.get(3)?,
+                use_count: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+fn compute_spoken_words(conn: &Connection, raw_text: &str) -> Result<i64> {
+    let snippets = load_snippet_rows(conn)?;
+    Ok(snippets::count_words_without_snippet_triggers(
+        raw_text,
+        &snippets,
+    ))
+}
+
+fn backfill_spoken_words(conn: &Connection) -> Result<()> {
+    let snippets = load_snippet_rows(conn)?;
+    let mut select = conn.prepare("SELECT id, raw_text FROM transcriptions WHERE spoken_words IS NULL")?;
+    let rows = select
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut update = conn.prepare("UPDATE transcriptions SET spoken_words = ?2 WHERE id = ?1")?;
+
+    for (id, raw_text) in rows {
+        let spoken_words = snippets::count_words_without_snippet_triggers(&raw_text, &snippets);
+        update.execute(params![id, spoken_words])?;
+    }
+
+    Ok(())
+}
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS transcriptions (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   raw_text    TEXT    NOT NULL,
   clean_text  TEXT    NOT NULL,
   words       INTEGER NOT NULL DEFAULT 0,
+  spoken_words INTEGER,
   duration_ms INTEGER NOT NULL DEFAULT 0,
   api_used    TEXT    NOT NULL DEFAULT '',
   created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
@@ -363,7 +408,32 @@ pub fn open(path: &str) -> Result<Db> {
         }
         conn.execute_batch("COMMIT;")?;
     }
+    if user_version < 7 {
+        conn.execute_batch("BEGIN;")?;
+        if let Err(err) = (|| -> Result<()> {
+            ensure_table_column(
+                &conn,
+                "transcriptions",
+                "spoken_words",
+                "ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;",
+            )?;
+            backfill_spoken_words(&conn)?;
+            conn.execute_batch("PRAGMA user_version = 7;")?;
+            Ok(())
+        })() {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err);
+        }
+        conn.execute_batch("COMMIT;")?;
+    }
     ensure_cleanup_cache_schema(&conn)?;
+    ensure_table_column(
+        &conn,
+        "transcriptions",
+        "spoken_words",
+        "ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;",
+    )?;
+    backfill_spoken_words(&conn)?;
 
     Ok(Arc::new(Mutex::new(conn)))
 }
@@ -423,11 +493,12 @@ pub fn insert_transcription_returning(
     api_used: &str,
 ) -> Result<RecentEntry> {
     let conn = lock_conn(db)?;
+    let spoken_words = compute_spoken_words(&conn, raw)?;
     Ok(conn.query_row(
-        "INSERT INTO transcriptions (raw_text, clean_text, words, duration_ms, api_used) \
-         VALUES (?1, ?2, ?3, ?4, ?5) \
+        "INSERT INTO transcriptions (raw_text, clean_text, words, spoken_words, duration_ms, api_used) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
          RETURNING id, clean_text, words, created_at",
-        params![raw, clean, words, duration_ms, api_used],
+        params![raw, clean, words, spoken_words, duration_ms, api_used],
         |r| {
             Ok(RecentEntry {
                 id: r.get(0)?,
@@ -466,44 +537,13 @@ pub fn query_stats(db: &Db) -> Result<Stats> {
         [],
         |r| r.get(0),
     )?;
-
-    let mut snippet_stmt = conn.prepare(
-        "SELECT id, trigger, expansion, instructions, use_count, created_at \
-         FROM snippets",
+    let avg_wpm: f64 = conn.query_row(
+        "SELECT COALESCE(AVG(CAST(spoken_words AS REAL) * 60000.0 / duration_ms), 0.0)
+         FROM transcriptions
+         WHERE duration_ms > 0 AND spoken_words > 0",
+        [],
+        |r| r.get(0),
     )?;
-    let snippet_rows = snippet_stmt
-        .query_map([], |r| {
-            Ok(Snippet {
-                id: r.get(0)?,
-                trigger: r.get(1)?,
-                expansion: r.get(2)?,
-                instructions: r.get(3)?,
-                use_count: r.get(4)?,
-                created_at: r.get(5)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-
-    let mut transcription_stmt =
-        conn.prepare("SELECT raw_text, duration_ms FROM transcriptions WHERE duration_ms > 0")?;
-    let mut wpm_sum = 0.0_f64;
-    let mut wpm_count = 0_i64;
-    let transcription_rows =
-        transcription_stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-    for row in transcription_rows {
-        let (raw_text, duration_ms) = row?;
-        let spoken_words = snippets::count_words_without_snippet_triggers(&raw_text, &snippet_rows);
-        if spoken_words == 0 {
-            continue;
-        }
-        wpm_sum += (spoken_words as f64) * 60000.0 / (duration_ms as f64);
-        wpm_count += 1;
-    }
-    let avg_wpm = if wpm_count == 0 {
-        0.0
-    } else {
-        wpm_sum / (wpm_count as f64)
-    };
 
     let day_streak: i64 = conn.query_row(
         "WITH consecutive AS (
@@ -1298,6 +1338,54 @@ mod tests {
         let conn = lock_conn(&db).expect("lock");
         assert!(table_has_column(&conn, "cleanup_cache", "expires_at_epoch").expect("column"));
         assert!(table_has_column(&conn, "cleanup_cache", "last_hit_at_epoch").expect("column"));
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn open_backfills_legacy_spoken_words_column() {
+        let path = temp_db_path("legacy_spoken_words");
+        {
+            let conn = Connection::open(&path).expect("create legacy db");
+            conn.execute_batch(
+                "CREATE TABLE transcriptions (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   raw_text TEXT NOT NULL,
+                   clean_text TEXT NOT NULL,
+                   words INTEGER NOT NULL DEFAULT 0,
+                   duration_ms INTEGER NOT NULL DEFAULT 0,
+                   api_used TEXT NOT NULL DEFAULT '',
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE TABLE snippets (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   trigger TEXT NOT NULL UNIQUE,
+                   expansion TEXT NOT NULL,
+                   instructions TEXT NOT NULL DEFAULT '',
+                   use_count INTEGER NOT NULL DEFAULT 0,
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 INSERT INTO snippets (trigger, expansion) VALUES ('sig', 'signature');
+                 INSERT INTO transcriptions (raw_text, clean_text, words, duration_ms, api_used)
+                   VALUES ('hello sig world', 'clean', 3, 1000, 'test');
+                 PRAGMA user_version = 6;",
+            )
+            .expect("seed legacy db");
+        }
+
+        let db = open(path.to_str().expect("path string")).expect("open repairs legacy db");
+        let conn = lock_conn(&db).expect("lock");
+        let spoken_words: i64 = conn
+            .query_row(
+                "SELECT spoken_words FROM transcriptions LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .expect("spoken words");
+        assert_eq!(spoken_words, 2);
         drop(conn);
         drop(db);
         let _ = std::fs::remove_file(&path);
