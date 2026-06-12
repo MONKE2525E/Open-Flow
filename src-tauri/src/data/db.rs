@@ -438,8 +438,15 @@ pub fn open(path: &str) -> Result<Db> {
         "spoken_words",
         "ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;",
     )? {
-        if let Err(err) = backfill_spoken_words(&conn) {
-            log::warn!("Failed to backfill spoken_words column: {err}");
+        let _ = conn.execute_batch("BEGIN;");
+        match backfill_spoken_words(&conn) {
+            Ok(()) => {
+                let _ = conn.execute_batch("COMMIT;");
+            }
+            Err(err) => {
+                let _ = conn.execute_batch("ROLLBACK;");
+                log::warn!("Failed to backfill spoken_words column: {err}");
+            }
         }
     }
 
