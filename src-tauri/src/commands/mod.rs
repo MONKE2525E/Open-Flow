@@ -1458,8 +1458,11 @@ pub async fn import_data(
 
 #[cfg(test)]
 mod tests {
-    use super::{backup_sqlite_database, path_with_suffix, validate_setting};
+    use super::validate_setting;
     use serde_json::json;
+
+    #[cfg(windows)]
+    use super::{backup_sqlite_database, path_with_suffix};
 
     #[test]
     fn validate_setting_rejects_unknown_keys() {
@@ -1501,6 +1504,7 @@ mod tests {
         assert!(err.contains("Invalid or unsupported setting"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn backup_sqlite_database_copies_db_and_wal() {
         let root = std::env::temp_dir().join(format!(
@@ -1529,6 +1533,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[cfg(windows)]
     #[test]
     fn path_with_suffix_appends_without_touching_extension() {
         let path = std::path::Path::new("Verenu/verenu.db");
