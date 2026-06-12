@@ -430,22 +430,23 @@ pub fn open(path: &str) -> Result<Db> {
 
     // Self-heal: some databases ended up with user_version >= 7 without the
     // spoken_words column from that migration actually landing (an
-    // interrupted migration during the Verenu rename/update). Idempotent —
-    // ensure_table_column no-ops if the column is already present.
-    if ensure_table_column(
-        &conn,
-        "transcriptions",
-        "spoken_words",
-        "ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;",
-    )? {
+    // interrupted migration during the Verenu rename/update). The column
+    // addition and backfill run in one transaction so a failed backfill
+    // rolls back the column too, letting this retry on the next launch.
+    if !table_has_column(&conn, "transcriptions", "spoken_words")? {
         let _ = conn.execute_batch("BEGIN;");
-        match backfill_spoken_words(&conn) {
+        let res = (|| -> Result<()> {
+            conn.execute_batch("ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;")?;
+            backfill_spoken_words(&conn)?;
+            Ok(())
+        })();
+        match res {
             Ok(()) => {
                 let _ = conn.execute_batch("COMMIT;");
             }
             Err(err) => {
                 let _ = conn.execute_batch("ROLLBACK;");
-                log::warn!("Failed to backfill spoken_words column: {err}");
+                log::warn!("Failed to self-heal spoken_words column: {err}");
             }
         }
     }
