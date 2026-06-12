@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use std::sync::OnceLock;
 
 #[derive(Deserialize)]
 struct GhRelease {
@@ -18,35 +17,14 @@ pub struct UpdateInfo {
     pub download_url: String,
 }
 
-/// Repos to check for releases. Prefer the renamed repo first, but keep the
-/// old repo as a fallback during the transition so update checks still work for
-/// releases published there.
-const RELEASE_REPOS: &[&str] = &["MONKE2525E/Verenu", "MONKE2525E/Open-Flow"];
+/// Repo to check for releases.
+const RELEASE_REPO: &str = "MONKE2525E/Verenu";
 
-/// Check all configured repos for a release newer than the current version,
-/// returning the highest version found. A 404 (repo has no releases yet, or
-/// doesn't exist) or other request error from a single repo is treated as "no
+/// Check the configured repo for a release newer than the current version. A
+/// 404 (repo has no releases yet) or other request error is treated as "no
 /// release" rather than failing the whole check.
 pub async fn check() -> anyhow::Result<Option<UpdateInfo>> {
-    let mut best: Option<UpdateInfo> = None;
-
-    for repo in RELEASE_REPOS {
-        match check_repo(repo).await {
-            Ok(Some(info)) => {
-                let is_better = match &best {
-                    Some(current_best) => is_newer(&info.version, &current_best.version),
-                    None => true,
-                };
-                if is_better {
-                    best = Some(info);
-                }
-            }
-            Ok(None) => {}
-            Err(e) => log::warn!("Update check against {repo} failed: {e}"),
-        }
-    }
-
-    Ok(best)
+    check_repo(RELEASE_REPO).await
 }
 
 async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
@@ -79,56 +57,6 @@ async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
         version: display_version,
         download_url: asset.browser_download_url.clone(),
     }))
-}
-
-/// Repos to check, in priority order, for the About page "Source" link.
-const SOURCE_REPO_CANDIDATES: &[&str] = &["MONKE2525E/Verenu", "MONKE2525E/Open-Flow"];
-
-/// Cache for `resolve_source_repo()` so the About page only queries the
-/// GitHub API once per app run, regardless of how many times it mounts.
-static RESOLVED_SOURCE_REPO: OnceLock<String> = OnceLock::new();
-
-/// Resolve which repo to display/link as the project's "Source" by checking
-/// each candidate in order and returning the first that doesn't 404. Falls
-/// back to the last candidate (the current default) if every check fails.
-/// A successful resolution is cached for the lifetime of the process; a
-/// transient failure (network error or non-404 API error, e.g. rate limit)
-/// is not cached so it can be retried on the next call.
-pub async fn resolve_source_repo() -> String {
-    if let Some(repo) = RESOLVED_SOURCE_REPO.get() {
-        return repo.clone();
-    }
-
-    if let Some(resolved) = resolve_source_repo_uncached().await {
-        let _ = RESOLVED_SOURCE_REPO.set(resolved.clone());
-        resolved
-    } else {
-        SOURCE_REPO_CANDIDATES.last().unwrap().to_string()
-    }
-}
-
-async fn resolve_source_repo_uncached() -> Option<String> {
-    for repo in SOURCE_REPO_CANDIDATES {
-        let url = format!("https://api.github.com/repos/{repo}");
-        match super::client::get()
-            .get(&url)
-            .header("User-Agent", "verenu")
-            .send()
-            .await
-        {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    return Some((*repo).to_string());
-                } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
-                    continue;
-                } else {
-                    return None;
-                }
-            }
-            Err(_) => return None,
-        }
-    }
-    Some(SOURCE_REPO_CANDIDATES.last().unwrap().to_string())
 }
 
 /// Extract the first three numeric groups from any version string, return as "major.minor.patch".
