@@ -1159,7 +1159,7 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
         if let Ok(mut db_path) = app.path().app_data_dir() {
             db_path.push("verenu.db");
             if db_path.exists() {
-                let _ = std::fs::copy(&db_path, db_path.with_extension("db.bak"));
+                let _ = backup_sqlite_database(&db_path);
             }
         }
 
@@ -1201,6 +1201,17 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
         // Exit immediately so the binary is free before the installer starts.
         std::process::exit(0)
     }
+}
+
+fn backup_sqlite_database(db_path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::copy(db_path, db_path.with_extension("db.bak"))?;
+
+    let wal_path = std::path::PathBuf::from(format!("{}-wal", db_path.display()));
+    if wal_path.exists() {
+        std::fs::copy(&wal_path, format!("{}-wal.bak", db_path.display()))?;
+    }
+
+    Ok(())
 }
 
 // ---------- connectivity ----------
@@ -1439,7 +1450,7 @@ pub async fn import_data(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_setting;
+    use super::{backup_sqlite_database, validate_setting};
     use serde_json::json;
 
     #[test]
@@ -1480,5 +1491,33 @@ mod tests {
         let err = validate_setting(crate::data::store::HOTKEY, &json!(["ControlLeft"]))
             .expect_err("single hotkey part should fail");
         assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn backup_sqlite_database_copies_db_and_wal() {
+        let root = std::env::temp_dir().join(format!(
+            "verenu-backup-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create temp dir");
+
+        let db_path = root.join("verenu.db");
+        let wal_path = root.join("verenu.db-wal");
+        std::fs::write(&db_path, b"db").expect("write db");
+        std::fs::write(&wal_path, b"wal").expect("write wal");
+
+        backup_sqlite_database(&db_path).expect("backup succeeds");
+
+        assert_eq!(std::fs::read(root.join("verenu.db.bak")).expect("read db backup"), b"db");
+        assert_eq!(
+            std::fs::read(root.join("verenu.db-wal.bak")).expect("read wal backup"),
+            b"wal"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
