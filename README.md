@@ -3,100 +3,102 @@
 </div>
 
 <p align="center">
-  Hold <kbd>Ctrl</kbd>+<kbd>Windows</kbd>, speak, release — your words appear instantly, cleaned up by an LLM, in whatever app is in focus.<br/>
-  <em>Free, lightweight, local-first AI dictation. Bring your own API keys. No subscriptions. No telemetry. ~200MB RAM.</em>
+  Hold the hotkey, talk, release, and Verenu drops cleaned-up text into the app you were already using.
+  <br/>
+  <em>Local-first AI dictation for Windows and macOS. Bring your own API keys. No subscriptions. No telemetry.</em>
 </p>
 
----
+## What Verenu Is
 
-## Why Verenu?
+Verenu is an open source desktop dictation app built with Tauri, Svelte, Rust, and SQLite.
 
-**Lightweight & Fast**
-- Uses just ~200MB of RAM idle runs silently in the background without bloat.
-- Native Tauri app, not Electron. No bundled browser overhead.
-- Latency-optimized: Groq transcription completes in ~0.5 seconds.
+It records locally, sends audio and text only to the AI providers you choose, keeps your app data on your machine, and avoids the usual Electron bloat. The goal is simple: fast dictation, predictable formatting, and privacy that is easy to understand.
 
-**Local-First & Private**
-- All your transcription history lives in a local SQLite database on your machine.
-- API keys are stored securely on your system, never in the cloud.
-- No tracking, no telemetry, no analytics.
-- Only audio is sent to your chosen AI provider (Groq, OpenAI, or Google) — you control which.
+## What It Does
 
-**Free & Open Source**
-- No monthly subscription. Ever. Bring your own API keys.
-- Completely self-hosted. You own your data and your setup.
-- Open source under [MIT license](LICENSE) audit the code, fork it, use it however you like.
+- Hold-to-record dictation with global hotkeys
+- Provider choice for transcription and cleanup
+- Snippets, personal dictionary, and app-specific formatting profiles
+- Local history, local settings, and local data export/import
+- Optional auto-learn from repeated manual corrections
 
----
+## Platform Support
 
-##  How it Works
+Verenu supports both Windows and macOS.
 
-Verenu handles the entire pipeline from your microphone to your active application seamlessly:
+### Windows
 
-1. **Record:** Hold <kbd>Ctrl</kbd>+<kbd>Windows</kbd> to capture audio locally. A floating pill window shows live audio levels in real time.
-2. **Transcribe:** Audio is sent to your chosen transcription model (Groq, OpenAI, or Google) to generate raw text.
-3. **Clean & Format:** An LLM strips filler words, fixes grammar, and applies your context-specific formatting profile all text processing stays in your control.
-4. **Inject:** The polished text is instantly injected into your focused app via the clipboard (`Ctrl+V`), no permissions required.
+- Windows 10 and 11
+- Uses WebView2, not Electron
+- Default hold-to-record hotkey: <kbd>Ctrl</kbd> + <kbd>Windows</kbd>
+- API keys are stored in Windows Credential Manager
 
----
+### macOS
 
-##  Features
+- Apple Silicon and Intel builds are supported
+- Default hold-to-record hotkey: <kbd>Fn</kbd> + <kbd>Control</kbd>
+- API keys are stored in Keychain
+- Verenu needs macOS permissions for real-world use:
+  - Microphone, to capture audio
+  - Accessibility, to inject text and interact with focused apps
+  - Input Monitoring, to detect the global hotkey while other apps are focused
 
-### Core Dictation
-- **Hold-to-Record Hotkey:** Uses a low-level Windows keyboard hook for precise <kbd>Ctrl</kbd>+<kbd>Windows</kbd> hold/release timing. Works in any app.
-- **Mix & Match AI Providers:** Native support for Groq, OpenAI, and Google. Choose your preferred transcription and cleanup models independently you're not locked in.
-- **Smart LLM Cleanup:** Automatically removes filler words, fixes punctuation, and applies formatting — all powered by open APIs you control.
-- **Prompt Injection Protection:** Uses `<raw_dictation>` isolation boundaries to explicitly prevent the LLM from acting on any instructions accidentally spoken into the microphone.
+macOS support is not an afterthought anymore. It is part of the normal app flow, and the repo includes macOS-specific hotkey, permissions, injection, updater, and key-storage logic.
 
-### Customization
-- **Formatting Profiles:** Switch between *Casual*, *Formal*, and *Very Casual* modes. Profiles adapt automatically based on the active app.
-- **Cleanup Intensity:** Pick how aggressively Verenu rewrites your dictation: *Verbatim*, *Light*, *Medium*, or *Direct*.
-- **Snippets:** Create custom abbreviations and auto-expand them during dictation.
-- **Snippet Cleanup Instructions:** Add per-snippet cleanup rules like all caps, no ending period, or always ending with an exclamation mark.
-- **Personal Dictionary:** Teach Verenu names, brands, and jargon so the cleanup model preserves the exact spelling you want.
+## How It Works
 
-### Privacy & Offline
-- **Local Transcription History:** Every dictation is saved locally in SQLite on your machine, including raw/cleaned text, model used, word count, and duration.
-- **Auto-Learn Dictionary:** Optionally watch for repeated manual corrections after injection and add them back into your dictionary automatically.
-- **No Cloud Storage:** Your data never leaves your computer unless you explicitly sync it.
-- **Local Key Storage:** API keys and preferences are stored locally on your machine, not in the transcription database.
+1. Verenu records audio locally while you hold the hotkey.
+2. When you release, it sends the audio to your chosen transcription provider.
+3. It sends the resulting raw text to your chosen cleanup model so filler words, punctuation, tone, snippets, and formatting rules can be applied.
+4. It pastes the final text back into the app that had focus when you started.
+5. It stores local history and optional learning data on your machine.
 
----
+## Data And Privacy
 
-##  Your Choice of AI Provider
+Verenu does not run its own servers. Your data either stays on your device or goes directly to the third-party providers you choose.
 
-Verenu is provider-agnostic — pick whichever service you trust, use the cheapest, or switch between them on the fly. All API keys stay on your machine.
+### Stays on your device
 
-| Provider | Transcription Model | Cleanup Model | Latency | Cost |
-| :--- | :--- | :--- | :--- | :--- |
-| **Groq** | `whisper-large-v3-turbo`| `llama-3.3-70b-versatile` | ~1.0s | Free tier available ⭐ |
-| **OpenAI** | `gpt-4o-transcribe` | `gpt-4o-mini` | ~1.0s | ~$0.01–0.03 per request |
-| **Google** | `gemini-3.5-flash` | `gemini-3.5-flash` | ~3-5s | Free tier (limited quota) |
+- API keys in Windows Credential Manager or macOS Keychain
+- Settings in local app storage
+- Transcription history in local SQLite
+- Dictionary entries, snippets, and auto-learn data in local SQLite
+- Update-dismiss state, model preferences, and app mappings
+- Local logs unless you explicitly export them
 
-**Security:** API keys are stored locally using OS-level encryption (`tauri-plugin-store`). They're never written to the database, synced to the cloud, or logged anywhere.
+### Leaves your device
 
-### Getting Your API Key
-* **Groq:** Sign up at [console.groq.com](https://console.groq.com) → Create key under *API Keys*.
-* **OpenAI:** Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys) → Create secret key.
-* **Google:** Go to [aistudio.google.com](https://aistudio.google.com) → Get API key.
+- Recorded audio goes to your chosen transcription provider
+- Raw transcription text goes to your chosen cleanup provider
+- Snippet instructions, cleanup settings, and selected model metadata go with cleanup requests
+- Active app context may be sent if you enable app-context hints
+- Update checks hit GitHub release metadata
 
-*Paste your key into: Verenu → Settings → API Keys.*
+Read the full breakdown in [docs/DATA_AND_PRIVACY.md](docs/DATA_AND_PRIVACY.md).
 
----
+## AI Providers
 
-##  Setup & Installation
+You choose the providers. Verenu does not lock you into one stack.
+
+| Provider | Transcription | Cleanup |
+| --- | --- | --- |
+| Groq | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` |
+| OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
+| Google | `gemini-3.5-flash` | `gemini-3.5-flash` |
+
+If you care about privacy, speed, retention, or cost, judge the provider on its own policy. Once data leaves Verenu and hits a provider API, that provider's rules apply.
+
+## Setup
 
 ### Prerequisites
-- Windows 10/11 (WebView2 required — ships with Win 11, installable on Win 10)
-- [Rust + Cargo](https://rustup.rs/)
-- [Node.js 18+](https://nodejs.org/)
 
-### Windows Security Warning
-Because Verenu is built by a solo developer and the app is not code-signed with an expensive Microsoft-trusted certificate, Windows SmartScreen or your browser may show warnings when downloading or opening the installer. That is expected for unsigned indie software.
+- Node.js 18+
+- Rust and Cargo
+- Windows: WebView2
+- macOS: Xcode Command Line Tools are recommended for local builds
 
-If you want extra reassurance, upload the release file to [VirusTotal](https://www.virustotal.com/) and inspect the results before running it.
+### Run in development
 
-### Run in Development
 ```bash
 git clone https://github.com/MONKE2525E/Verenu.git
 cd Verenu
@@ -104,15 +106,37 @@ npm install
 npm run tauri dev
 ```
 
----
+### Useful commands
 
-## Tech Stack: Built for Efficiency
+```bash
+npm test
+npm run check
+npm run lint
+npm run test:rust
+npm run test:live
+npm run test:native
+```
 
-Verenu is intentionally lightweight. Here's why:
+## Release Flow
 
-- **Tauri 2.x** — Native Windows app with a minimal WebView2 bridge. No Electron bloat.
-- **Svelte 5** — Lean, compiler-driven UI framework. Tiny bundle size.
-- **Rust Backend** — Fast, memory-safe, zero-cost abstractions. Audio capture, hotkey handling, and clipboard injection run with near-zero overhead.
-- **SQLite** — Embedded database. No server, no network latency, no extra process.
+Most day-to-day work lands on `dev` first.
 
-**Result:** ~200MB RAM idle. Starts in <200ms. Runs silently in the background without slowing down your system.
+The normal flow is:
+
+1. Commit to `dev` for most changes.
+2. Review and test on `dev`.
+3. Merge `dev` into `main` when it is ready.
+4. Cut and ship the release from there.
+
+If you are contributing, read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) before you start.
+
+## Why Tauri
+
+- No bundled Chromium
+- Lower idle RAM
+- Native OS integrations where they actually matter
+- Better fit for a background dictation tool than a browser-shaped desktop app
+
+## License
+
+MIT. See [LICENSE](LICENSE).
