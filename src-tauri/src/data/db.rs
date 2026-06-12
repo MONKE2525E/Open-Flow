@@ -428,6 +428,19 @@ pub fn open(path: &str) -> Result<Db> {
     }
     ensure_cleanup_cache_schema(&conn)?;
 
+    // Self-heal: some databases ended up with user_version >= 7 without the
+    // spoken_words column from that migration actually landing (an
+    // interrupted migration during the Verenu rename/update). Idempotent —
+    // ensure_table_column no-ops if the column is already present.
+    if ensure_table_column(
+        &conn,
+        "transcriptions",
+        "spoken_words",
+        "ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;",
+    )? {
+        backfill_spoken_words(&conn)?;
+    }
+
     Ok(Arc::new(Mutex::new(conn)))
 }
 
@@ -1378,6 +1391,64 @@ mod tests {
                 |r| r.get(0),
             )
             .expect("spoken words");
+        assert_eq!(spoken_words, 2);
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn open_repairs_db_stuck_at_v7_without_spoken_words_column() {
+        // Simulates a database left at user_version = 7 by an interrupted
+        // migration (e.g. during the Verenu rename/update) where the
+        // ALTER TABLE for spoken_words never actually landed. The
+        // `if user_version < 7` migration block would never run again for
+        // such a database, so it must be self-healed unconditionally.
+        let path = temp_db_path("v7_missing_spoken_words");
+        {
+            let conn = Connection::open(&path).expect("create stuck db");
+            conn.execute_batch(
+                "CREATE TABLE transcriptions (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   raw_text TEXT NOT NULL,
+                   clean_text TEXT NOT NULL,
+                   words INTEGER NOT NULL DEFAULT 0,
+                   duration_ms INTEGER NOT NULL DEFAULT 0,
+                   api_used TEXT NOT NULL DEFAULT '',
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE TABLE snippets (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   trigger TEXT NOT NULL UNIQUE,
+                   expansion TEXT NOT NULL,
+                   instructions TEXT NOT NULL DEFAULT '',
+                   use_count INTEGER NOT NULL DEFAULT 0,
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 INSERT INTO snippets (trigger, expansion) VALUES ('sig', 'signature');
+                 INSERT INTO transcriptions (raw_text, clean_text, words, duration_ms, api_used)
+                   VALUES ('hello sig world', 'clean', 3, 1000, 'test');
+                 PRAGMA user_version = 7;",
+            )
+            .expect("seed stuck db");
+        }
+
+        let db = open(path.to_str().expect("path string")).expect("open repairs stuck db");
+
+        // Inserting a new transcription must succeed now that spoken_words exists.
+        insert_transcription_returning(&db, "second clip", "second clip", 2, 1000, "test")
+            .expect("insert after repair");
+
+        let conn = lock_conn(&db).expect("lock");
+        let spoken_words: i64 = conn
+            .query_row(
+                "SELECT spoken_words FROM transcriptions WHERE raw_text = 'hello sig world'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("spoken words backfilled");
         assert_eq!(spoken_words, 2);
         drop(conn);
         drop(db);
