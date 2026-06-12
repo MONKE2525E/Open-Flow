@@ -140,7 +140,9 @@ fn migrate_db_file_if_needed(new_db: &std::path::Path, old_db: &std::path::Path)
         std::fs::create_dir_all(parent)?;
     }
 
-    std::fs::copy(old_db, new_db)?;
+    copy_file_with_cleanup(old_db, new_db, |source, destination| {
+        std::fs::copy(source, destination)
+    })?;
     for suffix in ["-wal"] {
         let old_sidecar = std::path::PathBuf::from(format!("{}{suffix}", old_db.display()));
         if !old_sidecar.exists() {
@@ -156,6 +158,22 @@ fn migrate_db_file_if_needed(new_db: &std::path::Path, old_db: &std::path::Path)
                 err
             );
         }
+    }
+
+    Ok(())
+}
+
+fn copy_file_with_cleanup<F>(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+    copier: F,
+) -> std::io::Result<()>
+where
+    F: FnOnce(&std::path::Path, &std::path::Path) -> std::io::Result<u64>,
+{
+    if let Err(err) = copier(source, destination) {
+        let _ = std::fs::remove_file(destination);
+        return Err(err);
     }
 
     Ok(())
@@ -541,6 +559,26 @@ mod migration_tests {
         migrate_db_file_if_needed(&new_db, &old_db).expect("skip migration");
 
         assert_eq!(std::fs::read(&new_db).expect("new db"), b"new");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn copy_file_with_cleanup_removes_partial_destination_on_failure() {
+        let root = temp_dir("db-copy-cleanup");
+        std::fs::create_dir_all(&root).expect("create temp dir");
+        let source = root.join("source.db");
+        let destination = root.join("destination.db");
+        std::fs::write(&source, b"source").expect("write source");
+
+        let err = super::copy_file_with_cleanup(&source, &destination, |_, dest| {
+            std::fs::write(dest, b"partial").expect("write partial");
+            Err(std::io::Error::other("copy failed"))
+        })
+        .expect_err("copy should fail");
+
+        assert_eq!(err.kind(), std::io::ErrorKind::Other);
+        assert!(!destination.exists(), "partial destination should be removed");
+
         let _ = std::fs::remove_dir_all(root);
     }
 }
