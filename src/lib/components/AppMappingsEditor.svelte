@@ -41,6 +41,7 @@
   let profileDropdownOpen = $state(false);
   let cleanupDropdownOpen = $state(false);
   let openRowDropdown = $state<string | null>(null);
+  let rowDropdownPos = $state<{ top: number; right: number } | null>(null);
   let mappingError = $state('');
   let leavingExes = $state<Set<string>>(new Set());
 
@@ -48,6 +49,16 @@
     { id: '', label: 'Default' },
     ...cleanupIntensityOptions,
   ] as const;
+
+  const activeRowDropdown = $derived.by(() => {
+    if (!openRowDropdown) return null;
+    const sep = openRowDropdown.lastIndexOf(':');
+    const exe = openRowDropdown.slice(0, sep);
+    const field = openRowDropdown.slice(sep + 1) as 'profile' | 'cleanup';
+    const mapping = mappings.find((m) => m.exe === exe);
+    if (!mapping) return null;
+    return { exe, field, mapping };
+  });
 
   const pendingExe = $derived(addExe || (appSearch.trim() ? customExeFromSearch(appSearch) : ''));
   const pendingName = $derived(cleanAppName(addName || appSearch || pendingExe));
@@ -148,6 +159,7 @@
     );
     await saveMappings(updated);
     openRowDropdown = null;
+    rowDropdownPos = null;
   }
 
   function pickApp(app: InstalledApp) {
@@ -192,14 +204,22 @@
     }
   }
 
-  function toggleRowDropdown(key: string) {
-    openRowDropdown = openRowDropdown === key ? null : key;
+  function toggleRowDropdown(key: string, e: MouseEvent) {
+    if (openRowDropdown === key) {
+      openRowDropdown = null;
+      rowDropdownPos = null;
+      return;
+    }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    rowDropdownPos = { top: rect.bottom + 4, right: window.innerWidth - rect.right };
+    openRowDropdown = key;
   }
 
   function closeRowDropdown(e: MouseEvent | PointerEvent) {
     const target = e.target;
-    if (target instanceof Element && !target.closest('.row-drop-wrap')) {
+    if (target instanceof Element && !target.closest('.row-drop-wrap') && !target.closest('.row-drop-menu')) {
       openRowDropdown = null;
+      rowDropdownPos = null;
     }
   }
 
@@ -324,7 +344,7 @@
           <div class="row-drop-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
             <button
               class="mapping-badge-btn"
-              onclick={() => toggleRowDropdown(`${mapping.exe}:profile`)}
+              onclick={(e) => toggleRowDropdown(`${mapping.exe}:profile`, e)}
               onkeydown={handleRowDropdownKeydown}
               title="Tone for {getAppDisplayName(mapping, installedApps)}"
             >
@@ -333,32 +353,12 @@
                 <path d="m6 9 6 6 6-6"/>
               </svg>
             </button>
-            {#if openRowDropdown === `${mapping.exe}:profile`}
-              <div
-                class="row-drop-menu scroll-styled"
-                role="presentation"
-                onclick={(e) => e.stopPropagation()}
-                in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
-                out:fade={{ duration: motionMs(100) }}
-              >
-                {#each profileOptions as profile}
-                  <button
-                    class="row-drop-item"
-                    class:active={mapping.profile === profile.id}
-                    onclick={() => setMappingField(mapping.exe, { profile: profile.id })}
-                    onkeydown={handleRowDropdownKeydown}
-                  >
-                    {profile.label}
-                  </button>
-                {/each}
-              </div>
-            {/if}
           </div>
           <div class="row-drop-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
             <button
               class="mapping-badge-btn"
               class:is-default={!mapping.cleanup_intensity}
-              onclick={() => toggleRowDropdown(`${mapping.exe}:cleanup`)}
+              onclick={(e) => toggleRowDropdown(`${mapping.exe}:cleanup`, e)}
               onkeydown={handleRowDropdownKeydown}
               title="Auto-cleanup style for {getAppDisplayName(mapping, installedApps)}"
             >
@@ -367,26 +367,6 @@
                 <path d="m6 9 6 6 6-6"/>
               </svg>
             </button>
-            {#if openRowDropdown === `${mapping.exe}:cleanup`}
-              <div
-                class="row-drop-menu scroll-styled"
-                role="presentation"
-                onclick={(e) => e.stopPropagation()}
-                in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
-                out:fade={{ duration: motionMs(100) }}
-              >
-                {#each cleanupIntensityChoices as choice}
-                  <button
-                    class="row-drop-item"
-                    class:active={(mapping.cleanup_intensity || '') === choice.id}
-                    onclick={() => setMappingField(mapping.exe, { cleanup_intensity: choice.id || undefined })}
-                    onkeydown={handleRowDropdownKeydown}
-                  >
-                    {choice.label}
-                  </button>
-                {/each}
-              </div>
-            {/if}
           </div>
           <button class="mapping-delete-btn" onclick={() => deleteMapping(mapping.exe)} title="Remove {getAppDisplayName(mapping, installedApps)}">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
@@ -400,6 +380,41 @@
     <div class="mapping-empty" in:fade={{ duration: motionMs(MOTION_MS.fast) }} out:fade={{ duration: motionMs(MOTION_MS.fast) }}>{emptyText}</div>
   {/if}
 </div>
+
+{#if activeRowDropdown && rowDropdownPos}
+  <div
+    class="row-drop-menu scroll-styled"
+    role="presentation"
+    style="top: {rowDropdownPos.top}px; right: {rowDropdownPos.right}px;"
+    onclick={(e) => e.stopPropagation()}
+    in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
+    out:fade={{ duration: motionMs(100) }}
+  >
+    {#if activeRowDropdown.field === 'profile'}
+      {#each profileOptions as profile}
+        <button
+          class="row-drop-item"
+          class:active={activeRowDropdown.mapping.profile === profile.id}
+          onclick={() => setMappingField(activeRowDropdown.exe, { profile: profile.id })}
+          onkeydown={handleRowDropdownKeydown}
+        >
+          {profile.label}
+        </button>
+      {/each}
+    {:else}
+      {#each cleanupIntensityChoices as choice}
+        <button
+          class="row-drop-item"
+          class:active={(activeRowDropdown.mapping.cleanup_intensity || '') === choice.id}
+          onclick={() => setMappingField(activeRowDropdown.exe, { cleanup_intensity: choice.id || undefined })}
+          onkeydown={handleRowDropdownKeydown}
+        >
+          {choice.label}
+        </button>
+      {/each}
+    {/if}
+  </div>
+{/if}
 
 {#if mappingError}
   <div class="mapping-error">{mappingError}</div>
@@ -648,9 +663,7 @@
   .mapping-badge-btn svg.open { transform: rotate(180deg); }
 
   .row-drop-menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
+    position: fixed;
     background: var(--bg-elev);
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
@@ -658,7 +671,7 @@
     min-width: 120px;
     max-height: 200px;
     overflow-y: auto;
-    z-index: 20;
+    z-index: 50;
   }
 
   .row-drop-item {
