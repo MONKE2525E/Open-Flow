@@ -553,20 +553,31 @@ fn reject_with_pill(app: &AppHandle, msg: &str) {
     });
 }
 
-fn resolve_profile(
+fn resolve_app_mapping(
     store: Option<&tauri_plugin_store::Store<tauri::Wry>>,
     process_name: &str,
-    default_tone: &str,
-) -> String {
-    let mapped = store.and_then(|s| {
+) -> Option<AppMapping> {
+    store.and_then(|s| {
         s.get(store::APP_MAPPINGS)
             .and_then(|v| serde_json::from_value::<Vec<AppMapping>>(v).ok())
-            .and_then(|list| {
-                list.into_iter()
-                    .find_map(|m| (m.exe.to_lowercase() == process_name).then_some(m.profile))
-            })
-    });
-    mapped.unwrap_or_else(|| default_tone.to_owned())
+            .and_then(|list| list.into_iter().find(|m| m.exe.eq_ignore_ascii_case(process_name)))
+    })
+}
+
+/// Resolves the effective tone profile for `mapping`, falling back to the
+/// global `default_tone` when the app has no override, and applies the
+/// app's `cleanup_intensity` override (if any) onto `cfg` in place.
+fn apply_app_style_overrides(cfg: &mut store::PipelineConfig, mapping: Option<&AppMapping>) -> String {
+    if let Some(intensity) = mapping
+        .and_then(|m| m.cleanup_intensity.as_deref())
+        .filter(|i| !i.is_empty())
+    {
+        cfg.cleanup_intensity = intensity.to_owned();
+    }
+    mapping
+        .map(|m| m.profile.clone())
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| cfg.default_tone.clone())
 }
 
 pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow::Result<String> {
@@ -852,7 +863,7 @@ async fn open_config_and_context(
             return None;
         }
     };
-    let cfg = store::load_pipeline_config(&settings_store);
+    let mut cfg = store::load_pipeline_config(&settings_store);
     if !has_transcription_key_in_chain(&cfg) {
         show_error_pill(
             app,
@@ -861,7 +872,8 @@ async fn open_config_and_context(
         .await;
         return None;
     }
-    let profile = resolve_profile(Some(&settings_store), process_name, &cfg.default_tone);
+    let mapping = resolve_app_mapping(Some(&settings_store), process_name);
+    let profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
     let app_context = if cfg.app_context_hint {
         window_context::get_app_context_hint(process_name)
     } else {
@@ -1907,18 +1919,21 @@ pub async fn retry_transcription_impl(
         show_error_pill(app, "Retry window expired").await;
         anyhow::bail!("Retry window expired");
     }
-    let Some(capture) = capture else {
+    let Some(mut capture) = capture else {
         hide_pill(app);
         anyhow::bail!("No retry available");
     };
 
     let settings_store = app.store("settings.json")?;
-    let cfg = store::load_pipeline_config(&settings_store);
+    let mut cfg = store::load_pipeline_config(&settings_store);
 
     if !has_transcription_key_in_chain(&cfg) {
         show_error_pill(app, "No API key configured").await;
         anyhow::bail!("No API key configured");
     }
+
+    let mapping = resolve_app_mapping(Some(&settings_store), &capture.process_name);
+    capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
 
     let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
         run_transcription_and_cleanup(

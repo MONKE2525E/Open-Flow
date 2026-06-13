@@ -737,8 +737,8 @@ pub fn insert_dictionary_entry_auto_learned(
 
     let conn = lock_conn(db)?;
     let changed = conn.execute(
-        "INSERT INTO dictionary (term, mistake, auto_learned, correction_count) \
-         VALUES (?1, ?2, 1, 1) \
+        "INSERT INTO dictionary (term, mistake, auto_learned, correction_count, confidence_tier) \
+         VALUES (?1, ?2, 1, 1, ?3) \
          ON CONFLICT(term) DO UPDATE SET \
            correction_count = correction_count + 1, \
            confidence_tier = ?3, \
@@ -776,40 +776,29 @@ pub fn log_auto_learn_event(
     Ok(())
 }
 
+/// Records a confidence observation for a (wrong, correct) pair and returns
+/// the running average confidence across all observations of that pair.
 pub fn upsert_auto_learn_candidate(
     db: &Db,
     wrong: &str,
     correct: &str,
     confidence: f64,
-    cooldown_minutes: i64,
-) -> Result<bool> {
+) -> Result<f64> {
     let conn = lock_conn(db)?;
-    let blocked: i64 = conn.query_row(
-        "SELECT COUNT(*)
-         FROM auto_learn_candidates
-         WHERE wrong_word = ?1
-           AND correct_word = ?2
-           AND cooldown_until IS NOT NULL
-           AND cooldown_until > datetime('now')",
-        params![wrong, correct],
-        |r| r.get(0),
-    )?;
-    if blocked > 0 {
-        return Ok(false);
-    }
-    conn.execute(
+    conn.query_row(
         "INSERT INTO auto_learn_candidates
-         (wrong_word, correct_word, confidence_sum, confidence_avg, seen_count, last_seen_at, cooldown_until)
-         VALUES (?1, ?2, ?3, ?3, 1, datetime('now'), datetime('now', ?4))
+         (wrong_word, correct_word, confidence_sum, confidence_avg, seen_count, last_seen_at)
+         VALUES (?1, ?2, ?3, ?3, 1, datetime('now'))
          ON CONFLICT(wrong_word, correct_word) DO UPDATE SET
            confidence_sum = auto_learn_candidates.confidence_sum + excluded.confidence_sum,
            seen_count = auto_learn_candidates.seen_count + 1,
            confidence_avg = (auto_learn_candidates.confidence_sum + excluded.confidence_sum) / (auto_learn_candidates.seen_count + 1),
-           last_seen_at = datetime('now'),
-           cooldown_until = datetime('now', ?4)",
-        params![wrong, correct, confidence, format!("+{} minutes", cooldown_minutes.max(0))],
-    )?;
-    Ok(true)
+           last_seen_at = datetime('now')
+         RETURNING confidence_avg",
+        params![wrong, correct, confidence],
+        |r| r.get(0),
+    )
+    .map_err(Into::into)
 }
 
 pub fn mark_auto_learn_candidate_promoted(db: &Db, wrong: &str, correct: &str) -> Result<()> {

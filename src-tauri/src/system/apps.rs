@@ -12,6 +12,10 @@ pub struct AppMapping {
     pub profile: String,
     #[serde(default)]
     pub name: String,
+    /// Per-app override for `cleanup_intensity`. `None` (or empty) falls back
+    /// to the global setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_intensity: Option<String>,
 }
 
 /// Combines registry-discovered and currently-running apps into a single deduplicated list.
