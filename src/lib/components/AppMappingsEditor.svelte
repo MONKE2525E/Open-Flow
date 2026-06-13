@@ -316,13 +316,20 @@
   $effect(() => {
     if (!openRowDropdown) return;
 
+    const handleScroll = () => {
+      openRowDropdown = null;
+      rowDropdownPos = null;
+    };
+
     const timeout = window.setTimeout(() => {
       window.addEventListener('pointerdown', closeRowDropdown);
+      window.addEventListener('scroll', handleScroll, { capture: true, passive: true });
     });
 
     return () => {
       window.clearTimeout(timeout);
       window.removeEventListener('pointerdown', closeRowDropdown);
+      window.removeEventListener('scroll', handleScroll, { capture: true });
     };
   });
 </script>
