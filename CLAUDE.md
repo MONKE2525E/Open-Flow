@@ -233,9 +233,11 @@ Cleanup instruction keywords are applied mechanically to LLM output *after* the 
 
 ## Auto-Learn System (`api/auto_learn.rs`)
 
-After injection, monitors the focused text field for 30 seconds using Windows UI Automation. Each dictation session spawns its own monitor; concurrent monitors are intentional and necessary so corrections from separate dictations can each count toward the 2-session promotion threshold. Detects user corrections via Levenshtein edit distance (`edit_distance`, `is_spelling_correction`) — pairs must differ by ≤2 chars or ≤50% of max length. A `StableTextGate` requires two consecutive identical UIA reads before evaluating corrections, preventing mid-typing noise. A (wrong → correct) pair must be seen in 2 separate sessions within 2 days before being promoted to the dictionary. Within a session, `recorded_this_session` deduplicates so one noisy edit can't count twice.
+After injection, monitors the focused text field for 60 seconds using Windows UI Automation. Each dictation session spawns its own monitor; concurrent monitors are intentional and necessary so corrections from separate dictations can each count toward the promotion threshold. Detects user corrections via Levenshtein edit distance (`edit_distance`, `is_candidate_correction`) — pairs must differ by ≤2 chars or ≤50% of max length. A `StableTextGate` requires two consecutive identical UIA reads before evaluating corrections, preventing mid-typing noise. Promotion is confidence-tiered: a (wrong → correct) pair whose accumulated `confidence_avg` reaches `FAST_PROMOTION_CONFIDENCE` (0.70 — reachable only by distinctive corrections, e.g. brand/technical terms with a small edit distance) promotes after a single session; all other pairs need 2 separate sessions within 2 days. Within a session, `recorded_this_session` deduplicates so one noisy edit can't count twice.
 
 Requires COM initialization (`CoInitializeEx`) per thread via a `ComGuard` — UI Automation will fail silently without it.
+
+Auto-learned dictionary entries whose `mistake` is a plain, non-distinctive word (per `has_distinctive_features` in `system/text.rs`) are excluded from the mechanical find/replace in `apply_substitutions_from` — they're corrected contextually via the cleanup LLM prompt instead, so a mis-learned pair (e.g. "rock" → "Groq") can't clobber legitimate uses of the common word. Manual dictionary entries are never gated.
 
 ## Key Design Constraints
 
