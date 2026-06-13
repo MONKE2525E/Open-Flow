@@ -1,5 +1,5 @@
 use crate::data::db;
-use crate::system::text::tokenize_lower_alnum;
+use crate::system::text::{has_distinctive_features, tokenize_lower_alnum};
 
 const MAX_PROMPT_ENTRIES: usize = 48;
 const MAX_PROMPT_CHARS: usize = 5_000;
@@ -173,9 +173,19 @@ fn format_dictionary_entry(entry: &db::DictionaryEntry) -> String {
 }
 
 pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> (String, Vec<i64>) {
+    // Auto-learned mistakes that look like plain common words (no distinctive
+    // features) are left to the cleanup LLM's contextual judgment instead of
+    // a blunt mechanical replace, so a mis-learned pair like "rock" -> "Groq"
+    // can't clobber every legitimate use of "rock".
     let mut replaceable: Vec<(i64, &str, &str)> = entries
         .iter()
-        .filter_map(|e| e.mistake.as_deref().map(|m| (e.id, m, e.term.as_str())))
+        .filter_map(|e| {
+            let mistake = e.mistake.as_deref()?;
+            if e.auto_learned && !has_distinctive_features(mistake) {
+                return None;
+            }
+            Some((e.id, mistake, e.term.as_str()))
+        })
         .collect();
     replaceable.sort_by_key(|(_, mistake, _)| std::cmp::Reverse(mistake.len()));
 
@@ -260,6 +270,14 @@ mod tests {
         }
     }
 
+    fn auto_learned_entry(id: i64, term: &str, mistake: &str) -> DictionaryEntry {
+        DictionaryEntry {
+            auto_learned: true,
+            confidence_tier: "medium".to_string(),
+            ..entry(id, term, Some(mistake))
+        }
+    }
+
     #[test]
     fn relevant_prompt_prefers_matching_entries() {
         let entries = vec![
@@ -312,6 +330,30 @@ mod tests {
         let entries = vec![entry(1, "cliche", Some("cliché"))];
         let (out, applied) = apply_substitutions_from("Use cliché in this line.", &entries);
         assert_eq!(out, "Use cliche in this line.");
+        assert_eq!(applied, vec![1]);
+    }
+
+    #[test]
+    fn auto_learned_common_word_mistake_is_not_mechanically_substituted() {
+        let entries = vec![auto_learned_entry(1, "Groq", "rock")];
+        let (out, applied) = apply_substitutions_from("I love rock music", &entries);
+        assert_eq!(out, "I love rock music");
+        assert!(applied.is_empty());
+    }
+
+    #[test]
+    fn auto_learned_distinctive_mistake_is_still_substituted() {
+        let entries = vec![auto_learned_entry(1, "vscode", "vsc0de")];
+        let (out, applied) = apply_substitutions_from("please open vsc0de now", &entries);
+        assert_eq!(out, "please open vscode now");
+        assert_eq!(applied, vec![1]);
+    }
+
+    #[test]
+    fn manual_common_word_mistake_is_still_mechanically_substituted() {
+        let entries = vec![entry(1, "Groq", Some("rock"))];
+        let (out, applied) = apply_substitutions_from("I love rock music", &entries);
+        assert_eq!(out, "I love Groq music");
         assert_eq!(applied, vec![1]);
     }
 }

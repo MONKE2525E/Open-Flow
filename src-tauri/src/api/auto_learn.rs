@@ -17,6 +17,7 @@ use crate::core::text_context::is_invisible_prefix_char as is_invisible_probe_ch
 #[cfg(any(windows, test))]
 use crate::core::text_context::SentenceContext;
 use crate::data::{db, store};
+use crate::system::text::has_distinctive_features;
 use crate::DbHandle;
 
 const MONITOR_WINDOW_SECS: u64 = 60;
@@ -28,14 +29,19 @@ const REJECTION_WINDOW_SECS: u64 = 8;
 const REJECTION_POLL_MS: u64 = 500;
 const CACHE_REJECTION_WINDOW_SECS: u64 = 10;
 const PENDING_RETENTION_DAYS: i64 = 2;
-const PROMOTION_THRESHOLD: i64 = 2;
+const PROMOTION_THRESHOLD_DEFAULT: i64 = 2;
+const PROMOTION_THRESHOLD_FAST: i64 = 1;
+// candidate_confidence() tops out around 0.80; this is reachable only by
+// distinctive corrections (brand/technical terms) with a small edit distance.
+const FAST_PROMOTION_CONFIDENCE: f64 = 0.70;
+const HIGH_CONFIDENCE_TIER: f64 = 0.70;
+const MEDIUM_CONFIDENCE_TIER: f64 = 0.55;
 const STABLE_TEXT_OBSERVATIONS_REQUIRED: usize = 2;
 const MIN_CANDIDATE_NORM_LEN: usize = 2;
 const MAX_SPAN_GROWTH_WORDS: usize = 5;
 const MAX_REPLACEMENTS_PER_SPAN: usize = 2;
 const MAX_CHANGED_OPS_PER_SPAN: usize = 4;
 const MIN_CANDIDATE_CONFIDENCE: f64 = 0.45;
-const PAIR_COOLDOWN_MINUTES: i64 = 0;
 
 static ACTIVE_MONITORS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -223,28 +229,6 @@ fn tokenize_words(text: &str) -> Vec<WordToken> {
     }
 
     tokens
-}
-
-fn has_distinctive_features(token: &str) -> bool {
-    if !token.is_ascii() {
-        return true;
-    }
-    if token.len() >= 4
-        && token
-            .chars()
-            .any(|c| matches!(c.to_ascii_lowercase(), 'q' | 'x' | 'z'))
-    {
-        return true;
-    }
-    if token
-        .chars()
-        .any(|c| c.is_ascii_digit() || matches!(c, '\'' | '-' | '_'))
-    {
-        return true;
-    }
-
-    let uppercase_count = token.chars().filter(|c| c.is_uppercase()).count();
-    uppercase_count > 1 || token.chars().skip(1).any(|c| c.is_uppercase())
 }
 
 fn is_common_word(word: &str) -> bool {
@@ -747,26 +731,22 @@ fn record_candidate(
         return false;
     }
 
-    if !db::upsert_auto_learn_candidate(
-        db,
-        &mistake,
-        &correction,
-        confidence,
-        PAIR_COOLDOWN_MINUTES,
-    )
-    .unwrap_or(false)
-    {
-        let _ = db::log_auto_learn_event(
-            db,
-            "candidate",
-            "cooldown_skip",
-            app_context,
-            &mistake_hash,
-            &correction_hash,
-            confidence,
-        );
-        return false;
-    }
+    let confidence_avg = match db::upsert_auto_learn_candidate(db, &mistake, &correction, confidence) {
+        Ok(confidence_avg) => confidence_avg,
+        Err(e) => {
+            log::warn!("auto-learn candidate upsert failed: {e}");
+            let _ = db::log_auto_learn_event(
+                db,
+                "candidate",
+                "candidate_upsert_failed",
+                app_context,
+                &mistake_hash,
+                &correction_hash,
+                confidence,
+            );
+            return false;
+        }
+    };
 
     if let Err(e) = db::insert_pending_correction(db, &mistake, &correction) {
         log::warn!("auto-learn pending insert failed: {e}");
@@ -786,7 +766,13 @@ fn record_candidate(
         db::count_pending_corrections_recent(db, &mistake, &correction, PENDING_RETENTION_DAYS)
             .unwrap_or(0);
 
-    if count < PROMOTION_THRESHOLD {
+    let threshold = if confidence_avg >= FAST_PROMOTION_CONFIDENCE {
+        PROMOTION_THRESHOLD_FAST
+    } else {
+        PROMOTION_THRESHOLD_DEFAULT
+    };
+
+    if count < threshold {
         let _ = db::log_auto_learn_event(
             db,
             "candidate",
@@ -799,9 +785,9 @@ fn record_candidate(
         return false;
     }
 
-    let tier = if confidence >= 0.85 {
+    let tier = if confidence_avg >= HIGH_CONFIDENCE_TIER {
         "high"
-    } else if confidence >= 0.72 {
+    } else if confidence_avg >= MEDIUM_CONFIDENCE_TIER {
         "medium"
     } else {
         "low"
@@ -1824,7 +1810,12 @@ mod tests {
         original: String,
         corrected: String,
         expect: Vec<[String; 2]>,
-        promotes_after_two_sessions: bool,
+        /// Number of sessions needed to promote this pair, or `null` if the
+        /// case isn't expected to promote at all. 1 exercises the
+        /// fast-promotion path (confidence >= FAST_PROMOTION_CONFIDENCE);
+        /// 2 exercises the default path.
+        #[serde(default)]
+        promotion_sessions: Option<u8>,
     }
 
     #[test]
@@ -1929,7 +1920,7 @@ mod tests {
             "test-app",
             "Koobernetes".to_string(),
             "Kubernetes".to_string(),
-            0.9,
+            0.6,
         ));
         assert!(!record_candidate(
             &db,
@@ -1937,7 +1928,7 @@ mod tests {
             "test-app",
             "Koobernetes".to_string(),
             "Kubernetes".to_string(),
-            0.9,
+            0.6,
         ));
 
         let count = db::count_pending_corrections_recent(
@@ -1963,7 +1954,7 @@ mod tests {
                     "test-app",
                     "Koobernetes".to_string(),
                     "Kubernetes".to_string(),
-                    0.9,
+                    0.6,
                 ),
                 expected
             );
@@ -1989,7 +1980,7 @@ mod tests {
                     "test-app",
                     "rock".to_string(),
                     "qroq".to_string(),
-                    0.9,
+                    0.6,
                 ),
                 expected
             );
@@ -2000,6 +1991,28 @@ mod tests {
         assert_eq!(entries[0].term, "qroq");
         assert_eq!(entries[0].mistake.as_deref(), Some("rock"));
         assert!(entries[0].auto_learned);
+    }
+
+    #[test]
+    fn high_confidence_candidate_promotes_after_one_session() {
+        let db = db::open(":memory:").expect("test db");
+        let mut recorded = HashSet::new();
+
+        assert!(record_candidate(
+            &db,
+            &mut recorded,
+            "test-app",
+            "vsc0de".to_string(),
+            "vscode".to_string(),
+            0.75,
+        ));
+
+        let entries = db::query_dictionary(&db).expect("dictionary");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].term, "vscode");
+        assert_eq!(entries[0].mistake.as_deref(), Some("vsc0de"));
+        assert!(entries[0].auto_learned);
+        assert_eq!(entries[0].confidence_tier, "high");
     }
 
     #[test]
@@ -2108,7 +2121,7 @@ mod tests {
                 .collect();
             assert_eq!(actual, expected, "case {}", case.name);
 
-            if case.promotes_after_two_sessions {
+            if let Some(sessions) = case.promotion_sessions {
                 assert!(
                     !expected.is_empty(),
                     "case {} marked promotable without expected pair",
@@ -2117,19 +2130,28 @@ mod tests {
                 let db = db::open(":memory:").expect("test db");
                 let (mistake, correction) = expected[0].clone();
 
-                for expected_promoted in [false, true] {
+                // 1 session exercises the fast-promotion path (confidence >=
+                // FAST_PROMOTION_CONFIDENCE); 2 exercises the default path.
+                let confidence = if sessions == 1 {
+                    FAST_PROMOTION_CONFIDENCE + 0.05
+                } else {
+                    FAST_PROMOTION_CONFIDENCE - 0.1
+                };
+
+                for session in 1..=sessions {
                     let mut recorded = HashSet::new();
+                    let promoted = record_candidate(
+                        &db,
+                        &mut recorded,
+                        "test-app",
+                        mistake.clone(),
+                        correction.clone(),
+                        confidence,
+                    );
                     assert_eq!(
-                        record_candidate(
-                            &db,
-                            &mut recorded,
-                            "test-app",
-                            mistake.clone(),
-                            correction.clone(),
-                            0.9,
-                        ),
-                        expected_promoted,
-                        "case {} promotion threshold",
+                        promoted,
+                        session == sessions,
+                        "case {} promotion threshold (session {session}/{sessions})",
                         case.name
                     );
                 }

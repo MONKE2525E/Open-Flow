@@ -1,3 +1,28 @@
+/// True if `token` contains a feature (non-ASCII, q/x/z, digit/apostrophe/hyphen/underscore,
+/// or internal capitalization) that makes it unlikely to be a plain mis-transcribed
+/// common word — i.e. likely a brand/technical term or proper noun.
+pub fn has_distinctive_features(token: &str) -> bool {
+    if !token.is_ascii() {
+        return true;
+    }
+    if token.len() >= 4
+        && token
+            .chars()
+            .any(|c| matches!(c.to_ascii_lowercase(), 'q' | 'x' | 'z'))
+    {
+        return true;
+    }
+    if token
+        .chars()
+        .any(|c| c.is_ascii_digit() || matches!(c, '\'' | '-' | '_'))
+    {
+        return true;
+    }
+
+    let uppercase_count = token.chars().filter(|c| c.is_uppercase()).count();
+    uppercase_count > 1 || token.chars().skip(1).any(|c| c.is_uppercase())
+}
+
 pub fn tokenize_lower_alnum(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut buf = String::new();
