@@ -167,8 +167,6 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "com.verenu.app";
 #[cfg(target_os = "macos")]
-const LEGACY_KEYCHAIN_SERVICE: &str = "com.openflow.app";
-#[cfg(target_os = "macos")]
 const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
 #[cfg(target_os = "macos")]
 const KEYCHAIN_DUPLICATE_ITEM: i32 = -25299;
@@ -193,7 +191,7 @@ fn manual_legacy_creds_paths(app: &AppHandle) -> Vec<PathBuf> {
         .home_dir()
         .unwrap_or_else(|_| PathBuf::from("."));
 
-    ["Verenu", "OpenFlow"]
+    ["Verenu"]
         .into_iter()
         .map(|app_dir| manual_legacy_creds_path_from_home(Path::new(&home), app_dir))
         .collect()
@@ -312,31 +310,7 @@ fn read_keychain_service(service: &str, provider: &str) -> Result<Option<String>
 
 #[cfg(target_os = "macos")]
 fn read_keychain(provider: &str) -> Result<Option<String>, String> {
-    if let Some(current) = read_keychain_service(KEYCHAIN_SERVICE, provider)? {
-        return Ok(Some(current));
-    }
-
-    let Some(legacy) = read_keychain_service(LEGACY_KEYCHAIN_SERVICE, provider)? else {
-        return Ok(None);
-    };
-    let normalized = normalize_key(&legacy).to_string();
-    if normalized.is_empty() {
-        return Ok(None);
-    }
-
-    if let Err(err) = set(provider, &normalized) {
-        log::warn!("Could not migrate legacy Keychain item for {provider}: {err}");
-        return Ok(Some(normalized));
-    }
-
-    let user = keychain_user(provider)?;
-    match delete_generic_password(LEGACY_KEYCHAIN_SERVICE, user) {
-        Ok(()) => {}
-        Err(err) if err.code() == KEYCHAIN_ITEM_NOT_FOUND => {}
-        Err(err) => log::warn!("Could not delete legacy Keychain item for {provider}: {err}"),
-    }
-
-    Ok(Some(normalized))
+    read_keychain_service(KEYCHAIN_SERVICE, provider)
 }
 
 #[cfg(target_os = "macos")]
@@ -672,16 +646,6 @@ mod tests {
         assert_eq!(
             path,
             Path::new("/Users/tester/Library/Application Support/Verenu/credentials.json")
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn manual_legacy_creds_path_supports_openflow_directory() {
-        let path = manual_legacy_creds_path_from_home(Path::new("/Users/tester"), "OpenFlow");
-        assert_eq!(
-            path,
-            Path::new("/Users/tester/Library/Application Support/OpenFlow/credentials.json")
         );
     }
 

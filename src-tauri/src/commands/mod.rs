@@ -1134,11 +1134,6 @@ pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
 }
 
 #[tauri::command]
-pub async fn get_source_repo() -> String {
-    crate::api::updater::resolve_source_repo().await
-}
-
-#[tauri::command]
 pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), String> {
     #[cfg(not(windows))]
     {

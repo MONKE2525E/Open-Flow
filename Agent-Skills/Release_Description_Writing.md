@@ -4,15 +4,16 @@ This guide documents the canonical format for Verenu GitHub release descriptions
 
 ## Structure Overview
 
-A release description has seven sections in this order:
+A release description has eight sections in this order:
 
-1. **Title line** (H1) — version + 1-2 word tagline
-2. **App blurb** — one-sentence elevator pitch, bold, always the same
-3. **What's New** (H2) — version-specific changelog
-4. **Features** (H2) — evergreen feature catalogue, updated as features land
-5. **Getting Started** (H2) — static four-step onboarding
-6. **Lightweight & Local** (H2) — static positioning block
-7. **Virustotal Review** (H2) — per-release file hashes
+1. **Title line** (H1) - version + 1-2 word tagline
+2. **App blurb** - one-sentence elevator pitch, bold, always the same
+3. **What's New** (H2) - version-specific changelog
+4. **Features** (H2) - evergreen feature catalogue, updated as features land
+5. **Getting Started** (H2) - static four-step onboarding
+6. **Shortcuts** (H2) - static default hotkeys by platform
+7. **Lightweight & Local** (H2) - static positioning block
+8. **Virustotal Review** (H2) - per-release file hashes
 
 ---
 
@@ -46,10 +47,10 @@ This anchors new readers who land on a release page without context.
 Rules:
 - One bullet per distinct feature or improvement shipped in this version.
 - Lead with the feature name in bold, then a dash, then a single plain-English sentence.
-- Sentence starts with a verb ("Added", "Reworked", "Refactored", "Reduced") or describes what the app *can now do* ("Verenu can now…").
-- No trailing period on bullet items — consistent with previous releases.
+- Sentence starts with a verb ("Added", "Reworked", "Refactored", "Reduced") or describes what the app can now do.
+- No trailing period on bullet items, consistent with previous releases.
 - Order: user-facing features first, then infrastructure/reliability, then testing/tooling last.
-- Do not include bug fixes that have no user-visible impact — fold them into the relevant hardening bullet if needed.
+- Do not include bug fixes that have no user-visible impact. Fold them into the relevant hardening bullet if needed.
 
 ### 4. Features
 
@@ -62,9 +63,9 @@ Rules:
 ```
 
 Rules:
-- This section is **evergreen** — update it as features land, not just at release time.
+- This section is evergreen. Update it as features land, not just at release time.
 - Categories used: Transcription, Text Cleanup, Dictionary & Snippets, History & Stats, Settings.
-- Bold-label bullets (`**Label** - description`) for major features; plain bullets for supporting details.
+- Bold-label bullets (`**Label** - description`) for major features. Use plain bullets for supporting details.
 - Use bold format for hotkeys (e.g., `**Ctrl+Win**` for Windows, `**fn+Control**` for macOS) with no backticks.
 - Keep descriptions present-tense and functional ("Start a continuous dictation session").
 
@@ -81,7 +82,21 @@ Rules:
 
 This is static.
 
-### 6. Lightweight & Local
+### 6. Shortcuts
+
+```
+## Shortcuts
+
+- **Windows hold-to-record** - Hold **Ctrl+Win** to record, release to transcribe and inject
+- **macOS hold-to-record** - Hold **fn+Control** to record, release to transcribe and inject
+```
+
+Rules:
+- This is static unless the app's default shortcuts change.
+- Use bold format for the key chords with no backticks.
+- Keep the descriptions simple and human-readable.
+
+### 7. Lightweight & Local
 
 ```
 ## Lightweight & Local
@@ -94,7 +109,7 @@ This is static.
 
 This is static.
 
-### 7. Virustotal Review
+### 8. Virustotal Review
 
 ```
 ## Virustotal Review

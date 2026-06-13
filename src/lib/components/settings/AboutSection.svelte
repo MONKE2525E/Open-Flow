@@ -12,24 +12,14 @@
   let versionTapTimer: ReturnType<typeof setTimeout> | null = null;
   let devModeHintVisible = $state(false);
 
-  // Defaults to the current Verenu repo and is replaced with
-  // "MONKE2525E/Verenu" once the backend confirms that repo exists.
-  let sourceRepo = $state('MONKE2525E/Verenu');
+  const SOURCE_REPO = 'MONKE2525E/Verenu';
 
   $effect(() => {
     if (appStore.updateInfo) updateCheckState = 'available';
   });
 
-  $effect(() => {
-    invoke<string>('get_source_repo')
-      .then((repo) => {
-        if (repo) sourceRepo = repo;
-      })
-      .catch(() => {});
-  });
-
   async function openRepo() {
-    const url = `https://github.com/${sourceRepo}`;
+    const url = `https://github.com/${SOURCE_REPO}`;
     try {
       const { open } = await import('@tauri-apps/plugin-shell');
       await open(url);
@@ -105,7 +95,7 @@
 </div>
 <div class="setting-row">
   <div><div class="label">Source</div></div>
-  <button class="btn-ghost" onclick={openRepo}>github.com/{sourceRepo}</button>
+  <button class="btn-ghost" onclick={openRepo}>github.com/{SOURCE_REPO}</button>
 </div>
 <div class="setting-row">
   <div>
