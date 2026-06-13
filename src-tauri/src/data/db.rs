@@ -433,6 +433,8 @@ pub fn open(path: &str) -> Result<Db> {
     // interrupted migration during the Verenu rename/update). The column
     // addition and backfill run in one transaction so a failed backfill
     // rolls back the column too, letting this retry on the next launch.
+    // Errors are propagated: without this column, every transcription
+    // insert fails, so running in this state is worse than failing to open.
     if !table_has_column(&conn, "transcriptions", "spoken_words")? {
         let tx = conn.transaction()?;
         let res = (|| -> Result<()> {
@@ -445,7 +447,8 @@ pub fn open(path: &str) -> Result<Db> {
                 tx.commit()?;
             }
             Err(err) => {
-                log::warn!("Failed to self-heal spoken_words column: {err}");
+                log::error!("Failed to self-heal spoken_words column: {err}");
+                return Err(err);
             }
         }
     }
