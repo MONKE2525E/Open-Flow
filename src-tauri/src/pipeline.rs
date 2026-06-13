@@ -560,7 +560,7 @@ fn resolve_app_mapping(
     store.and_then(|s| {
         s.get(store::APP_MAPPINGS)
             .and_then(|v| serde_json::from_value::<Vec<AppMapping>>(v).ok())
-            .and_then(|list| list.into_iter().find(|m| m.exe.to_lowercase() == process_name))
+            .and_then(|list| list.into_iter().find(|m| m.exe.eq_ignore_ascii_case(process_name)))
     })
 }
 
