@@ -7,6 +7,7 @@ export interface AppMapping {
   exe: string;
   profile: string;
   name?: string;
+  cleanup_intensity?: string;
 }
 
 export const profileOptions = [
@@ -15,12 +16,26 @@ export const profileOptions = [
   { id: 'very_casual', label: 'Very Casual' },
 ] as const;
 
+export const cleanupIntensityOptions = [
+  { id: 'none', label: 'Verbatim' },
+  { id: 'light', label: 'Light' },
+  { id: 'medium', label: 'Medium' },
+  { id: 'high', label: 'Direct' },
+] as const;
+
+export const DEFAULT_CLEANUP_INTENSITY_LABEL = 'Default';
+
 export function normalizeExe(exe: string) {
   return exe.trim().toLowerCase();
 }
 
 export function getProfileLabel(profile: string) {
   return profileOptions.find((option) => option.id === profile)?.label ?? titleize(profile);
+}
+
+export function getCleanupIntensityLabel(intensity: string | undefined | null) {
+  if (!intensity) return DEFAULT_CLEANUP_INTENSITY_LABEL;
+  return cleanupIntensityOptions.find((option) => option.id === intensity)?.label ?? titleize(intensity);
 }
 
 export function getAppDisplayName(
