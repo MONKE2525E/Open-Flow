@@ -154,10 +154,14 @@
   }
 
   async function setMappingField(exe: string, patch: Partial<AppMapping>) {
+    const previousMappings = mappings;
     const updated = mappings.map((mapping) =>
       mapping.exe === exe ? normalizeMapping({ ...mapping, ...patch }) : mapping,
     );
-    await saveMappings(updated);
+    const saved = await saveMappings(updated);
+    if (!saved) {
+      mappings = normalizeMappings(previousMappings);
+    }
     openRowDropdown = null;
     rowDropdownPos = null;
   }
