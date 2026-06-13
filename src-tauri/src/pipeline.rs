@@ -1919,7 +1919,7 @@ pub async fn retry_transcription_impl(
         show_error_pill(app, "Retry window expired").await;
         anyhow::bail!("Retry window expired");
     }
-    let Some(capture) = capture else {
+    let Some(mut capture) = capture else {
         hide_pill(app);
         anyhow::bail!("No retry available");
     };
@@ -1933,7 +1933,7 @@ pub async fn retry_transcription_impl(
     }
 
     let mapping = resolve_app_mapping(Some(&settings_store), &capture.process_name);
-    apply_app_style_overrides(&mut cfg, mapping.as_ref());
+    capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
 
     let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
         run_transcription_and_cleanup(
