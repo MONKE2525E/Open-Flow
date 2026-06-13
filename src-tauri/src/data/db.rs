@@ -250,7 +250,7 @@ CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
 ";
 
 pub fn open(path: &str) -> Result<Db> {
-    let conn = Connection::open(path)?;
+    let mut conn = Connection::open(path)?;
     conn.execute_batch(SCHEMA)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
 
@@ -434,18 +434,17 @@ pub fn open(path: &str) -> Result<Db> {
     // addition and backfill run in one transaction so a failed backfill
     // rolls back the column too, letting this retry on the next launch.
     if !table_has_column(&conn, "transcriptions", "spoken_words")? {
-        let _ = conn.execute_batch("BEGIN;");
+        let tx = conn.transaction()?;
         let res = (|| -> Result<()> {
-            conn.execute_batch("ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;")?;
-            backfill_spoken_words(&conn)?;
+            tx.execute_batch("ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;")?;
+            backfill_spoken_words(&tx)?;
             Ok(())
         })();
         match res {
             Ok(()) => {
-                let _ = conn.execute_batch("COMMIT;");
+                tx.commit()?;
             }
             Err(err) => {
-                let _ = conn.execute_batch("ROLLBACK;");
                 log::warn!("Failed to self-heal spoken_words column: {err}");
             }
         }
