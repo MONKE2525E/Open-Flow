@@ -1,6 +1,6 @@
 {
   "name": "verenu",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "Verenu - An open-source AI dictation app for Windows",
   "main": "index.js",
   "type": "module",
