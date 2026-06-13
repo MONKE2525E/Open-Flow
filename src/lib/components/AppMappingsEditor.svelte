@@ -53,6 +53,7 @@
   const activeRowDropdown = $derived.by(() => {
     if (!openRowDropdown) return null;
     const sep = openRowDropdown.lastIndexOf(':');
+    if (sep === -1) return null;
     const exe = openRowDropdown.slice(0, sep);
     const field = openRowDropdown.slice(sep + 1) as 'profile' | 'cleanup';
     const mapping = mappings.find((m) => m.exe === exe);
