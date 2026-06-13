@@ -13,6 +13,7 @@ export interface AppMapping {
   exe: string;
   profile: string;
   name?: string;
+  cleanup_intensity?: CleanupIntensity;
 }
 
 type SettingsValueMap = {
