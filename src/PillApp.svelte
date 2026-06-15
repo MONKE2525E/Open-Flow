@@ -115,14 +115,21 @@
 
   // Opens the error pill: render collapsed (icon-only), measure the message
   // text, then grow to its natural width on the next frame so the CSS width
-  // transition has a starting value to animate from.
+  // transition has a starting value to animate from. pill-error and
+  // pill-state arrive as separate events, so openError() can be invoked
+  // again before a prior call finishes — the task id lets a stale call
+  // bail out instead of clobbering a newer one's measurement/animation.
+  let openErrorTaskId = 0;
   async function openError() {
+    const taskId = ++openErrorTaskId;
     errOpen = false;
     errWidth = 40;
     await tick();
+    if (taskId !== openErrorTaskId) return;
     const textW = errTextEl?.scrollWidth ?? 0;
     const errWidthNatural = Math.min(40 + 8 + textW + 14, 356);
     requestAnimationFrame(() => {
+      if (taskId !== openErrorTaskId) return;
       errWidth = errWidthNatural;
       errOpen = true;
     });
