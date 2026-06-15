@@ -156,9 +156,4 @@
   --pill-bg: #0d0a08;
   --pill-fg: #ffffff;
   --pill-bar: #ffffff;
-
-  /* Same dark red-tint as light theme — error pill never follows theme. */
-  --pill-error-bg: #351613;
-  --pill-error-border: #7a3027;
-  --pill-error-fg: #ff8f80;
 }

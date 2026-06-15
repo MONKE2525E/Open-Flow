@@ -119,6 +119,11 @@
     }, 200);
   }
 
+  // Error pill dimensions in px — mirror .pill.error's CSS (width / gap / max-width).
+  const ERROR_COLLAPSED_WIDTH = 42;
+  const ERROR_GAP = 8;
+  const ERROR_MAX_WIDTH = 356;
+
   // Opens the error pill: render collapsed (icon-only), measure the message
   // text, then grow to its natural width on the next frame so the CSS width
   // transition has a starting value to animate from. pill-error and
@@ -129,11 +134,13 @@
   async function openError() {
     const taskId = ++openErrorTaskId;
     errOpen = false;
-    errWidth = 42;
+    errWidth = ERROR_COLLAPSED_WIDTH;
     await tick();
     if (taskId !== openErrorTaskId || state !== 'error') return;
     const textW = errTextEl?.scrollWidth ?? 0;
-    const errWidthNatural = textW > 0 ? Math.min(42 + 8 + textW, 356) : 42;
+    const errWidthNatural = textW > 0
+      ? Math.min(ERROR_COLLAPSED_WIDTH + ERROR_GAP + textW, ERROR_MAX_WIDTH)
+      : ERROR_COLLAPSED_WIDTH;
     requestAnimationFrame(() => {
       if (taskId !== openErrorTaskId || state !== 'error') return;
       errWidth = errWidthNatural;
