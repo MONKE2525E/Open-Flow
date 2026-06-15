@@ -166,29 +166,45 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
             PILL_ERROR_WIDTH_POINTS
         };
 
+        // Resize and reposition are checked independently: primary_monitor()
+        // can return None on some platforms (e.g. macOS) while the window is
+        // still hidden, which would otherwise skip positioning on the first
+        // call and then skip it again on every later call once needs_resize
+        // is false — permanently mispositioning the pill. Falling back to a
+        // scale factor of 1.0 keeps the resize check meaningful even before
+        // monitor info is available.
+        let monitor = pill.primary_monitor().ok().flatten();
+        let scale_factor = monitor.as_ref().map(|m| m.scale_factor()).unwrap_or(1.0);
+
         // Most transitions (recording/processing/error/idle) share this same
-        // width, so skip the resize/reposition entirely when the window is
-        // already at the target size — re-issuing identical set_size/
-        // set_position calls can still make the OS window manager flicker.
+        // width, so skip the resize when the window is already at the target
+        // size — re-issuing identical set_size calls can still make the OS
+        // window manager flicker.
         let needs_resize = pill
             .inner_size()
-            .ok()
-            .zip(pill.primary_monitor().ok().flatten())
-            .map(|(cur, m)| (cur.width as f64 - width * m.scale_factor()).abs() > 1.0)
+            .map(|cur| (cur.width as f64 - width * scale_factor).abs() > 1.0)
             .unwrap_or(true);
 
         if needs_resize {
             pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS)).ok();
+        }
 
-            if let Ok(Some(m)) = pill.primary_monitor() {
-                let sz = m.size();
-                let sf = m.scale_factor();
-                let pos = m.position();
-                let x = pos.x + ((sz.width as f64 - width * sf) / 2.0) as i32;
-                let bottom_offset_points = pill_bottom_offset_points();
-                let y = pos.y
-                    + (sz.height as f64 - (PILL_HEIGHT_POINTS + bottom_offset_points) * sf) as i32;
-                pill.set_position(tauri::PhysicalPosition::new(x, y)).ok();
+        if let Some(m) = monitor {
+            let sz = m.size();
+            let sf = m.scale_factor();
+            let pos = m.position();
+            let target_x = pos.x + ((sz.width as f64 - width * sf) / 2.0) as i32;
+            let bottom_offset_points = pill_bottom_offset_points();
+            let target_y = pos.y
+                + (sz.height as f64 - (PILL_HEIGHT_POINTS + bottom_offset_points) * sf) as i32;
+
+            let needs_reposition = pill
+                .outer_position()
+                .map(|cur| (cur.x - target_x).abs() > 1 || (cur.y - target_y).abs() > 1)
+                .unwrap_or(true);
+
+            if needs_reposition {
+                pill.set_position(tauri::PhysicalPosition::new(target_x, target_y)).ok();
             }
         }
 
