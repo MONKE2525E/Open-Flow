@@ -60,7 +60,7 @@ core-graphics      = "0.24"   # CGEventTap, CGEvent post (Cmd+V)
 foreign-types-shared = "0.3"
 core-foundation    = "0.10"   # CFRunLoop, CFString, CFRunLoopSource
 core-foundation-sys = "0.8"   # CFGetTypeID / CFRelease for AX value handling
-objc2              = "0.5"     # msg_send! for AppKit (NSWorkspace, NSPasteboard)
+objc2              = "0.6"     # msg_send! for AppKit (NSWorkspace, NSPasteboard)
 objc2-foundation   = { version = "0.2", features = ["NSData", "NSString"] }  # NSData/NSString conversions
 accessibility-sys  = "0.1"     # AXUIElement (auto-learn focused text + AX prompt)
 libproc            = "0.14"    # process RSS for memory monitor
