@@ -125,27 +125,41 @@
   const ERROR_MAX_WIDTH = 356;
 
   // Opens the error pill: render collapsed (icon-only), measure the message
-  // text, then grow to its natural width on the next frame so the CSS width
-  // transition has a starting value to animate from. pill-error and
-  // pill-state arrive as separate events, so openError() can be invoked
-  // again before a prior call finishes — the task id lets a stale call
-  // bail out instead of clobbering a newer one's measurement/animation.
+  // text, then grow to its natural width so the CSS width transition has a
+  // starting value to animate from. pill-error and pill-state arrive as
+  // separate events in unspecified order, so openError() can be invoked
+  // again before or after a prior call finishes. The task id lets a stale
+  // call bail out instead of clobbering a newer one's measurement, and
+  // wasOpen skips the collapse phase on a re-trigger so an already-open pill
+  // resizes in place instead of visibly collapsing and re-expanding.
   let openErrorTaskId = 0;
   async function openError() {
     const taskId = ++openErrorTaskId;
-    errOpen = false;
-    errWidth = ERROR_COLLAPSED_WIDTH;
+    const wasOpen = errOpen;
+    if (!wasOpen) {
+      errOpen = false;
+      errWidth = ERROR_COLLAPSED_WIDTH;
+    }
     await tick();
     if (taskId !== openErrorTaskId || state !== 'error') return;
-    requestAnimationFrame(() => {
-      if (taskId !== openErrorTaskId || state !== 'error') return;
+
+    const applyWidth = () => {
       const textW = errTextEl?.scrollWidth ?? 0;
       const errWidthNatural = textW > 0
         ? Math.min(ERROR_COLLAPSED_WIDTH + ERROR_GAP + textW, ERROR_MAX_WIDTH)
         : ERROR_COLLAPSED_WIDTH;
       errWidth = errWidthNatural;
       errOpen = true;
-    });
+    };
+
+    if (wasOpen) {
+      applyWidth();
+    } else {
+      requestAnimationFrame(() => {
+        if (taskId !== openErrorTaskId || state !== 'error') return;
+        applyWidth();
+      });
+    }
   }
 
   onMount(() => {
@@ -201,6 +215,9 @@
 
       const l2 = await listen<string>('pill-error', (ev) => {
         errorMsg = ev.payload ?? 'Something went wrong';
+        if (state === 'error') {
+          openError();
+        }
       });
       if (!mounted) { l2(); return; }
       unlisteners.push(l2);
