@@ -546,16 +546,10 @@ fn next_cache_expiry(
 async fn show_error_pill(app: &AppHandle, msg: &str) {
     log::error!("pipeline error: {msg}");
     app.emit("verenu:error", msg).ok();
+    // Auto-hide is handled by the frontend (PillApp.svelte), which can check
+    // its own state before reverting to idle, avoiding a race where a new
+    // recording session's pill gets hidden by this error's timeout.
     show_pill_msg(app, "error", Some(msg));
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    // Only hide if no new recording session has started in the meantime
-    if let Some(state) = app.try_state::<SharedState>() {
-        if let Ok(st) = lock_state(&state) {
-            if st.session.is_none() {
-                hide_pill(app);
-            }
-        }
-    }
 }
 
 /// Shows the pill in error state for a quality-gate rejection without

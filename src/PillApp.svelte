@@ -7,6 +7,7 @@
   let errOpen = false;
   let errWidth = 0;
   let errTextEl: HTMLSpanElement | null = null;
+  let errorTimer: ReturnType<typeof setTimeout> | null = null;
   let showHfButtons = false;
   let hfTimer: ReturnType<typeof setTimeout> | null = null;
   let prevState: PillState = 'idle';
@@ -111,6 +112,10 @@
       errOpen = false;
       errWidth = 0;
       errorMsg = '';
+      if (errorTimer) {
+        clearTimeout(errorTimer);
+        errorTimer = null;
+      }
     }, 200);
   }
 
@@ -167,7 +172,17 @@
           stopRaf();
         }
         if (state !== 'recording' && state !== 'handsfree') smoothed = 0;
-        if (state === 'error') openError();
+        if (state === 'error') {
+          openError();
+          if (errorTimer) clearTimeout(errorTimer);
+          errorTimer = setTimeout(() => {
+            errorTimer = null;
+            if (state === 'error') goIdle();
+          }, 2000);
+        } else if (errorTimer) {
+          clearTimeout(errorTimer);
+          errorTimer = null;
+        }
       });
       if (!mounted) { l1(); return; }
       unlisteners.push(l1);
@@ -378,6 +393,7 @@
 
   /* Error: rounded rectangle, dark red-tinted, expands horizontally to reveal the message */
   .pill.error {
+    width: 42px;
     gap: 8px;
     padding: 0 14px;
     background: var(--pill-error-bg);
