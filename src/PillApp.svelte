@@ -110,6 +110,7 @@
       smoothed = 0;
       errOpen = false;
       errWidth = 0;
+      errorMsg = '';
     }, 200);
   }
 
@@ -123,11 +124,11 @@
   async function openError() {
     const taskId = ++openErrorTaskId;
     errOpen = false;
-    errWidth = 40;
+    errWidth = 42;
     await tick();
     if (taskId !== openErrorTaskId) return;
     const textW = errTextEl?.scrollWidth ?? 0;
-    const errWidthNatural = Math.min(40 + 8 + textW + 14, 356);
+    const errWidthNatural = Math.min(42 + 8 + textW, 356);
     requestAnimationFrame(() => {
       if (taskId !== openErrorTaskId) return;
       errWidth = errWidthNatural;
