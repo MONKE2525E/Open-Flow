@@ -137,12 +137,12 @@
     errWidth = ERROR_COLLAPSED_WIDTH;
     await tick();
     if (taskId !== openErrorTaskId || state !== 'error') return;
-    const textW = errTextEl?.scrollWidth ?? 0;
-    const errWidthNatural = textW > 0
-      ? Math.min(ERROR_COLLAPSED_WIDTH + ERROR_GAP + textW, ERROR_MAX_WIDTH)
-      : ERROR_COLLAPSED_WIDTH;
     requestAnimationFrame(() => {
       if (taskId !== openErrorTaskId || state !== 'error') return;
+      const textW = errTextEl?.scrollWidth ?? 0;
+      const errWidthNatural = textW > 0
+        ? Math.min(ERROR_COLLAPSED_WIDTH + ERROR_GAP + textW, ERROR_MAX_WIDTH)
+        : ERROR_COLLAPSED_WIDTH;
       errWidth = errWidthNatural;
       errOpen = true;
     });
@@ -199,7 +199,6 @@
 
       const l2 = await listen<string>('pill-error', (ev) => {
         errorMsg = ev.payload ?? 'Something went wrong';
-        if (state === 'error') openError();
       });
       if (!mounted) { l2(); return; }
       unlisteners.push(l2);
