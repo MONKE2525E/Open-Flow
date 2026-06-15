@@ -205,6 +205,9 @@
     return () => {
       mounted = false;
       cancelAnimationFrame(rafId);
+      if (errorTimer) clearTimeout(errorTimer);
+      if (dyingTimer) clearTimeout(dyingTimer);
+      if (hfTimer) clearTimeout(hfTimer);
       unlisteners.forEach(u => u());
     };
   });

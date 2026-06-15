@@ -556,19 +556,9 @@ async fn show_error_pill(app: &AppHandle, msg: &str) {
 /// focusing the main window or blocking the pipeline task.
 fn reject_with_pill(app: &AppHandle, msg: &str) {
     app.emit("verenu:error", msg).ok();
+    // Auto-hide is handled by the frontend (PillApp.svelte), matching
+    // show_error_pill's clean implementation.
     show_pill_msg(app, "error", Some(msg));
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        // Only hide if no new recording session has started in the meantime
-        if let Some(state) = app.try_state::<SharedState>() {
-            if let Ok(st) = lock_state(&state) {
-                if st.session.is_none() {
-                    hide_pill(&app);
-                }
-            }
-        }
-    });
 }
 
 fn resolve_app_mapping(
