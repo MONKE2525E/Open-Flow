@@ -179,9 +179,12 @@
             errorTimer = null;
             if (state === 'error') goIdle();
           }, 2000);
-        } else if (errorTimer) {
-          clearTimeout(errorTimer);
-          errorTimer = null;
+        } else {
+          if (errorTimer) {
+            clearTimeout(errorTimer);
+            errorTimer = null;
+          }
+          errorMsg = '';
         }
       });
       if (!mounted) { l1(); return; }
