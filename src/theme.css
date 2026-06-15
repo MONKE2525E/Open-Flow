@@ -1,3 +1,7 @@
+@import '@fontsource-variable/fraunces/standard.css';
+@import '@fontsource-variable/inter-tight/wght.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';
+
 :root {
   color-scheme: light;
 
@@ -70,9 +74,16 @@
   --pill-muted: rgba(255, 255, 255, 0.45);
   --pill-muted-strong: rgba(255, 255, 255, 0.85);
 
-  --serif: 'Fraunces', Georgia, serif;
-  --sans: 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  /* Error pill is always dark red-tinted, regardless of theme — matches the
+     dark-theme --danger/--danger-bg/--danger-line so the pill and in-app
+     error toast agree. */
+  --pill-error-bg: #351613;
+  --pill-error-border: #7a3027;
+  --pill-error-fg: #ff8f80;
+
+  --serif: 'Fraunces Variable', 'Fraunces', Georgia, serif;
+  --sans: 'Inter Tight Variable', 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
+  --mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
 
   --r-sm: 8px;
   --r-md: 12px;

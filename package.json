@@ -39,6 +39,9 @@
     "vite": "^8.0.10"
   },
   "dependencies": {
+    "@fontsource-variable/fraunces": "^5.2.9",
+    "@fontsource-variable/inter-tight": "^5.2.7",
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@tauri-apps/plugin-shell": "^2.3.5"
   }
 }

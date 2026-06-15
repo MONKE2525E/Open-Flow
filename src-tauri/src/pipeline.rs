@@ -17,6 +17,7 @@ const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
 const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
 const PILL_WIDTH_POINTS: f64 = 140.0;
+const PILL_ERROR_WIDTH_POINTS: f64 = 380.0;
 const PILL_HEIGHT_POINTS: f64 = 44.0;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const PILL_BOTTOM_GAP_POINTS: f64 = 16.0;
@@ -141,11 +142,71 @@ fn create_pill_if_needed(app: &AppHandle) {
 }
 
 pub fn show_pill(app: &AppHandle, state: &str) {
+    show_pill_msg(app, state, None);
+}
+
+/// Shows the pill window in the given state, optionally carrying an error
+/// message. The window stays at the wide (transparent, click-through) error
+/// width for all passive states so the in-pill error text has room to
+/// expand into without a resize/reposition jump; only "handsfree" narrows
+/// the window, since that's the one state where the click-capture zone
+/// must stay tight.
+fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
     create_pill_if_needed(app);
     if let Some(pill) = app.get_webview_window("pill") {
         // Click-through for passive states so nothing behind the pill is blocked.
         // Handsfree needs real cursor events for its cancel/confirm buttons.
         pill.set_ignore_cursor_events(state != "handsfree").ok();
+
+        // Size and position while still hidden, so the window appears already
+        // in place instead of flashing at its previous geometry and jumping.
+        let width = if state == "handsfree" {
+            PILL_WIDTH_POINTS
+        } else {
+            PILL_ERROR_WIDTH_POINTS
+        };
+
+        // Resize and reposition are checked independently: primary_monitor()
+        // can return None on some platforms (e.g. macOS) while the window is
+        // still hidden, which would otherwise skip positioning on the first
+        // call and then skip it again on every later call once needs_resize
+        // is false — permanently mispositioning the pill. Falling back to a
+        // scale factor of 1.0 keeps the resize check meaningful even before
+        // monitor info is available.
+        let monitor = pill.primary_monitor().ok().flatten();
+        let scale_factor = monitor.as_ref().map(|m| m.scale_factor()).unwrap_or(1.0);
+
+        // Most transitions (recording/processing/error/idle) share this same
+        // width, so skip the resize when the window is already at the target
+        // size — re-issuing identical set_size calls can still make the OS
+        // window manager flicker.
+        let needs_resize = pill
+            .inner_size()
+            .map(|cur| (cur.width as f64 - width * scale_factor).abs() > 1.0)
+            .unwrap_or(true);
+
+        if needs_resize {
+            pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS)).ok();
+        }
+
+        if let Some(m) = monitor {
+            let sz = m.size();
+            let sf = m.scale_factor();
+            let pos = m.position();
+            let target_x = pos.x + ((sz.width as f64 - width * sf) / 2.0) as i32;
+            let bottom_offset_points = pill_bottom_offset_points();
+            let target_y = pos.y
+                + (sz.height as f64 - (PILL_HEIGHT_POINTS + bottom_offset_points) * sf) as i32;
+
+            let needs_reposition = pill
+                .outer_position()
+                .map(|cur| (cur.x - target_x).abs() > 1 || (cur.y - target_y).abs() > 1)
+                .unwrap_or(true);
+
+            if needs_reposition {
+                pill.set_position(tauri::PhysicalPosition::new(target_x, target_y)).ok();
+            }
+        }
 
         // Show the window before emitting state so WebView2 is active when it
         // receives the event. WebView2 suspends event processing while hidden;
@@ -165,16 +226,11 @@ pub fn show_pill(app: &AppHandle, state: &str) {
         #[cfg(not(target_os = "windows"))]
         pill.show().ok();
 
-        if let Ok(Some(m)) = pill.primary_monitor() {
-            let sz = m.size();
-            let sf = m.scale_factor();
-            let x = ((sz.width as f64 / sf - PILL_WIDTH_POINTS) / 2.0 * sf) as i32;
-            let bottom_offset_points = pill_bottom_offset_points();
-            let y =
-                ((sz.height as f64 / sf - PILL_HEIGHT_POINTS - bottom_offset_points) * sf) as i32;
-            pill.set_position(tauri::PhysicalPosition::new(x, y)).ok();
+        // Emit the message before the state so the pill has the error text
+        // ready before it measures and animates open.
+        if let Some(msg) = message {
+            pill.emit("pill-error", msg).ok();
         }
-
         pill.emit("pill-state", state).ok();
     }
 }
@@ -525,32 +581,19 @@ fn next_cache_expiry(
 async fn show_error_pill(app: &AppHandle, msg: &str) {
     log::error!("pipeline error: {msg}");
     app.emit("verenu:error", msg).ok();
-    show_pill(app, "error");
-    if let Some(w) = app.get_webview_window("main") {
-        w.show().ok();
-        w.set_focus().ok();
-    }
-    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-    hide_pill(app);
+    // Auto-hide is handled by the frontend (PillApp.svelte), which can check
+    // its own state before reverting to idle, avoiding a race where a new
+    // recording session's pill gets hidden by this error's timeout.
+    show_pill_msg(app, "error", Some(msg));
 }
 
 /// Shows the pill in error state for a quality-gate rejection without
 /// focusing the main window or blocking the pipeline task.
 fn reject_with_pill(app: &AppHandle, msg: &str) {
     app.emit("verenu:error", msg).ok();
-    show_pill(app, "error");
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-        // Only hide if no new recording session has started in the meantime
-        if let Some(state) = app.try_state::<SharedState>() {
-            if let Ok(st) = lock_state(&state) {
-                if st.session.is_none() {
-                    hide_pill(&app);
-                }
-            }
-        }
-    });
+    // Auto-hide is handled by the frontend (PillApp.svelte), matching
+    // show_error_pill's clean implementation.
+    show_pill_msg(app, "error", Some(msg));
 }
 
 fn resolve_app_mapping(
