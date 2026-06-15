@@ -165,17 +165,31 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
         } else {
             PILL_ERROR_WIDTH_POINTS
         };
-        pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS)).ok();
 
-        if let Ok(Some(m)) = pill.primary_monitor() {
-            let sz = m.size();
-            let sf = m.scale_factor();
-            let pos = m.position();
-            let x = pos.x + ((sz.width as f64 - width * sf) / 2.0) as i32;
-            let bottom_offset_points = pill_bottom_offset_points();
-            let y = pos.y
-                + (sz.height as f64 - (PILL_HEIGHT_POINTS + bottom_offset_points) * sf) as i32;
-            pill.set_position(tauri::PhysicalPosition::new(x, y)).ok();
+        // Most transitions (recording/processing/error/idle) share this same
+        // width, so skip the resize/reposition entirely when the window is
+        // already at the target size — re-issuing identical set_size/
+        // set_position calls can still make the OS window manager flicker.
+        let needs_resize = pill
+            .inner_size()
+            .ok()
+            .zip(pill.primary_monitor().ok().flatten())
+            .map(|(cur, m)| (cur.width as f64 - width * m.scale_factor()).abs() > 1.0)
+            .unwrap_or(true);
+
+        if needs_resize {
+            pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS)).ok();
+
+            if let Ok(Some(m)) = pill.primary_monitor() {
+                let sz = m.size();
+                let sf = m.scale_factor();
+                let pos = m.position();
+                let x = pos.x + ((sz.width as f64 - width * sf) / 2.0) as i32;
+                let bottom_offset_points = pill_bottom_offset_points();
+                let y = pos.y
+                    + (sz.height as f64 - (PILL_HEIGHT_POINTS + bottom_offset_points) * sf) as i32;
+                pill.set_position(tauri::PhysicalPosition::new(x, y)).ok();
+            }
         }
 
         // Show the window before emitting state so WebView2 is active when it
