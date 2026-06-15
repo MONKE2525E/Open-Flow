@@ -17,6 +17,7 @@ const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
 const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
 const PILL_WIDTH_POINTS: f64 = 140.0;
+const PILL_ERROR_WIDTH_POINTS: f64 = 380.0;
 const PILL_HEIGHT_POINTS: f64 = 44.0;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const PILL_BOTTOM_GAP_POINTS: f64 = 16.0;
@@ -141,6 +142,14 @@ fn create_pill_if_needed(app: &AppHandle) {
 }
 
 pub fn show_pill(app: &AppHandle, state: &str) {
+    show_pill_msg(app, state, None);
+}
+
+/// Shows the pill window in the given state, optionally carrying an error
+/// message. The "error" state widens the (transparent, click-through) pill
+/// window so the in-pill error text has room to expand into; all other
+/// states use the normal compact width.
+fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
     create_pill_if_needed(app);
     if let Some(pill) = app.get_webview_window("pill") {
         // Click-through for passive states so nothing behind the pill is blocked.
@@ -165,16 +174,28 @@ pub fn show_pill(app: &AppHandle, state: &str) {
         #[cfg(not(target_os = "windows"))]
         pill.show().ok();
 
+        let width = if state == "error" {
+            PILL_ERROR_WIDTH_POINTS
+        } else {
+            PILL_WIDTH_POINTS
+        };
+        pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS)).ok();
+
         if let Ok(Some(m)) = pill.primary_monitor() {
             let sz = m.size();
             let sf = m.scale_factor();
-            let x = ((sz.width as f64 / sf - PILL_WIDTH_POINTS) / 2.0 * sf) as i32;
+            let x = ((sz.width as f64 / sf - width) / 2.0 * sf) as i32;
             let bottom_offset_points = pill_bottom_offset_points();
             let y =
                 ((sz.height as f64 / sf - PILL_HEIGHT_POINTS - bottom_offset_points) * sf) as i32;
             pill.set_position(tauri::PhysicalPosition::new(x, y)).ok();
         }
 
+        // Emit the message before the state so the pill has the error text
+        // ready before it measures and animates open.
+        if let Some(msg) = message {
+            pill.emit("pill-error", msg).ok();
+        }
         pill.emit("pill-state", state).ok();
     }
 }
@@ -525,12 +546,8 @@ fn next_cache_expiry(
 async fn show_error_pill(app: &AppHandle, msg: &str) {
     log::error!("pipeline error: {msg}");
     app.emit("verenu:error", msg).ok();
-    show_pill(app, "error");
-    if let Some(w) = app.get_webview_window("main") {
-        w.show().ok();
-        w.set_focus().ok();
-    }
-    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    show_pill_msg(app, "error", Some(msg));
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     hide_pill(app);
 }
 
@@ -538,10 +555,10 @@ async fn show_error_pill(app: &AppHandle, msg: &str) {
 /// focusing the main window or blocking the pipeline task.
 fn reject_with_pill(app: &AppHandle, msg: &str) {
     app.emit("verenu:error", msg).ok();
-    show_pill(app, "error");
+    show_pill_msg(app, "error", Some(msg));
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         // Only hide if no new recording session has started in the meantime
         if let Some(state) = app.try_state::<SharedState>() {
             if let Ok(st) = lock_state(&state) {

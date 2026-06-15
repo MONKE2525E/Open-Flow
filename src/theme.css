@@ -70,6 +70,13 @@
   --pill-muted: rgba(255, 255, 255, 0.45);
   --pill-muted-strong: rgba(255, 255, 255, 0.85);
 
+  /* Error pill is always dark red-tinted, regardless of theme — matches the
+     dark-theme --danger/--danger-bg/--danger-line so the pill and in-app
+     error toast agree. */
+  --pill-error-bg: #351613;
+  --pill-error-border: #7a3027;
+  --pill-error-fg: #ff8f80;
+
   --serif: 'Fraunces', Georgia, serif;
   --sans: 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
@@ -149,4 +156,9 @@
   --pill-bg: #0d0a08;
   --pill-fg: #ffffff;
   --pill-bar: #ffffff;
+
+  /* Same dark red-tint as light theme — error pill never follows theme. */
+  --pill-error-bg: #351613;
+  --pill-error-border: #7a3027;
+  --pill-error-fg: #ff8f80;
 }
