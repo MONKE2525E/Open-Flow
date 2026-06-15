@@ -146,9 +146,11 @@ pub fn show_pill(app: &AppHandle, state: &str) {
 }
 
 /// Shows the pill window in the given state, optionally carrying an error
-/// message. The "error" state widens the (transparent, click-through) pill
-/// window so the in-pill error text has room to expand into; all other
-/// states use the normal compact width.
+/// message. The window stays at the wide (transparent, click-through) error
+/// width for all passive states so the in-pill error text has room to
+/// expand into without a resize/reposition jump; only "handsfree" narrows
+/// the window, since that's the one state where the click-capture zone
+/// must stay tight.
 fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
     create_pill_if_needed(app);
     if let Some(pill) = app.get_webview_window("pill") {
@@ -174,10 +176,10 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
         #[cfg(not(target_os = "windows"))]
         pill.show().ok();
 
-        let width = if state == "error" {
-            PILL_ERROR_WIDTH_POINTS
-        } else {
+        let width = if state == "handsfree" {
             PILL_WIDTH_POINTS
+        } else {
+            PILL_ERROR_WIDTH_POINTS
         };
         pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS)).ok();
 

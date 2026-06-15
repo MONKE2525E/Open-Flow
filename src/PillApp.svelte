@@ -131,11 +131,11 @@
     errOpen = false;
     errWidth = 42;
     await tick();
-    if (taskId !== openErrorTaskId) return;
+    if (taskId !== openErrorTaskId || state !== 'error') return;
     const textW = errTextEl?.scrollWidth ?? 0;
     const errWidthNatural = Math.min(42 + 8 + textW, 356);
     requestAnimationFrame(() => {
-      if (taskId !== openErrorTaskId) return;
+      if (taskId !== openErrorTaskId || state !== 'error') return;
       errWidth = errWidthNatural;
       errOpen = true;
     });
