@@ -133,7 +133,7 @@
     await tick();
     if (taskId !== openErrorTaskId || state !== 'error') return;
     const textW = errTextEl?.scrollWidth ?? 0;
-    const errWidthNatural = Math.min(42 + 8 + textW, 356);
+    const errWidthNatural = textW > 0 ? Math.min(42 + 8 + textW, 356) : 42;
     requestAnimationFrame(() => {
       if (taskId !== openErrorTaskId || state !== 'error') return;
       errWidth = errWidthNatural;
