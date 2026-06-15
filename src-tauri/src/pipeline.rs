@@ -170,10 +170,11 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
         if let Ok(Some(m)) = pill.primary_monitor() {
             let sz = m.size();
             let sf = m.scale_factor();
-            let x = ((sz.width as f64 - width * sf) / 2.0) as i32;
+            let pos = m.position();
+            let x = pos.x + ((sz.width as f64 - width * sf) / 2.0) as i32;
             let bottom_offset_points = pill_bottom_offset_points();
-            let y =
-                (sz.height as f64 - (PILL_HEIGHT_POINTS + bottom_offset_points) * sf) as i32;
+            let y = pos.y
+                + (sz.height as f64 - (PILL_HEIGHT_POINTS + bottom_offset_points) * sf) as i32;
             pill.set_position(tauri::PhysicalPosition::new(x, y)).ok();
         }
 
