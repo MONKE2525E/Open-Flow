@@ -1,3 +1,7 @@
+@import '@fontsource-variable/fraunces/standard.css';
+@import '@fontsource-variable/inter-tight/wght.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';
+
 :root {
   color-scheme: light;
 
@@ -77,9 +81,9 @@
   --pill-error-border: #7a3027;
   --pill-error-fg: #ff8f80;
 
-  --serif: 'Fraunces', Georgia, serif;
-  --sans: 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --serif: 'Fraunces Variable', 'Fraunces', Georgia, serif;
+  --sans: 'Inter Tight Variable', 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
+  --mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
 
   --r-sm: 8px;
   --r-md: 12px;
