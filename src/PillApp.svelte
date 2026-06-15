@@ -192,6 +192,8 @@
             errorTimer = null;
           }
           errorMsg = '';
+          errOpen = false;
+          errWidth = 0;
         }
       });
       if (!mounted) { l1(); return; }

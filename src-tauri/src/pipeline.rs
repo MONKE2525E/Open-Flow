@@ -158,6 +158,25 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
         // Handsfree needs real cursor events for its cancel/confirm buttons.
         pill.set_ignore_cursor_events(state != "handsfree").ok();
 
+        // Size and position while still hidden, so the window appears already
+        // in place instead of flashing at its previous geometry and jumping.
+        let width = if state == "handsfree" {
+            PILL_WIDTH_POINTS
+        } else {
+            PILL_ERROR_WIDTH_POINTS
+        };
+        pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS)).ok();
+
+        if let Ok(Some(m)) = pill.primary_monitor() {
+            let sz = m.size();
+            let sf = m.scale_factor();
+            let x = ((sz.width as f64 - width * sf) / 2.0) as i32;
+            let bottom_offset_points = pill_bottom_offset_points();
+            let y =
+                (sz.height as f64 - (PILL_HEIGHT_POINTS + bottom_offset_points) * sf) as i32;
+            pill.set_position(tauri::PhysicalPosition::new(x, y)).ok();
+        }
+
         // Show the window before emitting state so WebView2 is active when it
         // receives the event. WebView2 suspends event processing while hidden;
         // emitting into a suspended view causes the first state to be dropped or
@@ -175,23 +194,6 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
         }
         #[cfg(not(target_os = "windows"))]
         pill.show().ok();
-
-        let width = if state == "handsfree" {
-            PILL_WIDTH_POINTS
-        } else {
-            PILL_ERROR_WIDTH_POINTS
-        };
-        pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS)).ok();
-
-        if let Ok(Some(m)) = pill.primary_monitor() {
-            let sz = m.size();
-            let sf = m.scale_factor();
-            let x = ((sz.width as f64 - width * sf) / 2.0) as i32;
-            let bottom_offset_points = pill_bottom_offset_points();
-            let y =
-                (sz.height as f64 - (PILL_HEIGHT_POINTS + bottom_offset_points) * sf) as i32;
-            pill.set_position(tauri::PhysicalPosition::new(x, y)).ok();
-        }
 
         // Emit the message before the state so the pill has the error text
         // ready before it measures and animates open.
