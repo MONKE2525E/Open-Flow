@@ -186,6 +186,23 @@
   let tops: number[] = [];
   let totalHeight = 0;
 
+  let listOffset = 0;
+  let lastStart = -1;
+  let lastEnd = -1;
+  let lastItemsRef: RenderItem[] | null = null;
+  let lastTopsSignature = "";
+
+  function updateListOffset() {
+    if (!container || !listContainer) return;
+    const listRect = listContainer.getBoundingClientRect();
+    if (container === document.documentElement) {
+      listOffset = listRect.top + window.scrollY;
+    } else {
+      const containerRect = container.getBoundingClientRect();
+      listOffset = listRect.top - containerRect.top + container.scrollTop;
+    }
+  }
+
   function updateLayout() {
     tops = [];
     let currentTop = 0;
@@ -196,6 +213,7 @@
       currentTop += h;
     }
     totalHeight = currentTop;
+    updateListOffset();
   }
 
   function updateVirtualList() {
@@ -203,21 +221,14 @@
       visibleItems = [];
       topSpacerHeight = 0;
       bottomSpacerHeight = 0;
+      lastStart = -1;
+      lastEnd = -1;
+      lastItemsRef = null;
+      lastTopsSignature = "";
       return;
     }
     scrollTop = container === document.documentElement ? window.scrollY : container.scrollTop;
     clientHeight = container === document.documentElement ? window.innerHeight : container.clientHeight;
-
-    let listOffset = 0;
-    if (listContainer) {
-      const listRect = listContainer.getBoundingClientRect();
-      if (container === document.documentElement) {
-        listOffset = listRect.top + window.scrollY;
-      } else {
-        const containerRect = container.getBoundingClientRect();
-        listOffset = listRect.top - containerRect.top + container.scrollTop;
-      }
-    }
 
     const relativeScrollTop = Math.max(0, scrollTop - listOffset);
     const buffer = 400; // scroll buffer (px)
@@ -258,6 +269,21 @@
     start = Math.max(0, Math.min(start, flatItems.length));
     end = Math.max(start, Math.min(end, flatItems.length));
 
+    const topsSignature = tops.length > 0 ? `${tops[0]}-${tops[tops.length - 1]}-${totalHeight}` : "";
+
+    if (
+      start === lastStart &&
+      end === lastEnd &&
+      flatItems === lastItemsRef &&
+      topsSignature === lastTopsSignature
+    ) {
+      return;
+    }
+    lastStart = start;
+    lastEnd = end;
+    lastItemsRef = flatItems;
+    lastTopsSignature = topsSignature;
+
     visibleItems = flatItems.slice(start, end).map((item, idx) => ({
       item,
       index: start + idx
@@ -272,10 +298,16 @@
     container;
     listContainer;
     updateLayout();
+    updateListOffset();
     updateVirtualList();
   }
 
   function handleScroll() {
+    updateVirtualList();
+  }
+
+  function handleResize() {
+    updateListOffset();
     updateVirtualList();
   }
 
@@ -373,7 +405,7 @@
     container = document.querySelector('.content') || document.documentElement;
     const scrollTarget = container === document.documentElement ? window : container;
     scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('resize', handleScroll, { passive: true });
+    window.addEventListener('resize', handleResize, { passive: true });
 
     let mounted = true;
     const unlisteners: (() => void)[] = [];
@@ -421,7 +453,7 @@
         const scrollTarget = container === document.documentElement ? window : container;
         scrollTarget.removeEventListener('scroll', handleScroll);
       }
-      window.removeEventListener('resize', handleScroll);
+      window.removeEventListener('resize', handleResize);
       if (sharedObserver) {
         sharedObserver.disconnect();
         sharedObserver = null;
