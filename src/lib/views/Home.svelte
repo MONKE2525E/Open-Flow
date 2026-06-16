@@ -174,7 +174,7 @@
 
     // Prune cachedHeights to avoid memory leaks from old/deleted history items
     const keys = new Set(flatItems.map(item => item.key));
-    for (const key in cachedHeights) {
+    for (const key of Object.keys(cachedHeights)) {
       if (!keys.has(key)) {
         delete cachedHeights[key];
       }
@@ -295,9 +295,15 @@
     listContainer;
     appStore.updateInfo;
     failedEntry;
+    updateLayout();
+    updateVirtualList();
+    // Recalculate list offset after the DOM has updated to handle banner toggles
     tick().then(() => {
-      updateLayout();
-      updateVirtualList();
+      const oldOffset = listOffset;
+      updateListOffset();
+      if (listOffset !== oldOffset) {
+        updateVirtualList();
+      }
     });
   }
 
