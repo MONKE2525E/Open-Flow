@@ -250,6 +250,8 @@ fn main() {
             commands::get_stats,
             commands::get_cleanup_cache_status,
             commands::clear_cleanup_cache,
+            commands::get_default_cleanup_prompt,
+            commands::test_cleanup_prompt,
             commands::get_microphones,
             commands::get_memory_mb,
             commands::start_input_recording,

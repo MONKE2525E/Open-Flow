@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
-use crate::api::{auto_learn, cleanup, transcription};
+use crate::api::{auto_learn, cleanup, prompts, transcription};
 use crate::core::{injection, window_context};
 use crate::data::{db, dictionary, snippets, store};
 use crate::media::audio;
@@ -30,11 +30,72 @@ fn transcription_provider_from_str(s: &str) -> transcription::Provider {
     }
 }
 
-fn cleanup_provider_from_str(s: &str) -> cleanup::CleanupProvider {
-    match s {
-        "openai" => cleanup::CleanupProvider::OpenAI,
-        "google" => cleanup::CleanupProvider::Google,
-        _ => cleanup::CleanupProvider::Groq,
+/// Runtime safety net for a cleanup result that looks like the model
+/// answering/refusing instead of returning cleaned dictation. Differential:
+/// only acts if `cleaned` looks like a refusal AND `raw` does not (a real
+/// speaker can legitimately say "I cannot...").
+///
+/// Returns `Some(text)` for a usable cleaned result (safe to cache), or
+/// `None` if the retry also looks like a refusal/failed and the caller
+/// should skip cleanup entirely and use the pre-cleanup text.
+#[allow(clippy::too_many_arguments)]
+async fn guard_cleanup_refusal(
+    cleaned: String,
+    raw: &str,
+    expanded: &str,
+    provider_id: &str,
+    model: &str,
+    key: &str,
+    profile: &str,
+    intensity: &str,
+    extra_rules: &str,
+    app_context: Option<&str>,
+) -> Option<String> {
+    if !prompts::looks_like_refusal(&cleaned) || prompts::looks_like_refusal(raw) {
+        return Some(cleaned);
+    }
+
+    log::warn!(
+        "pipeline: cleanup output looks like a model refusal, retrying once with hardened prompt provider={provider_id} model={model}"
+    );
+
+    let cp = cleanup::provider_from_str(provider_id);
+    let retried = cleanup::cleanup(
+        expanded,
+        cp,
+        key,
+        model,
+        profile,
+        intensity,
+        extra_rules,
+        app_context,
+        Some(prompts::hardened_retry_template()),
+    )
+    .await;
+
+    match retried {
+        Ok(retried)
+            if !retried.is_empty()
+                && (!prompts::looks_like_refusal(&retried) || prompts::looks_like_refusal(raw)) =>
+        {
+            log::debug!(
+                "pipeline: cleanup refusal retry succeeded provider={provider_id} model={model}"
+            );
+            Some(retried)
+        }
+        Ok(_) => {
+            log::warn!(
+                "pipeline: cleanup refusal retry still looks like a refusal, falling back to pre-cleanup text provider={provider_id} model={model}"
+            );
+            None
+        }
+        Err(e) => {
+            log::warn!(
+                "pipeline: cleanup refusal retry failed, falling back to pre-cleanup text provider={provider_id} model={model} error={}",
+                trim_err(&e.to_string())
+            );
+            None
+        }
     }
 }
 
@@ -1169,14 +1230,15 @@ async fn run_cleanup_and_snippets_for_db(
             extra_rules.lines().filter(|l| !l.trim().is_empty()).count()
         );
 
-        let mut cleaned_res: Option<String> = None;
+        let mut cleaned_res: Option<(String, String, String, String)> = None;
         let mut last_cleanup_err: Option<anyhow::Error> = None;
         for (provider_id, model) in cleanup_model_chain(cfg) {
             let key = cfg.key_for(&provider_id).to_owned();
             if key.is_empty() {
                 continue;
             }
-            let cp = cleanup_provider_from_str(&provider_id);
+            let cp = cleanup::provider_from_str(&provider_id);
+            let custom_template = cfg.cleanup_override_for(&provider_id, &model);
             match cleanup::cleanup(
                 &expanded,
                 cp,
@@ -1186,6 +1248,7 @@ async fn run_cleanup_and_snippets_for_db(
                 &cfg.cleanup_intensity,
                 &extra_rules,
                 app_context,
+                custom_template,
             )
             .await
             {
@@ -1196,7 +1259,7 @@ async fn run_cleanup_and_snippets_for_db(
                         model,
                         cleaned.chars().count()
                     );
-                    cleaned_res = Some(cleaned);
+                    cleaned_res = Some((cleaned, provider_id.clone(), model.clone(), key.clone()));
                     break;
                 }
                 Ok(_) => {
@@ -1221,7 +1284,27 @@ async fn run_cleanup_and_snippets_for_db(
             }
         }
 
-        match cleaned_res {
+        let provider_succeeded = cleaned_res.is_some();
+        let guarded = match cleaned_res {
+            Some((cleaned, provider_id, model, key)) => {
+                guard_cleanup_refusal(
+                    cleaned,
+                    raw,
+                    &expanded,
+                    &provider_id,
+                    &model,
+                    &key,
+                    profile,
+                    &cfg.cleanup_intensity,
+                    &extra_rules,
+                    app_context,
+                )
+                .await
+            }
+            None => None,
+        };
+
+        match guarded {
             Some(cleaned) => {
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
@@ -1242,7 +1325,9 @@ async fn run_cleanup_and_snippets_for_db(
                 }
                 overridden
             }
-            None if last_cleanup_err.is_some() => return Err(last_cleanup_err.expect("checked")),
+            None if !provider_succeeded && last_cleanup_err.is_some() => {
+                return Err(last_cleanup_err.expect("checked"))
+            }
             None => snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions),
         }
     } else {
@@ -1456,6 +1541,7 @@ mod tests {
         should_run_cleanup_llm, should_use_cleanup_cache, style_scoped_cleanup_cache_key,
         PipelineTestDictionaryEntry, PipelineTestRequest, PipelineTestSnippet,
     };
+    use crate::api::prompts::looks_like_refusal;
     use crate::data::store;
     use crate::testing::{
         fixture_hit_count, register_fixture, reset, set_enabled, take_injections, FixtureSpec,
@@ -1552,6 +1638,8 @@ mod tests {
             contextual_caps_enabled: true,
             auto_spacing_enabled: true,
             macos_clipboard_sniff_enabled: false,
+            advanced_model_ui: false,
+            cleanup_prompt_overrides: std::collections::HashMap::new(),
         }
     }
 
@@ -1772,6 +1860,90 @@ mod tests {
             1
         );
         assert_eq!(fixture_hit_count("cleanup", "openai", "gpt-4o-mini"), 1);
+        reset();
+    }
+
+    #[test]
+    fn looks_like_refusal_matches_known_markers() {
+        assert!(looks_like_refusal(
+            "I am an AI and I do not have access to real-time data."
+        ));
+        assert!(looks_like_refusal("As an AI, I can't help with that."));
+        assert!(looks_like_refusal("I cannot provide that information."));
+        assert!(!looks_like_refusal("Send me the file when you can."));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_keeps_self_described_refusal_when_dictated_by_user() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("I cannot believe it is already five o'clock".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("I cannot believe it's already five o'clock.".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let result = run_pipeline_fixture(base_request(base_config()))
+            .await
+            .expect("dictated refusal-shaped text should pass through unchanged");
+        assert_eq!(
+            result.final_text_before_dictionary,
+            "I cannot believe it's already five o'clock."
+        );
+        assert_eq!(
+            fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+            1
+        );
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_retries_then_falls_back_on_model_refusal() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("what time is it in tokyo right now".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some(
+                "I am an AI and I do not have access to real-time information.".into(),
+            ),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let result = run_pipeline_fixture(base_request(base_config()))
+            .await
+            .expect("model refusal should fall back to pre-cleanup text");
+        assert_eq!(
+            result.final_text_before_dictionary,
+            "what time is it in tokyo right now"
+        );
+        assert_eq!(
+            fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+            2
+        );
         reset();
     }
 

@@ -35,7 +35,33 @@
     cleanup_default_model?: string | null;
     transcription_fallback_models?: string[] | null;
     cleanup_fallback_models?: string[] | null;
+    cleanup_prompt_overrides?: unknown;
   };
+
+  type PromptTestCaseResult = {
+    name: string;
+    passed: boolean;
+    detail: string;
+  };
+
+  type PromptTestReport = {
+    passed: boolean;
+    static_warnings: string[];
+    live_results: PromptTestCaseResult[];
+  };
+
+  type PromptTestState =
+    | { status: 'idle' }
+    | { status: 'testing' }
+    | { status: 'passed' }
+    | { status: 'failed'; report?: PromptTestReport; error?: string };
+
+  const CLEANUP_PROMPT_TAGS = [
+    '{{ active_app }}',
+    '{{ cleanup_preset }}',
+    '{{ formatting_rules }}',
+    '{{ snippet_overrides }}',
+  ];
 
   const providerSections: ProviderSection[] = [
     { id: 'groq', label: 'Groq', storeProvider: 'groq' },
@@ -72,6 +98,11 @@
     transcription: { groq: '', openai: '', google: '' },
     cleanup: { groq: '', openai: '', google: '' },
   });
+
+  let cleanupPromptOverrides = $state<Record<string, string>>({});
+  let cleanupPromptDrafts = $state<Record<string, string>>({});
+  let cleanupPromptLoading = $state<Record<string, boolean>>({});
+  let cleanupPromptTestState = $state<Record<string, PromptTestState>>({});
 
   let transcriptionOpen = $state(false);
   let cleanupOpen = $state(false);
@@ -221,6 +252,14 @@
     if (Array.isArray(cFallbackRaw)) cleanupFallbackModels = cFallbackRaw.filter((m) => !!splitModelId(m));
     if (typeof advancedRaw === 'boolean') advancedModelUi = advancedRaw;
 
+    if (all.cleanup_prompt_overrides && typeof all.cleanup_prompt_overrides === 'object') {
+      const overrides: Record<string, string> = {};
+      for (const [k, v] of Object.entries(all.cleanup_prompt_overrides as Record<string, unknown>)) {
+        if (typeof v === 'string') overrides[k] = v;
+      }
+      cleanupPromptOverrides = overrides;
+    }
+
     const preT = transcriptionDefaultModel;
     const preC = cleanupDefaultModel;
     const preTFb = transcriptionFallbackModels.length;
@@ -331,6 +370,92 @@
 
   function activeModelLabel(type: TaskType): string {
     return splitModelId(taskDefault(type))?.model ?? 'None';
+  }
+
+  function currentCleanupModelFor(provider: ProviderId): string {
+    const parsed = splitModelId(cleanupDefaultModel);
+    if (parsed && parsed.provider === provider) return parsed.model;
+    return recommendedModels.cleanup[provider as UiProviderId].premium;
+  }
+
+  async function ensurePromptDraftLoaded(provider: ProviderId, model: string) {
+    const key = modelId(provider, model);
+    if (cleanupPromptDrafts[key] !== undefined || cleanupPromptLoading[key]) return;
+    cleanupPromptLoading = { ...cleanupPromptLoading, [key]: true };
+    try {
+      const override = cleanupPromptOverrides[key];
+      const text = override ?? await invoke<string>('get_default_cleanup_prompt', { provider, model });
+      cleanupPromptDrafts = { ...cleanupPromptDrafts, [key]: text };
+    } catch (err) {
+      console.error('ensurePromptDraftLoaded failed:', err);
+    } finally {
+      cleanupPromptLoading = { ...cleanupPromptLoading, [key]: false };
+    }
+  }
+
+  $effect(() => {
+    if (!advancedModelUi) return;
+    for (const section of providerSections) {
+      ensurePromptDraftLoaded(section.storeProvider, currentCleanupModelFor(section.storeProvider));
+    }
+  });
+
+  async function saveCleanupPrompt(provider: ProviderId, model: string, force = false) {
+    const key = modelId(provider, model);
+    const draft = cleanupPromptDrafts[key] ?? '';
+    if (force) {
+      cleanupPromptOverrides = { ...cleanupPromptOverrides, [key]: draft };
+      await saveSetting('cleanup_prompt_overrides', cleanupPromptOverrides);
+      cleanupPromptTestState = { ...cleanupPromptTestState, [key]: { status: 'passed' } };
+      return;
+    }
+    cleanupPromptTestState = { ...cleanupPromptTestState, [key]: { status: 'testing' } };
+    try {
+      const report = await invoke<PromptTestReport>('test_cleanup_prompt', { provider, model, template: draft });
+      if (report.passed) {
+        cleanupPromptOverrides = { ...cleanupPromptOverrides, [key]: draft };
+        await saveSetting('cleanup_prompt_overrides', cleanupPromptOverrides);
+        cleanupPromptTestState = { ...cleanupPromptTestState, [key]: { status: 'passed' } };
+      } else {
+        cleanupPromptTestState = { ...cleanupPromptTestState, [key]: { status: 'failed', report } };
+      }
+    } catch (err) {
+      cleanupPromptTestState = {
+        ...cleanupPromptTestState,
+        [key]: { status: 'failed', error: err instanceof Error ? err.message : String(err) },
+      };
+    }
+  }
+
+  async function resetCleanupPrompt(provider: ProviderId, model: string) {
+    const key = modelId(provider, model);
+    cleanupPromptLoading = { ...cleanupPromptLoading, [key]: true };
+    try {
+      const text = await invoke<string>('get_default_cleanup_prompt', { provider, model });
+      cleanupPromptDrafts = { ...cleanupPromptDrafts, [key]: text };
+      cleanupPromptTestState = { ...cleanupPromptTestState, [key]: { status: 'idle' } };
+    } catch (err) {
+      console.error('resetCleanupPrompt failed:', err);
+    } finally {
+      cleanupPromptLoading = { ...cleanupPromptLoading, [key]: false };
+    }
+  }
+
+  function dismissPromptTest(key: string) {
+    cleanupPromptTestState = { ...cleanupPromptTestState, [key]: { status: 'idle' } };
+  }
+
+  function updateCleanupPromptDraft(provider: ProviderId, model: string, value: string) {
+    const key = modelId(provider, model);
+    cleanupPromptDrafts = { ...cleanupPromptDrafts, [key]: value };
+    const current = cleanupPromptTestState[key];
+    if (current && (current.status === 'passed' || current.status === 'failed')) {
+      cleanupPromptTestState = { ...cleanupPromptTestState, [key]: { status: 'idle' } };
+    }
+  }
+
+  function failedCheckCount(report: PromptTestReport): number {
+    return report.static_warnings.length + report.live_results.filter((r) => !r.passed).length;
   }
 
   async function handleAdvancedModelUi(value: boolean) {
@@ -487,6 +612,88 @@
           </div>
         {/each}
         </div>
+
+        {#if type === 'cleanup' && advancedModelUi}
+          <div class="prompt-editor-section" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
+            <div class="prompt-editor-intro">
+              <span class="prompt-editor-intro-text">Cleanup prompt template — use these tags to inject context:</span>
+              <div class="prompt-tags-row">
+                {#each CLEANUP_PROMPT_TAGS as tag}
+                  <span class="prompt-tag">{tag}</span>
+                {/each}
+              </div>
+            </div>
+            {#each providerSections as section (section.id)}
+              {@const model = currentCleanupModelFor(section.storeProvider)}
+              {@const key = modelId(section.storeProvider, model)}
+              {@const draft = cleanupPromptDrafts[key]}
+              {@const testState = cleanupPromptTestState[key] ?? { status: 'idle' }}
+              {@const hasKey = apiKeyStatus[section.storeProvider]}
+              <div class="prompt-editor-card">
+                <div class="prompt-editor-head">
+                  <span class="prompt-editor-provider">{section.label}</span>
+                  <span class="prompt-editor-model">{model}</span>
+                </div>
+                {#if cleanupPromptLoading[key] && draft === undefined}
+                  <div class="prompt-loading">Loading…</div>
+                {:else}
+                  <textarea
+                    class="prompt-textarea"
+                    value={draft ?? ''}
+                    oninput={(e) => updateCleanupPromptDraft(section.storeProvider, model, (e.currentTarget as HTMLTextAreaElement).value)}
+                    rows={10}
+                    spellcheck={false}
+                    disabled={testState.status === 'testing'}
+                  ></textarea>
+                  <div class="prompt-editor-actions">
+                    {#if hasKey}
+                      <button
+                        class="prompt-btn-ghost"
+                        disabled={testState.status === 'testing' || cleanupPromptLoading[key]}
+                        onclick={() => resetCleanupPrompt(section.storeProvider, model)}
+                      >Reset to default</button>
+                      <button
+                        class="prompt-btn"
+                        disabled={testState.status === 'testing' || cleanupPromptLoading[key]}
+                        onclick={() => saveCleanupPrompt(section.storeProvider, model)}
+                      >{testState.status === 'testing' ? 'Testing…' : 'Save'}</button>
+                    {:else}
+                      <span class="prompt-hint">Add a {section.label} API key to save custom prompts.</span>
+                    {/if}
+                  </div>
+                  {#if testState.status === 'passed'}
+                    <div class="prompt-test-result prompt-test-passed"
+                      transition:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: cubicOut }}>
+                      Prompt saved.
+                    </div>
+                  {:else if testState.status === 'failed'}
+                    <div class="prompt-test-result prompt-test-failed"
+                      transition:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: cubicOut }}>
+                      {#if testState.error}
+                        <span>{testState.error}</span>
+                      {:else if testState.report}
+                        <span>Failed {failedCheckCount(testState.report)} check{failedCheckCount(testState.report) !== 1 ? 's' : ''}:</span>
+                        <ul>
+                          {#each testState.report.static_warnings as w}
+                            <li>{w}</li>
+                          {/each}
+                          {#each testState.report.live_results.filter((r) => !r.passed) as r}
+                            <li>{r.name}: {r.detail}</li>
+                          {/each}
+                        </ul>
+                      {/if}
+                      <div class="prompt-test-buttons">
+                        <button class="prompt-btn-ghost" onclick={() => dismissPromptTest(key)}>Keep editing</button>
+                        <button class="prompt-btn" onclick={() => saveCleanupPrompt(section.storeProvider, model, true)}>Save anyway</button>
+                      </div>
+                    </div>
+                  {/if}
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+
       </div>
     {/if}
   </div>
@@ -494,10 +701,10 @@
 
 <div class="advanced-toggle-row">
   <div class="adv-text">
-    <span class="adv-label">Custom models</span>
-    <span class="adv-desc">Add custom model names per provider</span>
+    <span class="adv-label">Advanced Models</span>
+    <span class="adv-desc">Edit cleanup prompts and add custom models per provider</span>
   </div>
-  <Toggle checked={advancedModelUi} onchange={handleAdvancedModelUi} label="Custom models" />
+  <Toggle checked={advancedModelUi} onchange={handleAdvancedModelUi} label="Advanced Models" />
 </div>
 
 <style>
@@ -973,5 +1180,189 @@
     font-size: 11px;
     font-family: var(--sans);
     color: var(--ink-mute);
+  }
+
+  /* ── Prompt editor ───────────────────────── */
+  .prompt-editor-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 16px 16px;
+    border-top: 1px solid var(--line);
+  }
+
+  .prompt-editor-intro {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .prompt-editor-intro-text {
+    font-size: 11px;
+    font-family: var(--sans);
+    color: var(--ink-mute);
+  }
+
+  .prompt-tags-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .prompt-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+  }
+
+  .prompt-editor-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg-elev);
+  }
+
+  .prompt-editor-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .prompt-editor-provider {
+    font-size: 12px;
+    font-family: var(--sans);
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .prompt-editor-model {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-mute);
+  }
+
+  .prompt-loading {
+    font-size: 12px;
+    font-family: var(--sans);
+    color: var(--ink-mute);
+    padding: 8px 0;
+  }
+
+  .prompt-textarea {
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+    width: 100%;
+    resize: vertical;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--paper);
+    color: var(--ink);
+    box-sizing: border-box;
+  }
+
+  .prompt-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .prompt-textarea:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .prompt-editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+
+  .prompt-hint {
+    font-size: 11px;
+    font-family: var(--sans);
+    color: var(--ink-mute);
+    margin-right: auto;
+  }
+
+  .prompt-btn {
+    font-size: 12px;
+    font-family: var(--sans);
+    font-weight: 500;
+    padding: 5px 12px;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: var(--on-accent);
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+
+  .prompt-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .prompt-btn-ghost {
+    font-size: 12px;
+    font-family: var(--sans);
+    font-weight: 500;
+    padding: 5px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .prompt-btn-ghost:hover:not(:disabled) {
+    background: var(--bg-elev);
+    color: var(--ink);
+  }
+
+  .prompt-btn-ghost:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .prompt-test-result {
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-family: var(--sans);
+  }
+
+  .prompt-test-passed {
+    background: color-mix(in oklab, var(--accent) 10%, var(--paper));
+    color: var(--accent-ink);
+  }
+
+  .prompt-test-failed {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border: 1px solid var(--danger-line);
+  }
+
+  .prompt-test-failed ul {
+    margin: 4px 0 0 0;
+    padding-left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .prompt-test-buttons {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    justify-content: flex-end;
   }
 </style>
