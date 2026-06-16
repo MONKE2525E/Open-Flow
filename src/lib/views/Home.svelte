@@ -326,6 +326,7 @@
     if (container) {
       container.addEventListener('scroll', handleScroll);
     }
+    window.addEventListener('resize', handleScroll);
 
     let mounted = true;
     const unlisteners: (() => void)[] = [];
@@ -372,6 +373,7 @@
       if (container) {
         container.removeEventListener('scroll', handleScroll);
       }
+      window.removeEventListener('resize', handleScroll);
       while (unlisteners.length > 0) {
         unlisteners.pop()?.();
       }
@@ -454,7 +456,7 @@
                 {item.label}
               </div>
             {:else if item.type === 'row'}
-              <div use:measureItem={item.key} class="day-row" class:first-in-table={flatItems[index - 1]?.type === 'header'} in:fly={{ y: -10, duration: 400, easing: expoOut }}>
+              <div use:measureItem={item.key} class="day-row" class:first-in-table={flatItems[index - 1]?.type === 'header'}>
                 <div class="day-time">{fmtTime(item.entry.created_at)}</div>
                 <div class="day-text">{item.entry.clean_text}</div>
                 <button
