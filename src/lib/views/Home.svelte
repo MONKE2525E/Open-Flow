@@ -451,7 +451,9 @@
       if (container) {
         const scrollTarget = container === document.documentElement ? window : container;
         scrollTarget.removeEventListener('scroll', handleScroll);
+        container = null;
       }
+      listContainer = null;
       window.removeEventListener('resize', handleScroll);
       if (sharedObserver) {
         sharedObserver.disconnect();
