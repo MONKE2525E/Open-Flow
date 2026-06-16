@@ -174,6 +174,7 @@
   }
 
   let container: HTMLElement | null = null;
+  let listContainer: HTMLElement | null = null;
   let cachedHeights: Record<string, number> = {};
   
   let visibleItems: { item: RenderItem; index: number }[] = [];
@@ -207,9 +208,21 @@
     scrollTop = container === document.documentElement ? window.scrollY : container.scrollTop;
     clientHeight = container === document.documentElement ? window.innerHeight : container.clientHeight;
 
+    let listOffset = 0;
+    if (listContainer) {
+      const listRect = listContainer.getBoundingClientRect();
+      if (container === document.documentElement) {
+        listOffset = listRect.top + window.scrollY;
+      } else {
+        const containerRect = container.getBoundingClientRect();
+        listOffset = listRect.top - containerRect.top + container.scrollTop;
+      }
+    }
+
+    const relativeScrollTop = Math.max(0, scrollTop - listOffset);
     const buffer = 400; // scroll buffer (px)
-    const startY = Math.max(0, scrollTop - buffer);
-    const endY = scrollTop + clientHeight + buffer;
+    const startY = Math.max(0, relativeScrollTop - buffer);
+    const endY = relativeScrollTop + clientHeight + buffer;
 
     let start = flatItems.length;
     let end = flatItems.length;
@@ -257,6 +270,7 @@
   $: {
     flatItems;
     container;
+    listContainer;
     updateLayout();
     updateVirtualList();
   }
@@ -294,12 +308,6 @@
 
   function measureItem(node: HTMLElement, key: string) {
     nodeKeys.set(node, key);
-    const rect = node.getBoundingClientRect();
-    if (rect.height > 0 && cachedHeights[key] !== rect.height) {
-      cachedHeights[key] = rect.height;
-      updateLayout();
-      updateVirtualList();
-    }
     const observer = getSharedObserver();
     if (observer) {
       observer.observe(node);
@@ -309,12 +317,6 @@
       update(newKey: string) {
         nodeKeys.delete(node);
         nodeKeys.set(node, newKey);
-        const rect = node.getBoundingClientRect();
-        if (rect.height > 0 && cachedHeights[newKey] !== rect.height) {
-          cachedHeights[newKey] = rect.height;
-          updateLayout();
-          updateVirtualList();
-        }
       },
       destroy() {
         if (observer) {
@@ -493,35 +495,37 @@
             No dictations yet. Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to get started.
           </div>
         {:else}
-          <div style="height: {topSpacerHeight}px;"></div>
-          {#each visibleItems as { item, index } (item.key)}
-            {#if item.type === 'header'}
-              <div use:measureItem={item.key} class="day-head" class:muted={index > 0 || !!failedEntry}>
-                {item.label}
-              </div>
-            {:else if item.type === 'row'}
-              <div use:measureItem={item.key} class="day-row" class:first-in-table={index === 0 || flatItems[index - 1]?.type === 'header'}>
-                <div class="day-time">{fmtTime(item.entry.created_at)}</div>
-                <div class="day-text">{item.entry.clean_text}</div>
-                <button
-                  class="copy-btn"
-                  class:copied={copiedId === item.entry.id}
-                  onclick={() => copyText(item.entry)}
-                  title="Copy to clipboard"
-                  aria-label="Copy"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    {#if copiedId === item.entry.id}
-                      {@html icons.check}
-                    {:else}
-                      {@html icons.copy}
-                    {/if}
-                  </svg>
-                </button>
-              </div>
-            {/if}
-          {/each}
-          <div style="height: {bottomSpacerHeight}px;"></div>
+          <div bind:this={listContainer}>
+            <div style="height: {topSpacerHeight}px;"></div>
+            {#each visibleItems as { item, index } (item.key)}
+              {#if item.type === 'header'}
+                <div use:measureItem={item.key} class="day-head" class:muted={index > 0 || !!failedEntry}>
+                  {item.label}
+                </div>
+              {:else if item.type === 'row'}
+                <div use:measureItem={item.key} class="day-row" class:first-in-table={index === 0 || flatItems[index - 1]?.type === 'header'}>
+                  <div class="day-time">{fmtTime(item.entry.created_at)}</div>
+                  <div class="day-text">{item.entry.clean_text}</div>
+                  <button
+                    class="copy-btn"
+                    class:copied={copiedId === item.entry.id}
+                    onclick={() => copyText(item.entry)}
+                    title="Copy to clipboard"
+                    aria-label="Copy"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      {#if copiedId === item.entry.id}
+                        {@html icons.check}
+                      {:else}
+                        {@html icons.copy}
+                      {/if}
+                    </svg>
+                  </button>
+                </div>
+              {/if}
+            {/each}
+            <div style="height: {bottomSpacerHeight}px;"></div>
+          </div>
         {/if}
       {/if}
     </div>
