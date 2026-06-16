@@ -258,26 +258,53 @@
     updateVirtualList();
   }
 
-  function measureItem(node: HTMLElement, key: string) {
-    const updateHeight = () => {
-      const rect = node.getBoundingClientRect();
-      if (rect.height > 0 && cachedHeights[key] !== rect.height) {
-        cachedHeights[key] = rect.height;
-        updateLayout();
-        updateVirtualList();
-      }
-    };
-    
-    updateHeight();
+  let sharedObserver: ResizeObserver | null = null;
+  const nodeKeys = new WeakMap<HTMLElement, string>();
 
-    const ro = new ResizeObserver(() => {
-      updateHeight();
-    });
-    ro.observe(node);
+  function getSharedObserver() {
+    if (!sharedObserver && typeof ResizeObserver !== 'undefined') {
+      sharedObserver = new ResizeObserver((entries) => {
+        let changed = false;
+        for (const entry of entries) {
+          const node = entry.target as HTMLElement;
+          const key = nodeKeys.get(node);
+          if (key) {
+            const rect = node.getBoundingClientRect();
+            if (rect.height > 0 && cachedHeights[key] !== rect.height) {
+              cachedHeights[key] = rect.height;
+              changed = true;
+            }
+          }
+        }
+        if (changed) {
+          updateLayout();
+          updateVirtualList();
+        }
+      });
+    }
+    return sharedObserver;
+  }
+
+  function measureItem(node: HTMLElement, key: string) {
+    nodeKeys.set(node, key);
+    const observer = getSharedObserver();
+    if (observer) {
+      observer.observe(node);
+    }
+
+    const rect = node.getBoundingClientRect();
+    if (rect.height > 0 && cachedHeights[key] !== rect.height) {
+      cachedHeights[key] = rect.height;
+      updateLayout();
+      updateVirtualList();
+    }
 
     return {
       destroy() {
-        ro.disconnect();
+        if (observer) {
+          observer.unobserve(node);
+        }
+        nodeKeys.delete(node);
       }
     };
   }
