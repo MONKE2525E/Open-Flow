@@ -154,8 +154,14 @@
   let flatItems: RenderItem[] = [];
   $: {
     const seenHeaders = new Set<string>();
+    const dateCache = new Map<string, string>();
     flatItems = recents.reduce<RenderItem[]>((acc, entry) => {
-      const label = fmtDate(entry.created_at);
+      const dayKey = entry.created_at.slice(0, 10);
+      let label = dateCache.get(dayKey);
+      if (!label) {
+        label = fmtDate(entry.created_at);
+        dateCache.set(dayKey, label);
+      }
       if (!seenHeaders.has(label)) {
         seenHeaders.add(label);
         if (!(failedEntry && label === 'Today')) {
@@ -292,23 +298,10 @@
       observer.observe(node);
     }
 
-    const rect = node.getBoundingClientRect();
-    if (rect.height > 0 && cachedHeights[key] !== rect.height) {
-      cachedHeights[key] = rect.height;
-      updateLayout();
-      updateVirtualList();
-    }
-
     return {
       update(newKey: string) {
         nodeKeys.delete(node);
         nodeKeys.set(node, newKey);
-        const r = node.getBoundingClientRect();
-        if (r.height > 0 && cachedHeights[newKey] !== r.height) {
-          cachedHeights[newKey] = r.height;
-          updateLayout();
-          updateVirtualList();
-        }
       },
       destroy() {
         if (observer) {
