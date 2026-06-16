@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { appStore } from './lib/stores';
+  import { cleanupPromptEditor } from './lib/stores.svelte';
   import { isMac } from './lib/platform';
   import TitleBar from './lib/components/layout/TitleBar.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
@@ -9,6 +10,7 @@
   import Snippets from './lib/views/Snippets.svelte';
   import Style from './lib/views/Style.svelte';
   import Settings from './lib/views/Settings.svelte';
+  import CleanupPromptModal from './lib/components/settings/CleanupPromptModal.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
   import { invoke, listen } from './lib/tauri';
@@ -147,6 +149,9 @@
     </div>
   </div>
   <Settings />
+  {#if cleanupPromptEditor.open}
+    <CleanupPromptModal />
+  {/if}
   <DictationPill />
 
   {#if errorToast}
