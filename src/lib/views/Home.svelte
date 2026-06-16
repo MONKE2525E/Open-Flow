@@ -244,7 +244,7 @@
       index: start + idx
     }));
 
-    topSpacerHeight = tops[start] || 0;
+    topSpacerHeight = start < flatItems.length ? (tops[start] || 0) : totalHeight;
     bottomSpacerHeight = totalHeight - (end < flatItems.length ? tops[end] : totalHeight);
   }
 
