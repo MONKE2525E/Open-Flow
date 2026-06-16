@@ -276,7 +276,7 @@
           const node = entry.target as HTMLElement;
           const key = nodeKeys.get(node);
           if (key) {
-            const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+            const height = entry.borderBoxSize?.[0]?.blockSize ?? node.getBoundingClientRect().height;
             if (height > 0 && cachedHeights[key] !== height) {
               cachedHeights[key] = height;
               changed = true;
