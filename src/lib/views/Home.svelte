@@ -198,7 +198,7 @@
   }
 
   function updateVirtualList() {
-    if (!container || flatItems.length === 0) {
+    if (!container || flatItems.length === 0 || tops.length !== flatItems.length) {
       visibleItems = [];
       topSpacerHeight = 0;
       bottomSpacerHeight = 0;
@@ -256,6 +256,7 @@
 
   $: {
     flatItems;
+    container;
     updateLayout();
     updateVirtualList();
   }
@@ -294,8 +295,10 @@
   function measureItem(node: HTMLElement, key: string) {
     nodeKeys.set(node, key);
     const rect = node.getBoundingClientRect();
-    if (rect.height > 0) {
+    if (rect.height > 0 && cachedHeights[key] !== rect.height) {
       cachedHeights[key] = rect.height;
+      updateLayout();
+      updateVirtualList();
     }
     const observer = getSharedObserver();
     if (observer) {
@@ -307,8 +310,10 @@
         nodeKeys.delete(node);
         nodeKeys.set(node, newKey);
         const rect = node.getBoundingClientRect();
-        if (rect.height > 0) {
+        if (rect.height > 0 && cachedHeights[newKey] !== rect.height) {
           cachedHeights[newKey] = rect.height;
+          updateLayout();
+          updateVirtualList();
         }
       },
       destroy() {
