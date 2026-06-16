@@ -362,7 +362,7 @@
   .mic-btn { display: flex; align-items: center; gap: 6px; max-width: 180px; }
   .mic-btn svg { transition: transform 150ms; }
   .mic-btn svg.open { transform: rotate(180deg); }
-  .mic-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+  .mic-btn span { overflow: hidden; white-space: nowrap; }
   .mic-menu {
     position: absolute;
     right: 0;
