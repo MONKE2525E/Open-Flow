@@ -130,6 +130,28 @@ export function listItemCollapse(node: HTMLElement, params: MotionTransitionPara
   };
 }
 
+export interface ExpandFromOriginParams {
+  origin?: { x: number; y: number };
+  duration?: number;
+}
+
+export function expandFromOrigin(node: Element, params: ExpandFromOriginParams = {}) {
+  const duration = motionMs(params.duration ?? 240);
+  const nodeRect = node.getBoundingClientRect();
+  const originX = params.origin ? params.origin.x - nodeRect.left : nodeRect.width / 2;
+  const originY = params.origin ? params.origin.y - nodeRect.top : nodeRect.height / 2;
+  const scaleFrom = 0.18;
+
+  return {
+    duration,
+    easing: cubicOut,
+    css: (t: number) => {
+      const scale = scaleFrom + (1 - scaleFrom) * t;
+      return `opacity:${t}; transform: scale(${scale}); transform-origin: ${originX}px ${originY}px;`;
+    },
+  };
+}
+
 export interface AnimateWidthParams {
   text: string;
   min?: number;

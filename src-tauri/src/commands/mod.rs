@@ -498,6 +498,11 @@ pub fn get_default_cleanup_prompt(provider: String, model: String) -> String {
 }
 
 #[tauri::command]
+pub fn lint_cleanup_prompt(template: String) -> Vec<String> {
+    prompts::lint_cleanup_template(&template)
+}
+
+#[tauri::command]
 pub async fn test_cleanup_prompt(
     provider: String,
     model: String,

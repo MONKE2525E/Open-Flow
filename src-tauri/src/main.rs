@@ -251,6 +251,7 @@ fn main() {
             commands::get_cleanup_cache_status,
             commands::clear_cleanup_cache,
             commands::get_default_cleanup_prompt,
+            commands::lint_cleanup_prompt,
             commands::test_cleanup_prompt,
             commands::get_microphones,
             commands::get_memory_mb,

@@ -1,4 +1,5 @@
 import { invoke } from './tauri';
+import type { ProviderId } from './settings';
 
 export type PageId = 'home' | 'dictionary' | 'snippets' | 'style';
 export type AppearanceMode = 'system' | 'light' | 'dark';
@@ -99,6 +100,40 @@ export async function fetchSnippets(): Promise<void> {
     appStore.snippetsFetchStatus = 'error';
     appStore.snippetsFetchError = formatIpcError(err);
   }
+}
+
+export const cleanupPromptOverridesStore = $state<{ overrides: Record<string, string> }>({
+  overrides: {},
+});
+
+export const cleanupPromptEditor = $state<{
+  open: boolean;
+  provider: ProviderId | null;
+  model: string | null;
+  origin: { x: number; y: number } | null;
+}>({
+  open: false,
+  provider: null,
+  model: null,
+  origin: null,
+});
+
+export function openCleanupPromptEditor(
+  provider: ProviderId,
+  model: string,
+  triggerRect: DOMRect
+) {
+  cleanupPromptEditor.provider = provider;
+  cleanupPromptEditor.model = model;
+  cleanupPromptEditor.origin = {
+    x: triggerRect.left + triggerRect.width / 2,
+    y: triggerRect.top + triggerRect.height / 2,
+  };
+  cleanupPromptEditor.open = true;
+}
+
+export function closeCleanupPromptEditor() {
+  cleanupPromptEditor.open = false;
 }
 
 export async function fetchDictionary(): Promise<void> {
