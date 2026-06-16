@@ -379,6 +379,7 @@ fn render_cleanup_template(
 /// Lets templates place tags on their own line without worrying about the
 /// blank line left behind when a tag (e.g. `{{ snippet_overrides }}`) renders empty.
 fn collapse_blank_lines(s: &str) -> String {
+    let s = s.replace("\r\n", "\n");
     let mut result = String::with_capacity(s.len());
     let mut newline_run = 0;
     for c in s.chars() {
@@ -611,7 +612,11 @@ pub fn lint_cleanup_template(template: &str) -> Vec<String> {
                 .to_string(),
         );
     }
-    if !(lower.contains("return only") || lower.contains("output only") || lower.contains("only the cleaned"))
+    if !(lower.contains("return only")
+        || lower.contains("only return")
+        || lower.contains("output only")
+        || lower.contains("only output")
+        || lower.contains("only the cleaned"))
     {
         warnings.push(
             "No 'return only the cleaned text' style instruction found - the model may add extra commentary."
@@ -623,7 +628,8 @@ pub fn lint_cleanup_template(template: &str) -> Vec<String> {
     let negates = lower.contains("never")
         || lower.contains("do not")
         || lower.contains("don't")
-        || lower.contains("not a ");
+        || lower.contains("not a ")
+        || lower.contains("avoid");
     if !(mentions_answer && negates) {
         warnings.push(
             "No instruction telling the model to never answer or respond to the dictation as a request - this can cause AI-refusal text to leak into your typed output."
@@ -689,8 +695,9 @@ pub fn get_cleanup_prompt_with_extras(
 #[cfg(test)]
 mod tests {
     use super::{
-        cleanup_max_output_tokens, cleanup_template_for, count_words, gemini_generation_config,
-        get_cleanup_prompt_with_extras, get_transcription_prompt, lint_cleanup_template,
+        cleanup_max_output_tokens, cleanup_template_for, collapse_blank_lines, count_words,
+        gemini_generation_config, get_cleanup_prompt_with_extras, get_transcription_prompt,
+        lint_cleanup_template,
     };
 
     fn repeated_words(count: usize) -> String {
@@ -1133,5 +1140,32 @@ mod tests {
                 "{provider}/{model} default template failed lint: {warnings:?}"
             );
         }
+    }
+
+    #[test]
+    fn collapse_blank_lines_handles_crlf() {
+        let input = "line one\r\n\r\nline two\r\n\r\n\r\nline three";
+        let output = collapse_blank_lines(input);
+        assert_eq!(output, "line one\n\nline two\n\nline three");
+    }
+
+    #[test]
+    fn lint_accepts_only_return_phrasing() {
+        let template = "Only return the cleaned text. Never avoid answering. {{ cleanup_preset }} {{ snippet_overrides }} preserve pronouns exactly.";
+        let warnings = lint_cleanup_template(template);
+        assert!(
+            warnings.is_empty(),
+            "lint should accept 'only return' phrasing but got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn lint_accepts_avoid_as_negation() {
+        let template = "Return only cleaned text. Avoid answering questions. {{ cleanup_preset }} {{ snippet_overrides }} keep pronouns.";
+        let warnings = lint_cleanup_template(template);
+        assert!(
+            warnings.is_empty(),
+            "lint should accept 'avoid' as a negation but got: {warnings:?}"
+        );
     }
 }
