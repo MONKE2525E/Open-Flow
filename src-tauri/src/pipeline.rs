@@ -523,6 +523,41 @@ fn recording_gate_rms(active_gain: f32) -> f32 {
     }
 }
 
+/// Returns true when the transcription looks like a Whisper prompt-echo or
+/// a well-known silent-audio hallucination rather than actual speech.
+///
+/// Whisper sometimes outputs literal phrases from its own system prompt
+/// (e.g. "Return only spoken words.") when the audio contains no
+/// recognisable speech.  We catch these before the cleanup step so they
+/// are never injected and never populate the cleanup cache.
+fn is_transcription_hallucination(text: &str) -> bool {
+    let t = text.trim().to_lowercase();
+    // Phrases from our transcription system prompts (prompts.rs).  Whisper
+    // echoes these verbatim when it receives near-silent audio.
+    const PATTERNS: &[&str] = &[
+        "return only spoken words",
+        "return only the words spoken",
+        "verenu dictation in ",
+        "transcribe the audio in ",
+        "preserve pronouns exactly",
+        // Well-known generic Whisper hallucinations for silent/noisy audio
+        "thank you for watching",
+        "thanks for watching",
+        "please subscribe",
+        "subscribe to my channel",
+        "subtitles by ",
+        "transcribed by ",
+        "[silence]",
+        "[music]",
+        "[music playing]",
+        "[applause]",
+        "[laughter]",
+        "[no audio]",
+        "[blank audio]",
+    ];
+    PATTERNS.iter().any(|p| t.starts_with(p))
+}
+
 fn preview_text(s: &str, limit: usize) -> String {
     let compact = s.replace(['\n', '\r'], " ");
     let compact = compact.trim();
@@ -840,12 +875,11 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     }
 
     let stage_transcribe = std::time::Instant::now();
-    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
-        run_transcription_and_cleanup(&app, &wav, &cfg, &profile, app_context.as_deref()).await
-    else {
+    let Some((raw_unorm, api_used)) = run_transcription(&app, &wav, &cfg).await else {
         emit_pipeline_failed(&app);
         return;
     };
+    let raw = normalize_transcription_math_artifacts(&raw_unorm);
     log::debug!(
         "pipeline: transcription ok provider={} raw_chars={} raw_preview=\"{}\"",
         api_used,
@@ -860,7 +894,23 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         stage_transcribe.elapsed().as_millis()
     );
 
+    // Post-transcription hallucination gate — silently drop prompt-echoes and
+    // known silent-audio artifacts before they reach cleanup or the cache.
+    if is_transcription_hallucination(&raw) {
+        log::warn!(
+            "pipeline: transcription matched hallucination pattern, dropping silently raw=\"{}\"",
+            preview_text(&raw, 60)
+        );
+        return;
+    }
+
     let stage_cleanup = std::time::Instant::now();
+    let Some((final_text, dict_entries, cleanup_cache_key)) =
+        run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
+    else {
+        emit_pipeline_failed(&app);
+        return;
+    };
     log::debug!(
         "pipeline: cleanup/snippets ok final_chars={} final_preview=\"{}\" dict_entries={}",
         final_text.chars().count(),
@@ -1058,20 +1108,6 @@ async fn run_transcription(
     None
 }
 
-async fn run_transcription_and_cleanup(
-    app: &AppHandle,
-    wav: &bytes::Bytes,
-    cfg: &store::PipelineConfig,
-    profile: &str,
-    app_context: Option<&str>,
-) -> Option<(String, String, String, Vec<db::DictionaryEntry>, String)> {
-    let (raw, api_used) = run_transcription(app, wav, cfg).await?;
-    let raw = normalize_transcription_math_artifacts(&raw);
-
-    let (final_text, dict_entries, cleanup_cache_key) =
-        run_cleanup_and_snippets(app, &raw, cfg, profile, app_context).await?;
-    Some((raw, api_used, final_text, dict_entries, cleanup_cache_key))
-}
 
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
 // instruction override application. Returns (final_text_before_dict, dict_entries)
@@ -1537,9 +1573,10 @@ pub async fn run_pipeline_fixture(
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_transcription_math_artifacts, recording_gate_rms, run_pipeline_fixture,
-        should_run_cleanup_llm, should_use_cleanup_cache, style_scoped_cleanup_cache_key,
-        PipelineTestDictionaryEntry, PipelineTestRequest, PipelineTestSnippet,
+        is_transcription_hallucination, normalize_transcription_math_artifacts, recording_gate_rms,
+        run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
+        style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
+        PipelineTestSnippet,
     };
     use crate::api::prompts::looks_like_refusal;
     use crate::data::store;
@@ -1547,6 +1584,29 @@ mod tests {
         fixture_hit_count, register_fixture, reset, set_enabled, take_injections, FixtureSpec,
     };
     use bytes::Bytes;
+
+    #[test]
+    fn hallucination_gate_catches_prompt_echo() {
+        assert!(is_transcription_hallucination("Return only spoken words."));
+        assert!(is_transcription_hallucination("Return only spoken words"));
+        assert!(is_transcription_hallucination("Return only the words spoken."));
+        assert!(is_transcription_hallucination("Verenu dictation in English."));
+        assert!(is_transcription_hallucination("Transcribe the audio in English."));
+    }
+
+    #[test]
+    fn hallucination_gate_catches_common_whisper_artifacts() {
+        assert!(is_transcription_hallucination("Thank you for watching!"));
+        assert!(is_transcription_hallucination("[silence]"));
+        assert!(is_transcription_hallucination("[Music playing]"));
+    }
+
+    #[test]
+    fn hallucination_gate_passes_real_speech() {
+        assert!(!is_transcription_hallucination("Return the package to me by Thursday."));
+        assert!(!is_transcription_hallucination("Why does YouTube's algorithm feel like doo-doo?"));
+        assert!(!is_transcription_hallucination("Thank you for your help."));
+    }
 
     #[test]
     fn cleanup_cache_bypasses_math_like_queries() {
@@ -2150,17 +2210,22 @@ pub async fn retry_transcription_impl(
     let mapping = resolve_app_mapping(Some(&settings_store), &capture.process_name);
     capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
 
-    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
-        run_transcription_and_cleanup(
-            app,
-            &capture.wav,
-            &cfg,
-            &capture.profile,
-            capture.app_context.as_deref(),
-        )
-        .await
+    let Some((raw_unorm, api_used)) = run_transcription(app, &capture.wav, &cfg).await else {
+        anyhow::bail!("Retry transcription failed");
+    };
+    let raw = normalize_transcription_math_artifacts(&raw_unorm);
+    if is_transcription_hallucination(&raw) {
+        log::warn!(
+            "pipeline: retry transcription matched hallucination pattern, dropping raw=\"{}\"",
+            preview_text(&raw, 60)
+        );
+        anyhow::bail!("Recording was too quiet — nothing was transcribed");
+    }
+    let Some((final_text, dict_entries, cleanup_cache_key)) =
+        run_cleanup_and_snippets(app, &raw, &cfg, &capture.profile, capture.app_context.as_deref())
+            .await
     else {
-        anyhow::bail!("Retry processing failed");
+        anyhow::bail!("Retry cleanup failed");
     };
 
     finalize_pipeline_completion(
