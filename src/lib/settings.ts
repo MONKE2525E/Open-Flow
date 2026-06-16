@@ -46,6 +46,7 @@ type SettingsValueMap = {
   update_dismissed_version: string | null;
   appearance_mode: AppearanceMode;
   advanced_model_ui: boolean;
+  cleanup_prompt_overrides: Record<string, string>;
 };
 
 export type SettingKey = keyof SettingsValueMap;

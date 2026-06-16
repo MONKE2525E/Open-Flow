@@ -22,6 +22,7 @@ pub async fn cleanup(
     intensity: &str,
     snippet_instructions: &str,
     app_context: Option<&str>,
+    custom_template: Option<&str>,
 ) -> Result<String> {
     let provider_id = provider_id(&provider);
     #[cfg(any(test, debug_assertions))]
@@ -37,10 +38,11 @@ pub async fn cleanup(
         snippet_instructions,
         app_context,
         text,
+        custom_template,
     );
     let max_output_tokens = cleanup_max_output_tokens(intensity, text);
     log::debug!(
-        "cleanup: start provider={:?} model={} profile={} intensity={} input_chars={} prompt_chars={} max_output_tokens={} snippet_rule_lines={} app_context={}",
+        "cleanup: start provider={:?} model={} profile={} intensity={} input_chars={} prompt_chars={} max_output_tokens={} snippet_rule_lines={} app_context={} custom_template={}",
         provider,
         model,
         profile,
@@ -49,7 +51,8 @@ pub async fn cleanup(
         prompt.chars().count(),
         max_output_tokens,
         snippet_instructions.lines().filter(|l| !l.trim().is_empty()).count(),
-        app_context.is_some()
+        app_context.is_some(),
+        custom_template.is_some()
     );
     if crate::system::logger::is_verbose() {
         log::debug!("cleanup: input_full=\"{}\"", text);
@@ -97,6 +100,14 @@ fn provider_id(provider: &CleanupProvider) -> &'static str {
         CleanupProvider::Groq => "groq",
         CleanupProvider::OpenAI => "openai",
         CleanupProvider::Google => "google",
+    }
+}
+
+pub fn provider_from_str(s: &str) -> CleanupProvider {
+    match s {
+        "openai" => CleanupProvider::OpenAI,
+        "google" => CleanupProvider::Google,
+        _ => CleanupProvider::Groq,
     }
 }
 

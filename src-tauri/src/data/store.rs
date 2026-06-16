@@ -32,6 +32,7 @@ pub const AUTO_SPACING: &str = "auto_spacing_enabled";
 pub const APPEARANCE_MODE: &str = "appearance_mode";
 pub const FORCE_SETUP_ON_LAUNCH: &str = "force_setup_on_launch";
 pub const ADVANCED_MODEL_UI: &str = "advanced_model_ui";
+pub const CLEANUP_PROMPT_OVERRIDES: &str = "cleanup_prompt_overrides";
 pub const CREDENTIALS_MIGRATED: &str = "credentials_migrated_v1";
 pub const MACOS_CLIPBOARD_SNIFF: &str = "macos_clipboard_sniff_enabled";
 pub const UPDATE_DISMISSED_VERSION: &str = "update_dismissed_version";
@@ -61,6 +62,8 @@ pub struct PipelineConfig {
     pub contextual_caps_enabled: bool,
     pub auto_spacing_enabled: bool,
     pub macos_clipboard_sniff_enabled: bool,
+    pub advanced_model_ui: bool,
+    pub cleanup_prompt_overrides: std::collections::HashMap<String, String>,
 }
 
 pub const GROQ: &str = "groq";
@@ -165,6 +168,19 @@ impl PipelineConfig {
             _ => &self.key_groq,
         }
     }
+
+    /// Returns the user's custom cleanup prompt template for `provider/model`,
+    /// or `None` if Advanced Models is off or no override is stored for this model.
+    pub fn cleanup_override_for(&self, provider: &str, model: &str) -> Option<&str> {
+        if !self.advanced_model_ui {
+            return None;
+        }
+        let key = format!("{provider}/{model}");
+        self.cleanup_prompt_overrides
+            .get(&key)
+            .map(String::as_str)
+            .filter(|s| !s.trim().is_empty())
+    }
 }
 
 pub fn parse_model_id(id: &str) -> Option<(String, String)> {
@@ -249,6 +265,13 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
 
     let transcription_fallback_models = parse_string_array(TRANSCRIPTION_FALLBACK_MODELS);
     let cleanup_fallback_models = parse_string_array(CLEANUP_FALLBACK_MODELS);
+    let cleanup_prompt_overrides = store
+        .get(CLEANUP_PROMPT_OVERRIDES)
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+        .collect();
 
     PipelineConfig {
         transcription_provider,
@@ -287,6 +310,11 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             .get(MACOS_CLIPBOARD_SNIFF)
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        advanced_model_ui: store
+            .get(ADVANCED_MODEL_UI)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        cleanup_prompt_overrides,
     }
 }
 

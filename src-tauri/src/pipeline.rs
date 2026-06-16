@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
-use crate::api::{auto_learn, cleanup, transcription};
+use crate::api::{auto_learn, cleanup, prompts, transcription};
 use crate::core::{injection, window_context};
 use crate::data::{db, dictionary, snippets, store};
 use crate::media::audio;
@@ -30,11 +30,72 @@ fn transcription_provider_from_str(s: &str) -> transcription::Provider {
     }
 }
 
-fn cleanup_provider_from_str(s: &str) -> cleanup::CleanupProvider {
-    match s {
-        "openai" => cleanup::CleanupProvider::OpenAI,
-        "google" => cleanup::CleanupProvider::Google,
-        _ => cleanup::CleanupProvider::Groq,
+/// Runtime safety net for a cleanup result that looks like the model
+/// answering/refusing instead of returning cleaned dictation. Differential:
+/// only acts if `cleaned` looks like a refusal AND `raw` does not (a real
+/// speaker can legitimately say "I cannot...").
+///
+/// Returns `Some(text)` for a usable cleaned result (safe to cache), or
+/// `None` if the retry also looks like a refusal/failed and the caller
+/// should skip cleanup entirely and use the pre-cleanup text.
+#[allow(clippy::too_many_arguments)]
+async fn guard_cleanup_refusal(
+    cleaned: String,
+    raw: &str,
+    expanded: &str,
+    provider_id: &str,
+    model: &str,
+    key: &str,
+    profile: &str,
+    intensity: &str,
+    extra_rules: &str,
+    app_context: Option<&str>,
+) -> Option<String> {
+    if !prompts::looks_like_refusal(&cleaned) || prompts::looks_like_refusal(raw) {
+        return Some(cleaned);
+    }
+
+    log::warn!(
+        "pipeline: cleanup output looks like a model refusal, retrying once with hardened prompt provider={provider_id} model={model}"
+    );
+
+    let cp = cleanup::provider_from_str(provider_id);
+    let retried = cleanup::cleanup(
+        expanded,
+        cp,
+        key,
+        model,
+        profile,
+        intensity,
+        extra_rules,
+        app_context,
+        Some(prompts::hardened_retry_template()),
+    )
+    .await;
+
+    match retried {
+        Ok(retried)
+            if !retried.is_empty()
+                && (!prompts::looks_like_refusal(&retried) || prompts::looks_like_refusal(raw)) =>
+        {
+            log::debug!(
+                "pipeline: cleanup refusal retry succeeded provider={provider_id} model={model}"
+            );
+            Some(retried)
+        }
+        Ok(_) => {
+            log::warn!(
+                "pipeline: cleanup refusal retry still looks like a refusal, falling back to pre-cleanup text provider={provider_id} model={model}"
+            );
+            None
+        }
+        Err(e) => {
+            log::warn!(
+                "pipeline: cleanup refusal retry failed, falling back to pre-cleanup text provider={provider_id} model={model} error={}",
+                trim_err(&e.to_string())
+            );
+            None
+        }
     }
 }
 
@@ -462,6 +523,41 @@ fn recording_gate_rms(active_gain: f32) -> f32 {
     }
 }
 
+/// Returns true when the transcription looks like a Whisper prompt-echo or
+/// a well-known silent-audio hallucination rather than actual speech.
+///
+/// Whisper sometimes outputs literal phrases from its own system prompt
+/// (e.g. "Return only spoken words.") when the audio contains no
+/// recognisable speech.  We catch these before the cleanup step so they
+/// are never injected and never populate the cleanup cache.
+fn is_transcription_hallucination(text: &str) -> bool {
+    let t = text.trim().to_lowercase();
+    // Phrases from our transcription system prompts (prompts.rs).  Whisper
+    // echoes these verbatim when it receives near-silent audio.
+    const PATTERNS: &[&str] = &[
+        "return only spoken words",
+        "return only the words spoken",
+        "verenu dictation in ",
+        "transcribe the audio in ",
+        "preserve pronouns exactly",
+        // Well-known generic Whisper hallucinations for silent/noisy audio
+        "thank you for watching",
+        "thanks for watching",
+        "please subscribe",
+        "subscribe to my channel",
+        "subtitles by ",
+        "transcribed by ",
+        "[silence]",
+        "[music]",
+        "[music playing]",
+        "[applause]",
+        "[laughter]",
+        "[no audio]",
+        "[blank audio]",
+    ];
+    PATTERNS.iter().any(|p| t.starts_with(p))
+}
+
 fn preview_text(s: &str, limit: usize) -> String {
     let compact = s.replace(['\n', '\r'], " ");
     let compact = compact.trim();
@@ -779,12 +875,11 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
     }
 
     let stage_transcribe = std::time::Instant::now();
-    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
-        run_transcription_and_cleanup(&app, &wav, &cfg, &profile, app_context.as_deref()).await
-    else {
+    let Some((raw_unorm, api_used)) = run_transcription(&app, &wav, &cfg).await else {
         emit_pipeline_failed(&app);
         return;
     };
+    let raw = normalize_transcription_math_artifacts(&raw_unorm);
     log::debug!(
         "pipeline: transcription ok provider={} raw_chars={} raw_preview=\"{}\"",
         api_used,
@@ -799,7 +894,24 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         stage_transcribe.elapsed().as_millis()
     );
 
+    // Post-transcription hallucination gate — silently drop prompt-echoes and
+    // known silent-audio artifacts before they reach cleanup or the cache.
+    if is_transcription_hallucination(&raw) {
+        log::warn!(
+            "pipeline: transcription matched hallucination pattern, dropping silently raw=\"{}\"",
+            preview_text(&raw, 60)
+        );
+        hide_pill(&app);
+        return;
+    }
+
     let stage_cleanup = std::time::Instant::now();
+    let Some((final_text, dict_entries, cleanup_cache_key)) =
+        run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
+    else {
+        emit_pipeline_failed(&app);
+        return;
+    };
     log::debug!(
         "pipeline: cleanup/snippets ok final_chars={} final_preview=\"{}\" dict_entries={}",
         final_text.chars().count(),
@@ -997,20 +1109,6 @@ async fn run_transcription(
     None
 }
 
-async fn run_transcription_and_cleanup(
-    app: &AppHandle,
-    wav: &bytes::Bytes,
-    cfg: &store::PipelineConfig,
-    profile: &str,
-    app_context: Option<&str>,
-) -> Option<(String, String, String, Vec<db::DictionaryEntry>, String)> {
-    let (raw, api_used) = run_transcription(app, wav, cfg).await?;
-    let raw = normalize_transcription_math_artifacts(&raw);
-
-    let (final_text, dict_entries, cleanup_cache_key) =
-        run_cleanup_and_snippets(app, &raw, cfg, profile, app_context).await?;
-    Some((raw, api_used, final_text, dict_entries, cleanup_cache_key))
-}
 
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
 // instruction override application. Returns (final_text_before_dict, dict_entries)
@@ -1169,14 +1267,15 @@ async fn run_cleanup_and_snippets_for_db(
             extra_rules.lines().filter(|l| !l.trim().is_empty()).count()
         );
 
-        let mut cleaned_res: Option<String> = None;
+        let mut cleaned_res: Option<(String, String, String, String)> = None;
         let mut last_cleanup_err: Option<anyhow::Error> = None;
         for (provider_id, model) in cleanup_model_chain(cfg) {
             let key = cfg.key_for(&provider_id).to_owned();
             if key.is_empty() {
                 continue;
             }
-            let cp = cleanup_provider_from_str(&provider_id);
+            let cp = cleanup::provider_from_str(&provider_id);
+            let custom_template = cfg.cleanup_override_for(&provider_id, &model);
             match cleanup::cleanup(
                 &expanded,
                 cp,
@@ -1186,6 +1285,7 @@ async fn run_cleanup_and_snippets_for_db(
                 &cfg.cleanup_intensity,
                 &extra_rules,
                 app_context,
+                custom_template,
             )
             .await
             {
@@ -1196,7 +1296,7 @@ async fn run_cleanup_and_snippets_for_db(
                         model,
                         cleaned.chars().count()
                     );
-                    cleaned_res = Some(cleaned);
+                    cleaned_res = Some((cleaned, provider_id.clone(), model.clone(), key.clone()));
                     break;
                 }
                 Ok(_) => {
@@ -1221,7 +1321,27 @@ async fn run_cleanup_and_snippets_for_db(
             }
         }
 
-        match cleaned_res {
+        let provider_succeeded = cleaned_res.is_some();
+        let guarded = match cleaned_res {
+            Some((cleaned, provider_id, model, key)) => {
+                guard_cleanup_refusal(
+                    cleaned,
+                    raw,
+                    &expanded,
+                    &provider_id,
+                    &model,
+                    &key,
+                    profile,
+                    &cfg.cleanup_intensity,
+                    &extra_rules,
+                    app_context,
+                )
+                .await
+            }
+            None => None,
+        };
+
+        match guarded {
             Some(cleaned) => {
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
@@ -1242,7 +1362,9 @@ async fn run_cleanup_and_snippets_for_db(
                 }
                 overridden
             }
-            None if last_cleanup_err.is_some() => return Err(last_cleanup_err.expect("checked")),
+            None if !provider_succeeded && last_cleanup_err.is_some() => {
+                return Err(last_cleanup_err.expect("checked"))
+            }
             None => snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions),
         }
     } else {
@@ -1452,15 +1574,40 @@ pub async fn run_pipeline_fixture(
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_transcription_math_artifacts, recording_gate_rms, run_pipeline_fixture,
-        should_run_cleanup_llm, should_use_cleanup_cache, style_scoped_cleanup_cache_key,
-        PipelineTestDictionaryEntry, PipelineTestRequest, PipelineTestSnippet,
+        is_transcription_hallucination, normalize_transcription_math_artifacts, recording_gate_rms,
+        run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
+        style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
+        PipelineTestSnippet,
     };
+    use crate::api::prompts::looks_like_refusal;
     use crate::data::store;
     use crate::testing::{
         fixture_hit_count, register_fixture, reset, set_enabled, take_injections, FixtureSpec,
     };
     use bytes::Bytes;
+
+    #[test]
+    fn hallucination_gate_catches_prompt_echo() {
+        assert!(is_transcription_hallucination("Return only spoken words."));
+        assert!(is_transcription_hallucination("Return only spoken words"));
+        assert!(is_transcription_hallucination("Return only the words spoken."));
+        assert!(is_transcription_hallucination("Verenu dictation in English."));
+        assert!(is_transcription_hallucination("Transcribe the audio in English."));
+    }
+
+    #[test]
+    fn hallucination_gate_catches_common_whisper_artifacts() {
+        assert!(is_transcription_hallucination("Thank you for watching!"));
+        assert!(is_transcription_hallucination("[silence]"));
+        assert!(is_transcription_hallucination("[Music playing]"));
+    }
+
+    #[test]
+    fn hallucination_gate_passes_real_speech() {
+        assert!(!is_transcription_hallucination("Return the package to me by Thursday."));
+        assert!(!is_transcription_hallucination("Why does YouTube's algorithm feel like doo-doo?"));
+        assert!(!is_transcription_hallucination("Thank you for your help."));
+    }
 
     #[test]
     fn cleanup_cache_bypasses_math_like_queries() {
@@ -1552,6 +1699,8 @@ mod tests {
             contextual_caps_enabled: true,
             auto_spacing_enabled: true,
             macos_clipboard_sniff_enabled: false,
+            advanced_model_ui: false,
+            cleanup_prompt_overrides: std::collections::HashMap::new(),
         }
     }
 
@@ -1775,6 +1924,90 @@ mod tests {
         reset();
     }
 
+    #[test]
+    fn looks_like_refusal_matches_known_markers() {
+        assert!(looks_like_refusal(
+            "I am an AI and I do not have access to real-time data."
+        ));
+        assert!(looks_like_refusal("As an AI, I can't help with that."));
+        assert!(looks_like_refusal("I cannot provide that information."));
+        assert!(!looks_like_refusal("Send me the file when you can."));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_keeps_self_described_refusal_when_dictated_by_user() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("I cannot believe it is already five o'clock".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("I cannot believe it's already five o'clock.".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let result = run_pipeline_fixture(base_request(base_config()))
+            .await
+            .expect("dictated refusal-shaped text should pass through unchanged");
+        assert_eq!(
+            result.final_text_before_dictionary,
+            "I cannot believe it's already five o'clock."
+        );
+        assert_eq!(
+            fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+            1
+        );
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_retries_then_falls_back_on_model_refusal() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("what time is it in tokyo right now".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some(
+                "I am an AI and I do not have access to real-time information.".into(),
+            ),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let result = run_pipeline_fixture(base_request(base_config()))
+            .await
+            .expect("model refusal should fall back to pre-cleanup text");
+        assert_eq!(
+            result.final_text_before_dictionary,
+            "what time is it in tokyo right now"
+        );
+        assert_eq!(
+            fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+            2
+        );
+        reset();
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn pipeline_fixture_skips_cleanup_for_pure_snippet_fast_path() {
         let _guard = harness_test_lock().lock().expect("harness lock");
@@ -1978,17 +2211,22 @@ pub async fn retry_transcription_impl(
     let mapping = resolve_app_mapping(Some(&settings_store), &capture.process_name);
     capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
 
-    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
-        run_transcription_and_cleanup(
-            app,
-            &capture.wav,
-            &cfg,
-            &capture.profile,
-            capture.app_context.as_deref(),
-        )
-        .await
+    let Some((raw_unorm, api_used)) = run_transcription(app, &capture.wav, &cfg).await else {
+        anyhow::bail!("Retry transcription failed");
+    };
+    let raw = normalize_transcription_math_artifacts(&raw_unorm);
+    if is_transcription_hallucination(&raw) {
+        log::warn!(
+            "pipeline: retry transcription matched hallucination pattern, dropping raw=\"{}\"",
+            preview_text(&raw, 60)
+        );
+        anyhow::bail!("Recording was too quiet — nothing was transcribed");
+    }
+    let Some((final_text, dict_entries, cleanup_cache_key)) =
+        run_cleanup_and_snippets(app, &raw, &cfg, &capture.profile, capture.app_context.as_deref())
+            .await
     else {
-        anyhow::bail!("Retry processing failed");
+        anyhow::bail!("Retry cleanup failed");
     };
 
     finalize_pipeline_completion(
