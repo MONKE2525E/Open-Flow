@@ -317,6 +317,12 @@
       update(newKey: string) {
         nodeKeys.delete(node);
         nodeKeys.set(node, newKey);
+        const height = node.getBoundingClientRect().height;
+        if (height > 0 && cachedHeights[newKey] !== height) {
+          cachedHeights[newKey] = height;
+          updateLayout();
+          updateVirtualList();
+        }
       },
       destroy() {
         if (observer) {
