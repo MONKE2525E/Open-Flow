@@ -171,7 +171,18 @@
       acc.push({ type: 'row', entry, key: `row-${entry.id}` });
       return acc;
     }, []);
+
+    // Prune cachedHeights to avoid memory leaks from old/deleted history items
+    const keys = new Set(flatItems.map(item => item.key));
+    for (const key in cachedHeights) {
+      if (!keys.has(key)) {
+        delete cachedHeights[key];
+      }
+    }
   }
+
+  const DEFAULT_HEADER_HEIGHT = 38;
+  const DEFAULT_ROW_HEIGHT = 58;
 
   let container: HTMLElement | null = null;
   let listContainer: HTMLElement | null = null;
@@ -180,8 +191,6 @@
   let visibleItems: { item: RenderItem; index: number }[] = [];
   let topSpacerHeight = 0;
   let bottomSpacerHeight = 0;
-  let scrollTop = 0;
-  let clientHeight = 600;
 
   let tops: number[] = [];
   let totalHeight = 0;
@@ -189,8 +198,6 @@
   let listOffset = 0;
   let lastStart = -1;
   let lastEnd = -1;
-  let lastItemsRef: RenderItem[] | null = null;
-  let lastTops: number[] | null = null;
 
   function updateListOffset() {
     if (!container || !listContainer) return;
@@ -209,7 +216,7 @@
     for (let i = 0; i < flatItems.length; i++) {
       tops.push(currentTop);
       const item = flatItems[i];
-      const h = cachedHeights[item.key] || (item.type === 'header' ? 38 : 58);
+      const h = cachedHeights[item.key] || (item.type === 'header' ? DEFAULT_HEADER_HEIGHT : DEFAULT_ROW_HEIGHT);
       currentTop += h;
     }
     totalHeight = currentTop;
@@ -223,12 +230,10 @@
       bottomSpacerHeight = 0;
       lastStart = -1;
       lastEnd = -1;
-      lastItemsRef = null;
-      lastTops = null;
       return;
     }
-    scrollTop = container === document.documentElement ? window.scrollY : container.scrollTop;
-    clientHeight = container === document.documentElement ? window.innerHeight : container.clientHeight;
+    const scrollTop = container === document.documentElement ? window.scrollY : container.scrollTop;
+    const clientHeight = container === document.documentElement ? window.innerHeight : container.clientHeight;
 
     const relativeScrollTop = Math.max(0, scrollTop - listOffset);
     const buffer = 400; // scroll buffer (px)
@@ -244,7 +249,7 @@
     while (low <= high) {
       const mid = (low + high) >> 1;
       const top = tops[mid];
-      const h = cachedHeights[flatItems[mid].key] || (flatItems[mid].type === 'header' ? 38 : 58);
+      const h = cachedHeights[flatItems[mid].key] || (flatItems[mid].type === 'header' ? DEFAULT_HEADER_HEIGHT : DEFAULT_ROW_HEIGHT);
       if (top + h >= startY) {
         start = mid;
         high = mid - 1;
@@ -269,18 +274,11 @@
     start = Math.max(0, Math.min(start, flatItems.length));
     end = Math.max(start, Math.min(end, flatItems.length));
 
-    if (
-      start === lastStart &&
-      end === lastEnd &&
-      flatItems === lastItemsRef &&
-      tops === lastTops
-    ) {
+    if (start === lastStart && end === lastEnd) {
       return;
     }
     lastStart = start;
     lastEnd = end;
-    lastItemsRef = flatItems;
-    lastTops = tops;
 
     visibleItems = flatItems.slice(start, end).map((item, idx) => ({
       item,
@@ -310,39 +308,29 @@
     updateVirtualList();
   }
 
-  let sharedObserver: ResizeObserver | null = null;
   const nodeKeys = new WeakMap<HTMLElement, string>();
-
-  function getSharedObserver() {
-    if (!sharedObserver && typeof ResizeObserver !== 'undefined') {
-      sharedObserver = new ResizeObserver((entries) => {
-        let changed = false;
-        for (const entry of entries) {
-          const node = entry.target as HTMLElement;
-          const key = nodeKeys.get(node);
-          if (key) {
-            const height = entry.borderBoxSize?.[0]?.blockSize ?? node.getBoundingClientRect().height;
-            if (height > 0 && cachedHeights[key] !== height) {
-              cachedHeights[key] = height;
-              changed = true;
-            }
-          }
+  const sharedObserver = new ResizeObserver((entries) => {
+    let changed = false;
+    for (const entry of entries) {
+      const node = entry.target as HTMLElement;
+      const key = nodeKeys.get(node);
+      if (key) {
+        const height = entry.borderBoxSize?.[0]?.blockSize ?? node.getBoundingClientRect().height;
+        if (height > 0 && cachedHeights[key] !== height) {
+          cachedHeights[key] = height;
+          changed = true;
         }
-        if (changed) {
-          updateLayout();
-          updateVirtualList();
-        }
-      });
+      }
     }
-    return sharedObserver;
-  }
+    if (changed) {
+      updateLayout();
+      updateVirtualList();
+    }
+  });
 
   function measureItem(node: HTMLElement, key: string) {
     nodeKeys.set(node, key);
-    const observer = getSharedObserver();
-    if (observer) {
-      observer.observe(node);
-    }
+    sharedObserver.observe(node);
 
     return {
       update(newKey: string) {
@@ -356,9 +344,7 @@
         }
       },
       destroy() {
-        if (observer) {
-          observer.unobserve(node);
-        }
+        sharedObserver.unobserve(node);
         nodeKeys.delete(node);
       }
     };
@@ -455,10 +441,7 @@
       }
       listContainer = null;
       window.removeEventListener('resize', handleScroll);
-      if (sharedObserver) {
-        sharedObserver.disconnect();
-        sharedObserver = null;
-      }
+      sharedObserver.disconnect();
       while (unlisteners.length > 0) {
         unlisteners.pop()?.();
       }
