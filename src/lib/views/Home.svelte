@@ -300,6 +300,16 @@
     }
 
     return {
+      update(newKey: string) {
+        nodeKeys.delete(node);
+        nodeKeys.set(node, newKey);
+        const r = node.getBoundingClientRect();
+        if (r.height > 0 && cachedHeights[newKey] !== r.height) {
+          cachedHeights[newKey] = r.height;
+          updateLayout();
+          updateVirtualList();
+        }
+      },
       destroy() {
         if (observer) {
           observer.unobserve(node);
@@ -314,9 +324,9 @@
       const [r, s] = await Promise.all([invoke<Entry[]>('get_recent'), invoke<Stats>('get_stats')]);
       recents = r;
       stats = s;
-      setTimeout(() => {
+      requestAnimationFrame(() => {
         updateVirtualList();
-      }, 0);
+      });
     } catch (err) {
       console.error('Home load failed:', err);
       recents = [];
@@ -349,11 +359,10 @@
       .catch(() => { /* use platform default if setting unavailable */ });
     load();
 
-    container = document.querySelector('.content');
-    if (container) {
-      container.addEventListener('scroll', handleScroll);
-    }
-    window.addEventListener('resize', handleScroll);
+    container = document.querySelector('.content') || document.documentElement;
+    const scrollTarget = container === document.documentElement ? window : container;
+    scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleScroll, { passive: true });
 
     let mounted = true;
     const unlisteners: (() => void)[] = [];
@@ -398,7 +407,8 @@
     return () => {
       mounted = false;
       if (container) {
-        container.removeEventListener('scroll', handleScroll);
+        const scrollTarget = container === document.documentElement ? window : container;
+        scrollTarget.removeEventListener('scroll', handleScroll);
       }
       window.removeEventListener('resize', handleScroll);
       while (unlisteners.length > 0) {
