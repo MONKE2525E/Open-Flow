@@ -306,6 +306,7 @@
     max-width: 100%;
     min-width: 0;
     min-height: calc(100% + 1px);
+    padding-right: 14px;
   }
 
   .error-toast {
