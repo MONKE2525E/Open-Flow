@@ -4,7 +4,7 @@
 - Github Repo: https://github.com/MONKE2525E/Verenu
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
 - docs/ROADMAP.md keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
-- currently working towards Verenu 0.11.0.
+- currently working towards Verenu 0.14.0.
 - Always add yourself as a co-author  in all commits you make e.g @Claude, @Codex, @google-antigravity, etc but dont add a note at the bottom of the PR description
 
 
@@ -19,22 +19,17 @@ Verenu is an open-source AI dictation desktop app for Windows and macOS — a fr
 - **Framework:** Tauri 2.x (Rust backend + WebView2 frontend — not Electron, not a web app)
 - **Frontend:** Svelte 5 + TypeScript + Tailwind CSS v4
 - **Database:** SQLite via `rusqlite` (direct, not `tauri-plugin-sql`)
-- **Settings store:** `tauri-plugin-store`
+- **Settings store:** `tauri-plugin-store` (non-secret settings only — see [Settings & Configuration](#settings--configuration) for where API keys actually live)
 - **Audio capture:** `cpal` + `hound` for WAV encoding + `nnnoiseless` for noise reduction
-- **Windows native APIs:** `windows` crate (hotkey hook, active window, SendInput, UI Automation)
-- **macOS native APIs:** `CGEventTap` (global hotkey), `Security` framework (Keychain), Accessibility API
+- **Windows native APIs:** `windows` crate (hotkey hook, active window, SendInput, UI Automation, Credential Manager)
+- **macOS native APIs:** `core-graphics` (`CGEventTap` global hotkey), `security-framework` (Keychain), `accessibility-sys` (AX API), `objc2`/`objc2-foundation` (AppKit interop — `NSWorkspace`, `NSPasteboard`), `coreaudio-rs` (native mute control)
 - **HTTP:** `reqwest` (async API calls to AI providers)
 - **Async runtime:** `tokio`
 - **Utilities:** `chrono` (timestamps), `anyhow` (error handling)
 
 ## Design System
 
-See [docs/colors.md](docs/colors.md) for the complete color palette, typography, and theming system. The design uses a warm, earthy aesthetic with:
-- Soft-amber paper background (`#f9f7f3`)
-- Japonica terracotta accent (`#d97757`)
-- Armadillo warm-dark text palette
-- Fraunces serif, Inter Tight sans, JetBrains Mono monospace typography
-- Accent themes (Terracotta, Moss, Slate, Ink) applied via OKLch CSS variables in `App.svelte`
+See [docs/colors.md](docs/colors.md) for the complete color palette, typography, and theming system.
 
 ## Build & Dev Commands
 
@@ -63,6 +58,7 @@ cargo test --manifest-path src-tauri/Cargo.toml <test_name>
 # Unified tests — preferred entrypoint
 npm test                                     # fast profile
 npm run test:all                             # same fast profile explicitly
+npm run test:full                            # fast + live + native (everything, incl. opt-in suites)
 npm run test:live                            # live API checks, skips when keys are absent
 npm run test:native                          # platform/manual-adjacent checks
 python tests/OnePyFone.py                    # fast profile, auto-starts Vite :1420
@@ -72,6 +68,10 @@ python tests/OnePyFone.py --suite ui,state   # targeted suites
 # Available profiles: fast | live | native | full
 # Available suites: preflight | frontend | rust | contract | ui | state | animation | pipeline | native
 # fast is deterministic and CI-friendly; live/native are opt-in
+
+# Run Playwright smoke tests directly (bypasses the OnePyFone harness)
+npm run test:smoke                           # tests/smoke/*.cjs in sequence
+npm run test:smoke:state                     # state-machine smoke test only
 ```
 
 ## Agent Skills
@@ -85,6 +85,7 @@ When executing tasks, refer to the guidelines in the `Agent-Skills/` directory:
 
 - **PR checks workflow** (`.github/workflows/pr-checks.yml`) keeps frontend and OS-matrix Rust jobs, then runs the unified fast profile with JSON/JUnit reports
 - **Extended profiles workflow** (`.github/workflows/extended-test-profiles.yml`) runs opt-in live/native profiles on schedule or manual dispatch
+- **Build installers workflow** (`.github/workflows/build-installers.yml`) is manual (`workflow_dispatch`) — builds release installers on demand, not on every push
 - **Dependency review** (`.github/workflows/dependency-review.yml`) gates new dependencies for supply-chain risk
 - **Copilot review instructions** (`.github/copilot-instructions.md`) contain guidance on Rust Windows integration, frontend patterns, and smoke-test contracts — read these before major changes
 
@@ -110,41 +111,57 @@ src/                        # Svelte 5 frontend
     components/             # Shared: Toggle, Dropdown, MicInputButton
     components/settings/    # Settings sections: General, Models, ApiKeys, AppMappings, Privacy, Audio, Advanced, About
     views/                  # Home (main flow), Dictionary, Snippets, Settings, Setup (first-run API key entry), Style pages
+    calibrationCopy.ts       # Localized copy strings for the mic-calibration UI (companion to calibration.ts)
 src-tauri/
   src/
     main.rs                 # Tauri setup, state initialization, command registration
-    pipeline.rs             # run_pipeline() orchestration, quality gates
+    pipeline.rs             # run_pipeline() orchestration, quality gates, pill window creation/resize
     commands/mod.rs         # All #[tauri::command] handlers (extracted from main.rs)
     testing.rs              # Test fixture infrastructure — cfg(test)/debug_assertions only
     api/
+      mod.rs                 # Shared retry/auth-error classification: AuthErrorCategory, is_retryable_provider_error(), quota_bail()
+      client.rs              # Shared reqwest client construction
+      gemini_types.rs        # Gemini request/response (de)serialization types
       transcription.rs      # POST audio to Groq/OpenAI/Google → raw text
       cleanup.rs            # POST raw text to LLM with profile system prompt
-      auto_learn.rs         # Post-injection correction monitor (Windows UI Automation)
+      auto_learn.rs         # Post-injection correction monitor (UI Automation on Windows, AX on macOS)
       prompts.rs            # System prompt assembly with recency-bias overrides
       updater.rs            # Auto-update logic
     core/
-      hotkey.rs             # WH_KEYBOARD_LL hook, hold/release state machine
-      injection.rs          # Clipboard-based text injection + Ctrl+V
-      window_context.rs     # GetForegroundWindow → process name
+      hotkey/
+        mod.rs               # Platform-dispatch + shared chord/handsfree state
+        win.rs                # Windows: SetWindowsHookExW(WH_KEYBOARD_LL) hold/release hook
+        mac.rs                # macOS: CGEventTap (listen-only) hold/release hook
+      injection.rs          # Clipboard-based text injection + Ctrl+V/Cmd+V (both platforms, cfg-gated in one file)
+      context_probe.rs      # Layered InjectionContextProbe: caret-local read (UIA/AX) → clipboard-sniff → history fallback
+      context_probe_macos.rs # macOS-only half of context_probe (AX-based caret read)
+      text_context.rs       # SentenceContext / InjectionPrefixClass classification used by context_probe + injection
+      window_context.rs     # Foreground window → process name (GetForegroundWindow / NSWorkspace)
     data/
       db.rs                 # SQLite schema (inline) + migrations + all queries
-      store.rs              # tauri-plugin-store key constants
+      store.rs              # tauri-plugin-store key constants for settings (NOT api keys — see credentials.rs)
+      credentials.rs        # API key storage: Windows Credential Manager (CredWriteW/CredReadW) / macOS Keychain (security-framework). Never tauri-plugin-store, never SQLite.
       dictionary.rs         # Dictionary substitution logic
       snippets.rs           # Snippet expansion (pure and instruction-based paths)
     media/
       audio.rs              # CPAL mic capture → WAV, RMS level streaming
     system/
       apps.rs               # Registry scan for installed apps + process dedup
-      logger.rs             # Logging utilities
-      memory.rs             # Memory monitoring
+      mac_app.rs             # macOS-only: NSWorkspace app lookup, NSPasteboard helpers
+      macos_ax_text_marker.m # Objective-C shim for AX text-marker APIs (compiled via cc, see build-dependencies)
+      logger.rs               # Logging utilities
+      memory.rs              # Memory monitoring
+      number_parser.rs        # Spoken-number → digit parsing
       text.rs               # Text utilities
       volume.rs             # Volume detection
   Cargo.toml
-  tauri.conf.json           # 2 windows: main (1100×720) + pill (220×60 always-on-top)
+  tauri.conf.json           # Declares only the "main" window (1100×720). The pill window is NOT statically configured.
 tests/
   smoke/                    # Playwright smoke tests — NEVER edit these files
   manual/                   # Manual test scripts (hotkey, layout bounds) — not automated
 ```
+
+The pill window is created at runtime by `create_pill_if_needed()` in `pipeline.rs` (`WebviewWindowBuilder`, always-on-top, transparent, decorations off, initial size 140×44) — it is resized per recording state rather than recreated, so don't look for its dimensions in `tauri.conf.json`.
 
 ## Core Data Flow
 
@@ -167,7 +184,7 @@ tests/
     9. db.rs INSERT transcription record
     10. injection.rs: re-focus captured HWND → save clipboard → contextual-cap check → Ctrl+V → restore clipboard
     11. Emit 'verenu:transcribed' to frontend
-    12. auto_learn.rs: monitor focused text for 30s via UI Automation for corrections
+    12. auto_learn.rs: monitor focused text for 60s (MONITOR_WINDOW_SECS) via UI Automation/AX for corrections
 ```
 
 ## SQLite Schema
@@ -180,7 +197,7 @@ dictionary      (id, wrong, correct, auto_learned, correction_count, created_at)
 snippets        (id, trigger, expansion, use_count, created_at)
 ```
 
-WAL mode is enabled. Migrations use `execute_batch` wrapped in explicit `BEGIN/COMMIT/ROLLBACK` — a failed migration rolls back fully rather than leaving a partial schema. API keys are never stored in SQLite — use `tauri-plugin-store` only.
+WAL mode is enabled. Migrations use `execute_batch` wrapped in explicit `BEGIN/COMMIT/ROLLBACK` — a failed migration rolls back fully rather than leaving a partial schema. API keys are never stored in SQLite — they live in the OS credential store (`data/credentials.rs`).
 
 ## API Providers
 
@@ -194,14 +211,16 @@ Groq is the recommended default — free tier, fast LPU inference. Google sends 
 
 The `transcription_language` setting (ISO 639-1, default `en`) is sent to Groq/OpenAI as the `language` form field and to Gemini as a natural-language label via `transcription_language_label()` in `store.rs`. Supported languages: `src/lib/transcriptionLanguages.ts` (frontend), `is_supported_transcription_language()` (Rust).
 
-**API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to any configured fallback models. Fallback models are configured per task (transcription/cleanup) in the Models settings tab and stored as `transcription_fallback_models` / `cleanup_fallback_models` arrays. Fallback is implicit — if fallback models are configured, they are always tried in order. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately.
+**API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to any configured fallback models. Fallback models are configured per task (transcription/cleanup) in the Models settings tab and stored as `transcription_fallback_models` / `cleanup_fallback_models` arrays. Fallback is implicit — if fallback models are configured, they are always tried in order. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately. `is_retryable_provider_error()` in `api/mod.rs` is the single source of truth for what counts as retryable (reqwest timeout/connect errors, HTTP 408/429/5xx, and a few message-substring heuristics).
+
+**401 handling:** `api/mod.rs` classifies unauthorized responses into `AuthErrorCategory` (`InvalidOrRevokedKey`, `ScopeOrAccountRestriction`, `UnknownUnauthorized`) via `classify_unauthorized_body()`, and encodes the result as a structured `AUTH_401|provider=...|category=...` error string (`auth_401_error()` / `parse_auth_401_error()`) so the frontend can show a category-specific message instead of a generic failure.
 
 ## Global Hotkey Behavior
 
 - **Windows:** Ctrl+Windows (hold) → start recording; release → stop and process
 - **macOS:** Fn+Control (hold/release) via `CGEventTap`
 
-The Windows hotkey uses a raw `SetWindowsHookExW(WH_KEYBOARD_LL)` hook in `core/hotkey.rs`, not `tauri-plugin-global-shortcut`, because that plugin only fires on keydown — hold/release state requires the low-level hook. The macOS equivalent uses `CGEventTap` for the same reason.
+`core/hotkey/` is split by platform: `win.rs` uses a raw `SetWindowsHookExW(WH_KEYBOARD_LL)` hook, `mac.rs` uses a listen-only `CGEventTap`, and `mod.rs` holds the platform dispatch plus shared chord/handsfree state. `tauri-plugin-global-shortcut` is a declared dependency but is not used for the hold/release hotkey — that plugin only fires on keydown, so hold/release state requires the low-level hook on both platforms.
 
 ## Formatting Profiles
 
@@ -209,14 +228,14 @@ Active window process name → profile → system prompt prefix sent to cleanup 
 
 Built-in profiles: `casual`, `formal`, `very_casual`. Profile system prompts live in `src-tauri/src/api/cleanup.rs`. `resolve_profile()` reads `AppMapping` entries (`Vec<AppMapping>`) from `tauri-plugin-store` at pipeline time to map foreground process name → profile name. Lookup key is the lowercase `.exe` name. Falls back to `default_tone` setting if no mapping found.
 
-Store keys (API keys, settings) are defined as constants in `src-tauri/src/data/store.rs` — always use the constant, never a raw string literal. When adding a new setting, update both `store.rs` (Rust constant + validation) and `src/lib/settings.ts` (frontend `SettingsValueMap` type entry).
+Store keys (settings, plus the API key *identifiers* used as credential usernames) are defined as constants in `src-tauri/src/data/store.rs` — always use the constant, never a raw string literal. When adding a new setting, update both `store.rs` (Rust constant + validation) and `src/lib/settings.ts` (frontend `SettingsValueMap` type entry).
 
 ## Settings & Configuration
 
 - **Frontend settings registry** lives in `src/lib/settings.ts` as the `SettingsValueMap` TypeScript type. Add new setting entries here.
 - **Backend validation & constants** live in `src-tauri/src/data/store.rs`. All store keys are constants; never use raw string literals.
 - **Type mirrors**: `transcriptionLanguages.ts` (frontend) mirrors the backend's supported language validation in `store.rs` — keep them synchronized.
-- **API keys** are stored securely via `tauri-plugin-store`, never in SQLite or logs. Commands that check key presence return a boolean status only, never the key itself.
+- **API keys do not live in `tauri-plugin-store`.** They are stored in the native OS credential store via `src-tauri/src/data/credentials.rs`: Windows Credential Manager (`CredWriteW`/`CredReadW`/`CredDeleteW`, target `{user}.verenu`) or macOS Keychain (`security-framework` generic-password items). `store.rs`'s `KEY_GROQ`/`KEY_OPENAI`/`KEY_GOOGLE` constants are only used as the credential's username/identifier — the secret value itself never touches `tauri-plugin-store` or SQLite. Commands that check key presence return a boolean status only, never the key itself.
 
 ## Prompt Assembly (`prompts.rs`)
 
@@ -233,9 +252,9 @@ Cleanup instruction keywords are applied mechanically to LLM output *after* the 
 
 ## Auto-Learn System (`api/auto_learn.rs`)
 
-After injection, monitors the focused text field for 60 seconds using Windows UI Automation. Each dictation session spawns its own monitor; concurrent monitors are intentional and necessary so corrections from separate dictations can each count toward the promotion threshold. Detects user corrections via Levenshtein edit distance (`edit_distance`, `is_candidate_correction`) — pairs must differ by ≤2 chars or ≤50% of max length. A `StableTextGate` requires two consecutive identical UIA reads before evaluating corrections, preventing mid-typing noise. Promotion is confidence-tiered: a (wrong → correct) pair whose accumulated `confidence_avg` reaches `FAST_PROMOTION_CONFIDENCE` (0.70 — reachable only by distinctive corrections, e.g. brand/technical terms with a small edit distance) promotes after a single session; all other pairs need 2 separate sessions within 2 days. Within a session, `recorded_this_session` deduplicates so one noisy edit can't count twice.
+After injection, monitors the focused text field for 60 seconds (`MONITOR_WINDOW_SECS`) using UI Automation on Windows or the AX API on macOS. Each dictation session spawns its own monitor; concurrent monitors are intentional and necessary so corrections from separate dictations can each count toward the promotion threshold. Detects user corrections via Levenshtein edit distance (`edit_distance`, `is_candidate_correction`) — pairs must differ by ≤2 chars or ≤50% of max length. A `StableTextGate` requires two consecutive identical reads before evaluating corrections, preventing mid-typing noise. Promotion is confidence-tiered: a (wrong → correct) pair whose accumulated `confidence_avg` reaches `FAST_PROMOTION_CONFIDENCE` (0.70 — reachable only by distinctive corrections, e.g. brand/technical terms with a small edit distance) promotes after a single session; all other pairs need 2 separate sessions within 2 days. Within a session, `recorded_this_session` deduplicates so one noisy edit can't count twice.
 
-Requires COM initialization (`CoInitializeEx`) per thread via a `ComGuard` — UI Automation will fail silently without it.
+On Windows, requires COM initialization (`CoInitializeEx`) per thread via a `ComGuard` — UI Automation will fail silently without it. The macOS path uses the AX API instead and has no COM equivalent.
 
 Auto-learned dictionary entries whose `mistake` is a plain, non-distinctive word (per `has_distinctive_features` in `system/text.rs`) are excluded from the mechanical find/replace in `apply_substitutions_from` — they're corrected contextually via the cleanup LLM prompt instead, so a mis-learned pair (e.g. "rock" → "Groq") can't clobber legitimate uses of the common word. Manual dictionary entries are never gated.
 
@@ -244,7 +263,7 @@ Auto-learned dictionary entries whose `mistake` is a plain, non-distinctive word
 - **No bundled browser.** Tauri uses Windows WebView2 — keep this. Never switch to Electron.
 - **RAM target: ~200MB idle.** Profile before adding any heavy JS dependency. See [docs/transcription-ram-reliability-plan.md](docs/transcription-ram-reliability-plan.md) for the prioritized list of known memory and reliability issues in the Rust pipeline.
 - **Text injection is clipboard-based.** `SendInput` character-by-character is unreliable across apps; clipboard + Ctrl+V works everywhere.
-- **API keys never touch the DB.** Use `tauri-plugin-store` only. Commands that check key presence return a boolean status, never the key itself.
+- **API keys never touch the DB, logs, or `tauri-plugin-store`.** They live only in the OS credential store (`data/credentials.rs`). Commands that check key presence return a boolean status, never the key itself.
 - **MVP scope:** transcription + history + dictionary + snippets + cleanup + hotkey. Insights/stats and IDE integrations are post-MVP.
 
 ## Shared Frontend Components
@@ -258,7 +277,7 @@ Three reusable components in `src/lib/components/`:
 ## Patterns & Gotchas
 
 ### Hotkey hook — callback timing
-The `WH_KEYBOARD_LL` callback in `core/hotkey.rs` must return within ~300ms or Windows silently kills it. All actual work (pipeline, async calls) must happen in a spawned tokio task, not in the hook body. The hook only sends a `HotkeyEvent` enum over a channel.
+The `WH_KEYBOARD_LL` callback in `core/hotkey/win.rs` must return within ~300ms or Windows silently kills it. All actual work (pipeline, async calls) must happen in a spawned tokio task, not in the hook body. The hook only sends a `HotkeyEvent` enum over a channel.
 
 ### Pill window — never hide it
 Hiding the pill window suspends the WebView2 renderer. The next state event emitted while it is hidden will be silently dropped, leaving the pill stuck. Keep it always-visible but click-through + transparent in idle state. Emit state events *after* showing the window, not before. The pill uses `SW_SHOWNOACTIVATE` so it appears without stealing focus from the target app. In idle/passive states the pill is click-through; only in "handsfree" state does it accept real cursor events for buttons.
@@ -271,7 +290,7 @@ Hiding the pill window suspends the WebView2 renderer. The next state event emit
 No user-facing feedback is shown when rejected. These are currently magic numbers in `pipeline.rs`.
 
 ### Injection — contextual capitalization and timing
-`injection.rs` peeks at the character before the cursor using Shift+Left + Ctrl+C, then inspects the clipboard. If the preceding character is not a sentence-ending `.!?\n\r`, the first letter of the injected text is lowercased (mid-sentence join). Two timing constraints: 60ms wait after the Shift+Left+Ctrl+C sequence for the clipboard to populate, and 30ms between releasing modifier keys and sending Ctrl+V — without this gap, some apps miss the Ctrl key in the same message-pump cycle.
+Capitalization decisions come from a layered `InjectionContextProbe` (`core/context_probe.rs` + `core/text_context.rs`), not a single trick. It tries, in order: a caret-local read via the platform accessibility API (UI Automation on Windows, AX on macOS, `ContextProbeSource::CaretLocal`) → a clipboard-sniff fallback (select one char back with Shift+Left/Cmd+Shift+Left, copy, inspect, then restore the selection — `ContextProbeSource::ClipboardSniff`) → a history-based guess (`HistoryFallback`) when the control is unsupported or permission is missing. The result classifies into `SentenceContext` (`NewSentence`/`MidSentence`/`Unknown`); if not `NewSentence`, the first letter of the injected text is lowercased (mid-sentence join). Timing constants in `injection.rs`: `MODIFIER_GAP_MS` = 30ms between releasing modifier keys and sending Ctrl+V/Cmd+V (without this gap, some apps miss the Ctrl key in the same message-pump cycle), and ~30ms waits between the sniff's key-down/key-up stages for the clipboard to populate.
 
 ### HWND capture — foreground window before async work
 The foreground window HWND is captured at the very start of `run_pipeline()`, before any async API call. This ensures Ctrl+V is sent to the correct window even if the user switches apps during the transcription/cleanup round-trip. The captured HWND is re-focused just before injection.
