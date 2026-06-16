@@ -52,7 +52,15 @@
   let testState = $state<TestStatus>({ status: 'idle' });
   let liveWarnings = $state<string[]>([]);
 
-  let lintDebounceId = 0;
+  let isMounted = true;
+  let lintTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  $effect(() => {
+    return () => {
+      isMounted = false;
+      clearTimeout(lintTimeout);
+    };
+  });
 
   const origin = $derived(cleanupPromptEditor.origin ?? undefined);
   const provider = $derived(cleanupPromptEditor.provider!);
@@ -122,26 +130,25 @@
     liveWarnings = [];
     try {
       const def = await invoke<string>('get_default_cleanup_prompt', { provider, model });
+      if (!isMounted) return;
       defaultText = def;
       const saved = cleanupPromptOverridesStore.overrides[`${provider}/${model}`];
       const text = saved ?? def;
       draft = text;
       runLint(text);
     } catch (err) {
-      console.error('CleanupPromptModal loadDraft failed:', err);
+      if (isMounted) console.error('CleanupPromptModal loadDraft failed:', err);
     } finally {
-      loading = false;
+      if (isMounted) loading = false;
     }
   }
 
   function runLint(text: string) {
-    const id = ++lintDebounceId;
-    setTimeout(async () => {
-      if (id !== lintDebounceId) return;
+    clearTimeout(lintTimeout);
+    lintTimeout = setTimeout(async () => {
       try {
         const warnings = await invoke<string[]>('lint_cleanup_prompt', { template: text });
-        if (id !== lintDebounceId) return;
-        liveWarnings = warnings;
+        if (isMounted) liveWarnings = warnings;
       } catch {
         // lint errors are non-critical
       }
@@ -170,8 +177,9 @@
     if (force) {
       applyOverride(draft);
       await saveSetting('cleanup_prompt_overrides', cleanupPromptOverridesStore.overrides);
+      if (!isMounted) return;
       testState = { status: 'passed' };
-      setTimeout(() => closeCleanupPromptEditor(), 500);
+      setTimeout(() => { if (isMounted) closeCleanupPromptEditor(); }, 500);
       return;
     }
 
@@ -182,15 +190,18 @@
         model,
         template: draft,
       });
+      if (!isMounted) return;
       if (report.passed) {
         applyOverride(draft);
         await saveSetting('cleanup_prompt_overrides', cleanupPromptOverridesStore.overrides);
+        if (!isMounted) return;
         testState = { status: 'passed' };
-        setTimeout(() => closeCleanupPromptEditor(), 600);
+        setTimeout(() => { if (isMounted) closeCleanupPromptEditor(); }, 600);
       } else {
         testState = { status: 'failed', report };
       }
     } catch (err) {
+      if (!isMounted) return;
       testState = {
         status: 'failed',
         error: err instanceof Error ? err.message : String(err),

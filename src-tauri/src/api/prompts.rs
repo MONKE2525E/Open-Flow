@@ -835,7 +835,11 @@ mod tests {
     }
 
     #[test]
-    fn large_cleanup_models_skip_examples() {
+    fn large_cleanup_models_include_examples() {
+        // Large models now include the same few-shot EXAMPLES block as small
+        // models; the block was added to fix prompt-injection failures where
+        // llama-3.3-70b-versatile and gpt-4o complied with embedded
+        // instructions (e.g. outputting "hello" for the injection test case).
         let prompt = get_cleanup_prompt_with_extras(
             "groq",
             "llama-3.3-70b-versatile",
@@ -846,7 +850,7 @@ mod tests {
             "you should call me tomorrow",
             None,
         );
-        assert!(!prompt.contains("EXAMPLES"));
+        assert!(prompt.contains("EXAMPLES"));
     }
 
     #[test]
