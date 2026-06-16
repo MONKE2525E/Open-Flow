@@ -162,10 +162,10 @@
         label = fmtDate(entry.created_at);
         dateCache.set(dayKey, label);
       }
-      if (!seenHeaders.has(label)) {
-        seenHeaders.add(label);
+      if (!seenHeaders.has(dayKey)) {
+        seenHeaders.add(dayKey);
         if (!(failedEntry && label === 'Today')) {
-          acc.push({ type: 'header', label, key: `header-${label}` });
+          acc.push({ type: 'header', label, key: `header-${dayKey}` });
         }
       }
       acc.push({ type: 'row', entry, key: `row-${entry.id}` });
