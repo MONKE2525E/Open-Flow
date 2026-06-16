@@ -503,7 +503,7 @@
                   {item.label}
                 </div>
               {:else if item.type === 'row'}
-                <div use:measureItem={item.key} class="day-row" class:first-in-table={index === 0 || flatItems[index - 1]?.type === 'header'}>
+                <div use:measureItem={item.key} class="day-row" class:first-in-table={(index === 0 && !failedEntry) || flatItems[index - 1]?.type === 'header'}>
                   <div class="day-time">{fmtTime(item.entry.created_at)}</div>
                   <div class="day-text">{item.entry.clean_text}</div>
                   <button
