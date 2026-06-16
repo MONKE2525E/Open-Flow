@@ -190,7 +190,7 @@
   let lastStart = -1;
   let lastEnd = -1;
   let lastItemsRef: RenderItem[] | null = null;
-  let lastTopsSignature = "";
+  let lastTops: number[] | null = null;
 
   function updateListOffset() {
     if (!container || !listContainer) return;
@@ -224,7 +224,7 @@
       lastStart = -1;
       lastEnd = -1;
       lastItemsRef = null;
-      lastTopsSignature = "";
+      lastTops = null;
       return;
     }
     scrollTop = container === document.documentElement ? window.scrollY : container.scrollTop;
@@ -275,14 +275,14 @@
       start === lastStart &&
       end === lastEnd &&
       flatItems === lastItemsRef &&
-      topsSignature === lastTopsSignature
+      tops === lastTops
     ) {
       return;
     }
     lastStart = start;
     lastEnd = end;
     lastItemsRef = flatItems;
-    lastTopsSignature = topsSignature;
+    lastTops = tops;
 
     visibleItems = flatItems.slice(start, end).map((item, idx) => ({
       item,
@@ -297,17 +297,16 @@
     flatItems;
     container;
     listContainer;
+    appStore.updateInfo;
+    failedEntry;
     updateLayout();
-    updateListOffset();
     updateVirtualList();
   }
 
-  function handleScroll() {
-    updateVirtualList();
-  }
-
-  function handleResize() {
-    updateListOffset();
+  function handleScroll(event?: Event) {
+    if (event?.type === 'resize') {
+      updateListOffset();
+    }
     updateVirtualList();
   }
 
@@ -405,7 +404,7 @@
     container = document.querySelector('.content') || document.documentElement;
     const scrollTarget = container === document.documentElement ? window : container;
     scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('resize', handleResize, { passive: true });
+    window.addEventListener('resize', handleScroll, { passive: true });
 
     let mounted = true;
     const unlisteners: (() => void)[] = [];
@@ -453,7 +452,7 @@
         const scrollTarget = container === document.documentElement ? window : container;
         scrollTarget.removeEventListener('scroll', handleScroll);
       }
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', handleScroll);
       if (sharedObserver) {
         sharedObserver.disconnect();
         sharedObserver = null;
