@@ -211,7 +211,7 @@
     const startY = Math.max(0, scrollTop - buffer);
     const endY = scrollTop + clientHeight + buffer;
 
-    let start = 0;
+    let start = flatItems.length;
     let end = flatItems.length;
 
     // Binary search for start index (first item ending after startY)
