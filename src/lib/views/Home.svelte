@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { fly } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
@@ -269,8 +269,6 @@
     start = Math.max(0, Math.min(start, flatItems.length));
     end = Math.max(start, Math.min(end, flatItems.length));
 
-    const topsSignature = tops.length > 0 ? `${tops[0]}-${tops[tops.length - 1]}-${totalHeight}` : "";
-
     if (
       start === lastStart &&
       end === lastEnd &&
@@ -299,8 +297,10 @@
     listContainer;
     appStore.updateInfo;
     failedEntry;
-    updateLayout();
-    updateVirtualList();
+    tick().then(() => {
+      updateLayout();
+      updateVirtualList();
+    });
   }
 
   function handleScroll(event?: Event) {
