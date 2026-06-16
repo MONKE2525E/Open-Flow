@@ -282,14 +282,14 @@
     flex: 1;
     display: flex;
     min-height: 0;
-    padding: 0 14px 14px 14px;
+    padding: 0 0 14px 14px;
     gap: 14px;
   }
 
   .content {
     flex: 1;
     background: transparent;
-    overflow-y: scroll;
+    overflow-y: auto;
     overflow-x: hidden;
     scrollbar-gutter: stable;
     position: relative;
