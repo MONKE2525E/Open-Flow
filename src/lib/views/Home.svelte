@@ -147,20 +147,128 @@
     } catch { return iso.slice(0, 10); }
   }
 
-  // Group entries by day label
-  $: grouped = recents.reduce<{ label: string; rows: Entry[] }[]>((acc, entry) => {
-    const label = fmtDate(entry.created_at);
-    const group = acc.find(g => g.label === label);
-    if (group) group.rows.push(entry);
-    else acc.push({ label, rows: [entry] });
-    return acc;
-  }, []);
+  type RenderItem =
+    | { type: 'header'; key: string; label: string }
+    | { type: 'row'; key: string; entry: Entry };
+
+  let flatItems: RenderItem[] = [];
+  $: {
+    flatItems = recents.reduce<RenderItem[]>((acc, entry) => {
+      const label = fmtDate(entry.created_at);
+      const hasHeader = acc.some(item => item.type === 'header' && item.label === label);
+      if (!hasHeader) {
+        if (!(failedEntry && label === 'Today')) {
+          acc.push({ type: 'header', label, key: `header-${label}` });
+        }
+      }
+      acc.push({ type: 'row', entry, key: `row-${entry.id}` });
+      return acc;
+    }, []);
+  }
+
+  let container: HTMLElement | null = null;
+  let cachedHeights: Record<string, number> = {};
+  
+  let visibleItems: { item: RenderItem; index: number }[] = [];
+  let topSpacerHeight = 0;
+  let bottomSpacerHeight = 0;
+  let scrollTop = 0;
+  let clientHeight = 600;
+
+  function updateVirtualList() {
+    if (!container) return;
+    scrollTop = container.scrollTop;
+    clientHeight = container.clientHeight;
+
+    const tops: number[] = [];
+    let currentTop = 0;
+    for (let i = 0; i < flatItems.length; i++) {
+      tops.push(currentTop);
+      const item = flatItems[i];
+      const h = cachedHeights[item.key] || (item.type === 'header' ? 38 : 58);
+      currentTop += h;
+    }
+
+    const buffer = 400; // scroll buffer (px)
+    const startY = Math.max(0, scrollTop - buffer);
+    const endY = scrollTop + clientHeight + buffer;
+
+    let start = 0;
+    let end = flatItems.length;
+
+    for (let i = 0; i < flatItems.length; i++) {
+      const top = tops[i];
+      const item = flatItems[i];
+      const h = cachedHeights[item.key] || (item.type === 'header' ? 38 : 58);
+      const bottom = top + h;
+
+      if (bottom < startY) {
+        start = i + 1;
+      }
+      if (top > endY) {
+        end = i;
+        break;
+      }
+    }
+
+    start = Math.max(0, Math.min(start, flatItems.length));
+    end = Math.max(start, Math.min(end, flatItems.length));
+
+    visibleItems = flatItems.slice(start, end).map((item, idx) => ({
+      item,
+      index: start + idx
+    }));
+
+    topSpacerHeight = tops[start] || 0;
+
+    let bottomSum = 0;
+    for (let i = end; i < flatItems.length; i++) {
+      const item = flatItems[i];
+      bottomSum += cachedHeights[item.key] || (item.type === 'header' ? 38 : 58);
+    }
+    bottomSpacerHeight = bottomSum;
+  }
+
+  $: {
+    flatItems;
+    updateVirtualList();
+  }
+
+  function handleScroll() {
+    updateVirtualList();
+  }
+
+  function measureItem(node: HTMLElement, key: string) {
+    const updateHeight = () => {
+      const rect = node.getBoundingClientRect();
+      if (rect.height > 0 && cachedHeights[key] !== rect.height) {
+        cachedHeights[key] = rect.height;
+        updateVirtualList();
+      }
+    };
+    
+    updateHeight();
+
+    const ro = new ResizeObserver(() => {
+      updateHeight();
+    });
+    ro.observe(node);
+
+    return {
+      destroy() {
+        ro.disconnect();
+      }
+    };
+  }
 
   async function load() {
     try {
       const [r, s] = await Promise.all([invoke<Entry[]>('get_recent'), invoke<Stats>('get_stats')]);
       recents = r;
       stats = s;
+      setTimeout(() => {
+        updateVirtualList();
+      }, 0);
     } catch (err) {
       console.error('Home load failed:', err);
       recents = [];
@@ -172,8 +280,6 @@
   function handleInstall() {
     if (!appStore.updateInfo) return;
     installing = true;
-    // Happy path: backend exits the process — no response ever arrives.
-    // Error path: invoke rejects and we reset the button.
     invoke('install_update', { downloadUrl: appStore.updateInfo.downloadUrl }).catch((e) => {
       console.error('Install failed:', e);
       installing = false;
@@ -194,6 +300,12 @@
       .then(hk => { if (hk?.length === 2) hotkey = hk; })
       .catch(() => { /* use platform default if setting unavailable */ });
     load();
+
+    container = document.querySelector('.content');
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+    }
+
     let mounted = true;
     const unlisteners: (() => void)[] = [];
 
@@ -209,7 +321,6 @@
         .catch(() => {});
     }
 
-    // Check for updates, skip banner if user dismissed this version
     invoke<UpdateInfo | null>('check_for_update').then(async (update) => {
       if (update) {
         try {
@@ -237,6 +348,9 @@
 
     return () => {
       mounted = false;
+      if (container) {
+        container.removeEventListener('scroll', handleScroll);
+      }
       while (unlisteners.length > 0) {
         unlisteners.pop()?.();
       }
@@ -312,34 +426,35 @@
             No dictations yet. Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to get started.
           </div>
         {:else}
-          {#each grouped as group, gi (group.label)}
-            {#if !(failedEntry && group.label === 'Today')}
-              <div class="day-head" class:muted={gi > 0 || !!failedEntry}>{group.label}</div>
+          <div style="height: {topSpacerHeight}px;"></div>
+          {#each visibleItems as { item, index } (item.key)}
+            {#if item.type === 'header'}
+              <div use:measureItem={item.key} class="day-head" class:muted={index > 0 || !!failedEntry}>
+                {item.label}
+              </div>
+            {:else if item.type === 'row'}
+              <div use:measureItem={item.key} class="day-row" class:first-in-table={flatItems[index - 1]?.type === 'header'} in:fly={{ y: -10, duration: 400, easing: expoOut }}>
+                <div class="day-time">{fmtTime(item.entry.created_at)}</div>
+                <div class="day-text">{item.entry.clean_text}</div>
+                <button
+                  class="copy-btn"
+                  class:copied={copiedId === item.entry.id}
+                  onclick={() => copyText(item.entry)}
+                  title="Copy to clipboard"
+                  aria-label="Copy"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    {#if copiedId === item.entry.id}
+                      {@html icons.check}
+                    {:else}
+                      {@html icons.copy}
+                    {/if}
+                  </svg>
+                </button>
+              </div>
             {/if}
-            <div class="day-table">
-              {#each group.rows as r (r.id)}
-                <div class="day-row" in:fly={{ y: -10, duration: 400, easing: expoOut }} animate:flip={{ duration: 400, easing: expoOut }}>
-                  <div class="day-time">{fmtTime(r.created_at)}</div>
-                  <div class="day-text">{r.clean_text}</div>
-                  <button
-                    class="copy-btn"
-                    class:copied={copiedId === r.id}
-                    onclick={() => copyText(r)}
-                    title="Copy to clipboard"
-                    aria-label="Copy"
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      {#if copiedId === r.id}
-                        {@html icons.check}
-                      {:else}
-                        {@html icons.copy}
-                      {/if}
-                    </svg>
-                  </button>
-                </div>
-              {/each}
-            </div>
           {/each}
+          <div style="height: {bottomSpacerHeight}px;"></div>
         {/if}
       {/if}
     </div>
@@ -705,5 +820,9 @@
     .stat-card {
       grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     }
+  }
+
+  .day-row.first-in-table {
+    border-top: 1px solid var(--line);
   }
 </style>

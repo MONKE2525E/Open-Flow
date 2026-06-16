@@ -532,7 +532,7 @@ pub fn query_recent(db: &Db) -> Result<Vec<RecentEntry>> {
     let conn = lock_conn(db)?;
     let mut stmt = conn.prepare(
         "SELECT id, clean_text, words, created_at \
-         FROM transcriptions ORDER BY created_at DESC LIMIT 30",
+         FROM transcriptions ORDER BY created_at DESC",
     )?;
     let rows = stmt
         .query_map([], |r| {
