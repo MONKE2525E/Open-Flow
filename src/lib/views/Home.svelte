@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { fly } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { expoOut } from 'svelte/easing';
@@ -147,14 +147,214 @@
     } catch { return iso.slice(0, 10); }
   }
 
-  // Group entries by day label
-  $: grouped = recents.reduce<{ label: string; rows: Entry[] }[]>((acc, entry) => {
-    const label = fmtDate(entry.created_at);
-    const group = acc.find(g => g.label === label);
-    if (group) group.rows.push(entry);
-    else acc.push({ label, rows: [entry] });
-    return acc;
-  }, []);
+  type RenderItem =
+    | { type: 'header'; key: string; label: string }
+    | { type: 'row'; key: string; entry: Entry };
+
+  let flatItems: RenderItem[] = [];
+  $: {
+    const seenHeaders = new Set<string>();
+    const dateCache = new Map<string, string>();
+    flatItems = recents.reduce<RenderItem[]>((acc, entry) => {
+      const dayKey = entry.created_at.slice(0, 10);
+      let label = dateCache.get(dayKey);
+      if (!label) {
+        label = fmtDate(entry.created_at);
+        dateCache.set(dayKey, label);
+      }
+      if (!seenHeaders.has(dayKey)) {
+        seenHeaders.add(dayKey);
+        if (!(failedEntry && label === 'Today')) {
+          acc.push({ type: 'header', label, key: `header-${dayKey}` });
+        }
+      }
+      acc.push({ type: 'row', entry, key: `row-${entry.id}` });
+      return acc;
+    }, []);
+
+    // Prune cachedHeights to avoid memory leaks from old/deleted history items
+    const keys = new Set(flatItems.map(item => item.key));
+    for (const key of Object.keys(cachedHeights)) {
+      if (!keys.has(key)) {
+        delete cachedHeights[key];
+      }
+    }
+  }
+
+  const DEFAULT_HEADER_HEIGHT = 38;
+  const DEFAULT_ROW_HEIGHT = 58;
+
+  let container: HTMLElement | null = null;
+  let listContainer: HTMLElement | null = null;
+  let cachedHeights: Record<string, number> = {};
+  
+  let visibleItems: { item: RenderItem; index: number }[] = [];
+  let topSpacerHeight = 0;
+  let bottomSpacerHeight = 0;
+
+  let tops: number[] = [];
+  let totalHeight = 0;
+
+  let listOffset = 0;
+  let lastStart = -1;
+  let lastEnd = -1;
+
+  function updateListOffset() {
+    if (!container || !listContainer) return;
+    const listRect = listContainer.getBoundingClientRect();
+    if (container === document.documentElement) {
+      listOffset = listRect.top + window.scrollY;
+    } else {
+      const containerRect = container.getBoundingClientRect();
+      listOffset = listRect.top - containerRect.top + container.scrollTop;
+    }
+  }
+
+  function updateLayout() {
+    tops = [];
+    let currentTop = 0;
+    for (let i = 0; i < flatItems.length; i++) {
+      tops.push(currentTop);
+      const item = flatItems[i];
+      const h = cachedHeights[item.key] || (item.type === 'header' ? DEFAULT_HEADER_HEIGHT : DEFAULT_ROW_HEIGHT);
+      currentTop += h;
+    }
+    totalHeight = currentTop;
+    updateListOffset();
+  }
+
+  function updateVirtualList() {
+    if (!container || flatItems.length === 0 || tops.length !== flatItems.length) {
+      visibleItems = [];
+      topSpacerHeight = 0;
+      bottomSpacerHeight = 0;
+      lastStart = -1;
+      lastEnd = -1;
+      return;
+    }
+    const scrollTop = container === document.documentElement ? window.scrollY : container.scrollTop;
+    const clientHeight = container === document.documentElement ? window.innerHeight : container.clientHeight;
+
+    const relativeScrollTop = Math.max(0, scrollTop - listOffset);
+    const buffer = 400; // scroll buffer (px)
+    const startY = Math.max(0, relativeScrollTop - buffer);
+    const endY = relativeScrollTop + clientHeight + buffer;
+
+    let start = flatItems.length;
+    let end = flatItems.length;
+
+    // Binary search for start index (first item ending after startY)
+    let low = 0;
+    let high = flatItems.length - 1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const top = tops[mid];
+      const h = cachedHeights[flatItems[mid].key] || (flatItems[mid].type === 'header' ? DEFAULT_HEADER_HEIGHT : DEFAULT_ROW_HEIGHT);
+      if (top + h >= startY) {
+        start = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+
+    // Binary search for end index (first item starting after endY)
+    low = start;
+    high = flatItems.length - 1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (tops[mid] > endY) {
+        end = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+
+    start = Math.max(0, Math.min(start, flatItems.length));
+    end = Math.max(start, Math.min(end, flatItems.length));
+
+    if (start === lastStart && end === lastEnd) {
+      return;
+    }
+    lastStart = start;
+    lastEnd = end;
+
+    visibleItems = flatItems.slice(start, end).map((item, idx) => ({
+      item,
+      index: start + idx
+    }));
+
+    topSpacerHeight = start < flatItems.length ? (tops[start] || 0) : totalHeight;
+    bottomSpacerHeight = totalHeight - (end < flatItems.length ? tops[end] : totalHeight);
+  }
+
+  $: {
+    flatItems;
+    container;
+    listContainer;
+    appStore.updateInfo;
+    failedEntry;
+    updateLayout();
+    updateVirtualList();
+    // Recalculate list offset after the DOM has updated to handle banner toggles
+    tick().then(() => {
+      const oldOffset = listOffset;
+      updateListOffset();
+      if (listOffset !== oldOffset) {
+        updateVirtualList();
+      }
+    });
+  }
+
+  function handleScroll(event?: Event) {
+    if (event?.type === 'resize') {
+      updateListOffset();
+    }
+    updateVirtualList();
+  }
+
+  const nodeKeys = new WeakMap<HTMLElement, string>();
+  const sharedObserver = new ResizeObserver((entries) => {
+    let changed = false;
+    for (const entry of entries) {
+      const node = entry.target as HTMLElement;
+      const key = nodeKeys.get(node);
+      if (key) {
+        const height = entry.borderBoxSize?.[0]?.blockSize ?? node.getBoundingClientRect().height;
+        if (height > 0 && cachedHeights[key] !== height) {
+          cachedHeights[key] = height;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      updateLayout();
+      updateVirtualList();
+    }
+  });
+
+  function measureItem(node: HTMLElement, key: string) {
+    nodeKeys.set(node, key);
+    sharedObserver.observe(node);
+
+    return {
+      update(newKey: string) {
+        nodeKeys.delete(node);
+        nodeKeys.set(node, newKey);
+        const height = node.getBoundingClientRect().height;
+        if (height > 0 && cachedHeights[newKey] !== height) {
+          cachedHeights[newKey] = height;
+          updateLayout();
+          updateVirtualList();
+        }
+      },
+      destroy() {
+        sharedObserver.unobserve(node);
+        nodeKeys.delete(node);
+      }
+    };
+  }
 
   async function load() {
     try {
@@ -172,8 +372,6 @@
   function handleInstall() {
     if (!appStore.updateInfo) return;
     installing = true;
-    // Happy path: backend exits the process — no response ever arrives.
-    // Error path: invoke rejects and we reset the button.
     invoke('install_update', { downloadUrl: appStore.updateInfo.downloadUrl }).catch((e) => {
       console.error('Install failed:', e);
       installing = false;
@@ -194,6 +392,12 @@
       .then(hk => { if (hk?.length === 2) hotkey = hk; })
       .catch(() => { /* use platform default if setting unavailable */ });
     load();
+
+    container = document.querySelector('.content') || document.documentElement;
+    const scrollTarget = container === document.documentElement ? window : container;
+    scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleScroll, { passive: true });
+
     let mounted = true;
     const unlisteners: (() => void)[] = [];
 
@@ -209,7 +413,6 @@
         .catch(() => {});
     }
 
-    // Check for updates, skip banner if user dismissed this version
     invoke<UpdateInfo | null>('check_for_update').then(async (update) => {
       if (update) {
         try {
@@ -237,6 +440,14 @@
 
     return () => {
       mounted = false;
+      if (container) {
+        const scrollTarget = container === document.documentElement ? window : container;
+        scrollTarget.removeEventListener('scroll', handleScroll);
+        container = null;
+      }
+      listContainer = null;
+      window.removeEventListener('resize', handleScroll);
+      sharedObserver.disconnect();
       while (unlisteners.length > 0) {
         unlisteners.pop()?.();
       }
@@ -312,24 +523,26 @@
             No dictations yet. Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to get started.
           </div>
         {:else}
-          {#each grouped as group, gi (group.label)}
-            {#if !(failedEntry && group.label === 'Today')}
-              <div class="day-head" class:muted={gi > 0 || !!failedEntry}>{group.label}</div>
-            {/if}
-            <div class="day-table">
-              {#each group.rows as r (r.id)}
-                <div class="day-row" in:fly={{ y: -10, duration: 400, easing: expoOut }} animate:flip={{ duration: 400, easing: expoOut }}>
-                  <div class="day-time">{fmtTime(r.created_at)}</div>
-                  <div class="day-text">{r.clean_text}</div>
+          <div bind:this={listContainer}>
+            <div style="height: {topSpacerHeight}px;"></div>
+            {#each visibleItems as { item, index } (item.key)}
+              {#if item.type === 'header'}
+                <div use:measureItem={item.key} class="day-head" class:muted={index > 0 || !!failedEntry}>
+                  {item.label}
+                </div>
+              {:else if item.type === 'row'}
+                <div use:measureItem={item.key} class="day-row" class:first-in-table={(index === 0 && !failedEntry) || flatItems[index - 1]?.type === 'header'}>
+                  <div class="day-time">{fmtTime(item.entry.created_at)}</div>
+                  <div class="day-text">{item.entry.clean_text}</div>
                   <button
                     class="copy-btn"
-                    class:copied={copiedId === r.id}
-                    onclick={() => copyText(r)}
+                    class:copied={copiedId === item.entry.id}
+                    onclick={() => copyText(item.entry)}
                     title="Copy to clipboard"
                     aria-label="Copy"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      {#if copiedId === r.id}
+                      {#if copiedId === item.entry.id}
                         {@html icons.check}
                       {:else}
                         {@html icons.copy}
@@ -337,9 +550,10 @@
                     </svg>
                   </button>
                 </div>
-              {/each}
-            </div>
-          {/each}
+              {/if}
+            {/each}
+            <div style="height: {bottomSpacerHeight}px;"></div>
+          </div>
         {/if}
       {/if}
     </div>
@@ -705,5 +919,9 @@
     .stat-card {
       grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     }
+  }
+
+  .day-row.first-in-table {
+    border-top: 1px solid var(--line);
   }
 </style>

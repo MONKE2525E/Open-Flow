@@ -530,9 +530,13 @@ pub fn insert_transcription_returning(
 
 pub fn query_recent(db: &Db) -> Result<Vec<RecentEntry>> {
     let conn = lock_conn(db)?;
+    // We order by id DESC instead of created_at DESC because id is the autoincrementing
+    // primary key. Since IDs are monotonically increasing, this retrieves items in the
+    // same chronological order but leverages the primary key index directly, avoiding
+    // full table scans and manual sorting overhead in SQLite.
     let mut stmt = conn.prepare(
         "SELECT id, clean_text, words, created_at \
-         FROM transcriptions ORDER BY created_at DESC LIMIT 30",
+         FROM transcriptions ORDER BY id DESC",
     )?;
     let rows = stmt
         .query_map([], |r| {
