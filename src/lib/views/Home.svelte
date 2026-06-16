@@ -204,8 +204,8 @@
       bottomSpacerHeight = 0;
       return;
     }
-    scrollTop = container.scrollTop;
-    clientHeight = container.clientHeight;
+    scrollTop = container === document.documentElement ? window.scrollY : container.scrollTop;
+    clientHeight = container === document.documentElement ? window.innerHeight : container.clientHeight;
 
     const buffer = 400; // scroll buffer (px)
     const startY = Math.max(0, scrollTop - buffer);
