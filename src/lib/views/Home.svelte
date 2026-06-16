@@ -153,10 +153,11 @@
 
   let flatItems: RenderItem[] = [];
   $: {
+    const seenHeaders = new Set<string>();
     flatItems = recents.reduce<RenderItem[]>((acc, entry) => {
       const label = fmtDate(entry.created_at);
-      const hasHeader = acc.some(item => item.type === 'header' && item.label === label);
-      if (!hasHeader) {
+      if (!seenHeaders.has(label)) {
+        seenHeaders.add(label);
         if (!(failedEntry && label === 'Today')) {
           acc.push({ type: 'header', label, key: `header-${label}` });
         }
@@ -175,12 +176,11 @@
   let scrollTop = 0;
   let clientHeight = 600;
 
-  function updateVirtualList() {
-    if (!container) return;
-    scrollTop = container.scrollTop;
-    clientHeight = container.clientHeight;
+  let tops: number[] = [];
+  let totalHeight = 0;
 
-    const tops: number[] = [];
+  function updateLayout() {
+    tops = [];
     let currentTop = 0;
     for (let i = 0; i < flatItems.length; i++) {
       tops.push(currentTop);
@@ -188,6 +188,18 @@
       const h = cachedHeights[item.key] || (item.type === 'header' ? 38 : 58);
       currentTop += h;
     }
+    totalHeight = currentTop;
+  }
+
+  function updateVirtualList() {
+    if (!container || flatItems.length === 0) {
+      visibleItems = [];
+      topSpacerHeight = 0;
+      bottomSpacerHeight = 0;
+      return;
+    }
+    scrollTop = container.scrollTop;
+    clientHeight = container.clientHeight;
 
     const buffer = 400; // scroll buffer (px)
     const startY = Math.max(0, scrollTop - buffer);
@@ -196,18 +208,31 @@
     let start = 0;
     let end = flatItems.length;
 
-    for (let i = 0; i < flatItems.length; i++) {
-      const top = tops[i];
-      const item = flatItems[i];
-      const h = cachedHeights[item.key] || (item.type === 'header' ? 38 : 58);
-      const bottom = top + h;
-
-      if (bottom < startY) {
-        start = i + 1;
+    // Binary search for start index (first item ending after startY)
+    let low = 0;
+    let high = flatItems.length - 1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const top = tops[mid];
+      const h = cachedHeights[flatItems[mid].key] || (flatItems[mid].type === 'header' ? 38 : 58);
+      if (top + h >= startY) {
+        start = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
       }
-      if (top > endY) {
-        end = i;
-        break;
+    }
+
+    // Binary search for end index (first item starting after endY)
+    low = start;
+    high = flatItems.length - 1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (tops[mid] > endY) {
+        end = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
       }
     }
 
@@ -220,17 +245,12 @@
     }));
 
     topSpacerHeight = tops[start] || 0;
-
-    let bottomSum = 0;
-    for (let i = end; i < flatItems.length; i++) {
-      const item = flatItems[i];
-      bottomSum += cachedHeights[item.key] || (item.type === 'header' ? 38 : 58);
-    }
-    bottomSpacerHeight = bottomSum;
+    bottomSpacerHeight = totalHeight - (end < flatItems.length ? tops[end] : totalHeight);
   }
 
   $: {
     flatItems;
+    updateLayout();
     updateVirtualList();
   }
 
@@ -243,6 +263,7 @@
       const rect = node.getBoundingClientRect();
       if (rect.height > 0 && cachedHeights[key] !== rect.height) {
         cachedHeights[key] = rect.height;
+        updateLayout();
         updateVirtualList();
       }
     };
