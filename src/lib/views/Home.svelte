@@ -324,9 +324,6 @@
       const [r, s] = await Promise.all([invoke<Entry[]>('get_recent'), invoke<Stats>('get_stats')]);
       recents = r;
       stats = s;
-      requestAnimationFrame(() => {
-        updateVirtualList();
-      });
     } catch (err) {
       console.error('Home load failed:', err);
       recents = [];
