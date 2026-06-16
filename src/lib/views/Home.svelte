@@ -275,9 +275,9 @@
           const node = entry.target as HTMLElement;
           const key = nodeKeys.get(node);
           if (key) {
-            const rect = node.getBoundingClientRect();
-            if (rect.height > 0 && cachedHeights[key] !== rect.height) {
-              cachedHeights[key] = rect.height;
+            const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+            if (height > 0 && cachedHeights[key] !== height) {
+              cachedHeights[key] = height;
               changed = true;
             }
           }
@@ -401,6 +401,10 @@
         scrollTarget.removeEventListener('scroll', handleScroll);
       }
       window.removeEventListener('resize', handleScroll);
+      if (sharedObserver) {
+        sharedObserver.disconnect();
+        sharedObserver = null;
+      }
       while (unlisteners.length > 0) {
         unlisteners.pop()?.();
       }
