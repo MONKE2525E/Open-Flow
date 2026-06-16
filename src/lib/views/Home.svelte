@@ -293,6 +293,10 @@
 
   function measureItem(node: HTMLElement, key: string) {
     nodeKeys.set(node, key);
+    const rect = node.getBoundingClientRect();
+    if (rect.height > 0) {
+      cachedHeights[key] = rect.height;
+    }
     const observer = getSharedObserver();
     if (observer) {
       observer.observe(node);
@@ -302,6 +306,10 @@
       update(newKey: string) {
         nodeKeys.delete(node);
         nodeKeys.set(node, newKey);
+        const rect = node.getBoundingClientRect();
+        if (rect.height > 0) {
+          cachedHeights[newKey] = rect.height;
+        }
       },
       destroy() {
         if (observer) {
