@@ -901,6 +901,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
             "pipeline: transcription matched hallucination pattern, dropping silently raw=\"{}\"",
             preview_text(&raw, 60)
         );
+        hide_pill(&app);
         return;
     }
 
