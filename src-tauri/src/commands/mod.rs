@@ -133,12 +133,28 @@ pub async fn save_setting(
     value: serde_json::Value,
 ) -> Result<(), String> {
     validate_setting(&key, &value)?;
+    let history_prune_days = if key == store::HISTORY_RETENTION {
+        value.as_str().and_then(store::history_retention_days)
+    } else {
+        None
+    };
     let store = app.store("settings.json").map_err(|e| e.to_string())?;
     store.set(key.clone(), value);
     store.save().map_err(|e| e.to_string())?;
 
     if key == store::APPEARANCE_MODE {
         crate::apply_runtime_icons(&app, None);
+    }
+
+    if let Some(days) = history_prune_days {
+        let db = app.state::<DbHandle>().inner().clone();
+        let deleted = tokio::task::spawn_blocking(move || db::prune_transcriptions_older_than(&db, days))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        if deleted > 0 {
+            let _ = app.emit("verenu:history-pruned", ());
+        }
     }
 
     Ok(())
@@ -376,6 +392,19 @@ pub async fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
     tokio::task::spawn_blocking(move || db::query_stats(&db).map_err(|e| e.to_string()))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn count_old_transcriptions(app: AppHandle, retention: String) -> Result<i64, String> {
+    let Some(days) = store::history_retention_days(&retention) else {
+        return Ok(0);
+    };
+    let db = app.state::<DbHandle>().inner().clone();
+    tokio::task::spawn_blocking(move || {
+        db::count_transcriptions_older_than(&db, days).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

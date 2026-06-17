@@ -429,6 +429,8 @@
       load();
     }));
 
+    trackListener(listen('verenu:history-pruned', () => load()));
+
     trackListener(listen<string>('verenu:pipeline-failed', (ev) => {
       failedEntry = { created_at: ev.payload };
       if (failedTimer) clearTimeout(failedTimer);
