@@ -181,6 +181,10 @@ CREATE TABLE IF NOT EXISTS transcriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_transcriptions_created_at
   ON transcriptions(created_at);
+CREATE TABLE IF NOT EXISTS lifetime_stats (
+  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  total_words INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS dictionary (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   term             TEXT    NOT NULL UNIQUE,
@@ -441,6 +445,23 @@ pub fn open(path: &str) -> Result<Db> {
             return Err(err.into());
         }
     }
+    if user_version < 9 {
+        // Seed the lifetime word counter from existing history so upgrading
+        // users don't see it reset to zero. From here on it's only ever
+        // incremented on insert, never recomputed from transcriptions, so
+        // history retention pruning can't shrink it.
+        let res = conn.execute_batch(
+            "BEGIN;
+             INSERT OR IGNORE INTO lifetime_stats (id, total_words)
+               SELECT 1, COALESCE(SUM(words), 0) FROM transcriptions;
+             PRAGMA user_version = 9;
+             COMMIT;",
+        );
+        if let Err(err) = res {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err.into());
+        }
+    }
     ensure_cleanup_cache_schema(&conn)?;
 
     // Self-heal: some databases ended up with user_version >= 7 without the
@@ -527,7 +548,7 @@ pub fn insert_transcription_returning(
 ) -> Result<RecentEntry> {
     let conn = lock_conn(db)?;
     let spoken_words = compute_spoken_words(&conn, raw)?;
-    Ok(conn.query_row(
+    let entry = conn.query_row(
         "INSERT INTO transcriptions (raw_text, clean_text, words, spoken_words, duration_ms, api_used) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
          RETURNING id, clean_text, words, created_at",
@@ -540,7 +561,14 @@ pub fn insert_transcription_returning(
                 created_at: r.get(3)?,
             })
         },
-    )?)
+    )?;
+    // Lifetime counter is intentionally separate from the transcriptions
+    // table so history retention pruning never shrinks it.
+    conn.execute(
+        "UPDATE lifetime_stats SET total_words = total_words + ?1 WHERE id = 1",
+        params![words],
+    )?;
+    Ok(entry)
 }
 
 pub fn query_recent(db: &Db) -> Result<Vec<RecentEntry>> {
@@ -570,7 +598,7 @@ pub fn query_stats(db: &Db) -> Result<Stats> {
     let conn = lock_conn(db)?;
 
     let total_words: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(words),0) FROM transcriptions",
+        "SELECT total_words FROM lifetime_stats WHERE id = 1",
         [],
         |r| r.get(0),
     )?;
@@ -1798,6 +1826,68 @@ mod tests {
 
         assert_eq!(stats.total_words, 1500);
         assert!(stats.avg_wpm > 0.0);
+    }
+
+    #[test]
+    fn prune_transcriptions_older_than_deletes_only_old_rows() {
+        let db = test_db();
+        insert_transcription_returning(&db, "old one", "old one", 2, 1000, "test")
+            .expect("old transcription");
+        insert_transcription_returning(&db, "recent one", "recent one", 2, 1000, "test")
+            .expect("recent transcription");
+        {
+            let conn = lock_conn(&db).expect("lock");
+            conn.execute(
+                "UPDATE transcriptions SET created_at = datetime('now', '-30 days') WHERE clean_text = 'old one'",
+                [],
+            )
+            .expect("backdate old row");
+        }
+
+        assert_eq!(
+            count_transcriptions_older_than(&db, 7).expect("count"),
+            1
+        );
+        assert_eq!(
+            prune_transcriptions_older_than(&db, 7).expect("prune"),
+            1
+        );
+
+        let conn = lock_conn(&db).expect("lock");
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM transcriptions", [], |r| r.get(0))
+            .expect("remaining count");
+        assert_eq!(remaining, 1);
+        let remaining_text: String = conn
+            .query_row("SELECT clean_text FROM transcriptions", [], |r| r.get(0))
+            .expect("remaining text");
+        assert_eq!(remaining_text, "recent one");
+    }
+
+    #[test]
+    fn pruning_old_transcriptions_does_not_reduce_lifetime_word_total() {
+        let db = test_db();
+        insert_transcription_returning(&db, "old one", "old one", 5, 1000, "test")
+            .expect("old transcription");
+        insert_transcription_returning(&db, "recent one", "recent one", 3, 1000, "test")
+            .expect("recent transcription");
+        {
+            let conn = lock_conn(&db).expect("lock");
+            conn.execute(
+                "UPDATE transcriptions SET created_at = datetime('now', '-30 days') WHERE clean_text = 'old one'",
+                [],
+            )
+            .expect("backdate old row");
+        }
+
+        let before = query_stats(&db).expect("stats before prune").total_words;
+        assert_eq!(before, 8);
+
+        let deleted = prune_transcriptions_older_than(&db, 7).expect("prune");
+        assert_eq!(deleted, 1);
+
+        let after = query_stats(&db).expect("stats after prune").total_words;
+        assert_eq!(after, 8, "lifetime word counter must not shrink when old history is pruned");
     }
 
     #[test]
