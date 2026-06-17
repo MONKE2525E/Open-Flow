@@ -163,9 +163,18 @@ fn main() {
                     .unwrap_or("30 days");
                 if let Some(days) = crate::data::store::history_retention_days(retention) {
                     let db = app.state::<DbHandle>().inner().clone();
+                    let app_handle = app.handle().clone();
                     tauri::async_runtime::spawn_blocking(move || {
-                        if let Err(e) = db::prune_transcriptions_older_than(&db, days) {
-                            log::warn!("Failed to prune old transcriptions during startup: {e:?}");
+                        match db::prune_transcriptions_older_than(&db, days) {
+                            Ok(deleted) if deleted > 0 => {
+                                let _ = app_handle.emit("verenu:history-pruned", ());
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to prune old transcriptions during startup: {e:?}"
+                                );
+                            }
                         }
                     });
                 }

@@ -546,9 +546,10 @@ pub fn insert_transcription_returning(
     duration_ms: i64,
     api_used: &str,
 ) -> Result<RecentEntry> {
-    let conn = lock_conn(db)?;
+    let mut conn = lock_conn(db)?;
     let spoken_words = compute_spoken_words(&conn, raw)?;
-    let entry = conn.query_row(
+    let tx = conn.transaction()?;
+    let entry = tx.query_row(
         "INSERT INTO transcriptions (raw_text, clean_text, words, spoken_words, duration_ms, api_used) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
          RETURNING id, clean_text, words, created_at",
@@ -563,11 +564,14 @@ pub fn insert_transcription_returning(
         },
     )?;
     // Lifetime counter is intentionally separate from the transcriptions
-    // table so history retention pruning never shrinks it.
-    conn.execute(
+    // table so history retention pruning never shrinks it. Committed in the
+    // same transaction as the insert so a crash between the two can't leave
+    // total_words permanently undercounted.
+    tx.execute(
         "UPDATE lifetime_stats SET total_words = total_words + ?1 WHERE id = 1",
         params![words],
     )?;
+    tx.commit()?;
     Ok(entry)
 }
 
