@@ -179,6 +179,8 @@ CREATE TABLE IF NOT EXISTS transcriptions (
   api_used    TEXT    NOT NULL DEFAULT '',
   created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_transcriptions_created_at
+  ON transcriptions(created_at);
 CREATE TABLE IF NOT EXISTS dictionary (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   term             TEXT    NOT NULL UNIQUE,
@@ -425,6 +427,19 @@ pub fn open(path: &str) -> Result<Db> {
             return Err(err);
         }
         conn.execute_batch("COMMIT;")?;
+    }
+    if user_version < 8 {
+        let res = conn.execute_batch(
+            "BEGIN;
+             CREATE INDEX IF NOT EXISTS idx_transcriptions_created_at
+               ON transcriptions(created_at);
+             PRAGMA user_version = 8;
+             COMMIT;",
+        );
+        if let Err(err) = res {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err.into());
+        }
     }
     ensure_cleanup_cache_schema(&conn)?;
 
