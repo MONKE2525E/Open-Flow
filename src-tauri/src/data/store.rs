@@ -39,6 +39,17 @@ pub const UPDATE_DISMISSED_VERSION: &str = "update_dismissed_version";
 pub const HISTORY_RETENTION: &str = "history_retention";
 pub const AUTOSTART_ENABLED: &str = "autostart_enabled";
 
+/// Maps a `history_retention` setting value to a day count. `None` means
+/// "Forever" (or an unrecognized value) — never prune.
+pub fn history_retention_days(value: &str) -> Option<i64> {
+    match value {
+        "7 days" => Some(7),
+        "30 days" => Some(30),
+        "90 days" => Some(90),
+        _ => None,
+    }
+}
+
 // ---------- pipeline config ----------
 
 /// All settings values needed by run_pipeline, loaded in one place.

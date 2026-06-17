@@ -156,6 +156,16 @@ fn main() {
                         }
                     }
                 }
+                if let Some(days) = store
+                    .get(crate::data::store::HISTORY_RETENTION)
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .and_then(|v| crate::data::store::history_retention_days(&v))
+                {
+                    let _ = db::prune_transcriptions_older_than(
+                        app.state::<DbHandle>().inner(),
+                        days,
+                    );
+                }
                 !store
                     .get("setup_complete")
                     .and_then(|v| v.as_bool())
@@ -248,6 +258,7 @@ fn main() {
             commands::hide_main,
             commands::get_recent,
             commands::get_stats,
+            commands::count_old_transcriptions,
             commands::get_cleanup_cache_status,
             commands::clear_cleanup_cache,
             commands::get_default_cleanup_prompt,

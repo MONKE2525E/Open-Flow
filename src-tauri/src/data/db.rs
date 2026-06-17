@@ -907,6 +907,25 @@ pub fn prune_pending_corrections(db: &Db, max_age_days: i64) -> Result<usize> {
     Ok(changed)
 }
 
+pub fn count_transcriptions_older_than(db: &Db, max_age_days: i64) -> Result<i64> {
+    let conn = lock_conn(db)?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM transcriptions WHERE created_at < datetime('now', ?1)",
+        params![format!("-{} days", max_age_days.max(1))],
+        |r| r.get(0),
+    )?;
+    Ok(count)
+}
+
+pub fn prune_transcriptions_older_than(db: &Db, max_age_days: i64) -> Result<usize> {
+    let conn = lock_conn(db)?;
+    let changed = conn.execute(
+        "DELETE FROM transcriptions WHERE created_at < datetime('now', ?1)",
+        params![format!("-{} days", max_age_days.max(1))],
+    )?;
+    Ok(changed)
+}
+
 pub fn update_dictionary_entry(db: &Db, id: i64, term: &str, mistake: Option<&str>) -> Result<()> {
     let normalized_term = require_nonempty_trimmed("Term", term)?;
     let normalized_mistake = normalize_optional_trimmed(mistake);
