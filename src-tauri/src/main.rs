@@ -158,8 +158,7 @@ fn main() {
                 }
                 if let Some(days) = store
                     .get(crate::data::store::HISTORY_RETENTION)
-                    .and_then(|v| v.as_str().map(str::to_string))
-                    .and_then(|v| crate::data::store::history_retention_days(&v))
+                    .and_then(|v| v.as_str().and_then(crate::data::store::history_retention_days))
                 {
                     let db = app.state::<DbHandle>().inner().clone();
                     tauri::async_runtime::spawn_blocking(move || {

@@ -88,6 +88,10 @@
     await saveHistoryRetention(value);
   }
 
+  function handleRetentionModalKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && confirmRetention) confirmRetention = null;
+  }
+
   async function handleAppContextHint(value: boolean) {
     appContextHint = value;
     try {
@@ -224,6 +228,8 @@
     }
   }
 </script>
+
+<svelte:window onkeydown={handleRetentionModalKeydown} />
 
 <h2 class="settings-h">Privacy</h2>
 <div class="setting-row">

@@ -133,9 +133,11 @@ pub async fn save_setting(
     value: serde_json::Value,
 ) -> Result<(), String> {
     validate_setting(&key, &value)?;
-    let history_prune_days = (key == store::HISTORY_RETENTION)
-        .then(|| value.as_str().and_then(store::history_retention_days))
-        .flatten();
+    let history_prune_days = if key == store::HISTORY_RETENTION {
+        value.as_str().and_then(store::history_retention_days)
+    } else {
+        None
+    };
     let store = app.store("settings.json").map_err(|e| e.to_string())?;
     store.set(key.clone(), value);
     store.save().map_err(|e| e.to_string())?;
