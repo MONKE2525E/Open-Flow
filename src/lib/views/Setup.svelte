@@ -89,6 +89,8 @@
     cleanup: true,
     noise: true,
     caps: true,
+    autoSpacing: true,
+    appContextHint: false,
     autoLearn: false,
     autostart: false,
     muteAudio: false,
@@ -385,6 +387,8 @@
       await saveSetting('cleanup_enabled', quickPrefs.cleanup);
       await saveSetting('noise_reduction', quickPrefs.noise);
       await saveSetting('contextual_caps_enabled', quickPrefs.caps);
+      await saveSetting('auto_spacing_enabled', quickPrefs.autoSpacing);
+      await saveSetting('app_context_hint', quickPrefs.appContextHint);
       await saveSetting('auto_learn_enabled', quickPrefs.autoLearn);
       await saveSetting('mute_audio', quickPrefs.muteAudio);
       if (quickPrefs.autostart) await invoke('set_autostart', { enabled: true });
@@ -1027,6 +1031,28 @@
                   onclick={() => toggleQuickPref('caps')}
                   onkeydown={handleQuickSwitchKeydown}
                   onkeyup={(e) => handleQuickSwitchKeyup(e, 'caps')}
+                ></div>
+              </div>
+              <div class="qs-toggle-row">
+                <div>
+                  <div class="qs-toggle-label">Automatic spacing</div>
+                  <div class="qs-toggle-desc">Add a space before injected text when joining after existing text</div>
+                </div>
+                <div class="qs-toggle" class:on={quickPrefs.autoSpacing} role="switch" aria-checked={quickPrefs.autoSpacing} aria-label="Automatic spacing" tabindex="0"
+                  onclick={() => toggleQuickPref('autoSpacing')}
+                  onkeydown={handleQuickSwitchKeydown}
+                  onkeyup={(e) => handleQuickSwitchKeyup(e, 'autoSpacing')}
+                ></div>
+              </div>
+              <div class="qs-toggle-row">
+                <div>
+                  <div class="qs-toggle-label">App context hint</div>
+                  <div class="qs-toggle-desc">Pass the active app to the cleanup model to tailor formatting</div>
+                </div>
+                <div class="qs-toggle" class:on={quickPrefs.appContextHint} role="switch" aria-checked={quickPrefs.appContextHint} aria-label="App context hint" tabindex="0"
+                  onclick={() => toggleQuickPref('appContextHint')}
+                  onkeydown={handleQuickSwitchKeydown}
+                  onkeyup={(e) => handleQuickSwitchKeyup(e, 'appContextHint')}
                 ></div>
               </div>
               <div class="qs-toggle-row">

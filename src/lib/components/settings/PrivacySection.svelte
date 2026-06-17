@@ -232,6 +232,45 @@
 <svelte:window onkeydown={handleRetentionModalKeydown} />
 
 <h2 class="settings-h">Privacy</h2>
+
+<h3 class="settings-subhead first">Context</h3>
+<div class="setting-row">
+  <div><div class="label">App context hint</div><div class="desc">Passes the active app to the cleanup model to tailor formatting</div></div>
+  <Toggle checked={appContextHint} onchange={handleAppContextHint} label="App context hint" />
+</div>
+
+<h3 class="settings-subhead">On-device learning</h3>
+<div class="setting-row">
+  <div>
+    <div class="label" style="display:flex;align-items:center;gap:7px;">
+      Auto-learn corrections
+      <span class="privacy-eye-wrap">
+        <svg class="privacy-eye" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        <span class="privacy-tooltip">Entirely on-device — no text is sent to any API.</span>
+      </span>
+    </div>
+    <div class="desc">Add confirmed corrections to dictionary automatically</div>
+  </div>
+  <Toggle checked={autoLearn} onchange={handleAutoLearn} label="Auto-learn corrections" />
+</div>
+<div class="setting-row">
+  <div>
+    <div class="label">Auto-learn activity</div>
+    <div class="desc">
+      Promoted: {autoLearnSummary.promotions} | Low-confidence blocked: {autoLearnSummary.low_confidence_rejections} | Anchor misses: {autoLearnSummary.anchor_misses}
+    </div>
+    {#if recentAutoLearn.length > 0}
+      <div class="desc" style="margin-top:4px;">
+        Latest: {recentAutoLearn[0].event_type} ({recentAutoLearn[0].reason_code})
+      </div>
+    {/if}
+  </div>
+</div>
+
+<h3 class="settings-subhead">History & storage</h3>
 <div class="setting-row">
   <div><div class="label">Transcription history</div><div class="desc">How long to keep past dictations</div></div>
   <div class="history-dropdown">
@@ -279,39 +318,6 @@
   </div>
 </div>
 <div class="setting-row">
-  <div><div class="label">App context hint</div><div class="desc">Passes the active app to the cleanup model to tailor formatting</div></div>
-  <Toggle checked={appContextHint} onchange={handleAppContextHint} label="App context hint" />
-</div>
-<div class="setting-row">
-  <div>
-    <div class="label" style="display:flex;align-items:center;gap:7px;">
-      Auto-learn corrections
-      <span class="privacy-eye-wrap">
-        <svg class="privacy-eye" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-          <circle cx="12" cy="12" r="3"/>
-        </svg>
-        <span class="privacy-tooltip">Entirely on-device — no text is sent to any API.</span>
-      </span>
-    </div>
-    <div class="desc">Add confirmed corrections to dictionary automatically</div>
-  </div>
-  <Toggle checked={autoLearn} onchange={handleAutoLearn} label="Auto-learn corrections" />
-</div>
-<div class="setting-row">
-  <div>
-    <div class="label">Auto-learn activity</div>
-    <div class="desc">
-      Promoted: {autoLearnSummary.promotions} | Low-confidence blocked: {autoLearnSummary.low_confidence_rejections} | Anchor misses: {autoLearnSummary.anchor_misses}
-    </div>
-    {#if recentAutoLearn.length > 0}
-      <div class="desc" style="margin-top:4px;">
-        Latest: {recentAutoLearn[0].event_type} ({recentAutoLearn[0].reason_code})
-      </div>
-    {/if}
-  </div>
-</div>
-<div class="setting-row">
   <div>
     <div class="label">Cleanup cache</div>
     <div class="desc">
@@ -335,7 +341,7 @@
   </button>
 </div>
 
-<h2 class="settings-h data-h">Data</h2>
+<h3 class="settings-subhead">Backup</h3>
 <div class="setting-row">
   <div>
     <div class="label">Export Backup</div>
@@ -403,8 +409,6 @@
 {/if}
 
 <style>
-  .data-h { --settings-h-mb: 2px; margin-top: 52px; }
-
   .data-ok { color: var(--success); }
   .data-err { color: var(--accent); }
   .data-status {
