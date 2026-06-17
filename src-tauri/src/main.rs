@@ -156,10 +156,12 @@ fn main() {
                         }
                     }
                 }
-                if let Some(days) = store
-                    .get(crate::data::store::HISTORY_RETENTION)
-                    .and_then(|v| v.as_str().and_then(crate::data::store::history_retention_days))
-                {
+                let retention_value = store.get(crate::data::store::HISTORY_RETENTION);
+                let retention = retention_value
+                    .as_ref()
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("30 days");
+                if let Some(days) = crate::data::store::history_retention_days(retention) {
                     let db = app.state::<DbHandle>().inner().clone();
                     tauri::async_runtime::spawn_blocking(move || {
                         if let Err(e) = db::prune_transcriptions_older_than(&db, days) {
