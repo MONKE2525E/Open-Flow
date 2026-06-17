@@ -179,6 +179,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return { total_words: 0, avg_wpm: 0, day_streak: 0 } as T;
     case 'get_memory_mb':
       return 0 as T;
+    case 'count_old_transcriptions':
+      return 0 as T;
     case 'get_api_key_status':
       return { groq: false, openai: false, google: false } as T;
     case 'get_accessibility_permission_status':
