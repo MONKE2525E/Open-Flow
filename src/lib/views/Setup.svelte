@@ -2494,7 +2494,7 @@
   }
 
   /* ── Quick Settings step ───────────────────────────────────────────── */
-  .qs-step { max-width: 920px; }
+  .qs-step { max-width: 920px; gap: 18px; }
 
   .qs-cards {
     display: grid;
@@ -2507,7 +2507,7 @@
     background: var(--bg-elev);
     border: 1.5px solid var(--line);
     border-radius: var(--r-md);
-    padding: 14px 14px;
+    padding: 11px 14px;
     opacity: 0;
     transform: translateY(12px);
     transition: opacity 0.3s ease, transform 0.3s ease, border-color 0.15s;
@@ -2534,7 +2534,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
   }
 
   .qs-card-icon {
@@ -2573,7 +2573,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 0;
+    padding: 7px 0;
     border-top: 1px solid var(--line);
     gap: 16px;
   }
@@ -2582,13 +2582,13 @@
     font-size: 13px;
     font-weight: 500;
     color: var(--ink-strong);
-    margin-bottom: 2px;
+    margin-bottom: 1px;
   }
 
   .qs-toggle-desc {
     font-size: 11.5px;
     color: var(--ink-mute);
-    line-height: 1.4;
+    line-height: 1.3;
   }
 
   .qs-toggle {
