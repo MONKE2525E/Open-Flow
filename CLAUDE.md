@@ -283,11 +283,11 @@ The `WH_KEYBOARD_LL` callback in `core/hotkey/win.rs` must return within ~300ms 
 Hiding the pill window suspends the WebView2 renderer. The next state event emitted while it is hidden will be silently dropped, leaving the pill stuck. Keep it always-visible but click-through + transparent in idle state. Emit state events *after* showing the window, not before. The pill uses `SW_SHOWNOACTIVATE` so it appears without stealing focus from the target app. In idle/passive states the pill is click-through; only in "handsfree" state does it accept real cursor events for buttons.
 
 ### Recording quality gates
-`run_pipeline()` silently rejects recordings below two thresholds before calling any API:
+`run_pipeline()` rejects recordings below two thresholds before calling any API:
 - `duration_ms < 700` — avoids Whisper hallucinations on short clips
 - `rms < 0.008` — near-silence, likely accidental activation
 
-No user-facing feedback is shown when rejected. These are currently magic numbers in `pipeline.rs`.
+Rejection shows an error message on the pill (`reject_with_pill()` in `pipeline.rs`, distinguishing "Recording too short" vs "Audio too quiet — check your mic"); the in-app mic button (`transcribe_input_only()` / `MicInputButton.svelte`) shows the equivalent message inline. These thresholds are currently magic numbers in `pipeline.rs`.
 
 ### Injection — contextual capitalization and timing
 Capitalization decisions come from a layered `InjectionContextProbe` (`core/context_probe.rs` + `core/text_context.rs`), not a single trick. It tries, in order: a caret-local read via the platform accessibility API (UI Automation on Windows, AX on macOS, `ContextProbeSource::CaretLocal`) → a clipboard-sniff fallback (select one char back with Shift+Left/Cmd+Shift+Left, copy, inspect, then restore the selection — `ContextProbeSource::ClipboardSniff`) → a history-based guess (`HistoryFallback`) when the control is unsupported or permission is missing. The result classifies into `SentenceContext` (`NewSentence`/`MidSentence`/`Unknown`); if not `NewSentence`, the first letter of the injected text is lowercased (mid-sentence join). Timing constants in `injection.rs`: `MODIFIER_GAP_MS` = 30ms between releasing modifier keys and sending Ctrl+V/Cmd+V (without this gap, some apps miss the Ctrl key in the same message-pump cycle), and ~30ms waits between the sniff's key-down/key-up stages for the clipboard to populate.

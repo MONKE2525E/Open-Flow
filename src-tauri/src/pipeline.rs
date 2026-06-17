@@ -16,8 +16,7 @@ use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
 const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
-const PILL_WIDTH_POINTS: f64 = 140.0;
-const PILL_ERROR_WIDTH_POINTS: f64 = 380.0;
+const PILL_WIDTH_POINTS: f64 = 380.0;
 const PILL_HEIGHT_POINTS: f64 = 44.0;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const PILL_BOTTOM_GAP_POINTS: f64 = 16.0;
@@ -207,11 +206,14 @@ pub fn show_pill(app: &AppHandle, state: &str) {
 }
 
 /// Shows the pill window in the given state, optionally carrying an error
-/// message. The window stays at the wide (transparent, click-through) error
-/// width for all passive states so the in-pill error text has room to
-/// expand into without a resize/reposition jump; only "handsfree" narrows
-/// the window, since that's the one state where the click-capture zone
-/// must stay tight.
+/// message. The window is always kept at the same width regardless of state
+/// (room enough for the error text to expand into) so it never needs to
+/// resize or reposition after its first appearance — resizing a WebView2
+/// window causes a visible repaint-lag flicker even when the native resize
+/// itself is atomic, so the fix is to avoid triggering one at all rather
+/// than to make it faster. Handsfree's click-capture zone is therefore wider
+/// than the visible pill; clicks in the empty space around it are swallowed
+/// instead of passing through while handsfree is active.
 fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
     create_pill_if_needed(app);
     if let Some(pill) = app.get_webview_window("pill") {
@@ -221,11 +223,7 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
 
         // Size and position while still hidden, so the window appears already
         // in place instead of flashing at its previous geometry and jumping.
-        let width = if state == "handsfree" {
-            PILL_WIDTH_POINTS
-        } else {
-            PILL_ERROR_WIDTH_POINTS
-        };
+        let width = PILL_WIDTH_POINTS;
 
         // Resize and reposition are checked independently: primary_monitor()
         // can return None on some platforms (e.g. macOS) while the window is
@@ -246,11 +244,8 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
             .map(|cur| (cur.width as f64 - width * scale_factor).abs() > 1.0)
             .unwrap_or(true);
 
-        if needs_resize {
-            pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS)).ok();
-        }
-
-        if let Some(m) = monitor {
+        // Target position (physical pixels) on the current monitor, if known.
+        let target_pos = monitor.as_ref().map(|m| {
             let sz = m.size();
             let sf = m.scale_factor();
             let pos = m.position();
@@ -258,14 +253,57 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
             let bottom_offset_points = pill_bottom_offset_points();
             let target_y = pos.y
                 + (sz.height as f64 - (PILL_HEIGHT_POINTS + bottom_offset_points) * sf) as i32;
+            (target_x, target_y)
+        });
 
-            let needs_reposition = pill
+        let needs_reposition = match target_pos {
+            Some((target_x, target_y)) => pill
                 .outer_position()
                 .map(|cur| (cur.x - target_x).abs() > 1 || (cur.y - target_y).abs() > 1)
-                .unwrap_or(true);
+                .unwrap_or(true),
+            None => false,
+        };
 
-            if needs_reposition {
-                pill.set_position(tauri::PhysicalPosition::new(target_x, target_y)).ok();
+        // On Windows, resize and reposition are merged into a single
+        // SetWindowPos call so the two are atomic if both are ever needed at
+        // once (e.g. a monitor/DPI change). With a constant width this only
+        // actually fires on the very first show, while still hidden.
+        #[cfg(target_os = "windows")]
+        {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+            };
+
+            if needs_resize || needs_reposition {
+                if let Ok(hwnd) = pill.hwnd() {
+                    let cx = (width * scale_factor).round() as i32;
+                    let cy = (PILL_HEIGHT_POINTS * scale_factor).round() as i32;
+                    let (x, y) = target_pos.unwrap_or((0, 0));
+
+                    let mut flags = SWP_NOZORDER | SWP_NOACTIVATE;
+                    if !needs_resize {
+                        flags |= SWP_NOSIZE;
+                    }
+                    if !needs_reposition {
+                        flags |= SWP_NOMOVE;
+                    }
+
+                    unsafe {
+                        let _ = SetWindowPos(hwnd, None, x, y, cx, cy, flags);
+                    }
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if needs_resize {
+                pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS)).ok();
+            }
+            if let Some((target_x, target_y)) = target_pos {
+                if needs_reposition {
+                    pill.set_position(tauri::PhysicalPosition::new(target_x, target_y)).ok();
+                }
             }
         }
 
@@ -747,7 +785,10 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
 
     if duration_ms < MIN_RECORDING_MS || rms < min_rms {
         hide_pill(&app);
-        anyhow::bail!("Recording too short");
+        if duration_ms < MIN_RECORDING_MS {
+            anyhow::bail!("Recording too short");
+        }
+        anyhow::bail!("Audio too quiet — check your mic");
     }
     let wav = bytes::Bytes::from(wav);
 
