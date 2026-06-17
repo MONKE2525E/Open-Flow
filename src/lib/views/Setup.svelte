@@ -89,6 +89,8 @@
     cleanup: true,
     noise: true,
     caps: true,
+    autoSpacing: true,
+    appContextHint: false,
     autoLearn: false,
     autostart: false,
     muteAudio: false,
@@ -385,6 +387,8 @@
       await saveSetting('cleanup_enabled', quickPrefs.cleanup);
       await saveSetting('noise_reduction', quickPrefs.noise);
       await saveSetting('contextual_caps_enabled', quickPrefs.caps);
+      await saveSetting('auto_spacing_enabled', quickPrefs.autoSpacing);
+      await saveSetting('app_context_hint', quickPrefs.appContextHint);
       await saveSetting('auto_learn_enabled', quickPrefs.autoLearn);
       await saveSetting('mute_audio', quickPrefs.muteAudio);
       if (quickPrefs.autostart) await invoke('set_autostart', { enabled: true });
@@ -1027,6 +1031,28 @@
                   onclick={() => toggleQuickPref('caps')}
                   onkeydown={handleQuickSwitchKeydown}
                   onkeyup={(e) => handleQuickSwitchKeyup(e, 'caps')}
+                ></div>
+              </div>
+              <div class="qs-toggle-row">
+                <div>
+                  <div class="qs-toggle-label">Automatic spacing</div>
+                  <div class="qs-toggle-desc">Add a space before injected text when joining after existing text</div>
+                </div>
+                <div class="qs-toggle" class:on={quickPrefs.autoSpacing} role="switch" aria-checked={quickPrefs.autoSpacing} aria-label="Automatic spacing" tabindex="0"
+                  onclick={() => toggleQuickPref('autoSpacing')}
+                  onkeydown={handleQuickSwitchKeydown}
+                  onkeyup={(e) => handleQuickSwitchKeyup(e, 'autoSpacing')}
+                ></div>
+              </div>
+              <div class="qs-toggle-row">
+                <div>
+                  <div class="qs-toggle-label">App context hint</div>
+                  <div class="qs-toggle-desc">Pass the active app to the cleanup model to tailor formatting</div>
+                </div>
+                <div class="qs-toggle" class:on={quickPrefs.appContextHint} role="switch" aria-checked={quickPrefs.appContextHint} aria-label="App context hint" tabindex="0"
+                  onclick={() => toggleQuickPref('appContextHint')}
+                  onkeydown={handleQuickSwitchKeydown}
+                  onkeyup={(e) => handleQuickSwitchKeyup(e, 'appContextHint')}
                 ></div>
               </div>
               <div class="qs-toggle-row">
@@ -2468,7 +2494,7 @@
   }
 
   /* ── Quick Settings step ───────────────────────────────────────────── */
-  .qs-step { max-width: 920px; }
+  .qs-step { max-width: 920px; gap: 18px; }
 
   .qs-cards {
     display: grid;
@@ -2481,7 +2507,7 @@
     background: var(--bg-elev);
     border: 1.5px solid var(--line);
     border-radius: var(--r-md);
-    padding: 14px 14px;
+    padding: 11px 14px;
     opacity: 0;
     transform: translateY(12px);
     transition: opacity 0.3s ease, transform 0.3s ease, border-color 0.15s;
@@ -2508,7 +2534,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
   }
 
   .qs-card-icon {
@@ -2547,7 +2573,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 0;
+    padding: 7px 0;
     border-top: 1px solid var(--line);
     gap: 16px;
   }
@@ -2556,13 +2582,13 @@
     font-size: 13px;
     font-weight: 500;
     color: var(--ink-strong);
-    margin-bottom: 2px;
+    margin-bottom: 1px;
   }
 
   .qs-toggle-desc {
     font-size: 11.5px;
     color: var(--ink-mute);
-    line-height: 1.4;
+    line-height: 1.3;
   }
 
   .qs-toggle {

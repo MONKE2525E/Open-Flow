@@ -4,6 +4,7 @@
   import { expoOut } from 'svelte/easing';
   import { onDestroy } from 'svelte';
   import Toggle from '../Toggle.svelte';
+  import { isMac } from '../../platform';
   import { saveSetting } from '../../settings';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import { getAudioCalibrationCopy } from '../../calibrationCopy';
@@ -21,6 +22,7 @@
   } from '../../calibration';
 
   let noiseReduction = $state(true);
+  let muteAudio = $state(false);
   let micGain = $state(3.5);
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
@@ -37,12 +39,14 @@
 
   async function loadSettings() {
     try {
-      const [nr, savedGain, language] = await Promise.all([
+      const [nr, mute, savedGain, language] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
+        invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
         invoke<number | null>('get_setting', { key: 'mic_gain' }),
         invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       ]);
       noiseReduction = nr ?? true;
+      muteAudio = mute ?? false;
       if (savedGain !== null && savedGain !== undefined) {
         micGain = Math.max(1, Math.min(8, savedGain));
       }
@@ -59,6 +63,16 @@
     } catch (err) {
       noiseReduction = !value;
       console.error('save noise_reduction failed:', err);
+    }
+  }
+
+  async function handleMuteAudio(value: boolean) {
+    muteAudio = value;
+    try {
+      await saveSetting('mute_audio', value);
+    } catch (err) {
+      muteAudio = !value;
+      console.error('save mute_audio failed:', err);
     }
   }
 
@@ -79,6 +93,7 @@
 
 <h2 class="settings-h">Microphone</h2>
 
+<h3 class="settings-subhead first">Gain & calibration</h3>
 <div class="setting-row gain-row">
   <div class="gain-header">
     <div>
@@ -109,11 +124,6 @@
       At high gain, enable <strong>noise reduction</strong> to avoid amplifying background noise.
     </div>
   {/if}
-</div>
-
-<div class="setting-row">
-  <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
-  <Toggle checked={noiseReduction} onchange={handleNoiseReduction} label="Noise reduction" />
 </div>
 
 <div class="setting-row cal-row" class:calibrating={$isCalibrating}>
@@ -173,6 +183,16 @@
       </div>
     {/if}
   </div>
+</div>
+
+<h3 class="settings-subhead">Input</h3>
+<div class="setting-row">
+  <div><div class="label">{isMac ? 'Mute System Audio' : 'Mute PC Audio'}</div><div class="desc">{isMac ? 'Mutes system volume while dictating to prevent audio interference' : 'Mutes Windows volume while dictating to prevent audio interference'}</div></div>
+  <Toggle checked={muteAudio} onchange={handleMuteAudio} label={isMac ? 'Mute system audio' : 'Mute PC audio'} />
+</div>
+<div class="setting-row">
+  <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
+  <Toggle checked={noiseReduction} onchange={handleNoiseReduction} label="Noise reduction" />
 </div>
 
 <style>

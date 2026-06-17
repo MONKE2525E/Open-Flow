@@ -333,6 +333,17 @@
     color: var(--ink);
   }
 
+  .settings-body :global(.settings-subhead) {
+    font-family: var(--serif);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    letter-spacing: -0.01em;
+    margin: 30px 0 4px;
+  }
+
+  .settings-body :global(.settings-subhead.first) { margin-top: 4px; }
+
   .settings-body :global(.setting-row) {
     display: flex;
     align-items: center;
