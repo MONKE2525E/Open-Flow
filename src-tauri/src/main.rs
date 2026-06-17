@@ -161,10 +161,12 @@ fn main() {
                     .and_then(|v| v.as_str().map(str::to_string))
                     .and_then(|v| crate::data::store::history_retention_days(&v))
                 {
-                    let _ = db::prune_transcriptions_older_than(
-                        app.state::<DbHandle>().inner(),
-                        days,
-                    );
+                    let db = app.state::<DbHandle>().inner().clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Err(e) = db::prune_transcriptions_older_than(&db, days) {
+                            log::warn!("Failed to prune old transcriptions during startup: {e:?}");
+                        }
+                    });
                 }
                 !store
                     .get("setup_complete")
