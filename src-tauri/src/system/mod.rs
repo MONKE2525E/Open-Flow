@@ -1,4 +1,5 @@
 pub mod apps;
+pub mod keyboard;
 pub mod logger;
 #[cfg(target_os = "macos")]
 pub mod mac_app;

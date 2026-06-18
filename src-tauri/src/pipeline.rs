@@ -119,6 +119,7 @@ pub struct RetryCapture {
     pub process_name: String,
     pub profile: String,
     pub app_context: Option<String>,
+    pub caps_lock_on: bool,
 }
 
 fn lock_state(state: &SharedState) -> anyhow::Result<MutexGuard<'_, AppState>> {
@@ -866,6 +867,11 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         return;
     };
 
+    // Read once, synchronously, as close to the hotkey-release moment as
+    // possible — the rest of the pipeline is async and the user may keep
+    // typing (toggling Caps Lock) while it runs.
+    let caps_lock_on = crate::system::keyboard::caps_lock_is_on();
+
     let process_name = window_context::get_active_process_name()
         .unwrap_or_else(|| "unknown".into())
         .to_lowercase();
@@ -928,6 +934,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             process_name: process_name.clone(),
             profile: profile.clone(),
             app_context: app_context.clone(),
+            caps_lock_on,
         });
     }
 
@@ -1000,6 +1007,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             cleanup_cache_key,
             captured_at: retry_captured_at,
             event_only,
+            caps_lock_on,
         },
     )
     .await
@@ -1495,6 +1503,7 @@ pub struct PipelineTestRequest {
     pub app_context: Option<String>,
     pub snippets: Vec<PipelineTestSnippet>,
     pub dictionary: Vec<PipelineTestDictionaryEntry>,
+    pub caps_lock_on: bool,
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -1593,13 +1602,24 @@ pub async fn run_pipeline_fixture(
             request.app_context.as_deref(),
         )
         .await?;
+    let apply_caps_lock_upper = request.config.caps_lock_uppercase_enabled && request.caps_lock_on;
     let (injected_text, _applied_dict_ids) =
         dictionary::apply_substitutions_from(&final_text_before_dictionary, &dict_entries);
+    let injected_text = if apply_caps_lock_upper {
+        injected_text.to_uppercase()
+    } else {
+        injected_text
+    };
     let words = raw_text.split_whitespace().count() as i64;
+    let clean_for_insert = if apply_caps_lock_upper {
+        final_text_before_dictionary.to_uppercase()
+    } else {
+        final_text_before_dictionary.clone()
+    };
     let history_entry = db::insert_transcription_returning(
         &db_handle,
         &raw_text,
-        &final_text_before_dictionary,
+        &clean_for_insert,
         words,
         request.duration_ms as i64,
         &api_used,
@@ -1765,6 +1785,7 @@ mod tests {
             auto_learn_enabled: false,
             contextual_caps_enabled: true,
             auto_spacing_enabled: true,
+            caps_lock_uppercase_enabled: false,
             macos_clipboard_sniff_enabled: false,
             advanced_model_ui: false,
             cleanup_prompt_overrides: std::collections::HashMap::new(),
@@ -1783,6 +1804,7 @@ mod tests {
             app_context: None,
             snippets: Vec::new(),
             dictionary: Vec::new(),
+            caps_lock_on: false,
         }
     }
 
@@ -2156,6 +2178,61 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_uppercases_output_only_when_setting_and_caps_lock_both_on() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("send the report now".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("Send the report now.".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        // Setting on + Caps Lock on -> uppercase the injected text and the
+        // persisted history record, but not the pre-dictionary cleanup value.
+        let mut config = base_config();
+        config.caps_lock_uppercase_enabled = true;
+        let mut request = base_request(config.clone());
+        request.caps_lock_on = true;
+        let result = run_pipeline_fixture(request)
+            .await
+            .expect("caps lock uppercase path should succeed");
+        assert_eq!(result.final_text_before_dictionary, "Send the report now.");
+        assert_eq!(result.injected_text, "SEND THE REPORT NOW.");
+        assert_eq!(result.history_entry.clean_text, "SEND THE REPORT NOW.");
+
+        // Setting on + Caps Lock off -> unchanged.
+        let mut request = base_request(config);
+        request.caps_lock_on = false;
+        let result = run_pipeline_fixture(request)
+            .await
+            .expect("caps lock off should leave output unchanged");
+        assert_eq!(result.injected_text, "Send the report now.");
+        assert_eq!(result.history_entry.clean_text, "Send the report now.");
+
+        // Setting off -> unchanged regardless of Caps Lock state.
+        let mut request = base_request(base_config());
+        request.caps_lock_on = true;
+        let result = run_pipeline_fixture(request)
+            .await
+            .expect("setting disabled should leave output unchanged");
+        assert_eq!(result.injected_text, "Send the report now.");
+        assert_eq!(result.history_entry.clean_text, "Send the report now.");
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn pipeline_fixture_honors_formal_cleanup_even_with_none_intensity() {
         let _guard = harness_test_lock().lock().expect("harness lock");
         reset();
@@ -2315,6 +2392,7 @@ pub async fn retry_transcription_impl(
             cleanup_cache_key,
             captured_at: capture.captured_at,
             event_only: false,
+            caps_lock_on: capture.caps_lock_on,
         },
     )
     .await
@@ -2333,6 +2411,7 @@ struct PipelineCompletionContext<'a> {
     cleanup_cache_key: String,
     captured_at: std::time::Instant,
     event_only: bool,
+    caps_lock_on: bool,
 }
 
 async fn finalize_pipeline_completion(
@@ -2344,6 +2423,12 @@ async fn finalize_pipeline_completion(
     let (final_text_substituted, applied_dict_ids) =
         dictionary::apply_substitutions_from(ctx.final_text_before_dict, ctx.dict_entries);
     let dict_changed = !applied_dict_ids.is_empty();
+    let apply_caps_lock_upper = ctx.cfg.caps_lock_uppercase_enabled && ctx.caps_lock_on;
+    let final_text_substituted = if apply_caps_lock_upper {
+        final_text_substituted.to_uppercase()
+    } else {
+        final_text_substituted
+    };
     log::debug!(
         "pipeline: dictionary apply changed={} before_chars={} after_chars={} stage_ms={}",
         dict_changed,
@@ -2366,7 +2451,11 @@ async fn finalize_pipeline_completion(
     let words = ctx.raw.split_whitespace().count() as i64;
     let db_for_insert = db_handle.inner().clone();
     let raw_for_insert = ctx.raw.to_string();
-    let clean_for_insert = ctx.final_text_before_dict.to_string();
+    let clean_for_insert = if apply_caps_lock_upper {
+        ctx.final_text_before_dict.to_uppercase()
+    } else {
+        ctx.final_text_before_dict.to_string()
+    };
     let api_used_for_insert = ctx.api_used.to_string();
     let duration_for_insert = ctx.duration_ms as i64;
     let entry = match tokio::task::spawn_blocking(move || {

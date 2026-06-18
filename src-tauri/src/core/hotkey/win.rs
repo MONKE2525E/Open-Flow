@@ -219,6 +219,11 @@ pub fn set_handless_active(v: bool) {
     HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
 }
 
+/// Current Caps Lock toggle state, tracked from the hook thread.
+pub fn caps_lock_is_on() -> bool {
+    CAPS_LOCK_ON.load(Ordering::SeqCst)
+}
+
 #[allow(dead_code)]
 pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
 
@@ -294,6 +299,14 @@ static RELEASE_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync:
 static HANDLESS_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 static CANCEL_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 
+// Updated on every hook callback (see `hook_proc`) so reads always reflect a
+// thread with an active message pump — `GetKeyState`'s toggle bit is
+// synchronized to the calling thread's message queue, so querying it directly
+// from elsewhere (e.g. the Tokio pipeline thread) can return stale state.
+// Backs `caps_lock_is_on()` for the optional caps-lock output-uppercasing
+// setting.
+static CAPS_LOCK_ON: AtomicBool = AtomicBool::new(false);
+
 static CHORD_DOWN: AtomicBool = AtomicBool::new(false);
 static HANDLESS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ESCAPE_CANCELLED: AtomicBool = AtomicBool::new(false);
@@ -316,6 +329,10 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
         let msg = wparam.0 as u32;
         let vk = kb.vkCode;
+
+        // This thread pumps messages (see `start`'s GetMessageW loop), so
+        // GetKeyState's toggle bit is reliably in sync here.
+        CAPS_LOCK_ON.store((GetKeyState(0x14) & 0x0001) != 0, Ordering::SeqCst);
 
         let k1 = KEY1.load(Ordering::Relaxed);
         let k2 = KEY2.load(Ordering::Relaxed);

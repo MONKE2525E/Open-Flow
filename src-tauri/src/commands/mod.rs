@@ -78,7 +78,8 @@ fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> 
         | store::SETUP_COMPLETE
         | store::FORCE_SETUP_ON_LAUNCH
         | store::ADVANCED_MODEL_UI
-        | store::AUTOSTART_ENABLED => value.is_boolean(),
+        | store::AUTOSTART_ENABLED
+        | store::CAPS_LOCK_UPPERCASE => value.is_boolean(),
         store::MIC_GAIN => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
         store::APP_MAPPINGS => serde_json::from_value::<Vec<AppMapping>>(value.clone()).is_ok(),
         store::HOTKEY => value
@@ -284,6 +285,7 @@ pub struct AllSettings {
     pub auto_learn_enabled: Option<bool>,
     pub contextual_caps_enabled: Option<bool>,
     pub auto_spacing_enabled: Option<bool>,
+    pub caps_lock_uppercase_enabled: Option<bool>,
     pub mic_gain: Option<f64>,
     pub history_retention: Option<String>,
     pub microphone_device: Option<String>,
@@ -387,6 +389,7 @@ const EXPORTABLE_SETTINGS: &[&str] = &[
     store::AUTO_LEARN_EVENT_MODE,
     store::CONTEXTUAL_CAPS,
     store::AUTO_SPACING,
+    store::CAPS_LOCK_UPPERCASE,
     store::AUTOSTART_ENABLED,
     store::APP_MAPPINGS,
 ];
@@ -428,6 +431,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         auto_learn_enabled: bool_val(store::AUTO_LEARN_ENABLED),
         contextual_caps_enabled: bool_val(store::CONTEXTUAL_CAPS),
         auto_spacing_enabled: bool_val(store::AUTO_SPACING),
+        caps_lock_uppercase_enabled: bool_val(store::CAPS_LOCK_UPPERCASE),
         mic_gain: f64_val(store::MIC_GAIN),
         history_retention: str_val(store::HISTORY_RETENTION),
         microphone_device: str_val(store::MICROPHONE_DEVICE),
