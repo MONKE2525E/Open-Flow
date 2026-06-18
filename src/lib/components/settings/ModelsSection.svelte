@@ -43,7 +43,7 @@
   const providerSections: ProviderSection[] = [
     { id: 'groq', label: 'Groq', storeProvider: 'groq' },
     { id: 'openai', label: 'OpenAI', storeProvider: 'openai' },
-    { id: 'google', label: 'Google', storeProvider: 'google' },
+    { id: 'google', label: 'Gemini', storeProvider: 'google' },
   ];
 
   const recommendedModels: Record<TaskType, Record<UiProviderId, { premium: string; standard: string }>> = {
