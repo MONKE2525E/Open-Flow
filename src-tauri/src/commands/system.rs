@@ -125,7 +125,7 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
                     REG_SZ,
                     Some(std::slice::from_raw_parts(
                         app_path_wide.as_ptr() as *const u8,
-                        (app_path_wide.len() - 1) * 2,
+                        app_path_wide.len() * 2,
                     )),
                 )
             } else {
