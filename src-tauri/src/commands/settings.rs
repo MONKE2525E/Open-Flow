@@ -713,45 +713,72 @@ pub async fn import_data(
         let mut dictionary_inserted = 0usize;
         let mut dictionary_skipped = 0usize;
         let mut dictionary_already_existed = 0usize;
-        for entry in &payload.dictionary {
-            if entry.term.trim().is_empty() {
-                dictionary_skipped += 1;
-                continue;
-            }
-            match db::insert_dictionary_entry_from_backup(&db, &entry.term, entry.mistake.as_deref(), entry.auto_learned, &entry.confidence_tier, entry.correction_count) {
-                Ok(()) => dictionary_inserted += 1,
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("UNIQUE constraint failed") {
-                        dictionary_already_existed += 1;
-                    } else {
-                        log::warn!("import_data: dictionary insert error for '{}': {msg}", entry.term);
-                        dictionary_skipped += 1;
-                    }
-                }
-            }
-        }
-
         let mut snippets_inserted = 0usize;
         let mut snippets_skipped = 0usize;
         let mut snippets_already_existed = 0usize;
-        for snippet in &payload.snippets {
-            if snippet.trigger.trim().is_empty() || snippet.expansion.trim().is_empty() {
-                snippets_skipped += 1;
-                continue;
-            }
-            match db::insert_snippet_returning(&db, &snippet.trigger, &snippet.expansion, &snippet.instructions) {
-                Ok(_) => snippets_inserted += 1,
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("UNIQUE constraint failed") {
-                        snippets_already_existed += 1;
-                    } else {
-                        log::warn!("import_data: snippet insert error for '{}': {msg}", snippet.trigger);
-                        snippets_skipped += 1;
+
+        // Bulk-import dictionary entries and snippets inside a single
+        // transaction (and a single lock acquisition) instead of one
+        // implicit transaction per row - hundreds of individually committed
+        // inserts each force a disk sync, which is slow, and leaves a
+        // partially-imported database if the process dies mid-import.
+        {
+            let mut conn = db
+                .lock()
+                .map_err(|_| "Database lock was poisoned".to_string())?;
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+            for entry in &payload.dictionary {
+                if entry.term.trim().is_empty() {
+                    dictionary_skipped += 1;
+                    continue;
+                }
+                match db::insert_dictionary_entry_from_backup_conn(
+                    &tx,
+                    &entry.term,
+                    entry.mistake.as_deref(),
+                    entry.auto_learned,
+                    &entry.confidence_tier,
+                    entry.correction_count,
+                ) {
+                    Ok(()) => dictionary_inserted += 1,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("UNIQUE constraint failed") {
+                            dictionary_already_existed += 1;
+                        } else {
+                            log::warn!("import_data: dictionary insert error for '{}': {msg}", entry.term);
+                            dictionary_skipped += 1;
+                        }
                     }
                 }
             }
+
+            for snippet in &payload.snippets {
+                if snippet.trigger.trim().is_empty() || snippet.expansion.trim().is_empty() {
+                    snippets_skipped += 1;
+                    continue;
+                }
+                match db::insert_snippet_returning_conn(
+                    &tx,
+                    &snippet.trigger,
+                    &snippet.expansion,
+                    &snippet.instructions,
+                ) {
+                    Ok(_) => snippets_inserted += 1,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("UNIQUE constraint failed") {
+                            snippets_already_existed += 1;
+                        } else {
+                            log::warn!("import_data: snippet insert error for '{}': {msg}", snippet.trigger);
+                            snippets_skipped += 1;
+                        }
+                    }
+                }
+            }
+
+            tx.commit().map_err(|e| e.to_string())?;
         }
 
         log::info!(

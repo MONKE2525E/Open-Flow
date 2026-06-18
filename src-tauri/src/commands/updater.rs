@@ -43,14 +43,11 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
         // against the bundle identifier and may point at a different file).
         let db_path = crate::app_db_path();
         if db_path.exists() {
-            // Hold the shared connection lock for the copy so a concurrent
-            // write or WAL checkpoint can't leave the .db and -wal backups
-            // mismatched - every other DB access in this app goes through
-            // the same lock, so this fully serializes against them.
             let db = app.state::<DbHandle>().inner().clone();
-            let guard = db.lock();
-            if guard.is_ok() {
-                let _ = backup_sqlite_database(&db_path);
+            let lock_result = db.lock();
+            if let Ok(conn) = lock_result {
+                let backup_path = db_path.with_extension("db.bak");
+                let _ = backup_sqlite_database(&conn, &backup_path);
             }
         }
 
@@ -94,22 +91,21 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
     }
 }
 
+// Uses SQLite's Online Backup API rather than copying the .db/-wal files
+// directly: a raw file copy of a live WAL-mode database isn't atomic, so a
+// concurrent write or checkpoint between copying the two files could leave
+// them mismatched. The Backup API produces one consistent, complete .db
+// file regardless of what else the connection is doing.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub fn backup_sqlite_database(db_path: &std::path::Path) -> std::io::Result<()> {
-    std::fs::copy(db_path, db_path.with_extension("db.bak"))?;
-
-    let wal_path = path_with_suffix(db_path, "-wal");
-    if wal_path.exists() {
-        std::fs::copy(&wal_path, path_with_suffix(db_path, "-wal.bak"))?;
-    }
-
-    Ok(())
-}
-
-#[cfg_attr(not(windows), allow(dead_code))]
-pub fn path_with_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
-    let mut path_with_suffix = path.to_path_buf().into_os_string();
-    path_with_suffix.push(suffix);
-    std::path::PathBuf::from(path_with_suffix)
+pub fn backup_sqlite_database(
+    conn: &rusqlite::Connection,
+    backup_path: &std::path::Path,
+) -> Result<(), String> {
+    let mut backup_conn = rusqlite::Connection::open(backup_path).map_err(|e| e.to_string())?;
+    let backup =
+        rusqlite::backup::Backup::new(conn, &mut backup_conn).map_err(|e| e.to_string())?;
+    backup
+        .run_to_completion(5, std::time::Duration::from_millis(250), None)
+        .map_err(|e| e.to_string())
 }
 

@@ -44,6 +44,21 @@ pub fn insert_snippet_returning(
     expansion: &str,
     instructions: &str,
 ) -> Result<CreatedRecordMeta> {
+    // Insert and read last_insert_rowid under a single lock to prevent another
+    // thread's insert racing between the two acquisitions and returning the wrong id.
+    let conn = lock_conn(db)?;
+    insert_snippet_returning_conn(&conn, trigger, expansion, instructions)
+}
+
+/// Same as `insert_snippet_returning` but takes an already-locked connection,
+/// so a caller doing many inserts (e.g. bulk import) can wrap them all in one
+/// transaction instead of locking per row.
+pub fn insert_snippet_returning_conn(
+    conn: &rusqlite::Connection,
+    trigger: &str,
+    expansion: &str,
+    instructions: &str,
+) -> Result<CreatedRecordMeta> {
     let normalized_trigger = require_nonempty_trimmed("Trigger", trigger)?;
     validate_char_limit("Trigger", &normalized_trigger, SNIPPET_TRIGGER_CHAR_LIMIT)?;
     let normalized_expansion = normalize_multiline(expansion);
@@ -52,9 +67,6 @@ pub fn insert_snippet_returning(
     }
     let normalized_instructions = normalize_multiline(instructions);
 
-    // Insert and read last_insert_rowid under a single lock to prevent another
-    // thread's insert racing between the two acquisitions and returning the wrong id.
-    let conn = lock_conn(db)?;
     conn.execute(
         "INSERT INTO snippets (trigger, expansion, instructions) VALUES (?1, ?2, ?3)",
         params![

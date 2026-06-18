@@ -112,8 +112,11 @@ pub fn insert_dictionary_entry_returning(
     Ok(CreatedRecordMeta { id, created_at })
 }
 
-pub fn insert_dictionary_entry_from_backup(
-    db: &Db,
+/// Inserts a dictionary entry restored from a backup file. Takes an
+/// already-locked connection so a caller doing many inserts (bulk import)
+/// can wrap them all in one transaction instead of locking per row.
+pub fn insert_dictionary_entry_from_backup_conn(
+    conn: &rusqlite::Connection,
     term: &str,
     mistake: Option<&str>,
     auto_learned: bool,
@@ -126,7 +129,6 @@ pub fn insert_dictionary_entry_from_backup(
     if let Some(m) = normalized_mistake.as_deref() {
         validate_char_limit("Often mistranscribed as", m, DICTIONARY_ENTRY_CHAR_LIMIT)?;
     }
-    let conn = lock_conn(db)?;
     conn.execute(
         "INSERT INTO dictionary (term, mistake, auto_learned, correction_count, confidence_tier, last_seen_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",

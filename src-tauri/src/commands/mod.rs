@@ -31,9 +31,7 @@ pub use updater::*;
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        backup_sqlite_database, classify_validation_response, path_with_suffix, validate_setting,
-    };
+    use super::{backup_sqlite_database, classify_validation_response, validate_setting};
     use serde_json::json;
 
     #[test]
@@ -115,7 +113,7 @@ mod tests {
     }
 
     #[test]
-    fn backup_sqlite_database_copies_db_and_wal() {
+    fn backup_sqlite_database_copies_live_data() {
         let root = std::env::temp_dir().join(format!(
             "verenu-backup-test-{}-{}",
             std::process::id(),
@@ -127,30 +125,23 @@ mod tests {
         std::fs::create_dir_all(&root).expect("create temp dir");
 
         let db_path = root.join("verenu.db");
-        let wal_path = root.join("verenu.db-wal");
-        std::fs::write(&db_path, b"db").expect("write db");
-        std::fs::write(&wal_path, b"wal").expect("write wal");
+        let backup_path = root.join("verenu.db.bak");
+        let conn = rusqlite::Connection::open(&db_path).expect("open source db");
+        conn.execute_batch("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT NOT NULL);")
+            .expect("create table");
+        conn.execute("INSERT INTO t (val) VALUES ('hello')", [])
+            .expect("insert row");
 
-        backup_sqlite_database(&db_path).expect("backup succeeds");
+        backup_sqlite_database(&conn, &backup_path).expect("backup succeeds");
 
-        assert_eq!(
-            std::fs::read(root.join("verenu.db.bak")).expect("read db backup"),
-            b"db"
-        );
-        assert_eq!(
-            std::fs::read(root.join("verenu.db-wal.bak")).expect("read wal backup"),
-            b"wal"
-        );
+        let backup_conn = rusqlite::Connection::open(&backup_path).expect("open backup db");
+        let val: String = backup_conn
+            .query_row("SELECT val FROM t WHERE id = 1", [], |r| r.get(0))
+            .expect("read backed-up row");
+        assert_eq!(val, "hello");
 
+        drop(conn);
+        drop(backup_conn);
         let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn path_with_suffix_appends_without_touching_extension() {
-        let path = std::path::Path::new("Verenu/verenu.db");
-        assert_eq!(
-            path_with_suffix(path, "-wal.bak"),
-            std::path::PathBuf::from("Verenu/verenu.db-wal.bak")
-        );
     }
 }

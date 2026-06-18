@@ -100,16 +100,20 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
     // new install) and a pointless db.bak gets created on first launch.
     let db_existed_before_open = db_path.exists();
     let mut conn = Connection::open(db_path)?;
+    // user_version lives in the file header, so it's readable before SCHEMA
+    // is applied. Read it here (and take the pre-migration backup) before any
+    // statement touches the file, so db.bak is a true snapshot of what the
+    // user had - not a copy already overwritten by SCHEMA's CREATE TABLE IF
+    // NOT EXISTS statements.
+    let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if user_version < 2 && db_existed_before_open {
+        let _ = std::fs::copy(db_path, db_path.with_extension("db.bak"));
+    }
+
     conn.execute_batch(SCHEMA)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
 
-    let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-
     if user_version < 2 {
-        if db_existed_before_open {
-            let _ = std::fs::copy(db_path, db_path.with_extension("db.bak"));
-        }
-
         // IMPORTANT: each migration uses BEGIN/COMMIT for atomicity, followed by an
         // explicit ROLLBACK. If the migration fails mid-way, sqlite3_exec aborts but
         // leaves the BEGIN open. Without the ROLLBACK cleanup, every subsequent INSERT
