@@ -298,11 +298,13 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
         #[cfg(not(target_os = "windows"))]
         {
             if needs_resize {
-                pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS)).ok();
+                pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS))
+                    .ok();
             }
             if let Some((target_x, target_y)) = target_pos {
                 if needs_reposition {
-                    pill.set_position(tauri::PhysicalPosition::new(target_x, target_y)).ok();
+                    pill.set_position(tauri::PhysicalPosition::new(target_x, target_y))
+                        .ok();
                 }
             }
         }
@@ -737,14 +739,20 @@ fn resolve_app_mapping(
     store.and_then(|s| {
         s.get(store::APP_MAPPINGS)
             .and_then(|v| serde_json::from_value::<Vec<AppMapping>>(v).ok())
-            .and_then(|list| list.into_iter().find(|m| m.exe.eq_ignore_ascii_case(process_name)))
+            .and_then(|list| {
+                list.into_iter()
+                    .find(|m| m.exe.eq_ignore_ascii_case(process_name))
+            })
     })
 }
 
 /// Resolves the effective tone profile for `mapping`, falling back to the
 /// global `default_tone` when the app has no override, and applies the
 /// app's `cleanup_intensity` override (if any) onto `cfg` in place.
-fn apply_app_style_overrides(cfg: &mut store::PipelineConfig, mapping: Option<&AppMapping>) -> String {
+fn apply_app_style_overrides(
+    cfg: &mut store::PipelineConfig,
+    mapping: Option<&AppMapping>,
+) -> String {
     if let Some(intensity) = mapping
         .and_then(|m| m.cleanup_intensity.as_deref())
         .filter(|i| !i.is_empty())
@@ -844,6 +852,14 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
 }
 
 pub async fn run_pipeline(app: AppHandle, state: SharedState) {
+    run_pipeline_with_delivery(app, state, false).await;
+}
+
+pub async fn run_pipeline_event_only(app: AppHandle, state: SharedState) {
+    run_pipeline_with_delivery(app, state, true).await;
+}
+
+async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_only: bool) {
     let started_at = std::time::Instant::now();
     let Some((session, target_hwnd)) = take_pipeline_session(&state) else {
         log::debug!("pipeline: no session - recording never started or was already consumed");
@@ -983,6 +999,7 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
             process_name,
             cleanup_cache_key,
             captured_at: retry_captured_at,
+            event_only,
         },
     )
     .await
@@ -1149,7 +1166,6 @@ async fn run_transcription(
     }
     None
 }
-
 
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
 // instruction override application. Returns (final_text_before_dict, dict_entries)
@@ -1631,9 +1647,15 @@ mod tests {
     fn hallucination_gate_catches_prompt_echo() {
         assert!(is_transcription_hallucination("Return only spoken words."));
         assert!(is_transcription_hallucination("Return only spoken words"));
-        assert!(is_transcription_hallucination("Return only the words spoken."));
-        assert!(is_transcription_hallucination("Verenu dictation in English."));
-        assert!(is_transcription_hallucination("Transcribe the audio in English."));
+        assert!(is_transcription_hallucination(
+            "Return only the words spoken."
+        ));
+        assert!(is_transcription_hallucination(
+            "Verenu dictation in English."
+        ));
+        assert!(is_transcription_hallucination(
+            "Transcribe the audio in English."
+        ));
     }
 
     #[test]
@@ -1645,8 +1667,12 @@ mod tests {
 
     #[test]
     fn hallucination_gate_passes_real_speech() {
-        assert!(!is_transcription_hallucination("Return the package to me by Thursday."));
-        assert!(!is_transcription_hallucination("Why does YouTube's algorithm feel like doo-doo?"));
+        assert!(!is_transcription_hallucination(
+            "Return the package to me by Thursday."
+        ));
+        assert!(!is_transcription_hallucination(
+            "Why does YouTube's algorithm feel like doo-doo?"
+        ));
         assert!(!is_transcription_hallucination("Thank you for your help."));
     }
 
@@ -2028,9 +2054,7 @@ mod tests {
             task: "cleanup".into(),
             provider: "groq".into(),
             model: "llama-3.3-70b-versatile".into(),
-            response: Some(
-                "I am an AI and I do not have access to real-time information.".into(),
-            ),
+            response: Some("I am an AI and I do not have access to real-time information.".into()),
             error_kind: None,
             error_message: None,
         });
@@ -2263,9 +2287,14 @@ pub async fn retry_transcription_impl(
         );
         anyhow::bail!("Recording was too quiet — nothing was transcribed");
     }
-    let Some((final_text, dict_entries, cleanup_cache_key)) =
-        run_cleanup_and_snippets(app, &raw, &cfg, &capture.profile, capture.app_context.as_deref())
-            .await
+    let Some((final_text, dict_entries, cleanup_cache_key)) = run_cleanup_and_snippets(
+        app,
+        &raw,
+        &cfg,
+        &capture.profile,
+        capture.app_context.as_deref(),
+    )
+    .await
     else {
         anyhow::bail!("Retry cleanup failed");
     };
@@ -2285,6 +2314,7 @@ pub async fn retry_transcription_impl(
             process_name: capture.process_name,
             cleanup_cache_key,
             captured_at: capture.captured_at,
+            event_only: false,
         },
     )
     .await
@@ -2302,6 +2332,7 @@ struct PipelineCompletionContext<'a> {
     process_name: String,
     cleanup_cache_key: String,
     captured_at: std::time::Instant,
+    event_only: bool,
 }
 
 async fn finalize_pipeline_completion(
@@ -2379,7 +2410,15 @@ async fn finalize_pipeline_completion(
     // Detect this by PID and fall back to clipboard-only so the user can paste manually.
     let self_inject = foreground_is_own_process() || hwnd_is_own_process(ctx.target_hwnd);
 
-    let injected = if self_inject {
+    let injected = if ctx.event_only {
+        injection::InjectionOutcome {
+            text: final_text_substituted.clone(),
+            context_state: "event_only",
+            case_decision: "setup_try_event",
+            probe_source: "unavailable",
+            selection_state: "unknown",
+        }
+    } else if self_inject {
         log::info!("pipeline: self-inject detected — clipboard fallback");
         if let Err(e) = injection::copy_to_clipboard(&final_text_substituted).await {
             log::warn!("pipeline: clipboard fallback write failed: {e}");
@@ -2420,7 +2459,7 @@ async fn finalize_pipeline_completion(
     };
     let injected_text = injected.text;
     log::debug!(
-        "pipeline: injection done contextual_caps={} auto_spacing={} context_state={} case_decision={} probe_source={} selection_state={} output_chars={} stage_ms={}",
+        "pipeline: delivery done contextual_caps={} auto_spacing={} context_state={} case_decision={} probe_source={} selection_state={} output_chars={} stage_ms={}",
         ctx.cfg.contextual_caps_enabled,
         ctx.cfg.auto_spacing_enabled,
         injected.context_state,
@@ -2431,6 +2470,10 @@ async fn finalize_pipeline_completion(
         inject_stage.elapsed().as_millis()
     );
     app.emit("verenu:transcribed", &injected_text).ok();
+
+    if ctx.event_only {
+        return Ok(entry);
+    }
 
     if !ctx.cleanup_cache_key.is_empty() {
         auto_learn::start_cache_rejection_monitor(

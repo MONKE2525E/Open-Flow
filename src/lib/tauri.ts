@@ -183,6 +183,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return 0 as T;
     case 'get_api_key_status':
       return { groq: false, openai: false, google: false } as T;
+    case 'validate_api_key':
+      return { ok: true, message: 'Key verified (dev mode).' } as T;
     case 'get_accessibility_permission_status':
       return String(getDevSetting('accessibility_permission_status') ?? 'authorized') as T;
     case 'get_microphone_permission_status':
@@ -216,6 +218,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'open_accessibility_settings':
     case 'open_microphone_settings':
     case 'start_input_recording':
+    case 'start_setup_try_recording':
+    case 'stop_setup_try_recording':
     case 'retry_transcription':
     case 'install_update':
     case 'set_dev_logging_enabled':

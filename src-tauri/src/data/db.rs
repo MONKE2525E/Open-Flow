@@ -147,14 +147,14 @@ fn load_snippet_rows(conn: &Connection) -> Result<Vec<Snippet>> {
 fn compute_spoken_words(conn: &Connection, raw_text: &str) -> Result<i64> {
     let snippets = load_snippet_rows(conn)?;
     Ok(snippets::count_words_without_snippet_triggers(
-        raw_text,
-        &snippets,
+        raw_text, &snippets,
     ))
 }
 
 fn backfill_spoken_words(conn: &Connection) -> Result<()> {
     let snippets = load_snippet_rows(conn)?;
-    let mut select = conn.prepare("SELECT id, raw_text FROM transcriptions WHERE spoken_words IS NULL")?;
+    let mut select =
+        conn.prepare("SELECT id, raw_text FROM transcriptions WHERE spoken_words IS NULL")?;
     let rows = select
         .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1456,11 +1456,9 @@ mod tests {
         let db = open(path.to_str().expect("path string")).expect("open repairs legacy db");
         let conn = lock_conn(&db).expect("lock");
         let spoken_words: i64 = conn
-            .query_row(
-                "SELECT spoken_words FROM transcriptions LIMIT 1",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT spoken_words FROM transcriptions LIMIT 1", [], |r| {
+                r.get(0)
+            })
             .expect("spoken words");
         assert_eq!(spoken_words, 2);
         drop(conn);
@@ -1848,14 +1846,8 @@ mod tests {
             .expect("backdate old row");
         }
 
-        assert_eq!(
-            count_transcriptions_older_than(&db, 7).expect("count"),
-            1
-        );
-        assert_eq!(
-            prune_transcriptions_older_than(&db, 7).expect("prune"),
-            1
-        );
+        assert_eq!(count_transcriptions_older_than(&db, 7).expect("count"), 1);
+        assert_eq!(prune_transcriptions_older_than(&db, 7).expect("prune"), 1);
 
         let conn = lock_conn(&db).expect("lock");
         let remaining: i64 = conn
@@ -1891,7 +1883,10 @@ mod tests {
         assert_eq!(deleted, 1);
 
         let after = query_stats(&db).expect("stats after prune").total_words;
-        assert_eq!(after, 8, "lifetime word counter must not shrink when old history is pruned");
+        assert_eq!(
+            after, 8,
+            "lifetime word counter must not shrink when old history is pruned"
+        );
     }
 
     #[test]

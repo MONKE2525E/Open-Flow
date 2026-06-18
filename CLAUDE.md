@@ -110,7 +110,8 @@ src/                        # Svelte 5 frontend
     components/layout/      # TitleBar, Sidebar, DictationPill
     components/             # Shared: Toggle, Dropdown, MicInputButton
     components/settings/    # Settings sections: General, Models, ApiKeys, AppMappings, Privacy, Audio, Advanced, About
-    views/                  # Home (main flow), Dictionary, Snippets, Settings, Setup (first-run API key entry), Style pages
+    views/                  # Home (main flow), Dictionary, Snippets, Settings, Setup (first-run wizard orchestrator), Style pages
+    setup/                  # First-run wizard: SetupShell.svelte (shared chrome/header/action bar) + steps/ (Intro, Provider, ApiKey, Permissions [macOS], WritingStyle, Appearance, QuickSettings, Calibration, TryIt, Done)
     calibrationCopy.ts       # Localized copy strings for the mic-calibration UI (companion to calibration.ts)
 src-tauri/
   src/
