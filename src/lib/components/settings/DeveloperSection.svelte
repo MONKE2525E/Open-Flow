@@ -99,6 +99,12 @@
 
 <h2 class="settings-h">Developer</h2>
 <p class="panel-note">Session log stream from backend runtime. Dev mode resets after app restart.</p>
+<div class="privacy-warn" role="note">
+  <strong>Privacy warning:</strong> Verbose logs can capture your full dictated text,
+  the prompts sent to AI providers, and the active-app context. Anything you download
+  or share contains this content in plain text — only enable verbose logging or export
+  logs if you understand what they hold.
+</div>
 <div class="setting-row">
   <div>
     <div class="label">Force Setup On Launch</div>
@@ -177,5 +183,19 @@
   .actions {
     display: flex;
     gap: 8px;
+  }
+  .privacy-warn {
+    margin: 10px 0 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--warn-line, var(--line));
+    border-left: 3px solid var(--warn, #c4742a);
+    border-radius: 8px;
+    background: var(--warn-bg, rgba(196, 116, 42, 0.08));
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+  .privacy-warn strong {
+    color: var(--ink);
   }
 </style>

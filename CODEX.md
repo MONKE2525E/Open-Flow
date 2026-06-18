@@ -1,2 +1,1 @@
-## search for CLAUDE.md in repo for context
-Verenu\CLAUDE.md
+See [CLAUDE.md](./CLAUDE.md) for all project context, conventions, and instructions.

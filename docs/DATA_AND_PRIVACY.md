@@ -35,6 +35,12 @@ Stored locally in app storage and SQLite:
 - Recent logs stay local unless you explicitly export them
 - Exported logs are created only when you trigger that action
 
+> **Warning — verbose logging captures your content.** When verbose logging is
+> enabled, logs can include your full dictated text, the prompts sent to AI
+> providers, and the active-app context. These logs are stored in plain text.
+> Any log file you download or share therefore contains that content. Only
+> enable verbose logging or export logs if you understand and accept this.
+
 ### Backups
 
 Manual export/import stays local unless you choose to move the file elsewhere.

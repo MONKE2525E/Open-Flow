@@ -36,6 +36,7 @@ Use a PR when one of these is true:
 
 - Node.js 18+
 - Rust and Cargo
+- Python 3.8+ (required by `npm test` — the OnePyFone test runner is a Python script)
 - Windows: WebView2
 - macOS: Xcode Command Line Tools are recommended
 
