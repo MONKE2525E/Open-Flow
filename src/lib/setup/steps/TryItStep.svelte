@@ -85,11 +85,11 @@
     listen<string>('verenu:transcribed', (ev) => {
       if (destroyed) return;
       errorMessage = '';
-      // Real Ctrl+V into the focused textarea should have already landed via bind:value.
-      // If it didn't (focus lost mid-paste, etc.), fall back to the event payload directly.
-      setTimeout(() => {
-        if (!sampleText.trim() && ev.payload) sampleText = ev.payload;
-      }, 150);
+      // start_setup_try_recording runs the pipeline in event-only mode (no real
+      // clipboard/Ctrl+V injection), so this event is the only way text reaches the
+      // textarea. Always take the latest payload so trying multiple dictations in a
+      // row keeps showing the most recent result instead of requiring "Try again".
+      if (ev.payload) sampleText = ev.payload;
     }).then((unsub) => {
       if (destroyed) unsub();
       else unlistenTranscribed = unsub;
