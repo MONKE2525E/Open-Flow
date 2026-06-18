@@ -130,24 +130,28 @@
         class:failed={keyValidation[item.id].status === 'invalid'}
         placeholder={keyStatus[item.id] ? '••••••••••••' : item.ph}
         bind:value={draftKeys[item.id]}
+        oninput={() => {
+          if (keyValidation[item.id].status === 'invalid') keyValidation[item.id] = { status: 'idle', message: '' };
+          if (keyErrors[item.id]) keyErrors[item.id] = '';
+        }}
         onkeydown={(e) => e.key === 'Enter' && saveKey(item.id)}
         autocomplete="off"
         aria-invalid={keyErrors[item.id] || keyValidation[item.id].status === 'invalid' ? 'true' : 'false'}
       />
-      <div class="flip-btn" class:flipped={keyStatus[item.id]}>
+      <div class="flip-btn" class:flipped={keyStatus[item.id] && !draftKeys[item.id].trim()}>
         <button
           class="btn-ghost flip-face front"
           onclick={() => saveKey(item.id)}
-          disabled={keyStatus[item.id] || !draftKeys[item.id].trim() || keySaving[item.id]}
-          tabindex={keyStatus[item.id] ? -1 : 0}
-          aria-hidden={keyStatus[item.id] ? 'true' : 'false'}
+          disabled={!draftKeys[item.id].trim() || keySaving[item.id]}
+          tabindex={keyStatus[item.id] && !draftKeys[item.id].trim() ? -1 : 0}
+          aria-hidden={keyStatus[item.id] && !draftKeys[item.id].trim() ? 'true' : 'false'}
         >{keySaving[item.id] ? 'Saving…' : 'Save'}</button>
         <button
           class="btn-ghost btn-clear flip-face back"
           onclick={() => clearKey(item.id)}
-          disabled={!keyStatus[item.id] || keySaving[item.id]}
-          tabindex={keyStatus[item.id] ? 0 : -1}
-          aria-hidden={keyStatus[item.id] ? 'false' : 'true'}
+          disabled={!keyStatus[item.id] || draftKeys[item.id].trim().length > 0 || keySaving[item.id]}
+          tabindex={keyStatus[item.id] && !draftKeys[item.id].trim() ? 0 : -1}
+          aria-hidden={keyStatus[item.id] && !draftKeys[item.id].trim() ? 'false' : 'true'}
         >Clear</button>
       </div>
     </div>
