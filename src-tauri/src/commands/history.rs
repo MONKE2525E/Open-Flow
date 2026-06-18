@@ -103,10 +103,7 @@ pub async fn clear_cleanup_cache(app: AppHandle) -> Result<usize, String> {
 #[tauri::command]
 pub async fn get_cleanup_cache_status(app: AppHandle) -> Result<CleanupCacheStatus, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
+    let app_data = crate::app_data_dir();
     let (free_bytes, entry_count) = tokio::task::spawn_blocking(move || {
         let free = free_bytes_for_path(&app_data)
             .map_err(|e| format!("Failed to read free disk space: {e}"))?;
