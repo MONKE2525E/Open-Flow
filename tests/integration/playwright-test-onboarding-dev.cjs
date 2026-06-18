@@ -42,9 +42,8 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
       await page.getByRole('button', { name: 'Next' }).click();
     }
 
+    // Writing Style merges cleanup intensity and tone onto one screen.
     await page.locator('button.option-card', { has: page.locator('.option-name', { hasText: 'Direct' }) }).click();
-    await page.getByRole('button', { name: 'Next' }).click();
-
     await page.locator('.tone-card:has-text("Formal")').click();
     await page.getByRole('button', { name: 'Next' }).click();
 
@@ -68,7 +67,20 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
       // Calibration box did not appear
     }
     if (hasCalibrationStep) {
-      await page.locator('.step-footer .btn-skip').click();
+      await page.locator('.btn-skip').click();
+    }
+
+    // Try It step: skip the hands-on hotkey test in automated runs.
+    const tryItField = page.locator('.tryit-field');
+    let hasTryItStep = false;
+    try {
+      await tryItField.waitFor({ state: 'visible', timeout: 1000 });
+      hasTryItStep = true;
+    } catch (e) {
+      // Try It field did not appear
+    }
+    if (hasTryItStep) {
+      await page.locator('.btn-skip').click();
     }
 
     await page.locator('.done-summary').waitFor({ state: 'visible', timeout: TIMEOUT });

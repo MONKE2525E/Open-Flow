@@ -18,6 +18,7 @@
   }
   import Toggle from '../Toggle.svelte';
   import { saveSetting, type ProviderId, type ProviderModelMap } from '../../settings';
+  import { getProviderLogo } from '../../setup/ProviderLogos';
 
   type TaskType = 'transcription' | 'cleanup';
   type UiProviderId = 'groq' | 'openai' | 'google';
@@ -399,7 +400,10 @@
             (m) => m !== recommendedModels[type][section.id].premium && m !== recommendedModels[type][section.id].standard
           )}
           <div class="simple-group" class:no-key={!hasKey}>
-            <span class="simple-provider">{section.label}</span>
+            <span class="simple-provider">
+              <span class="simple-provider-logo">{@html getProviderLogo(section.storeProvider)}</span>
+              {section.label}
+            </span>
 
             {#each ['premium', 'standard'] as rawTier}
               {@const tier = rawTier as 'premium' | 'standard'}
@@ -684,6 +688,9 @@
   }
 
   .simple-provider {
+    display: flex;
+    align-items: center;
+    gap: 5px;
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.09em;
@@ -693,6 +700,9 @@
     padding: 0 10px;
     margin-bottom: 3px;
   }
+
+  .simple-provider-logo { display: inline-flex; width: 12px; height: 12px; flex-shrink: 0; }
+  .simple-provider-logo :global(svg) { width: 100%; height: 100%; }
 
   .simple-row {
     display: flex;

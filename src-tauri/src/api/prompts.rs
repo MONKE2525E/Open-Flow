@@ -697,8 +697,13 @@ pub fn get_cleanup_prompt_with_extras(
     let preset = build_preset_block(profile, intensity, tier, has_numeric_content, has_overrides);
     let overrides_block = snippet_overrides_block(extra_rules);
 
-    let mut rendered =
-        render_cleanup_template(template, active_app, &preset, FORMATTING_RULES, &overrides_block);
+    let mut rendered = render_cleanup_template(
+        template,
+        active_app,
+        &preset,
+        FORMATTING_RULES,
+        &overrides_block,
+    );
 
     if has_overrides && !template.contains("{{ snippet_overrides }}") {
         rendered = format!("{rendered}\n\n{overrides_block}");
@@ -1076,9 +1081,18 @@ mod tests {
                 "you should send me the file",
                 None,
             );
-            assert!(!prompt.contains("{{"), "{provider}/{model} left an unfilled tag");
-            assert!(prompt.contains("Slack"), "{provider}/{model} missing active_app");
-            assert!(prompt.contains("FINAL OUTPUT OVERRIDES"), "{provider}/{model} missing overrides");
+            assert!(
+                !prompt.contains("{{"),
+                "{provider}/{model} left an unfilled tag"
+            );
+            assert!(
+                prompt.contains("Slack"),
+                "{provider}/{model} missing active_app"
+            );
+            assert!(
+                prompt.contains("FINAL OUTPUT OVERRIDES"),
+                "{provider}/{model} missing overrides"
+            );
         }
     }
 

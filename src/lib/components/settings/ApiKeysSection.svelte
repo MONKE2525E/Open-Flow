@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '../../tauri';
+  import { getProviderLogo } from '../../setup/ProviderLogos';
 
   type ProviderId = 'groq' | 'openai' | 'google';
   type KeyStatus = Record<ProviderId, boolean>;
   type KeyDrafts = Record<ProviderId, string>;
+  type KeyValidation = { status: 'idle' | 'checking' | 'valid' | 'invalid' | 'unknown'; message: string };
 
   const keyProviders: { id: ProviderId; label: string; ph: string; models: string }[] = [
     { id: 'groq',   label: 'Groq',   ph: 'gsk_…',  models: 'whisper-large-v3-turbo · llama-3.3-70b' },
@@ -16,6 +18,11 @@
   let draftKeys = $state<KeyDrafts>({ groq: '', openai: '', google: '' });
   let keySaving = $state<Record<ProviderId, boolean>>({ groq: false, openai: false, google: false });
   let keyErrors = $state<KeyDrafts>({ groq: '', openai: '', google: '' });
+  let keyValidation = $state<Record<ProviderId, KeyValidation>>({
+    groq: { status: 'idle', message: '' },
+    openai: { status: 'idle', message: '' },
+    google: { status: 'idle', message: '' },
+  });
 
   async function loadKeyStatus() {
     try {
@@ -25,6 +32,17 @@
     } catch (err) {
       console.error('get_api_key_status failed:', err);
       return keyStatus;
+    }
+  }
+
+  async function testKey(provider: ProviderId, key: string) {
+    if (!key.trim()) return;
+    keyValidation[provider] = { status: 'checking', message: '' };
+    try {
+      const result = await invoke<{ ok: boolean; status: 'valid' | 'invalid' | 'unknown'; message: string }>('validate_api_key', { provider, key: key.trim() });
+      keyValidation[provider] = { status: result.status, message: result.message };
+    } catch {
+      keyValidation[provider] = { status: 'unknown', message: "Couldn't verify the key right now." };
     }
   }
 
@@ -38,6 +56,7 @@
       const status = await loadKeyStatus();
       if (status[provider]) {
         draftKeys[provider] = '';
+        void testKey(provider, key);
       } else {
         keyErrors[provider] = 'The key did not persist after saving. Please try again.';
       }
@@ -56,6 +75,7 @@
       await invoke('delete_api_key', { provider });
       await loadKeyStatus();
       draftKeys[provider] = '';
+      keyValidation[provider] = { status: 'idle', message: '' };
     } catch (e) {
       console.error('delete_api_key failed', e);
       keyErrors[provider] = 'Could not remove this key locally. Please try again.';
@@ -76,6 +96,7 @@
   <div class="setting-row key-row">
     <div class="key-left">
       <div class="label">
+        <span class="key-logo">{@html getProviderLogo(item.id)}</span>
         {item.label}
         {#if keyStatus[item.id]}
           <span class="key-saved">● saved</span>
@@ -95,6 +116,11 @@
       />
       <button
         class="btn-ghost"
+        onclick={() => testKey(item.id, draftKeys[item.id])}
+        disabled={!draftKeys[item.id].trim() || keySaving[item.id] || keyValidation[item.id].status === 'checking'}
+      >{keyValidation[item.id].status === 'checking' ? 'Testing…' : 'Test'}</button>
+      <button
+        class="btn-ghost"
         onclick={() => saveKey(item.id)}
         disabled={!draftKeys[item.id].trim() || keySaving[item.id]}
       >{keySaving[item.id] ? 'Saving…' : 'Save'}</button>
@@ -109,12 +135,26 @@
     {#if keyErrors[item.id]}
       <p class="key-error">{keyErrors[item.id]}</p>
     {/if}
+    {#if keyValidation[item.id].status !== 'idle' && keyValidation[item.id].status !== 'checking'}
+      <p class="key-validation" class:valid={keyValidation[item.id].status === 'valid'}>
+        {keyValidation[item.id].status === 'valid' ? 'Key verified.' : keyValidation[item.id].message}
+      </p>
+    {/if}
   </div>
 {/each}
 
 <style>
   .key-row { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
   .key-left { flex: 1; min-width: 0; }
+  .key-logo {
+    display: inline-flex;
+    width: 16px;
+    height: 16px;
+    color: var(--ink-mute);
+    vertical-align: -3px;
+    margin-right: 6px;
+  }
+  .key-logo :global(svg) { width: 100%; height: 100%; }
   .key-right { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
   .key-saved {
     font-family: var(--mono);
@@ -135,6 +175,21 @@
     width: 200px;
     letter-spacing: 0.04em;
   }
+  .key-input::-ms-reveal {
+    display: none;
+  }
+
+  .key-input::-ms-clear {
+    display: none;
+  }
+
+  .key-input::-webkit-credentials-auto-fill-button {
+    display: none;
+  }
+
+  .key-input::-webkit-contacts-auto-fill-button {
+    display: none;
+  }
   .key-input:focus {
     outline: none;
     border-color: var(--accent);
@@ -154,4 +209,11 @@
     font-size: 11px;
     color: var(--danger);
   }
+  .key-validation {
+    width: 100%;
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: var(--warning);
+  }
+  .key-validation.valid { color: var(--success); }
 </style>

@@ -13,13 +13,14 @@ async function readLayoutState(page) {
     const overlay = document.querySelector('.setup-overlay');
     const wrap = document.querySelector('.step-wrap');
     const step = document.querySelector('.step');
-    const footer = document.querySelector('.step-footer');
-    const heading = document.querySelector('.step-header h2, .done-title, .brand-name');
+    const actionbar = document.querySelector('.setup-actionbar');
+    const heading = document.querySelector('.setup-header h2, .done-title, .brand-name');
 
     const rect = (el) => el ? el.getBoundingClientRect() : null;
     const stepRect = rect(step);
     const wrapRect = rect(wrap);
-    const footerRect = rect(footer);
+    const overlayRect = rect(overlay);
+    const actionbarRect = rect(actionbar);
 
     const pageScroll =
       html.scrollHeight !== html.clientHeight ||
@@ -32,6 +33,8 @@ async function readLayoutState(page) {
       stepRect.bottom <= wrapRect.bottom
     );
 
+    // .setup-content is intentionally overflow-y:auto as a safety net for unusually
+    // tall steps — only flag it if it's actually overflowing, not just CSS-capable.
     const scrollableVisibleContainers = Array.from(
       overlay?.querySelectorAll('*') ?? []
     )
@@ -52,8 +55,9 @@ async function readLayoutState(page) {
       title: heading?.textContent?.trim() ?? 'unknown',
       pageScroll,
       inBounds,
-      footerBottom: footerRect?.bottom ?? null,
-      wrapBottom: wrapRect?.bottom ?? null,
+      actionbarBottom: actionbarRect?.bottom ?? null,
+      actionbarTop: actionbarRect?.top ?? null,
+      overlayBottom: overlayRect?.bottom ?? null,
       scrollableVisibleContainers,
     };
   });
@@ -63,10 +67,19 @@ async function verifyViewport(browser, viewport) {
   const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } });
   const failures = [];
 
+  await page.addInitScript(() => {
+    localStorage.setItem('verenu:dev-settings', JSON.stringify({
+      force_setup_on_launch: true,
+      setup_complete: false,
+    }));
+  });
+
   await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: 15000 });
   await page.waitForTimeout(500);
 
-  for (let stepIndex = 0; stepIndex <= 8; stepIndex++) {
+  let previousActionbarTop = null;
+
+  for (let stepIndex = 0; stepIndex <= 10; stepIndex++) {
     const state = await readLayoutState(page);
     console.log(`[${viewport.label}] Step ${stepIndex}: ${state.title}`);
 
@@ -81,14 +94,22 @@ async function verifyViewport(browser, viewport) {
         `[${viewport.label}] "${state.title}" has internal scrollable container(s): ${JSON.stringify(state.scrollableVisibleContainers)}`
       );
     }
-    if (state.footerBottom !== null && state.wrapBottom !== null && state.footerBottom > state.wrapBottom) {
-      failures.push(`[${viewport.label}] "${state.title}" footer extends below visible area.`);
+    if (state.actionbarBottom !== null && state.overlayBottom !== null && state.actionbarBottom > state.overlayBottom) {
+      failures.push(`[${viewport.label}] "${state.title}" action bar extends below visible area.`);
+    }
+    if (state.actionbarTop !== null) {
+      if (previousActionbarTop !== null && Math.abs(state.actionbarTop - previousActionbarTop) > 1) {
+        failures.push(
+          `[${viewport.label}] "${state.title}" action bar moved (top ${previousActionbarTop}px -> ${state.actionbarTop}px).`
+        );
+      }
+      previousActionbarTop = state.actionbarTop;
     }
 
-    const finalButton = page.locator('.step-wrap.visible .btn-primary:has-text("Start dictating")');
+    const finalButton = page.locator('.setup-actionbar .btn-primary:has-text("Start dictating")');
     if (await finalButton.count()) break;
 
-    const nextButton = page.locator('.step-wrap.visible .btn-primary').first();
+    const nextButton = page.locator('.setup-actionbar .btn-primary').first();
     if (!(await nextButton.count())) break;
     await nextButton.click();
     await page.waitForTimeout(420);

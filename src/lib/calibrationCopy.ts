@@ -43,7 +43,6 @@ type SetupCopy = {
   successTail: string;
   skipButton: string;
   continueButton: string;
-  skipCalibrationButton: string;
   cancelButton: string;
   recalibrateButton: string;
 };
@@ -144,7 +143,6 @@ const SETUP_COPY: Record<BaseLanguage, SetupCopy> = {
     successTail: 'Your voice levels are now optimized for transcription.',
     skipButton: 'Skip calibration',
     continueButton: 'Continue',
-    skipCalibrationButton: 'Skip Calibration',
     cancelButton: 'Cancel',
     recalibrateButton: 'Recalibrate',
   },
@@ -168,7 +166,6 @@ const SETUP_COPY: Record<BaseLanguage, SetupCopy> = {
     successTail: 'Tus niveles de voz ahora están optimizados para la transcripción.',
     skipButton: 'Omitir calibración',
     continueButton: 'Continuar',
-    skipCalibrationButton: 'Omitir calibración',
     cancelButton: 'Cancelar',
     recalibrateButton: 'Recalibrar',
   },
@@ -192,7 +189,6 @@ const SETUP_COPY: Record<BaseLanguage, SetupCopy> = {
     successTail: 'Les niveaux de voix sont maintenant optimisés pour la transcription.',
     skipButton: "Ignorer l'étalonnage",
     continueButton: 'Continuer',
-    skipCalibrationButton: "Ignorer l'étalonnage",
     cancelButton: 'Annuler',
     recalibrateButton: 'Recalibrer',
   },
@@ -216,7 +212,6 @@ const SETUP_COPY: Record<BaseLanguage, SetupCopy> = {
     successTail: 'Deine Sprachpegel sind jetzt für die Transkription optimiert.',
     skipButton: 'Kalibrierung überspringen',
     continueButton: 'Weiter',
-    skipCalibrationButton: 'Kalibrierung überspringen',
     cancelButton: 'Abbrechen',
     recalibrateButton: 'Neu kalibrieren',
   },
@@ -240,7 +235,6 @@ const SETUP_COPY: Record<BaseLanguage, SetupCopy> = {
     successTail: 'Seus níveis de voz agora estão otimizados para transcrição.',
     skipButton: 'Pular calibração',
     continueButton: 'Continuar',
-    skipCalibrationButton: 'Pular calibração',
     cancelButton: 'Cancelar',
     recalibrateButton: 'Recalibrar',
   },
@@ -264,7 +258,6 @@ const SETUP_COPY: Record<BaseLanguage, SetupCopy> = {
     successTail: '你的语音电平现在已针对转写进行优化。',
     skipButton: '跳过校准',
     continueButton: '继续',
-    skipCalibrationButton: '跳过校准',
     cancelButton: '取消',
     recalibrateButton: '重新校准',
   },
