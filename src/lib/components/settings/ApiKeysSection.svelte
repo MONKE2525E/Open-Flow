@@ -39,8 +39,8 @@
     if (!key.trim()) return;
     keyValidation[provider] = { status: 'checking', message: '' };
     try {
-      const result = await invoke<{ ok: boolean; message: string }>('validate_api_key', { provider, key: key.trim() });
-      keyValidation[provider] = { status: result.ok ? 'valid' : 'invalid', message: result.message };
+      const result = await invoke<{ ok: boolean; status: 'valid' | 'invalid' | 'unknown'; message: string }>('validate_api_key', { provider, key: key.trim() });
+      keyValidation[provider] = { status: result.status, message: result.message };
     } catch {
       keyValidation[provider] = { status: 'unknown', message: "Couldn't verify the key right now." };
     }

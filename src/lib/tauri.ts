@@ -184,7 +184,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'get_api_key_status':
       return { groq: false, openai: false, google: false } as T;
     case 'validate_api_key':
-      return { ok: true, message: 'Key verified (dev mode).' } as T;
+      return { ok: true, status: 'valid', message: 'Key verified (dev mode).' } as T;
     case 'get_accessibility_permission_status':
       return String(getDevSetting('accessibility_permission_status') ?? 'authorized') as T;
     case 'get_microphone_permission_status':

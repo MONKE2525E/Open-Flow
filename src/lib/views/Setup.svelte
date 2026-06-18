@@ -162,8 +162,8 @@
   async function validateKey(key: string) {
     keyValidation = { status: 'checking', message: '' };
     try {
-      const result = await invoke<{ ok: boolean; message: string }>('validate_api_key', { provider, key });
-      keyValidation = { status: result.ok ? 'valid' : 'invalid', message: result.message };
+      const result = await invoke<{ ok: boolean; status: 'valid' | 'invalid' | 'unknown'; message: string }>('validate_api_key', { provider, key });
+      keyValidation = { status: result.status, message: result.message };
     } catch {
       keyValidation = { status: 'unknown', message: "Couldn't verify the key right now." };
     }

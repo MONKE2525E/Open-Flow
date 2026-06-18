@@ -103,8 +103,17 @@
       else unlistenError = unsub;
     });
 
+    // The OS sends keyup to whatever window has focus, not necessarily ours — if focus
+    // is lost mid-chord (alt-tab, an OS popup, a system dialog), our keyup handler never
+    // fires and the chord/recording would otherwise get stuck active. Blur is the backstop.
+    function handleBlur() {
+      if (localRecording) void stopLocalRecording();
+      pressedHotkeyCodes.clear();
+    }
+
     window.addEventListener('keydown', handleSetupTryKeydown, { capture: true });
     window.addEventListener('keyup', handleSetupTryKeyup, { capture: true });
+    window.addEventListener('blur', handleBlur);
 
     return () => {
       destroyed = true;
@@ -113,6 +122,7 @@
       unlistenError?.();
       window.removeEventListener('keydown', handleSetupTryKeydown, { capture: true });
       window.removeEventListener('keyup', handleSetupTryKeyup, { capture: true });
+      window.removeEventListener('blur', handleBlur);
       pressedHotkeyCodes.clear();
     };
   });

@@ -127,6 +127,10 @@ pub async fn get_api_key_status(_app: AppHandle) -> Result<serde_json::Value, St
 #[derive(serde::Serialize)]
 pub struct KeyValidationResult {
     pub ok: bool,
+    /// "valid" | "invalid" | "unknown" — lets the frontend tell a definitive
+    /// auth failure (401/403) apart from an inconclusive network/timeout/5xx
+    /// result, which "ok: false" alone can't distinguish.
+    pub status: String,
     pub message: String,
 }
 
@@ -136,6 +140,7 @@ fn classify_validation_response(status: u16, body: &str) -> KeyValidationResult 
     if (200..300).contains(&status) {
         return KeyValidationResult {
             ok: true,
+            status: "valid".to_string(),
             message: "Key verified.".to_string(),
         };
     }
@@ -151,10 +156,15 @@ fn classify_validation_response(status: u16, body: &str) -> KeyValidationResult 
                 "The provider rejected this key.".to_string()
             }
         };
-        return KeyValidationResult { ok: false, message };
+        return KeyValidationResult {
+            ok: false,
+            status: "invalid".to_string(),
+            message,
+        };
     }
     KeyValidationResult {
         ok: false,
+        status: "unknown".to_string(),
         message: format!("Couldn't verify the key right now (provider returned status {status})."),
     }
 }
@@ -170,6 +180,7 @@ pub async fn validate_api_key(
     if trimmed.is_empty() {
         return Ok(KeyValidationResult {
             ok: false,
+            status: "invalid".to_string(),
             message: "Key is empty.".to_string(),
         });
     }
@@ -197,6 +208,7 @@ pub async fn validate_api_key(
         Err(_) => {
             return Ok(KeyValidationResult {
                 ok: false,
+                status: "unknown".to_string(),
                 message: "Couldn't reach the provider to verify the key.".to_string(),
             })
         }
@@ -1801,6 +1813,7 @@ mod tests {
     fn classify_validation_response_accepts_2xx() {
         let result = classify_validation_response(200, "");
         assert!(result.ok);
+        assert_eq!(result.status, "valid");
     }
 
     #[test]
@@ -1808,6 +1821,7 @@ mod tests {
         let result =
             classify_validation_response(401, r#"{"error":{"message":"Invalid API Key"}}"#);
         assert!(!result.ok);
+        assert_eq!(result.status, "invalid");
         assert!(result.message.to_lowercase().contains("invalid"));
     }
 
@@ -1818,6 +1832,7 @@ mod tests {
             r#"{"error":{"message":"Only team owners or users with the developer role may create or manage API keys."}}"#,
         );
         assert!(!result.ok);
+        assert_eq!(result.status, "invalid");
         assert!(result
             .message
             .to_lowercase()
@@ -1828,6 +1843,7 @@ mod tests {
     fn classify_validation_response_treats_other_statuses_as_inconclusive() {
         let result = classify_validation_response(503, "");
         assert!(!result.ok);
+        assert_eq!(result.status, "unknown");
         assert!(result.message.contains("503"));
     }
 
