@@ -95,6 +95,10 @@ CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
 
 pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
     let db_path = path.as_ref();
+    // Connection::open creates the file if it doesn't exist, so this check
+    // must run before open() - otherwise it's always true (even on a brand
+    // new install) and a pointless db.bak gets created on first launch.
+    let db_existed_before_open = db_path.exists();
     let mut conn = Connection::open(db_path)?;
     conn.execute_batch(SCHEMA)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
@@ -102,7 +106,7 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
 
     if user_version < 2 {
-        if db_path.exists() {
+        if db_existed_before_open {
             let _ = std::fs::copy(db_path, db_path.with_extension("db.bak"));
         }
 

@@ -43,7 +43,15 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
         // against the bundle identifier and may point at a different file).
         let db_path = crate::app_db_path();
         if db_path.exists() {
-            let _ = backup_sqlite_database(&db_path);
+            // Hold the shared connection lock for the copy so a concurrent
+            // write or WAL checkpoint can't leave the .db and -wal backups
+            // mismatched - every other DB access in this app goes through
+            // the same lock, so this fully serializes against them.
+            let db = app.state::<DbHandle>().inner().clone();
+            let guard = db.lock();
+            if guard.is_ok() {
+                let _ = backup_sqlite_database(&db_path);
+            }
         }
 
         let bytes = crate::api::client::get()
