@@ -70,140 +70,154 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
 
 #[tauri::command]
 pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String> {
+    // Registry/file/process operations below are all blocking I/O - run them
+    // off the async executor so a slow disk or registry call can't stall
+    // other Tokio tasks (audio capture, hotkey handling, etc.).
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::ffi::OsStrExt;
-        use windows::core::PCWSTR;
-        use windows::Win32::System::Registry::{
-            RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
-            KEY_WRITE, REG_SZ,
-        };
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            use std::os::windows::ffi::OsStrExt;
+            use windows::core::PCWSTR;
+            use windows::Win32::System::Registry::{
+                RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY,
+                HKEY_CURRENT_USER, KEY_WRITE, REG_SZ,
+            };
 
-        // Quote the path: a Run value is a command line, so an unquoted path
-        // containing spaces (e.g. "C:\Program Files\Verenu\verenu.exe") would be
-        // parsed as multiple arguments and fail to launch.
-        let app_path = format!(
-            "\"{}\"",
-            std::env::current_exe()
-                .map_err(|e| format!("Failed to get executable path: {e}"))?
-                .to_string_lossy()
-        );
-
-        let subkey: Vec<u16> =
-            std::ffi::OsStr::new("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
-        let value_name: Vec<u16> = std::ffi::OsStr::new("Verenu")
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-
-        unsafe {
-            let mut hkey = HKEY::default();
-            let status = RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                PCWSTR(subkey.as_ptr()),
-                None,
-                KEY_WRITE,
-                std::ptr::addr_of_mut!(hkey),
+            // Quote the path: a Run value is a command line, so an unquoted path
+            // containing spaces (e.g. "C:\Program Files\Verenu\verenu.exe") would be
+            // parsed as multiple arguments and fail to launch.
+            let app_path = format!(
+                "\"{}\"",
+                std::env::current_exe()
+                    .map_err(|e| format!("Failed to get executable path: {e}"))?
+                    .to_string_lossy()
             );
 
-            if status.is_err() {
-                return Err("Failed to open registry key".to_string());
-            }
-
-            let result = if enabled {
-                let app_path_wide: Vec<u16> = std::ffi::OsStr::new(&app_path)
+            let subkey: Vec<u16> =
+                std::ffi::OsStr::new("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
                     .encode_wide()
                     .chain(std::iter::once(0))
                     .collect();
-                RegSetValueExW(
-                    hkey,
-                    PCWSTR(value_name.as_ptr()),
+            let value_name: Vec<u16> = std::ffi::OsStr::new("Verenu")
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+            unsafe {
+                let mut hkey = HKEY::default();
+                let status = RegOpenKeyExW(
+                    HKEY_CURRENT_USER,
+                    PCWSTR(subkey.as_ptr()),
                     None,
-                    REG_SZ,
-                    Some(std::slice::from_raw_parts(
-                        app_path_wide.as_ptr() as *const u8,
-                        app_path_wide.len() * 2,
-                    )),
-                )
-            } else {
-                RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()))
-            };
+                    KEY_WRITE,
+                    std::ptr::addr_of_mut!(hkey),
+                );
 
-            let _ = RegCloseKey(hkey);
+                if status.is_err() {
+                    return Err("Failed to open registry key".to_string());
+                }
 
-            if result.is_err() {
-                return Err("Failed to set registry value".to_string());
+                let result = if enabled {
+                    let app_path_wide: Vec<u16> = std::ffi::OsStr::new(&app_path)
+                        .encode_wide()
+                        .chain(std::iter::once(0))
+                        .collect();
+                    RegSetValueExW(
+                        hkey,
+                        PCWSTR(value_name.as_ptr()),
+                        None,
+                        REG_SZ,
+                        Some(std::slice::from_raw_parts(
+                            app_path_wide.as_ptr() as *const u8,
+                            app_path_wide.len() * 2,
+                        )),
+                    )
+                } else {
+                    RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()))
+                };
+
+                let _ = RegCloseKey(hkey);
+
+                if result.is_err() {
+                    return Err("Failed to set registry value".to_string());
+                }
             }
-        }
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
     }
 
     // macOS: write/remove a LaunchAgent plist that launches the app at login.
     #[cfg(target_os = "macos")]
     {
-        let label = "com.verenu.app";
-        let domain = format!("gui/{}", unsafe { libc::getuid() });
-        let service_target = format!("{domain}/{label}");
-        let home = _app
-            .path()
-            .home_dir()
-            .map_err(|e| format!("Failed to get home directory: {e}"))?;
-        let dir = home.join("Library/LaunchAgents");
-        let plist_path = dir.join(format!("{label}.plist"));
+        let app_handle = _app.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let label = "com.verenu.app";
+            let domain = format!("gui/{}", unsafe { libc::getuid() });
+            let service_target = format!("{domain}/{label}");
+            let home = app_handle
+                .path()
+                .home_dir()
+                .map_err(|e| format!("Failed to get home directory: {e}"))?;
+            let dir = home.join("Library/LaunchAgents");
+            let plist_path = dir.join(format!("{label}.plist"));
 
-        if enabled {
-            let app_path = std::env::current_exe()
-                .map_err(|e| format!("Failed to get executable path: {e}"))?
-                .to_string_lossy()
-                .to_string();
-            let mut use_open = false;
-            let mut target_path = app_path.clone();
-            if let Some(index) = app_path.find(".app/Contents/MacOS/") {
-                target_path = app_path[..index + 4].to_string();
-                use_open = true;
-            }
+            if enabled {
+                let app_path = std::env::current_exe()
+                    .map_err(|e| format!("Failed to get executable path: {e}"))?
+                    .to_string_lossy()
+                    .to_string();
+                let mut use_open = false;
+                let mut target_path = app_path.clone();
+                if let Some(index) = app_path.find(".app/Contents/MacOS/") {
+                    target_path = app_path[..index + 4].to_string();
+                    use_open = true;
+                }
 
-            let escaped_target_path = target_path
-                .replace('&', "&amp;")
-                .replace('<', "&lt;")
-                .replace('>', "&gt;");
-            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let plist = if use_open {
-                format!(
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-                     <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-                     <plist version=\"1.0\">\n\
-                     <dict>\n\
-                       <key>Label</key><string>{label}</string>\n\
-                       <key>ProgramArguments</key><array><string>open</string><string>-g</string><string>{escaped_target_path}</string></array>\n\
-                       <key>RunAtLoad</key><true/>\n\
-                     </dict>\n\
-                     </plist>\n"
-                )
+                let escaped_target_path = target_path
+                    .replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;");
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                let plist = if use_open {
+                    format!(
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+                         <plist version=\"1.0\">\n\
+                         <dict>\n\
+                           <key>Label</key><string>{label}</string>\n\
+                           <key>ProgramArguments</key><array><string>open</string><string>-g</string><string>{escaped_target_path}</string></array>\n\
+                           <key>RunAtLoad</key><true/>\n\
+                         </dict>\n\
+                         </plist>\n"
+                    )
+                } else {
+                    format!(
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+                         <plist version=\"1.0\">\n\
+                         <dict>\n\
+                           <key>Label</key><string>{label}</string>\n\
+                           <key>ProgramArguments</key><array><string>{escaped_target_path}</string></array>\n\
+                           <key>RunAtLoad</key><true/>\n\
+                         </dict>\n\
+                         </plist>\n"
+                    )
+                };
+                std::fs::write(&plist_path, plist).map_err(|e| e.to_string())?;
+                let _ = launchctl_bootout(&service_target);
+                launchctl_bootstrap(&domain, &plist_path)?;
             } else {
-                format!(
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-                     <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-                     <plist version=\"1.0\">\n\
-                     <dict>\n\
-                       <key>Label</key><string>{label}</string>\n\
-                       <key>ProgramArguments</key><array><string>{escaped_target_path}</string></array>\n\
-                       <key>RunAtLoad</key><true/>\n\
-                     </dict>\n\
-                     </plist>\n"
-                )
-            };
-            std::fs::write(&plist_path, plist).map_err(|e| e.to_string())?;
-            let _ = launchctl_bootout(&service_target);
-            launchctl_bootstrap(&domain, &plist_path)?;
-        } else {
-            let _ = launchctl_bootout(&service_target);
-            if plist_path.exists() {
-                std::fs::remove_file(&plist_path).map_err(|e| e.to_string())?;
+                let _ = launchctl_bootout(&service_target);
+                if plist_path.exists() {
+                    std::fs::remove_file(&plist_path).map_err(|e| e.to_string())?;
+                }
             }
-        }
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
     }
 
     let store = _app.store("settings.json").map_err(|e| e.to_string())?;

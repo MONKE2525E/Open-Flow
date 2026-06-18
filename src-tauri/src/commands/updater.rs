@@ -36,20 +36,7 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-        let _ = &app; // AppHandle kept in the signature for cross-platform parity
-
-        // Back up the database before touching anything. Derive the path from the
-        // canonical app-data helper (NOT app.path().app_data_dir(), which resolves
-        // against the bundle identifier and may point at a different file).
-        let db_path = crate::app_db_path();
-        if db_path.exists() {
-            let db = app.state::<DbHandle>().inner().clone();
-            let lock_result = db.lock();
-            if let Ok(conn) = lock_result {
-                let backup_path = db_path.with_extension("db.bak");
-                let _ = backup_sqlite_database(&conn, &backup_path);
-            }
-        }
+        let db = app.state::<DbHandle>().inner().clone();
 
         let bytes = crate::api::client::get()
             .get(&download_url)
@@ -62,29 +49,51 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
             .await
             .map_err(|e| e.to_string())?;
 
-        let installer = std::env::temp_dir().join("verenu-update.exe");
-        let mut f = std::fs::File::create(&installer).map_err(|e| e.to_string())?;
-        f.write_all(&bytes).map_err(|e| e.to_string())?;
-        drop(f);
+        // Everything from here on is blocking file/registry/process I/O -
+        // run it off the async executor so it can't stall other Tokio tasks
+        // (audio capture, hotkey handling, etc.) while the installer stages.
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            // Back up the database before touching anything. Derive the path from
+            // the canonical app-data helper (NOT app.path().app_data_dir(), which
+            // resolves against the bundle identifier and may point at a different
+            // file).
+            let db_path = crate::app_db_path();
+            if db_path.exists() {
+                let lock_result = db.lock();
+                if let Ok(conn) = lock_result {
+                    let backup_path = db_path.with_extension("db.bak");
+                    let _ = backup_sqlite_database(&conn, &backup_path);
+                }
+            }
 
-        // Batch launcher: waits for this process to exit, runs the installer silently,
-        // then relaunches the app. cmd.exe avoids PowerShell execution-policy issues;
-        // CREATE_NO_WINDOW suppresses any console flash.
-        let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let script = format!(
-            "@echo off\r\ntimeout /t 2 /nobreak >nul\r\n\"{}\" /S\r\nstart \"\" \"{}\"\r\n",
-            installer.display(),
-            current_exe.display()
-        );
-        let script_path = std::env::temp_dir().join("verenu-updater.cmd");
-        std::fs::write(&script_path, &script).map_err(|e| e.to_string())?;
+            let installer = std::env::temp_dir().join("verenu-update.exe");
+            let mut f = std::fs::File::create(&installer).map_err(|e| e.to_string())?;
+            f.write_all(&bytes).map_err(|e| e.to_string())?;
+            drop(f);
 
-        std::process::Command::new("cmd")
-            .arg("/c")
-            .arg(&script_path)
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+            // Batch launcher: waits for this process to exit, runs the installer
+            // silently, then relaunches the app. cmd.exe avoids PowerShell
+            // execution-policy issues; CREATE_NO_WINDOW suppresses any console flash.
+            let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let script = format!(
+                "@echo off\r\ntimeout /t 2 /nobreak >nul\r\n\"{}\" /S\r\nstart \"\" \"{}\"\r\n",
+                installer.display(),
+                current_exe.display()
+            );
+            let script_path = std::env::temp_dir().join("verenu-updater.cmd");
+            std::fs::write(&script_path, &script).map_err(|e| e.to_string())?;
+
+            std::process::Command::new("cmd")
+                .arg("/c")
+                .arg(&script_path)
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
 
         // Exit immediately so the binary is free before the installer starts.
         std::process::exit(0)
