@@ -16,7 +16,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-ico", "macos-private-api"] }
 tauri-plugin-store       = "2"
-tauri-plugin-global-shortcut = "2"
 tauri-plugin-shell       = "2"
 tauri-plugin-single-instance = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
