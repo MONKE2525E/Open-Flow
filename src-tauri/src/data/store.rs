@@ -38,6 +38,7 @@ pub const MACOS_CLIPBOARD_SNIFF: &str = "macos_clipboard_sniff_enabled";
 pub const UPDATE_DISMISSED_VERSION: &str = "update_dismissed_version";
 pub const HISTORY_RETENTION: &str = "history_retention";
 pub const AUTOSTART_ENABLED: &str = "autostart_enabled";
+pub const CAPS_LOCK_UPPERCASE: &str = "caps_lock_uppercase_enabled";
 
 /// Maps a `history_retention` setting value to a day count. `None` means
 /// "Forever" (or an unrecognized value) — never prune.
@@ -72,6 +73,7 @@ pub struct PipelineConfig {
     pub auto_learn_enabled: bool,
     pub contextual_caps_enabled: bool,
     pub auto_spacing_enabled: bool,
+    pub caps_lock_uppercase_enabled: bool,
     pub macos_clipboard_sniff_enabled: bool,
     pub advanced_model_ui: bool,
     pub cleanup_prompt_overrides: std::collections::HashMap<String, String>,
@@ -317,6 +319,10 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             .get(AUTO_SPACING)
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
+        caps_lock_uppercase_enabled: store
+            .get(CAPS_LOCK_UPPERCASE)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         macos_clipboard_sniff_enabled: store
             .get(MACOS_CLIPBOARD_SNIFF)
             .and_then(|v| v.as_bool())

@@ -7,6 +7,7 @@
     noise: boolean;
     caps: boolean;
     autoSpacing: boolean;
+    capsLock: boolean;
     appContextHint: boolean;
     autoLearn: boolean;
     autostart: boolean;
@@ -92,6 +93,15 @@
           </div>
           <div class="qs-toggle" class:on={quickPrefs.autoSpacing} role="switch" aria-checked={quickPrefs.autoSpacing} aria-label="Automatic spacing" tabindex="0"
             onclick={() => toggle('autoSpacing')} onkeydown={handleKeydown} onkeyup={(e) => handleKeyup(e, 'autoSpacing')}
+          ></div>
+        </div>
+        <div class="qs-toggle-row">
+          <div>
+            <div class="qs-toggle-label">Automatic caps lock detection</div>
+            <div class="qs-toggle-desc">Output ALL CAPS when Caps Lock is on</div>
+          </div>
+          <div class="qs-toggle" class:on={quickPrefs.capsLock} role="switch" aria-checked={quickPrefs.capsLock} aria-label="Automatic caps lock detection" tabindex="0"
+            onclick={() => toggle('capsLock')} onkeydown={handleKeydown} onkeyup={(e) => handleKeyup(e, 'capsLock')}
           ></div>
         </div>
         <div class="qs-toggle-row">

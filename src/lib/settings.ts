@@ -41,6 +41,7 @@ type SettingsValueMap = {
   auto_learn_enabled: boolean;
   contextual_caps_enabled: boolean;
   auto_spacing_enabled: boolean;
+  caps_lock_uppercase_enabled: boolean;
   history_retention: HistoryRetention;
   microphone_device: string | null;
   update_dismissed_version: string | null;

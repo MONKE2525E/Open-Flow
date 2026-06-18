@@ -29,6 +29,7 @@
   let cleanup = $state(true);
   let contextualCaps = $state(true);
   let autoSpacing = $state(true);
+  let capsLockUppercase = $state(false);
   let hotkey = $state(defaultHotkey);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
@@ -118,6 +119,7 @@
       invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
+      invoke<boolean | null>('get_setting', { key: 'caps_lock_uppercase_enabled' }),
       invoke<string[]>('get_microphones'),
       invoke<string | null>('get_setting', { key: 'microphone_device' }),
     ]);
@@ -129,6 +131,7 @@
     cleanup = val<boolean | null>(4, null) ?? true;
     contextualCaps = val<boolean | null>(5, null) ?? true;
     autoSpacing = val<boolean | null>(6, null) ?? true;
+    capsLockUppercase = val<boolean | null>(7, null) ?? false;
 
     const hk = val<string[] | null>(1, null);
     if (hk && hk.length === 2) hotkey = hk;
@@ -143,8 +146,8 @@
       selectedLanguage = language;
     }
 
-    microphones = val<string[]>(7, []);
-    selectedMic = val<string | null>(8, null) ?? '';
+    microphones = val<string[]>(8, []);
+    selectedMic = val<string | null>(9, null) ?? '';
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
@@ -215,6 +218,16 @@
     } catch (err) {
       autoSpacing = !value;
       console.error('save auto_spacing_enabled failed:', err);
+    }
+  }
+
+  async function handleCapsLockUppercase(value: boolean) {
+    capsLockUppercase = value;
+    try {
+      await saveSetting('caps_lock_uppercase_enabled', value);
+    } catch (err) {
+      capsLockUppercase = !value;
+      console.error('save caps_lock_uppercase_enabled failed:', err);
     }
   }
 
@@ -452,6 +465,10 @@
 <div class="setting-row">
   <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
   <Toggle checked={autoSpacing} onchange={handleAutoSpacing} label="Automatic spacing" />
+</div>
+<div class="setting-row">
+  <div><div class="label">Automatic caps lock detection</div><div class="desc">When Caps Lock is on, output your dictation in ALL CAPS</div></div>
+  <Toggle checked={capsLockUppercase} onchange={handleCapsLockUppercase} label="Automatic caps lock detection" />
 </div>
 
 <style>

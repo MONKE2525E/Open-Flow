@@ -58,6 +58,7 @@
     noise: true,
     caps: true,
     autoSpacing: true,
+    capsLock: false,
     appContextHint: false,
     autoLearn: false,
     autostart: false,
@@ -79,7 +80,7 @@
     try {
       const [
         savedAppearance, savedLanguage, savedProvider, savedIntensity, savedTone, keyStatus,
-        savedCleanup, savedNoise, savedCaps, savedAutoSpacing, savedAppContextHint, savedAutoLearn, savedMute, savedAutostart,
+        savedCleanup, savedNoise, savedCaps, savedAutoSpacing, savedCapsLock, savedAppContextHint, savedAutoLearn, savedMute, savedAutostart,
       ] = await Promise.all([
         invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
         invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
@@ -91,6 +92,7 @@
         invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
         invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
         invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
+        invoke<boolean | null>('get_setting', { key: 'caps_lock_uppercase_enabled' }),
         invoke<boolean | null>('get_setting', { key: 'app_context_hint' }),
         invoke<boolean | null>('get_setting', { key: 'auto_learn_enabled' }),
         invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
@@ -107,6 +109,7 @@
         noise: savedNoise ?? quickPrefs.noise,
         caps: savedCaps ?? quickPrefs.caps,
         autoSpacing: savedAutoSpacing ?? quickPrefs.autoSpacing,
+        capsLock: savedCapsLock ?? quickPrefs.capsLock,
         appContextHint: savedAppContextHint ?? quickPrefs.appContextHint,
         autoLearn: savedAutoLearn ?? quickPrefs.autoLearn,
         autostart: savedAutostart ?? quickPrefs.autostart,
@@ -181,6 +184,7 @@
       await saveSetting('noise_reduction', quickPrefs.noise);
       await saveSetting('contextual_caps_enabled', quickPrefs.caps);
       await saveSetting('auto_spacing_enabled', quickPrefs.autoSpacing);
+      await saveSetting('caps_lock_uppercase_enabled', quickPrefs.capsLock);
       await saveSetting('app_context_hint', quickPrefs.appContextHint);
       await saveSetting('auto_learn_enabled', quickPrefs.autoLearn);
       await saveSetting('mute_audio', quickPrefs.muteAudio);

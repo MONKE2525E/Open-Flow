@@ -119,6 +119,11 @@ static K1_REGULAR_DOWN: AtomicBool = AtomicBool::new(false);
 static K2_REGULAR_DOWN: AtomicBool = AtomicBool::new(false);
 static SYNTHETIC_PASTE_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
 
+// Updated from every real keyboard/flags event the tap observes (see the tap
+// callback below). Backs `caps_lock_is_on()` for the optional caps-lock
+// output-uppercasing setting.
+static CAPS_LOCK_ON: AtomicBool = AtomicBool::new(false);
+
 #[derive(Clone, Copy)]
 struct HotkeyEvent {
     etype: CGEventType,
@@ -178,6 +183,11 @@ pub fn reset_chord_state() {
 
 pub fn set_handless_active(v: bool) {
     HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
+}
+
+/// Current Caps Lock toggle state, tracked from the event tap's flags.
+pub fn caps_lock_is_on() -> bool {
+    CAPS_LOCK_ON.load(Ordering::SeqCst)
 }
 
 /// A chord is registrable as long as the trigger key maps to a known id.
@@ -342,8 +352,10 @@ where
                                 }
                                 actual_len = out_len.min(text.len() as libc::c_ulong) as u8;
                             }
+                            let flags_bits = event.get_flags().bits();
+                            CAPS_LOCK_ON.store(flags_bits & FLAG_ALPHASHIFT != 0, Ordering::SeqCst);
                             (
-                                event.get_flags().bits(),
+                                flags_bits,
                                 event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
                                 text,
                                 actual_len,
