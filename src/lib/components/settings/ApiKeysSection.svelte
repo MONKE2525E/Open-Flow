@@ -111,8 +111,14 @@
       <div class="label">
         <span class="key-logo">{@html getProviderLogo(item.id)}</span>
         {item.label}
-        {#if keyStatus[item.id]}
-          <span class="key-saved">● saved</span>
+        {#if keyValidation[item.id].status === 'invalid'}
+          <span class="key-status failed" title={keyValidation[item.id].message}>
+            <span class="key-status-dot"></span>failed
+          </span>
+        {:else if keyStatus[item.id]}
+          <span class="key-status saved" title={keyValidation[item.id].message || 'Key saved'}>
+            <span class="key-status-dot"></span>saved
+          </span>
         {/if}
       </div>
       <div class="desc">{item.models}</div>
@@ -148,15 +154,6 @@
     {#if keyErrors[item.id]}
       <p class="key-error">{keyErrors[item.id]}</p>
     {/if}
-    {#if keyValidation[item.id].status !== 'idle' && keyValidation[item.id].status !== 'checking'}
-      <p
-        class="key-validation"
-        class:valid={keyValidation[item.id].status === 'valid'}
-        class:failed={keyValidation[item.id].status === 'invalid'}
-      >
-        {keyValidation[item.id].status === 'valid' ? 'Key verified.' : keyValidation[item.id].message}
-      </p>
-    {/if}
   </div>
 {/each}
 
@@ -173,13 +170,47 @@
   }
   .key-logo :global(svg) { width: 100%; height: 100%; }
   .key-right { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
-  .key-saved {
+  /* Inline status chip next to the provider name — saved (green) / failed (red).
+     Slides + pops in; the failed dot pulses a ring twice to draw the eye. */
+  .key-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 8px;
     font-family: var(--mono);
     font-size: 10px;
-    color: var(--success);
     font-weight: 400;
-    margin-left: 6px;
     letter-spacing: 0.02em;
+    animation: status-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .key-status.saved { color: var(--success); }
+  .key-status.failed { color: var(--danger); }
+  .key-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+    animation: dot-pop 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .key-status.failed .key-status-dot {
+    animation:
+      dot-pop 0.3s cubic-bezier(0.22, 1, 0.36, 1) both,
+      dot-pulse 1.1s ease-out 0.18s 2;
+  }
+  @keyframes status-in {
+    from { opacity: 0; transform: translateX(-5px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes dot-pop {
+    from { transform: scale(0); }
+    60% { transform: scale(1.3); }
+    to { transform: scale(1); }
+  }
+  @keyframes dot-pulse {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger) 50%, transparent); }
+    70% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--danger) 0%, transparent); }
+    100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger) 0%, transparent); }
   }
   .key-input {
     font-family: var(--mono);
@@ -264,17 +295,11 @@
     font-size: 11px;
     color: var(--danger);
   }
-  .key-validation {
-    width: 100%;
-    margin: 4px 0 0;
-    font-size: 11px;
-    color: var(--warning);
-  }
-  .key-validation.valid { color: var(--success); }
-  .key-validation.failed { color: var(--danger); }
 
   @media (prefers-reduced-motion: reduce) {
     .flip-btn { transition: none; }
-    .key-input.failed { animation: none; }
+    .key-input.failed,
+    .key-status,
+    .key-status-dot { animation: none; }
   }
 </style>
