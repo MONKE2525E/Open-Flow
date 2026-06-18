@@ -310,7 +310,7 @@ class SettingsContractSyncCheck(PythonTest):
         t0 = time.monotonic()
         rust_path = ROOT / "src-tauri" / "src" / "data" / "store.rs"
         ts_path = ROOT / "src" / "lib" / "settings.ts"
-        all_settings_path = ROOT / "src-tauri" / "src" / "commands" / "mod.rs"
+        all_settings_path = ROOT / "src-tauri" / "src" / "commands" / "settings.rs"
 
         rust_text = rust_path.read_text(encoding="utf-8")
         ts_text = ts_path.read_text(encoding="utf-8")
@@ -334,7 +334,7 @@ class SettingsContractSyncCheck(PythonTest):
 
         payload_match = re.search(r"pub struct AllSettings \{(.*?)\n\}", all_settings_text, re.S)
         if not payload_match:
-            return TestResult(False, "Could not parse AllSettings in commands/mod.rs", time.monotonic() - t0)
+            return TestResult(False, "Could not parse AllSettings in commands/settings.rs", time.monotonic() - t0)
         payload_keys = {
             match.group(1)
             for match in re.finditer(r"pub ([a-zA-Z0-9_]+):", payload_match.group(1))
