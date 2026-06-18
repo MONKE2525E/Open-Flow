@@ -186,7 +186,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         groq: false,
         openai: false,
         google: false,
-        ...(getDevSetting('__api_key_status') as Record<string, boolean> | null),
+        ...(getDevSetting('__provider_connected') as Record<string, boolean> | null),
       } as T;
     case 'validate_api_key':
       return { ok: true, status: 'valid', message: 'Key verified (dev mode).' } as T;
@@ -221,8 +221,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       // (saved indicator + Save⇄Clear flip) is actually demoable in browser dev.
       const provider = String(args?.provider ?? '');
       if (provider) {
-        const current = (getDevSetting('__api_key_status') as Record<string, boolean> | null) ?? {};
-        writeDevSetting('__api_key_status', { ...current, [provider]: command === 'save_api_key' });
+        const current = (getDevSetting('__provider_connected') as Record<string, boolean> | null) ?? {};
+        writeDevSetting('__provider_connected', { ...current, [provider]: command === 'save_api_key' });
       }
       return undefined as T;
     }
