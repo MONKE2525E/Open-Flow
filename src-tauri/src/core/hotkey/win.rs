@@ -221,7 +221,15 @@ pub fn set_handless_active(v: bool) {
 
 /// Current Caps Lock toggle state, tracked from the hook thread.
 pub fn caps_lock_is_on() -> bool {
-    CAPS_LOCK_ON.load(Ordering::SeqCst)
+    if CAPS_LOCK_OBSERVED.load(Ordering::SeqCst) {
+        return CAPS_LOCK_ON.load(Ordering::SeqCst);
+    }
+    // The low-level hook hasn't seen a key event yet, so the cached value is
+    // meaningless (it would default to `false`). Fall back to a direct toggle-bit
+    // read. This can be momentarily stale relative to the hook thread's message
+    // queue, but it matches the synchronous accuracy of the macOS path and is far
+    // better than always reporting "off" before the first keystroke.
+    unsafe { (GetKeyState(0x14) & 0x0001) != 0 }
 }
 
 #[allow(dead_code)]
@@ -306,6 +314,9 @@ static CANCEL_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::
 // Backs `caps_lock_is_on()` for the optional caps-lock output-uppercasing
 // setting.
 static CAPS_LOCK_ON: AtomicBool = AtomicBool::new(false);
+// Whether the hook has ever stored a caps-lock reading. Until it has, `CAPS_LOCK_ON`
+// is just its `false` default, so `caps_lock_is_on()` must read the key state directly.
+static CAPS_LOCK_OBSERVED: AtomicBool = AtomicBool::new(false);
 
 static CHORD_DOWN: AtomicBool = AtomicBool::new(false);
 static HANDLESS_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -333,6 +344,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         // This thread pumps messages (see `start`'s GetMessageW loop), so
         // GetKeyState's toggle bit is reliably in sync here.
         CAPS_LOCK_ON.store((GetKeyState(0x14) & 0x0001) != 0, Ordering::SeqCst);
+        CAPS_LOCK_OBSERVED.store(true, Ordering::SeqCst);
 
         let k1 = KEY1.load(Ordering::Relaxed);
         let k2 = KEY2.load(Ordering::Relaxed);

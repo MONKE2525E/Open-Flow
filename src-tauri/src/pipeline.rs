@@ -870,7 +870,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // Read once, synchronously, as close to the hotkey-release moment as
     // possible — the rest of the pipeline is async and the user may keep
     // typing (toggling Caps Lock) while it runs.
-    let caps_lock_on = crate::system::keyboard::caps_lock_is_on();
+    let caps_lock_on = crate::core::hotkey::caps_lock_is_on();
 
     let process_name = window_context::get_active_process_name()
         .unwrap_or_else(|| "unknown".into())
