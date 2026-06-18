@@ -67,7 +67,7 @@
   const model = $derived(cleanupPromptEditor.model!);
 
   const providerLabel = $derived(
-    provider === 'groq' ? 'Groq' : provider === 'openai' ? 'OpenAI' : 'Google'
+    provider === 'groq' ? 'Groq' : provider === 'openai' ? 'OpenAI' : 'Gemini'
   );
 
   const statusKind = $derived((): 'clean' | 'warn' | 'error' | 'testing' | 'passed' => {
