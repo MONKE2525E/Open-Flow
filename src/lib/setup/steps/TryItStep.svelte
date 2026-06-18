@@ -74,26 +74,34 @@
   onMount(() => {
     textareaEl?.focus();
 
+    let destroyed = false;
     let unlistenTranscribed: (() => void) | undefined;
     let unlistenError: (() => void) | undefined;
 
-    (async () => {
-      unlistenTranscribed = await listen<string>('verenu:transcribed', (ev) => {
-        errorMessage = '';
-        // Real Ctrl+V into the focused textarea should have already landed via bind:value.
-        // If it didn't (focus lost mid-paste, etc.), fall back to the event payload directly.
-        setTimeout(() => {
-          if (!sampleText.trim() && ev.payload) sampleText = ev.payload;
-        }, 150);
-      });
-      unlistenError = await listen<string>('verenu:error', (ev) => {
-        errorMessage = ev.payload || 'Something went wrong with that recording.';
-      });
-    })();
+    listen<string>('verenu:transcribed', (ev) => {
+      errorMessage = '';
+      // Real Ctrl+V into the focused textarea should have already landed via bind:value.
+      // If it didn't (focus lost mid-paste, etc.), fall back to the event payload directly.
+      setTimeout(() => {
+        if (!sampleText.trim() && ev.payload) sampleText = ev.payload;
+      }, 150);
+    }).then((unsub) => {
+      if (destroyed) unsub();
+      else unlistenTranscribed = unsub;
+    });
+
+    listen<string>('verenu:error', (ev) => {
+      errorMessage = ev.payload || 'Something went wrong with that recording.';
+    }).then((unsub) => {
+      if (destroyed) unsub();
+      else unlistenError = unsub;
+    });
+
     window.addEventListener('keydown', handleSetupTryKeydown, { capture: true });
     window.addEventListener('keyup', handleSetupTryKeyup, { capture: true });
 
     return () => {
+      destroyed = true;
       if (localRecording) void stopLocalRecording();
       unlistenTranscribed?.();
       unlistenError?.();

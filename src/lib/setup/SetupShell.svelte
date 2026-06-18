@@ -54,6 +54,7 @@
               class="dot"
               class:active={i + 1 === step}
               class:done={i + 1 < step}
+              disabled={i + 1 > step}
               onclick={() => onDotClick(i + 1)}
               aria-label="Step {i + 1}"
             ></button>

@@ -182,9 +182,9 @@ pub async fn validate_api_key(
         store::OPENAI => client
             .get("https://api.openai.com/v1/models")
             .bearer_auth(trimmed),
-        store::GOOGLE => client.get(format!(
-            "https://generativelanguage.googleapis.com/v1beta/models?key={trimmed}"
-        )),
+        store::GOOGLE => client
+            .get("https://generativelanguage.googleapis.com/v1beta/models")
+            .header("x-goog-api-key", trimmed),
         _ => return Err(format!("Unknown provider: {provider}")),
     };
 
