@@ -35,33 +35,46 @@
     }
   }
 
-  async function testKey(provider: ProviderId, key: string) {
-    if (!key.trim()) return;
-    keyValidation[provider] = { status: 'checking', message: '' };
-    try {
-      const result = await invoke<{ ok: boolean; status: 'valid' | 'invalid' | 'unknown'; message: string }>('validate_api_key', { provider, key: key.trim() });
-      keyValidation[provider] = { status: result.status, message: result.message };
-    } catch {
-      keyValidation[provider] = { status: 'unknown', message: "Couldn't verify the key right now." };
-    }
-  }
-
+  // Save now tests first: a definitively-rejected key (401/403) is never persisted.
   async function saveKey(provider: ProviderId) {
     const key = draftKeys[provider].trim();
     if (!key) return;
     keyErrors[provider] = '';
+    keyValidation[provider] = { status: 'checking', message: '' };
     keySaving[provider] = true;
     try {
+      let validation: { status: 'valid' | 'invalid' | 'unknown'; message: string };
+      try {
+        const result = await invoke<{ ok: boolean; status: 'valid' | 'invalid' | 'unknown'; message: string }>('validate_api_key', { provider, key });
+        validation = { status: result.status, message: result.message };
+      } catch {
+        validation = { status: 'unknown', message: "Couldn't verify the key right now." };
+      }
+
+      // Definitive rejection — don't store it, surface the failure in red.
+      if (validation.status === 'invalid') {
+        keyValidation[provider] = validation;
+        return;
+      }
+
       await invoke('save_api_key', { provider, key });
       const status = await loadKeyStatus();
-      if (status[provider]) {
-        draftKeys[provider] = '';
-        void testKey(provider, key);
-      } else {
+      if (!status[provider]) {
+        keyValidation[provider] = { status: 'idle', message: '' };
         keyErrors[provider] = 'The key did not persist after saving. Please try again.';
+        return;
       }
+
+      draftKeys[provider] = '';
+      // 'unknown' = couldn't reach the provider; we saved it anyway (might be fine)
+      // but say so plainly instead of claiming it's verified.
+      keyValidation[provider] =
+        validation.status === 'valid'
+          ? { status: 'valid', message: 'Key verified.' }
+          : { status: 'unknown', message: "Saved, but couldn't verify it right now." };
     } catch (e) {
       console.error('save_api_key failed', e);
+      keyValidation[provider] = { status: 'idle', message: '' };
       keyErrors[provider] = 'Could not save this key locally. Please try again.';
     } finally {
       keySaving[provider] = false;
@@ -108,35 +121,39 @@
       <input
         type="password"
         class="key-input"
+        class:failed={keyValidation[item.id].status === 'invalid'}
         placeholder={keyStatus[item.id] ? '••••••••••••' : item.ph}
         bind:value={draftKeys[item.id]}
         onkeydown={(e) => e.key === 'Enter' && saveKey(item.id)}
         autocomplete="off"
-        aria-invalid={keyErrors[item.id] ? 'true' : 'false'}
+        aria-invalid={keyErrors[item.id] || keyValidation[item.id].status === 'invalid' ? 'true' : 'false'}
       />
-      <button
-        class="btn-ghost"
-        onclick={() => testKey(item.id, draftKeys[item.id])}
-        disabled={!draftKeys[item.id].trim() || keySaving[item.id] || keyValidation[item.id].status === 'checking'}
-      >{keyValidation[item.id].status === 'checking' ? 'Testing…' : 'Test'}</button>
-      <button
-        class="btn-ghost"
-        onclick={() => saveKey(item.id)}
-        disabled={!draftKeys[item.id].trim() || keySaving[item.id]}
-      >{keySaving[item.id] ? 'Saving…' : 'Save'}</button>
-      {#if keyStatus[item.id]}
+      <div class="flip-btn" class:flipped={keyStatus[item.id]}>
         <button
-          class="btn-ghost btn-clear"
+          class="btn-ghost flip-face front"
+          onclick={() => saveKey(item.id)}
+          disabled={keyStatus[item.id] || !draftKeys[item.id].trim() || keySaving[item.id]}
+          tabindex={keyStatus[item.id] ? -1 : 0}
+          aria-hidden={keyStatus[item.id] ? 'true' : 'false'}
+        >{keySaving[item.id] ? 'Saving…' : 'Save'}</button>
+        <button
+          class="btn-ghost btn-clear flip-face back"
           onclick={() => clearKey(item.id)}
-          disabled={keySaving[item.id]}
+          disabled={!keyStatus[item.id] || keySaving[item.id]}
+          tabindex={keyStatus[item.id] ? 0 : -1}
+          aria-hidden={keyStatus[item.id] ? 'false' : 'true'}
         >Clear</button>
-      {/if}
+      </div>
     </div>
     {#if keyErrors[item.id]}
       <p class="key-error">{keyErrors[item.id]}</p>
     {/if}
     {#if keyValidation[item.id].status !== 'idle' && keyValidation[item.id].status !== 'checking'}
-      <p class="key-validation" class:valid={keyValidation[item.id].status === 'valid'}>
+      <p
+        class="key-validation"
+        class:valid={keyValidation[item.id].status === 'valid'}
+        class:failed={keyValidation[item.id].status === 'invalid'}
+      >
         {keyValidation[item.id].status === 'valid' ? 'Key verified.' : keyValidation[item.id].message}
       </p>
     {/if}
@@ -203,6 +220,44 @@
     background: var(--danger-bg);
     border-color: var(--danger-line);
   }
+
+  /* Save ⇄ Clear split-flap flip. Both faces share one grid cell so the
+     container auto-sizes to the wider face; the whole thing rotates on X. */
+  .flip-btn {
+    display: inline-grid;
+    min-width: 72px;
+    flex-shrink: 0;
+    transform-style: preserve-3d;
+    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .flip-btn.flipped { transform: rotateX(180deg); }
+  .flip-face {
+    grid-area: 1 / 1;
+    width: 100%;
+    text-align: center;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+  }
+  .flip-face.back { transform: rotateX(180deg); }
+
+  /* Failure feedback: red border + one-shot shake when a key is rejected. */
+  .key-input[aria-invalid='true'] { border-color: var(--danger); }
+  .key-input.failed {
+    border-color: var(--danger);
+    animation: key-shake 0.4s ease;
+  }
+  .key-input.failed:focus {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent);
+  }
+  @keyframes key-shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-4px); }
+    40% { transform: translateX(4px); }
+    60% { transform: translateX(-3px); }
+    80% { transform: translateX(2px); }
+  }
+
   .key-error {
     width: 100%;
     margin: 4px 0 0;
@@ -216,4 +271,10 @@
     color: var(--warning);
   }
   .key-validation.valid { color: var(--success); }
+  .key-validation.failed { color: var(--danger); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .flip-btn { transition: none; }
+    .key-input.failed { animation: none; }
+  }
 </style>

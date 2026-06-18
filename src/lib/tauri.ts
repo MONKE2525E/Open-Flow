@@ -182,7 +182,12 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'count_old_transcriptions':
       return 0 as T;
     case 'get_api_key_status':
-      return { groq: false, openai: false, google: false } as T;
+      return {
+        groq: false,
+        openai: false,
+        google: false,
+        ...(getDevSetting('__api_key_status') as Record<string, boolean> | null),
+      } as T;
     case 'validate_api_key':
       return { ok: true, status: 'valid', message: 'Key verified (dev mode).' } as T;
     case 'get_accessibility_permission_status':
@@ -211,7 +216,16 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'stop_and_transcribe_input':
       return '' as T;
     case 'save_api_key':
-    case 'delete_api_key':
+    case 'delete_api_key': {
+      // Round-trip "saved" state through dev storage so the API Keys section
+      // (saved indicator + Save⇄Clear flip) is actually demoable in browser dev.
+      const provider = String(args?.provider ?? '');
+      if (provider) {
+        const current = (getDevSetting('__api_key_status') as Record<string, boolean> | null) ?? {};
+        writeDevSetting('__api_key_status', { ...current, [provider]: command === 'save_api_key' });
+      }
+      return undefined as T;
+    }
     case 'set_autostart':
     case 'save_hotkey':
     case 'hide_main':
