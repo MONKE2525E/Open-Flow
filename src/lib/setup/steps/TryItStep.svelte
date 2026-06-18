@@ -13,6 +13,7 @@
   let localRecording = false;
   let localStartInFlight = false;
   let pressedHotkeyCodes = new Set<string>();
+  let destroyed = false;
 
   let status = $derived(sampleText.trim().length > 0 ? 'success' : 'waiting');
 
@@ -27,14 +28,18 @@
   }
 
   async function startLocalRecording() {
-    if (localRecording || localStartInFlight) return;
+    if (localRecording || localStartInFlight || destroyed) return;
     localStartInFlight = true;
     errorMessage = '';
     try {
       await invoke('start_setup_try_recording');
+      if (destroyed) {
+        void invoke('stop_setup_try_recording');
+        return;
+      }
       localRecording = true;
     } catch (err) {
-      if (!String(err).includes('Already recording')) {
+      if (!destroyed && !String(err).includes('Already recording')) {
         errorMessage = String(err || 'Failed to start recording.');
       }
     } finally {
@@ -74,11 +79,11 @@
   onMount(() => {
     textareaEl?.focus();
 
-    let destroyed = false;
     let unlistenTranscribed: (() => void) | undefined;
     let unlistenError: (() => void) | undefined;
 
     listen<string>('verenu:transcribed', (ev) => {
+      if (destroyed) return;
       errorMessage = '';
       // Real Ctrl+V into the focused textarea should have already landed via bind:value.
       // If it didn't (focus lost mid-paste, etc.), fall back to the event payload directly.
@@ -91,6 +96,7 @@
     });
 
     listen<string>('verenu:error', (ev) => {
+      if (destroyed) return;
       errorMessage = ev.payload || 'Something went wrong with that recording.';
     }).then((unsub) => {
       if (destroyed) unsub();
@@ -102,7 +108,7 @@
 
     return () => {
       destroyed = true;
-      if (localRecording) void stopLocalRecording();
+      if (localRecording || localStartInFlight) void invoke('stop_setup_try_recording');
       unlistenTranscribed?.();
       unlistenError?.();
       window.removeEventListener('keydown', handleSetupTryKeydown, { capture: true });
