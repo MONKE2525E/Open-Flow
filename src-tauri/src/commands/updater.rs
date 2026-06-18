@@ -104,8 +104,14 @@ pub fn backup_sqlite_database(
     let mut backup_conn = rusqlite::Connection::open(backup_path).map_err(|e| e.to_string())?;
     let backup =
         rusqlite::backup::Backup::new(conn, &mut backup_conn).map_err(|e| e.to_string())?;
-    backup
-        .run_to_completion(5, std::time::Duration::from_millis(250), None)
-        .map_err(|e| e.to_string())
+    // A negative page count backs up everything in one step instead of the
+    // paced small-batch-with-delay loop run_to_completion uses for live
+    // databases - holding the source lock for the duration is fine here
+    // since the caller already holds the app's only connection and is about
+    // to exit right after this call, so there's nothing else to avoid blocking.
+    match backup.step(-1).map_err(|e| e.to_string())? {
+        rusqlite::backup::StepResult::Done => Ok(()),
+        other => Err(format!("Backup did not complete in a single step: {other:?}")),
+    }
 }
 
