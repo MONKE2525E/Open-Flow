@@ -13,7 +13,7 @@ const { spawn } = require('child_process');
   
   try {
     console.log("Navigating to local dev server...");
-    await page.goto('http://localhost:5173');
+    await page.goto(process.env.TEST_URL || 'http://localhost:1420');
     
     // Evaluate to open settings
     await page.evaluate(async () => {

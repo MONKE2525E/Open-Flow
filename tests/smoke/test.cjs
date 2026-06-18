@@ -1,9 +1,11 @@
 // Smoke test: app mount + DOM structure
 // Verifies the app mounts without JS errors and exposes required DOM structure.
+const path = require('path');
 const { chromium } = require('playwright');
 const { tauriMock } = require('./_tauri-mock.cjs');
 
-const TARGET_URL = 'http://localhost:1420';
+const TARGET_URL = process.env.TEST_URL || 'http://localhost:1420';
+const SCREENSHOT_PATH = path.join(__dirname, 'screenshot.png');
 const TIMEOUT = 10_000;
 
 (async () => {
@@ -32,8 +34,8 @@ const TIMEOUT = 10_000;
     if (!(await appDiv.isVisible())) errors.push('.app root element not found');
 
     // Screenshot for visual inspection
-    await page.screenshot({ path: 'G:\\Verenu\\screenshot.png', fullPage: true });
-    console.log('Screenshot saved to screenshot.png');
+    await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
+    console.log(`Screenshot saved to ${SCREENSHOT_PATH}`);
 
     // Fail if any JS errors occurred during load or interaction
     if (errors.length > 0) {

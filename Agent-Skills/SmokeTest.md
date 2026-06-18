@@ -13,8 +13,8 @@ description: Minimal guide to run and fix Verenu smoke tests by changing app cod
 
 ## Current test contracts
 
-- `test.cjs` (5173): app loads, `.nav-item` exists, `.app` visible.
-- `test-app.cjs` (5173): App Mappings add flow works end-to-end.
+- `test.cjs` (1420): app loads, `.nav-item` exists, `.app` visible.
+- `test-app.cjs` (1420): App Mappings add flow works end-to-end.
 - `playwright-test-ui.cjs` (1420): nav headings render, settings sections render, privacy toggles flip, settings closes.
 - `playwright-test-fixes.cjs` (1420):
   - Advanced: `.toggle` exists
@@ -66,6 +66,17 @@ node tests/smoke/playwright-test-ui.cjs
 node tests/smoke/playwright-test-fixes.cjs
 node tests/smoke/playwright-test-state.cjs
 ```
+
+## Manual scripts
+
+These are not part of any automated profile — run them by hand when investigating
+the relevant subsystem:
+
+- `tests/manual/auto-learn-harness.ps1` — drives the auto-learn correction flow on
+  Windows. Starts the dev server, then exercises dictation/correction so you can
+  watch promotion behavior. Run: `pwsh tests/manual/auto-learn-harness.ps1`.
+- `tests/manual/hotkey.cjs` — manual hotkey/injection probe against the dev server.
+- `tests/manual/setup-layout-bounds.js` — manual setup-wizard layout-bounds check.
 
 ## Notes
 
