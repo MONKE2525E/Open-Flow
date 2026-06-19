@@ -731,22 +731,23 @@ fn record_candidate(
         return false;
     }
 
-    let confidence_avg = match db::upsert_auto_learn_candidate(db, &mistake, &correction, confidence) {
-        Ok(confidence_avg) => confidence_avg,
-        Err(e) => {
-            log::warn!("auto-learn candidate upsert failed: {e}");
-            let _ = db::log_auto_learn_event(
-                db,
-                "candidate",
-                "candidate_upsert_failed",
-                app_context,
-                &mistake_hash,
-                &correction_hash,
-                confidence,
-            );
-            return false;
-        }
-    };
+    let confidence_avg =
+        match db::upsert_auto_learn_candidate(db, &mistake, &correction, confidence) {
+            Ok(confidence_avg) => confidence_avg,
+            Err(e) => {
+                log::warn!("auto-learn candidate upsert failed: {e}");
+                let _ = db::log_auto_learn_event(
+                    db,
+                    "candidate",
+                    "candidate_upsert_failed",
+                    app_context,
+                    &mistake_hash,
+                    &correction_hash,
+                    confidence,
+                );
+                return false;
+            }
+        };
 
     if let Err(e) = db::insert_pending_correction(db, &mistake, &correction) {
         log::warn!("auto-learn pending insert failed: {e}");

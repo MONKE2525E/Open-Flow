@@ -105,6 +105,10 @@ INTEGRATION_DIR = Path(__file__).parent / "integration"
 AUDIO_WAV  = SMOKE_DIR / "smoke_test.wav"
 CARGO_TOML = ROOT / "src-tauri" / "Cargo.toml"
 
+# npm is a batch shim on Windows (npm.cmd); subprocess can't exec bare "npm"
+# without shell=True, which silently breaks the fast profile. Resolve once here.
+NPM = "npm.cmd" if sys.platform == "win32" else "npm"
+
 # ═══ PORTS ════════════════════════════════════════════════════════════════════
 
 PORT_TAURI = 1420
@@ -288,14 +292,14 @@ class FrontendTypecheck(ShellCommandTest):
     name = "Frontend typecheck"
     suite = "frontend"
     timeout_s = 240
-    command = ["npm", "run", "check"]
+    command = [NPM, "run", "check"]
 
 
 class FrontendBuild(ShellCommandTest):
     name = "Frontend build"
     suite = "frontend"
     timeout_s = 240
-    command = ["npm", "run", "build"]
+    command = [NPM, "run", "build"]
 
 
 class SettingsContractSyncCheck(PythonTest):
@@ -306,7 +310,7 @@ class SettingsContractSyncCheck(PythonTest):
         t0 = time.monotonic()
         rust_path = ROOT / "src-tauri" / "src" / "data" / "store.rs"
         ts_path = ROOT / "src" / "lib" / "settings.ts"
-        all_settings_path = ROOT / "src-tauri" / "src" / "commands" / "mod.rs"
+        all_settings_path = ROOT / "src-tauri" / "src" / "commands" / "settings.rs"
 
         rust_text = rust_path.read_text(encoding="utf-8")
         ts_text = ts_path.read_text(encoding="utf-8")
@@ -330,7 +334,7 @@ class SettingsContractSyncCheck(PythonTest):
 
         payload_match = re.search(r"pub struct AllSettings \{(.*?)\n\}", all_settings_text, re.S)
         if not payload_match:
-            return TestResult(False, "Could not parse AllSettings in commands/mod.rs", time.monotonic() - t0)
+            return TestResult(False, "Could not parse AllSettings in commands/settings.rs", time.monotonic() - t0)
         payload_keys = {
             match.group(1)
             for match in re.finditer(r"pub ([a-zA-Z0-9_]+):", payload_match.group(1))
@@ -508,7 +512,7 @@ class ServerManager:
                 )
             else:
                 import os as _os
-                cmd_list = ["npm", "run", "tauri", "dev"] if mode == "tauri" else ["npm", "run", "dev"]
+                cmd_list = [NPM, "run", "tauri", "dev"] if mode == "tauri" else [NPM, "run", "dev"]
                 self._proc = subprocess.Popen(
                     cmd_list, cwd=ROOT,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -612,8 +616,8 @@ def _cleanup_test_artifacts() -> int:
 
 def _exec_node(entry: TestEntry) -> TestResult:
     t0 = time.monotonic()
-    # Pass TEST_URL so tests like test-dictionary-ui.cjs that default to :5173
-    # connect to whichever server OnePyFone actually started.
+    # Pass TEST_URL so browser tests connect to whichever server OnePyFone
+    # actually started (port 1420 by default, per vite.config).
     env = {**os.environ, "TEST_URL": _active_test_url}
     try:
         r = subprocess.run(

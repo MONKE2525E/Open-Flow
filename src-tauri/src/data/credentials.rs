@@ -181,15 +181,14 @@ fn tauri_legacy_creds_path(app: &AppHandle) -> PathBuf {
 
 #[cfg(target_os = "macos")]
 fn manual_legacy_creds_path_from_home(home: &Path, app_dir: &str) -> PathBuf {
-    home.join(format!("Library/Application Support/{app_dir}/credentials.json"))
+    home.join(format!(
+        "Library/Application Support/{app_dir}/credentials.json"
+    ))
 }
 
 #[cfg(target_os = "macos")]
 fn manual_legacy_creds_paths(app: &AppHandle) -> Vec<PathBuf> {
-    let home = app
-        .path()
-        .home_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
+    let home = app.path().home_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     ["Verenu"]
         .into_iter()
@@ -434,12 +433,6 @@ pub fn read_for_status(provider: &str) -> Result<bool, String> {
         Ok(None) => Ok(false),
         Err(e) => Err(e),
     }
-}
-
-#[cfg(not(target_os = "macos"))]
-#[allow(dead_code)]
-pub fn read_for_status(_provider: &str) -> Result<bool, String> {
-    Ok(true)
 }
 
 #[cfg(target_os = "macos")]

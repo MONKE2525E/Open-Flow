@@ -25,11 +25,11 @@
     defaultDevice: 'Default Device',
     noDevicesFound: 'No devices found',
   };
-  let muteAudio = $state(false);
   let autostart = $state(false);
   let cleanup = $state(true);
   let contextualCaps = $state(true);
   let autoSpacing = $state(true);
+  let capsLockUppercase = $state(false);
   let hotkey = $state(defaultHotkey);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
@@ -112,7 +112,6 @@
 
   async function loadSettings() {
     const results = await Promise.allSettled([
-      invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
       invoke<boolean | null>('get_setting', { key: 'autostart_enabled' }),
       invoke<string[] | null>('get_setting', { key: 'hotkey' }),
       invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
@@ -120,6 +119,7 @@
       invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
+      invoke<boolean | null>('get_setting', { key: 'caps_lock_uppercase_enabled' }),
       invoke<string[]>('get_microphones'),
       invoke<string | null>('get_setting', { key: 'microphone_device' }),
     ]);
@@ -127,21 +127,21 @@
     const val = <T>(i: number, fallback: T): T =>
       results[i].status === 'fulfilled' ? (results[i] as PromiseFulfilledResult<T>).value ?? fallback : fallback;
 
-    muteAudio = val<boolean | null>(0, null) ?? false;
-    autostart = val<boolean | null>(1, null) ?? false;
-    cleanup = val<boolean | null>(5, null) ?? true;
-    contextualCaps = val<boolean | null>(6, null) ?? true;
-    autoSpacing = val<boolean | null>(7, null) ?? true;
+    autostart = val<boolean | null>(0, null) ?? false;
+    cleanup = val<boolean | null>(4, null) ?? true;
+    contextualCaps = val<boolean | null>(5, null) ?? true;
+    autoSpacing = val<boolean | null>(6, null) ?? true;
+    capsLockUppercase = val<boolean | null>(7, null) ?? false;
 
-    const hk = val<string[] | null>(2, null);
+    const hk = val<string[] | null>(1, null);
     if (hk && hk.length === 2) hotkey = hk;
 
-    const appearance = val<AppearanceMode | null>(3, null);
+    const appearance = val<AppearanceMode | null>(2, null);
     if (appearance === 'system' || appearance === 'light' || appearance === 'dark') {
       appStore.appearanceMode = appearance;
     }
 
-    const language = val<TranscriptionLanguageCode | null>(4, null);
+    const language = val<TranscriptionLanguageCode | null>(3, null);
     if (!languageTouched && language && transcriptionLanguages.some((option) => option.code === language)) {
       selectedLanguage = language;
     }
@@ -178,16 +178,6 @@
       await saveSetting('transcription_language', code);
     } catch (err) {
       console.error('save transcription_language failed:', err);
-    }
-  }
-
-  async function handleMuteAudio(value: boolean) {
-    muteAudio = value;
-    try {
-      await saveSetting('mute_audio', value);
-    } catch (err) {
-      muteAudio = !value;
-      console.error('save mute_audio failed:', err);
     }
   }
 
@@ -228,6 +218,16 @@
     } catch (err) {
       autoSpacing = !value;
       console.error('save auto_spacing_enabled failed:', err);
+    }
+  }
+
+  async function handleCapsLockUppercase(value: boolean) {
+    capsLockUppercase = value;
+    try {
+      await saveSetting('caps_lock_uppercase_enabled', value);
+    } catch (err) {
+      capsLockUppercase = !value;
+      console.error('save caps_lock_uppercase_enabled failed:', err);
     }
   }
 
@@ -327,6 +327,7 @@
 <svelte:window onclick={handleWindowClick} />
 
 <h2 class="settings-h">General</h2>
+<h3 class="settings-subhead first">Dictation</h3>
 <div class="setting-row">
   <div><div class="label">Hotkey</div><div class="desc">Hold to record, release to transcribe</div></div>
   <button
@@ -430,10 +431,7 @@
     {/if}
   </div>
 </div>
-<div class="setting-row">
-  <div><div class="label">{isMac ? 'Mute System Audio' : 'Mute PC Audio'}</div><div class="desc">{isMac ? 'Mutes system volume while dictating to prevent audio interference' : 'Mutes Windows volume while dictating to prevent audio interference'}</div></div>
-  <Toggle checked={muteAudio} onchange={handleMuteAudio} label={isMac ? 'Mute system audio' : 'Mute PC audio'} />
-</div>
+<h3 class="settings-subhead">Appearance & System</h3>
 <div class="setting-row">
   <div><div class="label">Appearance</div><div class="desc">{isMac ? 'Follow macOS or force a specific theme' : 'Follow Windows or force a specific theme'}</div></div>
   <div class="appearance-segment" role="radiogroup" aria-label="Appearance" bind:this={segmentEl}>
@@ -455,6 +453,7 @@
   <div><div class="label">Start on Boot</div><div class="desc">{isMac ? 'Launch Verenu when macOS starts' : 'Launch Verenu when Windows starts'}</div></div>
   <Toggle checked={autostart} onchange={handleAutostart} label="Start on boot" />
 </div>
+<h3 class="settings-subhead">Text processing</h3>
 <div class="setting-row">
   <div><div class="label">Auto-cleanup</div><div class="desc">Run LLM cleanup on every transcription</div></div>
   <Toggle checked={cleanup} onchange={handleCleanup} label="Auto-cleanup" />
@@ -466,6 +465,10 @@
 <div class="setting-row">
   <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
   <Toggle checked={autoSpacing} onchange={handleAutoSpacing} label="Automatic spacing" />
+</div>
+<div class="setting-row">
+  <div><div class="label">Automatic caps lock detection</div><div class="desc">When Caps Lock is on, output your dictation in ALL CAPS</div></div>
+  <Toggle checked={capsLockUppercase} onchange={handleCapsLockUppercase} label="Automatic caps lock detection" />
 </div>
 
 <style>

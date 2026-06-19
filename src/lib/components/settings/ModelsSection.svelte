@@ -3,6 +3,7 @@
   import { fly, slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
+  import { cleanupPromptOverridesStore, openCleanupPromptEditor } from '../../stores.svelte';
 
   function pillScale(
     node: Element,
@@ -17,6 +18,7 @@
   }
   import Toggle from '../Toggle.svelte';
   import { saveSetting, type ProviderId, type ProviderModelMap } from '../../settings';
+  import { getProviderLogo } from '../../setup/ProviderLogos';
 
   type TaskType = 'transcription' | 'cleanup';
   type UiProviderId = 'groq' | 'openai' | 'google';
@@ -35,12 +37,13 @@
     cleanup_default_model?: string | null;
     transcription_fallback_models?: string[] | null;
     cleanup_fallback_models?: string[] | null;
+    cleanup_prompt_overrides?: unknown;
   };
 
   const providerSections: ProviderSection[] = [
     { id: 'groq', label: 'Groq', storeProvider: 'groq' },
     { id: 'openai', label: 'OpenAI', storeProvider: 'openai' },
-    { id: 'google', label: 'Google', storeProvider: 'google' },
+    { id: 'google', label: 'Gemini', storeProvider: 'google' },
   ];
 
   const recommendedModels: Record<TaskType, Record<UiProviderId, { premium: string; standard: string }>> = {
@@ -72,6 +75,7 @@
     transcription: { groq: '', openai: '', google: '' },
     cleanup: { groq: '', openai: '', google: '' },
   });
+
 
   let transcriptionOpen = $state(false);
   let cleanupOpen = $state(false);
@@ -221,6 +225,14 @@
     if (Array.isArray(cFallbackRaw)) cleanupFallbackModels = cFallbackRaw.filter((m) => !!splitModelId(m));
     if (typeof advancedRaw === 'boolean') advancedModelUi = advancedRaw;
 
+    if (all.cleanup_prompt_overrides && typeof all.cleanup_prompt_overrides === 'object') {
+      const overrides: Record<string, string> = {};
+      for (const [k, v] of Object.entries(all.cleanup_prompt_overrides as Record<string, unknown>)) {
+        if (typeof v === 'string') overrides[k] = v;
+      }
+      cleanupPromptOverridesStore.overrides = overrides;
+    }
+
     const preT = transcriptionDefaultModel;
     const preC = cleanupDefaultModel;
     const preTFb = transcriptionFallbackModels.length;
@@ -333,6 +345,12 @@
     return splitModelId(taskDefault(type))?.model ?? 'None';
   }
 
+  function currentCleanupModelFor(provider: ProviderId): string {
+    const parsed = splitModelId(cleanupDefaultModel);
+    if (parsed && parsed.provider === provider) return parsed.model;
+    return recommendedModels.cleanup[provider as UiProviderId].premium;
+  }
+
   async function handleAdvancedModelUi(value: boolean) {
     advancedModelUi = value;
     try {
@@ -382,7 +400,10 @@
             (m) => m !== recommendedModels[type][section.id].premium && m !== recommendedModels[type][section.id].standard
           )}
           <div class="simple-group" class:no-key={!hasKey}>
-            <span class="simple-provider">{section.label}</span>
+            <span class="simple-provider">
+              <span class="simple-provider-logo">{@html getProviderLogo(section.storeProvider)}</span>
+              {section.label}
+            </span>
 
             {#each ['premium', 'standard'] as rawTier}
               {@const tier = rawTier as 'premium' | 'standard'}
@@ -487,6 +508,33 @@
           </div>
         {/each}
         </div>
+
+        {#if type === 'cleanup' && advancedModelUi}
+          <div class="prompt-editor-section" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
+            {#each providerSections as section (section.id)}
+              {@const model = currentCleanupModelFor(section.storeProvider)}
+              {@const key = modelId(section.storeProvider, model)}
+              {@const isCustomized = !!cleanupPromptOverridesStore.overrides[key]?.trim()}
+              <div class="prompt-edit-row">
+                <div class="prompt-edit-meta">
+                  <span class="prompt-editor-provider">{section.label}</span>
+                  <span class="prompt-editor-model">{model}</span>
+                </div>
+                <div class="prompt-edit-right">
+                  {#if isCustomized}
+                    <span class="prompt-customized-badge">Customized</span>
+                  {/if}
+                  <button
+                    class="prompt-edit-btn"
+                    type="button"
+                    onclick={(e) => openCleanupPromptEditor(section.storeProvider, model, (e.currentTarget as HTMLButtonElement).getBoundingClientRect())}
+                  >Edit prompt</button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+
       </div>
     {/if}
   </div>
@@ -494,10 +542,10 @@
 
 <div class="advanced-toggle-row">
   <div class="adv-text">
-    <span class="adv-label">Custom models</span>
-    <span class="adv-desc">Add custom model names per provider</span>
+    <span class="adv-label">Advanced Models</span>
+    <span class="adv-desc">Edit cleanup prompts and add custom models per provider</span>
   </div>
-  <Toggle checked={advancedModelUi} onchange={handleAdvancedModelUi} label="Custom models" />
+  <Toggle checked={advancedModelUi} onchange={handleAdvancedModelUi} label="Advanced Models" />
 </div>
 
 <style>
@@ -596,6 +644,10 @@
     flex-direction: column;
   }
 
+  .tile-inner:has(.prompt-editor-section) {
+    padding-bottom: 0;
+  }
+
   .tile-inner .warn-banner {
     margin: 10px 0 8px;
   }
@@ -636,6 +688,9 @@
   }
 
   .simple-provider {
+    display: flex;
+    align-items: center;
+    gap: 5px;
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.09em;
@@ -645,6 +700,9 @@
     padding: 0 10px;
     margin-bottom: 3px;
   }
+
+  .simple-provider-logo { display: inline-flex; width: 12px; height: 12px; flex-shrink: 0; }
+  .simple-provider-logo :global(svg) { width: 100%; height: 100%; }
 
   .simple-row {
     display: flex;
@@ -974,4 +1032,82 @@
     font-family: var(--sans);
     color: var(--ink-mute);
   }
+
+  /* ── Prompt editor (compact rows) ───────────────────────── */
+  .prompt-editor-section {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 0;
+  }
+
+  .prompt-edit-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    transition: background 0.14s;
+  }
+
+  .prompt-edit-row:hover { background: var(--control-hover); }
+
+  .prompt-edit-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .prompt-editor-provider {
+    font-size: 12px;
+    font-family: var(--sans);
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .prompt-editor-model {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-mute);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .prompt-edit-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .prompt-customized-badge {
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 7px;
+    border-radius: 20px;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    white-space: nowrap;
+  }
+
+  .prompt-edit-btn {
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 4px 11px;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: background 0.14s, color 0.14s;
+    white-space: nowrap;
+  }
+
+  .prompt-edit-btn:hover { background: var(--bg-elev); color: var(--ink); }
+  .prompt-edit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 </style>

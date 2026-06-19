@@ -88,26 +88,38 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
     }
 }
 
-/// Per-user directory for the SQLite database, following each OS's convention.
+/// Canonical per-user data directory for Verenu, following each OS's convention.
+///
+/// This is the single source of truth for where Verenu stores its SQLite
+/// database. Everything that touches the DB — startup `open`, the in-app
+/// updater's pre-update backup, etc. — MUST derive its path from here (via
+/// [`app_db_path`]). Do NOT use Tauri's `app.path().app_data_dir()` for the
+/// database: that resolves against the bundle identifier and is not guaranteed
+/// to equal this path, so backups would silently target a different file.
 #[cfg(windows)]
-fn app_data_dir() -> std::path::PathBuf {
+pub(crate) fn app_data_dir() -> std::path::PathBuf {
     std::env::var("APPDATA")
         .map(|p| std::path::PathBuf::from(p).join("Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 #[cfg(target_os = "macos")]
-fn app_data_dir() -> std::path::PathBuf {
+pub(crate) fn app_data_dir() -> std::path::PathBuf {
     std::env::var("HOME")
         .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn app_data_dir() -> std::path::PathBuf {
+pub(crate) fn app_data_dir() -> std::path::PathBuf {
     std::env::var("HOME")
         .map(|h| std::path::PathBuf::from(h).join(".config/Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+/// Canonical path to the SQLite database file. Use this everywhere.
+pub(crate) fn app_db_path() -> std::path::PathBuf {
+    app_data_dir().join("verenu.db")
 }
 
 fn main() {
@@ -124,10 +136,8 @@ fn main() {
         retry_capture: None,
     }));
 
-    let db_dir = app_data_dir();
-    std::fs::create_dir_all(&db_dir).ok();
-    let db_handle: DbHandle =
-        db::open(db_dir.join("verenu.db").to_str().unwrap()).expect("failed to open database");
+    std::fs::create_dir_all(app_data_dir()).ok();
+    let db_handle: DbHandle = db::open(app_db_path()).expect("failed to open database");
     let _ = db::cleanup_cache_prune_expired(&db_handle);
 
     tauri::Builder::default()
@@ -155,6 +165,28 @@ fn main() {
                             }
                         }
                     }
+                }
+                let retention_value = store.get(crate::data::store::HISTORY_RETENTION);
+                let retention = retention_value
+                    .as_ref()
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("30 days");
+                if let Some(days) = crate::data::store::history_retention_days(retention) {
+                    let db = app.state::<DbHandle>().inner().clone();
+                    let app_handle = app.handle().clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        match db::prune_transcriptions_older_than(&db, days) {
+                            Ok(deleted) if deleted > 0 => {
+                                let _ = app_handle.emit("verenu:history-pruned", ());
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to prune old transcriptions during startup: {e:?}"
+                                );
+                            }
+                        }
+                    });
                 }
                 !store
                     .get("setup_complete")
@@ -234,6 +266,7 @@ fn main() {
             commands::save_api_key,
             commands::delete_api_key,
             commands::get_api_key_status,
+            commands::validate_api_key,
             commands::save_setting,
             commands::get_setting,
             commands::get_all_settings,
@@ -248,14 +281,20 @@ fn main() {
             commands::hide_main,
             commands::get_recent,
             commands::get_stats,
+            commands::count_old_transcriptions,
             commands::get_cleanup_cache_status,
             commands::clear_cleanup_cache,
+            commands::get_default_cleanup_prompt,
+            commands::lint_cleanup_prompt,
+            commands::test_cleanup_prompt,
             commands::get_microphones,
             commands::get_memory_mb,
             commands::start_input_recording,
+            commands::start_setup_try_recording,
             commands::start_calibration_monitoring,
             commands::stop_calibration_monitoring,
             commands::stop_and_transcribe_input,
+            commands::stop_setup_try_recording,
             commands::stop_recording,
             commands::stop_handless_mode,
             commands::get_installed_apps,

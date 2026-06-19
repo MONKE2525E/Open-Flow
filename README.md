@@ -94,6 +94,7 @@ If you care about privacy, speed, retention, or cost, judge the provider on its 
 
 - Node.js 18+
 - Rust and Cargo
+- Python 3.8+ (required by `npm test` — the OnePyFone test runner is a Python script)
 - Windows: WebView2
 - macOS: Xcode Command Line Tools are recommended for local builds
 

@@ -1,9 +1,13 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
 
   type PillState = 'idle' | 'recording' | 'processing' | 'handsfree' | 'error';
   let state: PillState = 'idle';
   let errorMsg = '';
+  let errOpen = false;
+  let errWidth = 0;
+  let errTextEl: HTMLSpanElement | null = null;
+  let errorTimer: ReturnType<typeof setTimeout> | null = null;
   let showHfButtons = false;
   let hfTimer: ReturnType<typeof setTimeout> | null = null;
   let prevState: PillState = 'idle';
@@ -105,7 +109,57 @@
       prevState = state;
       state = 'idle';
       smoothed = 0;
+      errOpen = false;
+      errWidth = 0;
+      errorMsg = '';
+      if (errorTimer) {
+        clearTimeout(errorTimer);
+        errorTimer = null;
+      }
     }, 200);
+  }
+
+  // Error pill dimensions in px — mirror .pill.error's CSS (width / gap / max-width).
+  const ERROR_COLLAPSED_WIDTH = 42;
+  const ERROR_GAP = 8;
+  const ERROR_MAX_WIDTH = 356;
+
+  // Opens the error pill: render collapsed (icon-only), measure the message
+  // text, then grow to its natural width so the CSS width transition has a
+  // starting value to animate from. pill-error and pill-state arrive as
+  // separate events in unspecified order, so openError() can be invoked
+  // again before or after a prior call finishes. The task id lets a stale
+  // call bail out instead of clobbering a newer one's measurement, and
+  // wasOpen skips the collapse phase on a re-trigger so an already-open pill
+  // resizes in place instead of visibly collapsing and re-expanding.
+  let openErrorTaskId = 0;
+  async function openError() {
+    const taskId = ++openErrorTaskId;
+    const wasOpen = errOpen;
+    if (!wasOpen) {
+      errOpen = false;
+      errWidth = ERROR_COLLAPSED_WIDTH;
+    }
+    await tick();
+    if (taskId !== openErrorTaskId || state !== 'error') return;
+
+    const applyWidth = () => {
+      const textW = errTextEl?.scrollWidth ?? 0;
+      const errWidthNatural = textW > 0
+        ? Math.min(ERROR_COLLAPSED_WIDTH + ERROR_GAP + textW, ERROR_MAX_WIDTH)
+        : ERROR_COLLAPSED_WIDTH;
+      errWidth = errWidthNatural;
+      errOpen = true;
+    };
+
+    if (wasOpen) {
+      applyWidth();
+    } else {
+      requestAnimationFrame(() => {
+        if (taskId !== openErrorTaskId || state !== 'error') return;
+        applyWidth();
+      });
+    }
   }
 
   onMount(() => {
@@ -119,7 +173,7 @@
         const incoming = (ev.payload as PillState) || 'idle';
         if (hfTimer !== null) { clearTimeout(hfTimer); hfTimer = null; }
 
-        if (incoming === 'idle' && (state === 'recording' || state === 'handsfree')) {
+        if (incoming === 'idle' && (state === 'recording' || state === 'handsfree' || state === 'error')) {
           stopRaf();
           goIdle();
           return;
@@ -139,12 +193,31 @@
           stopRaf();
         }
         if (state !== 'recording' && state !== 'handsfree') smoothed = 0;
+        if (state === 'error') {
+          openError();
+          if (errorTimer) clearTimeout(errorTimer);
+          errorTimer = setTimeout(() => {
+            errorTimer = null;
+            if (state === 'error') goIdle();
+          }, 2000);
+        } else {
+          if (errorTimer) {
+            clearTimeout(errorTimer);
+            errorTimer = null;
+          }
+          errorMsg = '';
+          errOpen = false;
+          errWidth = 0;
+        }
       });
       if (!mounted) { l1(); return; }
       unlisteners.push(l1);
 
-      const l2 = await listen<string>('verenu:error', (ev) => {
-        errorMsg = ev.payload ?? 'Failed';
+      const l2 = await listen<string>('pill-error', (ev) => {
+        errorMsg = ev.payload ?? 'Something went wrong';
+        if (state === 'error') {
+          openError();
+        }
       });
       if (!mounted) { l2(); return; }
       unlisteners.push(l2);
@@ -160,6 +233,9 @@
     return () => {
       mounted = false;
       cancelAnimationFrame(rafId);
+      if (errorTimer) clearTimeout(errorTimer);
+      if (dyingTimer) clearTimeout(dyingTimer);
+      if (hfTimer) clearTimeout(hfTimer);
       unlisteners.forEach(u => u());
     };
   });
@@ -192,9 +268,12 @@
     </div>
 
   {:else if state === 'error'}
-    <div class="pill error">
-      <div class="err-icon">!</div>
-      <span class="err-text">Failed</span>
+    <div class="pill error" class:err-open={errOpen} class:dying={dying}
+         style={errWidth ? `width:${errWidth}px` : ''}>
+      <svg class="err-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+      </svg>
+      <span class="err-text" bind:this={errTextEl}>{errorMsg || 'Something went wrong'}</span>
     </div>
 
   {:else if state === 'handsfree'}
@@ -228,11 +307,12 @@
     margin: 0; padding: 0;
     background: transparent;
     overflow: hidden;
-    width: 140px; height: 44px;
+    width: 100vw; height: 44px;
+    font-family: var(--sans);
   }
 
   .wrap {
-    width: 140px; height: 44px;
+    width: 100vw; height: 44px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -261,7 +341,8 @@
   }
 
   .pill.recording.dying,
-  .pill.handsfree.dying {
+  .pill.handsfree.dying,
+  .pill.error.dying {
     animation: pillOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
     pointer-events: none;
   }
@@ -341,16 +422,32 @@
     to   { opacity: 1; }
   }
 
-  /* Error */
-  .pill.error { width: 110px; gap: 7px; padding: 0 14px; background: var(--danger-bg); }
-  .err-icon {
-    width: 15px; height: 15px; flex-shrink: 0;
-    border-radius: 50%;
-    background: var(--danger);
-    display: grid; place-items: center;
-    font-size: 10px; font-weight: 700; color: var(--on-accent);
+  /* Error: rounded rectangle, dark red-tinted, expands horizontally to reveal the message */
+  .pill.error {
+    width: 42px;
+    gap: 8px;
+    padding: 0 14px;
+    background: var(--pill-error-bg);
+    color: var(--pill-error-fg);
+    border-radius: 14px;
+    box-shadow: 0 0 0 1px var(--pill-error-border),
+                0 6px 18px rgba(0,0,0,0.28);
+    max-width: 356px;
+    overflow: hidden;
+    transition: width 0.30s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
-  .err-text { font-size: 11px; font-weight: 500; color: var(--danger); white-space: nowrap; }
+  .err-icon {
+    flex-shrink: 0;
+    color: var(--pill-error-fg);
+  }
+  .err-text {
+    font-size: 11.5px; font-weight: 500;
+    color: var(--pill-error-fg);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    opacity: 0;
+    transition: opacity 0.18s ease 0.08s;
+  }
+  .pill.error.err-open .err-text { opacity: 1; }
 
   /* Handsfree: starts compact (mirrors recording), expands to 112px after 450ms */
   .pill.handsfree {

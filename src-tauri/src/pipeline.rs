@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
-use crate::api::{auto_learn, cleanup, transcription};
+use crate::api::{auto_learn, cleanup, prompts, transcription};
 use crate::core::{injection, window_context};
 use crate::data::{db, dictionary, snippets, store};
 use crate::media::audio;
@@ -16,7 +16,7 @@ use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 const MIN_RECORDING_MS: u64 = 700;
 const MIN_RECORDING_RMS: f32 = 0.008;
 const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
-const PILL_WIDTH_POINTS: f64 = 140.0;
+const PILL_WIDTH_POINTS: f64 = 380.0;
 const PILL_HEIGHT_POINTS: f64 = 44.0;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const PILL_BOTTOM_GAP_POINTS: f64 = 16.0;
@@ -29,11 +29,72 @@ fn transcription_provider_from_str(s: &str) -> transcription::Provider {
     }
 }
 
-fn cleanup_provider_from_str(s: &str) -> cleanup::CleanupProvider {
-    match s {
-        "openai" => cleanup::CleanupProvider::OpenAI,
-        "google" => cleanup::CleanupProvider::Google,
-        _ => cleanup::CleanupProvider::Groq,
+/// Runtime safety net for a cleanup result that looks like the model
+/// answering/refusing instead of returning cleaned dictation. Differential:
+/// only acts if `cleaned` looks like a refusal AND `raw` does not (a real
+/// speaker can legitimately say "I cannot...").
+///
+/// Returns `Some(text)` for a usable cleaned result (safe to cache), or
+/// `None` if the retry also looks like a refusal/failed and the caller
+/// should skip cleanup entirely and use the pre-cleanup text.
+#[allow(clippy::too_many_arguments)]
+async fn guard_cleanup_refusal(
+    cleaned: String,
+    raw: &str,
+    expanded: &str,
+    provider_id: &str,
+    model: &str,
+    key: &str,
+    profile: &str,
+    intensity: &str,
+    extra_rules: &str,
+    app_context: Option<&str>,
+) -> Option<String> {
+    if !prompts::looks_like_refusal(&cleaned) || prompts::looks_like_refusal(raw) {
+        return Some(cleaned);
+    }
+
+    log::warn!(
+        "pipeline: cleanup output looks like a model refusal, retrying once with hardened prompt provider={provider_id} model={model}"
+    );
+
+    let cp = cleanup::provider_from_str(provider_id);
+    let retried = cleanup::cleanup(
+        expanded,
+        cp,
+        key,
+        model,
+        profile,
+        intensity,
+        extra_rules,
+        app_context,
+        Some(prompts::hardened_retry_template()),
+    )
+    .await;
+
+    match retried {
+        Ok(retried)
+            if !retried.is_empty()
+                && (!prompts::looks_like_refusal(&retried) || prompts::looks_like_refusal(raw)) =>
+        {
+            log::debug!(
+                "pipeline: cleanup refusal retry succeeded provider={provider_id} model={model}"
+            );
+            Some(retried)
+        }
+        Ok(_) => {
+            log::warn!(
+                "pipeline: cleanup refusal retry still looks like a refusal, falling back to pre-cleanup text provider={provider_id} model={model}"
+            );
+            None
+        }
+        Err(e) => {
+            log::warn!(
+                "pipeline: cleanup refusal retry failed, falling back to pre-cleanup text provider={provider_id} model={model} error={}",
+                trim_err(&e.to_string())
+            );
+            None
+        }
     }
 }
 
@@ -58,6 +119,7 @@ pub struct RetryCapture {
     pub process_name: String,
     pub profile: String,
     pub app_context: Option<String>,
+    pub caps_lock_on: bool,
 }
 
 fn lock_state(state: &SharedState) -> anyhow::Result<MutexGuard<'_, AppState>> {
@@ -141,11 +203,112 @@ fn create_pill_if_needed(app: &AppHandle) {
 }
 
 pub fn show_pill(app: &AppHandle, state: &str) {
+    show_pill_msg(app, state, None);
+}
+
+/// Shows the pill window in the given state, optionally carrying an error
+/// message. The window is always kept at the same width regardless of state
+/// (room enough for the error text to expand into) so it never needs to
+/// resize or reposition after its first appearance — resizing a WebView2
+/// window causes a visible repaint-lag flicker even when the native resize
+/// itself is atomic, so the fix is to avoid triggering one at all rather
+/// than to make it faster. Handsfree's click-capture zone is therefore wider
+/// than the visible pill; clicks in the empty space around it are swallowed
+/// instead of passing through while handsfree is active.
+fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
     create_pill_if_needed(app);
     if let Some(pill) = app.get_webview_window("pill") {
         // Click-through for passive states so nothing behind the pill is blocked.
         // Handsfree needs real cursor events for its cancel/confirm buttons.
         pill.set_ignore_cursor_events(state != "handsfree").ok();
+
+        // Size and position while still hidden, so the window appears already
+        // in place instead of flashing at its previous geometry and jumping.
+        let width = PILL_WIDTH_POINTS;
+
+        // Resize and reposition are checked independently: primary_monitor()
+        // can return None on some platforms (e.g. macOS) while the window is
+        // still hidden, which would otherwise skip positioning on the first
+        // call and then skip it again on every later call once needs_resize
+        // is false — permanently mispositioning the pill. Falling back to a
+        // scale factor of 1.0 keeps the resize check meaningful even before
+        // monitor info is available.
+        let monitor = pill.primary_monitor().ok().flatten();
+        let scale_factor = monitor.as_ref().map(|m| m.scale_factor()).unwrap_or(1.0);
+
+        // Most transitions (recording/processing/error/idle) share this same
+        // width, so skip the resize when the window is already at the target
+        // size — re-issuing identical set_size calls can still make the OS
+        // window manager flicker.
+        let needs_resize = pill
+            .inner_size()
+            .map(|cur| (cur.width as f64 - width * scale_factor).abs() > 1.0)
+            .unwrap_or(true);
+
+        // Target position (physical pixels) on the current monitor, if known.
+        let target_pos = monitor.as_ref().map(|m| {
+            let sz = m.size();
+            let sf = m.scale_factor();
+            let pos = m.position();
+            let target_x = pos.x + ((sz.width as f64 - width * sf) / 2.0) as i32;
+            let bottom_offset_points = pill_bottom_offset_points();
+            let target_y = pos.y
+                + (sz.height as f64 - (PILL_HEIGHT_POINTS + bottom_offset_points) * sf) as i32;
+            (target_x, target_y)
+        });
+
+        let needs_reposition = match target_pos {
+            Some((target_x, target_y)) => pill
+                .outer_position()
+                .map(|cur| (cur.x - target_x).abs() > 1 || (cur.y - target_y).abs() > 1)
+                .unwrap_or(true),
+            None => false,
+        };
+
+        // On Windows, resize and reposition are merged into a single
+        // SetWindowPos call so the two are atomic if both are ever needed at
+        // once (e.g. a monitor/DPI change). With a constant width this only
+        // actually fires on the very first show, while still hidden.
+        #[cfg(target_os = "windows")]
+        {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+            };
+
+            if needs_resize || needs_reposition {
+                if let Ok(hwnd) = pill.hwnd() {
+                    let cx = (width * scale_factor).round() as i32;
+                    let cy = (PILL_HEIGHT_POINTS * scale_factor).round() as i32;
+                    let (x, y) = target_pos.unwrap_or((0, 0));
+
+                    let mut flags = SWP_NOZORDER | SWP_NOACTIVATE;
+                    if !needs_resize {
+                        flags |= SWP_NOSIZE;
+                    }
+                    if !needs_reposition {
+                        flags |= SWP_NOMOVE;
+                    }
+
+                    unsafe {
+                        let _ = SetWindowPos(hwnd, None, x, y, cx, cy, flags);
+                    }
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if needs_resize {
+                pill.set_size(tauri::LogicalSize::new(width, PILL_HEIGHT_POINTS))
+                    .ok();
+            }
+            if let Some((target_x, target_y)) = target_pos {
+                if needs_reposition {
+                    pill.set_position(tauri::PhysicalPosition::new(target_x, target_y))
+                        .ok();
+                }
+            }
+        }
 
         // Show the window before emitting state so WebView2 is active when it
         // receives the event. WebView2 suspends event processing while hidden;
@@ -165,16 +328,11 @@ pub fn show_pill(app: &AppHandle, state: &str) {
         #[cfg(not(target_os = "windows"))]
         pill.show().ok();
 
-        if let Ok(Some(m)) = pill.primary_monitor() {
-            let sz = m.size();
-            let sf = m.scale_factor();
-            let x = ((sz.width as f64 / sf - PILL_WIDTH_POINTS) / 2.0 * sf) as i32;
-            let bottom_offset_points = pill_bottom_offset_points();
-            let y =
-                ((sz.height as f64 / sf - PILL_HEIGHT_POINTS - bottom_offset_points) * sf) as i32;
-            pill.set_position(tauri::PhysicalPosition::new(x, y)).ok();
+        // Emit the message before the state so the pill has the error text
+        // ready before it measures and animates open.
+        if let Some(msg) = message {
+            pill.emit("pill-error", msg).ok();
         }
-
         pill.emit("pill-state", state).ok();
     }
 }
@@ -406,6 +564,41 @@ fn recording_gate_rms(active_gain: f32) -> f32 {
     }
 }
 
+/// Returns true when the transcription looks like a Whisper prompt-echo or
+/// a well-known silent-audio hallucination rather than actual speech.
+///
+/// Whisper sometimes outputs literal phrases from its own system prompt
+/// (e.g. "Return only spoken words.") when the audio contains no
+/// recognisable speech.  We catch these before the cleanup step so they
+/// are never injected and never populate the cleanup cache.
+fn is_transcription_hallucination(text: &str) -> bool {
+    let t = text.trim().to_lowercase();
+    // Phrases from our transcription system prompts (prompts.rs).  Whisper
+    // echoes these verbatim when it receives near-silent audio.
+    const PATTERNS: &[&str] = &[
+        "return only spoken words",
+        "return only the words spoken",
+        "verenu dictation in ",
+        "transcribe the audio in ",
+        "preserve pronouns exactly",
+        // Well-known generic Whisper hallucinations for silent/noisy audio
+        "thank you for watching",
+        "thanks for watching",
+        "please subscribe",
+        "subscribe to my channel",
+        "subtitles by ",
+        "transcribed by ",
+        "[silence]",
+        "[music]",
+        "[music playing]",
+        "[applause]",
+        "[laughter]",
+        "[no audio]",
+        "[blank audio]",
+    ];
+    PATTERNS.iter().any(|p| t.starts_with(p))
+}
+
 fn preview_text(s: &str, limit: usize) -> String {
     let compact = s.replace(['\n', '\r'], " ");
     let compact = compact.trim();
@@ -525,32 +718,19 @@ fn next_cache_expiry(
 async fn show_error_pill(app: &AppHandle, msg: &str) {
     log::error!("pipeline error: {msg}");
     app.emit("verenu:error", msg).ok();
-    show_pill(app, "error");
-    if let Some(w) = app.get_webview_window("main") {
-        w.show().ok();
-        w.set_focus().ok();
-    }
-    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-    hide_pill(app);
+    // Auto-hide is handled by the frontend (PillApp.svelte), which can check
+    // its own state before reverting to idle, avoiding a race where a new
+    // recording session's pill gets hidden by this error's timeout.
+    show_pill_msg(app, "error", Some(msg));
 }
 
 /// Shows the pill in error state for a quality-gate rejection without
 /// focusing the main window or blocking the pipeline task.
 fn reject_with_pill(app: &AppHandle, msg: &str) {
     app.emit("verenu:error", msg).ok();
-    show_pill(app, "error");
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-        // Only hide if no new recording session has started in the meantime
-        if let Some(state) = app.try_state::<SharedState>() {
-            if let Ok(st) = lock_state(&state) {
-                if st.session.is_none() {
-                    hide_pill(&app);
-                }
-            }
-        }
-    });
+    // Auto-hide is handled by the frontend (PillApp.svelte), matching
+    // show_error_pill's clean implementation.
+    show_pill_msg(app, "error", Some(msg));
 }
 
 fn resolve_app_mapping(
@@ -560,14 +740,20 @@ fn resolve_app_mapping(
     store.and_then(|s| {
         s.get(store::APP_MAPPINGS)
             .and_then(|v| serde_json::from_value::<Vec<AppMapping>>(v).ok())
-            .and_then(|list| list.into_iter().find(|m| m.exe.eq_ignore_ascii_case(process_name)))
+            .and_then(|list| {
+                list.into_iter()
+                    .find(|m| m.exe.eq_ignore_ascii_case(process_name))
+            })
     })
 }
 
 /// Resolves the effective tone profile for `mapping`, falling back to the
 /// global `default_tone` when the app has no override, and applies the
 /// app's `cleanup_intensity` override (if any) onto `cfg` in place.
-fn apply_app_style_overrides(cfg: &mut store::PipelineConfig, mapping: Option<&AppMapping>) -> String {
+fn apply_app_style_overrides(
+    cfg: &mut store::PipelineConfig,
+    mapping: Option<&AppMapping>,
+) -> String {
     if let Some(intensity) = mapping
         .and_then(|m| m.cleanup_intensity.as_deref())
         .filter(|i| !i.is_empty())
@@ -608,7 +794,10 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
 
     if duration_ms < MIN_RECORDING_MS || rms < min_rms {
         hide_pill(&app);
-        anyhow::bail!("Recording too short");
+        if duration_ms < MIN_RECORDING_MS {
+            anyhow::bail!("Recording too short");
+        }
+        anyhow::bail!("Audio too quiet — check your mic");
     }
     let wav = bytes::Bytes::from(wav);
 
@@ -664,11 +853,24 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
 }
 
 pub async fn run_pipeline(app: AppHandle, state: SharedState) {
+    run_pipeline_with_delivery(app, state, false).await;
+}
+
+pub async fn run_pipeline_event_only(app: AppHandle, state: SharedState) {
+    run_pipeline_with_delivery(app, state, true).await;
+}
+
+async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_only: bool) {
     let started_at = std::time::Instant::now();
     let Some((session, target_hwnd)) = take_pipeline_session(&state) else {
         log::debug!("pipeline: no session - recording never started or was already consumed");
         return;
     };
+
+    // Read once, synchronously, as close to the hotkey-release moment as
+    // possible — the rest of the pipeline is async and the user may keep
+    // typing (toggling Caps Lock) while it runs.
+    let caps_lock_on = crate::core::hotkey::caps_lock_is_on();
 
     let process_name = window_context::get_active_process_name()
         .unwrap_or_else(|| "unknown".into())
@@ -732,16 +934,16 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
             process_name: process_name.clone(),
             profile: profile.clone(),
             app_context: app_context.clone(),
+            caps_lock_on,
         });
     }
 
     let stage_transcribe = std::time::Instant::now();
-    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
-        run_transcription_and_cleanup(&app, &wav, &cfg, &profile, app_context.as_deref()).await
-    else {
+    let Some((raw_unorm, api_used)) = run_transcription(&app, &wav, &cfg).await else {
         emit_pipeline_failed(&app);
         return;
     };
+    let raw = normalize_transcription_math_artifacts(&raw_unorm);
     log::debug!(
         "pipeline: transcription ok provider={} raw_chars={} raw_preview=\"{}\"",
         api_used,
@@ -756,7 +958,24 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
         stage_transcribe.elapsed().as_millis()
     );
 
+    // Post-transcription hallucination gate — silently drop prompt-echoes and
+    // known silent-audio artifacts before they reach cleanup or the cache.
+    if is_transcription_hallucination(&raw) {
+        log::warn!(
+            "pipeline: transcription matched hallucination pattern, dropping silently raw=\"{}\"",
+            preview_text(&raw, 60)
+        );
+        hide_pill(&app);
+        return;
+    }
+
     let stage_cleanup = std::time::Instant::now();
+    let Some((final_text, dict_entries, cleanup_cache_key)) =
+        run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
+    else {
+        emit_pipeline_failed(&app);
+        return;
+    };
     log::debug!(
         "pipeline: cleanup/snippets ok final_chars={} final_preview=\"{}\" dict_entries={}",
         final_text.chars().count(),
@@ -787,6 +1006,8 @@ pub async fn run_pipeline(app: AppHandle, state: SharedState) {
             process_name,
             cleanup_cache_key,
             captured_at: retry_captured_at,
+            event_only,
+            caps_lock_on,
         },
     )
     .await
@@ -954,21 +1175,6 @@ async fn run_transcription(
     None
 }
 
-async fn run_transcription_and_cleanup(
-    app: &AppHandle,
-    wav: &bytes::Bytes,
-    cfg: &store::PipelineConfig,
-    profile: &str,
-    app_context: Option<&str>,
-) -> Option<(String, String, String, Vec<db::DictionaryEntry>, String)> {
-    let (raw, api_used) = run_transcription(app, wav, cfg).await?;
-    let raw = normalize_transcription_math_artifacts(&raw);
-
-    let (final_text, dict_entries, cleanup_cache_key) =
-        run_cleanup_and_snippets(app, &raw, cfg, profile, app_context).await?;
-    Some((raw, api_used, final_text, dict_entries, cleanup_cache_key))
-}
-
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
 // instruction override application. Returns (final_text_before_dict, dict_entries)
 // so the caller can apply dictionary substitutions after saving to DB.
@@ -1126,14 +1332,15 @@ async fn run_cleanup_and_snippets_for_db(
             extra_rules.lines().filter(|l| !l.trim().is_empty()).count()
         );
 
-        let mut cleaned_res: Option<String> = None;
+        let mut cleaned_res: Option<(String, String, String, String)> = None;
         let mut last_cleanup_err: Option<anyhow::Error> = None;
         for (provider_id, model) in cleanup_model_chain(cfg) {
             let key = cfg.key_for(&provider_id).to_owned();
             if key.is_empty() {
                 continue;
             }
-            let cp = cleanup_provider_from_str(&provider_id);
+            let cp = cleanup::provider_from_str(&provider_id);
+            let custom_template = cfg.cleanup_override_for(&provider_id, &model);
             match cleanup::cleanup(
                 &expanded,
                 cp,
@@ -1143,6 +1350,7 @@ async fn run_cleanup_and_snippets_for_db(
                 &cfg.cleanup_intensity,
                 &extra_rules,
                 app_context,
+                custom_template,
             )
             .await
             {
@@ -1153,7 +1361,7 @@ async fn run_cleanup_and_snippets_for_db(
                         model,
                         cleaned.chars().count()
                     );
-                    cleaned_res = Some(cleaned);
+                    cleaned_res = Some((cleaned, provider_id.clone(), model.clone(), key.clone()));
                     break;
                 }
                 Ok(_) => {
@@ -1178,7 +1386,27 @@ async fn run_cleanup_and_snippets_for_db(
             }
         }
 
-        match cleaned_res {
+        let provider_succeeded = cleaned_res.is_some();
+        let guarded = match cleaned_res {
+            Some((cleaned, provider_id, model, key)) => {
+                guard_cleanup_refusal(
+                    cleaned,
+                    raw,
+                    &expanded,
+                    &provider_id,
+                    &model,
+                    &key,
+                    profile,
+                    &cfg.cleanup_intensity,
+                    &extra_rules,
+                    app_context,
+                )
+                .await
+            }
+            None => None,
+        };
+
+        match guarded {
             Some(cleaned) => {
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
@@ -1199,7 +1427,9 @@ async fn run_cleanup_and_snippets_for_db(
                 }
                 overridden
             }
-            None if last_cleanup_err.is_some() => return Err(last_cleanup_err.expect("checked")),
+            None if !provider_succeeded && last_cleanup_err.is_some() => {
+                return Err(last_cleanup_err.expect("checked"))
+            }
             None => snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions),
         }
     } else {
@@ -1273,6 +1503,7 @@ pub struct PipelineTestRequest {
     pub app_context: Option<String>,
     pub snippets: Vec<PipelineTestSnippet>,
     pub dictionary: Vec<PipelineTestDictionaryEntry>,
+    pub caps_lock_on: bool,
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -1371,13 +1602,24 @@ pub async fn run_pipeline_fixture(
             request.app_context.as_deref(),
         )
         .await?;
+    let apply_caps_lock_upper = request.config.caps_lock_uppercase_enabled && request.caps_lock_on;
     let (injected_text, _applied_dict_ids) =
         dictionary::apply_substitutions_from(&final_text_before_dictionary, &dict_entries);
+    let injected_text = if apply_caps_lock_upper {
+        injected_text.to_uppercase()
+    } else {
+        injected_text
+    };
     let words = raw_text.split_whitespace().count() as i64;
+    let clean_for_insert = if apply_caps_lock_upper {
+        final_text_before_dictionary.to_uppercase()
+    } else {
+        final_text_before_dictionary.clone()
+    };
     let history_entry = db::insert_transcription_returning(
         &db_handle,
         &raw_text,
-        &final_text_before_dictionary,
+        &clean_for_insert,
         words,
         request.duration_ms as i64,
         &api_used,
@@ -1409,15 +1651,50 @@ pub async fn run_pipeline_fixture(
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_transcription_math_artifacts, recording_gate_rms, run_pipeline_fixture,
-        should_run_cleanup_llm, should_use_cleanup_cache, style_scoped_cleanup_cache_key,
-        PipelineTestDictionaryEntry, PipelineTestRequest, PipelineTestSnippet,
+        is_transcription_hallucination, normalize_transcription_math_artifacts, recording_gate_rms,
+        run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
+        style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
+        PipelineTestSnippet,
     };
+    use crate::api::prompts::looks_like_refusal;
     use crate::data::store;
     use crate::testing::{
         fixture_hit_count, register_fixture, reset, set_enabled, take_injections, FixtureSpec,
     };
     use bytes::Bytes;
+
+    #[test]
+    fn hallucination_gate_catches_prompt_echo() {
+        assert!(is_transcription_hallucination("Return only spoken words."));
+        assert!(is_transcription_hallucination("Return only spoken words"));
+        assert!(is_transcription_hallucination(
+            "Return only the words spoken."
+        ));
+        assert!(is_transcription_hallucination(
+            "Verenu dictation in English."
+        ));
+        assert!(is_transcription_hallucination(
+            "Transcribe the audio in English."
+        ));
+    }
+
+    #[test]
+    fn hallucination_gate_catches_common_whisper_artifacts() {
+        assert!(is_transcription_hallucination("Thank you for watching!"));
+        assert!(is_transcription_hallucination("[silence]"));
+        assert!(is_transcription_hallucination("[Music playing]"));
+    }
+
+    #[test]
+    fn hallucination_gate_passes_real_speech() {
+        assert!(!is_transcription_hallucination(
+            "Return the package to me by Thursday."
+        ));
+        assert!(!is_transcription_hallucination(
+            "Why does YouTube's algorithm feel like doo-doo?"
+        ));
+        assert!(!is_transcription_hallucination("Thank you for your help."));
+    }
 
     #[test]
     fn cleanup_cache_bypasses_math_like_queries() {
@@ -1508,7 +1785,10 @@ mod tests {
             auto_learn_enabled: false,
             contextual_caps_enabled: true,
             auto_spacing_enabled: true,
+            caps_lock_uppercase_enabled: false,
             macos_clipboard_sniff_enabled: false,
+            advanced_model_ui: false,
+            cleanup_prompt_overrides: std::collections::HashMap::new(),
         }
     }
 
@@ -1524,6 +1804,7 @@ mod tests {
             app_context: None,
             snippets: Vec::new(),
             dictionary: Vec::new(),
+            caps_lock_on: false,
         }
     }
 
@@ -1732,6 +2013,88 @@ mod tests {
         reset();
     }
 
+    #[test]
+    fn looks_like_refusal_matches_known_markers() {
+        assert!(looks_like_refusal(
+            "I am an AI and I do not have access to real-time data."
+        ));
+        assert!(looks_like_refusal("As an AI, I can't help with that."));
+        assert!(looks_like_refusal("I cannot provide that information."));
+        assert!(!looks_like_refusal("Send me the file when you can."));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_keeps_self_described_refusal_when_dictated_by_user() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("I cannot believe it is already five o'clock".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("I cannot believe it's already five o'clock.".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let result = run_pipeline_fixture(base_request(base_config()))
+            .await
+            .expect("dictated refusal-shaped text should pass through unchanged");
+        assert_eq!(
+            result.final_text_before_dictionary,
+            "I cannot believe it's already five o'clock."
+        );
+        assert_eq!(
+            fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+            1
+        );
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_retries_then_falls_back_on_model_refusal() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("what time is it in tokyo right now".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("I am an AI and I do not have access to real-time information.".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        let result = run_pipeline_fixture(base_request(base_config()))
+            .await
+            .expect("model refusal should fall back to pre-cleanup text");
+        assert_eq!(
+            result.final_text_before_dictionary,
+            "what time is it in tokyo right now"
+        );
+        assert_eq!(
+            fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+            2
+        );
+        reset();
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn pipeline_fixture_skips_cleanup_for_pure_snippet_fast_path() {
         let _guard = harness_test_lock().lock().expect("harness lock");
@@ -1811,6 +2174,61 @@ mod tests {
             .expect("instruction and dictionary path should succeed");
         assert_eq!(result.final_text_before_dictionary, "ACME ALERT");
         assert_eq!(result.injected_text, "Verenu ALERT");
+        reset();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_fixture_uppercases_output_only_when_setting_and_caps_lock_both_on() {
+        let _guard = harness_test_lock().lock().expect("harness lock");
+        reset();
+        set_enabled(true);
+        register_fixture(FixtureSpec {
+            task: "transcription".into(),
+            provider: "groq".into(),
+            model: "whisper-large-v3-turbo".into(),
+            response: Some("send the report now".into()),
+            error_kind: None,
+            error_message: None,
+        });
+        register_fixture(FixtureSpec {
+            task: "cleanup".into(),
+            provider: "groq".into(),
+            model: "llama-3.3-70b-versatile".into(),
+            response: Some("Send the report now.".into()),
+            error_kind: None,
+            error_message: None,
+        });
+
+        // Setting on + Caps Lock on -> uppercase the injected text and the
+        // persisted history record, but not the pre-dictionary cleanup value.
+        let mut config = base_config();
+        config.caps_lock_uppercase_enabled = true;
+        let mut request = base_request(config.clone());
+        request.caps_lock_on = true;
+        let result = run_pipeline_fixture(request)
+            .await
+            .expect("caps lock uppercase path should succeed");
+        assert_eq!(result.final_text_before_dictionary, "Send the report now.");
+        assert_eq!(result.injected_text, "SEND THE REPORT NOW.");
+        assert_eq!(result.history_entry.clean_text, "SEND THE REPORT NOW.");
+
+        // Setting on + Caps Lock off -> unchanged.
+        let mut request = base_request(config);
+        request.caps_lock_on = false;
+        let result = run_pipeline_fixture(request)
+            .await
+            .expect("caps lock off should leave output unchanged");
+        assert_eq!(result.injected_text, "Send the report now.");
+        assert_eq!(result.history_entry.clean_text, "Send the report now.");
+
+        // Setting off -> unchanged regardless of Caps Lock state.
+        let mut request = base_request(base_config());
+        request.caps_lock_on = true;
+        let result = run_pipeline_fixture(request)
+            .await
+            .expect("setting disabled should leave output unchanged");
+        assert_eq!(result.injected_text, "Send the report now.");
+        assert_eq!(result.history_entry.clean_text, "Send the report now.");
         reset();
     }
 
@@ -1935,17 +2353,27 @@ pub async fn retry_transcription_impl(
     let mapping = resolve_app_mapping(Some(&settings_store), &capture.process_name);
     capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
 
-    let Some((raw, api_used, final_text, dict_entries, cleanup_cache_key)) =
-        run_transcription_and_cleanup(
-            app,
-            &capture.wav,
-            &cfg,
-            &capture.profile,
-            capture.app_context.as_deref(),
-        )
-        .await
+    let Some((raw_unorm, api_used)) = run_transcription(app, &capture.wav, &cfg).await else {
+        anyhow::bail!("Retry transcription failed");
+    };
+    let raw = normalize_transcription_math_artifacts(&raw_unorm);
+    if is_transcription_hallucination(&raw) {
+        log::warn!(
+            "pipeline: retry transcription matched hallucination pattern, dropping raw=\"{}\"",
+            preview_text(&raw, 60)
+        );
+        anyhow::bail!("Recording was too quiet — nothing was transcribed");
+    }
+    let Some((final_text, dict_entries, cleanup_cache_key)) = run_cleanup_and_snippets(
+        app,
+        &raw,
+        &cfg,
+        &capture.profile,
+        capture.app_context.as_deref(),
+    )
+    .await
     else {
-        anyhow::bail!("Retry processing failed");
+        anyhow::bail!("Retry cleanup failed");
     };
 
     finalize_pipeline_completion(
@@ -1963,6 +2391,8 @@ pub async fn retry_transcription_impl(
             process_name: capture.process_name,
             cleanup_cache_key,
             captured_at: capture.captured_at,
+            event_only: false,
+            caps_lock_on: capture.caps_lock_on,
         },
     )
     .await
@@ -1980,6 +2410,8 @@ struct PipelineCompletionContext<'a> {
     process_name: String,
     cleanup_cache_key: String,
     captured_at: std::time::Instant,
+    event_only: bool,
+    caps_lock_on: bool,
 }
 
 async fn finalize_pipeline_completion(
@@ -1991,6 +2423,12 @@ async fn finalize_pipeline_completion(
     let (final_text_substituted, applied_dict_ids) =
         dictionary::apply_substitutions_from(ctx.final_text_before_dict, ctx.dict_entries);
     let dict_changed = !applied_dict_ids.is_empty();
+    let apply_caps_lock_upper = ctx.cfg.caps_lock_uppercase_enabled && ctx.caps_lock_on;
+    let final_text_substituted = if apply_caps_lock_upper {
+        final_text_substituted.to_uppercase()
+    } else {
+        final_text_substituted
+    };
     log::debug!(
         "pipeline: dictionary apply changed={} before_chars={} after_chars={} stage_ms={}",
         dict_changed,
@@ -2013,7 +2451,11 @@ async fn finalize_pipeline_completion(
     let words = ctx.raw.split_whitespace().count() as i64;
     let db_for_insert = db_handle.inner().clone();
     let raw_for_insert = ctx.raw.to_string();
-    let clean_for_insert = ctx.final_text_before_dict.to_string();
+    let clean_for_insert = if apply_caps_lock_upper {
+        ctx.final_text_before_dict.to_uppercase()
+    } else {
+        ctx.final_text_before_dict.to_string()
+    };
     let api_used_for_insert = ctx.api_used.to_string();
     let duration_for_insert = ctx.duration_ms as i64;
     let entry = match tokio::task::spawn_blocking(move || {
@@ -2057,7 +2499,15 @@ async fn finalize_pipeline_completion(
     // Detect this by PID and fall back to clipboard-only so the user can paste manually.
     let self_inject = foreground_is_own_process() || hwnd_is_own_process(ctx.target_hwnd);
 
-    let injected = if self_inject {
+    let injected = if ctx.event_only {
+        injection::InjectionOutcome {
+            text: final_text_substituted.clone(),
+            context_state: "event_only",
+            case_decision: "setup_try_event",
+            probe_source: "unavailable",
+            selection_state: "unknown",
+        }
+    } else if self_inject {
         log::info!("pipeline: self-inject detected — clipboard fallback");
         if let Err(e) = injection::copy_to_clipboard(&final_text_substituted).await {
             log::warn!("pipeline: clipboard fallback write failed: {e}");
@@ -2098,7 +2548,7 @@ async fn finalize_pipeline_completion(
     };
     let injected_text = injected.text;
     log::debug!(
-        "pipeline: injection done contextual_caps={} auto_spacing={} context_state={} case_decision={} probe_source={} selection_state={} output_chars={} stage_ms={}",
+        "pipeline: delivery done contextual_caps={} auto_spacing={} context_state={} case_decision={} probe_source={} selection_state={} output_chars={} stage_ms={}",
         ctx.cfg.contextual_caps_enabled,
         ctx.cfg.auto_spacing_enabled,
         injected.context_state,
@@ -2109,6 +2559,10 @@ async fn finalize_pipeline_completion(
         inject_stage.elapsed().as_millis()
     );
     app.emit("verenu:transcribed", &injected_text).ok();
+
+    if ctx.event_only {
+        return Ok(entry);
+    }
 
     if !ctx.cleanup_cache_key.is_empty() {
         auto_learn::start_cache_rejection_monitor(

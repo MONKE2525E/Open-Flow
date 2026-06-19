@@ -4,10 +4,11 @@
   import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
   import { saveSetting, type HistoryRetention } from '../../settings';
-  import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
+  import { animateWidth, modalBackdrop, modalCard, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
 
   const historyOptions = ['7 days', '30 days', '90 days', 'Forever'];
   const HISTORY_MENU_ID = 'history-retention-menu';
+  let confirmRetention = $state<{ value: string; count: number } | null>(null);
   type CleanupCacheStatus = {
     entry_count: number;
     is_space_constrained: boolean;
@@ -63,6 +64,32 @@
     } catch (err) {
       console.error('saveHistoryRetention failed:', err);
     }
+  }
+
+  async function requestHistoryRetention(value: string) {
+    historyDropdownOpen = false;
+    if (value === historyRetention) return;
+    try {
+      const count = await invoke<number>('count_old_transcriptions', { retention: value });
+      if (count > 0) {
+        confirmRetention = { value, count };
+      } else {
+        await saveHistoryRetention(value);
+      }
+    } catch (err) {
+      console.error('count_old_transcriptions failed:', err);
+    }
+  }
+
+  async function confirmHistoryRetention() {
+    if (!confirmRetention) return;
+    const { value } = confirmRetention;
+    confirmRetention = null;
+    await saveHistoryRetention(value);
+  }
+
+  function handleRetentionModalKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && confirmRetention) confirmRetention = null;
   }
 
   async function handleAppContextHint(value: boolean) {
@@ -202,7 +229,48 @@
   }
 </script>
 
+<svelte:window onkeydown={handleRetentionModalKeydown} />
+
 <h2 class="settings-h">Privacy</h2>
+
+<h3 class="settings-subhead first">Context</h3>
+<div class="setting-row">
+  <div><div class="label">App context hint</div><div class="desc">Passes the active app to the cleanup model to tailor formatting</div></div>
+  <Toggle checked={appContextHint} onchange={handleAppContextHint} label="App context hint" />
+</div>
+
+<h3 class="settings-subhead">On-device learning</h3>
+<div class="setting-row">
+  <div>
+    <div class="label" style="display:flex;align-items:center;gap:7px;">
+      Auto-learn corrections
+      <span class="privacy-eye-wrap">
+        <svg class="privacy-eye" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        <span class="privacy-tooltip">Entirely on-device — no text is sent to any API.</span>
+      </span>
+    </div>
+    <div class="desc">Add confirmed corrections to dictionary automatically</div>
+  </div>
+  <Toggle checked={autoLearn} onchange={handleAutoLearn} label="Auto-learn corrections" />
+</div>
+<div class="setting-row">
+  <div>
+    <div class="label">Auto-learn activity</div>
+    <div class="desc">
+      Promoted: {autoLearnSummary.promotions} | Low-confidence blocked: {autoLearnSummary.low_confidence_rejections} | Anchor misses: {autoLearnSummary.anchor_misses}
+    </div>
+    {#if recentAutoLearn.length > 0}
+      <div class="desc" style="margin-top:4px;">
+        Latest: {recentAutoLearn[0].event_type} ({recentAutoLearn[0].reason_code})
+      </div>
+    {/if}
+  </div>
+</div>
+
+<h3 class="settings-subhead">History & storage</h3>
 <div class="setting-row">
   <div><div class="label">Transcription history</div><div class="desc">How long to keep past dictations</div></div>
   <div class="history-dropdown">
@@ -237,7 +305,7 @@
           <button
             class="mic-item"
             class:active={historyRetention === opt}
-            onclick={() => saveHistoryRetention(opt)}
+            onclick={() => requestHistoryRetention(opt)}
             onkeydown={handleHistoryButtonKeydown}
             role="option"
             aria-selected={historyRetention === opt}
@@ -245,39 +313,6 @@
             {opt}
           </button>
         {/each}
-      </div>
-    {/if}
-  </div>
-</div>
-<div class="setting-row">
-  <div><div class="label">App context hint</div><div class="desc">Passes the active app to the cleanup model to tailor formatting</div></div>
-  <Toggle checked={appContextHint} onchange={handleAppContextHint} label="App context hint" />
-</div>
-<div class="setting-row">
-  <div>
-    <div class="label" style="display:flex;align-items:center;gap:7px;">
-      Auto-learn corrections
-      <span class="privacy-eye-wrap">
-        <svg class="privacy-eye" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-          <circle cx="12" cy="12" r="3"/>
-        </svg>
-        <span class="privacy-tooltip">Entirely on-device — no text is sent to any API.</span>
-      </span>
-    </div>
-    <div class="desc">Add confirmed corrections to dictionary automatically</div>
-  </div>
-  <Toggle checked={autoLearn} onchange={handleAutoLearn} label="Auto-learn corrections" />
-</div>
-<div class="setting-row">
-  <div>
-    <div class="label">Auto-learn activity</div>
-    <div class="desc">
-      Promoted: {autoLearnSummary.promotions} | Low-confidence blocked: {autoLearnSummary.low_confidence_rejections} | Anchor misses: {autoLearnSummary.anchor_misses}
-    </div>
-    {#if recentAutoLearn.length > 0}
-      <div class="desc" style="margin-top:4px;">
-        Latest: {recentAutoLearn[0].event_type} ({recentAutoLearn[0].reason_code})
       </div>
     {/if}
   </div>
@@ -306,7 +341,7 @@
   </button>
 </div>
 
-<h2 class="settings-h data-h">Data</h2>
+<h3 class="settings-subhead">Backup</h3>
 <div class="setting-row">
   <div>
     <div class="label">Export Backup</div>
@@ -345,9 +380,35 @@
   onchange={handleFileSelected}
 />
 
-<style>
-  .data-h { --settings-h-mb: 2px; margin-top: 52px; }
+{#if confirmRetention}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <button class="modal-backdrop" aria-label="Close dialog" onclick={() => (confirmRetention = null)} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
+  <div
+    class="modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="retention-confirm-title"
+    in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel), scaleFrom: 0.97 }}
+    out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}
+  >
+    <div class="modal-header">
+      <h2 id="retention-confirm-title" class="modal-title">Delete older history?</h2>
+    </div>
+    <div class="modal-body">
+      <p class="confirm-copy">
+        Looks like you have {confirmRetention.count} transcription{confirmRetention.count === 1 ? '' : 's'} before this point. Changing this will delete that data. Are you sure?
+      </p>
+    </div>
+    <div class="modal-footer">
+      <div class="footer-actions">
+        <button class="btn-ghost" onclick={() => (confirmRetention = null)}>Cancel</button>
+        <button class="btn-danger" onclick={confirmHistoryRetention}>Delete history</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
+<style>
   .data-ok { color: var(--success); }
   .data-err { color: var(--accent); }
   .data-status {
@@ -362,7 +423,7 @@
   .mic-btn { display: flex; align-items: center; gap: 6px; max-width: 180px; }
   .mic-btn svg { transition: transform 150ms; }
   .mic-btn svg.open { transform: rotate(180deg); }
-  .mic-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+  .mic-btn span { overflow: hidden; white-space: nowrap; }
   .mic-menu {
     position: absolute;
     right: 0;
@@ -419,4 +480,73 @@
     transition: opacity 0.16s ease, transform 0.16s ease;
   }
   .privacy-eye-wrap:hover .privacy-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ── retention confirm modal ── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    border: 0;
+    padding: 0;
+    appearance: none;
+    background: var(--overlay);
+    z-index: 50;
+    outline: none;
+  }
+  .modal-card {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    translate: -50% -50%;
+    z-index: 51;
+    isolation: isolate;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    width: min(420px, calc(100vw - 40px));
+    box-shadow: var(--shadow-elev);
+    overflow: hidden;
+  }
+  .modal-header {
+    padding: 20px 20px 0;
+  }
+  .modal-title {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    color: var(--ink);
+    margin: 0;
+  }
+  .modal-body { padding: 10px 20px 18px; }
+  .confirm-copy {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+  .modal-footer {
+    padding: 0 20px 20px;
+  }
+  .footer-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .btn-danger {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border: 1px solid var(--danger-line);
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-family: var(--sans);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .btn-danger:hover {
+    background: var(--danger);
+    color: var(--on-accent);
+    border-color: var(--danger);
+  }
 </style>

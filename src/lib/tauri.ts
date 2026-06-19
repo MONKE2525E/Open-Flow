@@ -179,8 +179,17 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return { total_words: 0, avg_wpm: 0, day_streak: 0 } as T;
     case 'get_memory_mb':
       return 0 as T;
+    case 'count_old_transcriptions':
+      return 0 as T;
     case 'get_api_key_status':
-      return { groq: false, openai: false, google: false } as T;
+      return {
+        groq: false,
+        openai: false,
+        google: false,
+        ...(getDevSetting('__provider_connected') as Record<string, boolean> | null),
+      } as T;
+    case 'validate_api_key':
+      return { ok: true, status: 'valid', message: 'Key verified (dev mode).' } as T;
     case 'get_accessibility_permission_status':
       return String(getDevSetting('accessibility_permission_status') ?? 'authorized') as T;
     case 'get_microphone_permission_status':
@@ -207,13 +216,24 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'stop_and_transcribe_input':
       return '' as T;
     case 'save_api_key':
-    case 'delete_api_key':
+    case 'delete_api_key': {
+      // Round-trip "saved" state through dev storage so the API Keys section
+      // (saved indicator + Save⇄Clear flip) is actually demoable in browser dev.
+      const provider = String(args?.provider ?? '');
+      if (provider) {
+        const current = (getDevSetting('__provider_connected') as Record<string, boolean> | null) ?? {};
+        writeDevSetting('__provider_connected', { ...current, [provider]: command === 'save_api_key' });
+      }
+      return undefined as T;
+    }
     case 'set_autostart':
     case 'save_hotkey':
     case 'hide_main':
     case 'open_accessibility_settings':
     case 'open_microphone_settings':
     case 'start_input_recording':
+    case 'start_setup_try_recording':
+    case 'stop_setup_try_recording':
     case 'retry_transcription':
     case 'install_update':
     case 'set_dev_logging_enabled':

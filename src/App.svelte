@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { appStore } from './lib/stores';
+  import { cleanupPromptEditor } from './lib/stores.svelte';
   import { isMac } from './lib/platform';
   import TitleBar from './lib/components/layout/TitleBar.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
@@ -9,6 +10,7 @@
   import Snippets from './lib/views/Snippets.svelte';
   import Style from './lib/views/Style.svelte';
   import Settings from './lib/views/Settings.svelte';
+  import CleanupPromptModal from './lib/components/settings/CleanupPromptModal.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
   import { invoke, listen } from './lib/tauri';
@@ -117,10 +119,6 @@
   });
 </script>
 
-<svelte:head>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter+Tight:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
-</svelte:head>
-
 <div class="app">
   {#if appStore.setupComplete === false}
     <Setup />
@@ -151,6 +149,9 @@
     </div>
   </div>
   <Settings />
+  {#if cleanupPromptEditor.open}
+    <CleanupPromptModal />
+  {/if}
   <DictationPill />
 
   {#if errorToast}
@@ -171,67 +172,6 @@
 </div>
 
 <style>
-  :global(:root[data-theme="legacy-unused"]) {
-    /* Soft-amber — paper / surfaces */
-    --amber-50: #f9f7f3;
-    --amber-100: #f1ebe3;
-    --amber-200: #d8c9b5;
-
-    /* Japonica — accent (sparingly) */
-    --jap-50: #fcf4f0;
-    --jap-100: #f8e6dc;
-    --jap-200: #f0cbb8;
-    --jap-300: #e6a78b;
-    --jap-400: #d97757;
-    --jap-500: #cc5e3e;
-    --jap-600: #c44632;
-    --jap-700: #a3352b;
-
-    /* Armadillo — text */
-    --arm-200: #e8e5e3;
-    --arm-300: #d8d3cf;
-    --arm-400: #ada299;
-    --arm-500: #7e7266;
-    --arm-600: #5b554a;
-    --arm-700: #4a433a;
-    --arm-800: #2b2422;
-    --arm-900: #1e1915;
-    --arm-950: #0d0a08;
-
-    /* Surfaces */
-    --paper: var(--amber-50);
-    --paper-2: var(--amber-100);
-    --bg-elev: #ffffff;
-
-    /* Ink */
-    --ink: var(--arm-950);
-    --ink-strong: var(--arm-800);
-    --ink-soft: var(--arm-700);
-    --ink-mute: var(--arm-500);
-    --ink-faint: var(--arm-400);
-
-    --line: var(--arm-200);
-    --line-soft: #efeae3;
-    --line-strong: var(--arm-300);
-
-    --accent: var(--jap-400);
-    --accent-ink: var(--jap-700);
-    --accent-soft: var(--jap-100);
-
-    --serif: 'Fraunces', Georgia, serif;
-    --sans: 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
-    --mono: 'JetBrains Mono', ui-monospace, monospace;
-
-    --r-sm: 8px;
-    --r-md: 12px;
-    --r-lg: 16px;
-
-    --page-pad-x: clamp(18px, 3vw, 42px);
-    --page-pad-y: clamp(16px, 2.4vw, 30px);
-    --page-max: 1160px;
-    --page-readable: 680px;
-  }
-
   :global(*) {
     box-sizing: border-box;
   }
@@ -281,14 +221,14 @@
     flex: 1;
     display: flex;
     min-height: 0;
-    padding: 0 14px 14px 14px;
+    padding: 0 0 14px 14px;
     gap: 14px;
   }
 
   .content {
     flex: 1;
     background: transparent;
-    overflow-y: scroll;
+    overflow-y: auto;
     overflow-x: hidden;
     scrollbar-gutter: stable;
     position: relative;
@@ -305,6 +245,7 @@
     max-width: 100%;
     min-width: 0;
     min-height: calc(100% + 1px);
+    padding-right: 14px;
   }
 
   .error-toast {

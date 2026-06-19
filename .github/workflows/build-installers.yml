@@ -43,9 +43,9 @@ jobs:
         run: |
           if [ "${{ matrix.os-name }}" = "macos" ]; then
             npm run tauri build -- --target aarch64-apple-darwin
-            mv "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.13.0_aarch64.dmg" "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.13.0_Apple_Silicon.dmg"
+            mv "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_aarch64.dmg" "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_Apple_Silicon.dmg"
             npm run tauri build -- --target x86_64-apple-darwin
-            mv "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.13.0_x64.dmg" "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.13.0_Intel.dmg"
+            mv "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_x64.dmg" "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_Intel.dmg"
           else
             npm run tauri build
           fi
@@ -72,7 +72,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Verenu-macOS-Apple-Silicon-dmg
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.13.0_Apple_Silicon.dmg
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_Apple_Silicon.dmg
           if-no-files-found: error
 
       - name: Upload macOS Intel DMG (.dmg)
@@ -80,5 +80,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Verenu-macOS-Intel-dmg
-          path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.13.0_Intel.dmg
+          path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_Intel.dmg
           if-no-files-found: error

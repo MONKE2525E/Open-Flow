@@ -12,8 +12,6 @@
     "core:window:allow-set-focus",
     "core:window:allow-start-dragging",
     "shell:allow-open",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
     "store:allow-get",
     "store:allow-set",
     "store:allow-delete",

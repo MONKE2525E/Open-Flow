@@ -33,6 +33,9 @@ mod noop {
     pub fn reset_chord_state() {}
     pub fn set_handless_active(_v: bool) {}
     pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
+    pub fn caps_lock_is_on() -> bool {
+        false
+    }
     pub fn map_code_to_vk(_code: &str) -> u32 {
         0
     }

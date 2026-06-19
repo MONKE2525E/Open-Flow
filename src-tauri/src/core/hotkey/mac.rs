@@ -40,6 +40,7 @@ extern "C" {
         actual_string_length: *mut libc::c_ulong,
         unicode_string: *mut u16,
     );
+    fn CGEventSourceFlagsState(state_id: i32) -> u64;
 }
 
 // --- private key id scheme -------------------------------------------------
@@ -178,6 +179,15 @@ pub fn reset_chord_state() {
 
 pub fn set_handless_active(v: bool) {
     HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
+}
+
+/// Current Caps Lock toggle state, queried synchronously from the OS — avoids
+/// depending on the event tap having already observed a flags-changed event
+/// (which would otherwise read stale/default state for Caps Lock toggled
+/// before the tap was installed, or before Accessibility permission is granted).
+pub fn caps_lock_is_on() -> bool {
+    const COMBINED_SESSION_STATE: i32 = 0; // kCGEventSourceStateCombinedSessionState
+    unsafe { (CGEventSourceFlagsState(COMBINED_SESSION_STATE) & FLAG_ALPHASHIFT) != 0 }
 }
 
 /// A chord is registrable as long as the trigger key maps to a known id.
@@ -342,8 +352,9 @@ where
                                 }
                                 actual_len = out_len.min(text.len() as libc::c_ulong) as u8;
                             }
+                            let flags_bits = event.get_flags().bits();
                             (
-                                event.get_flags().bits(),
+                                flags_bits,
                                 event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
                                 text,
                                 actual_len,

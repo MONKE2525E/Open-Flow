@@ -56,6 +56,10 @@
     }
   }
 
+  function rerunSetup() {
+    appStore.setupComplete = false;
+  }
+
   function handleVersionTap() {
     if (appStore.devModeEnabled) return;
     versionTapCount += 1;
@@ -96,6 +100,13 @@
 <div class="setting-row">
   <div><div class="label">Source</div></div>
   <button class="btn-ghost" onclick={openRepo}>github.com/{SOURCE_REPO}</button>
+</div>
+<div class="setting-row">
+  <div>
+    <div class="label">Setup</div>
+    <div class="desc">Re-run onboarding to review your provider, key, and defaults.</div>
+  </div>
+  <button class="btn-ghost" onclick={rerunSetup}>Re-run setup</button>
 </div>
 <div class="setting-row">
   <div>
