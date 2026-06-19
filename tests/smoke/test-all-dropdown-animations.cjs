@@ -13,12 +13,13 @@
  *   4. App Profile (add row)      (AppMappingsEditor via Settings > Apps)
  */
 
+const path = require('path');
 const { chromium } = require('playwright');
 const { tauriMock } = require('./_tauri-mock.cjs');
 
-const TARGET_URL = 'http://localhost:1420';
+const TARGET_URL = process.env.TEST_URL || 'http://localhost:1420';
 const TIMEOUT = 12_000;
-const SCREENSHOT_DIR = 'G:\\Verenu';
+const SCREENSHOT_DIR = __dirname;
 
 async function checkDropdown(page, selector, label) {
   const btn = page.locator(selector).first();
@@ -75,7 +76,7 @@ async function openSettingsSection(page, sectionText) {
     results.push(await checkDropdown(page, '.mic-btn', 'Microphone (General)'));
     results.push(await checkDropdown(page, '.language-btn', 'Spoken Language (General)'));
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}\\screenshot-general.png` });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'screenshot-general.png') });
 
     // ── Language animation: English → Chinese Simplified → back ───────────────
     const langBtn = page.locator('.language-btn').first();
@@ -121,7 +122,7 @@ async function openSettingsSection(page, sectionText) {
       results.push({ label: 'Language menu open', pass: false, reason: 'menu not visible' });
     }
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}\\screenshot-language-anim.png` });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'screenshot-language-anim.png') });
 
     // ── Settings > Privacy ────────────────────────────────────────────────────
     await openSettingsSection(page, 'Privacy');
@@ -154,7 +155,7 @@ async function openSettingsSection(page, sectionText) {
       }
     }
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}\\screenshot-privacy.png` });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'screenshot-privacy.png') });
 
     // ── Settings > App Mappings ────────────────────────────────────────────────
     await openSettingsSection(page, 'App Mappings');
@@ -186,7 +187,7 @@ async function openSettingsSection(page, sectionText) {
       }
     }
 
-    await page.screenshot({ path: `${SCREENSHOT_DIR}\\screenshot-apps.png` });
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'screenshot-apps.png') });
 
   } catch (err) {
     errors.push(`Test threw: ${err.message}`);

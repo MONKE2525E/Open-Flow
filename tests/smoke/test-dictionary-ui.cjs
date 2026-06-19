@@ -1,11 +1,11 @@
 // Dictionary UI test — verifies layout, "often" display, inspector, and no flicker.
-// Connects to Vite dev server (port 5173). Start with: npm run dev
+// Connects to the Vite dev server (port 1420, see vite.config). Start with: npm run dev
 const { chromium } = require('playwright');
 const { tauriMock } = require('./_tauri-mock.cjs');
 const path = require('path');
 const fs   = require('fs');
 
-const TARGET_URL = process.env.TEST_URL || 'http://localhost:5173';
+const TARGET_URL = process.env.TEST_URL || 'http://localhost:1420';
 const TIMEOUT    = 10_000;
 const SS_DIR     = path.join(__dirname, '../../tmp-screenshots');
 

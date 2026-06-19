@@ -435,12 +435,6 @@ pub fn read_for_status(provider: &str) -> Result<bool, String> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-#[allow(dead_code)]
-pub fn read_for_status(_provider: &str) -> Result<bool, String> {
-    Ok(true)
-}
-
 #[cfg(target_os = "macos")]
 pub fn delete_saved(app: &AppHandle, provider: &str) -> Result<(), String> {
     delete(provider)?;

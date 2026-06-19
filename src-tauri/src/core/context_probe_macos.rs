@@ -1,5 +1,38 @@
 #![cfg(target_os = "macos")]
 
+//! macOS caret-local context probe (the real `CaretLocal` source).
+//!
+//! This is the macOS half of the layered `InjectionContextProbe`. It calls into
+//! the Objective-C shim (`system/macos_ax_text_marker.m`) which uses the
+//! Accessibility (AX) API to read the focused element's selected text range and
+//! the characters immediately before the caret. When AX permits, this returns a
+//! genuine `ContextProbeSource::CaretLocal` result with a real `context_tail`,
+//! exactly like the Windows UI Automation path — it is NOT clipboard-sniffing or
+//! history-guessing.
+//!
+//! ## Known OS limitations (why this can fall back)
+//!
+//! The AX API does not expose caret context for every control. The shim reports
+//! these cases so the caller can drop to the clipboard-sniff / history fallback
+//! (see `ContextProbeSource::allows_history_fallback`):
+//!
+//! - **Accessibility permission not granted** → `SOURCE_PERMISSION_MISSING`. The
+//!   app must be trusted under System Settings → Privacy & Security →
+//!   Accessibility; without it AX returns nothing.
+//! - **Controls that don't implement the text AX attributes** →
+//!   `SOURCE_UNSUPPORTED_CONTROL`. Common offenders: Chromium/Electron web views
+//!   and many browser text inputs, custom-drawn/canvas editors, terminal
+//!   emulators, and some cross-process or sandboxed apps that expose only a
+//!   coarse `AXTextArea` without `AXSelectedTextRange`/`AXTextMarker` support.
+//! - **Secure text fields** (password inputs) deliberately withhold contents →
+//!   typically reported as unsupported/ambiguous.
+//! - **Non-collapsed selection** → `SOURCE_AMBIGUOUS_SELECTION`: there is a
+//!   selection rather than a single caret, so the "what precedes the caret"
+//!   question is ill-defined and we do not guess.
+//!
+//! The read is synchronous on the calling thread (the AX round-trip is fast for
+//! supported controls); the caller runs it off the hotkey path.
+
 use std::ffi::c_char;
 
 use crate::core::context_probe::{

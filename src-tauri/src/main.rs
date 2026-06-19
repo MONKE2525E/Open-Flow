@@ -88,26 +88,38 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
     }
 }
 
-/// Per-user directory for the SQLite database, following each OS's convention.
+/// Canonical per-user data directory for Verenu, following each OS's convention.
+///
+/// This is the single source of truth for where Verenu stores its SQLite
+/// database. Everything that touches the DB — startup `open`, the in-app
+/// updater's pre-update backup, etc. — MUST derive its path from here (via
+/// [`app_db_path`]). Do NOT use Tauri's `app.path().app_data_dir()` for the
+/// database: that resolves against the bundle identifier and is not guaranteed
+/// to equal this path, so backups would silently target a different file.
 #[cfg(windows)]
-fn app_data_dir() -> std::path::PathBuf {
+pub(crate) fn app_data_dir() -> std::path::PathBuf {
     std::env::var("APPDATA")
         .map(|p| std::path::PathBuf::from(p).join("Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 #[cfg(target_os = "macos")]
-fn app_data_dir() -> std::path::PathBuf {
+pub(crate) fn app_data_dir() -> std::path::PathBuf {
     std::env::var("HOME")
         .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn app_data_dir() -> std::path::PathBuf {
+pub(crate) fn app_data_dir() -> std::path::PathBuf {
     std::env::var("HOME")
         .map(|h| std::path::PathBuf::from(h).join(".config/Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+/// Canonical path to the SQLite database file. Use this everywhere.
+pub(crate) fn app_db_path() -> std::path::PathBuf {
+    app_data_dir().join("verenu.db")
 }
 
 fn main() {
@@ -124,10 +136,8 @@ fn main() {
         retry_capture: None,
     }));
 
-    let db_dir = app_data_dir();
-    std::fs::create_dir_all(&db_dir).ok();
-    let db_handle: DbHandle =
-        db::open(db_dir.join("verenu.db").to_str().unwrap()).expect("failed to open database");
+    std::fs::create_dir_all(app_data_dir()).ok();
+    let db_handle: DbHandle = db::open(app_db_path()).expect("failed to open database");
     let _ = db::cleanup_cache_prune_expired(&db_handle);
 
     tauri::Builder::default()

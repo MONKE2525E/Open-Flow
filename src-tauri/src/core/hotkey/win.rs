@@ -299,12 +299,13 @@ static RELEASE_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync:
 static HANDLESS_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 static CANCEL_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 
-// Updated on every hook callback (see `hook_proc`) so reads always reflect a
-// thread with an active message pump — `GetKeyState`'s toggle bit is
-// synchronized to the calling thread's message queue, so querying it directly
-// from elsewhere (e.g. the Tokio pipeline thread) can return stale state.
-// Backs `caps_lock_is_on()` for the optional caps-lock output-uppercasing
-// setting.
+// Seeded once at hook-thread startup and updated on every hook callback (see
+// `start` and `hook_proc`) - both writes happen on the hook's dedicated
+// message-pumping thread, where `GetKeyState`'s toggle bit is reliably in
+// sync. Querying `GetKeyState` directly from elsewhere (e.g. the Tokio
+// pipeline thread, which has no message queue of its own) would not reflect
+// real toggle state. Backs `caps_lock_is_on()` for the optional caps-lock
+// output-uppercasing setting.
 static CAPS_LOCK_ON: AtomicBool = AtomicBool::new(false);
 
 static CHORD_DOWN: AtomicBool = AtomicBool::new(false);
@@ -543,6 +544,11 @@ where
                 return;
             }
         };
+
+        // Seed the cached state immediately: SetWindowsHookExW just gave this
+        // thread a message queue, so GetKeyState's toggle bit already reflects
+        // the real current state here, before the first key event arrives.
+        CAPS_LOCK_ON.store((GetKeyState(0x14) & 0x0001) != 0, Ordering::SeqCst);
 
         let mut msg = MSG::default();
         loop {

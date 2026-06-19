@@ -32,7 +32,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
     await page.locator('h1.page-h:has-text("Snippets")').waitFor({ state: 'visible', timeout: TIMEOUT });
     await page.locator('.toolbar .btn-primary:has-text("New snippet")').click();
     await page.locator('#trigger-input').fill('sig');
-    await page.locator('#expansion-input').fill('Best regards,\nNoah');
+    await page.locator('#expansion-input').fill('Best regards,\nThe Team');
     await page.locator('#instructions-input').fill('all capitals');
     await page.locator('.modal-card .btn-primary:has-text("Add snippet")').click();
     await page.locator('.snip-row:has-text("sig")').waitFor({ state: 'visible', timeout: TIMEOUT });

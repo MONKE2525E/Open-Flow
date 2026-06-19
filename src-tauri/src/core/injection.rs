@@ -48,7 +48,7 @@ const MODIFIER_GAP_MS: u64 = 30;
 #[cfg(target_os = "windows")]
 const PASTE_SETTLE_MS: u64 = 80;
 
-#[allow(dead_code)]
+#[cfg(test)]
 const SENTENCE_ENDERS: &[char] = &['.', '!', '?', '\n', '\r'];
 #[derive(Clone, Debug)]
 enum CursorContextState {
@@ -239,11 +239,11 @@ fn trim_tail_to_limit(text: &mut String) {
         *text = text[trim_at..].to_owned();
     }
 }
-#[allow(dead_code)]
+#[cfg(test)]
 fn trimmed_context_for_decision(text: &str) -> &str {
     text.trim_end_matches(|c: char| c.is_whitespace() && !SENTENCE_ENDERS.contains(&c))
 }
-#[allow(dead_code)]
+#[cfg(test)]
 fn classify_context(tail: &str) -> ContextKind {
     let trimmed = trimmed_context_for_decision(tail);
     if trimmed
@@ -387,7 +387,7 @@ fn find_first_alpha_span(text: &str) -> Option<(usize, usize)> {
     }
     start.map(|s| (s, end))
 }
-#[allow(dead_code)]
+#[cfg(test)]
 fn uppercase_first_word(text: &str) -> String {
     let Some((start, _)) = find_first_alpha_span(text) else {
         return text.to_owned();

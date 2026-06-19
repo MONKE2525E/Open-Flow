@@ -172,67 +172,6 @@
 </div>
 
 <style>
-  :global(:root[data-theme="legacy-unused"]) {
-    /* Soft-amber — paper / surfaces */
-    --amber-50: #f9f7f3;
-    --amber-100: #f1ebe3;
-    --amber-200: #d8c9b5;
-
-    /* Japonica — accent (sparingly) */
-    --jap-50: #fcf4f0;
-    --jap-100: #f8e6dc;
-    --jap-200: #f0cbb8;
-    --jap-300: #e6a78b;
-    --jap-400: #d97757;
-    --jap-500: #cc5e3e;
-    --jap-600: #c44632;
-    --jap-700: #a3352b;
-
-    /* Armadillo — text */
-    --arm-200: #e8e5e3;
-    --arm-300: #d8d3cf;
-    --arm-400: #ada299;
-    --arm-500: #7e7266;
-    --arm-600: #5b554a;
-    --arm-700: #4a433a;
-    --arm-800: #2b2422;
-    --arm-900: #1e1915;
-    --arm-950: #0d0a08;
-
-    /* Surfaces */
-    --paper: var(--amber-50);
-    --paper-2: var(--amber-100);
-    --bg-elev: #ffffff;
-
-    /* Ink */
-    --ink: var(--arm-950);
-    --ink-strong: var(--arm-800);
-    --ink-soft: var(--arm-700);
-    --ink-mute: var(--arm-500);
-    --ink-faint: var(--arm-400);
-
-    --line: var(--arm-200);
-    --line-soft: #efeae3;
-    --line-strong: var(--arm-300);
-
-    --accent: var(--jap-400);
-    --accent-ink: var(--jap-700);
-    --accent-soft: var(--jap-100);
-
-    --serif: 'Fraunces', Georgia, serif;
-    --sans: 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
-    --mono: 'JetBrains Mono', ui-monospace, monospace;
-
-    --r-sm: 8px;
-    --r-md: 12px;
-    --r-lg: 16px;
-
-    --page-pad-x: clamp(18px, 3vw, 42px);
-    --page-pad-y: clamp(16px, 2.4vw, 30px);
-    --page-max: 1160px;
-    --page-readable: 680px;
-  }
-
   :global(*) {
     box-sizing: border-box;
   }
