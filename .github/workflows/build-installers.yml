@@ -39,13 +39,65 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Read package version
+        run: |
+          app_version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+          echo "APP_VERSION=$app_version" >> "$GITHUB_ENV"
+        shell: bash
+
       - name: Build Tauri release app
         run: |
+          set -euo pipefail
+
+          MOUNT_DIR=""
+          cleanup_mount() {
+            if [ -n "${MOUNT_DIR:-}" ]; then
+              hdiutil detach "$MOUNT_DIR" -quiet || true
+              rm -rf "$MOUNT_DIR"
+            fi
+          }
+          trap cleanup_mount EXIT
+
+          verify_macos_dmg() {
+            local dmg_path="$1"
+            MOUNT_DIR="$(mktemp -d)"
+
+            hdiutil attach "$dmg_path" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
+
+            local app_path="$MOUNT_DIR/Verenu.app"
+            if [ ! -d "$app_path" ]; then
+              echo "Expected Verenu.app inside $dmg_path"
+              ls -la "$MOUNT_DIR"
+              exit 1
+            fi
+
+            codesign --verify --deep --strict --verbose=4 "$app_path"
+            codesign -dv --verbose=4 "$app_path"
+
+            if spctl --assess --type execute --verbose=4 "$app_path"; then
+              echo "spctl accepted $app_path"
+            else
+              echo "spctl rejected $app_path; expected for ad-hoc signed, non-notarized builds"
+            fi
+
+            hdiutil detach "$MOUNT_DIR" -quiet
+            rm -rf "$MOUNT_DIR"
+            MOUNT_DIR=""
+          }
+
           if [ "${{ matrix.os-name }}" = "macos" ]; then
+            apple_dmg="src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_aarch64.dmg"
+            apple_release_dmg="src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_Apple_Silicon.dmg"
+            intel_dmg="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_x64.dmg"
+            intel_release_dmg="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_Intel.dmg"
+
             npm run tauri build -- --target aarch64-apple-darwin
-            mv "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_aarch64.dmg" "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_Apple_Silicon.dmg"
+            mv "$apple_dmg" "$apple_release_dmg"
+            verify_macos_dmg "$apple_release_dmg"
+
             npm run tauri build -- --target x86_64-apple-darwin
-            mv "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_x64.dmg" "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_Intel.dmg"
+            mv "$intel_dmg" "$intel_release_dmg"
+            verify_macos_dmg "$intel_release_dmg"
           else
             npm run tauri build
           fi
@@ -72,7 +124,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Verenu-macOS-Apple-Silicon-dmg
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_Apple_Silicon.dmg
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_*_Apple_Silicon.dmg
           if-no-files-found: error
 
       - name: Upload macOS Intel DMG (.dmg)
@@ -80,5 +132,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Verenu-macOS-Intel-dmg
-          path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_0.14.0_Intel.dmg
+          path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_*_Intel.dmg
           if-no-files-found: error

@@ -3,7 +3,7 @@
   "productName": "Verenu",
   "mainBinaryName": "Verenu",
   "identifier": "com.verenu.app",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -58,7 +58,8 @@
     },
     "macOS": {
       "bundleName": "Verenu",
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
     }
   }
 }
