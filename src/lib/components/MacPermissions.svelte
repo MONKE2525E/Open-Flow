@@ -93,6 +93,7 @@
   let watchTicksLeft = 0;
   let restartTimeout: ReturnType<typeof setTimeout> | null = null;
   let unlistenError: (() => void) | null = null;
+  let active = true;
 
   const accessibilityPermission = $derived(snapshot.accessibility);
   const inputMonitoringPermission = $derived(snapshot.inputMonitoring);
@@ -360,15 +361,20 @@
     // Re-check when a dictation fails for a permission-related reason, so a
     // revoked/missing grant surfaces here without continuous polling.
     listen<string>('verenu:error', (ev) => {
-      if (typeof ev.payload === 'string' && looksLikePermissionError(ev.payload)) {
+      if (active && typeof ev.payload === 'string' && looksLikePermissionError(ev.payload)) {
         void refreshMacPermissions(true);
       }
     }).then((un) => {
-      unlistenError = un;
+      if (active) {
+        unlistenError = un;
+      } else {
+        un();
+      }
     });
   });
 
   onDestroy(() => {
+    active = false;
     stopWatch();
     if (restartTimeout) clearTimeout(restartTimeout);
     if (isMac) window.removeEventListener('focus', onWindowFocus);
