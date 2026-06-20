@@ -381,7 +381,7 @@ pub fn open_input_monitoring_settings() -> Result<(), String> {
 fn open_macos_settings(urls: &[&str]) -> Result<(), String> {
     let mut last_error = None;
     for url in urls {
-        match std::process::Command::new("open").arg(url).status() {
+        match std::process::Command::new("/usr/bin/open").arg(url).status() {
             Ok(status) if status.success() => return Ok(()),
             Ok(status) => last_error = Some(format!("open exited with status: {status}")),
             Err(err) => last_error = Some(err.to_string()),
@@ -416,7 +416,7 @@ pub async fn reset_macos_core_permissions() -> TccResetResult {
 
         if let Some(bundle_id) = bundle_identifier.as_deref() {
             for service in ["Accessibility", "ListenEvent"] {
-                let output = std::process::Command::new("tccutil")
+                let output = std::process::Command::new("/usr/bin/tccutil")
                     .args(["reset", service, bundle_id])
                     .output();
                 match output {

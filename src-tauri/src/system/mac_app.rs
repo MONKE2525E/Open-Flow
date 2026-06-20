@@ -26,7 +26,7 @@ extern "C" {}
 #[link(name = "IOKit", kind = "framework")]
 extern "C" {
     fn IOHIDCheckAccess(request_type: u32) -> u32;
-    fn IOHIDRequestAccess(request_type: u32) -> bool;
+    fn IOHIDRequestAccess(request_type: u32) -> u8;
 }
 
 // IOHIDRequestType: kIOHIDRequestTypeListenEvent is the first variant (= 0).
@@ -51,7 +51,7 @@ pub fn input_monitoring_status() -> &'static str {
 /// Monitoring. Returns `true` if already granted. Changes generally require an
 /// app relaunch before an existing event tap sees global events.
 pub fn request_input_monitoring() -> bool {
-    unsafe { IOHIDRequestAccess(IOHID_REQUEST_TYPE_LISTEN_EVENT) }
+    unsafe { IOHIDRequestAccess(IOHID_REQUEST_TYPE_LISTEN_EVENT) != 0 }
 }
 
 const APP_ICON_ICNS: &[u8] = include_bytes!("../../icons/icon.icns");
