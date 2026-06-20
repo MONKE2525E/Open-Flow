@@ -225,4 +225,3 @@ pub async fn stop_handless_mode(
     tauri::async_runtime::spawn(pipeline::run_pipeline(app, state.inner().clone()));
     Ok(())
 }
-

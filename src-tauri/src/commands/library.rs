@@ -181,4 +181,3 @@ pub async fn get_recent_auto_learn_activity(
     .await
     .map_err(|e| e.to_string())?
 }
-

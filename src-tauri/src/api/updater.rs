@@ -47,11 +47,20 @@ async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
         return Ok(None);
     }
 
+    #[cfg(windows)]
+    let suffix = ".exe";
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    let suffix = "Apple_Silicon.dmg";
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    let suffix = "Intel.dmg";
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let suffix = ".tar.gz";
+
     let asset = release
         .assets
         .iter()
-        .find(|a| a.name.ends_with(".exe"))
-        .ok_or_else(|| anyhow::anyhow!("No .exe asset in release"))?;
+        .find(|a| a.name.ends_with(suffix))
+        .ok_or_else(|| anyhow::anyhow!("No matching update asset ({suffix}) in release"))?;
 
     Ok(Some(UpdateInfo {
         version: display_version,

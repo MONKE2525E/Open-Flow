@@ -107,6 +107,81 @@
     - Keep release blocked until the core dictation loop is measurably better, not just feature-complete.
 - **Relevant Files**: `tests/OnePyFone.py`, `tests/smoke/`, `tests/manual/`, `src-tauri/src/pipeline.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/core/injection.rs`.
 
+---
+
+## macOS Production Bugs (Production-only — works in `npm run tauri dev`)
+
+These bugs only surface in the fully installed `.app` bundle. All three are suspected to stem from differences in how macOS handles permissions, bundle identity, and audio device access for a signed/notarized installed app versus a dev-mode process.
+
+---
+
+### macOS-1: Multiple "Open Flow" Entries in Launchpad / Spotlight ✓ Fixed
+
+**Symptom**: Three (or more) separate "Open Flow" icons appear in Launchpad / App Store search after installing, when only one should be present.
+
+**Suspected Cause**: macOS LaunchServices (the daemon that powers Launchpad and Spotlight) scans and indexes every `.app` bundle it can find across the filesystem — not just `/Applications`. During development, Tauri produces app bundles in multiple locations:
+- `src-tauri/target/release/bundle/macos/Open Flow.app`
+- `src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Open Flow.app` (Intel cross-compile)
+- Any `.dmg` volumes previously mounted
+
+LaunchServices caches these and keeps them visible even after the bundles are moved or deleted, until the database is explicitly refreshed. The `tauri-plugin-single-instance` plugin (registered in `main.rs:136`) correctly prevents two *processes* from running simultaneously, but it does nothing about the visual duplication in the Launchpad/Spotlight index.
+
+**Note**: This may partially be a developer environment artifact — installing from a clean DMG on a machine that has never run `npm run tauri dev` may not reproduce it.
+
+**Relevant Files**:
+- `src-tauri/tauri.conf.json` — bundle identifier (`bundle.identifier`); LaunchServices keys off this
+- `src-tauri/target/` — dev build artifacts that get indexed
+- `src-tauri/src/main.rs:136` — single-instance plugin registration (runtime-only, not LaunchServices)
+
+---
+
+### macOS-2: Accessibility Permission Never Recognized After Granting ✓ Fixed
+
+**Symptom**: The setup permission step (or the system prompt) shows "Needs access" even after the user grants Accessibility permission in System Settings. The UI keeps saying it wasn't granted no matter how many times the button is pressed. The hotkey and dictation never work at all in production.
+
+**Suspected Cause — TCC cache staleness**: `check_accessibility_permission` (in `commands/mod.rs:1015`) calls `AXIsProcessTrustedWithOptions(false)`. On macOS 13+, the TCC (Transparency, Consent, and Control) daemon is out-of-process and its response can be cached within the running process's session. Granting permission after the app has started may not be reflected until the app is restarted — `AXIsProcessTrustedWithOptions` continues returning `false` for the life of that process. The Setup polling loop (`Setup.svelte:231`) polls every 5 seconds but always gets the stale cached value. There is currently no instruction to the user to restart the app after granting.
+
+**Suspected Cause — Wrong bundle identity**: If the user is running a build-artifact `.app` from the dev target directory rather than the installed DMG copy, macOS may associate the permission with the bundle path it trusts, while the running process is a different path. Because macOS links accessibility permissions to bundle path + code-signing identity, a mismatch means permission to one bundle never applies to another even if both have the same bundle identifier.
+
+**Suspected Cause — CGEventTap not retried after permission is granted**: The `CGEventTap` for the global hotkey is created once in `setup_hotkey()` at app launch (`main.rs:572`). If Accessibility permission is not yet granted at that moment, `CGEventTap::new()` returns `None` (tap creation fails silently or emits an error to the frontend). There is no mechanism to re-attempt tap creation after the user grants permission. The user must fully quit and relaunch the app for the tap to be created. The current flow does not communicate this restart requirement.
+
+**Relevant Files**:
+- `src-tauri/src/commands/mod.rs:1015` — `check_accessibility_permission` / `AXIsProcessTrustedWithOptions`
+- `src-tauri/src/core/hotkey/mac.rs` — `CGEventTap` creation (listen-only tap, fails without Accessibility permission)
+- `src-tauri/src/main.rs:572` — `setup_hotkey()` called once at startup, no retry
+- `src/lib/views/Setup.svelte:229` — polling loop; only checks status, no restart-required messaging
+
+---
+
+### macOS-3: Auto Calibration Disappears Instantly ✓ Fixed
+
+**Symptom**: Clicking "Auto calibration" on the Audio settings page causes the calibration panel to appear and immediately vanish, as if it completed in zero milliseconds. No countdown, no microphone activity bar.
+
+**Suspected Cause — Microphone permission failure in production**: The `start_calibration_monitoring` command (`commands/mod.rs:536`) calls `start_recording_session_ex` in a `spawn_blocking` task, which ultimately calls `cpal`'s `build_input_stream` in `media/audio.rs`. In a fully-installed macOS app, Core Audio requires the `com.apple.security.device.audio-input` entitlement and an active microphone permission grant in TCC. If either is missing or if the TCC status is `not_determined` (permission never asked) or `denied`, `cpal` immediately returns an error. This error propagates back to the frontend as a rejected `invoke('start_calibration_monitoring')` call. The frontend's catch block in `calibration.ts:111` responds by calling `cancelCalibration()`, which sets `isCalibrating` back to `false` — collapsing the panel as if nothing happened. There is no error message shown to the user.
+
+**Suspected Cause — Entitlement misconfiguration in production bundle**: In dev mode, Tauri runs the binary directly and macOS may extend microphone access more permissively. In the signed production `.app`, if the `NSMicrophoneUsageDescription` Info.plist key or the audio-input entitlement is missing or misconfigured, the OS will deny access regardless of what the TCC database says.
+
+**Suspected Cause — Race with `starting` flag**: `start_calibration_monitoring` sets `st.starting = true` before the spawn_blocking call and resets it after. If the `lock_state` call after `spawn_blocking` fails (e.g., lock poisoned), `starting` stays `true` permanently. A subsequent calibration attempt returns "Already recording" which is also silently swallowed.
+
+**Relevant Files**:
+- `src-tauri/src/commands/mod.rs:536` — `start_calibration_monitoring` and `st.starting` guard
+- `src-tauri/src/media/audio.rs` — `cpal` stream build, where mic permission failure would surface
+- `src-tauri/src/pipeline.rs` — `start_recording_session_ex`
+- `src/lib/calibration.ts:109` — `invoke('start_calibration_monitoring')` error catch → silent `cancelCalibration()`
+- `src-tauri/tauri.conf.json` — entitlements and Info.plist keys for microphone access
+
+---
+
+### macOS-4: Other Suspected Production-Only Issues (Unconfirmed) ✓ Hardened
+
+These are educated guesses at problems that are likely to exist in the fully installed build but have not yet been confirmed:
+
+- **Keychain access differs between dev and production builds**: API keys are stored via `tauri-plugin-store` / macOS Keychain. If the bundle identifier or code-signing team changes between a dev build and the production build, Keychain access may fail silently or prompt with unexpected dialogs. Relevant: `src-tauri/src/data/credentials.rs`.
+- **Pill window may not appear correctly without Accessibility/Screen Recording permission**: The always-on-top pill window uses a high window level. On macOS, windows above a certain level may require Screen Recording permission to be visible over other apps' content. Relevant: `src-tauri/tauri.conf.json`, `src/PillApp.svelte`.
+- **Text injection (Cmd+V) may fail silently**: `injection.rs` on macOS uses `CGEventCreateKeyboardEvent` to synthesize Cmd+V. This requires Accessibility permission (same as the hotkey tap). If Accessibility was denied or the tap setup failed (see macOS-2), injection will fail with no visible error. Relevant: `src-tauri/src/core/injection.rs`.
+
+---
+
 ## Shipped in 0.10.0
 - Automatic microphone gain calibration (setup flow + Audio settings page)
 - Auto-learn dictionary reliability hardening and observability
