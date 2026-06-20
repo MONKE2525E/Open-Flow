@@ -297,13 +297,12 @@
   async function relaunchApp() {
     restarting = true;
     permissionsError = '';
+    restartTimeout = setTimeout(() => {
+      restarting = false;
+      permissionsError = 'Could not relaunch automatically — please quit and reopen Open Flow.';
+    }, 5000);
     void invoke('restart_app').catch(() => {
       // Ignore immediate IPC disconnection errors during restart.
-      // Set a timeout to show the error only if the app fails to exit after 5 seconds.
-      restartTimeout = setTimeout(() => {
-        restarting = false;
-        permissionsError = 'Could not relaunch automatically — please quit and reopen Open Flow.';
-      }, 5000);
     });
   }
 
