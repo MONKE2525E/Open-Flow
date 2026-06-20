@@ -33,9 +33,11 @@ KEYCHAIN_PATH="${OPENFLOW_SIGNING_KEYCHAIN:-$HOME/Library/Keychains/openflow-bui
 if [[ -f "$KEYCHAIN_PATH" ]]; then
   if ! security list-keychains -d user | grep -qF "$KEYCHAIN_PATH"; then
     # Prepend the build keychain to the user search list without dropping others.
-    EXISTING="$(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//')"
-    # shellcheck disable=SC2086
-    security list-keychains -d user -s "$KEYCHAIN_PATH" $EXISTING >/dev/null 2>&1 || true
+    EXISTING_ARR=()
+    while IFS= read -r line; do
+      EXISTING_ARR+=("$line")
+    done < <(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//')
+    security list-keychains -d user -s "$KEYCHAIN_PATH" "${EXISTING_ARR[@]}" >/dev/null 2>&1 || true
   fi
   if [[ -n "${OPENFLOW_SIGNING_KEYCHAIN_PASSWORD:-}" ]]; then
     security unlock-keychain -p "$OPENFLOW_SIGNING_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" \
