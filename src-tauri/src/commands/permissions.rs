@@ -411,52 +411,61 @@ pub fn open_privacy_security_settings() -> Result<(), String> {
 pub async fn reset_macos_core_permissions() -> TccResetResult {
     #[cfg(target_os = "macos")]
     {
-        let bundle_identifier = crate::system::mac_app::bundle_identifier();
-        let mut steps = Vec::new();
+        tokio::task::spawn_blocking(|| {
+            let bundle_identifier = crate::system::mac_app::bundle_identifier();
+            let mut steps = Vec::new();
 
-        if let Some(bundle_id) = bundle_identifier.as_deref() {
-            for service in ["Accessibility", "ListenEvent"] {
-                let output = std::process::Command::new("/usr/bin/tccutil")
-                    .args(["reset", service, bundle_id])
-                    .output();
-                match output {
-                    Ok(output) if output.status.success() => {
-                        steps.push(TccResetStep {
-                            service: service.to_string(),
-                            ok: true,
-                            message: "Reset".to_string(),
-                        });
-                    }
-                    Ok(output) => {
-                        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        steps.push(TccResetStep {
-                            service: service.to_string(),
-                            ok: false,
-                            message: if stderr.is_empty() { stdout } else { stderr },
-                        });
-                    }
-                    Err(err) => {
-                        steps.push(TccResetStep {
-                            service: service.to_string(),
-                            ok: false,
-                            message: err.to_string(),
-                        });
+            if let Some(bundle_id) = bundle_identifier.as_deref() {
+                for service in ["Accessibility", "ListenEvent"] {
+                    let output = std::process::Command::new("/usr/bin/tccutil")
+                        .args(["reset", service, bundle_id])
+                        .output();
+                    match output {
+                        Ok(output) if output.status.success() => {
+                            steps.push(TccResetStep {
+                                service: service.to_string(),
+                                ok: true,
+                                message: "Reset".to_string(),
+                            });
+                        }
+                        Ok(output) => {
+                            let stderr =
+                                String::from_utf8_lossy(&output.stderr).trim().to_string();
+                            let stdout =
+                                String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            steps.push(TccResetStep {
+                                service: service.to_string(),
+                                ok: false,
+                                message: if stderr.is_empty() { stdout } else { stderr },
+                            });
+                        }
+                        Err(err) => {
+                            steps.push(TccResetStep {
+                                service: service.to_string(),
+                                ok: false,
+                                message: err.to_string(),
+                            });
+                        }
                     }
                 }
+            } else {
+                steps.push(TccResetStep {
+                    service: "All".to_string(),
+                    ok: false,
+                    message: "Could not determine this app's bundle identifier.".to_string(),
+                });
             }
-        } else {
-            steps.push(TccResetStep {
-                service: "All".to_string(),
-                ok: false,
-                message: "Could not determine this app's bundle identifier.".to_string(),
-            });
-        }
 
-        TccResetResult {
-            bundle_identifier,
-            steps,
-        }
+            TccResetResult {
+                bundle_identifier,
+                steps,
+            }
+        })
+        .await
+        .unwrap_or_else(|_| TccResetResult {
+            bundle_identifier: None,
+            steps: Vec::new(),
+        })
     }
 
     #[cfg(not(target_os = "macos"))]

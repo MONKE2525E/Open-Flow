@@ -49,10 +49,8 @@ async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
 
     #[cfg(windows)]
     let suffix = ".exe";
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    let suffix = "Apple_Silicon.dmg";
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    let suffix = "Intel.dmg";
+    #[cfg(target_os = "macos")]
+    let suffix = if cfg!(target_arch = "aarch64") { "Apple_Silicon.dmg" } else { "Intel.dmg" };
     #[cfg(not(any(windows, target_os = "macos")))]
     let suffix = ".tar.gz";
 
