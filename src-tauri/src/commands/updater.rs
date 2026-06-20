@@ -120,7 +120,8 @@ pub fn backup_sqlite_database(
     // to exit right after this call, so there's nothing else to avoid blocking.
     match backup.step(-1).map_err(|e| e.to_string())? {
         rusqlite::backup::StepResult::Done => Ok(()),
-        other => Err(format!("Backup did not complete in a single step: {other:?}")),
+        other => Err(format!(
+            "Backup did not complete in a single step: {other:?}"
+        )),
     }
 }
-

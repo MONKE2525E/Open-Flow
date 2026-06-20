@@ -122,6 +122,19 @@ pub fn read_injection_context_probe_sync() -> InjectionContextProbe {
     }
 
     let source = map_source(raw.source);
+
+    // A response other than "permission missing" / "unavailable" means the AX API
+    // returned real data for another app's focused element — authoritative proof
+    // Accessibility is granted, even if `AXIsProcessTrusted()` is reporting a stale
+    // `false` after an ad-hoc rebuild. Latch it so the permissions snapshot can
+    // self-heal the same way the microphone and Input Monitoring signals do.
+    if !matches!(
+        source,
+        ContextProbeSource::PermissionMissing | ContextProbeSource::Unavailable
+    ) {
+        crate::system::mac_app::mark_accessibility_verified();
+    }
+
     let selection_state = map_selection_state(raw.selection_state);
     let control_type = c_buf_to_string(&raw.control_type);
     let role = c_buf_to_string(&raw.role);

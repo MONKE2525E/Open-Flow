@@ -18,7 +18,9 @@
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:smoke": "node tests/smoke/test.cjs && node tests/smoke/test-app.cjs && node tests/smoke/playwright-test-ui.cjs && node tests/smoke/playwright-test-fixes.cjs",
     "test:smoke:state": "node tests/smoke/playwright-test-state.cjs",
-    "tauri": "node scripts/tauri-cli.mjs"
+    "tauri": "node scripts/tauri-cli.mjs",
+    "macos:signing-identity": "bash scripts/macos/ensure-signing-identity.sh",
+    "tauri:build:signed": "bash scripts/macos/build-signed.sh"
   },
   "keywords": [],
   "author": "",

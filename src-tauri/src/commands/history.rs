@@ -119,4 +119,3 @@ pub async fn get_cleanup_cache_status(app: AppHandle) -> Result<CleanupCacheStat
         free_bytes,
     })
 }
-
