@@ -576,7 +576,9 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    background: var(--accent-soft, #e6f4ff);
     background: color-mix(in srgb, var(--accent-soft) 65%, var(--paper));
+    border: 1px solid var(--line, #d0d0d0);
     border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
     border-radius: var(--r-sm);
     padding: 9px 13px;
@@ -685,7 +687,9 @@
     font-size: 12px;
     color: var(--ink-soft);
     line-height: 1.45;
+    background: var(--paper, #fafafa);
     background: color-mix(in srgb, oklch(75% 0.12 60) 12%, var(--paper));
+    border: 1px solid var(--line, #d0d0d0);
     border: 1px solid color-mix(in srgb, oklch(75% 0.12 60) 30%, var(--line));
   }
 
@@ -700,7 +704,9 @@
     flex-wrap: wrap;
     border-radius: var(--r-sm);
     padding: 10px 12px;
+    background: var(--warning-bg, #fff3cd);
     background: color-mix(in srgb, var(--warning-bg) 56%, var(--paper));
+    border: 1px solid var(--line, #d0d0d0);
     border: 1px solid color-mix(in srgb, var(--warning) 26%, var(--line));
   }
 

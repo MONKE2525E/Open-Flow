@@ -381,8 +381,9 @@ pub fn open_input_monitoring_settings() -> Result<(), String> {
 fn open_macos_settings(urls: &[&str]) -> Result<(), String> {
     let mut last_error = None;
     for url in urls {
-        match std::process::Command::new("open").arg(url).spawn() {
-            Ok(_) => return Ok(()),
+        match std::process::Command::new("open").arg(url).status() {
+            Ok(status) if status.success() => return Ok(()),
+            Ok(status) => last_error = Some(format!("open exited with status: {status}")),
             Err(err) => last_error = Some(err.to_string()),
         }
     }
