@@ -408,7 +408,7 @@ pub fn open_privacy_security_settings() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn reset_macos_core_permissions() -> TccResetResult {
+pub async fn reset_macos_core_permissions() -> TccResetResult {
     #[cfg(target_os = "macos")]
     {
         let bundle_identifier = crate::system::mac_app::bundle_identifier();

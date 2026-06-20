@@ -112,7 +112,7 @@ export async function startCalibration() {
     await invoke('start_calibration_monitoring');
   } catch (e) {
     console.error('Failed to start calibration monitoring:', e);
-    const msg = e ? String(e) : "";
+    const msg = e && typeof e === 'object' && 'message' in e ? String((e as any).message) : (e ? String(e) : "");
     if (msg && msg.includes("Microphone access denied")) {
       // Backend already emits a detailed, user-friendly message — pass it through.
       calibrationError.set(msg);
