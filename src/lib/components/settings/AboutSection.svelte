@@ -44,6 +44,10 @@
     }
   }
 
+  function installActionLabel(update: UpdateInfo | null): string {
+    return update?.installMode === 'download' ? 'Download DMG' : 'Install Now';
+  }
+
   async function handleInstall() {
     if (!appStore.updateInfo) return;
     installingFromAbout = true;
@@ -124,7 +128,9 @@
   <div class="update-controls">
     {#if updateCheckState === 'available' && appStore.updateInfo}
       <button class="btn-ghost" onclick={handleInstall} disabled={installingFromAbout}>
-        {installingFromAbout ? 'Downloading…' : 'Install Now'}
+        {installingFromAbout
+          ? (appStore.updateInfo?.installMode === 'download' ? 'Opening…' : 'Installing…')
+          : installActionLabel(appStore.updateInfo)}
       </button>
     {:else}
       <button

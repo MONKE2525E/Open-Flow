@@ -369,13 +369,20 @@
     loading = false;
   }
 
-  function handleInstall() {
+  function installActionLabel(update: UpdateInfo | null): string {
+    return update?.installMode === 'download' ? 'Download DMG' : 'Install & Restart';
+  }
+
+  async function handleInstall() {
     if (!appStore.updateInfo) return;
     installing = true;
-    invoke('install_update', { downloadUrl: appStore.updateInfo.downloadUrl }).catch((e) => {
+    try {
+      await invoke('install_update', { downloadUrl: appStore.updateInfo.downloadUrl });
+    } catch (e) {
       console.error('Install failed:', e);
+    } finally {
       installing = false;
-    });
+    }
   }
 
   async function dismissUpdate() {
@@ -412,16 +419,6 @@
         })
         .catch(() => {});
     }
-
-    invoke<UpdateInfo | null>('check_for_update').then(async (update) => {
-      if (update) {
-        try {
-          const dismissed = await invoke<string | null>('get_setting', { key: 'update_dismissed_version' });
-          if (dismissed === update.version) return;
-        } catch { /* dev mode */ }
-        appStore.updateInfo = update;
-      }
-    }).catch(() => {});
 
     trackListener(listen('verenu:transcribed', () => {
       failedEntry = null;
@@ -490,7 +487,9 @@
             <div class="update-actions">
               <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
               <button class="update-btn" onclick={handleInstall} disabled={installing}>
-                {installing ? 'Installing…' : 'Install & Restart'}
+                {installing
+                  ? (appStore.updateInfo?.installMode === 'download' ? 'Opening…' : 'Installing…')
+                  : installActionLabel(appStore.updateInfo)}
               </button>
             </div>
           </div>

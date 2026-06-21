@@ -14,6 +14,7 @@
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
   import { invoke, listen } from './lib/tauri';
+  import { startAutomaticUpdateChecks } from './lib/updates';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
@@ -69,6 +70,7 @@
 
   onMount(() => {
     let cleanupFn: (() => void) | undefined;
+    let stopAutomaticUpdateChecks: (() => void) | undefined;
 
     (async () => {
       try {
@@ -93,6 +95,15 @@
       cleanupFn = unlisten;
     })();
 
+    // Synchronous: startAutomaticUpdateChecks fires its first check in the
+    // background and returns the cleanup immediately, so there's no unmount
+    // race to guard and the interval is always registered before we return.
+    try {
+      stopAutomaticUpdateChecks = startAutomaticUpdateChecks();
+    } catch (error) {
+      console.error('Failed to start automatic update checks:', error);
+    }
+
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
     const onSystemThemeChange = () => {
       if (appStore.appearanceMode === 'system') applyTheme();
@@ -112,6 +123,7 @@
 
     return () => {
       if (cleanupFn) cleanupFn();
+      if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
       media?.removeEventListener?.('change', onSystemThemeChange);
       clearInterval(connectivityTimer);
       document.removeEventListener('visibilitychange', handleVisibility);

@@ -40,7 +40,8 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
         | store::CLEANUP_INTENSITY
         | store::MICROPHONE_DEVICE
         | store::HISTORY_RETENTION
-        | store::UPDATE_DISMISSED_VERSION => value.is_string() || value.is_null(),
+        | store::UPDATE_DISMISSED_VERSION
+        | store::UPDATE_NOTIFIED_VERSION => value.is_string() || value.is_null(),
         store::TRANSCRIPTION_MODELS_BY_PROVIDER | store::CLEANUP_MODELS_BY_PROVIDER => {
             is_model_map(value)
         }
@@ -273,6 +274,7 @@ pub struct AllSettings {
     pub history_retention: Option<String>,
     pub microphone_device: Option<String>,
     pub update_dismissed_version: Option<String>,
+    pub update_notified_version: Option<String>,
     pub hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
     pub cleanup_prompt_overrides: Option<serde_json::Value>,
@@ -344,6 +346,7 @@ pub struct ImportSummary {
 //   MICROPHONE_DEVICE   — device-specific hardware identifier
 //   SETUP_COMPLETE / FORCE_SETUP_ON_LAUNCH — one-time setup flags
 //   UPDATE_DISMISSED_VERSION — transient UI state
+//   UPDATE_NOTIFIED_VERSION — transient notification state
 // When adding a new setting to validate_setting, decide here whether it should also be exported.
 const EXPORTABLE_SETTINGS: &[&str] = &[
     store::TRANSCRIPTION_PROVIDER,
@@ -419,6 +422,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         history_retention: str_val(store::HISTORY_RETENTION),
         microphone_device: str_val(store::MICROPHONE_DEVICE),
         update_dismissed_version: str_val(store::UPDATE_DISMISSED_VERSION),
+        update_notified_version: str_val(store::UPDATE_NOTIFIED_VERSION),
         hotkey: s.get(store::HOTKEY).and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
@@ -802,3 +806,4 @@ pub async fn import_data(
     .await
     .map_err(|e| format!("import_data task panicked: {e}"))?
 }
+

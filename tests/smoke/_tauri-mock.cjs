@@ -62,6 +62,7 @@ function tauriMock() {
     appearance_mode:         'system',
     advanced_model_ui:       true,
     update_dismissed_version: null,
+    update_notified_version: null,
     ...storedMem,
   };
 
@@ -148,6 +149,7 @@ function tauriMock() {
         appearance_mode:               mem.appearance_mode ?? null,
         advanced_model_ui:             mem.advanced_model_ui ?? null,
         update_dismissed_version:      mem.update_dismissed_version ?? null,
+        update_notified_version:       mem.update_notified_version ?? null,
       };
       case 'get_api_key_status': return { groq: false, openai: false, google: false };
       case 'check_api_key_set':  return false;

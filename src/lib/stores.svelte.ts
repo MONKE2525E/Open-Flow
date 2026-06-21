@@ -29,6 +29,8 @@ export interface DictionaryEntry {
 export interface UpdateInfo {
   version: string;
   downloadUrl: string;
+  assetName: string;
+  installMode: 'install' | 'download';
 }
 
 export const appStore = $state({
