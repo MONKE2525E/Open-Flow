@@ -31,6 +31,12 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
 
     #[cfg(target_os = "macos")]
     {
+        // `Shell::open` is soft-deprecated in favour of tauri-plugin-opener,
+        // but the shell plugin is already the only one wired up here and
+        // opening the verified release URL in the user's browser to start the
+        // DMG download is exactly what we want. Allow the deprecation rather
+        // than pulling in (and configuring capabilities for) another plugin.
+        #[allow(deprecated)]
         app.shell()
             .open(download_url, None)
             .map_err(|e| e.to_string())?;
