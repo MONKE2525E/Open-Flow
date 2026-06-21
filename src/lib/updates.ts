@@ -10,24 +10,18 @@ import { invoke, isTauriRuntime } from './tauri';
 
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
-async function requestNotificationPermissionAtStartup(): Promise<void> {
-  if (!isTauriRuntime()) return;
-
-  try {
-    if (await isPermissionGranted()) return;
-    await requestPermission();
-  } catch (error) {
-    console.warn('Notification permission request failed:', error);
-  }
-}
-
-async function notificationsAllowed(): Promise<boolean> {
+// Request notification permission contextually — only when we actually have a
+// new update to tell the user about — rather than firing the system prompt at
+// startup with no context, which users tend to decline. Returns whether
+// notifications are permitted after the (possibly skipped) request.
+async function ensureNotificationPermission(): Promise<boolean> {
   if (!isTauriRuntime()) return false;
 
   try {
-    return await isPermissionGranted();
+    if (await isPermissionGranted()) return true;
+    return (await requestPermission()) === 'granted';
   } catch (error) {
-    console.warn('Notification permission check failed:', error);
+    console.warn('Notification permission request failed:', error);
     return false;
   }
 }
@@ -76,7 +70,7 @@ async function checkForAutomaticUpdates(): Promise<void> {
   appStore.updateInfo = update;
 
   if (notifiedVersion === update.version) return;
-  if (!(await notificationsAllowed())) return;
+  if (!(await ensureNotificationPermission())) return;
 
   try {
     await sendUpdateNotification(update);
@@ -96,7 +90,6 @@ async function checkForAutomaticUpdates(): Promise<void> {
 }
 
 export async function startAutomaticUpdateChecks(): Promise<() => void> {
-  await requestNotificationPermissionAtStartup();
   await checkForAutomaticUpdates();
 
   const timer = window.setInterval(() => {

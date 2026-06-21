@@ -44,8 +44,8 @@
     }
   }
 
-  function installActionLabel(update: UpdateInfo): string {
-    return update.installMode === 'download' ? 'Download DMG' : 'Install Now';
+  function installActionLabel(update: UpdateInfo | null): string {
+    return update?.installMode === 'download' ? 'Download DMG' : 'Install Now';
   }
 
   async function handleInstall() {
