@@ -424,7 +424,9 @@ pub fn start_recording_session_ex(
         // requires Accessibility — without it, posting the paste keystroke silently
         // fails. Check the real TCC status up front so we surface the error instead
         // of recording and never pasting.
-        if !crate::commands::check_accessibility_permission(false) {
+        if !crate::system::mac_app::is_accessibility_verified()
+            && !crate::commands::check_accessibility_permission(false)
+        {
             return Err(
                 "Accessibility permission is required for Verenu on macOS. Open System Settings > Privacy & Security > Accessibility and enable Verenu."
                     .to_string(),
