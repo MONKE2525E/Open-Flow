@@ -82,6 +82,7 @@ const defaultSettings: Record<string, unknown> = {
   history_retention: '30 days',
   microphone_device: null,
   update_dismissed_version: null,
+  update_notified_version: null,
   advanced_model_ui: false,
   hotkey: defaultHotkey,
 };

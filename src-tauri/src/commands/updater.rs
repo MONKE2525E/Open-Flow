@@ -1,17 +1,15 @@
 //! Update check + in-app install, with pre-update DB backup.
 
 use super::*;
+#[cfg(target_os = "macos")]
+use tauri_plugin_shell::ShellExt;
 
 // ---------- updates ----------
 
 #[tauri::command]
-pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
+pub async fn check_for_update() -> Result<Option<crate::api::updater::UpdateInfo>, String> {
     match crate::api::updater::check().await {
-        Ok(Some(info)) => Ok(Some(serde_json::json!({
-            "version": info.version,
-            "downloadUrl": info.download_url,
-        }))),
-        Ok(None) => Ok(None),
+        Ok(update) => Ok(update),
         Err(e) => {
             log::warn!("Update check failed: {e}");
             Ok(None)
@@ -21,13 +19,18 @@ pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
 
 #[tauri::command]
 pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), String> {
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        app.shell()
+            .open(download_url, None)
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (&app, &download_url);
-        Err(
-            "In-app update is only available on Windows. Download the latest release from GitHub."
-                .into(),
-        )
+        Err("Updates are only supported on Windows and macOS.".into())
     }
 
     #[cfg(windows)]
@@ -120,8 +123,6 @@ pub fn backup_sqlite_database(
     // to exit right after this call, so there's nothing else to avoid blocking.
     match backup.step(-1).map_err(|e| e.to_string())? {
         rusqlite::backup::StepResult::Done => Ok(()),
-        other => Err(format!(
-            "Backup did not complete in a single step: {other:?}"
-        )),
+        other => Err(format!("Backup did not complete in a single step: {other:?}")),
     }
 }
