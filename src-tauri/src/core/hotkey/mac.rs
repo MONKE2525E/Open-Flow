@@ -79,7 +79,11 @@ static MANAGER: OnceLock<GlobalHotKeyManager> = OnceLock::new();
 static CURRENT_HOTKEY: Mutex<Option<HotKey>> = Mutex::new(None);
 static MAIN_HOTKEY_ID: AtomicU32 = AtomicU32::new(0);
 static ESCAPE_HOTKEY: OnceLock<HotKey> = OnceLock::new();
-static ESCAPE_REGISTERED: AtomicBool = AtomicBool::new(false);
+// `Mutex<bool>` (not an atomic) so the check and the register/unregister call are
+// one critical section — `set_escape_listening` is invoked from both the hotkey
+// event thread and Tauri command threads, and a lock-free swap could interleave
+// such that Escape stays registered (hijacked) system-wide.
+static ESCAPE_REGISTERED: Mutex<bool> = Mutex::new(false);
 
 fn now_ms() -> u64 {
     static START: OnceLock<Instant> = OnceLock::new();
@@ -323,7 +327,31 @@ fn build_hotkey(k1: u32, k2: u32) -> Option<HotKey> {
     }
     let trigger = code?;
     let mods = if mods.is_empty() { None } else { Some(mods) };
+    // A modifier-less single key would be consumed system-wide by
+    // RegisterEventHotKey, hijacking normal typing of that key everywhere. Only
+    // function keys (which don't produce text) are safe as a bare hotkey.
+    if mods.is_none() && !is_function_key(trigger) {
+        return None;
+    }
     Some(HotKey::new(mods, trigger))
+}
+
+fn is_function_key(code: Code) -> bool {
+    matches!(
+        code,
+        Code::F1
+            | Code::F2
+            | Code::F3
+            | Code::F4
+            | Code::F5
+            | Code::F6
+            | Code::F7
+            | Code::F8
+            | Code::F9
+            | Code::F10
+            | Code::F11
+            | Code::F12
+    )
 }
 
 // --- registration ----------------------------------------------------------
@@ -368,12 +396,16 @@ fn set_escape_listening(on: bool) {
         return;
     };
     let esc = *ESCAPE_HOTKEY.get_or_init(|| HotKey::new(None, Code::Escape));
-    if on {
-        if !ESCAPE_REGISTERED.swap(true, Ordering::SeqCst) && mgr.register(esc).is_err() {
-            ESCAPE_REGISTERED.store(false, Ordering::SeqCst);
+    let Ok(mut registered) = ESCAPE_REGISTERED.lock() else {
+        return;
+    };
+    if on && !*registered {
+        if mgr.register(esc).is_ok() {
+            *registered = true;
         }
-    } else if ESCAPE_REGISTERED.swap(false, Ordering::SeqCst) {
+    } else if !on && *registered {
         let _ = mgr.unregister(esc);
+        *registered = false;
     }
 }
 
@@ -500,4 +532,33 @@ where
     log::info!("macOS global hotkey installed (RegisterEventHotKey)");
 
     Ok(handle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hk(code1: &str, code2: &str) -> Option<HotKey> {
+        build_hotkey(map_code_to_vk(code1), map_code_to_vk(code2))
+    }
+
+    #[test]
+    fn modifier_less_single_key_is_rejected_unless_function_key() {
+        // A bare printable key would be consumed system-wide — reject it.
+        assert!(hk("KeyA", "").is_none());
+        assert!(hk("Space", "").is_none());
+        // Function keys don't produce text, so they're allowed bare.
+        assert!(hk("F5", "").is_some());
+        assert!(hk("F12", "").is_some());
+    }
+
+    #[test]
+    fn modifier_plus_key_and_modifier_only_combinations() {
+        // The default ⌥+Space and other modifier+key combos are valid.
+        assert!(hk("AltLeft", "Space").is_some());
+        assert!(hk("ControlLeft", "KeyA").is_some());
+        // A modifier-only chord (e.g. the legacy Fn+Control) is not registrable.
+        assert!(hk("ControlLeft", "Fn").is_none());
+        assert!(hk("", "").is_none());
+    }
 }

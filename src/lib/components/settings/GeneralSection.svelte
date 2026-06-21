@@ -281,8 +281,9 @@
         // A modifier first — wait for the key it pairs with (modifier+key chord).
         capturedKeys = [e.code];
         hotkeyState = 'first';
-      } else if (isMac) {
-        // macOS allows a single-key hotkey (e.g. F5) — accept it immediately.
+      } else if (isMac && /^F([1-9]|1[0-2])$/.test(e.code)) {
+        // macOS allows a single-key hotkey, but only function keys (F1–F12):
+        // a bare letter/Space would be consumed system-wide and hijack typing.
         capturedKeys = [e.code, ''];
         hotkeyState = 'saving';
         finishRecordingHotkey();
