@@ -374,7 +374,7 @@ mod tests {
         let output =
             apply_cleanup_instruction_overrides("Hello from Verenu.", "use all capital letters");
 
-        assert_eq!(output, "HELLO FROM OPEN FLOW.");
+        assert_eq!(output, "HELLO FROM VERENU.");
     }
 
     #[test]
