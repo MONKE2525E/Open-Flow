@@ -129,7 +129,7 @@
     {#if updateCheckState === 'available' && appStore.updateInfo}
       <button class="btn-ghost" onclick={handleInstall} disabled={installingFromAbout}>
         {installingFromAbout
-          ? (appStore.updateInfo.installMode === 'download' ? 'Opening…' : 'Installing…')
+          ? (appStore.updateInfo?.installMode === 'download' ? 'Opening…' : 'Installing…')
           : installActionLabel(appStore.updateInfo)}
       </button>
     {:else}

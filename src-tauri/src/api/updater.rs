@@ -209,7 +209,10 @@ fn select_macos_asset<'a>(
         .or_else(|| {
             assets.iter().find(|asset| {
                 let name = asset.name.to_ascii_lowercase();
-                name.ends_with(".dmg") && !exclude_hints.iter().any(|hint| name.contains(hint))
+                name.ends_with(".dmg")
+                    && !exclude_hints
+                        .iter()
+                        .any(|hint| name.contains(&hint.to_ascii_lowercase()))
             })
         })
         .map(|asset| (asset, InstallMode::Download))
@@ -232,7 +235,10 @@ fn find_asset_with_suffix_and_hints<'a>(
     let suffix = suffix.to_ascii_lowercase();
     assets.iter().find(|asset| {
         let name = asset.name.to_ascii_lowercase();
-        name.ends_with(&suffix) && hints.iter().any(|hint| name.contains(hint))
+        name.ends_with(&suffix)
+            && hints
+                .iter()
+                .any(|hint| name.contains(&hint.to_ascii_lowercase()))
     })
 }
 

@@ -488,7 +488,7 @@
               <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
               <button class="update-btn" onclick={handleInstall} disabled={installing}>
                 {installing
-                  ? (appStore.updateInfo.installMode === 'download' ? 'Opening…' : 'Installing…')
+                  ? (appStore.updateInfo?.installMode === 'download' ? 'Opening…' : 'Installing…')
                   : installActionLabel(appStore.updateInfo)}
               </button>
             </div>
