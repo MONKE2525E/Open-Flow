@@ -59,8 +59,18 @@ pub fn is_authorized_release_asset_url(url: &str) -> bool {
     if parsed.scheme() != "https" || parsed.host_str() != Some("github.com") {
         return false;
     }
+    let path = parsed.path();
+    // `Url::parse` normalizes literal `..` segments but leaves *percent-encoded*
+    // dots/slashes (`%2e`, `%2f`) untouched, so a path like
+    // `/MONKE2525E/Verenu/releases/download/%2e%2e/attacker/...` would still pass
+    // the prefix check yet be decoded into a traversal by the server. Real
+    // release-asset paths never contain encoded dots/slashes, so reject them.
+    let path_lower = path.to_ascii_lowercase();
+    if path_lower.contains("%2e") || path_lower.contains("%2f") {
+        return false;
+    }
     let expected_path = format!("/{RELEASE_REPO}/releases/download/");
-    parsed.path().starts_with(&expected_path)
+    path.starts_with(&expected_path)
 }
 
 /// Check the configured repo for a release newer than the current version. A
