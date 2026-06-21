@@ -42,5 +42,11 @@ export function formatKeyLabel(code: string): string {
 	);
 }
 
-/** The default dictation hotkey codes for the current platform. */
-export const defaultHotkey: string[] = isMac ? ['ControlLeft', 'Fn'] : ['ControlLeft', 'MetaLeft'];
+/**
+ * The default dictation hotkey codes for the current platform.
+ *
+ * macOS uses Carbon `RegisterEventHotKey` (no Input Monitoring permission), which
+ * can't bind a modifier-only chord — so the default is ⌥ Option + Space (two
+ * adjacent bottom-row keys, no Fn/Spotlight conflict). Windows keeps its chord.
+ */
+export const defaultHotkey: string[] = isMac ? ['AltLeft', 'Space'] : ['ControlLeft', 'MetaLeft'];

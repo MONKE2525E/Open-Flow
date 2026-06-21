@@ -149,26 +149,20 @@ function devCreated(id: number): CreatedRecordMeta {
 
 function devPermissionSnapshot(provider?: unknown) {
   const accessibility = String(getDevSetting('accessibility_permission_status') ?? 'authorized') as DevPermissionStatus;
-  const inputMonitoring = String(getDevSetting('input_monitoring_permission_status') ?? 'authorized') as DevPermissionStatus;
   const microphone = String(getDevSetting('microphone_permission_status') ?? 'authorized') as DevPermissionStatus;
   const saved = (getDevSetting('__provider_connected') as Record<string, boolean> | null) ?? {};
   const providerKey = typeof provider === 'string' ? provider : '';
   const keychain = providerKey && saved[providerKey]
     ? String(getDevSetting('keychain_permission_status') ?? 'authorized') as DevKeychainStatus
     : 'not_configured';
-  const globalInputSeen = Boolean(getDevSetting('global_input_seen') ?? true);
 
   return {
     accessibility,
-    inputMonitoring,
     microphone,
     keychain,
-    allCoreGranted: accessibility === 'authorized' && inputMonitoring === 'authorized' && microphone === 'authorized',
-    needsRelaunch: inputMonitoring === 'authorized' && !globalInputSeen,
+    allCoreGranted: accessibility === 'authorized' && microphone === 'authorized',
     lastCheckedAt: new Date().toISOString(),
     sourceHints: {
-      hotkeyTapActive: Boolean(getDevSetting('hotkey_tap_active') ?? true),
-      globalInputSeen,
       microphoneVerified: Boolean(getDevSetting('microphone_verified') ?? microphone === 'authorized'),
       accessibilityVerified: Boolean(getDevSetting('accessibility_verified') ?? accessibility === 'authorized'),
     },
@@ -178,7 +172,6 @@ function devPermissionSnapshot(provider?: unknown) {
       executablePath: String(getDevSetting('executable_path') ?? '/Applications/Verenu.app/Contents/MacOS/Verenu'),
       processId: 12345,
       accessibilityTrusted: accessibility === 'authorized',
-      inputMonitoringRaw: inputMonitoring,
     },
   };
 }
@@ -233,19 +226,10 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return String(getDevSetting('accessibility_permission_status') ?? 'authorized') as T;
     case 'get_microphone_permission_status':
       return String(getDevSetting('microphone_permission_status') ?? 'authorized') as T;
-    case 'get_input_monitoring_permission_status':
-      return String(getDevSetting('input_monitoring_permission_status') ?? 'authorized') as T;
     case 'get_macos_permission_snapshot':
       return devPermissionSnapshot(args?.provider) as T;
     case 'request_accessibility_permission':
       writeDevSetting('accessibility_permission_status', 'authorized');
-      return devPermissionSnapshot(args?.provider) as T;
-    case 'request_input_monitoring_permission':
-      writeDevSetting('input_monitoring_permission_status', 'authorized');
-      return 'authorized' as T;
-    case 'request_input_monitoring_permission_snapshot':
-      writeDevSetting('input_monitoring_permission_status', 'authorized');
-      writeDevSetting('global_input_seen', false);
       return devPermissionSnapshot(args?.provider) as T;
     case 'request_microphone_permission':
       writeDevSetting('microphone_permission_status', 'authorized');
@@ -258,12 +242,10 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return 'authorized' as T;
     case 'reset_macos_core_permissions':
       writeDevSetting('accessibility_permission_status', 'not_determined');
-      writeDevSetting('input_monitoring_permission_status', 'not_determined');
       return {
         bundleIdentifier: 'com.verenu.app',
         steps: [
           { service: 'Accessibility', ok: true, message: 'Reset' },
-          { service: 'ListenEvent', ok: true, message: 'Reset' },
         ],
       } as T;
     case 'check_for_update':
@@ -302,7 +284,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'save_hotkey':
     case 'hide_main':
     case 'open_accessibility_settings':
-    case 'open_input_monitoring_settings':
     case 'open_microphone_settings':
     case 'open_privacy_security_settings':
     case 'restart_app':

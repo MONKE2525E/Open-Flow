@@ -329,7 +329,7 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
         pill.show().ok();
 
         // macOS: `show()` (orderFront:) is ignored for a background app, so the
-        // pill only appeared when Open Flow was frontmost. Force it above the
+        // pill only appeared when Verenu was frontmost. Force it above the
         // active app's windows without stealing focus. AppKit window calls must
         // run on the main thread — show_pill is invoked from pipeline worker
         // threads, so dispatch there (a raw msg_send off-thread raises an ObjC
@@ -420,12 +420,10 @@ pub fn start_recording_session_ex(
 
     #[cfg(target_os = "macos")]
     {
-        // `AXIsProcessTrustedWithOptions` can return a stale cached `false` for the
-        // Check Accessibility strictly rather than using is_tap_active() as a proxy.
-        // The CGEventTap can be active on Input Monitoring alone — so a running tap
-        // does NOT prove Accessibility is granted. Without Accessibility, synthetic
-        // Cmd+V (posting events to the HID tap) silently fails. Using the real TCC
-        // check ensures we surface the error instead of recording and never pasting.
+        // The global hotkey needs no permission, but synthetic Cmd+V injection
+        // requires Accessibility — without it, posting the paste keystroke silently
+        // fails. Check the real TCC status up front so we surface the error instead
+        // of recording and never pasting.
         if !crate::commands::check_accessibility_permission(false) {
             return Err(
                 "Accessibility permission is required for Verenu on macOS. Open System Settings > Privacy & Security > Accessibility and enable Verenu."

@@ -17,15 +17,11 @@
   type KeychainStatus = 'authorized' | 'not_configured' | 'denied' | 'unknown';
   type MacPermissionSnapshot = {
     accessibility: MacPermissionStatus;
-    inputMonitoring: MacPermissionStatus;
     microphone: MacPermissionStatus;
     keychain: KeychainStatus;
     allCoreGranted: boolean;
-    needsRelaunch: boolean;
     lastCheckedAt: string;
     sourceHints: {
-      hotkeyTapActive: boolean;
-      globalInputSeen: boolean;
       microphoneVerified: boolean;
       accessibilityVerified: boolean;
     };
@@ -35,7 +31,6 @@
       executablePath: string | null;
       processId: number;
       accessibilityTrusted: boolean;
-      inputMonitoringRaw: MacPermissionStatus;
     };
   };
   type TccResetResult = {
@@ -44,7 +39,7 @@
   };
 
   type Props = {
-    /** True once Accessibility + Input Monitoring + Microphone are all granted. */
+    /** True once Accessibility + Microphone are both granted. */
     allGranted?: boolean;
     /** 'setup' shows a success banner once all granted; 'settings' is steady-state. */
     variant?: 'setup' | 'settings';
@@ -56,15 +51,11 @@
 
   let snapshot = $state<MacPermissionSnapshot>({
     accessibility: isMac ? 'unknown' : 'authorized',
-    inputMonitoring: isMac ? 'unknown' : 'authorized',
     microphone: isMac ? 'unknown' : 'authorized',
     keychain: 'unknown',
     allCoreGranted: !isMac,
-    needsRelaunch: false,
     lastCheckedAt: '',
     sourceHints: {
-      hotkeyTapActive: !isMac,
-      globalInputSeen: !isMac,
       microphoneVerified: !isMac,
       accessibilityVerified: !isMac,
     },
@@ -74,21 +65,18 @@
       executablePath: null,
       processId: 0,
       accessibilityTrusted: !isMac,
-      inputMonitoringRaw: !isMac ? 'authorized' : 'unknown',
     },
   });
   let keychainProvider = $state<ProviderId | null>(null);
   let permissionsLoading = $state(false);
   let permissionsError = $state('');
   let accessibilityPrompting = $state(false);
-  let inputMonitoringRequesting = $state(false);
   let microphoneRequesting = $state(false);
   let keychainLoading = $state(false);
   let repairing = $state(false);
   let restarting = $state(false);
 
   let accessibilityActionTaken = $state(false);
-  let inputMonitoringActionTaken = $state(false);
   let watchInterval: ReturnType<typeof setInterval> | null = null;
   let watchTicksLeft = 0;
   let restartTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -96,7 +84,6 @@
   let active = true;
 
   const accessibilityPermission = $derived(snapshot.accessibility);
-  const inputMonitoringPermission = $derived(snapshot.inputMonitoring);
   const microphonePermission = $derived(snapshot.microphone);
   const keychainStatus = $derived(snapshot.keychain);
   const showKeychainRow = $derived(!!keychainProvider && keychainStatus !== 'not_configured');
@@ -109,16 +96,9 @@
     if (status === 'unknown') return 'checking';
     return 'attention';
   }
-  const showRestartHint = $derived(
-    snapshot.needsRelaunch &&
-    (accessibilityActionTaken || inputMonitoringActionTaken) &&
-    (accessibilityPermission === 'authorized' || inputMonitoringPermission === 'authorized')
-  );
-  const showRepairHint = $derived(
-    accessibilityPermission !== 'authorized' || inputMonitoringPermission !== 'authorized'
-  );
+  const showRepairHint = $derived(accessibilityPermission !== 'authorized');
 
-  // Keep the bindable flag in sync with the three core OS permissions.
+  // Keep the bindable flag in sync with the core OS permissions.
   $effect(() => {
     allGranted = snapshot.allCoreGranted;
   });
@@ -161,7 +141,6 @@
     snapshot = {
       ...next,
       accessibility: next.accessibility || 'unknown',
-      inputMonitoring: next.inputMonitoring || 'unknown',
       microphone: next.microphone || 'unknown',
       keychain: providerOverride
         ? next.keychain || 'unknown'
@@ -225,7 +204,7 @@
       if (permissionsLoading) return;
       await refreshMacPermissions(true);
       watchTicksLeft -= 1;
-      if ((snapshot.allCoreGranted && !snapshot.needsRelaunch) || watchTicksLeft <= 0) {
+      if (snapshot.allCoreGranted || watchTicksLeft <= 0) {
         stopWatch();
       }
     }, WATCH_INTERVAL_MS);
@@ -244,7 +223,6 @@
     return (
       m.includes('permission') ||
       m.includes('accessibility') ||
-      m.includes('input monitoring') ||
       m.includes('microphone') ||
       m.includes('system settings')
     );
@@ -262,21 +240,6 @@
       permissionsError = 'Could not request Accessibility permission.';
     }
     accessibilityPrompting = false;
-    startWatch();
-  }
-
-  async function requestInputMonitoringPrompt() {
-    if (!isMac) return;
-    inputMonitoringRequesting = true;
-    inputMonitoringActionTaken = true;
-    permissionsError = '';
-    try {
-      const next = await invoke<MacPermissionSnapshot>('request_input_monitoring_permission_snapshot', { provider: null });
-      applySnapshot(next, null);
-    } catch {
-      permissionsError = 'Could not request Input Monitoring permission.';
-    }
-    inputMonitoringRequesting = false;
     startWatch();
   }
 
@@ -299,7 +262,7 @@
     permissionsError = '';
     restartTimeout = setTimeout(() => {
       restarting = false;
-      permissionsError = 'Could not relaunch automatically — please quit and reopen Open Flow.';
+      permissionsError = 'Could not relaunch automatically — please quit and reopen Verenu.';
     }, 5000);
     void invoke('restart_app').catch(() => {
       // Ignore immediate IPC disconnection errors during restart.
@@ -316,7 +279,7 @@
       if (failed.length > 0) {
         permissionsError = `Could not reset ${failed.map((step) => step.service).join(', ')}.`;
       } else {
-        permissionsError = 'Old macOS grants were reset. Add Open Flow again in Accessibility and Input Monitoring, then relaunch.';
+        permissionsError = 'Old macOS grant was reset. Add Verenu again under Accessibility, then relaunch.';
       }
       await invoke('open_accessibility_settings');
       startWatch();
@@ -328,14 +291,11 @@
     }
   }
 
-  async function openPermissionSettings(kind: 'accessibility' | 'microphone' | 'input_monitoring') {
+  async function openPermissionSettings(kind: 'accessibility' | 'microphone') {
     try {
-      if (kind === 'input_monitoring') inputMonitoringActionTaken = true;
       if (kind === 'accessibility') accessibilityActionTaken = true;
       const cmd =
-        kind === 'accessibility' ? 'open_accessibility_settings'
-        : kind === 'input_monitoring' ? 'open_input_monitoring_settings'
-        : 'open_microphone_settings';
+        kind === 'accessibility' ? 'open_accessibility_settings' : 'open_microphone_settings';
       await invoke(cmd);
       startWatch();
     } catch {
@@ -405,7 +365,7 @@
     <div class="perm-row">
       <div class="perm-row-main">
         <div class="perm-row-title">Accessibility</div>
-        <div class="perm-row-desc">Lets Open Flow listen for the global hotkey and inject text into any app.</div>
+        <div class="perm-row-desc">Lets Verenu type your dictation into other apps. The global hotkey (default <strong>⌥ Space</strong>) needs no extra permission.</div>
       </div>
       <div class="perm-row-side">
         {@render statusIndicator(accessibilityPermission, permissionLabel(accessibilityPermission))}
@@ -418,27 +378,6 @@
             </button>
           {/if}
           <button class="perm-action" onclick={() => openPermissionSettings('accessibility')}>Open Settings</button>
-        {/if}
-      </div>
-    </div>
-
-    <!-- Input Monitoring -->
-    <div class="perm-row">
-      <div class="perm-row-main">
-        <div class="perm-row-title">Input Monitoring</div>
-        <div class="perm-row-desc">Keeps the hotkey working while other apps are focused — without it, it only fires when Open Flow is frontmost.</div>
-      </div>
-      <div class="perm-row-side">
-        {@render statusIndicator(inputMonitoringPermission, permissionLabel(inputMonitoringPermission))}
-        {#if inputMonitoringPermission === 'restricted'}
-          <span class="perm-restricted">Managed by org</span>
-        {:else if inputMonitoringPermission !== 'authorized'}
-          {#if inputMonitoringPermission === 'not_determined' || inputMonitoringPermission === 'unknown'}
-            <button class="perm-action" onclick={requestInputMonitoringPrompt} disabled={inputMonitoringRequesting}>
-              {inputMonitoringRequesting ? 'Prompting…' : 'Request'}
-            </button>
-          {/if}
-          <button class="perm-action" onclick={() => openPermissionSettings('input_monitoring')}>Open Settings</button>
         {/if}
       </div>
     </div>
@@ -471,11 +410,11 @@
           <div class="perm-row-title">Keychain Access</div>
           <div class="perm-row-desc">
             {#if keychainStatus === 'denied'}
-              Access denied. Click <strong>Unlock access</strong> or allow Open Flow in Keychain Access.app.
+              Access denied. Click <strong>Unlock access</strong> or allow Verenu in Keychain Access.app.
             {:else if keychainStatus === 'authorized'}
               Secures your API key and keeps it in your Keychain.
             {:else}
-              Secures your API key. Open Flow prompts for access when it needs it.
+              Secures your API key. Verenu prompts for access when it needs it.
             {/if}
           </div>
         </div>
@@ -495,18 +434,6 @@
     <p class="permission-error">{permissionsError}</p>
   {/if}
 
-  {#if showRestartHint}
-    <div class="permission-restart-hint" transition:slide={{ duration: motionMs(200) }}>
-      <span class="restart-hint-text">
-        Just changed a permission in System Settings? Relaunch Open Flow so macOS
-        re-reads the latest Accessibility and Input Monitoring grants.
-      </span>
-      <button class="btn-relaunch" onclick={relaunchApp} disabled={restarting}>
-        {restarting ? 'Relaunching…' : 'Relaunch now'}
-      </button>
-    </div>
-  {/if}
-
   <div class="permission-foot">
     <button
       class="permission-details-toggle"
@@ -522,7 +449,7 @@
         class="permission-refresh-btn"
         onclick={relaunchApp}
         disabled={restarting}
-        title="Relaunch Open Flow to apply permission changes"
+        title="Relaunch Verenu to apply permission changes"
       >
         <span aria-hidden="true">⏻</span>
         {restarting ? 'Relaunching…' : 'Relaunch'}
@@ -544,26 +471,18 @@
       {#if showRepairHint}
         <div class="permission-repair">
           <p class="repair-copy">
-            <strong>Permission shows as enabled in System Settings but still isn't working?</strong>
-            macOS can hold a stale grant tied to an older build of Open Flow. Clear the
-            old grants so you can re-add this version fresh.
+            <strong>Accessibility shows as enabled but typing still doesn't work?</strong>
+            macOS can hold a stale grant from an older build. Reset it so you can re-add
+            this version fresh.
           </p>
           <button class="btn-repair" onclick={repairStaleGrants} disabled={repairing}>
-            {repairing ? 'Clearing…' : 'Clear old grants & re-request'}
+            {repairing ? 'Resetting…' : 'Reset stale grants'}
           </button>
         </div>
       {/if}
-      <p class="permission-note">
-        <strong>Bundle checked:</strong>
-        {snapshot.diagnostics.bundleIdentifier ?? 'Unknown bundle'}
-        {#if snapshot.diagnostics.bundlePath}
-          <br />{snapshot.diagnostics.bundlePath}
-        {/if}
-      </p>
       <p class="diag-line">
-        Raw OS state — Accessibility: <strong>{snapshot.diagnostics.accessibilityTrusted ? 'trusted' : 'not trusted'}</strong>,
-        Input Monitoring: <strong>{snapshot.diagnostics.inputMonitoringRaw}</strong>.
-        If these disagree with the status above, macOS is likely holding a stale grant from a previous build.
+        {snapshot.diagnostics.bundleIdentifier ?? 'Unknown bundle'} ·
+        Accessibility raw status: <strong>{snapshot.diagnostics.accessibilityTrusted ? 'trusted' : 'not trusted'}</strong>
       </p>
     </div>
   {/if}
@@ -681,27 +600,8 @@
 
   .permission-error { margin: 12px 0 0; color: var(--danger); font-size: 12px; }
 
-  /* Auxiliary hint — relaunch banner. */
-  .permission-restart-hint {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    border-radius: var(--r-sm);
-    padding: 10px 12px;
-    margin-top: 12px;
-    font-size: 12px;
-    color: var(--ink-soft);
-    line-height: 1.45;
-    background: var(--paper, #fafafa);
-    background: color-mix(in srgb, oklch(75% 0.12 60) 12%, var(--paper));
-    border: 1px solid var(--line, #d0d0d0);
-    border: 1px solid color-mix(in srgb, oklch(75% 0.12 60) 30%, var(--line));
-  }
-
-  .restart-hint-text { flex: 1; }
-
-  /* Repair action, shown inside the expanded Details section when a core
-     permission isn't granted — clears stale TCC grants and re-requests. */
+  /* Repair action, shown inside the expanded Details section when Accessibility
+     isn't granted — resets a stale TCC grant and re-requests. */
   .permission-repair {
     display: flex;
     align-items: center;
@@ -726,7 +626,6 @@
 
   .repair-copy strong { color: var(--ink-strong); display: block; margin-bottom: 2px; }
 
-  .btn-relaunch,
   .btn-repair {
     flex-shrink: 0;
     border: 0;
@@ -741,9 +640,7 @@
     white-space: nowrap;
     transition: filter 0.15s;
   }
-  .btn-relaunch:hover,
   .btn-repair:hover { filter: brightness(1.06); }
-  .btn-relaunch:disabled,
   .btn-repair:disabled { opacity: 0.6; cursor: default; }
 
   .permission-foot {
@@ -776,21 +673,7 @@
 
   .permission-diagnostics { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 
-  .permission-note {
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    padding: 9px 12px;
-    margin: 0;
-    font-size: 11.5px;
-    color: var(--ink-soft);
-    line-height: 1.5;
-    word-break: break-word;
-  }
-
-  .permission-note strong { color: var(--ink-strong); }
-
-  .diag-line { margin: 0; font-size: 11.5px; color: var(--ink-mute); line-height: 1.5; }
+  .diag-line { margin: 0; font-size: 11.5px; color: var(--ink-mute); line-height: 1.5; word-break: break-word; }
   .diag-line strong { color: var(--ink-soft); font-weight: 600; }
 
   .permission-refresh-btn {

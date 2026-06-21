@@ -9,15 +9,18 @@ npm run tauri:build:signed
 ```
 
 This signs the app with a **stable self-signed identity** ("Open Flow Self-Signed")
-so that Accessibility and Input Monitoring permissions you grant **survive
-rebuilds**. Building with plain `npm run tauri build` (ad-hoc signing) will make
-the app forget its permissions every time you rebuild.
+so that the Accessibility permission you grant **survives rebuilds**. Building
+with plain `npm run tauri build` (ad-hoc signing) will make the app forget its
+permission every time you rebuild.
+
+> The global hotkey now uses Carbon `RegisterEventHotKey` (no Input Monitoring
+> permission), so **Accessibility** (for Cmd+V injection / AX reads) is the only
+> rebuild-sensitive TCC grant left. Microphone self-heals (see below).
 
 ## Why this matters
 
-macOS TCC (Transparency, Consent & Control) ties **Accessibility** and **Input
-Monitoring** grants to the application's *code-signature identity*, not its path
-or bundle id.
+macOS TCC (Transparency, Consent & Control) ties the **Accessibility** grant to
+the application's *code-signature identity*, not its path or bundle id.
 
 - An **ad-hoc** signature (`signingIdentity: "-"` in `tauri.conf.json`) has no
   stable identity. TCC falls back to keying the grant on the binary's `CDHash`,
@@ -27,16 +30,15 @@ or bundle id.
 
 The symptom is confusing: **System Settings → Privacy & Security → Accessibility
 shows the app as enabled, but the app still behaves as if permission is missing**
-(the global hotkey and clipboard injection silently stop working). That is
-because the System Settings list matches the entry by path for *display*, while
-the runtime `AXIsProcessTrusted()` / `IOHIDCheckAccess()` checks compare the
-*running* binary's signature against what TCC actually authorised — and they
-don't match after a rebuild.
+(clipboard injection silently stops working). That is because the System Settings
+list matches the entry by path for *display*, while the runtime
+`AXIsProcessTrusted()` check compares the *running* binary's signature against
+what TCC actually authorised — and they don't match after a rebuild.
 
-> Microphone is the exception that hid this for a while: the mic path re-prompts
-> through AVFoundation (re-establishing the grant against the current binary) and
-> also has an empirical "I actually captured audio" latch, so it self-heals.
-> Accessibility and Input Monitoring cannot re-prompt the same way.
+> Microphone is the exception: the mic path re-prompts through AVFoundation
+> (re-establishing the grant against the current binary) and also has an empirical
+> "I actually captured audio" latch, so it self-heals. Accessibility cannot
+> re-prompt the same way.
 
 Signing every local/release build with **one reused certificate** gives the
 bundle a stable designated requirement, so a single grant persists across all
@@ -102,11 +104,10 @@ is tracked separately and is out of scope here.
 
 ## Recovering from stale grants
 
-If you previously installed ad-hoc builds and the OS is holding stale entries,
+If you previously installed ad-hoc builds and the OS is holding a stale entry,
 the in-app **Settings → Permissions → "Reset stale grants"** button runs
-`tccutil reset Accessibility com.verenu.app` and `tccutil reset ListenEvent
-com.verenu.app`, then walks you through re-adding the app. After switching to
-signed builds you should only have to grant once.
+`tccutil reset Accessibility com.verenu.app`, then walks you through re-adding the
+app. After switching to signed builds you should only have to grant once.
 
 ## Runtime resilience
 
@@ -114,10 +115,8 @@ Independently of signing, the permission snapshot uses empirical latches so a
 confirmed-working capability is trusted even if the raw TCC status query is stale:
 
 - **Microphone** — a successful capture (`mark_microphone_verified`).
-- **Input Monitoring** — the global tap actually seeing input
-  (`has_seen_global_input`).
 - **Accessibility** — a successful cross-process AX read in the caret probe
   (`mark_accessibility_verified`).
 
 The raw OS check is still surfaced separately in the snapshot's
-`diagnostics.accessibilityTrusted` / `inputMonitoringRaw` fields for debugging.
+`diagnostics.accessibilityTrusted` field for debugging.

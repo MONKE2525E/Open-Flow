@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke, listen } from '../../tauri';
-  import { isMac } from '../../platform';
+  import { isMac, formatKeyLabel, defaultHotkey } from '../../platform';
 
-  const hkKey1 = isMac ? 'fn' : 'Ctrl';
-  const hkKey2 = isMac ? 'Control' : 'Windows';
+  let hotkey = $state<string[]>(isMac ? defaultHotkey : ['ControlLeft', 'MetaLeft']);
+  invoke<string[] | null>('get_setting', { key: 'hotkey' })
+    .then((hk) => { if (hk && hk.length === 2) hotkey = hk; })
+    .catch(() => {});
+  const keyLabels = $derived(hotkey.filter(Boolean).map(formatKeyLabel));
   const setupTryHotkeyCodes = new Set(['ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight']);
 
   let sampleText = $state('');
@@ -137,8 +140,13 @@
 
 <div class="step">
   <div class="tryit-callout">
-    <kbd>{hkKey1}</kbd> <span>+</span> <kbd>{hkKey2}</kbd>
-    <p>Hold the keys, say a sentence, then release.</p>
+    {#each keyLabels as k, i}
+      {#if i > 0}<span>+</span>{/if}<kbd>{k}</kbd>
+    {/each}
+    <p>Hold {keyLabels.length > 1 ? 'the keys' : 'the key'}, say a sentence, then release.</p>
+    {#if isMac && hotkey[0] === 'F5'}
+      <p class="tryit-note">Nothing happening? F5 may be opening macOS Dictation — turn it off in System Settings → Keyboard → Dictation, or hold Fn with F5.</p>
+    {/if}
   </div>
 
   <textarea
@@ -191,6 +199,13 @@
     font-size: 13px;
     color: var(--ink-soft);
     flex-basis: 100%;
+  }
+
+  .tryit-callout .tryit-note {
+    margin-top: 6px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--ink-mute);
   }
 
   .tryit-field {

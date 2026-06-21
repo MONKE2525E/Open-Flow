@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build a macOS release bundle signed with the stable, reused self-signed identity
-# so TCC permission grants (Accessibility / Input Monitoring) survive rebuilds.
+# so the TCC Accessibility grant survives rebuilds.
 # See scripts/macos/ensure-signing-identity.sh and docs/macos-code-signing.md.
 #
 # Extra args are forwarded to `tauri build`, e.g.:

@@ -159,6 +159,16 @@ fn main() {
                     if let Some(arr) = val.as_array() {
                         if arr.len() == 2 {
                             if let (Some(k1), Some(k2)) = (arr[0].as_str(), arr[1].as_str()) {
+                                // On macOS the hotkey is now a modifier+key combo
+                                // (RegisterEventHotKey, no Input Monitoring). A stored
+                                // modifier-only chord from an earlier build (e.g. Fn+Control)
+                                // is not registrable — migrate it to the ⌥+Space default so
+                                // the backend and the settings label stay in sync.
+                                #[cfg(target_os = "macos")]
+                                if !crate::core::hotkey::is_hotkey_available(k1, k2) {
+                                    store.set("hotkey", serde_json::json!(["AltLeft", "Space"]));
+                                    let _ = store.save();
+                                }
                                 let vk1 = crate::core::hotkey::map_code_to_vk(k1);
                                 let vk2 = crate::core::hotkey::map_code_to_vk(k2);
                                 crate::core::hotkey::update_keys(vk1, vk2);
@@ -270,16 +280,11 @@ fn main() {
             commands::request_accessibility_permission,
             commands::open_accessibility_settings,
             commands::get_accessibility_permission_status,
-            commands::is_hotkey_tap_active,
             commands::get_microphone_permission_status,
             commands::request_microphone_permission,
             commands::request_microphone_permission_snapshot,
             commands::open_microphone_settings,
             commands::restart_app,
-            commands::get_input_monitoring_permission_status,
-            commands::request_input_monitoring_permission,
-            commands::request_input_monitoring_permission_snapshot,
-            commands::open_input_monitoring_settings,
             commands::open_privacy_security_settings,
             commands::reset_macos_core_permissions,
             commands::check_keychain_access,
@@ -338,7 +343,7 @@ fn main() {
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    let open_i = MenuItem::with_id(app, "open", "Open Open Flow", true, None::<&str>)?;
+    let open_i = MenuItem::with_id(app, "open", "Open Verenu", true, None::<&str>)?;
     let permissions_i =
         MenuItem::with_id(app, "permissions", "Permissions...", true, None::<&str>)?;
     let settings_i = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
@@ -365,7 +370,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .icon_as_template(cfg!(target_os = "macos"))
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .tooltip("Open Flow")
+        .tooltip("Verenu")
         .on_menu_event(|app, ev| match ev.id.as_ref() {
             "open" => {
                 show_main_window(app);

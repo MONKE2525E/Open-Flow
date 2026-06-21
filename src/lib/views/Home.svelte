@@ -472,7 +472,7 @@
       <div class="hero-photo">
         <div class="hero-photo-content">
           <h2 class="hero-photo-title">
-            Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to dictate
+            Hold <kbd>{hk1}</kbd>{#if hotkey[1]} <kbd>{hk2}</kbd>{/if} to dictate
           </h2>
           <p class="hero-photo-sub">
             Verenu works in any app. Try it in
@@ -522,7 +522,7 @@
 
         {#if recents.length === 0 && !failedEntry}
           <div class="empty-state">
-            No dictations yet. Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to get started.
+            No dictations yet. Hold <kbd>{hk1}</kbd>{#if hotkey[1]} <kbd>{hk2}</kbd>{/if} to get started.
           </div>
         {:else}
           <div bind:this={listContainer}>

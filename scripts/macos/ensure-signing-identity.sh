@@ -5,7 +5,7 @@
 #
 # WHY THIS MATTERS
 # ----------------
-# macOS TCC ties Accessibility and Input Monitoring grants to the app's code
+# macOS TCC ties the Accessibility grant to the app's code
 # signature (its "designated requirement"), NOT its path or bundle id. Ad-hoc
 # signing (`signingIdentity: "-"`) has no stable identity, so every rebuild gets a
 # different CDHash and the OS treats it as a brand-new app — silently dropping

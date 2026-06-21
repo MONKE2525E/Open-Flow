@@ -55,7 +55,8 @@ windows = { version = "0.61", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-core-graphics      = "0.24"   # CGEventTap, CGEvent post (Cmd+V)
+global-hotkey      = "0.8"    # Carbon RegisterEventHotKey global hotkey (no Input Monitoring / Accessibility needed)
+core-graphics      = "0.24"   # CGEvent post (Cmd+V), Caps-Lock state
 foreign-types-shared = "0.3"
 core-foundation    = "0.10"   # CFRunLoop, CFString, CFRunLoopSource
 core-foundation-sys = "0.8"   # CFGetTypeID / CFRelease for AX value handling

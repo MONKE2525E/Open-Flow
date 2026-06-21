@@ -1074,7 +1074,7 @@ pub async fn inject_text(
         if !crate::commands::check_accessibility_permission(false) {
             log::error!(
                 "inject_text: Cmd+V injection attempted but Accessibility is not granted — \
-                 grant Open Flow Accessibility permission in System Settings → Privacy & Security → Accessibility"
+                 grant Verenu Accessibility permission in System Settings → Privacy & Security → Accessibility"
             );
         }
 
@@ -1128,11 +1128,10 @@ pub async fn inject_text(
         .flatten();
 
         log::info!(
-            "inject_text(macos): target_pid={} text_len={} posted={} tap_active={}",
+            "inject_text(macos): target_pid={} text_len={} posted={}",
             (target_hwnd & 0xFFFFFFFF) as i32,
             adjusted.len(),
             posted.is_some(),
-            crate::core::hotkey::is_tap_active()
         );
 
         tokio::time::sleep(Duration::from_millis(120)).await;
