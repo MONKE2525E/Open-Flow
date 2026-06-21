@@ -57,7 +57,9 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
     if vk1 == 0 {
         return Err(format!("Unrecognized key code: {key1}"));
     }
-    if vk2 == 0 {
+    // An empty second slot is allowed (a single-key hotkey, e.g. macOS F5);
+    // only reject a non-empty key code that we can't recognise.
+    if !key2.is_empty() && vk2 == 0 {
         return Err(format!("Unrecognized key code: {key2}"));
     }
     crate::core::hotkey::update_keys(vk1, vk2);

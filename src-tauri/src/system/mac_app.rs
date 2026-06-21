@@ -19,40 +19,10 @@ use tauri::AppHandle;
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {}
 
-// Input Monitoring (HID listen) permission. A keyboard `CGEventTap` only receives
-// events from *other* applications when the app is granted Input Monitoring —
-// without it the tap only sees keystrokes while the app is frontmost. This is
-// distinct from Accessibility (which authorizes posting events / Cmd+V).
-#[link(name = "IOKit", kind = "framework")]
-extern "C" {
-    fn IOHIDCheckAccess(request_type: u32) -> u32;
-    fn IOHIDRequestAccess(request_type: u32) -> u8;
-}
-
-// IOHIDRequestType: kIOHIDRequestTypeListenEvent is the first variant (= 0).
-const IOHID_REQUEST_TYPE_LISTEN_EVENT: u32 = 0;
-// IOHIDAccessType return values from IOHIDCheckAccess.
-const IOHID_ACCESS_TYPE_GRANTED: u32 = 0;
-const IOHID_ACCESS_TYPE_DENIED: u32 = 1;
-
-/// Current Input Monitoring (HID listen) permission for the app.
-///
-/// Returns `authorized`, `denied`, or `not_determined`.
-pub fn input_monitoring_status() -> &'static str {
-    match unsafe { IOHIDCheckAccess(IOHID_REQUEST_TYPE_LISTEN_EVENT) } {
-        IOHID_ACCESS_TYPE_GRANTED => "authorized",
-        IOHID_ACCESS_TYPE_DENIED => "denied",
-        _ => "not_determined",
-    }
-}
-
-/// Request Input Monitoring access. If undetermined, macOS shows the consent
-/// prompt and adds the app to System Settings → Privacy & Security → Input
-/// Monitoring. Returns `true` if already granted. Changes generally require an
-/// app relaunch before an existing event tap sees global events.
-pub fn request_input_monitoring() -> bool {
-    unsafe { IOHIDRequestAccess(IOHID_REQUEST_TYPE_LISTEN_EVENT) != 0 }
-}
+// The global hotkey now uses Carbon `RegisterEventHotKey` (see
+// `core::hotkey::mac`), which needs no Input Monitoring permission, so the old
+// IOKit HID-listen probing has been removed. The only remaining macOS
+// permissions are Accessibility (Cmd+V injection / AX reads) and Microphone.
 
 const APP_ICON_ICNS: &[u8] = include_bytes!("../../icons/icon.icns");
 
@@ -188,7 +158,7 @@ pub fn set_regular_activation_policy_on_main_thread(app: &AppHandle) {
 /// Float the pill window above other apps' windows *without* activating Open
 /// Flow. Tauri's `show()` maps to `-[NSWindow orderFront:]`, which AppKit
 /// suppresses for a background (non-active) app — so the pill only appeared
-/// while Open Flow was frontmost. We instead:
+/// while Verenu was frontmost. We instead:
 ///   1. raise the window level above normal windows (NSStatusWindowLevel = 25),
 ///   2. let it appear on every Space and over full-screen apps,
 ///   3. order it front with `orderFrontRegardless`, which ignores active state.
@@ -209,7 +179,7 @@ pub fn float_pill_window(ns_window: *mut std::ffi::c_void) {
         // active Space and over full-screen apps without switching Spaces.
         let behavior: usize = (1 << 0) | (1 << 8);
         let _: () = msg_send![win, setCollectionBehavior: behavior];
-        // Order front even though Open Flow is not the active application.
+        // Order front even though Verenu is not the active application.
         let _: () = msg_send![win, orderFrontRegardless];
     })
 }

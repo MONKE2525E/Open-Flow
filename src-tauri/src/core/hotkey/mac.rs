@@ -1,47 +1,40 @@
-//! macOS global hold/release hotkey via a `CGEventTap`.
+//! macOS global hold/release hotkey via Carbon `RegisterEventHotKey`
+//! (through the `global-hotkey` crate).
 //!
 //! Mirrors the public contract of the Windows backend (`super::win`):
 //! `start`, `update_keys`, `map_code_to_vk`, `is_hotkey_available`,
-//! `reset_chord_state`, `set_handless_active`.
+//! `reset_chord_state`, `set_handless_active`, `begin_synthetic_paste_suppression`,
+//! `caps_lock_is_on`.
 //!
 //! Design notes:
-//! - A **listen-only** tap is used (`CGEventTapOptions::ListenOnly`). It observes
-//!   key/modifier state but never deletes events, so it can't cause stuck
-//!   modifiers or swallow shortcuts. The trade-off is that we cannot suppress the
-//!   OS Fn/Globe "show emoji" action — users set System Settings → Keyboard →
-//!   "Press 🌐 key to: Do Nothing". The tap requires Accessibility / Input
-//!   Monitoring permission (the OS prompts on first creation).
+//! - `RegisterEventHotKey` requires **no permission** — not Accessibility, not
+//!   Input Monitoring. It delivers `Pressed` / `Released` events for a single
+//!   registered key combination, which is exactly what hold-to-talk needs. The
+//!   trade-off vs. the old `CGEventTap` is that the hotkey can no longer be a
+//!   pure modifier chord (e.g. Fn+Control): Carbon hotkeys need a real key, so
+//!   the default is **⌥ Option + Space** (two adjacent bottom-row keys, no Fn
+//!   gymnastics and no Spotlight conflict).
+//! - Because we no longer observe every keystroke, we also no longer feed the
+//!   injection-history capitalization fallback on macOS — that path now relies on
+//!   the Accessibility caret read / clipboard sniff (see `core::context_probe`).
 //! - Key ids produced by `map_code_to_vk` are private to this backend: modifiers
-//!   are tiny sentinel ids (1..=6) resolved against `CGEventFlags`; regular keys
-//!   are `REGULAR_BASE + <macOS keycode>` and tracked via key down/up.
-//! - The default chord is **Control (key1) + Fn (key2)**.
+//!   are tiny sentinel ids (1..=6); regular keys are `REGULAR_BASE + <macOS
+//!   keycode>`. `update_keys` resolves them into a single `global_hotkey::HotKey`.
 
-use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-use core_foundation::base::TCFType;
-use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
-use core_foundation_sys::mach_port::CFMachPortRef;
-use core_graphics::event::{
-    CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventTapProxy,
-    CGEventType, EventField,
-};
-use foreign_types_shared::ForeignType;
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
-    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
-    fn CGEventKeyboardGetUnicodeString(
-        event: core_graphics::sys::CGEventRef,
-        max_string_length: libc::c_ulong,
-        actual_string_length: *mut libc::c_ulong,
-        unicode_string: *mut u16,
-    );
     fn CGEventSourceFlagsState(state_id: i32) -> u64;
 }
+
+// caps-lock bit in CGEventFlags (kCGEventFlagMaskAlphaShift).
+const FLAG_ALPHASHIFT: u64 = 0x0001_0000;
 
 // --- private key id scheme -------------------------------------------------
 
@@ -53,52 +46,18 @@ const ID_FN: u32 = 5;
 const ID_CAPS: u32 = 6;
 const REGULAR_BASE: u32 = 0x100;
 
-const KEY_ESCAPE: i64 = 53; // macOS virtual keycode for Escape
-const KEY_TAB: i64 = 48;
-const KEY_BACKSPACE: i64 = 51;
-const KEY_RETURN: i64 = 36;
-const KEY_FORWARD_DELETE: i64 = 117;
-const KEY_HOME: i64 = 115;
-const KEY_END: i64 = 119;
-const KEY_PAGE_UP: i64 = 116;
-const KEY_PAGE_DOWN: i64 = 121;
-const KEY_LEFT: i64 = 123;
-const KEY_RIGHT: i64 = 124;
-const KEY_DOWN: i64 = 125;
-const KEY_UP: i64 = 126;
+// macOS virtual keycode for Space — the trigger key of the default ⌥+Space hotkey.
+const MAC_KEYCODE_SPACE: u32 = 49;
 
-// Keep production builds quiet unless we're actively debugging the event tap.
-const HOTKEY_DEBUG: bool = false;
-
-fn is_modifier(id: u32) -> bool {
-    (ID_CONTROL..=ID_CAPS).contains(&id)
-}
-
-// CGEventFlags raw bits (kCGEventFlagMask*). Kept as raw u64 so this module
-// doesn't depend on the exact associated-constant names across crate versions.
-const FLAG_ALPHASHIFT: u64 = 0x0001_0000; // caps lock
-const FLAG_SHIFT: u64 = 0x0002_0000;
-const FLAG_CONTROL: u64 = 0x0004_0000;
-const FLAG_ALTERNATE: u64 = 0x0008_0000;
-const FLAG_COMMAND: u64 = 0x0010_0000;
-const FLAG_SECONDARY_FN: u64 = 0x0080_0000;
-
-fn modifier_mask(id: u32) -> u64 {
-    match id {
-        ID_CONTROL => FLAG_CONTROL,
-        ID_SHIFT => FLAG_SHIFT,
-        ID_ALT => FLAG_ALTERNATE,
-        ID_COMMAND => FLAG_COMMAND,
-        ID_FN => FLAG_SECONDARY_FN,
-        ID_CAPS => FLAG_ALPHASHIFT,
-        _ => 0,
-    }
-}
+// Double-tap window for handsfree toggle, and the max hold treated as a "tap".
+const HANDSFREE_DOUBLE_TAP_MS: u64 = 350;
+const TAP_MAX_HOLD_MS: u64 = 250;
 
 // --- state -----------------------------------------------------------------
 
-static KEY1: AtomicU32 = AtomicU32::new(ID_CONTROL); // held modifier (default Ctrl)
-static KEY2: AtomicU32 = AtomicU32::new(ID_FN); // trigger (default Fn)
+// Default hotkey: ⌥ Option + Space. KEY1 is the Option modifier, KEY2 the Space key.
+static KEY1: AtomicU32 = AtomicU32::new(ID_ALT);
+static KEY2: AtomicU32 = AtomicU32::new(REGULAR_BASE + MAC_KEYCODE_SPACE);
 
 static PRESS_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 static RELEASE_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
@@ -107,84 +66,41 @@ static CANCEL_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 static ESCAPE_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 
 static CHORD_ACTIVE: AtomicBool = AtomicBool::new(false);
-static HANDLESS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ESCAPE_CANCELLED: AtomicBool = AtomicBool::new(false);
 static CHORD_DOWN_MS: AtomicU64 = AtomicU64::new(0);
 static HANDLESS_PENDING: AtomicBool = AtomicBool::new(false);
 static HANDLESS_PENDING_MS: AtomicU64 = AtomicU64::new(0);
-static EVENT_TAP_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
-static TAP_ACTIVE: AtomicBool = AtomicBool::new(false);
-// Latched once the chord fires while another app is frontmost — empirical proof
-// that the tap receives global keystrokes (i.e. Input Monitoring is effectively
-// granted), independent of the per-process-cached IOHIDCheckAccess result.
-static GLOBAL_INPUT_SEEN: AtomicBool = AtomicBool::new(false);
 
-/// True once the hotkey has fired while another application was frontmost, which
-/// can only happen when the tap is receiving global input — i.e. Input Monitoring
-/// is working. Authoritative override for the unreliable `IOHIDCheckAccess` cache.
-pub fn has_seen_global_input() -> bool {
-    GLOBAL_INPUT_SEEN.load(Ordering::SeqCst)
-}
-
-/// Returns `true` once the CGEventTap has been successfully created and enabled.
-/// The tap polls until Accessibility permission is granted, so this becomes `true`
-/// only after the user has authorized the app — useful as a permission signal when
-/// `AXIsProcessTrustedWithOptions` returns a stale cached result.
-pub fn is_tap_active() -> bool {
-    TAP_ACTIVE.load(Ordering::SeqCst)
-}
-
-// Down-state for the (rare) case where a configured chord key is a regular key
-// rather than a modifier. Modifiers are read from CGEventFlags instead.
-static K1_REGULAR_DOWN: AtomicBool = AtomicBool::new(false);
-static K2_REGULAR_DOWN: AtomicBool = AtomicBool::new(false);
-static SYNTHETIC_PASTE_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Clone, Copy)]
-struct HotkeyEvent {
-    etype: CGEventType,
-    flags: u64,
-    keycode: i64,
-    text: [u16; 8],
-    text_len: u8,
-}
+// `GlobalHotKeyManager` is `unsafe impl Send + Sync` (it guards Carbon access
+// with an internal mutex), so it is safe to hold in a static and re-register
+// the hotkey from `update_keys` on any thread.
+static MANAGER: OnceLock<GlobalHotKeyManager> = OnceLock::new();
+static CURRENT_HOTKEY: Mutex<Option<HotKey>> = Mutex::new(None);
+static MAIN_HOTKEY_ID: AtomicU32 = AtomicU32::new(0);
+static ESCAPE_HOTKEY: OnceLock<HotKey> = OnceLock::new();
+// `Mutex<bool>` (not an atomic) so the check and the register/unregister call are
+// one critical section — `set_escape_listening` is invoked from both the hotkey
+// event thread and Tauri command threads, and a lock-free swap could interleave
+// such that Escape stays registered (hijacked) system-wide.
+static ESCAPE_REGISTERED: Mutex<bool> = Mutex::new(false);
 
 fn now_ms() -> u64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
-pub fn begin_synthetic_paste_suppression(duration_ms: u64) {
-    SYNTHETIC_PASTE_UNTIL_MS.store(now_ms().saturating_add(duration_ms), Ordering::SeqCst);
-}
-
-fn synthetic_paste_suppressed(now: u64) -> bool {
-    SYNTHETIC_PASTE_UNTIL_MS.load(Ordering::SeqCst) > now
-}
-
-fn reenable_event_tap() {
-    let tap_port = EVENT_TAP_PORT.load(Ordering::SeqCst) as CFMachPortRef;
-    if tap_port.is_null() {
-        log::warn!("macOS event tap disabled before a tap port was registered");
-        return;
-    }
-
-    unsafe {
-        CGEventTapEnable(tap_port, true);
-    }
-    log::info!("macOS event tap re-enabled");
-}
-
 // --- public contract -------------------------------------------------------
 
+/// Synthetic-paste suppression was only needed to keep the old keystroke tap
+/// from recording our own Cmd+V into the injection history. Without the tap this
+/// is a no-op (kept to satisfy the shared cross-platform contract).
+pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
+
 pub fn update_keys(k1: u32, k2: u32) {
-    if k1 != 0 {
-        KEY1.store(k1, Ordering::SeqCst);
-    }
-    if k2 != 0 {
-        KEY2.store(k2, Ordering::SeqCst);
-    }
+    KEY1.store(k1, Ordering::SeqCst);
+    KEY2.store(k2, Ordering::SeqCst);
     reset_chord_state();
+    register_main_hotkey();
 }
 
 pub fn reset_chord_state() {
@@ -193,31 +109,30 @@ pub fn reset_chord_state() {
     HANDLESS_PENDING.store(false, Ordering::SeqCst);
     HANDLESS_PENDING_MS.store(0, Ordering::SeqCst);
     CHORD_DOWN_MS.store(0, Ordering::SeqCst);
-    K1_REGULAR_DOWN.store(false, Ordering::SeqCst);
-    K2_REGULAR_DOWN.store(false, Ordering::SeqCst);
+    refresh_escape_listening();
 }
 
 pub fn set_handless_active(v: bool) {
-    HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
+    let _ = v;
+    refresh_escape_listening();
 }
 
-/// Current Caps Lock toggle state, queried synchronously from the OS — avoids
-/// depending on the event tap having already observed a flags-changed event
-/// (which would otherwise read stale/default state for Caps Lock toggled
-/// before the tap was installed, or before Accessibility permission is granted).
+/// Current Caps Lock toggle state, queried synchronously from the OS.
 pub fn caps_lock_is_on() -> bool {
     const COMBINED_SESSION_STATE: i32 = 0; // kCGEventSourceStateCombinedSessionState
     unsafe { (CGEventSourceFlagsState(COMBINED_SESSION_STATE) & FLAG_ALPHASHIFT) != 0 }
 }
 
-/// A chord is registrable as long as the trigger key maps to a known id.
-pub fn is_hotkey_available(_key1: &str, key2: &str) -> bool {
-    map_code_to_vk(key2) != 0
+/// A hotkey is registrable as long as the (modifiers, key) pair resolves to a
+/// real key — Carbon hotkeys cannot be modifier-only.
+pub fn is_hotkey_available(key1: &str, key2: &str) -> bool {
+    build_hotkey(map_code_to_vk(key1), map_code_to_vk(key2)).is_some()
 }
 
 /// Map a JS `KeyboardEvent.code` to this backend's private key id.
 pub fn map_code_to_vk(code: &str) -> u32 {
     match code {
+        "" => 0,
         "ControlLeft" | "ControlRight" => ID_CONTROL,
         "ShiftLeft" | "ShiftRight" => ID_SHIFT,
         "AltLeft" | "AltRight" => ID_ALT,
@@ -231,7 +146,7 @@ pub fn map_code_to_vk(code: &str) -> u32 {
 }
 
 /// macOS ANSI virtual keycodes for the common `KeyboardEvent.code` values a user
-/// might rebind to. The default Fn+Control chord uses none of these.
+/// might rebind to. The default F5 hotkey resolves through here (F5 → 96).
 fn js_code_to_mac_keycode(code: &str) -> Option<u32> {
     let kc = match code {
         "KeyA" => 0,
@@ -271,8 +186,15 @@ fn js_code_to_mac_keycode(code: &str) -> Option<u32> {
         "Digit9" => 25,
         "Digit0" => 29,
         "Space" => 49,
+        "Escape" => 53,
+        "Backspace" => 51,
+        "Delete" => 117,
         "Enter" => 36,
         "Tab" => 48,
+        "Home" => 115,
+        "End" => 119,
+        "PageUp" => 116,
+        "PageDown" => 121,
         "Backquote" => 50,
         "Minus" => 27,
         "Equal" => 24,
@@ -305,6 +227,286 @@ fn js_code_to_mac_keycode(code: &str) -> Option<u32> {
     Some(kc)
 }
 
+/// Reverse of `js_code_to_mac_keycode`: macOS virtual keycode → `global-hotkey`
+/// `Code`. Used by `build_hotkey` to register the trigger key.
+fn mac_keycode_to_code(kc: u32) -> Option<Code> {
+    let code = match kc {
+        0 => Code::KeyA,
+        1 => Code::KeyS,
+        2 => Code::KeyD,
+        3 => Code::KeyF,
+        4 => Code::KeyH,
+        5 => Code::KeyG,
+        6 => Code::KeyZ,
+        7 => Code::KeyX,
+        8 => Code::KeyC,
+        9 => Code::KeyV,
+        11 => Code::KeyB,
+        12 => Code::KeyQ,
+        13 => Code::KeyW,
+        14 => Code::KeyE,
+        15 => Code::KeyR,
+        16 => Code::KeyY,
+        17 => Code::KeyT,
+        31 => Code::KeyO,
+        32 => Code::KeyU,
+        34 => Code::KeyI,
+        35 => Code::KeyP,
+        37 => Code::KeyL,
+        38 => Code::KeyJ,
+        40 => Code::KeyK,
+        45 => Code::KeyN,
+        46 => Code::KeyM,
+        18 => Code::Digit1,
+        19 => Code::Digit2,
+        20 => Code::Digit3,
+        21 => Code::Digit4,
+        23 => Code::Digit5,
+        22 => Code::Digit6,
+        26 => Code::Digit7,
+        28 => Code::Digit8,
+        25 => Code::Digit9,
+        29 => Code::Digit0,
+        49 => Code::Space,
+        53 => Code::Escape,
+        51 => Code::Backspace,
+        117 => Code::Delete,
+        36 => Code::Enter,
+        48 => Code::Tab,
+        115 => Code::Home,
+        119 => Code::End,
+        116 => Code::PageUp,
+        121 => Code::PageDown,
+        50 => Code::Backquote,
+        27 => Code::Minus,
+        24 => Code::Equal,
+        33 => Code::BracketLeft,
+        30 => Code::BracketRight,
+        42 => Code::Backslash,
+        41 => Code::Semicolon,
+        39 => Code::Quote,
+        43 => Code::Comma,
+        47 => Code::Period,
+        44 => Code::Slash,
+        123 => Code::ArrowLeft,
+        124 => Code::ArrowRight,
+        125 => Code::ArrowDown,
+        126 => Code::ArrowUp,
+        122 => Code::F1,
+        120 => Code::F2,
+        99 => Code::F3,
+        118 => Code::F4,
+        96 => Code::F5,
+        97 => Code::F6,
+        98 => Code::F7,
+        100 => Code::F8,
+        101 => Code::F9,
+        109 => Code::F10,
+        103 => Code::F11,
+        111 => Code::F12,
+        _ => return None,
+    };
+    Some(code)
+}
+
+fn modifier_id_to_mods(id: u32) -> Option<Modifiers> {
+    match id {
+        ID_CONTROL => Some(Modifiers::CONTROL),
+        ID_SHIFT => Some(Modifiers::SHIFT),
+        ID_ALT => Some(Modifiers::ALT),
+        ID_COMMAND => Some(Modifiers::META),
+        // Fn / Caps Lock can't be Carbon hotkey modifiers — ignore them.
+        ID_FN | ID_CAPS => Some(Modifiers::empty()),
+        _ => None,
+    }
+}
+
+/// Resolve the two private key ids into a single registrable `HotKey`, or `None`
+/// if there is no real trigger key (e.g. a modifier-only combination).
+fn build_hotkey(k1: u32, k2: u32) -> Option<HotKey> {
+    let mut mods = Modifiers::empty();
+    let mut code: Option<Code> = None;
+    for id in [k1, k2] {
+        if id == 0 {
+            continue;
+        }
+        if let Some(m) = modifier_id_to_mods(id) {
+            mods |= m;
+        } else if id >= REGULAR_BASE {
+            if let Some(c) = mac_keycode_to_code(id - REGULAR_BASE) {
+                code = Some(c);
+            }
+        }
+    }
+    let trigger = code?;
+    let mods = if mods.is_empty() { None } else { Some(mods) };
+    // A modifier-less single key would be consumed system-wide by
+    // RegisterEventHotKey, hijacking normal typing of that key everywhere. Only
+    // function keys (which don't produce text) are safe as a bare hotkey.
+    if mods.is_none() && !is_function_key(trigger) {
+        return None;
+    }
+    Some(HotKey::new(mods, trigger))
+}
+
+fn is_function_key(code: Code) -> bool {
+    matches!(
+        code,
+        Code::F1
+            | Code::F2
+            | Code::F3
+            | Code::F4
+            | Code::F5
+            | Code::F6
+            | Code::F7
+            | Code::F8
+            | Code::F9
+            | Code::F10
+            | Code::F11
+            | Code::F12
+    )
+}
+
+// --- registration ----------------------------------------------------------
+
+fn register_main_hotkey() {
+    let Some(mgr) = MANAGER.get() else {
+        return;
+    };
+    let hk = match build_hotkey(KEY1.load(Ordering::SeqCst), KEY2.load(Ordering::SeqCst)) {
+        Some(hk) => hk,
+        None => {
+            // Fall back to ⌥+Space so the app always has a working hotkey rather
+            // than silently registering nothing (e.g. a stale modifier-only setting).
+            log::warn!("hotkey: configured keys are not registrable — falling back to ⌥+Space");
+            HotKey::new(Some(Modifiers::ALT), Code::Space)
+        }
+    };
+    if let Ok(mut cur) = CURRENT_HOTKEY.lock() {
+        if let Some(prev) = cur.take() {
+            let _ = mgr.unregister(prev);
+        }
+        match mgr.register(hk) {
+            Ok(()) => {
+                *cur = Some(hk);
+                MAIN_HOTKEY_ID.store(hk.id(), Ordering::SeqCst);
+                log::info!("hotkey: registered global hotkey id={}", hk.id());
+            }
+            Err(e) => {
+                MAIN_HOTKEY_ID.store(0, Ordering::SeqCst);
+                log::error!("hotkey: failed to register global hotkey: {e}");
+            }
+        }
+    }
+}
+
+/// Register/unregister a plain-Escape hotkey for the duration of an active
+/// recording so the user can cancel mid-dictation. We keep it transient because
+/// a registered hotkey is consumed system-wide — we don't want to swallow Escape
+/// everywhere, only while the user is holding the dictation key.
+fn set_escape_listening(on: bool) {
+    let Some(mgr) = MANAGER.get() else {
+        return;
+    };
+    let esc = *ESCAPE_HOTKEY.get_or_init(|| HotKey::new(None, Code::Escape));
+    let Ok(mut registered) = ESCAPE_REGISTERED.lock() else {
+        return;
+    };
+    if on && !*registered {
+        if mgr.register(esc).is_ok() {
+            *registered = true;
+        }
+    } else if !on && *registered {
+        let _ = mgr.unregister(esc);
+        *registered = false;
+    }
+}
+
+fn refresh_escape_listening() {
+    // Keep Escape transient to active hold-to-talk only. Leaving it registered
+    // for the entire handsfree session would hijack Escape system-wide while the
+    // app records in the background.
+    set_escape_listening(CHORD_ACTIVE.load(Ordering::SeqCst));
+}
+
+// --- event handling --------------------------------------------------------
+
+fn handle_hotkey_event(ev: GlobalHotKeyEvent) {
+    if ESCAPE_HOTKEY.get().is_some_and(|h| h.id() == ev.id) {
+        if matches!(ev.state, HotKeyState::Pressed) {
+            on_escape_pressed();
+        }
+        return;
+    }
+    if ev.id != MAIN_HOTKEY_ID.load(Ordering::SeqCst) {
+        return;
+    }
+    match ev.state {
+        HotKeyState::Pressed => on_main_pressed(),
+        HotKeyState::Released => on_main_released(),
+    }
+}
+
+fn on_main_pressed() {
+    // Carbon delivers a single Pressed per physical press, but guard against any
+    // duplicate before a Released arrives.
+    if CHORD_ACTIVE.load(Ordering::SeqCst) {
+        return;
+    }
+    let now = now_ms();
+
+    // Double-tap within the window toggles handsfree mode.
+    if HANDLESS_PENDING.swap(false, Ordering::SeqCst)
+        && now.saturating_sub(HANDLESS_PENDING_MS.load(Ordering::SeqCst)) <= HANDSFREE_DOUBLE_TAP_MS
+    {
+        if let Some(cb) = HANDLESS_CB.get() {
+            cb();
+        }
+        return;
+    }
+
+    CHORD_ACTIVE.store(true, Ordering::SeqCst);
+    CHORD_DOWN_MS.store(now, Ordering::SeqCst);
+    ESCAPE_CANCELLED.store(false, Ordering::SeqCst);
+    refresh_escape_listening();
+    if let Some(cb) = PRESS_CB.get() {
+        cb();
+    }
+}
+
+fn on_main_released() {
+    if !CHORD_ACTIVE.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    let now = now_ms();
+    let held_ms = now.saturating_sub(CHORD_DOWN_MS.load(Ordering::SeqCst));
+    refresh_escape_listening();
+
+    if ESCAPE_CANCELLED.swap(false, Ordering::SeqCst) {
+        // Escape already cancelled this session — emit nothing further.
+    } else if held_ms < TAP_MAX_HOLD_MS {
+        // Quick tap → cancel and arm the double-tap (handsfree) window.
+        HANDLESS_PENDING.store(true, Ordering::SeqCst);
+        HANDLESS_PENDING_MS.store(now, Ordering::SeqCst);
+        if let Some(cb) = CANCEL_CB.get() {
+            cb();
+        }
+    } else if let Some(cb) = RELEASE_CB.get() {
+        cb();
+    }
+}
+
+fn on_escape_pressed() {
+    if CHORD_ACTIVE.load(Ordering::SeqCst) {
+        ESCAPE_CANCELLED.store(true, Ordering::SeqCst);
+    }
+    if let Some(cb) = ESCAPE_CB.get() {
+        cb();
+    }
+}
+
+// --- start -----------------------------------------------------------------
+
 pub fn start<P, R, H, C, E>(
     on_press: P,
     on_release: R,
@@ -319,331 +521,69 @@ where
     C: Fn() + Send + Sync + 'static,
     E: Fn() + Send + Sync + 'static,
 {
+    if MANAGER.get().is_some() {
+        log::warn!("hotkey: global hotkey manager already initialized");
+        return Ok(std::thread::spawn(|| {}));
+    }
+
     let _ = PRESS_CB.set(Box::new(on_press));
     let _ = RELEASE_CB.set(Box::new(on_release));
     let _ = HANDLESS_CB.set(Box::new(on_handless));
     let _ = CANCEL_CB.set(Box::new(on_cancel));
     let _ = ESCAPE_CB.set(Box::new(on_escape));
 
-    let (tx, rx) = mpsc::channel::<HotkeyEvent>();
-    std::thread::spawn(move || {
-        while let Ok(event) = rx.recv() {
-            handle_event(event);
-        }
-    });
+    // Created here (on the main thread, from Tauri `setup`) because the crate
+    // installs its Carbon event handler on the application event target, which
+    // is serviced by the main run loop Tauri already runs.
+    let manager = GlobalHotKeyManager::new()
+        .map_err(|e| format!("failed to create global hotkey manager: {e}"))?;
+    if MANAGER.set(manager).is_err() {
+        log::warn!("hotkey: global hotkey manager already initialized");
+        return Ok(std::thread::spawn(|| {}));
+    }
+    register_main_hotkey();
 
+    // Drain hotkey events on a background thread; the receiver is a process-wide
+    // channel fed by the Carbon handler, so it is safe to poll off-thread.
     let handle = std::thread::spawn(move || {
-        // CGEventTap creation returns Err until Accessibility permission is
-        // granted. Rather than failing permanently (forcing an app restart after
-        // the user grants it), poll until it succeeds.
-        let mut attempt: u32 = 0;
-        let tap = loop {
-            let result = CGEventTap::new(
-                CGEventTapLocation::HID,
-                CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::ListenOnly,
-                // core-graphics 0.24.x builds the CGEventMask internally from
-                // a Vec<CGEventType>, so keep the typed list here.
-                vec![
-                    CGEventType::KeyDown,
-                    CGEventType::KeyUp,
-                    CGEventType::FlagsChanged,
-                ],
-                {
-                    let tx = tx.clone();
-                    move |_proxy: CGEventTapProxy, etype: CGEventType, event| {
-                        let (flags, keycode, text, text_len) = if matches!(
-                            etype,
-                            CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
-                        ) {
-                            (0, 0, [0u16; 8], 0)
-                        } else {
-                            let mut text = [0u16; 8];
-                            let mut actual_len = 0u8;
-                            if matches!(etype, CGEventType::KeyDown) {
-                                let mut out_len = 0 as libc::c_ulong;
-                                unsafe {
-                                    CGEventKeyboardGetUnicodeString(
-                                        event.as_ptr(),
-                                        text.len() as libc::c_ulong,
-                                        &mut out_len,
-                                        text.as_mut_ptr(),
-                                    );
-                                }
-                                actual_len = out_len.min(text.len() as libc::c_ulong) as u8;
-                            }
-                            let flags_bits = event.get_flags().bits();
-                            (
-                                flags_bits,
-                                event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
-                                text,
-                                actual_len,
-                            )
-                        };
-                        let _ = tx.send(HotkeyEvent {
-                            etype,
-                            flags,
-                            keycode,
-                            text,
-                            text_len,
-                        });
-                        None
-                    }
-                },
-            );
-            match result {
-                Ok(t) => break t,
-                Err(()) => {
-                    #[allow(clippy::manual_is_multiple_of)]
-                    if attempt % 10 == 0 {
-                        log::error!(
-                            "CGEventTap not created — grant Verenu Accessibility permission (System Settings → Privacy & Security → Accessibility). Retrying…"
-                        );
-                        if HOTKEY_DEBUG {
-                            log::debug!("[hotkey] CGEventTap::new failed (attempt {attempt}) — Accessibility not granted yet");
-                        }
-                    }
-                    attempt += 1;
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                }
-            }
-        };
-
-        let loop_source = match tap.mach_port.create_runloop_source(0) {
-            Ok(s) => s,
-            Err(()) => {
-                log::error!("failed to create run-loop source for event tap");
-                return;
-            }
-        };
-        let current = CFRunLoop::get_current();
-        unsafe {
-            current.add_source(&loop_source, kCFRunLoopCommonModes);
+        let rx = GlobalHotKeyEvent::receiver();
+        while let Ok(ev) = rx.recv() {
+            handle_hotkey_event(ev);
         }
-        EVENT_TAP_PORT.store(
-            tap.mach_port.as_concrete_TypeRef() as *mut c_void,
-            Ordering::SeqCst,
-        );
-        tap.enable();
-        TAP_ACTIVE.store(true, Ordering::SeqCst);
-        log::info!("macOS hotkey event tap installed");
-        if HOTKEY_DEBUG {
-            log::debug!("[hotkey] event tap installed — listening for Fn+Control");
-        }
-        CFRunLoop::run_current();
     });
+    log::info!("macOS global hotkey installed (RegisterEventHotKey)");
 
     Ok(handle)
 }
 
-// --- event handling --------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn keycode_is_navigation_or_reset(keycode: i64) -> bool {
-    matches!(
-        keycode,
-        KEY_TAB
-            | KEY_FORWARD_DELETE
-            | KEY_ESCAPE
-            | KEY_HOME
-            | KEY_END
-            | KEY_PAGE_UP
-            | KEY_PAGE_DOWN
-            | KEY_LEFT
-            | KEY_RIGHT
-            | KEY_DOWN
-            | KEY_UP
-    )
-}
-
-fn shortcut_modifier_held(flags: u64) -> bool {
-    flags & (FLAG_CONTROL | FLAG_ALTERNATE | FLAG_COMMAND) != 0
-}
-
-fn event_text(event: &HotkeyEvent) -> String {
-    String::from_utf16_lossy(&event.text[..event.text_len as usize])
-}
-
-fn update_injection_history_for_event(event: &HotkeyEvent, now: u64) {
-    if !matches!(event.etype, CGEventType::KeyDown) || synthetic_paste_suppressed(now) {
-        return;
+    fn hk(code1: &str, code2: &str) -> Option<HotKey> {
+        build_hotkey(map_code_to_vk(code1), map_code_to_vk(code2))
     }
 
-    let keycode = event.keycode;
-    let flags = event.flags;
-
-    if keycode == KEY_BACKSPACE {
-        if shortcut_modifier_held(flags) {
-            crate::core::injection::reset_injection_history();
-        } else {
-            let hwnd = crate::core::window_context::get_foreground_hwnd();
-            crate::core::injection::backspace_injection_history(hwnd);
-        }
-        return;
+    #[test]
+    fn modifier_less_single_key_is_rejected_unless_function_key() {
+        // A bare printable key would be consumed system-wide — reject it.
+        assert!(hk("KeyA", "").is_none());
+        assert!(hk("Space", "").is_none());
+        // Function keys don't produce text, so they're allowed bare.
+        assert!(hk("F5", "").is_some());
+        assert!(hk("F12", "").is_some());
     }
 
-    if keycode == KEY_RETURN {
-        if flags & FLAG_SHIFT != 0 {
-            let hwnd = crate::core::window_context::get_foreground_hwnd();
-            if hwnd != 0 {
-                crate::core::injection::append_or_reset_injection_history(hwnd, '\n');
-            }
-        } else {
-            crate::core::injection::reset_injection_history();
-        }
-        return;
-    }
-
-    if keycode_is_navigation_or_reset(keycode) || shortcut_modifier_held(flags) {
-        crate::core::injection::reset_injection_history();
-        return;
-    }
-
-    let text = event_text(event);
-    let mut appended = false;
-    let hwnd = crate::core::window_context::get_foreground_hwnd();
-    if hwnd == 0 {
-        crate::core::injection::reset_injection_history();
-        return;
-    }
-    for ch in text
-        .chars()
-        .filter(|ch| !ch.is_control() || *ch == '\n' || *ch == '\r')
-    {
-        crate::core::injection::append_or_reset_injection_history(hwnd, ch);
-        appended = true;
-    }
-
-    if !appended && !text.is_empty() {
-        crate::core::injection::reset_injection_history();
-    }
-}
-
-fn handle_event(event: HotkeyEvent) {
-    let etype = event.etype;
-    // The system can disable a tap during lag or timeout; re-enable so the
-    // global hotkey does not stop permanently.
-    if matches!(
-        etype,
-        CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
-    ) {
-        log::warn!("macOS event tap disabled by system ({etype:?})");
-        reenable_event_tap();
-        return;
-    }
-
-    let k1 = KEY1.load(Ordering::Relaxed);
-    let k2 = KEY2.load(Ordering::Relaxed);
-    let flags = event.flags;
-    let keycode = event.keycode;
-    let is_down = matches!(etype, CGEventType::KeyDown);
-    let is_up = matches!(etype, CGEventType::KeyUp);
-
-    // Track down-state for regular (non-modifier) configured keys.
-    if k1 >= REGULAR_BASE {
-        let kc = (k1 - REGULAR_BASE) as i64;
-        if is_down && keycode == kc {
-            K1_REGULAR_DOWN.store(true, Ordering::SeqCst);
-        } else if is_up && keycode == kc {
-            K1_REGULAR_DOWN.store(false, Ordering::SeqCst);
-        }
-    }
-    if k2 >= REGULAR_BASE {
-        let kc = (k2 - REGULAR_BASE) as i64;
-        if is_down && keycode == kc {
-            K2_REGULAR_DOWN.store(true, Ordering::SeqCst);
-        } else if is_up && keycode == kc {
-            K2_REGULAR_DOWN.store(false, Ordering::SeqCst);
-        }
-    }
-
-    let held = |id: u32, regular_down: &AtomicBool| -> bool {
-        if is_modifier(id) {
-            flags & modifier_mask(id) != 0
-        } else {
-            regular_down.load(Ordering::SeqCst)
-        }
-    };
-    let held1 = held(k1, &K1_REGULAR_DOWN);
-    let held2 = held(k2, &K2_REGULAR_DOWN);
-    let both = held1 && held2;
-
-    if HOTKEY_DEBUG
-        && matches!(
-            etype,
-            CGEventType::FlagsChanged | CGEventType::KeyDown | CGEventType::KeyUp
-        )
-    {
-        log::debug!(
-            "[hotkey] {:?} flags={flags:#010x} keycode={keycode} k1={k1} k2={k2} held1={held1} held2={held2} both={both}",
-            etype
-        );
-    }
-
-    // Escape cancels an in-flight recording / handsfree session.
-    if is_down
-        && keycode == KEY_ESCAPE
-        && (CHORD_ACTIVE.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst))
-    {
-        if CHORD_ACTIVE.load(Ordering::SeqCst) {
-            ESCAPE_CANCELLED.store(true, Ordering::SeqCst);
-        }
-        if let Some(cb) = ESCAPE_CB.get() {
-            cb();
-        }
-        return;
-    }
-
-    let active = CHORD_ACTIVE.load(Ordering::SeqCst);
-    let now = now_ms();
-
-    if matches!(etype, CGEventType::KeyDown) {
-        update_injection_history_for_event(&event, now);
-    }
-
-    if both && !active {
-        // Double-tap of the chord within the window toggles handsfree mode.
-        if HANDLESS_PENDING.swap(false, Ordering::SeqCst)
-            && now.saturating_sub(HANDLESS_PENDING_MS.load(Ordering::SeqCst)) <= 350
-        {
-            if let Some(cb) = HANDLESS_CB.get() {
-                cb();
-            }
-            return;
-        }
-        CHORD_ACTIVE.store(true, Ordering::SeqCst);
-        CHORD_DOWN_MS.store(now, Ordering::SeqCst);
-        ESCAPE_CANCELLED.store(false, Ordering::SeqCst);
-        // If the chord fired while another app was frontmost, the tap is seeing
-        // global events — mark Input Monitoring as effectively granted.
-        if !GLOBAL_INPUT_SEEN.load(Ordering::SeqCst) {
-            let our_pid = std::process::id() as i32;
-            if crate::system::mac_app::frontmost_pid().is_some_and(|p| p != our_pid) {
-                GLOBAL_INPUT_SEEN.store(true, Ordering::SeqCst);
-            }
-        }
-        if HOTKEY_DEBUG {
-            log::debug!("[hotkey] PRESS (chord engaged) → start recording");
-        }
-        if let Some(cb) = PRESS_CB.get() {
-            cb();
-        }
-    } else if active && !both {
-        if HOTKEY_DEBUG {
-            log::debug!("[hotkey] RELEASE (chord released)");
-        }
-        CHORD_ACTIVE.store(false, Ordering::SeqCst);
-        let held_ms = now.saturating_sub(CHORD_DOWN_MS.load(Ordering::SeqCst));
-        if ESCAPE_CANCELLED.swap(false, Ordering::SeqCst) {
-            // Escape already cancelled this session — emit nothing further.
-        } else if held_ms < 250 {
-            // Quick tap → cancel and arm the double-tap (handsfree) window.
-            HANDLESS_PENDING.store(true, Ordering::SeqCst);
-            HANDLESS_PENDING_MS.store(now, Ordering::SeqCst);
-            if let Some(cb) = CANCEL_CB.get() {
-                cb();
-            }
-        } else if let Some(cb) = RELEASE_CB.get() {
-            cb();
-        }
+    #[test]
+    fn modifier_plus_key_and_modifier_only_combinations() {
+        // The default ⌥+Space and other modifier+key combos are valid.
+        assert!(hk("AltLeft", "Space").is_some());
+        assert!(hk("ControlLeft", "KeyA").is_some());
+        assert!(hk("AltLeft", "Escape").is_some());
+        assert!(hk("AltLeft", "Backspace").is_some());
+        assert!(hk("AltLeft", "PageDown").is_some());
+        // A modifier-only chord (e.g. the legacy Fn+Control) is not registrable.
+        assert!(hk("ControlLeft", "Fn").is_none());
+        assert!(hk("", "").is_none());
     }
 }

@@ -1,12 +1,16 @@
 //! macOS Accessibility / Microphone / Keychain permission commands.
+//!
+//! The global hotkey uses Carbon `RegisterEventHotKey` (see `core::hotkey::mac`),
+//! which needs no Input Monitoring permission — so the only macOS permissions the
+//! app requests are **Accessibility** (Cmd+V injection + AX reads) and
+//! **Microphone**. Keychain access is surfaced separately when a provider key is
+//! stored.
 
 // ---------- macOS permissions ----------
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionSourceHints {
-    pub hotkey_tap_active: bool,
-    pub global_input_seen: bool,
     pub microphone_verified: bool,
     pub accessibility_verified: bool,
 }
@@ -15,11 +19,9 @@ pub struct PermissionSourceHints {
 #[serde(rename_all = "camelCase")]
 pub struct MacPermissionSnapshot {
     pub accessibility: String,
-    pub input_monitoring: String,
     pub microphone: String,
     pub keychain: String,
     pub all_core_granted: bool,
-    pub needs_relaunch: bool,
     pub last_checked_at: String,
     pub source_hints: PermissionSourceHints,
     pub diagnostics: MacPermissionDiagnostics,
@@ -33,7 +35,6 @@ pub struct MacPermissionDiagnostics {
     pub executable_path: Option<String>,
     pub process_id: u32,
     pub accessibility_trusted: bool,
-    pub input_monitoring_raw: String,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -51,33 +52,25 @@ pub struct TccResetResult {
     pub steps: Vec<TccResetStep>,
 }
 
-fn summarize_core_permissions(
-    accessibility: &str,
-    input_monitoring: &str,
-    microphone: &str,
-    source_hints: &PermissionSourceHints,
-) -> (bool, bool) {
-    let all_core_granted = accessibility == "authorized"
-        && input_monitoring == "authorized"
-        && microphone == "authorized";
-
-    // IOHID/TCC decisions can be cached by the running process. If macOS says
-    // Input Monitoring is granted but this process has not yet empirically seen
-    // global input, a relaunch is the clearest recovery path after the user has
-    // just changed the toggle in System Settings. The UI decides when to surface
-    // the hint so long-time users are not nagged before interacting.
-    let needs_relaunch = input_monitoring == "authorized" && !source_hints.global_input_seen;
-
-    (all_core_granted, needs_relaunch)
+/// Core permissions are granted once both Accessibility and Microphone are
+/// authorized. (The hotkey no longer needs a separate permission.)
+fn core_permissions_granted(accessibility: &str, microphone: &str) -> bool {
+    accessibility == "authorized" && microphone == "authorized"
 }
 
 #[cfg(target_os = "macos")]
 fn permission_source_hints() -> PermissionSourceHints {
     PermissionSourceHints {
-        hotkey_tap_active: crate::core::hotkey::is_tap_active(),
-        global_input_seen: crate::core::hotkey::has_seen_global_input(),
         microphone_verified: crate::system::mac_app::is_microphone_verified(),
         accessibility_verified: crate::system::mac_app::is_accessibility_verified(),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn permission_source_hints() -> PermissionSourceHints {
+    PermissionSourceHints {
+        microphone_verified: true,
+        accessibility_verified: true,
     }
 }
 
@@ -91,7 +84,6 @@ fn permission_diagnostics() -> MacPermissionDiagnostics {
             .map(|p| p.to_string_lossy().into_owned()),
         process_id: std::process::id(),
         accessibility_trusted: check_accessibility_permission(false),
-        input_monitoring_raw: crate::system::mac_app::input_monitoring_status().to_string(),
     }
 }
 
@@ -105,17 +97,6 @@ fn permission_diagnostics() -> MacPermissionDiagnostics {
             .map(|p| p.to_string_lossy().into_owned()),
         process_id: std::process::id(),
         accessibility_trusted: true,
-        input_monitoring_raw: "authorized".to_string(),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn permission_source_hints() -> PermissionSourceHints {
-    PermissionSourceHints {
-        hotkey_tap_active: true,
-        global_input_seen: true,
-        microphone_verified: true,
-        accessibility_verified: true,
     }
 }
 
@@ -138,19 +119,6 @@ fn accessibility_permission_status() -> String {
 
 #[cfg(not(target_os = "macos"))]
 fn accessibility_permission_status() -> String {
-    "authorized".to_string()
-}
-
-#[cfg(target_os = "macos")]
-fn input_monitoring_permission_status() -> String {
-    if crate::core::hotkey::has_seen_global_input() {
-        return "authorized".to_string();
-    }
-    crate::system::mac_app::input_monitoring_status().to_string()
-}
-
-#[cfg(not(target_os = "macos"))]
-fn input_monitoring_permission_status() -> String {
     "authorized".to_string()
 }
 
@@ -186,24 +154,16 @@ async fn keychain_status_for_provider(_provider: Option<String>) -> String {
 
 async fn macos_permission_snapshot(provider: Option<String>) -> MacPermissionSnapshot {
     let accessibility = accessibility_permission_status();
-    let input_monitoring = input_monitoring_permission_status();
     let microphone = microphone_permission_status_string();
     let keychain = keychain_status_for_provider(provider).await;
     let source_hints = permission_source_hints();
-    let (all_core_granted, needs_relaunch) = summarize_core_permissions(
-        &accessibility,
-        &input_monitoring,
-        &microphone,
-        &source_hints,
-    );
+    let all_core_granted = core_permissions_granted(&accessibility, &microphone);
 
     MacPermissionSnapshot {
         accessibility,
-        input_monitoring,
         microphone,
         keychain,
         all_core_granted,
-        needs_relaunch,
         last_checked_at: now_rfc3339(),
         source_hints,
         diagnostics: permission_diagnostics(),
@@ -215,9 +175,9 @@ pub async fn get_macos_permission_snapshot(provider: Option<String>) -> MacPermi
     macos_permission_snapshot(provider).await
 }
 
-/// Whether Verenu is trusted for the Accessibility API (needed for the global
-/// hotkey, Cmd+V injection, and auto-learn). When `prompt` is true, macOS shows
-/// the system permission dialog. Always true on non-macOS platforms.
+/// Whether Verenu is trusted for the Accessibility API (needed for Cmd+V
+/// injection and auto-learn). When `prompt` is true, macOS shows the system
+/// permission dialog. Always true on non-macOS platforms.
 #[cfg(target_os = "macos")]
 #[tauri::command]
 pub fn check_accessibility_permission(prompt: bool) -> bool {
@@ -268,21 +228,6 @@ pub async fn request_accessibility_permission(provider: Option<String>) -> MacPe
     macos_permission_snapshot(provider).await
 }
 
-/// Returns `true` once the macOS CGEventTap has been successfully created and
-/// enabled. Useful as a permission signal when Accessibility status is stale
-/// immediately after the user grants access. Always true off macOS.
-#[tauri::command]
-pub fn is_hotkey_tap_active() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        crate::core::hotkey::is_tap_active()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        true
-    }
-}
-
 #[tauri::command]
 pub fn get_microphone_permission_status() -> String {
     microphone_permission_status_string()
@@ -325,56 +270,12 @@ pub fn open_microphone_settings() -> Result<(), String> {
     ])
 }
 
-/// Relaunches the app. macOS caches Input Monitoring (and other TCC) decisions
-/// for the life of the process, and the global event tap only picks up a newly
-/// granted Input Monitoring permission after a restart.
+/// Relaunches the app. macOS can cache a TCC decision for the life of the
+/// process, so synthesised Cmd+V injection may only start working after a
+/// restart once Accessibility has just been granted.
 #[tauri::command]
 pub fn restart_app(handle: tauri::AppHandle) {
     handle.restart();
-}
-
-/// Current Input Monitoring permission status (`authorized`, `denied`, or
-/// `not_determined`). Required for the global keyboard tap to see keystrokes
-/// while other apps are frontmost. Always `authorized` on non-macOS platforms.
-#[tauri::command]
-pub fn get_input_monitoring_permission_status() -> String {
-    input_monitoring_permission_status()
-}
-
-/// Requests Input Monitoring access, showing the macOS consent prompt when the
-/// permission is undetermined. Returns the resulting status. No-op elsewhere.
-#[tauri::command]
-pub fn request_input_monitoring_permission() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = crate::system::mac_app::request_input_monitoring();
-        crate::system::mac_app::input_monitoring_status().to_string()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        "authorized".to_string()
-    }
-}
-
-#[tauri::command]
-pub async fn request_input_monitoring_permission_snapshot(
-    provider: Option<String>,
-) -> MacPermissionSnapshot {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = crate::system::mac_app::request_input_monitoring();
-    }
-    macos_permission_snapshot(provider).await
-}
-
-/// Opens the macOS Input Monitoring privacy pane so the user can grant access.
-/// No-op on other platforms.
-#[tauri::command]
-pub fn open_input_monitoring_settings() -> Result<(), String> {
-    open_macos_settings(&[
-        "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
-        "x-apple.systempreferences:com.apple.preference.security",
-    ])
 }
 
 #[cfg(target_os = "macos")]
@@ -407,6 +308,9 @@ pub fn open_privacy_security_settings() -> Result<(), String> {
     Ok(())
 }
 
+/// Clears the app's stale Accessibility TCC grant so the user can re-add this
+/// build fresh. Rarely needed now that builds are signed with a stable identity,
+/// but kept as a last-resort repair.
 #[tauri::command]
 pub async fn reset_macos_core_permissions() -> TccResetResult {
     #[cfg(target_os = "macos")]
@@ -416,36 +320,33 @@ pub async fn reset_macos_core_permissions() -> TccResetResult {
             let mut steps = Vec::new();
 
             if let Some(bundle_id) = bundle_identifier.as_deref() {
-                for service in ["Accessibility", "ListenEvent"] {
-                    let output = std::process::Command::new("/usr/bin/tccutil")
-                        .args(["reset", service, bundle_id])
-                        .output();
-                    match output {
-                        Ok(output) if output.status.success() => {
-                            steps.push(TccResetStep {
-                                service: service.to_string(),
-                                ok: true,
-                                message: "Reset".to_string(),
-                            });
-                        }
-                        Ok(output) => {
-                            let stderr =
-                                String::from_utf8_lossy(&output.stderr).trim().to_string();
-                            let stdout =
-                                String::from_utf8_lossy(&output.stdout).trim().to_string();
-                            steps.push(TccResetStep {
-                                service: service.to_string(),
-                                ok: false,
-                                message: if stderr.is_empty() { stdout } else { stderr },
-                            });
-                        }
-                        Err(err) => {
-                            steps.push(TccResetStep {
-                                service: service.to_string(),
-                                ok: false,
-                                message: err.to_string(),
-                            });
-                        }
+                let service = "Accessibility";
+                let output = std::process::Command::new("/usr/bin/tccutil")
+                    .args(["reset", service, bundle_id])
+                    .output();
+                match output {
+                    Ok(output) if output.status.success() => {
+                        steps.push(TccResetStep {
+                            service: service.to_string(),
+                            ok: true,
+                            message: "Reset".to_string(),
+                        });
+                    }
+                    Ok(output) => {
+                        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        steps.push(TccResetStep {
+                            service: service.to_string(),
+                            ok: false,
+                            message: if stderr.is_empty() { stdout } else { stderr },
+                        });
+                    }
+                    Err(err) => {
+                        steps.push(TccResetStep {
+                            service: service.to_string(),
+                            ok: false,
+                            message: err.to_string(),
+                        });
                     }
                 }
             } else {
@@ -504,34 +405,12 @@ pub async fn check_keychain_access(provider: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{summarize_core_permissions, PermissionSourceHints};
-
-    fn hints(global_input_seen: bool) -> PermissionSourceHints {
-        PermissionSourceHints {
-            hotkey_tap_active: true,
-            global_input_seen,
-            microphone_verified: true,
-            accessibility_verified: true,
-        }
-    }
+    use super::core_permissions_granted;
 
     #[test]
-    fn summary_requires_all_three_core_permissions() {
-        let (all, relaunch) =
-            summarize_core_permissions("authorized", "authorized", "authorized", &hints(true));
-        assert!(all);
-        assert!(!relaunch);
-
-        let (all, _) =
-            summarize_core_permissions("authorized", "denied", "authorized", &hints(true));
-        assert!(!all);
-    }
-
-    #[test]
-    fn summary_flags_possible_input_monitoring_relaunch_cache() {
-        let (all, relaunch) =
-            summarize_core_permissions("authorized", "authorized", "authorized", &hints(false));
-        assert!(all);
-        assert!(relaunch);
+    fn summary_requires_accessibility_and_microphone() {
+        assert!(core_permissions_granted("authorized", "authorized"));
+        assert!(!core_permissions_granted("authorized", "denied"));
+        assert!(!core_permissions_granted("needs_permission", "authorized"));
     }
 }
