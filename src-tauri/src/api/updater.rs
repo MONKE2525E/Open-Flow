@@ -82,13 +82,18 @@ pub fn is_authorized_release_asset_url(url: &str) -> bool {
     }
 
     // The tag and asset are attacker-influenced only insofar as a crafted URL
-    // could put traversal markers here; reject empties, dot segments, and
-    // percent-encoded dots/slashes/backslashes.
+    // could put traversal markers here. `path_segments()` returns segments
+    // still percent-encoded (verified: `..%2f..` stays `..%2f..`, it is not
+    // decoded to `../..`), so we must catch the *encoded* forms. We also reject
+    // the *literal* separators/dot segments as belt-and-suspenders, so the
+    // check stays correct even if a future url-crate version were to decode.
     let is_suspicious = |s: &str| {
         let lower = s.to_ascii_lowercase();
         s.is_empty()
             || s == "."
             || s == ".."
+            || s.contains('/')
+            || s.contains('\\')
             || lower.contains("%2e")
             || lower.contains("%2f")
             || lower.contains("%5c")
@@ -379,6 +384,7 @@ mod tests {
             // Percent-encoded dot / slash / backslash traversal.
             "https://github.com/MONKE2525E/Verenu/releases/download/%2e%2e/a.exe",
             "https://github.com/MONKE2525E/Verenu/releases/download/v1/%2fa.exe",
+            "https://github.com/MONKE2525E/Verenu/releases/download/..%2f..%2fattacker/a.exe",
             "https://github.com/MONKE2525E/Verenu/releases/download/..%5c..%5cattacker%5crepo/a.exe",
             // Wrong structure (too few / too many segments).
             "https://github.com/MONKE2525E/Verenu/releases/download/v1",
