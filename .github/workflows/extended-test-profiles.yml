@@ -54,7 +54,7 @@ jobs:
               "api_key_google": os.environ.get("GOOGLE_API_KEY", "").strip(),
           }
           payload = {key: value for key, value in payload.items() if value}
-          target = Path.home() / "AppData" / "Roaming" / "com.openflow.app" / "settings.json"
+          target = Path.home() / "AppData" / "Roaming" / "com.verenu.app" / "settings.json"
           target.parent.mkdir(parents=True, exist_ok=True)
           target.write_text(json.dumps(payload), encoding="utf-8")
           print(f"Seeded live test store at {target}")

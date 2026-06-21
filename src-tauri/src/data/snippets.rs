@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn uppercase_override_applies_to_entire_output() {
         let output =
-            apply_cleanup_instruction_overrides("Hello from Open Flow.", "use all capital letters");
+            apply_cleanup_instruction_overrides("Hello from Verenu.", "use all capital letters");
 
         assert_eq!(output, "HELLO FROM OPEN FLOW.");
     }

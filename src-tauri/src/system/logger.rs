@@ -200,7 +200,6 @@ impl Log for SessionLogger {
         let verbose = is_verbose();
         if !verbose
             && record.level() <= log::Level::Debug
-            && !record.target().starts_with("open_flow")
             && !record.target().starts_with("verenu")
             && !record.target().starts_with("src_tauri")
         {

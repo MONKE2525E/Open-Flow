@@ -54,7 +54,7 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "open_flow_{name}_{}_{}.db",
+            "verenu_{name}_{}_{}.db",
             std::process::id(),
             nanos
         ))
