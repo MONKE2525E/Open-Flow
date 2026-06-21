@@ -159,16 +159,25 @@ fn main() {
                     if let Some(arr) = val.as_array() {
                         if arr.len() == 2 {
                             if let (Some(k1), Some(k2)) = (arr[0].as_str(), arr[1].as_str()) {
+                                let (k1, k2) = (k1, k2);
                                 // On macOS the hotkey is now a modifier+key combo
                                 // (RegisterEventHotKey, no Input Monitoring). A stored
                                 // modifier-only chord from an earlier build (e.g. Fn+Control)
                                 // is not registrable — migrate it to the ⌥+Space default so
                                 // the backend and the settings label stay in sync.
                                 #[cfg(target_os = "macos")]
-                                if !crate::core::hotkey::is_hotkey_available(k1, k2) {
+                                let (k1, k2) = if !crate::core::hotkey::is_hotkey_available(k1, k2)
+                                {
                                     store.set("hotkey", serde_json::json!(["AltLeft", "Space"]));
-                                    let _ = store.save();
-                                }
+                                    if let Err(e) = store.save() {
+                                        log::warn!(
+                                            "Failed to save migrated hotkey to settings.json: {e:?}"
+                                        );
+                                    }
+                                    ("AltLeft", "Space")
+                                } else {
+                                    (k1, k2)
+                                };
                                 let vk1 = crate::core::hotkey::map_code_to_vk(k1);
                                 let vk2 = crate::core::hotkey::map_code_to_vk(k2);
                                 crate::core::hotkey::update_keys(vk1, vk2);

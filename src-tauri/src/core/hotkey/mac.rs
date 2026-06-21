@@ -186,8 +186,15 @@ fn js_code_to_mac_keycode(code: &str) -> Option<u32> {
         "Digit9" => 25,
         "Digit0" => 29,
         "Space" => 49,
+        "Escape" => 53,
+        "Backspace" => 51,
+        "Delete" => 117,
         "Enter" => 36,
         "Tab" => 48,
+        "Home" => 115,
+        "End" => 119,
+        "PageUp" => 116,
+        "PageDown" => 121,
         "Backquote" => 50,
         "Minus" => 27,
         "Equal" => 24,
@@ -261,8 +268,15 @@ fn mac_keycode_to_code(kc: u32) -> Option<Code> {
         25 => Code::Digit9,
         29 => Code::Digit0,
         49 => Code::Space,
+        53 => Code::Escape,
+        51 => Code::Backspace,
+        117 => Code::Delete,
         36 => Code::Enter,
         48 => Code::Tab,
+        115 => Code::Home,
+        119 => Code::End,
+        116 => Code::PageUp,
+        121 => Code::PageDown,
         50 => Code::Backquote,
         27 => Code::Minus,
         24 => Code::Equal,
@@ -565,6 +579,9 @@ mod tests {
         // The default ⌥+Space and other modifier+key combos are valid.
         assert!(hk("AltLeft", "Space").is_some());
         assert!(hk("ControlLeft", "KeyA").is_some());
+        assert!(hk("AltLeft", "Escape").is_some());
+        assert!(hk("AltLeft", "Backspace").is_some());
+        assert!(hk("AltLeft", "PageDown").is_some());
         // A modifier-only chord (e.g. the legacy Fn+Control) is not registrable.
         assert!(hk("ControlLeft", "Fn").is_none());
         assert!(hk("", "").is_none());
