@@ -43,11 +43,24 @@ const RELEASE_REPO: &str = "MONKE2525E/Verenu";
 /// Returns true only for URLs that point at an official release asset for
 /// [`RELEASE_REPO`]. GitHub serves release assets from
 /// `https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>`, so any
-/// legitimate `download_url` we hand to the installer starts with this prefix.
+/// legitimate `download_url` we hand to the installer lives under this path.
 /// Used by the `install_update` command to reject arbitrary URLs.
+///
+/// The URL is fully parsed (not string-prefix matched) so dot-segment path
+/// traversal can't smuggle a different repo past the check: a raw
+/// `starts_with` would accept
+/// `https://github.com/MONKE2525E/Verenu/releases/download/../../attacker/repo/...`,
+/// but `Url::parse` normalizes the `..` segments before we inspect the host
+/// and path.
 pub fn is_authorized_release_asset_url(url: &str) -> bool {
-    let prefix = format!("https://github.com/{RELEASE_REPO}/releases/download/");
-    url.starts_with(&prefix)
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "https" || parsed.host_str() != Some("github.com") {
+        return false;
+    }
+    let expected_path = format!("/{RELEASE_REPO}/releases/download/");
+    parsed.path().starts_with(&expected_path)
 }
 
 /// Check the configured repo for a release newer than the current version. A

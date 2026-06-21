@@ -95,15 +95,19 @@
       });
       cleanupFn = unlisten;
 
-      const stop = await startAutomaticUpdateChecks();
-      // If the component unmounted while this async init was in flight, the
-      // cleanup function below has already run (with stopAutomaticUpdateChecks
-      // still undefined), so stop the just-started interval immediately to
-      // avoid leaking a timer.
-      if (destroyed) {
-        stop();
-      } else {
-        stopAutomaticUpdateChecks = stop;
+      try {
+        const stop = await startAutomaticUpdateChecks();
+        // If the component unmounted while this async init was in flight, the
+        // cleanup function below has already run (with stopAutomaticUpdateChecks
+        // still undefined), so stop the just-started interval immediately to
+        // avoid leaking a timer.
+        if (destroyed) {
+          stop();
+        } else {
+          stopAutomaticUpdateChecks = stop;
+        }
+      } catch (error) {
+        console.error('Failed to start automatic update checks:', error);
       }
     })();
 
