@@ -42,16 +42,16 @@ const RELEASE_REPO: &str = "MONKE2525E/Verenu";
 
 /// Returns true only for URLs that point at an official release asset for
 /// [`RELEASE_REPO`]. GitHub serves release assets from
-/// `https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>`, so any
-/// legitimate `download_url` we hand to the installer lives under this path.
-/// Used by the `install_update` command to reject arbitrary URLs.
+/// `https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>` — exactly
+/// six path segments. Used by the `install_update` command to reject arbitrary
+/// URLs before we open/download/execute them.
 ///
-/// The URL is fully parsed (not string-prefix matched) so dot-segment path
-/// traversal can't smuggle a different repo past the check: a raw
-/// `starts_with` would accept
-/// `https://github.com/MONKE2525E/Verenu/releases/download/../../attacker/repo/...`,
-/// but `Url::parse` normalizes the `..` segments before we inspect the host
-/// and path.
+/// Validation is done segment-by-segment rather than by prefix-matching the raw
+/// path, because `Url::parse` only normalizes *literal* `..` segments — it
+/// leaves percent-encoded traversal sequences (`%2e`, `%2f`, `%5c`) intact,
+/// which a server or proxy could later decode into a traversal to a different
+/// repo. Requiring exactly six segments, pinning the fixed ones, and rejecting
+/// dot/encoded-traversal segments closes every such bypass.
 pub fn is_authorized_release_asset_url(url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
@@ -59,21 +59,41 @@ pub fn is_authorized_release_asset_url(url: &str) -> bool {
     if parsed.scheme() != "https" || parsed.host_str() != Some("github.com") {
         return false;
     }
-    let path = parsed.path();
-    // `Url::parse` normalizes literal `..` segments but leaves *percent-encoded*
-    // dots/slashes (`%2e`, `%2f`) untouched, so a path like
-    // `/MONKE2525E/Verenu/releases/download/%2e%2e/attacker/...` would still pass
-    // the prefix check yet be decoded into a traversal by the server. Real
-    // release-asset paths never contain encoded dots/slashes, so reject them.
-    let path_lower = path.to_ascii_lowercase();
-    if path_lower.contains("%2e") || path_lower.contains("%2f") {
+
+    let Some(segments) = parsed.path_segments() else {
+        return false;
+    };
+    let segments: Vec<&str> = segments.collect();
+    // `/<owner>/<repo>/releases/download/<tag>/<asset>` — no more, no fewer.
+    let [owner, repo, releases, download, tag, asset] = segments.as_slice() else {
+        return false;
+    };
+
+    // GitHub owner/repo names are case-insensitive, so match them that way.
+    let mut expected = RELEASE_REPO.split('/');
+    let expected_owner = expected.next().unwrap_or_default();
+    let expected_repo = expected.next().unwrap_or_default();
+    if !owner.eq_ignore_ascii_case(expected_owner)
+        || !repo.eq_ignore_ascii_case(expected_repo)
+        || !releases.eq_ignore_ascii_case("releases")
+        || !download.eq_ignore_ascii_case("download")
+    {
         return false;
     }
-    // GitHub owner/repo names are case-insensitive, so compare the prefix
-    // case-insensitively to avoid rejecting an otherwise-legitimate asset URL
-    // that differs only in casing (e.g. `monke2525e/verenu`).
-    let expected_path = format!("/{RELEASE_REPO}/releases/download/").to_ascii_lowercase();
-    path_lower.starts_with(&expected_path)
+
+    // The tag and asset are attacker-influenced only insofar as a crafted URL
+    // could put traversal markers here; reject empties, dot segments, and
+    // percent-encoded dots/slashes/backslashes.
+    let is_suspicious = |s: &str| {
+        let lower = s.to_ascii_lowercase();
+        s.is_empty()
+            || s == "."
+            || s == ".."
+            || lower.contains("%2e")
+            || lower.contains("%2f")
+            || lower.contains("%5c")
+    };
+    !is_suspicious(tag) && !is_suspicious(asset)
 }
 
 /// Check the configured repo for a release newer than the current version. A
@@ -245,8 +265,8 @@ fn find_asset_with_suffix_and_hints<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        find_asset_with_suffix, is_newer, normalize_version, select_release_asset_for_target,
-        GhAsset, InstallMode, UpdateTarget,
+        find_asset_with_suffix, is_authorized_release_asset_url, is_newer, normalize_version,
+        select_release_asset_for_target, GhAsset, InstallMode, UpdateTarget,
     };
 
     fn asset(name: &str) -> GhAsset {
@@ -333,6 +353,43 @@ mod tests {
             select_release_asset_for_target(&assets, UpdateTarget::MacOsAppleSilicon)
                 .expect("rosetta fallback");
         assert_eq!(selected.0.name, "Verenu_0.15.0_Intel.dmg");
+    }
+
+    #[test]
+    fn authorized_url_accepts_official_release_assets() {
+        assert!(is_authorized_release_asset_url(
+            "https://github.com/MONKE2525E/Verenu/releases/download/v0.15.0/Verenu_0.15.0_x64-setup.exe"
+        ));
+        // Owner/repo casing is insignificant on GitHub.
+        assert!(is_authorized_release_asset_url(
+            "https://github.com/monke2525e/verenu/releases/download/v0.15.0/Verenu_0.15.0_Apple_Silicon.dmg"
+        ));
+    }
+
+    #[test]
+    fn authorized_url_rejects_bypasses_and_foreign_hosts() {
+        let bad = [
+            // Wrong host / scheme.
+            "http://github.com/MONKE2525E/Verenu/releases/download/v1/a.exe",
+            "https://evil.com/MONKE2525E/Verenu/releases/download/v1/a.exe",
+            // Different repo.
+            "https://github.com/attacker/repo/releases/download/v1/a.exe",
+            // Literal dot-segment traversal.
+            "https://github.com/MONKE2525E/Verenu/releases/download/../../attacker/repo/releases/download/v1/a.exe",
+            // Percent-encoded dot / slash / backslash traversal.
+            "https://github.com/MONKE2525E/Verenu/releases/download/%2e%2e/a.exe",
+            "https://github.com/MONKE2525E/Verenu/releases/download/v1/%2fa.exe",
+            "https://github.com/MONKE2525E/Verenu/releases/download/..%5c..%5cattacker%5crepo/a.exe",
+            // Wrong structure (too few / too many segments).
+            "https://github.com/MONKE2525E/Verenu/releases/download/v1",
+            "https://github.com/MONKE2525E/Verenu/blob/main/releases/download/v1/a.exe",
+        ];
+        for url in bad {
+            assert!(
+                !is_authorized_release_asset_url(url),
+                "should reject: {url}"
+            );
+        }
     }
 
     #[test]
