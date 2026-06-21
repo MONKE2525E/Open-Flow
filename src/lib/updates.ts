@@ -72,13 +72,17 @@ async function checkForAutomaticUpdates(): Promise<void> {
   try {
     await sendUpdateNotification(update);
   } catch (error) {
+    // Don't persist the notified version if delivery failed — otherwise the
+    // user never sees a notification yet we'd mark it as notified and never
+    // retry on the next check.
     console.warn('Update notification failed:', error);
-  } finally {
-    try {
-      await saveSetting('update_notified_version', update.version);
-    } catch (error) {
-      console.warn('Failed to persist notified update version:', error);
-    }
+    return;
+  }
+
+  try {
+    await saveSetting('update_notified_version', update.version);
+  } catch (error) {
+    console.warn('Failed to persist notified update version:', error);
   }
 }
 

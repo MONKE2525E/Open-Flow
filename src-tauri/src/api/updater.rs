@@ -40,6 +40,16 @@ enum UpdateTarget {
 /// Repo to check for releases.
 const RELEASE_REPO: &str = "MONKE2525E/Verenu";
 
+/// Returns true only for URLs that point at an official release asset for
+/// [`RELEASE_REPO`]. GitHub serves release assets from
+/// `https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>`, so any
+/// legitimate `download_url` we hand to the installer starts with this prefix.
+/// Used by the `install_update` command to reject arbitrary URLs.
+pub fn is_authorized_release_asset_url(url: &str) -> bool {
+    let prefix = format!("https://github.com/{RELEASE_REPO}/releases/download/");
+    url.starts_with(&prefix)
+}
+
 /// Check the configured repo for a release newer than the current version. A
 /// 404 (repo has no releases yet) or other request error is treated as "no
 /// release" rather than failing the whole check.

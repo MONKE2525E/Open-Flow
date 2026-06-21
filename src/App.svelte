@@ -71,6 +71,7 @@
   onMount(() => {
     let cleanupFn: (() => void) | undefined;
     let stopAutomaticUpdateChecks: (() => void) | undefined;
+    let destroyed = false;
 
     (async () => {
       try {
@@ -94,7 +95,16 @@
       });
       cleanupFn = unlisten;
 
-      stopAutomaticUpdateChecks = await startAutomaticUpdateChecks();
+      const stop = await startAutomaticUpdateChecks();
+      // If the component unmounted while this async init was in flight, the
+      // cleanup function below has already run (with stopAutomaticUpdateChecks
+      // still undefined), so stop the just-started interval immediately to
+      // avoid leaking a timer.
+      if (destroyed) {
+        stop();
+      } else {
+        stopAutomaticUpdateChecks = stop;
+      }
     })();
 
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
@@ -115,6 +125,7 @@
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
+      destroyed = true;
       if (cleanupFn) cleanupFn();
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
       media?.removeEventListener?.('change', onSystemThemeChange);

@@ -19,6 +19,16 @@ pub async fn check_for_update() -> Result<Option<crate::api::updater::UpdateInfo
 
 #[tauri::command]
 pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), String> {
+    // Defense-in-depth: `download_url` ultimately originates from a GitHub
+    // release asset (`browser_download_url`), but this command accepts it
+    // straight from the frontend and either opens it (macOS) or downloads and
+    // executes it (Windows). Refuse anything that isn't an official release
+    // asset URL so a compromised/spoofed frontend can't turn this into an
+    // arbitrary download-and-execute primitive.
+    if !crate::api::updater::is_authorized_release_asset_url(&download_url) {
+        return Err("Refusing to install update from an unauthorized URL.".into());
+    }
+
     #[cfg(target_os = "macos")]
     {
         app.shell()
