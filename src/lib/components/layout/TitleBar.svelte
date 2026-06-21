@@ -27,12 +27,12 @@
 <div class="titlebar" data-tauri-drag-region>
   <div class="tb-left"></div>
   <div class="tb-right">
-    <button class="tb-btn" title="Minimize" onclick={minimize}>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <button class="tb-btn" title="Minimize" aria-label="Minimize window" onclick={minimize}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
         <path d="M5 12h14"/>
       </svg>
     </button>
-    <button class="tb-btn close" title="Close" onclick={close}>
+    <button class="tb-btn close" title="Close" aria-label="Close window" onclick={close}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
         <path d="M6 6l12 12M6 18 18 6"/>
       </svg>
