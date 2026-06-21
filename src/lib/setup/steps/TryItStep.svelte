@@ -3,7 +3,7 @@
   import { invoke, listen } from '../../tauri';
   import { isMac, formatKeyLabel, defaultHotkey } from '../../platform';
 
-  let hotkey = $state<string[]>(isMac ? defaultHotkey : ['ControlLeft', 'MetaLeft']);
+  let hotkey = $state<string[]>(defaultHotkey);
   invoke<string[] | null>('get_setting', { key: 'hotkey' })
     .then((hk) => { if (hk && hk.length === 2) hotkey = hk; })
     .catch(() => {});
