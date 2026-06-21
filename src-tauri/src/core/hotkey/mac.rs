@@ -66,7 +66,6 @@ static CANCEL_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 static ESCAPE_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 
 static CHORD_ACTIVE: AtomicBool = AtomicBool::new(false);
-static HANDLESS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ESCAPE_CANCELLED: AtomicBool = AtomicBool::new(false);
 static CHORD_DOWN_MS: AtomicU64 = AtomicU64::new(0);
 static HANDLESS_PENDING: AtomicBool = AtomicBool::new(false);
@@ -114,7 +113,7 @@ pub fn reset_chord_state() {
 }
 
 pub fn set_handless_active(v: bool) {
-    HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
+    let _ = v;
     refresh_escape_listening();
 }
 
@@ -410,7 +409,10 @@ fn set_escape_listening(on: bool) {
 }
 
 fn refresh_escape_listening() {
-    set_escape_listening(CHORD_ACTIVE.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst));
+    // Keep Escape transient to active hold-to-talk only. Leaving it registered
+    // for the entire handsfree session would hijack Escape system-wide while the
+    // app records in the background.
+    set_escape_listening(CHORD_ACTIVE.load(Ordering::SeqCst));
 }
 
 // --- event handling --------------------------------------------------------
@@ -505,6 +507,11 @@ where
     C: Fn() + Send + Sync + 'static,
     E: Fn() + Send + Sync + 'static,
 {
+    if MANAGER.get().is_some() {
+        log::warn!("hotkey: global hotkey manager already initialized");
+        return Ok(std::thread::spawn(|| {}));
+    }
+
     let _ = PRESS_CB.set(Box::new(on_press));
     let _ = RELEASE_CB.set(Box::new(on_release));
     let _ = HANDLESS_CB.set(Box::new(on_handless));
@@ -518,6 +525,7 @@ where
         .map_err(|e| format!("failed to create global hotkey manager: {e}"))?;
     if MANAGER.set(manager).is_err() {
         log::warn!("hotkey: global hotkey manager already initialized");
+        return Ok(std::thread::spawn(|| {}));
     }
     register_main_hotkey();
 

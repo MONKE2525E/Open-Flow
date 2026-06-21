@@ -1071,7 +1071,9 @@ pub async fn inject_text(
         crate::system::mac_app::pasteboard_set_string(&adjusted);
         tokio::time::sleep(Duration::from_millis(20)).await;
 
-        if !crate::commands::check_accessibility_permission(false) {
+        if !crate::system::mac_app::is_accessibility_verified()
+            && !crate::commands::check_accessibility_permission(false)
+        {
             log::error!(
                 "inject_text: Cmd+V injection attempted but Accessibility is not granted — \
                  grant Verenu Accessibility permission in System Settings → Privacy & Security → Accessibility"
