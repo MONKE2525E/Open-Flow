@@ -223,11 +223,18 @@ async fn transcribe_gemini_with_prompt(
     let body = build_gemini_transcription_request(encoded, prompt, model);
 
     super::validate_model_for_url(model)?;
+    // Key goes in the `x-goog-api-key` header, never the URL query string — see the
+    // matching note in api/cleanup.rs. A leaked URL must not carry the secret.
     let url =
-        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}");
+        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
 
     let request_started = std::time::Instant::now();
-    let resp = super::client::get().post(&url).json(&body).send().await?;
+    let resp = super::client::get()
+        .post(&url)
+        .header("x-goog-api-key", api_key)
+        .json(&body)
+        .send()
+        .await?;
 
     let status = resp.status();
     let request_id = resp

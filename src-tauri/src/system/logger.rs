@@ -81,6 +81,12 @@ fn redact_message(input: &str) -> String {
     out = redact_after_token_ci(&out, "bearer ");
     out = redact_after_token_ci(&out, "api_key=");
     out = redact_after_token_ci(&out, "x-api-key:");
+    out = redact_after_token_ci(&out, "x-goog-api-key:");
+    // Google's legacy `?key=` query param. Scope to googleapis URLs so a stray
+    // `key=` elsewhere in a log line (cache keys, etc.) isn't clobbered.
+    if out.to_ascii_lowercase().contains("googleapis.com") {
+        out = redact_after_token_ci(&out, "key=");
+    }
     out = redact_json_key_ci(&out, "api_key");
     out = redact_json_key_ci(&out, "authorization");
     out
@@ -248,6 +254,21 @@ mod tests {
         let s = r#""abc\"def""#;
         let end = find_json_string_end(s, 1).expect("expected end quote");
         assert_eq!(&s[end..=end], "\"");
+    }
+
+    #[test]
+    fn redacts_google_url_key_query_param() {
+        let input = "POST https://generativelanguage.googleapis.com/v1beta/models/gemini:generateContent?key=AIzaSECRET status=200";
+        let out = super::redact_message(input);
+        assert!(!out.contains("AIzaSECRET"));
+        assert!(out.contains("key=[REDACTED]"));
+    }
+
+    #[test]
+    fn does_not_redact_unrelated_key_param() {
+        let input = "cleanup cache key=mysession123 stored";
+        let out = super::redact_message(input);
+        assert!(out.contains("mysession123"));
     }
 
     #[test]

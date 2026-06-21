@@ -621,7 +621,18 @@ fn is_transcription_hallucination(text: &str) -> bool {
     PATTERNS.iter().any(|p| t.starts_with(p))
 }
 
+/// Build a single-line, length-capped preview of dictation text for logs.
+///
+/// Privacy: dictation content must not land in default logs (the in-memory ring
+/// buffer, the `verenu:log` event stream, or exported log files). The actual
+/// text is therefore only included when developer verbose logging is enabled;
+/// otherwise a content-free `<N chars redacted>` marker is returned so the log
+/// still records that text existed and roughly how long it was. The companion
+/// `*_full` logs (also verbose-gated) carry the untruncated text.
 fn preview_text(s: &str, limit: usize) -> String {
+    if !crate::system::logger::is_verbose() {
+        return format!("<{} chars redacted>", s.chars().count());
+    }
     let compact = s.replace(['\n', '\r'], " ");
     let compact = compact.trim();
     if compact.chars().count() > limit {
@@ -1673,11 +1684,21 @@ pub async fn run_pipeline_fixture(
 #[cfg(test)]
 mod tests {
     use super::{
-        is_transcription_hallucination, normalize_transcription_math_artifacts, recording_gate_rms,
-        run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
+        is_transcription_hallucination, normalize_transcription_math_artifacts, preview_text,
+        recording_gate_rms, run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
         style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
         PipelineTestSnippet,
     };
+
+    #[test]
+    fn preview_text_redacts_dictation_content_when_not_verbose() {
+        // Verbose logging is off by default; dictation text must never appear in
+        // the rendered preview (it would otherwise reach the log buffer + export).
+        let out = preview_text("my secret dictated password is hunter2", 140);
+        assert!(!out.contains("secret"));
+        assert!(!out.contains("hunter2"));
+        assert!(out.contains("chars redacted"));
+    }
     use crate::api::prompts::looks_like_refusal;
     use crate::data::store;
     use crate::testing::{
