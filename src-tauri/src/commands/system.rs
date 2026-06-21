@@ -269,14 +269,17 @@ fn run_launchctl(args: &[&str]) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn check_connectivity() -> bool {
-    let client = match reqwest::Client::builder()
+    // Probe a host Verenu already contacts (the GitHub release API, also used by
+    // the updater) rather than a third-party beacon like google.com, so the
+    // connectivity check doesn't quietly phone a separate domain. Reuses the
+    // shared client for connection pooling; GitHub requires a User-Agent.
+    crate::api::client::get()
+        .head("https://api.github.com")
+        .header("User-Agent", "verenu")
         .timeout(std::time::Duration::from_secs(3))
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    client.head("https://www.google.com").send().await.is_ok()
+        .send()
+        .await
+        .is_ok()
 }
 
 // ---------- developer logs ----------

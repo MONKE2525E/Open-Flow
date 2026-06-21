@@ -93,6 +93,16 @@ Verenu checks GitHub release metadata for updates.
 
 That request does not include your dictated text, history, snippets, or API keys.
 
+### Connectivity check
+
+While the app window is open, Verenu periodically sends a lightweight `HEAD`
+request to `api.github.com` (about once a minute, paused while the window is
+hidden) just to detect whether you are online and show the offline indicator.
+
+That request carries no dictated text, history, snippets, or API keys — only the
+fact that a request was made. It reuses the same GitHub host the update check
+already contacts, so no additional third-party domain is involved.
+
 ## What Verenu Does Not Send
 
 Verenu does not send any of this to a Verenu-owned server, because there is no Verenu-owned server in the product path today:
@@ -117,6 +127,7 @@ That said, once data is sent to a third-party AI provider, that provider's reten
 | Dictionary and snippets | SQLite | nothing by default |
 | Auto-learn | local monitoring data and promoted entries | nothing by default |
 | Update check | current app state stays local | GitHub release metadata request |
+| Connectivity check | current app state stays local | periodic HEAD request to api.github.com |
 | Export data | backup file on local disk | nothing unless you share the file yourself |
 | Logs export | log file on local disk | nothing unless you share the file yourself |
 
