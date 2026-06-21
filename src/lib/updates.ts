@@ -89,8 +89,12 @@ async function checkForAutomaticUpdates(): Promise<void> {
   }
 }
 
-export async function startAutomaticUpdateChecks(): Promise<() => void> {
-  await checkForAutomaticUpdates();
+export function startAutomaticUpdateChecks(): () => void {
+  // Fire the first check in the background rather than awaiting it, so this
+  // function can return the cleanup synchronously. That removes the unmount
+  // race the caller would otherwise have to guard against — the interval is
+  // registered before we return, so cleanup can always clear it.
+  void checkForAutomaticUpdates();
 
   const timer = window.setInterval(() => {
     void checkForAutomaticUpdates();

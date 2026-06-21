@@ -71,7 +71,6 @@
   onMount(() => {
     let cleanupFn: (() => void) | undefined;
     let stopAutomaticUpdateChecks: (() => void) | undefined;
-    let destroyed = false;
 
     (async () => {
       try {
@@ -94,22 +93,16 @@
         toastTimer = setTimeout(() => { errorToast = ''; }, 5000);
       });
       cleanupFn = unlisten;
-
-      try {
-        const stop = await startAutomaticUpdateChecks();
-        // If the component unmounted while this async init was in flight, the
-        // cleanup function below has already run (with stopAutomaticUpdateChecks
-        // still undefined), so stop the just-started interval immediately to
-        // avoid leaking a timer.
-        if (destroyed) {
-          stop();
-        } else {
-          stopAutomaticUpdateChecks = stop;
-        }
-      } catch (error) {
-        console.error('Failed to start automatic update checks:', error);
-      }
     })();
+
+    // Synchronous: startAutomaticUpdateChecks fires its first check in the
+    // background and returns the cleanup immediately, so there's no unmount
+    // race to guard and the interval is always registered before we return.
+    try {
+      stopAutomaticUpdateChecks = startAutomaticUpdateChecks();
+    } catch (error) {
+      console.error('Failed to start automatic update checks:', error);
+    }
 
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
     const onSystemThemeChange = () => {
@@ -129,7 +122,6 @@
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      destroyed = true;
       if (cleanupFn) cleanupFn();
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
       media?.removeEventListener?.('change', onSystemThemeChange);
