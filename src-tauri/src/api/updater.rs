@@ -69,8 +69,11 @@ pub fn is_authorized_release_asset_url(url: &str) -> bool {
     if path_lower.contains("%2e") || path_lower.contains("%2f") {
         return false;
     }
-    let expected_path = format!("/{RELEASE_REPO}/releases/download/");
-    path.starts_with(&expected_path)
+    // GitHub owner/repo names are case-insensitive, so compare the prefix
+    // case-insensitively to avoid rejecting an otherwise-legitimate asset URL
+    // that differs only in casing (e.g. `monke2525e/verenu`).
+    let expected_path = format!("/{RELEASE_REPO}/releases/download/").to_ascii_lowercase();
+    path_lower.starts_with(&expected_path)
 }
 
 /// Check the configured repo for a release newer than the current version. A
@@ -175,11 +178,18 @@ fn select_release_asset_for_target(
 ) -> Option<(&GhAsset, InstallMode)> {
     match target {
         UpdateTarget::Windows => select_windows_asset(assets),
-        UpdateTarget::MacOsAppleSilicon => select_macos_asset(
+        // Apple Silicon can run Intel builds via Rosetta 2, so it may fall back
+        // to a generic/Intel DMG.
+        UpdateTarget::MacOsAppleSilicon => {
+            select_macos_asset(assets, &["apple_silicon", "aarch64", "arm64"], &[])
+        }
+        // Intel Macs cannot run arm64 binaries, so exclude Apple Silicon DMGs
+        // from the generic fallback rather than installing an unusable build.
+        UpdateTarget::MacOsIntel => select_macos_asset(
             assets,
+            &["intel", "x64", "x86_64"],
             &["apple_silicon", "aarch64", "arm64"],
         ),
-        UpdateTarget::MacOsIntel => select_macos_asset(assets, &["intel", "x64", "x86_64"]),
         UpdateTarget::Unsupported => None,
     }
 }
@@ -193,9 +203,15 @@ fn select_windows_asset(assets: &[GhAsset]) -> Option<(&GhAsset, InstallMode)> {
 fn select_macos_asset<'a>(
     assets: &'a [GhAsset],
     arch_hints: &[&str],
+    exclude_hints: &[&str],
 ) -> Option<(&'a GhAsset, InstallMode)> {
     find_asset_with_suffix_and_hints(assets, ".dmg", arch_hints)
-        .or_else(|| find_asset_with_suffix(assets, ".dmg"))
+        .or_else(|| {
+            assets.iter().find(|asset| {
+                let name = asset.name.to_ascii_lowercase();
+                name.ends_with(".dmg") && !exclude_hints.iter().any(|hint| name.contains(hint))
+            })
+        })
         .map(|asset| (asset, InstallMode::Download))
 }
 
@@ -292,6 +308,25 @@ mod tests {
         let selected = select_release_asset_for_target(&assets, UpdateTarget::MacOsIntel)
             .expect("generic dmg");
         assert_eq!(selected.0.name, "Verenu_0.15.0.dmg");
+    }
+
+    #[test]
+    fn macos_intel_does_not_fall_back_to_apple_silicon_dmg() {
+        let assets = [asset("Verenu_0.15.0_Apple_Silicon.dmg")];
+        assert!(
+            select_release_asset_for_target(&assets, UpdateTarget::MacOsIntel).is_none(),
+            "Intel must not install an Apple Silicon-only DMG"
+        );
+    }
+
+    #[test]
+    fn macos_apple_silicon_falls_back_to_intel_dmg() {
+        // Apple Silicon can run Intel builds via Rosetta 2.
+        let assets = [asset("Verenu_0.15.0_Intel.dmg")];
+        let selected =
+            select_release_asset_for_target(&assets, UpdateTarget::MacOsAppleSilicon)
+                .expect("rosetta fallback");
+        assert_eq!(selected.0.name, "Verenu_0.15.0_Intel.dmg");
     }
 
     #[test]

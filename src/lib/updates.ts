@@ -53,10 +53,19 @@ async function checkForAutomaticUpdates(): Promise<void> {
 
   let dismissedVersion: string | null = null;
   let notifiedVersion: string | null = null;
+  // Resolve each lookup independently so a single failed setting read doesn't
+  // wipe out the other — otherwise one failure could re-show a dismissed
+  // update or re-fire an already-sent notification.
   try {
     [dismissedVersion, notifiedVersion] = await Promise.all([
-      invoke<string | null>('get_setting', { key: 'update_dismissed_version' }),
-      invoke<string | null>('get_setting', { key: 'update_notified_version' }),
+      invoke<string | null>('get_setting', { key: 'update_dismissed_version' }).catch((error) => {
+        console.warn('Failed to look up dismissed update version:', error);
+        return null;
+      }),
+      invoke<string | null>('get_setting', { key: 'update_notified_version' }).catch((error) => {
+        console.warn('Failed to look up notified update version:', error);
+        return null;
+      }),
     ]);
   } catch (error) {
     console.warn('Update state lookup failed:', error);
