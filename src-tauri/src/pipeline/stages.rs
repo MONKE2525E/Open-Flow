@@ -91,12 +91,13 @@ pub(super) fn apply_app_style_overrides(
 ) -> String {
     if let Some(intensity) = mapping
         .and_then(|m| m.cleanup_intensity.as_deref())
+        .map(str::trim)
         .filter(|i| !i.is_empty())
     {
         cfg.cleanup_intensity = intensity.to_owned();
     }
     mapping
-        .map(|m| m.profile.clone())
+        .map(|m| m.profile.trim().to_owned())
         .filter(|p| !p.is_empty())
         .unwrap_or_else(|| cfg.default_tone.clone())
 }

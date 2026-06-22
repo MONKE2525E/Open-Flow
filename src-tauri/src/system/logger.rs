@@ -82,11 +82,11 @@ fn redact_message(input: &str) -> String {
     out = redact_after_token_ci(&out, "api_key=");
     out = redact_after_token_ci(&out, "x-api-key:");
     out = redact_after_token_ci(&out, "x-goog-api-key:");
-    // Google's legacy `?key=` query param. Scope to googleapis URLs so a stray
-    // `key=` elsewhere in a log line (cache keys, etc.) isn't clobbered.
-    if out.to_ascii_lowercase().contains("googleapis.com") {
-        out = redact_after_token_ci(&out, "key=");
-    }
+    // Google's legacy query-param key. Match the `?key=`/`&key=` URL markers
+    // specifically: avoids a per-message lowercase allocation and won't clobber
+    // unrelated params like `cache_key=` the way a bare `key=` would.
+    out = redact_after_token_ci(&out, "?key=");
+    out = redact_after_token_ci(&out, "&key=");
     out = redact_json_key_ci(&out, "api_key");
     out = redact_json_key_ci(&out, "authorization");
     out
