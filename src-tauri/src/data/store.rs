@@ -151,8 +151,11 @@ fn write_settings_file(path: &Path, values: &Map<String, Value>) -> Result<(), S
     // Write to a temp file then atomically rename so an interrupted write
     // (crash, power loss, disk full) can't truncate the live settings.json.
     let tmp_path = path.with_extension("json.tmp");
-    std::fs::write(&tmp_path, json)
-        .map_err(|e| format!("Failed to write temporary settings file: {e}"))?;
+    if let Err(e) = std::fs::write(&tmp_path, json) {
+        // A failed/partial write shouldn't leave a stale temp file behind.
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("Failed to write temporary settings file: {e}"));
+    }
     if let Err(e) = std::fs::rename(&tmp_path, path) {
         // Don't leave the temp file behind if the swap failed.
         let _ = std::fs::remove_file(&tmp_path);
