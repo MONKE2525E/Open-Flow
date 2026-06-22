@@ -24,6 +24,10 @@ mod focused_text;
 mod monitor;
 mod rejection;
 use correction::*;
+// Glob feeds the `pub(super)` helpers (e.g. classify_caret_char,
+// resolve_injection_context) to the test module via `use super::*`; on macOS
+// the lib build uses none of them directly, so silence the unused-import lint.
+#[allow(unused_imports)]
 use focused_text::*;
 use monitor::*;
 #[allow(unused_imports)]

@@ -131,22 +131,16 @@ pub(super) async fn stop_and_validate_audio(
             "pipeline: rejected recording that exceeded max duration limit max_seconds={}",
             audio::MAX_RECORDING_SECONDS
         );
+        // show_error_pill already logs and emits "verenu:error" itself, so pass
+        // the full descriptive message here rather than emitting a second event.
         show_error_pill(
             app,
             &format!(
-                "Recording exceeded the {} minute limit",
-                audio::MAX_RECORDING_SECONDS / 60
-            ),
-        )
-        .await;
-        app.emit(
-            "verenu:error",
-            format!(
                 "Recording exceeded the {} minute limit. Please split it into shorter dictations.",
                 audio::MAX_RECORDING_SECONDS / 60
             ),
         )
-        .ok();
+        .await;
         return None;
     }
     if duration_ms < MIN_RECORDING_MS || rms < min_rms {
@@ -534,4 +528,4 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
     };
 
     Ok((final_text, dict_entries, used_cache_key))
-}
+}

@@ -50,7 +50,8 @@
       : 'Download Installer';
   }
 
-  function installActionLabel(update: UpdateInfo): string {
+  function installActionLabel(update: UpdateInfo | null): string {
+    if (!update) return 'Install Now';
     return update.installMode === 'download' ? downloadActionLabel(update) : 'Install Now';
   }
 
