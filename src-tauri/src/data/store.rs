@@ -110,11 +110,27 @@ fn read_settings_file(path: &Path) -> Result<Map<String, Value>, String> {
     if raw.trim().is_empty() {
         return Ok(Map::new());
     }
-    match serde_json::from_str::<Value>(&raw)
-        .map_err(|e| format!("Failed to parse settings.json: {e}"))?
-    {
-        Value::Object(map) => Ok(map),
-        _ => Err("settings.json must contain a JSON object".to_string()),
+    // A corrupted or non-object settings.json must not crash the app at startup.
+    // Back up the bad file so settings can be recovered manually, then start fresh.
+    match serde_json::from_str::<Value>(&raw) {
+        Ok(Value::Object(map)) => Ok(map),
+        Ok(_) => {
+            log::error!("settings.json did not contain a JSON object; backing up and resetting");
+            backup_corrupt_settings(path);
+            Ok(Map::new())
+        }
+        Err(e) => {
+            log::error!("Failed to parse settings.json: {e}; backing up and resetting");
+            backup_corrupt_settings(path);
+            Ok(Map::new())
+        }
+    }
+}
+
+fn backup_corrupt_settings(path: &Path) {
+    let backup_path = path.with_extension("json.bak");
+    if let Err(e) = std::fs::rename(path, &backup_path) {
+        log::error!("Failed to back up corrupt settings.json: {e}");
     }
 }
 
@@ -125,7 +141,13 @@ fn write_settings_file(path: &Path, values: &Map<String, Value>) -> Result<(), S
     }
     let json = serde_json::to_string_pretty(values)
         .map_err(|e| format!("Failed to serialize settings.json: {e}"))?;
-    std::fs::write(path, json).map_err(|e| format!("Failed to write settings.json: {e}"))
+    // Write to a temp file then atomically rename so an interrupted write
+    // (crash, power loss, disk full) can't truncate the live settings.json.
+    let tmp_path = path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, json)
+        .map_err(|e| format!("Failed to write temporary settings file: {e}"))?;
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| format!("Failed to replace settings.json atomically: {e}"))
 }
 
 /// API key names in the store — never expose values to the frontend after write.
