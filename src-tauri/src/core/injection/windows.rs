@@ -143,8 +143,13 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
         }
         std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
         let _ = GlobalUnlock(hg);
-        SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hg.0)))
-            .map_err(|e| anyhow::anyhow!("SetClipboardData failed: {e}"))?;
+        if let Err(e) = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hg.0))) {
+            // The system only takes ownership of hg on success, so on failure we
+            // still own it: free it and release the clipboard before erroring.
+            let _ = GlobalFree(Some(hg));
+            CloseClipboard().ok();
+            return Err(anyhow::anyhow!("SetClipboardData failed: {e}"));
+        }
         CloseClipboard().ok();
         Ok(())
     } else {

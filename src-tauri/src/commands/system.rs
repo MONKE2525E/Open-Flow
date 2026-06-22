@@ -269,12 +269,14 @@ fn run_launchctl(args: &[&str]) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn check_connectivity() -> bool {
-    // Probe a host Verenu already contacts (the GitHub release API, also used by
-    // the updater) rather than a third-party beacon like google.com, so the
-    // connectivity check doesn't quietly phone a separate domain. Reuses the
+    // Probe github.com (a host Verenu already contacts for release downloads)
+    // rather than a third-party beacon like google.com, so the connectivity check
+    // doesn't quietly phone a separate domain. Deliberately NOT api.github.com:
+    // at a 60s poll that would consume the entire 60/hr unauthenticated GitHub
+    // API budget and starve the updater's release checks with 403s. Reuses the
     // shared client for connection pooling; GitHub requires a User-Agent.
     crate::api::client::get()
-        .head("https://api.github.com")
+        .head("https://github.com")
         .header("User-Agent", "verenu")
         .timeout(std::time::Duration::from_secs(3))
         .send()

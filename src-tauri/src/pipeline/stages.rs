@@ -77,7 +77,7 @@ pub(super) fn resolve_app_mapping(
             .and_then(|v| serde_json::from_value::<Vec<AppMapping>>(v).ok())
             .and_then(|list| {
                 list.into_iter()
-                    .find(|m| m.exe.eq_ignore_ascii_case(process_name))
+                    .find(|m| m.exe.trim().eq_ignore_ascii_case(process_name))
             })
     })
 }
