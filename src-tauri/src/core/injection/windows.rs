@@ -122,7 +122,7 @@ unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
 }
 
 unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
-    use ::windows::Win32::Foundation::HANDLE;
+    use ::windows::Win32::Foundation::{GlobalFree, HANDLE};
     use ::windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
@@ -134,6 +134,13 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
         EmptyClipboard().ok();
         let hg = GlobalAlloc(GMEM_MOVEABLE, data.len() * 2)?;
         let ptr = GlobalLock(hg) as *mut u16;
+        if ptr.is_null() {
+            // GlobalLock failed: free the block we own and release the
+            // clipboard rather than dereferencing null / leaking hg.
+            let _ = GlobalFree(Some(hg));
+            CloseClipboard().ok();
+            return Err(anyhow::anyhow!("GlobalLock failed"));
+        }
         std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
         let _ = GlobalUnlock(hg);
         SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hg.0)))
