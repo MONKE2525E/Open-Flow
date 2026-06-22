@@ -578,3 +578,56 @@ pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
         mute_audio,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn unique_tmp_path() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        p.push(format!("verenu_settings_test_{nanos}.json"));
+        p
+    }
+
+    // Regression test: the atomic write must overwrite an existing settings.json
+    // on every platform (std::fs::rename replaces the destination, including on
+    // Windows). A second save to the same path must succeed, not fail.
+    #[test]
+    fn write_settings_file_overwrites_existing() {
+        let path = unique_tmp_path();
+        let mut first = Map::new();
+        first.insert("hotkey".to_string(), json!(["CtrlLeft", "Space"]));
+        write_settings_file(&path, &first).expect("first save should succeed");
+
+        let mut second = Map::new();
+        second.insert("hotkey".to_string(), json!(["AltLeft", "Space"]));
+        write_settings_file(&path, &second).expect("overwrite save should succeed");
+
+        let reloaded = read_settings_file(&path).expect("read back");
+        assert_eq!(reloaded.get("hotkey"), Some(&json!(["AltLeft", "Space"])));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // A corrupt settings.json must not surface an error; it is backed up and the
+    // app starts from empty defaults.
+    #[test]
+    fn read_settings_file_recovers_from_corrupt_json() {
+        let path = unique_tmp_path();
+        std::fs::write(&path, b"{ not valid json").unwrap();
+
+        let recovered = read_settings_file(&path).expect("corrupt file recovers to defaults");
+        assert!(recovered.is_empty());
+
+        let backup = path.with_extension("json.bak");
+        assert!(backup.exists(), "corrupt file should be backed up");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&backup);
+    }
+}
