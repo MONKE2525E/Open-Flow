@@ -109,7 +109,19 @@ fn redact_message(input: &str) -> String {
 }
 
 pub fn sanitize_frontend_log_message(message: &str) -> String {
-    let mut sanitized = redact_message(message.trim());
+    let trimmed = message.trim();
+    // Cap the input before redaction so an enormous frontend message can't make
+    // the case-insensitive redaction passes burn CPU. Keep headroom above the
+    // final limit so we don't slice through a sensitive token near the boundary.
+    let to_redact = if trimmed.len() > MAX_FRONTEND_LOG_CHARS * 4 {
+        trimmed
+            .chars()
+            .take(MAX_FRONTEND_LOG_CHARS * 2)
+            .collect::<String>()
+    } else {
+        trimmed.to_string()
+    };
+    let mut sanitized = redact_message(&to_redact);
     if sanitized.chars().count() > MAX_FRONTEND_LOG_CHARS {
         sanitized = sanitized
             .chars()

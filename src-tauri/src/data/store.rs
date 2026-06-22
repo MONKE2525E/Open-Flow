@@ -132,8 +132,12 @@ fn read_settings_file(path: &Path) -> Result<Map<String, Value>, String> {
 
 fn backup_corrupt_settings(path: &Path) {
     let backup_path = path.with_extension("json.bak");
+    // Clear any prior backup first so the rename can't be blocked by a stale
+    // .bak on platforms/filesystems where replace-on-rename isn't guaranteed.
+    let _ = std::fs::remove_file(&backup_path);
     if let Err(e) = std::fs::rename(path, &backup_path) {
-        log::error!("Failed to back up corrupt settings.json: {e}");
+        // Non-critical startup cleanup — warn and continue rather than fail.
+        log::warn!("Failed to back up corrupt settings.json: {e}");
     }
 }
 
