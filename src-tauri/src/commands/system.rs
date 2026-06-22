@@ -269,14 +269,19 @@ fn run_launchctl(args: &[&str]) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn check_connectivity() -> bool {
-    let client = match reqwest::Client::builder()
+    // Probe github.com (a host Verenu already contacts for release downloads)
+    // rather than a third-party beacon like google.com, so the connectivity check
+    // doesn't quietly phone a separate domain. Deliberately NOT api.github.com:
+    // at a 60s poll that would consume the entire 60/hr unauthenticated GitHub
+    // API budget and starve the updater's release checks with 403s. Reuses the
+    // shared client for connection pooling; GitHub requires a User-Agent.
+    crate::api::client::get()
+        .head("https://github.com")
+        .header("User-Agent", "verenu")
         .timeout(std::time::Duration::from_secs(3))
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    client.head("https://www.google.com").send().await.is_ok()
+        .send()
+        .await
+        .is_ok()
 }
 
 // ---------- developer logs ----------
@@ -305,4 +310,9 @@ pub async fn download_logs(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn set_dev_logging_enabled(enabled: bool) {
     crate::system::logger::set_verbose(enabled);
+}
+
+#[tauri::command]
+pub fn get_dev_logging_enabled() -> bool {
+    crate::system::logger::is_verbose()
 }

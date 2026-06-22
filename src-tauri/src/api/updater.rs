@@ -15,6 +15,7 @@ struct GhAsset {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstallMode {
+    #[allow(dead_code)]
     Install,
     Download,
 }
@@ -222,7 +223,7 @@ fn select_release_asset_for_target(
 fn select_windows_asset(assets: &[GhAsset]) -> Option<(&GhAsset, InstallMode)> {
     find_asset_with_suffix(assets, ".exe")
         .or_else(|| find_asset_with_suffix(assets, ".msi"))
-        .map(|asset| (asset, InstallMode::Install))
+        .map(|asset| (asset, InstallMode::Download))
 }
 
 fn select_macos_asset<'a>(
@@ -301,12 +302,13 @@ mod tests {
         let selected = select_release_asset_for_target(&assets, UpdateTarget::Windows)
             .expect("windows asset");
         assert_eq!(selected.0.name, "Verenu_0.15.0_x64-setup.exe");
-        assert_eq!(selected.1, InstallMode::Install);
+        assert_eq!(selected.1, InstallMode::Download);
 
         let fallback_assets = [asset("Verenu_0.15.0_x64_en-US.msi")];
         let fallback = select_release_asset_for_target(&fallback_assets, UpdateTarget::Windows)
             .expect("windows msi fallback");
         assert_eq!(fallback.0.name, "Verenu_0.15.0_x64_en-US.msi");
+        assert_eq!(fallback.1, InstallMode::Download);
     }
 
     #[test]

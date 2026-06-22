@@ -8,7 +8,7 @@
   let exportMessage = $state('');
   let exporting = $state(false);
   let logViewport: HTMLDivElement | null = null;
-  let verboseEnabled = $state(true);
+  let verboseEnabled = $state(false);
   let forceSetupOnLaunch = $state(false);
 
   async function loadRecentLogs() {
@@ -52,8 +52,12 @@
 
   async function loadDevFlags() {
     try {
-      const force = await invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' });
+      const [force, verbose] = await Promise.all([
+        invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' }),
+        invoke<boolean>('get_dev_logging_enabled'),
+      ]);
       forceSetupOnLaunch = force ?? false;
+      verboseEnabled = verbose ?? false;
     } catch (err) {
       console.error('Failed to load dev flags:', err);
     }

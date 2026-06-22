@@ -44,8 +44,15 @@
     }
   }
 
+  function downloadActionLabel(update: UpdateInfo): string {
+    return update.assetName.toLowerCase().endsWith('.dmg')
+      ? 'Download DMG'
+      : 'Download Installer';
+  }
+
   function installActionLabel(update: UpdateInfo | null): string {
-    return update?.installMode === 'download' ? 'Download DMG' : 'Install Now';
+    if (!update) return 'Install Now';
+    return update.installMode === 'download' ? downloadActionLabel(update) : 'Install Now';
   }
 
   async function handleInstall() {
@@ -73,7 +80,6 @@
     }, 2600);
     if (versionTapCount >= 10) {
       appStore.devModeEnabled = true;
-      invoke('set_dev_logging_enabled', { enabled: true }).catch(() => {});
       versionTapCount = 0;
       if (versionTapTimer) {
         clearTimeout(versionTapTimer);

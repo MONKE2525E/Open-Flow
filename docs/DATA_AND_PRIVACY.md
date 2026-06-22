@@ -8,6 +8,7 @@ This document explains what Verenu keeps on device, what it sends off device, an
 - There is no built-in telemetry, analytics, or ad-tech pipeline.
 - Your data either stays on your machine or goes directly to the providers you configure.
 - If data leaves your machine, it leaves because a feature needs it and the provider endpoint is part of that feature.
+- Safety defaults beat convenience. On Windows, updates download or open the published installer instead of auto-executing downloaded bytes.
 
 ## What Stays On Device
 
@@ -32,18 +33,18 @@ Stored locally in app storage and SQLite:
 
 ### Logs
 
-- Recent logs stay local unless you explicitly export them
-- Exported logs are created only when you trigger that action
+- Recent logs stay local unless you explicitly export them.
+- Exported logs are created only when you trigger that action.
+- Unlocking Developer mode does not enable verbose logging by itself.
+- Verbose logging must be enabled explicitly from the Developer panel.
 
-> **Warning — verbose logging captures your content.** When verbose logging is
-> enabled, logs can include your full dictated text, the prompts sent to AI
-> providers, and the active-app context. These logs are stored in plain text.
-> Any log file you download or share therefore contains that content. Only
-> enable verbose logging or export logs if you understand and accept this.
+Current logging paths are intended to use redacted metadata rather than raw private content. That means counts, ids, model names, app identifiers, filenames, and redacted path labels are preferred over dictated text, prompt bodies, raw dictionary terms, raw snippet expansions, or full local paths.
+
+Even with that hardening, log exports can still contain sensitive operational detail. Do not share them casually.
 
 ### Backups
 
-Manual export/import stays local unless you choose to move the file elsewhere.
+Manual export and import stay local unless you choose to move the file elsewhere.
 
 Current backup export includes:
 
@@ -53,6 +54,8 @@ Current backup export includes:
 - Derived stats
 
 Current backup export does not include full transcription history.
+
+Import and restore paths validate supported setting values and reject oversized prompt overrides, snippet bodies, and unsupported app-mapping values instead of silently accepting junk.
 
 ## What Leaves Your Device
 
@@ -87,11 +90,25 @@ Depending on your settings and the feature being used, Verenu may also send:
 - selected model metadata
 - active app context, if app-context hints are enabled
 
-### Update checks
+### Update checks and downloads
 
 Verenu checks GitHub release metadata for updates.
 
 That request does not include your dictated text, history, snippets, or API keys.
+
+On Windows and macOS, installing an update opens the published GitHub asset so the platform installer flow can take over. Verenu does not auto-run a downloaded Windows executable from a fixed temp path.
+
+### Connectivity check
+
+While the app window is open, Verenu periodically sends a lightweight `HEAD` request to `api.github.com` to detect whether you are online and show the offline indicator.
+
+That request carries no dictated text, history, snippets, or API keys.
+
+## History Loading
+
+The Home view loads recent transcription history in pages of 100 items by default and can request older pages on demand.
+
+This changes UI loading behavior, not storage location. The full history database still lives on your machine unless you export or delete it.
 
 ## What Verenu Does Not Send
 
@@ -117,6 +134,7 @@ That said, once data is sent to a third-party AI provider, that provider's reten
 | Dictionary and snippets | SQLite | nothing by default |
 | Auto-learn | local monitoring data and promoted entries | nothing by default |
 | Update check | current app state stays local | GitHub release metadata request |
+| Connectivity check | current app state stays local | periodic `HEAD` request to `api.github.com` |
 | Export data | backup file on local disk | nothing unless you share the file yourself |
 | Logs export | log file on local disk | nothing unless you share the file yourself |
 
@@ -136,8 +154,9 @@ If you contribute code that changes any of the following, update this file and t
 - what data leaves the device
 - which provider receives what
 - what gets stored locally
-- backup/export contents
+- backup or export contents
 - logging behavior
 - new network calls
+- updater download or installer behavior
 
 If you cannot explain the data flow in plain English, the feature is not documented well enough yet.

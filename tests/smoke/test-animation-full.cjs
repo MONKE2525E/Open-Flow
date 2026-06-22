@@ -1,5 +1,5 @@
 const { chromium } = require('playwright');
-const { tauriMock } = require('./_tauri-mock.cjs');
+const { tauriMock, APP_VERSION } = require('./_tauri-mock.cjs');
 
 const TARGET_URL = 'http://localhost:1420';
 
@@ -8,7 +8,7 @@ const TARGET_URL = 'http://localhost:1420';
   const page = await browser.newPage();
   const errors = [];
 
-  await page.addInitScript(tauriMock);
+  await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
   page.on('pageerror', err => errors.push(`Page error: ${err.message}`));
   page.on('console', msg => {
     if (msg.type() === 'error') errors.push(`Console error: ${msg.text()}`);

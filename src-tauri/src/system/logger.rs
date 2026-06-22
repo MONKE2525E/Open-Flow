@@ -81,6 +81,12 @@ fn redact_message(input: &str) -> String {
     out = redact_after_token_ci(&out, "bearer ");
     out = redact_after_token_ci(&out, "api_key=");
     out = redact_after_token_ci(&out, "x-api-key:");
+    out = redact_after_token_ci(&out, "x-goog-api-key:");
+    // Google's legacy query-param key. Match the `?key=`/`&key=` URL markers
+    // specifically: avoids a per-message lowercase allocation and won't clobber
+    // unrelated params like `cache_key=` the way a bare `key=` would.
+    out = redact_after_token_ci(&out, "?key=");
+    out = redact_after_token_ci(&out, "&key=");
     out = redact_json_key_ci(&out, "api_key");
     out = redact_json_key_ci(&out, "authorization");
     out
@@ -194,7 +200,6 @@ impl Log for SessionLogger {
         let verbose = is_verbose();
         if !verbose
             && record.level() <= log::Level::Debug
-            && !record.target().starts_with("open_flow")
             && !record.target().starts_with("verenu")
             && !record.target().starts_with("src_tauri")
         {
@@ -248,6 +253,21 @@ mod tests {
         let s = r#""abc\"def""#;
         let end = find_json_string_end(s, 1).expect("expected end quote");
         assert_eq!(&s[end..=end], "\"");
+    }
+
+    #[test]
+    fn redacts_google_url_key_query_param() {
+        let input = "POST https://generativelanguage.googleapis.com/v1beta/models/gemini:generateContent?key=AIzaSECRET status=200";
+        let out = super::redact_message(input);
+        assert!(!out.contains("AIzaSECRET"));
+        assert!(out.contains("key=[REDACTED]"));
+    }
+
+    #[test]
+    fn does_not_redact_unrelated_key_param() {
+        let input = "cleanup cache key=mysession123 stored";
+        let out = super::redact_message(input);
+        assert!(out.contains("mysession123"));
     }
 
     #[test]

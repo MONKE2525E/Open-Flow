@@ -111,12 +111,12 @@
     media?.addEventListener?.('change', onSystemThemeChange);
 
     pingConnectivity();
-    let connectivityTimer = setInterval(pingConnectivity, 20_000);
+    let connectivityTimer = setInterval(pingConnectivity, 60_000);
     const handleVisibility = () => {
       clearInterval(connectivityTimer);
       if (!document.hidden) {
         pingConnectivity();
-        connectivityTimer = setInterval(pingConnectivity, 20_000);
+        connectivityTimer = setInterval(pingConnectivity, 60_000);
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);

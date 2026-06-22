@@ -54,7 +54,7 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "open_flow_{name}_{}_{}.db",
+            "verenu_{name}_{}_{}.db",
             std::process::id(),
             nanos
         ))
@@ -377,7 +377,7 @@ mod tests {
         // Simulate rejection monitor firing.
         cleanup_cache_delete_by_key(&db, "key1").expect("delete");
 
-        // Entry must be gone â€” next dictation will hit the LLM.
+        // Entry must be gone — next dictation will hit the LLM.
         assert!(cleanup_cache_get_active(&db, "key1")
             .expect("get after")
             .is_none());
@@ -420,7 +420,7 @@ mod tests {
             .expect("exists");
         assert_eq!(hit.hit_count, 2);
 
-        // User deletes output â†’ rejection monitor fires.
+        // User deletes output → rejection monitor fires.
         cleanup_cache_delete_by_key(&db, "k").expect("delete");
 
         assert!(cleanup_cache_get_active(&db, "k")
@@ -570,7 +570,7 @@ mod tests {
     fn dict_rejection_only_removes_auto_learned_entries() {
         let db = test_db();
 
-        // Manual entry â€” must survive rejection.
+        // Manual entry — must survive rejection.
         insert_dictionary_entry(&db, "groq", Some("grog")).expect("manual");
         let manual_id = query_dictionary(&db)
             .expect("query")
@@ -579,7 +579,7 @@ mod tests {
             .expect("find")
             .id;
 
-        // Auto-learned entry â€” must be removed.
+        // Auto-learned entry — must be removed.
         insert_dictionary_entry_auto_learned(&db, "Tauri", Some("Tari"), "high").expect("auto");
         let auto_id = query_dictionary(&db)
             .expect("query")
@@ -620,7 +620,7 @@ mod tests {
 
         // Dictionary entry gone.
         assert_eq!(query_dictionary(&db).expect("query after").len(), 0);
-        // Pending corrections also purged â€” prevents immediate re-promotion.
+        // Pending corrections also purged — prevents immediate re-promotion.
         assert_eq!(
             count_pending_corrections_recent(&db, "Tari", "Tauri", 7).expect("count after"),
             0
@@ -629,7 +629,7 @@ mod tests {
 
     #[test]
     fn cache_rejection_full_lifecycle() {
-        // End-to-end: insert â†’ hit (cache serves stale) â†’ reject â†’ miss (LLM runs again).
+        // End-to-end: insert → hit (cache serves stale) → reject → miss (LLM runs again).
         let db = test_db();
         let key = "chromium-is-a-web-browser-base";
         let bad_answer = "bad cached answer";
@@ -647,7 +647,7 @@ mod tests {
         cleanup_cache_touch_hit(&db, key, 2, "2026-01-01 00:00:00", "2999-01-01 00:00:00")
             .expect("touch");
 
-        // User deletes output within 10s â†’ monitor fires.
+        // User deletes output within 10s → monitor fires.
         cleanup_cache_delete_by_key(&db, key).expect("delete");
 
         // Third dictation: cache miss, LLM runs again with fresh context.

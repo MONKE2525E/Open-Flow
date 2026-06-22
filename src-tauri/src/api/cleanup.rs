@@ -58,7 +58,14 @@ pub async fn cleanup(
         log::debug!("cleanup: input_full=\"{}\"", text);
         log::debug!("cleanup: prompt_full=\"{}\"", prompt);
         if !snippet_instructions.is_empty() {
-            log::debug!("cleanup: snippet_rules_full=\"{}\"", snippet_instructions);
+            log::debug!(
+                "cleanup: snippet_rules_meta lines={} chars={}",
+                snippet_instructions
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .count(),
+                snippet_instructions.chars().count()
+            );
         }
         if let Some(ctx) = app_context {
             log::debug!("cleanup: app_context_full=\"{}\"", ctx);
@@ -275,11 +282,19 @@ async fn google_cleanup(
     let req = build_google_cleanup_request(text, prompt, model, max_output_tokens);
 
     super::validate_model_for_url(model)?;
+    // Pass the key in the `x-goog-api-key` header, never in the URL query string:
+    // URLs leak into error messages, proxies, and logs, and the bare `?key=` form
+    // would expose the secret (Verenu's top rule is "API keys never hit logs").
     let url =
-        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}");
+        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
 
     let request_started = std::time::Instant::now();
-    let resp = super::client::get().post(&url).json(&req).send().await?;
+    let resp = super::client::get()
+        .post(&url)
+        .header("x-goog-api-key", api_key)
+        .json(&req)
+        .send()
+        .await?;
     let request_id = resp
         .headers()
         .get("x-request-id")

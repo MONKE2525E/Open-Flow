@@ -127,6 +127,7 @@
       <input
         type="password"
         class="key-input"
+        aria-label={`${item.label} API key`}
         class:failed={keyValidation[item.id].status === 'invalid'}
         placeholder={keyStatus[item.id] ? '••••••••••••' : item.ph}
         bind:value={draftKeys[item.id]}

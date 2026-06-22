@@ -29,6 +29,7 @@ pub async fn get_app_mappings(app: AppHandle) -> Result<Vec<AppMapping>, String>
 pub async fn save_app_mappings(app: AppHandle, mappings: Vec<AppMapping>) -> Result<(), String> {
     let store = app.store("settings.json").map_err(|e| e.to_string())?;
     let value = serde_json::to_value(mappings).map_err(|e| e.to_string())?;
+    super::validate_setting(store::APP_MAPPINGS, &value)?;
     store.set(store::APP_MAPPINGS, value);
     store.save().map_err(|e| e.to_string())
 }

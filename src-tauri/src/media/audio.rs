@@ -8,6 +8,7 @@ use std::sync::Arc;
 const DISPLAY_GAIN: f32 = 15.0;
 const AUDIO_QUEUE_CAPACITY_SAMPLES: usize = 320_000;
 const WORKER_IDLE_SLEEP_MS: u64 = 2;
+pub const MAX_RECORDING_SECONDS: u64 = 900;
 
 fn clamp_unit_sample(v: f32) -> f32 {
     if v.is_finite() {
@@ -86,10 +87,17 @@ impl FrameDenoiser {
 
 pub struct RecordingSession {
     stop_tx: mpsc::SyncSender<()>,
-    result_rx: mpsc::Receiver<Result<(Vec<u8>, u64, f32)>>,
+    result_rx: mpsc::Receiver<Result<RecordingResult>>,
     pub level: Arc<AtomicU32>,
     pub raw_level: Arc<AtomicU32>,
     pub active: Arc<AtomicBool>,
+}
+
+pub struct RecordingResult {
+    pub wav: Vec<u8>,
+    pub duration_ms: u64,
+    pub rms: f32,
+    pub truncated: bool,
 }
 
 impl RecordingSession {
@@ -133,6 +141,8 @@ impl RecordingSession {
             let worker = std::thread::spawn(move || {
                 let mut processed = Vec::<f32>::new();
                 let mut batch = Vec::<f32>::with_capacity(2048);
+                let max_processed_samples = sample_rate as usize * MAX_RECORDING_SECONDS as usize;
+                let mut recording_truncated = false;
                 let mut denoiser = if noise_reduction {
                     Some(FrameDenoiser::new())
                 } else {
@@ -145,11 +155,23 @@ impl RecordingSession {
                         batch.push(clamp_unit_sample(sample * gain));
                     }
 
-                    if !batch.is_empty() {
+                    if !batch.is_empty() && !recording_truncated {
                         if let Some(d) = denoiser.as_mut() {
+                            let before_len = processed.len();
                             d.push(&batch, &mut processed);
+                            if processed.len() > max_processed_samples {
+                                processed.truncate(max_processed_samples);
+                                recording_truncated = true;
+                            } else if before_len == max_processed_samples {
+                                recording_truncated = true;
+                            }
                         } else {
-                            processed.extend_from_slice(&batch);
+                            append_capped_samples(
+                                &mut processed,
+                                &batch,
+                                max_processed_samples,
+                                &mut recording_truncated,
+                            );
                         }
                     }
 
@@ -163,10 +185,17 @@ impl RecordingSession {
                 }
 
                 if let Some(d) = denoiser.as_mut() {
+                    if recording_truncated {
+                        return (processed, true);
+                    }
                     d.flush(&mut processed);
+                    if processed.len() > max_processed_samples {
+                        processed.truncate(max_processed_samples);
+                        recording_truncated = true;
+                    }
                 }
 
-                processed
+                (processed, recording_truncated)
             });
 
             let level_cb = Arc::clone(&level_w);
@@ -235,7 +264,7 @@ impl RecordingSession {
             raw_level_w.store(0f32.to_bits(), Ordering::Relaxed);
             stop_processing.store(true, Ordering::Relaxed);
 
-            let data = match worker.join() {
+            let (data, recording_truncated) = match worker.join() {
                 Ok(samples) => samples,
                 Err(_) => {
                     let _ =
@@ -252,8 +281,12 @@ impl RecordingSession {
             let dur_ms = data.len() as u64 * 1000 / sample_rate as u64;
             let overall_rms = rms_f32(&data);
             let (encode_data, encode_rate) = resample_to_16k(&data, sample_rate);
-            let result =
-                encode_wav(&encode_data, encode_rate, 1).map(|wav| (wav, dur_ms, overall_rms));
+            let result = encode_wav(&encode_data, encode_rate, 1).map(|wav| RecordingResult {
+                wav,
+                duration_ms: dur_ms,
+                rms: overall_rms,
+                truncated: recording_truncated,
+            });
 
             let _ = result_tx.send(result);
         });
@@ -276,7 +309,7 @@ impl RecordingSession {
         })
     }
 
-    pub fn stop(self) -> Result<(Vec<u8>, u64, f32)> {
+    pub fn stop(self) -> Result<RecordingResult> {
         let _ = self.stop_tx.send(());
         self.result_rx
             .recv()
@@ -378,6 +411,27 @@ fn push_overwriting_oldest(queue: &ArrayQueue<f32>, dropped: &AtomicU64, sample:
     }
 }
 
+fn append_capped_samples(
+    processed: &mut Vec<f32>,
+    incoming: &[f32],
+    max_samples: usize,
+    recording_truncated: &mut bool,
+) {
+    if *recording_truncated || processed.len() >= max_samples {
+        *recording_truncated = true;
+        return;
+    }
+
+    let remaining = max_samples.saturating_sub(processed.len());
+    if incoming.len() > remaining {
+        processed.extend_from_slice(&incoming[..remaining]);
+        *recording_truncated = true;
+        return;
+    }
+
+    processed.extend_from_slice(incoming);
+}
+
 fn resample_to_16k(mono: &[f32], sample_rate: u32) -> (Vec<f32>, u32) {
     const TARGET: u32 = 16_000;
     if sample_rate == TARGET {
@@ -426,7 +480,7 @@ fn encode_wav(samples: &[f32], sample_rate: u32, channels: u16) -> Result<Vec<u8
 
 #[cfg(test)]
 mod tests {
-    use super::{enqueue_i16_buffer, push_overwriting_oldest};
+    use super::{append_capped_samples, enqueue_i16_buffer, push_overwriting_oldest};
     use crossbeam_queue::ArrayQueue;
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -464,5 +518,16 @@ mod tests {
         assert!(second.abs() < 1e-6);
         assert_eq!(dropped.load(Ordering::Relaxed), 0);
         assert!((f32::from_bits(raw_level.load(Ordering::Relaxed)) - 0.7071).abs() < 0.001);
+    }
+
+    #[test]
+    fn append_capped_samples_truncates_and_flags() {
+        let mut processed = vec![0.1, 0.2];
+        let mut truncated = false;
+
+        append_capped_samples(&mut processed, &[0.3, 0.4, 0.5], 4, &mut truncated);
+
+        assert_eq!(processed, vec![0.1, 0.2, 0.3, 0.4]);
+        assert!(truncated);
     }
 }

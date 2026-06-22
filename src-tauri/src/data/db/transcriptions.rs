@@ -81,6 +81,31 @@ pub fn query_recent(db: &Db) -> Result<Vec<RecentEntry>> {
     Ok(rows)
 }
 
+pub fn query_recent_page(db: &Db, limit: usize, offset: usize) -> Result<Vec<RecentEntry>> {
+    let conn = lock_conn(db)?;
+    let limit = limit.clamp(1, 500) as i64;
+    let offset = offset.min(i64::MAX as usize) as i64;
+    // We order by id DESC instead of created_at DESC because id is the autoincrementing
+    // primary key. Since IDs are monotonically increasing, this retrieves items in the
+    // same chronological order but leverages the primary key index directly, avoiding
+    // full table scans and manual sorting overhead in SQLite.
+    let mut stmt = conn.prepare(
+        "SELECT id, clean_text, words, created_at \
+         FROM transcriptions ORDER BY id DESC LIMIT ?1 OFFSET ?2",
+    )?;
+    let rows = stmt
+        .query_map(params![limit, offset], |r| {
+            Ok(RecentEntry {
+                id: r.get(0)?,
+                clean_text: r.get(1)?,
+                words: r.get(2)?,
+                created_at: r.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 pub fn query_stats(db: &Db) -> Result<Stats> {
     let conn = lock_conn(db)?;
 
@@ -138,4 +163,35 @@ pub fn prune_transcriptions_older_than(db: &Db, max_age_days: i64) -> Result<usi
         params![format!("-{} days", max_age_days.max(1))],
     )?;
     Ok(changed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{insert_transcription_returning, query_recent_page};
+
+    #[test]
+    fn query_recent_page_applies_limit_and_offset() {
+        let db = crate::data::db::open(":memory:").expect("db");
+        for i in 0..5 {
+            insert_transcription_returning(
+                &db,
+                &format!("raw {i}"),
+                &format!("clean {i}"),
+                i + 1,
+                1000,
+                "groq/whisper-large-v3-turbo",
+            )
+            .expect("insert transcription");
+        }
+
+        let first_page = query_recent_page(&db, 2, 0).expect("first page");
+        assert_eq!(first_page.len(), 2);
+        assert_eq!(first_page[0].clean_text, "clean 4");
+        assert_eq!(first_page[1].clean_text, "clean 3");
+
+        let second_page = query_recent_page(&db, 2, 2).expect("second page");
+        assert_eq!(second_page.len(), 2);
+        assert_eq!(second_page[0].clean_text, "clean 2");
+        assert_eq!(second_page[1].clean_text, "clean 1");
+    }
 }

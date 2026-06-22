@@ -15,7 +15,7 @@
 
 const path = require('path');
 const { chromium } = require('playwright');
-const { tauriMock } = require('./_tauri-mock.cjs');
+const { tauriMock, APP_VERSION } = require('./_tauri-mock.cjs');
 
 const TARGET_URL = process.env.TEST_URL || 'http://localhost:1420';
 const TIMEOUT = 12_000;
@@ -60,7 +60,7 @@ async function openSettingsSection(page, sectionText) {
   const page = await browser.newPage();
   const errors = [];
 
-  await page.addInitScript(tauriMock);
+  await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
   page.on('pageerror', err => errors.push(`Page error: ${err.message}`));
 
   const results = [];
@@ -143,6 +143,11 @@ async function openSettingsSection(page, sectionText) {
       if (await foreverItem.isVisible().catch(() => false)) {
         await foreverItem.click();
         await page.waitForTimeout(400);
+        const retentionModal = page.locator('.modal-card[aria-labelledby="retention-confirm-title"]');
+        if (await retentionModal.isVisible().catch(() => false)) {
+          await page.getByRole('button', { name: 'Cancel' }).click();
+          await retentionModal.waitFor({ state: 'hidden', timeout: 2_000 });
+        }
         const histWidthAfter = await histBtn.evaluate(el => el.offsetWidth);
         results.push({
           label: `History animation 30 days(${histWidthBefore}px) → Forever(${histWidthAfter}px)`,
@@ -165,6 +170,29 @@ async function openSettingsSection(page, sectionText) {
     // Profile animation: pick a longer profile label
     const profBtn = page.locator('.profile-drop-btn').first();
     const profWidthBefore = await profBtn.evaluate(el => el.offsetWidth);
+
+    await profBtn.focus();
+    await page.keyboard.press('ArrowDown');
+    await page.locator('#app-mappings-add-profile-menu[role="listbox"]').waitFor({ state: 'visible', timeout: 2_000 });
+    const profileExpanded = await profBtn.getAttribute('aria-expanded');
+    if (profileExpanded !== 'true') {
+      results.push({ label: 'Profile keyboard open semantics', pass: false, reason: `aria-expanded=${profileExpanded}` });
+    } else {
+      const selectedCount = await page.locator('#app-mappings-add-profile-menu [role="option"][aria-selected="true"]').count();
+      results.push({
+        label: 'Profile keyboard open semantics',
+        pass: selectedCount === 1,
+        reason: selectedCount === 1 ? undefined : `selected option count ${selectedCount}`,
+      });
+    }
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    const profileFocusRestored = await profBtn.evaluate((el) => document.activeElement === el);
+    results.push({
+      label: 'Profile keyboard focus restore',
+      pass: profileFocusRestored,
+      reason: profileFocusRestored ? undefined : 'focus did not return to trigger',
+    });
 
     await profBtn.click();
     await page.waitForTimeout(300);

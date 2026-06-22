@@ -221,6 +221,8 @@ pub async fn stop_handless_mode(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
+    crate::core::hotkey::set_handless_active(false);
+    crate::core::hotkey::reset_chord_state();
     lock_state(&state)?.handless = false;
     tauri::async_runtime::spawn(pipeline::run_pipeline(app, state.inner().clone()));
     Ok(())
