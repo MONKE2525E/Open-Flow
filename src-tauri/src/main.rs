@@ -153,7 +153,7 @@ fn main() {
                 .map_err(std::io::Error::other)?;
             crate::data::credentials::migrate_from_store(app.handle(), &settings);
             let _first_launch = {
-                if let Some(val) = settings.get("hotkey") {
+                if let Some(val) = settings.get(crate::data::store::HOTKEY) {
                     if let Some(arr) = val.as_array() {
                         if arr.len() == 2 {
                             if let (Some(k1), Some(k2)) = (arr[0].as_str(), arr[1].as_str()) {
@@ -167,7 +167,7 @@ fn main() {
                                 let (k1, k2) = if !crate::core::hotkey::is_hotkey_available(k1, k2)
                                 {
                                     let _ = settings
-                                        .set("hotkey", serde_json::json!(["AltLeft", "Space"]));
+                                        .set(crate::data::store::HOTKEY, serde_json::json!(["AltLeft", "Space"]));
                                     if let Err(e) = settings.save() {
                                         log::warn!(
                                             "Failed to save migrated hotkey to settings.json: {e:?}"
@@ -207,7 +207,7 @@ fn main() {
                     });
                 }
                 let first_launch = !settings
-                    .get("setup_complete")
+                    .get(crate::data::store::SETUP_COMPLETE)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 app.manage(settings.clone());

@@ -63,7 +63,7 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
         return Err(format!("Unrecognized key code: {key2}"));
     }
     crate::core::hotkey::update_keys(vk1, vk2);
-    store::settings_handle(&app)?.save_value("hotkey", serde_json::json!([key1, key2]))
+    store::settings_handle(&app)?.save_value(store::HOTKEY, serde_json::json!([key1, key2]))
 }
 
 // ---------- autostart ----------
