@@ -1,21 +1,16 @@
 <script lang="ts">
   import { invoke } from '../tauri';
   import { onMount } from 'svelte';
-  import { fly, slide, fade } from 'svelte/transition';
-  import { flip } from 'svelte/animate';
-  import { expoOut } from 'svelte/easing';
   import {
     cleanAppName,
-    cleanupIntensityOptions,
     getAppDisplayName,
-    getCleanupIntensityLabel,
-    getProfileLabel,
     normalizeExe,
-    profileOptions,
     type AppMapping,
     type InstalledApp,
   } from '../appMappings';
-  import { animateWidth, listItemCollapse, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../motion';
+  import { motionMs } from '../motion';
+  import AppMappingsAddForm from './appMappings/AppMappingsAddForm.svelte';
+  import AppMappingsList from './appMappings/AppMappingsList.svelte';
 
   let {
     showHeading = true,
@@ -32,45 +27,10 @@
   let mappings = $state<AppMapping[]>([]);
   let installedApps = $state<InstalledApp[]>([]);
   let areAppsLoaded = $state(false);
-  let addExe = $state('');
-  let addName = $state('');
-  let addProfile = $state('casual');
-  let addCleanupIntensity = $state('');
-  let appSearch = $state('');
-  let appPickerOpen = $state(false);
-  let profileDropdownOpen = $state(false);
-  let cleanupDropdownOpen = $state(false);
-  let openRowDropdown = $state<string | null>(null);
-  let rowDropdownPos = $state<{ top: number; right: number } | null>(null);
   let mappingError = $state('');
   let leavingExes = $state<Set<string>>(new Set());
 
-  const cleanupIntensityChoices = [
-    { id: '', label: 'Default' },
-    ...cleanupIntensityOptions,
-  ] as const;
-
-  const activeRowDropdown = $derived.by(() => {
-    if (!openRowDropdown) return null;
-    const sep = openRowDropdown.lastIndexOf(':');
-    if (sep === -1) return null;
-    const exe = openRowDropdown.slice(0, sep);
-    const field = openRowDropdown.slice(sep + 1) as 'profile' | 'cleanup';
-    const mapping = mappings.find((m) => m.exe === exe);
-    if (!mapping) return null;
-    return { exe, field, mapping };
-  });
-
-  const pendingExe = $derived(addExe || (appSearch.trim() ? customExeFromSearch(appSearch) : ''));
-  const pendingName = $derived(cleanAppName(addName || appSearch || pendingExe));
   const mappedExes = $derived(new Set(mappings.map((mapping) => normalizeExe(mapping.exe))));
-  const visibleMappings = $derived(mappings.filter((mapping) => !leavingExes.has(mapping.exe)));
-  const filteredApps = $derived(
-    installedApps
-      .filter((app) => !mappedExes.has(normalizeExe(app.exe)))
-      .filter((app) => matchesAppSearch(app, appSearch))
-      .slice(0, 40),
-  );
 
   onMount(() => {
     loadMappings();
@@ -87,6 +47,7 @@
 
   async function loadInstalledApps() {
     if (areAppsLoaded) return;
+
     try {
       installedApps = (await invoke<InstalledApp[]>('get_installed_apps')).map((app) => ({
         exe: normalizeExe(app.exe),
@@ -132,29 +93,7 @@
     }, motionMs(200));
   }
 
-  function customExeFromSearch(s: string): string {
-    return normalizeExe(s).replace(/\.exe$/, '') + '.exe';
-  }
-
-  async function addMapping() {
-    const rawExe = pendingExe;
-    if (!rawExe) return;
-    const entry = normalizeMapping({
-      exe: rawExe,
-      profile: addProfile,
-      name: addName || appSearch || rawExe,
-      cleanup_intensity: addCleanupIntensity || undefined,
-    });
-    await saveMappings([...mappings.filter((mapping) => mapping.exe !== entry.exe), entry]);
-    addExe = '';
-    addName = '';
-    addProfile = 'casual';
-    addCleanupIntensity = '';
-    appSearch = '';
-    appPickerOpen = false;
-  }
-
-  async function setMappingField(exe: string, patch: Partial<AppMapping>) {
+  async function updateMappingField(exe: string, patch: Partial<AppMapping>) {
     const previousMappings = mappings;
     const updated = mappings.map((mapping) =>
       mapping.exe === exe ? normalizeMapping({ ...mapping, ...patch }) : mapping,
@@ -163,76 +102,10 @@
     if (!saved) {
       mappings = normalizeMappings(previousMappings);
     }
-    openRowDropdown = null;
-    rowDropdownPos = null;
   }
 
-  function pickApp(app: InstalledApp) {
-    addExe = normalizeExe(app.exe);
-    addName = cleanAppName(app.name || app.exe);
-    appSearch = addName;
-    appPickerOpen = false;
-  }
-
-  function closeAppPicker(e: MouseEvent | PointerEvent) {
-    const target = e.target;
-    if (target instanceof Element && !target.closest('.app-picker-wrap')) {
-      appPickerOpen = false;
-    }
-  }
-
-  function closeProfileDropdown(e: MouseEvent | PointerEvent) {
-    const target = e.target;
-    if (target instanceof Element && !target.closest('.profile-drop-wrap')) {
-      profileDropdownOpen = false;
-    }
-  }
-
-  function handleProfileButtonKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && profileDropdownOpen) {
-      profileDropdownOpen = false;
-      e.stopPropagation();
-    }
-  }
-
-  function closeCleanupDropdown(e: MouseEvent | PointerEvent) {
-    const target = e.target;
-    if (target instanceof Element && !target.closest('.cleanup-drop-wrap')) {
-      cleanupDropdownOpen = false;
-    }
-  }
-
-  function handleCleanupButtonKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && cleanupDropdownOpen) {
-      cleanupDropdownOpen = false;
-      e.stopPropagation();
-    }
-  }
-
-  function toggleRowDropdown(key: string, e: MouseEvent) {
-    if (openRowDropdown === key) {
-      openRowDropdown = null;
-      rowDropdownPos = null;
-      return;
-    }
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    rowDropdownPos = { top: rect.bottom + 4, right: window.innerWidth - rect.right };
-    openRowDropdown = key;
-  }
-
-  function closeRowDropdown(e: MouseEvent | PointerEvent) {
-    const target = e.target;
-    if (target instanceof Element && !target.closest('.row-drop-wrap') && !target.closest('.row-drop-menu')) {
-      openRowDropdown = null;
-      rowDropdownPos = null;
-    }
-  }
-
-  function handleRowDropdownKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && openRowDropdown) {
-      openRowDropdown = null;
-      e.stopPropagation();
-    }
+  async function addMapping(entry: AppMapping) {
+    return saveMappings([...mappings.filter((mapping) => mapping.exe !== normalizeExe(entry.exe)), normalizeMapping(entry)]);
   }
 
   function normalizeMappings(entries: AppMapping[]) {
@@ -258,80 +131,6 @@
     }
     return mapping;
   }
-
-  function matchesAppSearch(app: InstalledApp, search: string) {
-    const query = search.trim().toLowerCase();
-    if (!query) return true;
-
-    const appName = cleanAppName(app.name || app.exe).toLowerCase();
-    const appExe = normalizeExe(app.exe);
-    const compactQuery = query.replace(/[^a-z0-9]/g, '');
-    const compactName = appName.replace(/[^a-z0-9]/g, '');
-    const compactExe = appExe.replace(/[^a-z0-9]/g, '');
-
-    return appName.includes(query)
-      || appExe.includes(query)
-      || (compactQuery.length > 0 && (compactName.includes(compactQuery) || compactExe.includes(compactQuery)));
-  }
-
-  $effect(() => {
-    if (!appPickerOpen) return;
-
-    const timeout = window.setTimeout(() => {
-      window.addEventListener('pointerdown', closeAppPicker);
-    });
-
-    return () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener('pointerdown', closeAppPicker);
-    };
-  });
-
-  $effect(() => {
-    if (!profileDropdownOpen) return;
-
-    const timeout = window.setTimeout(() => {
-      window.addEventListener('pointerdown', closeProfileDropdown);
-    });
-
-    return () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener('pointerdown', closeProfileDropdown);
-    };
-  });
-
-  $effect(() => {
-    if (!cleanupDropdownOpen) return;
-
-    const timeout = window.setTimeout(() => {
-      window.addEventListener('pointerdown', closeCleanupDropdown);
-    });
-
-    return () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener('pointerdown', closeCleanupDropdown);
-    };
-  });
-
-  $effect(() => {
-    if (!openRowDropdown) return;
-
-    const handleScroll = () => {
-      openRowDropdown = null;
-      rowDropdownPos = null;
-    };
-
-    const timeout = window.setTimeout(() => {
-      window.addEventListener('pointerdown', closeRowDropdown);
-      window.addEventListener('scroll', handleScroll, { capture: true, passive: true });
-    });
-
-    return () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener('pointerdown', closeRowDropdown);
-      window.removeEventListener('scroll', handleScroll, { capture: true });
-    };
-  });
 </script>
 
 {#if showHeading}
@@ -339,243 +138,26 @@
 {/if}
 <p class="panel-note">{intro}</p>
 
-<div class="mapping-region">
-  {#if mappings.length > 0}
-    <div class="mapping-list">
-      {#each visibleMappings as mapping (mapping.exe)}
-        <div
-          class="mapping-row"
-          animate:flip={{ duration: motionMs(300), easing: expoOut }}
-          in:fly={{ y: motionPx(10), duration: motionMs(300), easing: expoOut }}
-          out:listItemCollapse={{ duration: 200 }}
-        >
-          <div class="mapping-app-info">
-            <span class="mapping-app-name">{getAppDisplayName(mapping, installedApps)}</span>
-            <span class="mapping-exe-pill" aria-hidden="true">{mapping.exe}</span>
-          </div>
-          <div class="row-drop-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
-            <button
-              class="mapping-badge-btn"
-              onclick={(e) => toggleRowDropdown(`${mapping.exe}:profile`, e)}
-              onkeydown={handleRowDropdownKeydown}
-              title="Tone for {getAppDisplayName(mapping, installedApps)}"
-            >
-              {getProfileLabel(mapping.profile)}
-              <svg class:open={openRowDropdown === `${mapping.exe}:profile`} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m6 9 6 6 6-6"/>
-              </svg>
-            </button>
-          </div>
-          <div class="row-drop-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
-            <button
-              class="mapping-badge-btn"
-              class:is-default={!mapping.cleanup_intensity}
-              onclick={(e) => toggleRowDropdown(`${mapping.exe}:cleanup`, e)}
-              onkeydown={handleRowDropdownKeydown}
-              title="Auto-cleanup style for {getAppDisplayName(mapping, installedApps)}"
-            >
-              {getCleanupIntensityLabel(mapping.cleanup_intensity)}
-              <svg class:open={openRowDropdown === `${mapping.exe}:cleanup`} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m6 9 6 6 6-6"/>
-              </svg>
-            </button>
-          </div>
-          <button class="mapping-delete-btn" onclick={() => deleteMapping(mapping.exe)} title="Remove {getAppDisplayName(mapping, installedApps)}" aria-label="Remove {getAppDisplayName(mapping, installedApps)}">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
-              <path d="M18 6 6 18M6 6l12 12"/>
-            </svg>
-          </button>
-        </div>
-      {/each}
-    </div>
-  {:else}
-    <div class="mapping-empty" in:fade={{ duration: motionMs(MOTION_MS.fast) }} out:fade={{ duration: motionMs(MOTION_MS.fast) }}>{emptyText}</div>
-  {/if}
-</div>
-
-{#if activeRowDropdown && rowDropdownPos}
-  <div
-    class="row-drop-menu scroll-styled"
-    role="presentation"
-    style="top: {rowDropdownPos.top}px; right: {rowDropdownPos.right}px;"
-    onclick={(e) => e.stopPropagation()}
-    in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
-    out:fade={{ duration: motionMs(100) }}
-  >
-    {#if activeRowDropdown.field === 'profile'}
-      {#each profileOptions as profile}
-        <button
-          class="row-drop-item"
-          class:active={activeRowDropdown.mapping.profile === profile.id}
-          onclick={() => setMappingField(activeRowDropdown.exe, { profile: profile.id })}
-          onkeydown={handleRowDropdownKeydown}
-        >
-          {profile.label}
-        </button>
-      {/each}
-    {:else}
-      {#each cleanupIntensityChoices as choice}
-        <button
-          class="row-drop-item"
-          class:active={(activeRowDropdown.mapping.cleanup_intensity || '') === choice.id}
-          onclick={() => setMappingField(activeRowDropdown.exe, { cleanup_intensity: choice.id || undefined })}
-          onkeydown={handleRowDropdownKeydown}
-        >
-          {choice.label}
-        </button>
-      {/each}
-    {/if}
-  </div>
-{/if}
+<AppMappingsList
+  {mappings}
+  {installedApps}
+  {emptyText}
+  {leavingExes}
+  onDelete={deleteMapping}
+  onUpdateField={updateMappingField}
+/>
 
 {#if mappingError}
   <div class="mapping-error">{mappingError}</div>
 {/if}
 
-<div class="add-mapping-section">
-  <div class="add-mapping-label">{addLabel}</div>
-  <div class="add-mapping-row">
-    <div class="app-picker-wrap">
-      <input
-        class="app-search-input"
-        placeholder={areAppsLoaded ? 'Search apps...' : 'Loading apps...'}
-        bind:value={appSearch}
-        onfocus={() => { appPickerOpen = true; }}
-        oninput={() => { addExe = ''; addName = ''; appPickerOpen = true; }}
-        onkeydown={(e) => {
-          if (e.key === 'Enter') {
-            addMapping();
-          } else if (e.key === 'Escape' && appPickerOpen) {
-            appPickerOpen = false;
-            e.stopPropagation();
-          }
-        }}
-      />
-      {#if appPickerOpen && filteredApps.length > 0}
-        <div
-          class="app-picker-menu scroll-styled"
-          role="presentation"
-          onclick={(e) => e.stopPropagation()}
-          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
-          out:fade={{ duration: motionMs(100) }}
-        >
-          {#each filteredApps as app}
-            <button class="app-picker-item" onclick={() => pickApp(app)}>
-              <span class="app-picker-name">{cleanAppName(app.name || app.exe)}</span>
-              <span class="app-picker-exe-pill" aria-hidden="true">{app.exe}</span>
-            </button>
-          {/each}
-        </div>
-      {:else if appPickerOpen && appSearch.trim()}
-        <div
-          class="app-picker-menu app-picker-empty"
-          role="presentation"
-          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
-          out:fade={{ duration: motionMs(100) }}
-        >
-          <span>
-            No matching apps found. Press Enter to map custom executable:
-            <b>{customExeFromSearch(appSearch)}</b>
-          </span>
-        </div>
-      {/if}
-    </div>
-    <div
-      class="profile-drop-wrap"
-      role="presentation"
-      onclick={(e) => e.stopPropagation()}
-    >
-      <select class="profile-select profile-select-hidden" bind:value={addProfile} tabindex="-1" aria-hidden="true">
-        {#each profileOptions as profile}
-          <option value={profile.id}>{profile.label}</option>
-        {/each}
-      </select>
-      <button
-        class="profile-drop-btn"
-        use:animateWidth={{ text: getProfileLabel(addProfile) }}
-        onclick={() => (profileDropdownOpen = !profileDropdownOpen)}
-        onkeydown={handleProfileButtonKeydown}
-      >
-        <span>{getProfileLabel(addProfile)}</span>
-        <svg class:open={profileDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m6 9 6 6 6-6"/>
-        </svg>
-      </button>
-      {#if profileDropdownOpen}
-        <div
-          class="profile-drop-menu scroll-styled"
-          role="presentation"
-          onclick={(e) => e.stopPropagation()}
-          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
-          out:fade={{ duration: motionMs(100) }}
-        >
-          {#each profileOptions as profile}
-            <button
-              class="profile-drop-item"
-              class:active={addProfile === profile.id}
-              onclick={() => { addProfile = profile.id; profileDropdownOpen = false; }}
-              onkeydown={handleProfileButtonKeydown}
-            >
-              {profile.label}
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
-    <div
-      class="cleanup-drop-wrap"
-      role="presentation"
-      onclick={(e) => e.stopPropagation()}
-    >
-      <select class="cleanup-select cleanup-select-hidden" bind:value={addCleanupIntensity} tabindex="-1" aria-hidden="true">
-        {#each cleanupIntensityChoices as choice}
-          <option value={choice.id}>{choice.label}</option>
-        {/each}
-      </select>
-      <button
-        class="cleanup-drop-btn"
-        use:animateWidth={{ text: getCleanupIntensityLabel(addCleanupIntensity) }}
-        onclick={() => (cleanupDropdownOpen = !cleanupDropdownOpen)}
-        onkeydown={handleCleanupButtonKeydown}
-      >
-        <span>{getCleanupIntensityLabel(addCleanupIntensity)}</span>
-        <svg class:open={cleanupDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m6 9 6 6 6-6"/>
-        </svg>
-      </button>
-      {#if cleanupDropdownOpen}
-        <div
-          class="cleanup-drop-menu scroll-styled"
-          role="presentation"
-          onclick={(e) => e.stopPropagation()}
-          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
-          out:fade={{ duration: motionMs(100) }}
-        >
-          {#each cleanupIntensityChoices as choice}
-            <button
-              class="cleanup-drop-item"
-              class:active={addCleanupIntensity === choice.id}
-              onclick={() => { addCleanupIntensity = choice.id; cleanupDropdownOpen = false; }}
-              onkeydown={handleCleanupButtonKeydown}
-            >
-              {choice.label}
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
-    <button type="button" class="btn-primary add-btn" onclick={addMapping} disabled={!addExe && !appSearch.trim()}>Add</button>
-  </div>
-  {#if pendingExe}
-    <div class="add-preview">
-      <span>{pendingName}</span>
-      <span class="preview-dot"></span>
-      <span>{getProfileLabel(addProfile)}</span>
-      <span class="preview-dot"></span>
-      <span>{getCleanupIntensityLabel(addCleanupIntensity)} cleanup</span>
-    </div>
-  {/if}
-</div>
+<AppMappingsAddForm
+  {installedApps}
+  {areAppsLoaded}
+  {mappedExes}
+  {addLabel}
+  onAdd={addMapping}
+/>
 
 <style>
   .panel-note {
@@ -585,448 +167,9 @@
     line-height: 1.5;
   }
 
-  .btn-primary {
-    background: var(--ink);
-    color: var(--amber-50);
-    border: 1px solid transparent;
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: opacity 0.15s;
-  }
-
-  .btn-primary:disabled { opacity: 0.4; cursor: default; }
-  .btn-primary:not(:disabled):hover { opacity: 0.82; }
-
-  .mapping-list {
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    overflow: hidden;
-    max-width: 640px;
-  }
-
-  .mapping-region {
-    max-width: 640px;
-    margin-bottom: 20px;
-  }
-
-  .mapping-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--line);
-    background: var(--bg-elev);
-  }
-
-  .mapping-row:last-child { border-bottom: none; }
-
-  .mapping-app-info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .mapping-app-name {
-    display: block;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--ink-strong);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .row-drop-wrap {
-    position: relative;
-    flex-shrink: 0;
-  }
-
-  .mapping-badge-btn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 500;
-    font-family: var(--sans);
-    color: var(--accent-ink);
-    background: var(--accent-soft);
-    border: 1px solid color-mix(in oklab, var(--accent) 28%, transparent);
-    border-radius: 4px;
-    padding: 2px 8px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .mapping-badge-btn:hover { background: color-mix(in oklab, var(--accent-soft) 80%, var(--accent) 20%); }
-
-  .mapping-badge-btn.is-default {
-    color: var(--ink-mute);
-    background: transparent;
-    border-color: var(--line-strong);
-  }
-
-  .mapping-badge-btn.is-default:hover { background: var(--control-hover); }
-
-  .mapping-badge-btn svg { transition: transform 150ms; flex-shrink: 0; }
-  .mapping-badge-btn svg.open { transform: rotate(180deg); }
-
-  .row-drop-menu {
-    position: fixed;
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
-    min-width: 120px;
-    max-height: 200px;
-    overflow-y: auto;
-    z-index: 50;
-  }
-
-  .row-drop-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 7px 10px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .row-drop-item:last-child { border-bottom: none; }
-  .row-drop-item:hover { background: var(--control-hover); }
-  .row-drop-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
-
-  .mapping-exe-pill {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    overflow: hidden;
-    pointer-events: none;
-  }
-
-  .app-picker-exe-pill {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    overflow: hidden;
-    pointer-events: none;
-  }
-
-  .mapping-delete-btn {
-    background: none;
-    border: none;
-    padding: 3px;
-    border-radius: 4px;
-    color: var(--ink-mute);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-  }
-
-  .mapping-delete-btn:hover {
-    color: var(--ink-strong);
-    background: var(--control-hover);
-  }
-
-  .mapping-empty {
-    font-size: 12px;
-    color: var(--ink-mute);
-    padding: 8px 0 20px;
-    font-style: italic;
-  }
-
   .mapping-error {
     font-size: 12px;
     color: var(--accent);
     padding: 4px 0 12px;
-  }
-
-  .add-mapping-section {
-    border-top: 1px solid var(--line);
-    padding-top: 16px;
-    max-width: 640px;
-  }
-
-  .add-mapping-label {
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--ink-mute);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-family: var(--mono);
-    margin-bottom: 10px;
-  }
-
-  .add-mapping-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .app-picker-wrap {
-    position: relative;
-    flex: 1 1 260px;
-    min-width: 0;
-  }
-
-  .app-search-input {
-    width: 100%;
-    box-sizing: border-box;
-    font-family: var(--sans);
-    font-size: 12.5px;
-    background: transparent;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    padding: 7px 10px;
-    color: var(--ink-strong);
-    outline: none;
-  }
-
-  .app-search-input:focus { border-color: var(--accent); }
-
-  .app-picker-menu {
-    position: absolute;
-    left: 0;
-    top: calc(100% + 4px);
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
-    width: 100%;
-    max-height: 180px;
-    overflow-y: auto;
-    z-index: 20;
-  }
-
-  .app-picker-empty {
-    padding: 10px 12px;
-    font-size: 12px;
-    color: var(--ink-mute);
-    line-height: 1.5;
-  }
-
-  .app-picker-item {
-    display: block;
-    width: 100%;
-    padding: 8px 10px;
-    font-family: var(--sans);
-    background: none;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .app-picker-item:last-child { border-bottom: none; }
-  .app-picker-item:hover { background: var(--control-hover); }
-
-  .app-picker-name {
-    display: block;
-    font-size: 12.5px;
-    color: var(--ink-strong);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .profile-drop-wrap {
-    position: relative;
-    flex-shrink: 0;
-  }
-
-  .profile-select-hidden {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 1px;
-    height: 1px;
-    clip-path: inset(50%);
-    border: 0;
-    padding: 0;
-    margin: 0;
-    overflow: hidden;
-    pointer-events: none;
-  }
-
-  .profile-drop-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: transparent;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .profile-drop-btn:hover { background: var(--control-hover); }
-  .profile-drop-btn svg { transition: transform 150ms; }
-  .profile-drop-btn svg.open { transform: rotate(180deg); }
-
-  .profile-drop-btn span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 140px;
-  }
-
-  .profile-drop-menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
-    min-width: 130px;
-    max-height: 200px;
-    overflow-y: auto;
-    z-index: 20;
-  }
-
-  .profile-drop-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 8px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .profile-drop-item:last-child { border-bottom: none; }
-  .profile-drop-item:hover { background: var(--control-hover); }
-  .profile-drop-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
-
-  .cleanup-drop-wrap {
-    position: relative;
-    flex-shrink: 0;
-  }
-
-  .cleanup-select-hidden {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 1px;
-    height: 1px;
-    clip-path: inset(50%);
-    border: 0;
-    padding: 0;
-    margin: 0;
-    overflow: hidden;
-    pointer-events: none;
-  }
-
-  .cleanup-drop-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: transparent;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .cleanup-drop-btn:hover { background: var(--control-hover); }
-  .cleanup-drop-btn svg { transition: transform 150ms; }
-  .cleanup-drop-btn svg.open { transform: rotate(180deg); }
-
-  .cleanup-drop-btn span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 140px;
-  }
-
-  .cleanup-drop-menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
-    min-width: 120px;
-    max-height: 200px;
-    overflow-y: auto;
-    z-index: 20;
-  }
-
-  .cleanup-drop-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 8px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .cleanup-drop-item:last-child { border-bottom: none; }
-  .cleanup-drop-item:hover { background: var(--control-hover); }
-  .cleanup-drop-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
-
-  .add-btn { flex-shrink: 0; }
-
-  .add-preview {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    margin-top: 8px;
-    padding: 2px 1px;
-    font-size: 12px;
-    color: var(--ink-mute);
-  }
-
-  .preview-dot {
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: var(--ink-faint);
-    flex-shrink: 0;
-  }
-
-  @media (max-width: 720px) {
-    .app-picker-wrap {
-      flex-basis: 100%;
-    }
   }
 </style>

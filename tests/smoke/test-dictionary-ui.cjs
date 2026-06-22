@@ -1,7 +1,7 @@
 // Dictionary UI test — verifies layout, "often" display, inspector, and no flicker.
 // Connects to the Vite dev server (port 1420, see vite.config). Start with: npm run dev
 const { chromium } = require('playwright');
-const { tauriMock } = require('./_tauri-mock.cjs');
+const { tauriMock, APP_VERSION } = require('./_tauri-mock.cjs');
 const path = require('path');
 const fs   = require('fs');
 
@@ -28,7 +28,7 @@ const DICT_DATA = [
   let   failed  = 0;
 
   // Inject Tauri mock + dictionary data override
-  await page.addInitScript(tauriMock);
+  await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
   await page.addInitScript((data) => {
     const orig = window.__TAURI_INTERNALS__.invoke;
     window.__TAURI_INTERNALS__.invoke = async (cmd, args) => {
@@ -194,17 +194,24 @@ const DICT_DATA = [
     }
 
     // ── Add term modal ────────────────────────────────────────────────────────
-    await page.locator('button:has-text("Add term")').click();
+    const addTermButton = page.locator('button:has-text("Add term")');
+    await addTermButton.click();
     await page.waitForTimeout(200);
     const modalCard = page.locator('.modal-card');
     if (await modalCard.count() === 1) pass('Add term modal opens');
     else fail('Add term modal did not open');
+    const modalFocusInside = await modalCard.evaluate((el) => el.contains(document.activeElement));
+    if (modalFocusInside) pass('Dictionary modal moves focus inside the dialog');
+    else fail('Dictionary modal did not move focus inside the dialog');
 
     // Escape closes modal
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
     if (await page.locator('.modal-card').count() === 0) pass('Escape closes modal');
     else fail('Modal still open after Escape');
+    const addFocusRestored = await addTermButton.evaluate((el) => document.activeElement === el);
+    if (addFocusRestored) pass('Dictionary modal restores focus to the trigger');
+    else fail('Dictionary modal did not restore focus to the trigger');
 
     await ss('08-final');
 

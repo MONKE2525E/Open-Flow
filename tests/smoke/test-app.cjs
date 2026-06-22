@@ -1,7 +1,7 @@
 // Smoke test: App Mappings add flow (Settings → App Mappings)
 // Verifies that picking an app and clicking Add creates a visible mapping entry.
 const { chromium } = require('playwright');
-const { tauriMock } = require('./_tauri-mock.cjs');
+const { tauriMock, APP_VERSION } = require('./_tauri-mock.cjs');
 
 const TARGET_URL = 'http://localhost:1420';
 const TIMEOUT = 10_000;
@@ -26,7 +26,7 @@ async function waitForMappingRowOpacity(page, exe, timeout = 1_000) {
   const page = await browser.newPage();
   const errors = [];
 
-  await page.addInitScript(tauriMock);
+  await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
 
   page.on('pageerror', err => errors.push(`Page exception: ${err.message}`));
   page.on('console', msg => {

@@ -113,6 +113,67 @@ mod tests {
     }
 
     #[test]
+    fn validate_setting_rejects_unknown_history_retention() {
+        let err = validate_setting(crate::data::store::HISTORY_RETENTION, &json!("365 days"))
+            .expect_err("unknown history retention should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_unknown_default_tone() {
+        let err = validate_setting(crate::data::store::DEFAULT_TONE, &json!("business"))
+            .expect_err("unknown default tone should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_unknown_cleanup_intensity() {
+        let err = validate_setting(crate::data::store::CLEANUP_INTENSITY, &json!("extreme"))
+            .expect_err("unknown cleanup intensity should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_invalid_app_mapping_profile() {
+        let err = validate_setting(
+            crate::data::store::APP_MAPPINGS,
+            &json!([{
+                "exe": "chrome.exe",
+                "profile": "business"
+            }]),
+        )
+        .expect_err("invalid app mapping profile should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_invalid_app_mapping_cleanup_intensity() {
+        let err = validate_setting(
+            crate::data::store::APP_MAPPINGS,
+            &json!([{
+                "exe": "chrome.exe",
+                "profile": "casual",
+                "cleanup_intensity": "extreme"
+            }]),
+        )
+        .expect_err("invalid app mapping cleanup intensity should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_oversized_cleanup_prompt_override() {
+        let too_long = "x".repeat(20_001);
+        let err = validate_setting(
+            crate::data::store::CLEANUP_PROMPT_OVERRIDES,
+            &json!({
+                "groq/llama-3.3-70b-versatile": too_long
+            }),
+        )
+        .expect_err("oversized cleanup prompt override should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
     fn backup_sqlite_database_copies_live_data() {
         let root = std::env::temp_dir().join(format!(
             "verenu-backup-test-{}-{}",

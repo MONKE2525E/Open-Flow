@@ -1,6 +1,6 @@
 # Roadmap: Verenu
 
-## In Progress - 0.14.0
+## In Progress - 0.14.1
 
 ## 1. Models and Settings Redesign
 - **Goal**: Finish the model picker cleanup so provider selection, advanced mode, and key validation feel predictable instead of fragile.
@@ -18,7 +18,7 @@
     - Add temporary diagnostics that log sanitized key fingerprint continuity (`save -> read -> request`) for Groq and compare against OpenAI and Google behavior in the same session.
     - Capture provider response metadata (request ID, status, classified auth category, model name) so `invalid key` and `access denied` failures are separated.
     - Verify fallback and routing behavior on auth errors so a hidden provider or model switch is not masking the real source of failure.
-- **Relevant Files**: `src-tauri/src/data/credentials.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/api/mod.rs`, `src-tauri/src/pipeline.rs`, `src-tauri/src/main.rs`.
+- **Relevant Files**: `src-tauri/src/data/credentials.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/api/mod.rs`, `src-tauri/src/pipeline/mod.rs`, `src-tauri/src/main.rs`.
 
 ## 3. Contextual Capitalization Reliability Regression
 - **Goal**: Replace the brittle history-only contextual capitalization path with a deterministic context engine that reliably starts new chat messages with proper casing and preserves punctuation across Gemini, browser chat inputs, normal text boxes, and contenteditable editors.
@@ -62,7 +62,7 @@
         - Add a deterministic terminal-punctuation finalizer only for safe cases: natural-language sentence, cleanup enabled, not `very_casual`, not code-like, not a pure snippet, not an explicit "no punctuation" instruction.
         - Do not hide punctuation issues inside the capitalization engine. If cleanup returns punctuation-free text, the logs and tests should identify it as cleanup/punctuation, not contextual caps.
     - **Phase 5 - Replace the injection flow**:
-        - In `src-tauri/src/core/injection.rs`, call the new context probe and decision module before building `adjusted`.
+        - In `src-tauri/src/core/injection/mod.rs`, call the new context probe and decision module before building `adjusted`.
         - Preserve the existing clipboard paste path, refocus timing, modifier gap, and clipboard restoration because those are hard-won Windows reliability pieces.
         - Stop lowercasing from stale history. History can suggest mid-sentence only when it is fresh, same HWND, same edit control, same boundary generation, and no stronger probe exists.
         - Keep auto-spacing on the same decision path so spacing and capitalization cannot disagree about whether the cursor is mid-sentence.
@@ -78,7 +78,7 @@
         - Clicking a send button, pressing plain Enter to submit, switching windows, or losing focused-control identity cannot cause stale lowercase.
         - Punctuation failures are reproducible in tests or logs as cleanup/punctuation issues, not misattributed to capitalization.
         - No diagnostic path logs private dictated text, clipboard text, names, emails, API keys, or full field contents.
-- **Relevant Files**: `src-tauri/src/core/injection.rs`, `src-tauri/src/core/hotkey.rs`, `src-tauri/src/api/auto_learn.rs`, `src-tauri/src/api/prompts.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/pipeline.rs`, `src/lib/components/settings/GeneralSection.svelte`, `tests/manual/`, `tests/OnePyFone.py`.
+- **Relevant Files**: `src-tauri/src/core/injection/mod.rs`, `src-tauri/src/core/hotkey.rs`, `src-tauri/src/api/auto_learn.rs`, `src-tauri/src/api/prompts/mod.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/pipeline/mod.rs`, `src/lib/components/settings/GeneralSection.svelte`, `tests/manual/`, `tests/OnePyFone.py`.
 
 ## 4. Model-Specific Prompt Contracts and Context Retention
 - **Goal**: Replace generic cleanup prompting with model-specific contracts that are token-efficient while preserving essential context, especially on `light` mode.
@@ -88,7 +88,7 @@
     - Add regression fixtures where losing a single clause changes meaning, and compare outputs against known-good 0.10.0 medium-mode behavior.
     - Audit snippet overrides, dictionary substitutions, and post-cleanup transforms so context is not dropped after the model already returned a good output.
     - Add prompt-size and token-usage observability to validate efficiency improvements without over-compressing user content.
-- **Relevant Files**: `src-tauri/src/api/prompts.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/pipeline.rs`, `src-tauri/src/data/snippets.rs`, `src-tauri/src/data/dictionary.rs`, `src/lib/components/settings/ModelsSection.svelte`.
+- **Relevant Files**: `src-tauri/src/api/prompts/mod.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/pipeline/mod.rs`, `src-tauri/src/data/snippets.rs`, `src-tauri/src/data/dictionary.rs`, `src/lib/components/settings/ModelsSection.svelte`.
 
 ## 5. Fallback Chain and Model Persistence Hardening
 - **Goal**: Make transcription fallback, cleanup fallback, and model persistence behave consistently under real failure modes.
@@ -97,7 +97,7 @@
     - Validate `401` and `403` handling so non-retryable auth failures stop cleanly and retryable failures advance to the next configured model.
     - Ensure provider-prefixed IDs, slash-containing model names, and custom entries round-trip correctly between frontend and backend settings.
     - Add restart persistence checks for default models and fallback chains after provider switches and advanced-mode edits.
-- **Relevant Files**: `src-tauri/src/pipeline.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/mod.rs`, `src-tauri/src/data/store.rs`, `src/lib/components/settings/ModelsSection.svelte`, `src-tauri/src/commands/mod.rs`.
+- **Relevant Files**: `src-tauri/src/pipeline/mod.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/mod.rs`, `src-tauri/src/data/store.rs`, `src/lib/components/settings/ModelsSection.svelte`, `src-tauri/src/commands/mod.rs`.
 
 ## 6. Pre-Release Stabilization Gate
 - **Goal**: Hold release until Groq auth reliability, contextual capitalization, light/medium cleanup quality, and fallback behavior match or beat 0.10.0 baseline.
@@ -105,7 +105,7 @@
     - Run direct A/B checks on 0.10.0 versus 0.11.x for Groq auth duration, capitalization behavior, cleanup preservation, and fallback reliability.
     - Add targeted smoke and manual checks for the failure paths reported in daily dictation use.
     - Keep release blocked until the core dictation loop is measurably better, not just feature-complete.
-- **Relevant Files**: `tests/OnePyFone.py`, `tests/smoke/`, `tests/manual/`, `src-tauri/src/pipeline.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/core/injection.rs`.
+- **Relevant Files**: `tests/OnePyFone.py`, `tests/smoke/`, `tests/manual/`, `src-tauri/src/pipeline/mod.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/core/injection/mod.rs`.
 
 ---
 
@@ -166,7 +166,7 @@ LaunchServices caches these and keeps them visible even after the bundles are mo
 **Relevant Files**:
 - `src-tauri/src/commands/mod.rs:536` — `start_calibration_monitoring` and `st.starting` guard
 - `src-tauri/src/media/audio.rs` — `cpal` stream build, where mic permission failure would surface
-- `src-tauri/src/pipeline.rs` — `start_recording_session_ex`
+- `src-tauri/src/pipeline/mod.rs` — `start_recording_session_ex`
 - `src/lib/calibration.ts:109` — `invoke('start_calibration_monitoring')` error catch → silent `cancelCalibration()`
 - `src-tauri/tauri.conf.json` — entitlements and Info.plist keys for microphone access
 
@@ -178,14 +178,14 @@ These are educated guesses at problems that are likely to exist in the fully ins
 
 - **Keychain access differs between dev and production builds**: API keys are stored via `tauri-plugin-store` / macOS Keychain. If the bundle identifier or code-signing team changes between a dev build and the production build, Keychain access may fail silently or prompt with unexpected dialogs. Relevant: `src-tauri/src/data/credentials.rs`.
 - **Pill window may not appear correctly without Accessibility/Screen Recording permission**: The always-on-top pill window uses a high window level. On macOS, windows above a certain level may require Screen Recording permission to be visible over other apps' content. Relevant: `src-tauri/tauri.conf.json`, `src/PillApp.svelte`.
-- **Text injection (Cmd+V) may fail silently**: `injection.rs` on macOS uses `CGEventCreateKeyboardEvent` to synthesize Cmd+V. This requires Accessibility permission (same as the hotkey tap). If Accessibility was denied or the tap setup failed (see macOS-2), injection will fail with no visible error. Relevant: `src-tauri/src/core/injection.rs`.
+- **Text injection (Cmd+V) may fail silently**: `core/injection/macos.rs` on macOS uses `CGEventCreateKeyboardEvent` to synthesize Cmd+V. This requires Accessibility permission (same as the hotkey tap). If Accessibility was denied or the tap setup failed (see macOS-2), injection will fail with no visible error. Relevant: `src-tauri/src/core/injection/mod.rs`.
 
 ---
 
 ## Shipped in 0.10.0
 - Automatic microphone gain calibration (setup flow + Audio settings page)
 - Auto-learn dictionary reliability hardening and observability
-- Hidden developer mode with real-time verbose logs and Force Setup On Launch toggle
+- Hidden developer mode with opt-in verbose logs and Force Setup On Launch toggle
 - Numeric cleanup cache normalization
 - Profanity handling precedence fix across cleanup intensity and tone
 - Dictionary input clamping (50-char, code-point-safe)
@@ -211,3 +211,4 @@ These are educated guesses at problems that are likely to exist in the fully ins
 ## 3. Opt-in Analytics (PostHog)
 - **Goal**: Track feature usage to guide development.
 - **Strict Rule**: 100% Opt-in. Transparency regarding what is being tracked.
+

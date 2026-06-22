@@ -338,6 +338,7 @@ fn main() {
             commands::get_recent_logs,
             commands::download_logs,
             commands::set_dev_logging_enabled,
+            commands::get_dev_logging_enabled,
             commands::export_data,
             commands::import_data,
             commands::log_frontend,

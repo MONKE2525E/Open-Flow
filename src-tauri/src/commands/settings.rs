@@ -2,6 +2,8 @@
 
 use super::*;
 
+const CLEANUP_PROMPT_OVERRIDE_CHAR_LIMIT: usize = 20_000;
+
 pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> {
     let is_model_map = |v: &serde_json::Value| {
         let Some(obj) = v.as_object() else {
@@ -25,6 +27,36 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
         v.as_object()
             .is_some_and(|obj| obj.values().all(|val| val.is_string()))
     };
+    let is_cleanup_prompt_override_map = |v: &serde_json::Value| {
+        v.as_object().is_some_and(|obj| {
+            obj.iter().all(|(model_id, template)| {
+                store::parse_model_id(model_id).is_some()
+                    && template.as_str().is_some_and(|text| {
+                        text.chars().count() <= CLEANUP_PROMPT_OVERRIDE_CHAR_LIMIT
+                    })
+            })
+        })
+    };
+    let is_valid_app_mappings = |v: &serde_json::Value| {
+        let Ok(mappings) = serde_json::from_value::<Vec<AppMapping>>(v.clone()) else {
+            return false;
+        };
+        let mut seen = std::collections::HashSet::new();
+        mappings.iter().all(|mapping| {
+            let exe = mapping.exe.trim().to_lowercase();
+            let profile = mapping.profile.trim();
+            !exe.is_empty()
+                && seen.insert(exe)
+                && store::is_supported_default_tone(profile)
+                && mapping
+                    .cleanup_intensity
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(|value| {
+                        value.is_empty() || store::is_supported_cleanup_intensity(value)
+                    })
+        })
+    };
     let valid = match key {
         store::TRANSCRIPTION_PROVIDER | store::CLEANUP_PROVIDER => value
             .as_str()
@@ -36,19 +68,25 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
         | store::CLEANUP_MODEL
         | store::TRANSCRIPTION_DEFAULT_MODEL
         | store::CLEANUP_DEFAULT_MODEL
-        | store::DEFAULT_TONE
-        | store::CLEANUP_INTENSITY
         | store::MICROPHONE_DEVICE
-        | store::HISTORY_RETENTION
         | store::UPDATE_DISMISSED_VERSION
         | store::UPDATE_NOTIFIED_VERSION => value.is_string() || value.is_null(),
+        store::DEFAULT_TONE => value.as_str().is_some_and(store::is_supported_default_tone),
+        store::CLEANUP_INTENSITY => value
+            .as_str()
+            .is_some_and(store::is_supported_cleanup_intensity),
+        store::HISTORY_RETENTION => value
+            .as_str()
+            .is_some_and(store::is_supported_history_retention),
         store::TRANSCRIPTION_MODELS_BY_PROVIDER | store::CLEANUP_MODELS_BY_PROVIDER => {
             is_model_map(value)
         }
         store::TRANSCRIPTION_FALLBACK_MODELS | store::CLEANUP_FALLBACK_MODELS => {
             is_non_empty_string_array(value)
         }
-        store::CLEANUP_PROMPT_OVERRIDES => is_string_map(value),
+        store::CLEANUP_PROMPT_OVERRIDES => {
+            is_string_map(value) && is_cleanup_prompt_override_map(value)
+        }
         store::APPEARANCE_MODE => value
             .as_str()
             .is_some_and(|v| matches!(v, "system" | "light" | "dark")),
@@ -66,7 +104,7 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
         | store::AUTOSTART_ENABLED
         | store::CAPS_LOCK_UPPERCASE => value.is_boolean(),
         store::MIC_GAIN => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
-        store::APP_MAPPINGS => serde_json::from_value::<Vec<AppMapping>>(value.clone()).is_ok(),
+        store::APP_MAPPINGS => is_valid_app_mappings(value),
         store::HOTKEY => value
             .as_array()
             .is_some_and(|keys| keys.len() == 2 && keys.iter().all(serde_json::Value::is_string)),
@@ -654,7 +692,11 @@ pub async fn export_data(
         ));
         std::fs::write(&path, json).map_err(|e| format!("Failed to write backup file: {e}"))?;
 
-        log::info!("export_data: wrote {}", path.display());
+        let path_label = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("verenu-backup.json");
+        log::info!("export_data: wrote backup_file={path_label}");
         Ok(path.display().to_string())
     })
     .await
@@ -732,7 +774,7 @@ pub async fn import_data(
                 .map_err(|_| "Database lock was poisoned".to_string())?;
             let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-            for entry in &payload.dictionary {
+            for (index, entry) in payload.dictionary.iter().enumerate() {
                 if entry.term.trim().is_empty() {
                     dictionary_skipped += 1;
                     continue;
@@ -751,14 +793,18 @@ pub async fn import_data(
                         if msg.contains("UNIQUE constraint failed") {
                             dictionary_already_existed += 1;
                         } else {
-                            log::warn!("import_data: dictionary insert error for '{}': {msg}", entry.term);
+                            log::warn!(
+                                "import_data: dictionary insert error row={} chars={} error={msg}",
+                                index,
+                                entry.term.chars().count()
+                            );
                             dictionary_skipped += 1;
                         }
                     }
                 }
             }
 
-            for snippet in &payload.snippets {
+            for (index, snippet) in payload.snippets.iter().enumerate() {
                 if snippet.trigger.trim().is_empty() || snippet.expansion.trim().is_empty() {
                     snippets_skipped += 1;
                     continue;
@@ -775,7 +821,12 @@ pub async fn import_data(
                         if msg.contains("UNIQUE constraint failed") {
                             snippets_already_existed += 1;
                         } else {
-                            log::warn!("import_data: snippet insert error for '{}': {msg}", snippet.trigger);
+                            log::warn!(
+                                "import_data: snippet insert error row={} trigger_chars={} expansion_chars={} error={msg}",
+                                index,
+                                snippet.trigger.chars().count(),
+                                snippet.expansion.chars().count()
+                            );
                             snippets_skipped += 1;
                         }
                     }

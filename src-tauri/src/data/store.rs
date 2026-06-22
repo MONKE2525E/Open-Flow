@@ -41,6 +41,22 @@ pub const HISTORY_RETENTION: &str = "history_retention";
 pub const AUTOSTART_ENABLED: &str = "autostart_enabled";
 pub const CAPS_LOCK_UPPERCASE: &str = "caps_lock_uppercase_enabled";
 
+pub const DEFAULT_TONES: &[&str] = &["casual", "formal", "very_casual"];
+pub const CLEANUP_INTENSITIES: &[&str] = &["none", "light", "medium", "high"];
+pub const HISTORY_RETENTION_OPTIONS: &[&str] = &["7 days", "30 days", "90 days", "Forever"];
+
+pub fn is_supported_default_tone(value: &str) -> bool {
+    DEFAULT_TONES.contains(&value)
+}
+
+pub fn is_supported_cleanup_intensity(value: &str) -> bool {
+    CLEANUP_INTENSITIES.contains(&value)
+}
+
+pub fn is_supported_history_retention(value: &str) -> bool {
+    HISTORY_RETENTION_OPTIONS.contains(&value)
+}
+
 /// Maps a `history_retention` setting value to a day count. `None` means
 /// "Forever" (or an unrecognized value) — never prune.
 pub fn history_retention_days(value: &str) -> Option<i64> {
@@ -223,6 +239,14 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
             v
         }
     };
+    let supported_or_default = |key: &str, default: &str, is_supported: fn(&str) -> bool| {
+        let v = str_or(key, default);
+        if is_supported(&v) {
+            v
+        } else {
+            default.into()
+        }
+    };
     let language_or_default = |key: &str, default: &str| -> String {
         let v = str_or(key, default);
         if is_supported_transcription_language(&v) {
@@ -302,8 +326,12 @@ pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Pi
         key_groq: crate::data::credentials::get(GROQ),
         key_openai: crate::data::credentials::get(OPENAI),
         key_google: crate::data::credentials::get(GOOGLE),
-        default_tone: str_or(DEFAULT_TONE, "casual"),
-        cleanup_intensity: str_or(CLEANUP_INTENSITY, "medium"),
+        default_tone: supported_or_default(DEFAULT_TONE, "casual", is_supported_default_tone),
+        cleanup_intensity: supported_or_default(
+            CLEANUP_INTENSITY,
+            "medium",
+            is_supported_cleanup_intensity,
+        ),
         app_context_hint: store
             .get(APP_CONTEXT_HINT)
             .and_then(|v| v.as_bool())

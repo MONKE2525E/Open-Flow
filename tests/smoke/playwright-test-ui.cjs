@@ -1,7 +1,7 @@
 // Smoke test: UI navigation & interaction — Tauri window (port 1420)
 // Verifies nav routing, settings open/close, and toggle state changes.
 const { chromium } = require('playwright');
-const { tauriMock } = require('./_tauri-mock.cjs');
+const { tauriMock, APP_VERSION } = require('./_tauri-mock.cjs');
 
 const TARGET_URL = 'http://localhost:1420';
 const TIMEOUT = 8_000;
@@ -36,7 +36,7 @@ async function waitForSingleSettingsPanel(page) {
   const page = await browser.newPage();
   const errors = [];
 
-  await page.addInitScript(tauriMock);
+  await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
 
   page.on('pageerror', err => errors.push(`Page exception: ${err.message}`));
   page.on('console', msg => {
@@ -49,6 +49,15 @@ async function waitForSingleSettingsPanel(page) {
 
     // ── Navigation: page swaps should overlap during transition ───────────────
     await page.locator('h1.page-h:has-text("Welcome back")').waitFor({ state: 'visible', timeout: 3_000 });
+    const loadOlder = page.getByRole('button', { name: 'Load older' });
+    await loadOlder.waitFor({ state: 'visible', timeout: 3_000 });
+    await loadOlder.click();
+    await page.waitForFunction(
+      () => !document.body.textContent?.includes('Load older'),
+      null,
+      { timeout: 3_000 },
+    );
+    console.log('  âœ“ Home history pagination loads the final page');
     await page.locator('.nav-item:has-text("Dictionary")').click();
     const wrapperCountHandle = await page.waitForFunction(
       () => document.querySelectorAll('.page-wrapper').length >= 2
@@ -110,7 +119,7 @@ async function waitForSingleSettingsPanel(page) {
     }
 
     const versionFoot = await page.locator('.settings-foot').textContent();
-    if (!versionFoot?.includes('0.11.0')) {
+    if (!versionFoot?.includes(APP_VERSION)) {
       errors.push(`Settings footer version mismatch: "${versionFoot?.trim()}"`);
     } else {
       console.log(`  ✓ Settings footer shows ${versionFoot.trim()}`);
@@ -185,6 +194,26 @@ async function waitForSingleSettingsPanel(page) {
     }
 
     // ── Settings: close by clicking outside (10, 10) ─────────────────────────
+    const retentionButton = page.getByRole('button', { name: 'Transcription history retention' });
+    await retentionButton.click();
+    await page.getByRole('option', { name: '7 days' }).click();
+    const retentionModal = page.locator('.modal-card[aria-labelledby="retention-confirm-title"]');
+    await retentionModal.waitFor({ state: 'visible', timeout: 2_000 });
+    const retentionFocusInside = await retentionModal.evaluate((el) => el.contains(document.activeElement));
+    if (!retentionFocusInside) {
+      errors.push('Privacy retention confirmation dialog did not move focus inside the dialog');
+    } else {
+      console.log('  âœ“ Privacy retention confirmation moves focus inside the dialog');
+    }
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await retentionModal.waitFor({ state: 'hidden', timeout: 2_000 });
+    const retentionFocusRestored = await retentionButton.evaluate((el) => document.activeElement === el);
+    if (!retentionFocusRestored) {
+      errors.push('Privacy retention confirmation did not restore focus to the trigger');
+    } else {
+      console.log('  âœ“ Privacy retention confirmation restores focus to the trigger');
+    }
+
     console.log('  Closing Settings via outside click...');
     await page.mouse.click(10, 10);
     await waitForIntermediateOpacity(page, '.settings-overlay', 'Settings backdrop fades out').catch((err) => {

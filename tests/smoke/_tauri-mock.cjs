@@ -3,9 +3,12 @@
 // that Tauri injects into WebView2. Without this, invoke() throws and the Setup
 // overlay shows (setupComplete defaults to false), blocking all UI tests.
 //
-// Usage: await page.addInitScript(tauriMock);
+// Usage: await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
 
-function tauriMock() {
+const APP_VERSION = require('../../package.json').version;
+
+function tauriMock({ appVersion } = {}) {
+  const APP_VERSION = appVersion || '0.0.0';
   // ── Bootstrap Tauri globals (mirrors mockInternals() in @tauri-apps/api/mocks) ──
   window.__TAURI_INTERNALS__ = window.__TAURI_INTERNALS__ ?? {};
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = window.__TAURI_EVENT_PLUGIN_INTERNALS__ ?? {};
@@ -65,6 +68,12 @@ function tauriMock() {
     update_notified_version: null,
     ...storedMem,
   };
+  const recentEntries = Array.from({ length: 105 }, (_, index) => ({
+    id: 105 - index,
+    clean_text: `Mock history entry ${105 - index}`,
+    words: 3,
+    created_at: `2026-05-${String(31 - Math.floor(index / 8)).padStart(2, '0')} ${String(8 + (index % 10)).padStart(2, '0')}:00:00`,
+  }));
 
   function persistMem() {
     try {
@@ -110,7 +119,7 @@ function tauriMock() {
     if (cmd === 'plugin:event|emit')     return null;
 
     // App plugin (getVersion / getName called by Settings and Home)
-    if (cmd === 'plugin:app|version')       return '0.11.0';
+    if (cmd === 'plugin:app|version')       return APP_VERSION;
     if (cmd === 'plugin:app|name')          return 'Verenu';
     if (cmd === 'plugin:app|tauri_version') return '2.0.0';
 
@@ -162,14 +171,21 @@ function tauriMock() {
       ];
       case 'get_app_mappings':   return mem._app_mappings ?? [];
       case 'save_app_mappings':  mem._app_mappings = args?.mappings ?? []; persistMem(); return null;
-      case 'get_recent':         return [];
-      case 'get_stats':          return { total_words: 0, avg_wpm: 0, day_streak: 0 };
+      case 'get_recent': {
+        const limit = Number(args?.limit ?? 100);
+        const offset = Number(args?.offset ?? 0);
+        return recentEntries.slice(offset, offset + limit);
+      }
+      case 'get_stats':          return { total_words: 315, avg_wpm: 152, day_streak: 6 };
+      case 'count_old_transcriptions':
+        return args?.retention === 'Forever' ? 0 : 3;
       case 'get_dictionary':     return [];
       case 'get_snippets':       return [];
       case 'get_memory_mb':      return 75;   // number required — tweened(0) crashes on null
       case 'check_for_update':   return null;
       case 'get_recent_logs':    return ['[2026-05-17 10:00:00.000] INFO  smoke logger'];
       case 'download_logs':      return 'C:\\Users\\test\\Downloads\\verenu-logs-20260517-100000.txt';
+      case 'get_dev_logging_enabled': return false;
       case 'set_dev_logging_enabled': return null;
       default:                   return null;
     }
@@ -187,4 +203,4 @@ function tauriMock() {
   };
 }
 
-module.exports = { tauriMock };
+module.exports = { tauriMock, APP_VERSION };

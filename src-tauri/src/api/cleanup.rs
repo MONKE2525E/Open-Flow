@@ -58,7 +58,14 @@ pub async fn cleanup(
         log::debug!("cleanup: input_full=\"{}\"", text);
         log::debug!("cleanup: prompt_full=\"{}\"", prompt);
         if !snippet_instructions.is_empty() {
-            log::debug!("cleanup: snippet_rules_full=\"{}\"", snippet_instructions);
+            log::debug!(
+                "cleanup: snippet_rules_meta lines={} chars={}",
+                snippet_instructions
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .count(),
+                snippet_instructions.chars().count()
+            );
         }
         if let Some(ctx) = app_context {
             log::debug!("cleanup: app_context_full=\"{}\"", ctx);

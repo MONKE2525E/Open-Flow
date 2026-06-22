@@ -20,7 +20,7 @@ Use a PR when one of these is true:
 - You do not have write access
 - The change is risky, broad, or hard to review in a direct push
 - You want line-by-line discussion before it lands
-- The work changes release flow, privacy boundaries, provider behavior, or core dictation behavior
+- The work changes release flow, privacy boundaries, provider behavior, core dictation behavior, or updater behavior
 
 ## Before You Start
 
@@ -36,7 +36,7 @@ Use a PR when one of these is true:
 
 - Node.js 18+
 - Rust and Cargo
-- Python 3.8+ (required by `npm test` — the OnePyFone test runner is a Python script)
+- Python 3.8+ (required by `npm test` because the OnePyFone test runner is a Python script)
 - Windows: WebView2
 - macOS: Xcode Command Line Tools are recommended
 
@@ -65,6 +65,7 @@ npm run dev
 - Default hold-to-record hotkey is <kbd>Ctrl</kbd> + <kbd>Windows</kbd>.
 - API keys live in Windows Credential Manager.
 - Verenu uses native Windows APIs for hotkeys, focus tracking, and injection.
+- Update installs should open the published installer asset, not auto-run downloaded bytes.
 
 ### macOS
 
@@ -82,6 +83,15 @@ npm run dev
 - Keep dependencies lean. The app has a low idle RAM target.
 - Follow existing Rust, Svelte, TypeScript, and Tailwind patterns before inventing new abstractions.
 - If you change how data moves on or off device, document it clearly.
+- Privacy-impacting logs must use redacted metadata only. Do not log dictated text, prompt bodies, snippet expansions, raw dictionary terms, API keys, or full local paths.
+
+## File Size Expectations
+
+These are guidelines, not religious law, but you should treat them seriously:
+
+- Route files and settings components should stay under roughly 500 lines unless they are mostly static markup.
+- Rust modules should stay under roughly 700 lines unless they are mostly tests or generated-style constants.
+- If a UI file mixes persistence, keyboard handling, inspector layout, and modal editing in one place, split it.
 
 ## Testing
 
@@ -96,13 +106,19 @@ npm test
 ### Other common commands
 
 ```bash
-npm run test:all
-npm run test:live
-npm run test:native
 npm run check
 npm run lint
+npm run build
 npm run test:rust
+npm run test:smoke
+npm audit --audit-level=moderate
 ```
+
+### Dependency and security audit notes
+
+- CI runs `npm audit --audit-level=moderate`.
+- CI also installs and runs `cargo audit` against `src-tauri/Cargo.lock`.
+- Local work should run the same checks when practical, but `cargo audit` does not need to be preinstalled to make ordinary code changes.
 
 ### Targeted UI and state checks
 
@@ -113,7 +129,7 @@ python tests/OnePyFone.py --suite ui,state --no-server
 
 Rules:
 
-- Live/API checks are opt-in.
+- Live API checks are opt-in.
 - Never print API keys, clipboard contents, or real dictated text in test output.
 - Keep `tests/smoke/` frozen.
 - Add coverage in Rust tests or `tests/integration/` when behavior changes.

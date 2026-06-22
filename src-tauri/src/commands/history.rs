@@ -6,11 +6,19 @@ const SPACE_CONSTRAINED_THRESHOLD_BYTES: u64 = 1_073_741_824;
 // ---------- history / stats ----------
 
 #[tauri::command]
-pub async fn get_recent(app: AppHandle) -> Result<Vec<db::RecentEntry>, String> {
+pub async fn get_recent(
+    app: AppHandle,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Vec<db::RecentEntry>, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || db::query_recent(&db).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| e.to_string())?
+    let limit = limit.unwrap_or(100);
+    let offset = offset.unwrap_or(0);
+    tokio::task::spawn_blocking(move || {
+        db::query_recent_page(&db, limit, offset).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

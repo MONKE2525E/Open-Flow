@@ -253,6 +253,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return null as T;
     case 'check_connectivity':
       return (typeof navigator === 'undefined' ? true : navigator.onLine) as T;
+    case 'get_dev_logging_enabled':
+      return Boolean(getDevSetting('dev_logging_enabled') ?? false) as T;
     case 'get_cleanup_cache_status':
       return { entry_count: 0, is_space_constrained: false, free_bytes: null } as T;
     case 'get_auto_learn_status_summary':
@@ -281,6 +283,9 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       }
       return undefined as T;
     }
+    case 'set_dev_logging_enabled':
+      writeDevSetting('dev_logging_enabled', Boolean(args?.enabled));
+      return undefined as T;
     case 'set_autostart':
     case 'save_hotkey':
     case 'hide_main':
@@ -293,7 +298,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'stop_setup_try_recording':
     case 'retry_transcription':
     case 'install_update':
-    case 'set_dev_logging_enabled':
     case 'start_calibration_monitoring':
     case 'stop_calibration_monitoring':
       return undefined as T;

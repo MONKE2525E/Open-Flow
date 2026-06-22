@@ -1,7 +1,7 @@
 // Smoke test: element contract assertions — Tauri window (port 1420)
 // Verifies exact tag + class combos for critical UI elements.
 const { chromium } = require('playwright');
-const { tauriMock } = require('./_tauri-mock.cjs');
+const { tauriMock, APP_VERSION } = require('./_tauri-mock.cjs');
 
 const TARGET_URL = 'http://localhost:1420';
 const TIMEOUT = 8_000;
@@ -22,7 +22,7 @@ async function assert(label, locator, errors) {
   const page = await browser.newPage();
   const errors = [];
 
-  await page.addInitScript(tauriMock);
+  await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
 
   try {
     await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: TIMEOUT });

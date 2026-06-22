@@ -372,9 +372,14 @@ fn cleanup_legacy_plaintext_entries(app: &AppHandle, providers: &[&str]) {
             continue;
         }
         if let Err(err) = write_legacy_creds_file(&legacy.path, &legacy.map) {
+            let legacy_label = legacy
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("credentials.json");
             log::warn!(
                 "Could not clean legacy plaintext credentials file {}: {}",
-                legacy.path.display(),
+                legacy_label,
                 err
             );
         }
@@ -571,9 +576,14 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
     #[cfg(target_os = "macos")]
     for legacy in &legacy_files {
         if let Err(e) = write_legacy_creds_file(&legacy.path, &legacy.map) {
+            let legacy_label = legacy
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("credentials.json");
             log::warn!(
                 "Migration: could not persist legacy credentials cleanup for {}: {}",
-                legacy.path.display(),
+                legacy_label,
                 e
             );
             any_failed = true;

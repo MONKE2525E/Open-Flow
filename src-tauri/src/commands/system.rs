@@ -309,3 +309,8 @@ pub async fn download_logs(app: AppHandle) -> Result<String, String> {
 pub fn set_dev_logging_enabled(enabled: bool) {
     crate::system::logger::set_verbose(enabled);
 }
+
+#[tauri::command]
+pub fn get_dev_logging_enabled() -> bool {
+    crate::system::logger::is_verbose()
+}
