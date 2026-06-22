@@ -1,33 +1,22 @@
 use super::*;
 
-pub(super) fn transcription_provider_from_str(s: &str) -> transcription::Provider {
-    match s {
-        "openai" => transcription::Provider::OpenAI,
-        "google" => transcription::Provider::Google,
-        _ => transcription::Provider::Groq,
-    }
-}
 pub(super) fn transcription_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String)> {
-    let mut chain = Vec::<(String, String)>::new();
-    if let Some((provider, model)) = store::parse_model_id(&cfg.transcription_default_model) {
-        chain.push((provider, model));
-    }
-    for id in &cfg.transcription_fallback_models {
-        if let Some((provider, model)) = store::parse_model_id(id) {
-            if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
-                chain.push((provider, model));
-            }
-        }
-    }
-    chain
+    model_chain(
+        &cfg.transcription_default_model,
+        &cfg.transcription_fallback_models,
+    )
 }
 
 pub(super) fn cleanup_model_chain(cfg: &store::PipelineConfig) -> Vec<(String, String)> {
+    model_chain(&cfg.cleanup_default_model, &cfg.cleanup_fallback_models)
+}
+
+fn model_chain(default_model: &str, fallback_models: &[String]) -> Vec<(String, String)> {
     let mut chain = Vec::<(String, String)>::new();
-    if let Some((provider, model)) = store::parse_model_id(&cfg.cleanup_default_model) {
+    if let Some((provider, model)) = store::parse_model_id(default_model) {
         chain.push((provider, model));
     }
-    for id in &cfg.cleanup_fallback_models {
+    for id in fallback_models {
         if let Some((provider, model)) = store::parse_model_id(id) {
             if !chain.iter().any(|(p, m)| p == &provider && m == &model) {
                 chain.push((provider, model));
@@ -56,4 +45,4 @@ pub(super) fn trim_err(s: &str) -> String {
     } else {
         s.to_string()
     }
-}
+}

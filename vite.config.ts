@@ -14,7 +14,7 @@ export default defineConfig({
   },
   build: {
     target: ['es2020', 'chrome100'],
-    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
+    minify: !process.env.TAURI_DEBUG,
     sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: {
       input: {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { emit, invoke } from '../../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
@@ -259,12 +260,16 @@
     window.addEventListener('mousedown', cancelRecordingHotkey, { capture: true });
   }
 
+  function removeHotkeyCaptureListeners() {
+    window.removeEventListener('keydown', handleHotkeyKeydown, { capture: true });
+    window.removeEventListener('keyup', handleHotkeyKeyup, { capture: true });
+    window.removeEventListener('mousedown', cancelRecordingHotkey, { capture: true });
+  }
+
   function cancelRecordingHotkey(e?: MouseEvent | KeyboardEvent) {
     if (e && (e.target as HTMLElement).closest('.keybind-btn')) return;
     if (recordingHotkey) {
-      window.removeEventListener('keydown', handleHotkeyKeydown, { capture: true });
-      window.removeEventListener('keyup', handleHotkeyKeyup, { capture: true });
-      window.removeEventListener('mousedown', cancelRecordingHotkey, { capture: true });
+      removeHotkeyCaptureListeners();
       recordingHotkey = false;
       hotkeyState = 'idle';
       capturedKeys = [];
@@ -304,9 +309,7 @@
   }
 
   async function finishRecordingHotkey() {
-    window.removeEventListener('keydown', handleHotkeyKeydown, { capture: true });
-    window.removeEventListener('keyup', handleHotkeyKeyup, { capture: true });
-    window.removeEventListener('mousedown', cancelRecordingHotkey, { capture: true });
+    removeHotkeyCaptureListeners();
     recordingHotkey = false;
     if (capturedKeys.length === 2) {
       try {
@@ -334,6 +337,11 @@
       }
     }
   }
+
+  onDestroy(() => {
+    removeHotkeyCaptureListeners();
+    recordingHotkey = false;
+  });
 
   loadSettings();
 </script>

@@ -34,10 +34,10 @@ pub async fn hide_main(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn get_memory_mb() -> u64 {
-    match tokio::task::spawn_blocking(crate::system::memory::measure).await {
+    match run_blocking("get_memory_mb", || Ok(crate::system::memory::measure())).await {
         Ok(v) => v,
         Err(e) => {
-            log::error!("Task to get memory usage panicked: {e}");
+            log::error!("{e}");
             0
         }
     }
@@ -63,9 +63,11 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
         return Err(format!("Unrecognized key code: {key2}"));
     }
     crate::core::hotkey::update_keys(vk1, vk2);
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    store.set("hotkey", serde_json::json!([key1, key2]));
-    store.save().map_err(|e| e.to_string())
+    let settings = store::settings_handle(&app)?;
+    run_blocking("save_hotkey", move || {
+        settings.save_value(store::HOTKEY, serde_json::json!([key1, key2]))
+    })
+    .await
 }
 
 // ---------- autostart ----------
@@ -222,9 +224,11 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
         .map_err(|e| e.to_string())??;
     }
 
-    let store = _app.store("settings.json").map_err(|e| e.to_string())?;
-    store.set(store::AUTOSTART_ENABLED, serde_json::json!(enabled));
-    store.save().map_err(|e| e.to_string())
+    let settings = store::settings_handle(&_app)?;
+    run_blocking("set_autostart", move || {
+        settings.save_value(store::AUTOSTART_ENABLED, serde_json::json!(enabled))
+    })
+    .await
 }
 
 #[cfg(target_os = "macos")]
@@ -288,6 +292,7 @@ pub async fn check_connectivity() -> bool {
 
 #[tauri::command]
 pub fn log_frontend(level: String, message: String) {
+    let message = crate::system::logger::sanitize_frontend_log_message(&message);
     match level.as_str() {
         "warn" => log::warn!("fe: {message}"),
         "error" => log::error!("fe: {message}"),
@@ -302,9 +307,10 @@ pub fn get_recent_logs(limit: Option<usize>) -> Vec<String> {
 
 #[tauri::command]
 pub async fn download_logs(app: AppHandle) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || crate::system::logger::export_to_downloads(&app))
-        .await
-        .map_err(|e| e.to_string())?
+    run_blocking("download_logs", move || {
+        crate::system::logger::export_to_downloads(&app)
+    })
+    .await
 }
 
 #[tauri::command]

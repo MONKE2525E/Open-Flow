@@ -29,9 +29,9 @@ pub fn start_recording_session_ex(
     show_recording_pill: bool,
     emit_globally: bool,
 ) -> Result<(), String> {
-    let settings = app.store("settings.json");
+    let settings = store::settings_snapshot(app);
     let audio_config = match settings {
-        Ok(ref store) => store::load_audio_config(store),
+        Ok(ref settings) => store::load_audio_config(settings),
         Err(e) => {
             log::warn!(
                 "Failed to load settings.json store for audio config: {:?}",
@@ -148,7 +148,9 @@ pub fn spawn_level_emitter(
         }
     });
 }
-pub(super) fn take_pipeline_session(state: &SharedState) -> Option<(audio::RecordingSession, usize)> {
+pub(super) fn take_pipeline_session(
+    state: &SharedState,
+) -> Option<(audio::RecordingSession, usize)> {
     let mut st = match lock_state(state) {
         Ok(st) => st,
         Err(e) => {

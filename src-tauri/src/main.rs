@@ -19,7 +19,6 @@ use tauri::{
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, Theme,
 };
-use tauri_plugin_store::StoreExt;
 
 pub type DbHandle = db::Db;
 
@@ -141,7 +140,6 @@ fn main() {
     let _ = db::cleanup_cache_prune_expired(&db_handle);
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -151,12 +149,11 @@ fn main() {
         .manage(db_handle.clone())
         .setup(move |app| {
             crate::system::logger::init(app.handle())?;
-            let _first_launch = if let Ok(store) =
-                tauri_plugin_store::StoreExt::store(app.handle(), "settings.json")
-            {
-                let _ = store.reload();
-                crate::data::credentials::migrate_from_store(app.handle(), &store);
-                if let Some(val) = store.get("hotkey") {
+            let settings = crate::data::store::SettingsHandle::open(app.handle())
+                .map_err(std::io::Error::other)?;
+            crate::data::credentials::migrate_from_store(app.handle(), &settings);
+            let _first_launch = {
+                if let Some(val) = settings.get(crate::data::store::HOTKEY) {
                     if let Some(arr) = val.as_array() {
                         if arr.len() == 2 {
                             if let (Some(k1), Some(k2)) = (arr[0].as_str(), arr[1].as_str()) {
@@ -169,8 +166,9 @@ fn main() {
                                 #[cfg(target_os = "macos")]
                                 let (k1, k2) = if !crate::core::hotkey::is_hotkey_available(k1, k2)
                                 {
-                                    store.set("hotkey", serde_json::json!(["AltLeft", "Space"]));
-                                    if let Err(e) = store.save() {
+                                    let _ = settings
+                                        .set(crate::data::store::HOTKEY, serde_json::json!(["AltLeft", "Space"]));
+                                    if let Err(e) = settings.save() {
                                         log::warn!(
                                             "Failed to save migrated hotkey to settings.json: {e:?}"
                                         );
@@ -186,7 +184,7 @@ fn main() {
                         }
                     }
                 }
-                let retention_value = store.get(crate::data::store::HISTORY_RETENTION);
+                let retention_value = settings.get(crate::data::store::HISTORY_RETENTION);
                 let retention = retention_value
                     .as_ref()
                     .and_then(|v| v.as_str())
@@ -208,12 +206,12 @@ fn main() {
                         }
                     });
                 }
-                !store
-                    .get("setup_complete")
+                let first_launch = !settings
+                    .get(crate::data::store::SETUP_COMPLETE)
                     .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-            } else {
-                true
+                    .unwrap_or(false);
+                app.manage(settings.clone());
+                first_launch
             };
 
             setup_tray(app)?;
@@ -508,9 +506,9 @@ fn resolve_icon_theme(app: &AppHandle, theme_hint: Option<Theme>) -> IconTheme {
 }
 
 fn appearance_mode(app: &AppHandle) -> Option<String> {
-    app.store("settings.json")
+    crate::data::store::settings_handle(app)
         .ok()
-        .and_then(|store| store.get(crate::data::store::APPEARANCE_MODE))
+        .and_then(|settings| settings.get(crate::data::store::APPEARANCE_MODE))
         .and_then(|value| value.as_str().map(String::from))
 }
 

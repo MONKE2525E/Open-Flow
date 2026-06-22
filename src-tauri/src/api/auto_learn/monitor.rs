@@ -177,13 +177,10 @@ pub(super) fn record_candidate(
     }
 }
 pub(super) fn auto_learn_event_mode_enabled(app: &AppHandle) -> bool {
-    app.store("settings.json")
+    store::settings_handle(app)
         .ok()
-        .and_then(|store| {
-            store
-                .get(store::AUTO_LEARN_EVENT_MODE)
-                .and_then(|v| v.as_bool())
-        })
+        .and_then(|settings| settings.get(store::AUTO_LEARN_EVENT_MODE))
+        .and_then(|v| v.as_bool())
         .unwrap_or(false)
 }
 

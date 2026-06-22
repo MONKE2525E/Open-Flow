@@ -14,19 +14,19 @@ pub async fn get_recent(
     let db = app.state::<DbHandle>().inner().clone();
     let limit = limit.unwrap_or(100);
     let offset = offset.unwrap_or(0);
-    tokio::task::spawn_blocking(move || {
+    run_blocking("get_recent", move || {
         db::query_recent_page(&db, limit, offset).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || db::query_stats(&db).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| e.to_string())?
+    run_blocking("get_stats", move || {
+        db::query_stats(&db).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -35,11 +35,10 @@ pub async fn count_old_transcriptions(app: AppHandle, retention: String) -> Resu
         return Ok(0);
     };
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || {
+    run_blocking("count_old_transcriptions", move || {
         db::count_transcriptions_older_than(&db, days).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -103,24 +102,24 @@ fn free_bytes_for_path(_path: &std::path::Path) -> Result<u64, String> {
 #[tauri::command]
 pub async fn clear_cleanup_cache(app: AppHandle) -> Result<usize, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || db::cleanup_cache_clear_all(&db).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| format!("clear_cleanup_cache task panicked: {e}"))?
+    run_blocking("clear_cleanup_cache", move || {
+        db::cleanup_cache_clear_all(&db).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn get_cleanup_cache_status(app: AppHandle) -> Result<CleanupCacheStatus, String> {
     let db = app.state::<DbHandle>().inner().clone();
     let app_data = crate::app_data_dir();
-    let (free_bytes, entry_count) = tokio::task::spawn_blocking(move || {
+    let (free_bytes, entry_count) = run_blocking("get_cleanup_cache_status", move || {
         let free = free_bytes_for_path(&app_data)
             .map_err(|e| format!("Failed to read free disk space: {e}"))?;
         let count = db::cleanup_cache_count(&db)
             .map_err(|e| format!("Failed to count cleanup cache entries: {e}"))?;
         Ok::<_, String>((free, count))
     })
-    .await
-    .map_err(|e| format!("get_cleanup_cache_status task panicked: {e}"))??;
+    .await?;
     Ok(CleanupCacheStatus {
         entry_count,
         is_space_constrained: free_bytes < SPACE_CONSTRAINED_THRESHOLD_BYTES,

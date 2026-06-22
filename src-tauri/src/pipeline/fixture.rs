@@ -86,7 +86,7 @@ pub async fn run_pipeline_fixture(
         if key.is_empty() {
             continue;
         }
-        let provider = transcription_provider_from_str(&provider_id);
+        let provider = ProviderId::from_str(&provider_id);
         match transcription::transcribe(
             request.wav.clone(),
             provider,

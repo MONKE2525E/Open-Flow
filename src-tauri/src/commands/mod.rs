@@ -4,9 +4,8 @@
 //! each submodule picks them up via `use super::*`.
 
 pub(crate) use tauri::{AppHandle, Emitter, Manager};
-pub(crate) use tauri_plugin_store::StoreExt;
 
-pub(crate) use crate::api::{cleanup, prompts};
+pub(crate) use crate::api::{cleanup, prompts, ProviderId};
 pub(crate) use crate::data::{db, store};
 pub(crate) use crate::media::audio;
 pub(crate) use crate::pipeline::{self, SharedState};
@@ -20,6 +19,16 @@ mod recording;
 mod settings;
 mod system;
 mod updater;
+
+pub(crate) async fn run_blocking<T, F>(label: &'static str, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("{label} task panicked: {e}"))?
+}
 
 pub use history::*;
 pub use library::*;

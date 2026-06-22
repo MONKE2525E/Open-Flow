@@ -4,6 +4,183 @@ use super::*;
 
 const CLEANUP_PROMPT_OVERRIDE_CHAR_LIMIT: usize = 20_000;
 
+#[derive(Clone, Copy)]
+enum SettingKind {
+    Provider,
+    TranscriptionLanguage,
+    StringOrNull,
+    DefaultTone,
+    CleanupIntensity,
+    HistoryRetention,
+    ModelMap,
+    StringArray,
+    CleanupPromptOverrides,
+    AppearanceMode,
+    Bool,
+    MicGain,
+    AppMappings,
+    Hotkey,
+}
+
+#[derive(Clone, Copy)]
+pub struct SettingSpec {
+    key: &'static str,
+    kind: SettingKind,
+    readable: bool,
+    exportable: bool,
+}
+
+const fn setting_spec(
+    key: &'static str,
+    kind: SettingKind,
+    readable: bool,
+    exportable: bool,
+) -> SettingSpec {
+    SettingSpec {
+        key,
+        kind,
+        readable,
+        exportable,
+    }
+}
+
+const SETTING_SPECS: &[SettingSpec] = &[
+    setting_spec(
+        store::TRANSCRIPTION_PROVIDER,
+        SettingKind::Provider,
+        true,
+        true,
+    ),
+    setting_spec(
+        store::TRANSCRIPTION_LANGUAGE,
+        SettingKind::TranscriptionLanguage,
+        true,
+        true,
+    ),
+    setting_spec(store::CLEANUP_PROVIDER, SettingKind::Provider, true, true),
+    setting_spec(
+        store::TRANSCRIPTION_MODEL,
+        SettingKind::StringOrNull,
+        true,
+        true,
+    ),
+    setting_spec(store::CLEANUP_MODEL, SettingKind::StringOrNull, true, true),
+    setting_spec(
+        store::TRANSCRIPTION_MODELS_BY_PROVIDER,
+        SettingKind::ModelMap,
+        true,
+        true,
+    ),
+    setting_spec(
+        store::CLEANUP_MODELS_BY_PROVIDER,
+        SettingKind::ModelMap,
+        true,
+        true,
+    ),
+    setting_spec(
+        store::TRANSCRIPTION_DEFAULT_MODEL,
+        SettingKind::StringOrNull,
+        true,
+        true,
+    ),
+    setting_spec(
+        store::CLEANUP_DEFAULT_MODEL,
+        SettingKind::StringOrNull,
+        true,
+        true,
+    ),
+    setting_spec(
+        store::TRANSCRIPTION_FALLBACK_MODELS,
+        SettingKind::StringArray,
+        true,
+        true,
+    ),
+    setting_spec(
+        store::CLEANUP_FALLBACK_MODELS,
+        SettingKind::StringArray,
+        true,
+        true,
+    ),
+    setting_spec(store::CLEANUP_ENABLED, SettingKind::Bool, true, true),
+    setting_spec(store::HOTKEY, SettingKind::Hotkey, true, true),
+    setting_spec(
+        store::MICROPHONE_DEVICE,
+        SettingKind::StringOrNull,
+        true,
+        false,
+    ),
+    setting_spec(store::DEFAULT_TONE, SettingKind::DefaultTone, true, true),
+    setting_spec(
+        store::CLEANUP_INTENSITY,
+        SettingKind::CleanupIntensity,
+        true,
+        true,
+    ),
+    setting_spec(store::APP_MAPPINGS, SettingKind::AppMappings, true, true),
+    setting_spec(store::NOISE_REDUCTION, SettingKind::Bool, true, true),
+    setting_spec(store::MUTE_AUDIO, SettingKind::Bool, true, true),
+    setting_spec(store::MIC_GAIN, SettingKind::MicGain, true, false),
+    setting_spec(store::SETUP_COMPLETE, SettingKind::Bool, true, false),
+    setting_spec(store::APP_CONTEXT_HINT, SettingKind::Bool, true, true),
+    setting_spec(store::AUTO_LEARN_ENABLED, SettingKind::Bool, true, true),
+    setting_spec(store::AUTO_LEARN_EVENT_MODE, SettingKind::Bool, true, true),
+    setting_spec(store::CONTEXTUAL_CAPS, SettingKind::Bool, true, true),
+    setting_spec(store::AUTO_SPACING, SettingKind::Bool, true, true),
+    setting_spec(
+        store::APPEARANCE_MODE,
+        SettingKind::AppearanceMode,
+        true,
+        true,
+    ),
+    setting_spec(store::FORCE_SETUP_ON_LAUNCH, SettingKind::Bool, true, false),
+    setting_spec(store::ADVANCED_MODEL_UI, SettingKind::Bool, true, true),
+    setting_spec(
+        store::CLEANUP_PROMPT_OVERRIDES,
+        SettingKind::CleanupPromptOverrides,
+        true,
+        true,
+    ),
+    setting_spec(
+        store::UPDATE_DISMISSED_VERSION,
+        SettingKind::StringOrNull,
+        true,
+        false,
+    ),
+    setting_spec(
+        store::UPDATE_NOTIFIED_VERSION,
+        SettingKind::StringOrNull,
+        true,
+        false,
+    ),
+    setting_spec(
+        store::HISTORY_RETENTION,
+        SettingKind::HistoryRetention,
+        true,
+        true,
+    ),
+    setting_spec(store::AUTOSTART_ENABLED, SettingKind::Bool, true, true),
+    setting_spec(store::CAPS_LOCK_UPPERCASE, SettingKind::Bool, true, true),
+];
+
+fn spec_for(key: &str) -> Option<&'static SettingSpec> {
+    SETTING_SPECS.iter().find(|spec| spec.key == key)
+}
+
+pub fn is_readable_setting_key(key: &str) -> bool {
+    spec_for(key).is_some_and(|spec| spec.readable)
+}
+
+pub fn is_exportable_setting_key(key: &str) -> bool {
+    spec_for(key).is_some_and(|spec| spec.exportable)
+}
+
+fn exportable_setting_keys() -> impl Iterator<Item = &'static str> {
+    SETTING_SPECS
+        .iter()
+        .filter(|spec| spec.exportable)
+        .map(|spec| spec.key)
+}
+
 pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), String> {
     let is_model_map = |v: &serde_json::Value| {
         let Some(obj) = v.as_object() else {
@@ -22,10 +199,6 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
             arr.iter()
                 .all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty()))
         })
-    };
-    let is_string_map = |v: &serde_json::Value| {
-        v.as_object()
-            .is_some_and(|obj| obj.values().all(|val| val.is_string()))
     };
     let is_cleanup_prompt_override_map = |v: &serde_json::Value| {
         v.as_object().is_some_and(|obj| {
@@ -57,58 +230,36 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
                     })
         })
     };
-    let valid = match key {
-        store::TRANSCRIPTION_PROVIDER | store::CLEANUP_PROVIDER => value
+    let Some(spec) = spec_for(key) else {
+        return Err(format!("Invalid or unsupported setting: {key}"));
+    };
+    let valid = match spec.kind {
+        SettingKind::Provider => value
             .as_str()
             .is_some_and(|v| store::PROVIDERS.contains(&v)),
-        store::TRANSCRIPTION_LANGUAGE => value
+        SettingKind::TranscriptionLanguage => value
             .as_str()
             .is_some_and(store::is_supported_transcription_language),
-        store::TRANSCRIPTION_MODEL
-        | store::CLEANUP_MODEL
-        | store::TRANSCRIPTION_DEFAULT_MODEL
-        | store::CLEANUP_DEFAULT_MODEL
-        | store::MICROPHONE_DEVICE
-        | store::UPDATE_DISMISSED_VERSION
-        | store::UPDATE_NOTIFIED_VERSION => value.is_string() || value.is_null(),
-        store::DEFAULT_TONE => value.as_str().is_some_and(store::is_supported_default_tone),
-        store::CLEANUP_INTENSITY => value
+        SettingKind::StringOrNull => value.is_string() || value.is_null(),
+        SettingKind::DefaultTone => value.as_str().is_some_and(store::is_supported_default_tone),
+        SettingKind::CleanupIntensity => value
             .as_str()
             .is_some_and(store::is_supported_cleanup_intensity),
-        store::HISTORY_RETENTION => value
+        SettingKind::HistoryRetention => value
             .as_str()
             .is_some_and(store::is_supported_history_retention),
-        store::TRANSCRIPTION_MODELS_BY_PROVIDER | store::CLEANUP_MODELS_BY_PROVIDER => {
-            is_model_map(value)
-        }
-        store::TRANSCRIPTION_FALLBACK_MODELS | store::CLEANUP_FALLBACK_MODELS => {
-            is_non_empty_string_array(value)
-        }
-        store::CLEANUP_PROMPT_OVERRIDES => {
-            is_string_map(value) && is_cleanup_prompt_override_map(value)
-        }
-        store::APPEARANCE_MODE => value
+        SettingKind::ModelMap => is_model_map(value),
+        SettingKind::StringArray => is_non_empty_string_array(value),
+        SettingKind::CleanupPromptOverrides => is_cleanup_prompt_override_map(value),
+        SettingKind::AppearanceMode => value
             .as_str()
             .is_some_and(|v| matches!(v, "system" | "light" | "dark")),
-        store::CLEANUP_ENABLED
-        | store::NOISE_REDUCTION
-        | store::MUTE_AUDIO
-        | store::APP_CONTEXT_HINT
-        | store::AUTO_LEARN_ENABLED
-        | store::AUTO_LEARN_EVENT_MODE
-        | store::CONTEXTUAL_CAPS
-        | store::AUTO_SPACING
-        | store::SETUP_COMPLETE
-        | store::FORCE_SETUP_ON_LAUNCH
-        | store::ADVANCED_MODEL_UI
-        | store::AUTOSTART_ENABLED
-        | store::CAPS_LOCK_UPPERCASE => value.is_boolean(),
-        store::MIC_GAIN => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
-        store::APP_MAPPINGS => is_valid_app_mappings(value),
-        store::HOTKEY => value
+        SettingKind::Bool => value.is_boolean(),
+        SettingKind::MicGain => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
+        SettingKind::AppMappings => is_valid_app_mappings(value),
+        SettingKind::Hotkey => value
             .as_array()
             .is_some_and(|keys| keys.len() == 2 && keys.iter().all(serde_json::Value::is_string)),
-        _ => false,
     };
 
     if valid {
@@ -117,26 +268,49 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
         Err(format!("Invalid or unsupported setting: {key}"))
     }
 }
+
+#[cfg(test)]
+mod setting_key_tests {
+    use super::*;
+
+    #[test]
+    fn readable_settings_exclude_credential_keys() {
+        assert!(is_readable_setting_key(store::APPEARANCE_MODE));
+        assert!(!is_readable_setting_key(store::KEY_GROQ));
+        assert!(!is_readable_setting_key(store::KEY_OPENAI));
+        assert!(!is_readable_setting_key(store::KEY_GOOGLE));
+    }
+
+    #[test]
+    fn exportable_settings_exclude_credential_keys() {
+        assert!(is_exportable_setting_key(store::APP_MAPPINGS));
+        assert!(!is_exportable_setting_key(store::KEY_GROQ));
+        assert!(!is_exportable_setting_key(store::KEY_OPENAI));
+        assert!(!is_exportable_setting_key(store::KEY_GOOGLE));
+    }
+}
 // ---------- API keys ----------
 
 #[tauri::command]
 pub async fn save_api_key(app: AppHandle, provider: String, key: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || crate::data::credentials::save(&app, &provider, &key))
-        .await
-        .map_err(|e| e.to_string())?
+    run_blocking("save_api_key", move || {
+        crate::data::credentials::save(&app, &provider, &key)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn delete_api_key(app: AppHandle, provider: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || crate::data::credentials::delete_saved(&app, &provider))
-        .await
-        .map_err(|e| e.to_string())?
+    run_blocking("delete_api_key", move || {
+        crate::data::credentials::delete_saved(&app, &provider)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn get_api_key_status(_app: AppHandle) -> Result<serde_json::Value, String> {
     use crate::data::{credentials, store};
-    tokio::task::spawn_blocking(move || {
+    run_blocking("get_api_key_status", move || {
         Ok(serde_json::json!({
             "groq":   credentials::has(store::GROQ),
             "openai": credentials::has(store::OPENAI),
@@ -144,7 +318,6 @@ pub async fn get_api_key_status(_app: AppHandle) -> Result<serde_json::Value, St
         }))
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[derive(serde::Serialize)]
@@ -256,9 +429,9 @@ pub async fn save_setting(
     } else {
         None
     };
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    store.set(key.clone(), value);
-    store.save().map_err(|e| e.to_string())?;
+    let settings = store::settings_handle(&app)?;
+    let key_clone = key.clone();
+    run_blocking("save_setting", move || settings.save_value(key_clone, value)).await?;
 
     if key == store::APPEARANCE_MODE {
         crate::apply_runtime_icons(&app, None);
@@ -281,8 +454,10 @@ pub async fn save_setting(
 
 #[tauri::command]
 pub async fn get_setting(app: AppHandle, key: String) -> Result<Option<serde_json::Value>, String> {
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    Ok(store.get(&key))
+    if !is_readable_setting_key(&key) {
+        return Err(format!("Unsupported setting key: {key}"));
+    }
+    Ok(store::settings_handle(&app)?.get(&key))
 }
 
 #[derive(serde::Serialize)]
@@ -379,52 +554,13 @@ pub struct ImportSummary {
     pub snippets_already_existed: usize,
 }
 
-// Keys intentionally absent from this list (validated by validate_setting but never exported):
-//   MIC_GAIN            — device-specific calibration
-//   MICROPHONE_DEVICE   — device-specific hardware identifier
-//   SETUP_COMPLETE / FORCE_SETUP_ON_LAUNCH — one-time setup flags
-//   UPDATE_DISMISSED_VERSION — transient UI state
-//   UPDATE_NOTIFIED_VERSION — transient notification state
-// When adding a new setting to validate_setting, decide here whether it should also be exported.
-const EXPORTABLE_SETTINGS: &[&str] = &[
-    store::TRANSCRIPTION_PROVIDER,
-    store::TRANSCRIPTION_MODEL,
-    store::TRANSCRIPTION_LANGUAGE,
-    store::TRANSCRIPTION_DEFAULT_MODEL,
-    store::TRANSCRIPTION_MODELS_BY_PROVIDER,
-    store::TRANSCRIPTION_FALLBACK_MODELS,
-    store::CLEANUP_PROVIDER,
-    store::CLEANUP_MODEL,
-    store::CLEANUP_DEFAULT_MODEL,
-    store::CLEANUP_MODELS_BY_PROVIDER,
-    store::CLEANUP_FALLBACK_MODELS,
-    store::CLEANUP_ENABLED,
-    store::CLEANUP_INTENSITY,
-    store::DEFAULT_TONE,
-    store::APPEARANCE_MODE,
-    store::ADVANCED_MODEL_UI,
-    store::CLEANUP_PROMPT_OVERRIDES,
-    store::HOTKEY,
-    store::HISTORY_RETENTION,
-    store::NOISE_REDUCTION,
-    store::MUTE_AUDIO,
-    store::APP_CONTEXT_HINT,
-    store::AUTO_LEARN_ENABLED,
-    store::AUTO_LEARN_EVENT_MODE,
-    store::CONTEXTUAL_CAPS,
-    store::AUTO_SPACING,
-    store::CAPS_LOCK_UPPERCASE,
-    store::AUTOSTART_ENABLED,
-    store::APP_MAPPINGS,
-];
-
 #[tauri::command]
 pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
-    let s = app.store("settings.json").map_err(|e| e.to_string())?;
+    let s = store::settings_snapshot(&app)?;
     let bool_val = |key: &str| s.get(key).and_then(|v| v.as_bool());
     let str_val = |key: &str| s.get(key).and_then(|v| v.as_str().map(String::from));
     let f64_val = |key: &str| s.get(key).and_then(|v| v.as_f64());
-    let json_val = |key: &str| s.get(key);
+    let json_val = |key: &str| s.get_cloned(key);
     let str_array_val = |key: &str| {
         s.get(key).and_then(|v| {
             v.as_array().map(|arr| {
@@ -520,21 +656,22 @@ pub async fn test_cleanup_prompt(
     let static_warnings = prompts::lint_cleanup_template(&template);
 
     let key_provider = provider.clone();
-    let key = tokio::task::spawn_blocking(move || crate::data::credentials::get(&key_provider))
-        .await
-        .map_err(|e| format!("test_cleanup_prompt task panicked: {e}"))?;
+    let key = run_blocking("test_cleanup_prompt", move || {
+        Ok(crate::data::credentials::get(&key_provider))
+    })
+    .await?;
     if key.trim().is_empty() {
         return Err(format!(
             "Add a {provider} API key to test custom cleanup prompts."
         ));
     }
 
-    let cp = cleanup::provider_from_str(&provider);
+    let cp = ProviderId::from_str(&provider);
     let mut live_results = Vec::with_capacity(PROMPT_TEST_CASES.len());
     for &(name, input) in PROMPT_TEST_CASES {
         let outcome = cleanup::cleanup(
             input,
-            cp.clone(),
+            cp,
             &key,
             &model,
             "casual",
@@ -632,11 +769,11 @@ pub async fn export_data(
     db: tauri::State<'_, crate::DbHandle>,
 ) -> Result<String, String> {
     let db = db.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        let store = app.store("settings.json").map_err(|e| e.to_string())?;
+    run_blocking("export_data", move || {
+        let settings = store::settings_snapshot(&app)?;
         let mut settings_map = serde_json::Map::new();
-        for &key in EXPORTABLE_SETTINGS {
-            if let Some(value) = store.get(key) {
+        for key in exportable_setting_keys() {
+            if let Some(value) = settings.get_cloned(key) {
                 settings_map.insert(key.to_string(), value);
             }
         }
@@ -700,7 +837,6 @@ pub async fn export_data(
         Ok(path.display().to_string())
     })
     .await
-    .map_err(|e| format!("export_data task panicked: {e}"))?
 }
 
 #[tauri::command]
@@ -710,7 +846,7 @@ pub async fn import_data(
     json: String,
 ) -> Result<ImportSummary, String> {
     let db = db.inner().clone();
-    tokio::task::spawn_blocking(move || {
+    run_blocking("import_data", move || {
         let payload: ExportPayload = serde_json::from_str(&json)
             .map_err(|e| format!("Invalid backup file: {e}"))?;
 
@@ -721,7 +857,7 @@ pub async fn import_data(
             ));
         }
 
-        let store = app.store("settings.json").map_err(|e| e.to_string())?;
+        let settings = store::settings_handle(&app)?;
         let mut settings_applied = 0usize;
         let mut settings_skipped = 0usize;
         let mut appearance_mode_applied = false;
@@ -731,13 +867,13 @@ pub async fn import_data(
         }
         if let Some(obj) = payload.settings.as_object() {
             for (key, value) in obj {
-                if !EXPORTABLE_SETTINGS.contains(&key.as_str()) {
+                if !is_exportable_setting_key(key) {
                     settings_skipped += 1;
                     continue;
                 }
                 match validate_setting(key, value) {
                     Ok(()) => {
-                        store.set(key.clone(), value.clone());
+                        settings.set(key.clone(), value.clone())?;
                         if key == store::APPEARANCE_MODE {
                             appearance_mode_applied = true;
                         }
@@ -749,7 +885,7 @@ pub async fn import_data(
                     }
                 }
             }
-            store.save().map_err(|e| e.to_string())?;
+            settings.save()?;
         }
 
         if appearance_mode_applied {
@@ -855,6 +991,4 @@ pub async fn import_data(
         })
     })
     .await
-    .map_err(|e| format!("import_data task panicked: {e}"))?
 }
-

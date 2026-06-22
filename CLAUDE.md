@@ -18,7 +18,7 @@ Verenu is an open-source AI dictation desktop app for Windows and macOS — a fr
 - **Framework:** Tauri 2.x (Rust backend + WebView2 frontend — not Electron, not a web app)
 - **Frontend:** Svelte 5 + TypeScript + Tailwind CSS v4
 - **Database:** SQLite via `rusqlite` (direct, not `tauri-plugin-sql`)
-- **Settings store:** `tauri-plugin-store` (non-secret settings only — see [Settings & Configuration](#settings--configuration) for where API keys actually live)
+- **Settings store:** backend-owned JSON at Tauri `BaseDirectory::AppData/settings.json` via `src-tauri/src/data/store.rs` (non-secret settings only; see [Settings & Configuration](#settings--configuration) for where API keys actually live)
 - **Audio capture:** `cpal` + `hound` for WAV encoding + `nnnoiseless` for noise reduction
 - **Windows native APIs:** `windows` crate (hotkey hook, active window, SendInput, UI Automation, Credential Manager)
 - **macOS native APIs:** `core-graphics` (`CGEventTap` global hotkey), `security-framework` (Keychain), `accessibility-sys` (AX API), `objc2`/`objc2-foundation` (AppKit interop — `NSWorkspace`, `NSPasteboard`), `coreaudio-rs` (native mute control)
@@ -161,8 +161,8 @@ src-tauri/
         dictionary.rs       # Dictionary table queries
         snippets.rs         # Snippet table queries
         validation.rs       # Import/export and row validation helpers
-      store.rs              # tauri-plugin-store key constants for settings (NOT api keys — see credentials.rs)
-      credentials.rs        # API key storage: Windows Credential Manager (CredWriteW/CredReadW) / macOS Keychain (security-framework). Never tauri-plugin-store, never SQLite.
+      store.rs              # settings key constants plus backend-owned JSON settings store (NOT api keys; see credentials.rs)
+      credentials.rs        # API key storage: Windows Credential Manager (CredWriteW/CredReadW) / macOS Keychain (security-framework). Never settings.json, never SQLite.
       dictionary.rs         # Dictionary substitution logic
       snippets.rs           # Snippet expansion (pure and instruction-based paths)
     media/
@@ -248,16 +248,16 @@ The `transcription_language` setting (ISO 639-1, default `en`) is sent to Groq/O
 
 Active window process name → profile → system prompt prefix sent to cleanup LLM.
 
-Built-in profiles: `casual`, `formal`, `very_casual`. Profile system prompts live in `src-tauri/src/api/cleanup.rs`. `resolve_profile()` reads `AppMapping` entries (`Vec<AppMapping>`) from `tauri-plugin-store` at pipeline time to map foreground process name → profile name. Lookup key is the lowercase `.exe` name. Falls back to `default_tone` setting if no mapping found.
+Built-in profiles: `casual`, `formal`, `very_casual`. Profile system prompts live in `src-tauri/src/api/cleanup.rs`. `resolve_app_mapping()` reads `AppMapping` entries (`Vec<AppMapping>`) from the backend settings snapshot at pipeline time to map foreground process name → profile name. Lookup key is the lowercase `.exe` name. Falls back to `default_tone` setting if no mapping found.
 
 Store keys (settings, plus the API key *identifiers* used as credential usernames) are defined as constants in `src-tauri/src/data/store.rs` — always use the constant, never a raw string literal. When adding a new setting, update both `store.rs` (Rust constant + validation) and `src/lib/settings.ts` (frontend `SettingsValueMap` type entry).
 
 ## Settings & Configuration
 
 - **Frontend settings registry** lives in `src/lib/settings.ts` as the `SettingsValueMap` TypeScript type. Add new setting entries here.
-- **Backend validation & constants** live in `src-tauri/src/data/store.rs`. All store keys are constants; never use raw string literals.
+- **Backend settings storage, validation & constants** live in `src-tauri/src/data/store.rs` and `src-tauri/src/commands/settings.rs`. All settings keys are constants; never use raw string literals.
 - **Type mirrors**: `transcriptionLanguages.ts` (frontend) mirrors the backend's supported language validation in `store.rs` — keep them synchronized.
-- **API keys do not live in `tauri-plugin-store`.** They are stored in the native OS credential store via `src-tauri/src/data/credentials.rs`: Windows Credential Manager (`CredWriteW`/`CredReadW`/`CredDeleteW`, target `{user}.verenu`) or macOS Keychain (`security-framework` generic-password items). `store.rs`'s `KEY_GROQ`/`KEY_OPENAI`/`KEY_GOOGLE` constants are only used as the credential's username/identifier — the secret value itself never touches `tauri-plugin-store` or SQLite. Commands that check key presence return a boolean status only, never the key itself.
+- **API keys do not live in settings.json.** They are stored in the native OS credential store via `src-tauri/src/data/credentials.rs`: Windows Credential Manager (`CredWriteW`/`CredReadW`/`CredDeleteW`, target `{user}.verenu`) or macOS Keychain (`security-framework` generic-password items). `store.rs`'s `KEY_GROQ`/`KEY_OPENAI`/`KEY_GOOGLE` constants are only used as the credential's username/identifier; the secret value itself never touches settings.json or SQLite. Commands that check key presence return a boolean status only, never the key itself.
 
 ## Prompt Assembly (`api/prompts/`)
 
@@ -285,7 +285,7 @@ Auto-learned dictionary entries whose `mistake` is a plain, non-distinctive word
 - **No bundled browser.** Tauri uses Windows WebView2 — keep this. Never switch to Electron.
 - **RAM target: ~200MB idle.** Profile before adding any heavy JS dependency. See [docs/transcription-ram-reliability-plan.md](docs/transcription-ram-reliability-plan.md) for the prioritized list of known memory and reliability issues in the Rust pipeline.
 - **Text injection is clipboard-based.** `SendInput` character-by-character is unreliable across apps; clipboard + Ctrl+V works everywhere.
-- **API keys never touch the DB, logs, or `tauri-plugin-store`.** They live only in the OS credential store (`data/credentials.rs`). Commands that check key presence return a boolean status, never the key itself.
+- **API keys never touch the DB, logs, or settings.json.** They live only in the OS credential store (`data/credentials.rs`). Commands that check key presence return a boolean status, never the key itself.
 - **MVP scope:** transcription + history + dictionary + snippets + cleanup + hotkey. Insights/stats and IDE integrations are post-MVP.
 
 ## Shared Frontend Components
@@ -319,6 +319,8 @@ The foreground window HWND is captured at the very start of `run_pipeline()`, be
 
 ### Developer mode and verbose logs
 Unlocking Developer mode from About no longer enables verbose logging on its own. The Developer panel now reads the backend logging flag and defaults to `off`; verbose logging must be enabled explicitly there, where the warning is visible. When adding new logs, prefer redacted metadata such as counts, ids, model names, and filenames. Do not log dictated text, raw snippet expansions, raw dictionary terms, full prompts, or full local paths.
+
+Verbose logging is still subject to the privacy rule. Never add `*_full` logs for raw dictation, cleaned text, prompts, clipboard contents, app context text, dictionary values, snippet expansions, or frontend-supplied messages. If debugging needs correlation, log character counts, line counts, stable fingerprints, provider/model ids, and request ids instead.
 
 ### History loading
 Recent transcription history is paginated from the backend. `get_recent()` accepts optional `limit` and `offset` arguments and defaults to `100, 0`; Home appends older pages via `query_recent_page()` instead of loading the entire table every time.

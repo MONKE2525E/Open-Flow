@@ -1,3 +1,169 @@
+use serde_json::{Map, Value};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Manager};
+
+const SETTINGS_FILE: &str = "settings.json";
+
+#[derive(Clone)]
+pub struct SettingsHandle {
+    path: Arc<PathBuf>,
+    values: Arc<Mutex<Map<String, Value>>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SettingsSnapshot {
+    values: Map<String, Value>,
+}
+
+impl SettingsSnapshot {
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.values.get(key)
+    }
+
+    pub fn get_cloned(&self, key: &str) -> Option<Value> {
+        self.values.get(key).cloned()
+    }
+
+}
+
+impl SettingsHandle {
+    pub fn open(app: &AppHandle) -> Result<Self, String> {
+        let path = settings_path(app)?;
+        let values = read_settings_file(&path)?;
+        Ok(Self {
+            path: Arc::new(path),
+            values: Arc::new(Mutex::new(values)),
+        })
+    }
+
+    pub fn snapshot(&self) -> Result<SettingsSnapshot, String> {
+        let values = self
+            .values
+            .lock()
+            .map_err(|_| "Settings lock was poisoned".to_string())?
+            .clone();
+        Ok(SettingsSnapshot { values })
+    }
+
+    pub fn get(&self, key: &str) -> Option<Value> {
+        match self.values.lock() {
+            Ok(values) => values.get(key).cloned(),
+            Err(_) => {
+                log::error!("Settings lock was poisoned when reading key: {key}");
+                None
+            }
+        }
+    }
+
+    pub fn set(&self, key: impl Into<String>, value: Value) -> Result<(), String> {
+        self.values
+            .lock()
+            .map_err(|_| "Settings lock was poisoned".to_string())?
+            .insert(key.into(), value);
+        Ok(())
+    }
+
+    pub fn delete(&self, key: &str) -> Result<Option<Value>, String> {
+        Ok(self
+            .values
+            .lock()
+            .map_err(|_| "Settings lock was poisoned".to_string())?
+            .remove(key))
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        let values = self
+            .values
+            .lock()
+            .map_err(|_| "Settings lock was poisoned".to_string())?;
+        write_settings_file(&self.path, &values)
+    }
+
+    pub fn save_value(&self, key: impl Into<String>, value: Value) -> Result<(), String> {
+        self.set(key, value)?;
+        self.save()
+    }
+}
+
+pub fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .resolve(SETTINGS_FILE, tauri::path::BaseDirectory::AppData)
+        .map_err(|e| e.to_string())
+}
+
+pub fn settings_handle(app: &AppHandle) -> Result<SettingsHandle, String> {
+    if let Some(state) = app.try_state::<SettingsHandle>() {
+        Ok(state.inner().clone())
+    } else {
+        SettingsHandle::open(app)
+    }
+}
+
+pub fn settings_snapshot(app: &AppHandle) -> Result<SettingsSnapshot, String> {
+    settings_handle(app)?.snapshot()
+}
+
+fn read_settings_file(path: &Path) -> Result<Map<String, Value>, String> {
+    if !path.exists() {
+        return Ok(Map::new());
+    }
+    let raw =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read settings.json: {e}"))?;
+    if raw.trim().is_empty() {
+        return Ok(Map::new());
+    }
+    // A corrupted or non-object settings.json must not crash the app at startup.
+    // Back up the bad file so settings can be recovered manually, then start fresh.
+    match serde_json::from_str::<Value>(&raw) {
+        Ok(Value::Object(map)) => Ok(map),
+        Ok(_) => {
+            log::error!("settings.json did not contain a JSON object; backing up and resetting");
+            backup_corrupt_settings(path);
+            Ok(Map::new())
+        }
+        Err(e) => {
+            log::error!("Failed to parse settings.json: {e}; backing up and resetting");
+            backup_corrupt_settings(path);
+            Ok(Map::new())
+        }
+    }
+}
+
+fn backup_corrupt_settings(path: &Path) {
+    let backup_path = path.with_extension("json.bak");
+    // Clear any prior backup first so the rename can't be blocked by a stale
+    // .bak on platforms/filesystems where replace-on-rename isn't guaranteed.
+    let _ = std::fs::remove_file(&backup_path);
+    if let Err(e) = std::fs::rename(path, &backup_path) {
+        // Non-critical startup cleanup — warn and continue rather than fail.
+        log::warn!("Failed to back up corrupt settings.json: {e}");
+    }
+}
+
+fn write_settings_file(path: &Path, values: &Map<String, Value>) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create settings directory: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(values)
+        .map_err(|e| format!("Failed to serialize settings.json: {e}"))?;
+    // Write to a temp file then atomically rename so an interrupted write
+    // (crash, power loss, disk full) can't truncate the live settings.json.
+    let tmp_path = path.with_extension("json.tmp");
+    if let Err(e) = std::fs::write(&tmp_path, json) {
+        // A failed/partial write shouldn't leave a stale temp file behind.
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("Failed to write temporary settings file: {e}"));
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        // Don't leave the temp file behind if the swap failed.
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("Failed to replace settings.json atomically: {e}"));
+    }
+    Ok(())
+}
+
 /// API key names in the store — never expose values to the frontend after write.
 pub const KEY_GROQ: &str = "api_key_groq";
 pub const KEY_OPENAI: &str = "api_key_openai";
@@ -224,7 +390,7 @@ pub fn parse_model_id(id: &str) -> Option<(String, String)> {
     }
 }
 
-pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> PipelineConfig {
+pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
     let str_val = |key: &str| -> String {
         store
             .get(key)
@@ -386,7 +552,7 @@ impl Default for AudioConfig {
     }
 }
 
-pub fn load_audio_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> AudioConfig {
+pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
     let device = store
         .get(MICROPHONE_DEVICE)
         .and_then(|v| v.as_str().map(String::from));
@@ -410,5 +576,58 @@ pub fn load_audio_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> Audio
         noise_reduction,
         mic_gain,
         mute_audio,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn unique_tmp_path() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        p.push(format!("verenu_settings_test_{nanos}.json"));
+        p
+    }
+
+    // Regression test: the atomic write must overwrite an existing settings.json
+    // on every platform (std::fs::rename replaces the destination, including on
+    // Windows). A second save to the same path must succeed, not fail.
+    #[test]
+    fn write_settings_file_overwrites_existing() {
+        let path = unique_tmp_path();
+        let mut first = Map::new();
+        first.insert("hotkey".to_string(), json!(["CtrlLeft", "Space"]));
+        write_settings_file(&path, &first).expect("first save should succeed");
+
+        let mut second = Map::new();
+        second.insert("hotkey".to_string(), json!(["AltLeft", "Space"]));
+        write_settings_file(&path, &second).expect("overwrite save should succeed");
+
+        let reloaded = read_settings_file(&path).expect("read back");
+        assert_eq!(reloaded.get("hotkey"), Some(&json!(["AltLeft", "Space"])));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // A corrupt settings.json must not surface an error; it is backed up and the
+    // app starts from empty defaults.
+    #[test]
+    fn read_settings_file_recovers_from_corrupt_json() {
+        let path = unique_tmp_path();
+        std::fs::write(&path, b"{ not valid json").unwrap();
+
+        let recovered = read_settings_file(&path).expect("corrupt file recovers to defaults");
+        assert!(recovered.is_empty());
+
+        let backup = path.with_extension("json.bak");
+        assert!(backup.exists(), "corrupt file should be backed up");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&backup);
     }
 }
