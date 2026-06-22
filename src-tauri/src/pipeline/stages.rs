@@ -147,10 +147,10 @@ pub(super) async fn stop_and_validate_audio(
         let msg = if duration_ms < MIN_RECORDING_MS {
             "Recording too short"
         } else {
-            "Audio too quiet Ã¢â‚¬â€ check your mic"
+            "Audio too quiet — check your mic"
         };
         log::debug!(
-            "pipeline: rejected Ã¢â‚¬â€ duration={duration_ms}ms rms={rms:.4} min_rms={min_rms:.4}"
+            "pipeline: rejected — duration={duration_ms}ms rms={rms:.4} min_rms={min_rms:.4}"
         );
         reject_with_pill(app, msg);
         return None;
@@ -332,7 +332,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
         }
     }
 
-    // Fast path: entire transcription was a single snippet trigger Ã¢â‚¬â€ skip the LLM.
+    // Fast path: entire transcription was a single snippet trigger — skip the LLM.
     let pure_expansion = if snippet_instructions.is_empty() {
         snippets::try_pure_snippet_expand_from(raw, &db_snippets, db_handle)
     } else {

@@ -96,7 +96,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         if duration_ms < MIN_RECORDING_MS {
             anyhow::bail!("Recording too short");
         }
-        anyhow::bail!("Audio too quiet Ã¢â‚¬â€ check your mic");
+        anyhow::bail!("Audio too quiet — check your mic");
     }
     let wav = bytes::Bytes::from(wav);
 
@@ -167,7 +167,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     };
 
     // Read once, synchronously, as close to the hotkey-release moment as
-    // possible Ã¢â‚¬â€ the rest of the pipeline is async and the user may keep
+    // possible — the rest of the pipeline is async and the user may keep
     // typing (toggling Caps Lock) while it runs.
     let caps_lock_on = crate::core::hotkey::caps_lock_is_on();
 
@@ -257,7 +257,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         stage_transcribe.elapsed().as_millis()
     );
 
-    // Post-transcription hallucination gate Ã¢â‚¬â€ silently drop prompt-echoes and
+    // Post-transcription hallucination gate — silently drop prompt-echoes and
     // known silent-audio artifacts before they reach cleanup or the cache.
     if is_transcription_hallucination(&raw) {
         log::warn!(
@@ -380,7 +380,7 @@ pub async fn retry_transcription_impl(
             "pipeline: retry transcription matched hallucination pattern, dropping raw=\"{}\"",
             preview_text(&raw, 60)
         );
-        anyhow::bail!("Recording was too quiet Ã¢â‚¬â€ nothing was transcribed");
+        anyhow::bail!("Recording was too quiet — nothing was transcribed");
     }
     let Some((final_text, dict_entries, cleanup_cache_key)) = run_cleanup_and_snippets(
         app,

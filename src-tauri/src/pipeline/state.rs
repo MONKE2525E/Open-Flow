@@ -41,7 +41,7 @@ pub(super) fn emit_pipeline_failed(app: &AppHandle) {
 
 /// Returns true if our own process currently owns the foreground window.
 /// Catches the case where the user opened the Verenu main window while
-/// transcribing Ã¢â‚¬â€ if we tried to Ctrl+V / Cmd+V in that state the paste would
+/// transcribing — if we tried to Ctrl+V / Cmd+V in that state the paste would
 /// land in our own WebView and silently disappear.
 pub(super) fn foreground_is_own_process() -> bool {
     #[cfg(windows)]

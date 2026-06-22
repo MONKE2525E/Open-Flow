@@ -95,7 +95,7 @@ pub(super) fn style_scoped_cleanup_cache_key(
 }
 
 pub(super) fn snippet_instructions_fingerprint(instructions: &str) -> u64 {
-    // djb2 hash Ã¢â‚¬â€ deterministic across runs, no external dep
+    // djb2 hash — deterministic across runs, no external dep
     let mut h: u64 = 5381;
     for b in instructions.bytes() {
         h = h.wrapping_shl(5).wrapping_add(h).wrapping_add(b as u64);

@@ -140,8 +140,8 @@ pub(super) async fn inject_text(
         && !crate::commands::check_accessibility_permission(false)
     {
         log::error!(
-            "inject_text: Cmd+V injection attempted but Accessibility is not granted â€” \
-             grant Verenu Accessibility permission in System Settings â†’ Privacy & Security â†’ Accessibility"
+            "inject_text: Cmd+V injection attempted but Accessibility is not granted — \
+             grant Verenu Accessibility permission in System Settings → Privacy & Security → Accessibility"
         );
     }
 
@@ -194,7 +194,7 @@ pub(super) async fn inject_text(
 
     if posted.is_none() {
         return Err(anyhow::anyhow!(
-            "inject_text: failed to synthesise Cmd+V â€” grant Verenu Accessibility permission"
+            "inject_text: failed to synthesise Cmd+V — grant Verenu Accessibility permission"
         ));
     }
 

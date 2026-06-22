@@ -52,7 +52,7 @@ pub(super) fn has_cleanup_key_in_chain(cfg: &store::PipelineConfig) -> bool {
 pub(super) fn trim_err(s: &str) -> String {
     let s = s.trim();
     if s.chars().count() > 120 {
-        format!("{}Ã¢â‚¬Â¦", s.chars().take(117).collect::<String>())
+        format!("{}…", s.chars().take(117).collect::<String>())
     } else {
         s.to_string()
     }
