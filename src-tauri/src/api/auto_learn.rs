@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
-use tauri_plugin_store::StoreExt;
 
 #[cfg(windows)]
 use crate::core::context_probe::{
@@ -29,12 +28,12 @@ use correction::*;
 // the lib build uses none of them directly, so silence the unused-import lint.
 #[allow(unused_imports)]
 use focused_text::*;
-use monitor::*;
 #[allow(unused_imports)]
 pub use focused_text::{
     read_focused_text, read_focused_text_probe, read_injection_context_probe, FocusedTextProbe,
 };
 pub use monitor::start_monitor;
+use monitor::*;
 pub use rejection::{start_cache_rejection_monitor, start_rejection_monitor};
 
 const MONITOR_WINDOW_SECS: u64 = 60;
@@ -59,8 +58,6 @@ const MAX_SPAN_GROWTH_WORDS: usize = 5;
 const MAX_REPLACEMENTS_PER_SPAN: usize = 2;
 const MAX_CHANGED_OPS_PER_SPAN: usize = 4;
 const MIN_CANDIDATE_CONFIDENCE: f64 = 0.45;
-
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WordToken {
@@ -126,10 +123,6 @@ impl StableTextGate {
         self.processed_text.as_deref()
     }
 }
-
-
-
-
 
 #[cfg(test)]
 mod tests {

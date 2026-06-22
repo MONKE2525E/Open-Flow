@@ -29,7 +29,7 @@ pub(super) async fn guard_cleanup_refusal(
         "pipeline: cleanup output looks like a model refusal, retrying once with hardened prompt provider={provider_id} model={model}"
     );
 
-    let cp = cleanup::provider_from_str(provider_id);
+    let cp = ProviderId::from_str(provider_id);
     let retried = cleanup::cleanup(
         expanded,
         cp,
@@ -69,12 +69,12 @@ pub(super) async fn guard_cleanup_refusal(
     }
 }
 pub(super) fn resolve_app_mapping(
-    store: Option<&tauri_plugin_store::Store<tauri::Wry>>,
+    store: Option<&store::SettingsSnapshot>,
     process_name: &str,
 ) -> Option<AppMapping> {
     store.and_then(|s| {
         s.get(store::APP_MAPPINGS)
-            .and_then(|v| serde_json::from_value::<Vec<AppMapping>>(v).ok())
+            .and_then(|v| serde_json::from_value::<Vec<AppMapping>>(v.clone()).ok())
             .and_then(|list| {
                 list.into_iter()
                     .find(|m| m.exe.trim().eq_ignore_ascii_case(process_name))
@@ -163,7 +163,7 @@ pub(super) async fn open_config_and_context(
     app: &AppHandle,
     process_name: &str,
 ) -> Option<(store::PipelineConfig, String, Option<String>)> {
-    let settings_store = match app.store("settings.json") {
+    let settings_store = match store::settings_snapshot(app) {
         Ok(s) => s,
         Err(e) => {
             log::error!("store: {e}");
@@ -210,7 +210,7 @@ pub(super) async fn run_transcription(
         if key.is_empty() {
             continue;
         }
-        let provider = transcription_provider_from_str(&provider_id);
+        let provider = ProviderId::from_str(&provider_id);
         let language = cfg.transcription_language.clone();
         match transcription::transcribe(wav.clone(), provider, &key, &language, &model).await {
             Ok(raw) if !raw.is_empty() => {
@@ -318,19 +318,16 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             .count(),
         cfg.cleanup_enabled
     );
-    if crate::system::logger::is_verbose() {
-        log::debug!("pipeline: cleanup raw_full=\"{}\"", raw);
-        if !snippet_instructions.is_empty() {
-            log::debug!(
-                "pipeline: cleanup snippet_instructions_meta lines={} chars={} fingerprint={}",
-                snippet_instructions
-                    .lines()
-                    .filter(|line| !line.trim().is_empty())
-                    .count(),
-                snippet_instructions.chars().count(),
-                snippet_instructions_fingerprint(&snippet_instructions)
-            );
-        }
+    if crate::system::logger::is_verbose() && !snippet_instructions.is_empty() {
+        log::debug!(
+            "pipeline: cleanup snippet_instructions_meta lines={} chars={} fingerprint={}",
+            snippet_instructions
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count(),
+            snippet_instructions.chars().count(),
+            snippet_instructions_fingerprint(&snippet_instructions)
+        );
     }
 
     // Fast path: entire transcription was a single snippet trigger — skip the LLM.
@@ -431,7 +428,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             if key.is_empty() {
                 continue;
             }
-            let cp = cleanup::provider_from_str(&provider_id);
+            let cp = ProviderId::from_str(&provider_id);
             let custom_template = cfg.cleanup_override_for(&provider_id, &model);
             match cleanup::cleanup(
                 &expanded,

@@ -1,9 +1,8 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_store::StoreExt;
 
-use crate::api::{auto_learn, cleanup, prompts, transcription};
+use crate::api::{auto_learn, cleanup, prompts, transcription, ProviderId};
 use crate::core::{injection, window_context};
 use crate::data::{db, dictionary, snippets, store};
 use crate::media::audio;
@@ -13,44 +12,36 @@ use crate::system::text::is_number_word_token;
 use crate::DbHandle;
 use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 
-mod gates;
-mod pill;
+mod cache;
+mod chains;
 mod finalize;
 #[cfg(any(test, debug_assertions))]
 mod fixture;
-mod cache;
-mod chains;
+mod gates;
+mod pill;
 mod session;
 mod stages;
 mod state;
+use cache::*;
+use chains::*;
+use finalize::{finalize_pipeline_completion, PipelineCompletionContext};
+#[cfg(any(test, debug_assertions))]
+#[allow(unused_imports)]
+pub use fixture::{
+    run_pipeline_fixture, PipelineTestDictionaryEntry, PipelineTestRequest, PipelineTestResult,
+    PipelineTestSnippet,
+};
 use gates::{
     is_transcription_hallucination, normalize_transcription_math_artifacts, preview_text,
     recording_gate_rms, MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
 pub(crate) use pill::{hide_pill, show_pill};
 use pill::{reject_with_pill, show_error_pill};
-use finalize::{finalize_pipeline_completion, PipelineCompletionContext};
-use cache::*;
-use chains::*;
-use stages::*;
 pub use session::*;
+use stages::*;
 pub use state::*;
-#[cfg(any(test, debug_assertions))]
-#[allow(unused_imports)]
-pub use fixture::{
-    run_pipeline_fixture, PipelineTestDictionaryEntry, PipelineTestRequest,
-    PipelineTestResult, PipelineTestSnippet,
-};
-
-
-
-
-
 
 // ---------- pipeline ----------
-
-
-
 
 pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow::Result<String> {
     let session = {
@@ -64,11 +55,11 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     std::thread::spawn(crate::system::volume::unmute);
     show_pill(&app, "processing");
 
-    let settings_store = match app.store("settings.json") {
+    let settings_store = match store::settings_snapshot(&app) {
         Ok(s) => s,
         Err(e) => {
             hide_pill(&app);
-            return Err(anyhow::anyhow!(e.to_string()));
+            return Err(anyhow::anyhow!(e));
         }
     };
     let active_gain = store::load_audio_config(&settings_store).mic_gain;
@@ -114,7 +105,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         if key.is_empty() {
             continue;
         }
-        let provider = transcription_provider_from_str(&provider_id);
+        let provider = ProviderId::from_str(&provider_id);
         let language = cfg.transcription_language.clone();
         match transcription::transcribe(wav.clone(), provider, &key, &language, &model).await {
             Ok(text) if !text.is_empty() => {
@@ -181,7 +172,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
 
     // Keep the quiet-audio gate permissive at high gain. Whisper recordings can
     // still have low post-denoise RMS, even after amplification.
-    let active_gain = match app.store("settings.json") {
+    let active_gain = match store::settings_snapshot(&app) {
         Ok(s) => store::load_audio_config(&s).mic_gain,
         Err(e) => {
             log::warn!("pipeline: failed to load audio config, using default gain: {e}");
@@ -249,9 +240,6 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         raw.chars().count(),
         preview_text(&raw, 140)
     );
-    if crate::system::logger::is_verbose() {
-        log::debug!("pipeline: transcription raw_full=\"{}\"", raw);
-    }
     log::debug!(
         "pipeline: transcription stage_ms={}",
         stage_transcribe.elapsed().as_millis()
@@ -281,9 +269,6 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         preview_text(&final_text, 140),
         dict_entries.len()
     );
-    if crate::system::logger::is_verbose() {
-        log::debug!("pipeline: final_text_full=\"{}\"", final_text);
-    }
     log::debug!(
         "pipeline: cleanup stage_ms={}",
         stage_cleanup.elapsed().as_millis()
@@ -323,10 +308,6 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     );
 }
 
-
-
-
-
 #[cfg(test)]
 mod tests;
 
@@ -360,7 +341,7 @@ pub async fn retry_transcription_impl(
         anyhow::bail!("No retry available");
     };
 
-    let settings_store = app.store("settings.json")?;
+    let settings_store = store::settings_snapshot(app).map_err(anyhow::Error::msg)?;
     let mut cfg = store::load_pipeline_config(&settings_store);
 
     if !has_transcription_key_in_chain(&cfg) {

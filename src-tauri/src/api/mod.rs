@@ -9,6 +9,55 @@ pub mod updater;
 const AUTH_401_PREFIX: &str = "AUTH_401";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProviderId {
+    Groq,
+    OpenAI,
+    Google,
+}
+
+impl ProviderId {
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "openai" => Self::OpenAI,
+            "google" => Self::Google,
+            _ => Self::Groq,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Groq => "groq",
+            Self::OpenAI => "openai",
+            Self::Google => "google",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Groq => "Groq",
+            Self::OpenAI => "OpenAI",
+            Self::Google => "Google",
+        }
+    }
+
+    pub fn whisper_url(self) -> Option<&'static str> {
+        match self {
+            Self::Groq => Some("https://api.groq.com/openai/v1/audio/transcriptions"),
+            Self::OpenAI => Some("https://api.openai.com/v1/audio/transcriptions"),
+            Self::Google => None,
+        }
+    }
+
+    pub fn cleanup_url(self) -> Option<&'static str> {
+        match self {
+            Self::Groq => Some("https://api.groq.com/openai/v1/chat/completions"),
+            Self::OpenAI => Some("https://api.openai.com/v1/chat/completions"),
+            Self::Google => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthErrorCategory {
     InvalidOrRevokedKey,
     ScopeOrAccountRestriction,

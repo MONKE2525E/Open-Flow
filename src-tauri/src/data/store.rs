@@ -1,3 +1,133 @@
+use serde_json::{Map, Value};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Manager};
+
+const SETTINGS_FILE: &str = "settings.json";
+
+#[derive(Clone)]
+pub struct SettingsHandle {
+    path: Arc<PathBuf>,
+    values: Arc<Mutex<Map<String, Value>>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SettingsSnapshot {
+    values: Map<String, Value>,
+}
+
+impl SettingsSnapshot {
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.values.get(key)
+    }
+
+    pub fn get_cloned(&self, key: &str) -> Option<Value> {
+        self.values.get(key).cloned()
+    }
+
+}
+
+impl SettingsHandle {
+    pub fn open(app: &AppHandle) -> Result<Self, String> {
+        let path = settings_path(app)?;
+        let values = read_settings_file(&path)?;
+        Ok(Self {
+            path: Arc::new(path),
+            values: Arc::new(Mutex::new(values)),
+        })
+    }
+
+    pub fn snapshot(&self) -> Result<SettingsSnapshot, String> {
+        let values = self
+            .values
+            .lock()
+            .map_err(|_| "Settings lock was poisoned".to_string())?
+            .clone();
+        Ok(SettingsSnapshot { values })
+    }
+
+    pub fn get(&self, key: &str) -> Option<Value> {
+        self.values
+            .lock()
+            .ok()
+            .and_then(|values| values.get(key).cloned())
+    }
+
+    pub fn set(&self, key: impl Into<String>, value: Value) -> Result<(), String> {
+        self.values
+            .lock()
+            .map_err(|_| "Settings lock was poisoned".to_string())?
+            .insert(key.into(), value);
+        Ok(())
+    }
+
+    pub fn delete(&self, key: &str) -> Result<Option<Value>, String> {
+        Ok(self
+            .values
+            .lock()
+            .map_err(|_| "Settings lock was poisoned".to_string())?
+            .remove(key))
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        let values = self
+            .values
+            .lock()
+            .map_err(|_| "Settings lock was poisoned".to_string())?;
+        write_settings_file(&self.path, &values)
+    }
+
+    pub fn save_value(&self, key: impl Into<String>, value: Value) -> Result<(), String> {
+        self.set(key, value)?;
+        self.save()
+    }
+}
+
+pub fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .resolve(SETTINGS_FILE, tauri::path::BaseDirectory::AppData)
+        .map_err(|e| e.to_string())
+}
+
+pub fn settings_handle(app: &AppHandle) -> Result<SettingsHandle, String> {
+    if let Some(state) = app.try_state::<SettingsHandle>() {
+        Ok(state.inner().clone())
+    } else {
+        SettingsHandle::open(app)
+    }
+}
+
+pub fn settings_snapshot(app: &AppHandle) -> Result<SettingsSnapshot, String> {
+    settings_handle(app)?.snapshot()
+}
+
+fn read_settings_file(path: &Path) -> Result<Map<String, Value>, String> {
+    if !path.exists() {
+        return Ok(Map::new());
+    }
+    let raw =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read settings.json: {e}"))?;
+    if raw.trim().is_empty() {
+        return Ok(Map::new());
+    }
+    match serde_json::from_str::<Value>(&raw)
+        .map_err(|e| format!("Failed to parse settings.json: {e}"))?
+    {
+        Value::Object(map) => Ok(map),
+        _ => Err("settings.json must contain a JSON object".to_string()),
+    }
+}
+
+fn write_settings_file(path: &Path, values: &Map<String, Value>) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create settings directory: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(values)
+        .map_err(|e| format!("Failed to serialize settings.json: {e}"))?;
+    std::fs::write(path, json).map_err(|e| format!("Failed to write settings.json: {e}"))
+}
+
 /// API key names in the store — never expose values to the frontend after write.
 pub const KEY_GROQ: &str = "api_key_groq";
 pub const KEY_OPENAI: &str = "api_key_openai";
@@ -224,7 +354,7 @@ pub fn parse_model_id(id: &str) -> Option<(String, String)> {
     }
 }
 
-pub fn load_pipeline_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> PipelineConfig {
+pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
     let str_val = |key: &str| -> String {
         store
             .get(key)
@@ -386,7 +516,7 @@ impl Default for AudioConfig {
     }
 }
 
-pub fn load_audio_config(store: &tauri_plugin_store::Store<tauri::Wry>) -> AudioConfig {
+pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
     let device = store
         .get(MICROPHONE_DEVICE)
         .and_then(|v| v.as_str().map(String::from));

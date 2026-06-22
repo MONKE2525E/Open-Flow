@@ -1,21 +1,16 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use super::gemini_types::{GeminiGenerateReq, GeminiReqContent, GeminiReqPart};
 use super::prompts::{
     cleanup_max_output_tokens, gemini_generation_config, get_cleanup_prompt_with_extras,
 };
-
-#[derive(Clone, Debug)]
-pub enum CleanupProvider {
-    Groq,
-    OpenAI,
-    Google,
-}
+use super::ProviderId;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cleanup(
     text: &str,
-    provider: CleanupProvider,
+    provider: ProviderId,
     api_key: &str,
     model: &str,
     profile: &str,
@@ -24,7 +19,7 @@ pub async fn cleanup(
     app_context: Option<&str>,
     custom_template: Option<&str>,
 ) -> Result<String> {
-    let provider_id = provider_id(&provider);
+    let provider_id = provider.as_str();
     #[cfg(any(test, debug_assertions))]
     if let Some(result) = crate::testing::resolve_provider_fixture("cleanup", provider_id, model) {
         return result;
@@ -54,67 +49,29 @@ pub async fn cleanup(
         app_context.is_some(),
         custom_template.is_some()
     );
-    if crate::system::logger::is_verbose() {
-        log::debug!("cleanup: input_full=\"{}\"", text);
-        log::debug!("cleanup: prompt_full=\"{}\"", prompt);
-        if !snippet_instructions.is_empty() {
-            log::debug!(
-                "cleanup: snippet_rules_meta lines={} chars={}",
-                snippet_instructions
-                    .lines()
-                    .filter(|line| !line.trim().is_empty())
-                    .count(),
-                snippet_instructions.chars().count()
-            );
-        }
-        if let Some(ctx) = app_context {
-            log::debug!("cleanup: app_context_full=\"{}\"", ctx);
-        }
+    if crate::system::logger::is_verbose() && !snippet_instructions.is_empty() {
+        log::debug!(
+            "cleanup: snippet_rules_meta lines={} chars={}",
+            snippet_instructions
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count(),
+            snippet_instructions.chars().count()
+        );
     }
-    match provider {
-        CleanupProvider::Groq => {
-            openai_compat(
-                text,
-                api_key,
-                "https://api.groq.com/openai/v1/chat/completions",
-                "Groq",
-                model,
-                &prompt,
-                max_output_tokens,
-            )
-            .await
-        }
-        CleanupProvider::OpenAI => {
-            openai_compat(
-                text,
-                api_key,
-                "https://api.openai.com/v1/chat/completions",
-                "OpenAI",
-                model,
-                &prompt,
-                max_output_tokens,
-            )
-            .await
-        }
-        CleanupProvider::Google => {
-            google_cleanup(text, api_key, &prompt, model, max_output_tokens).await
-        }
-    }
-}
-
-fn provider_id(provider: &CleanupProvider) -> &'static str {
-    match provider {
-        CleanupProvider::Groq => "groq",
-        CleanupProvider::OpenAI => "openai",
-        CleanupProvider::Google => "google",
-    }
-}
-
-pub fn provider_from_str(s: &str) -> CleanupProvider {
-    match s {
-        "openai" => CleanupProvider::OpenAI,
-        "google" => CleanupProvider::Google,
-        _ => CleanupProvider::Groq,
+    if let Some(url) = provider.cleanup_url() {
+        openai_compat(
+            text,
+            api_key,
+            url,
+            provider.label(),
+            model,
+            &prompt,
+            max_output_tokens,
+        )
+        .await
+    } else {
+        google_cleanup(text, api_key, &prompt, model, max_output_tokens).await
     }
 }
 
@@ -239,29 +196,7 @@ async fn openai_compat(
         "cleanup: openai_compat parsed chars={}",
         output.chars().count()
     );
-    if crate::system::logger::is_verbose() {
-        log::debug!("cleanup: openai_compat output_full=\"{}\"", output);
-    }
     Ok(output)
-}
-
-#[derive(Serialize)]
-struct GoogleCleanupReq {
-    contents: Vec<GContent>,
-    #[serde(rename = "systemInstruction")]
-    system_instruction: GContent,
-    #[serde(rename = "generationConfig")]
-    generation_config: super::gemini_types::GeminiGenConfig,
-}
-
-#[derive(Serialize)]
-struct GContent {
-    parts: Vec<GPart>,
-}
-
-#[derive(Serialize)]
-struct GPart {
-    text: String,
 }
 
 async fn google_cleanup(
@@ -341,9 +276,6 @@ async fn google_cleanup(
         .map(|t| t.trim().to_owned())
         .ok_or_else(|| anyhow::anyhow!("No candidates or parts in Google response"))?;
     log::debug!("cleanup: google parsed chars={}", output.chars().count());
-    if crate::system::logger::is_verbose() {
-        log::debug!("cleanup: google output_full=\"{}\"", output);
-    }
     Ok(output)
 }
 
@@ -370,16 +302,18 @@ fn build_google_cleanup_request(
     prompt: &str,
     model: &str,
     max_output_tokens: u32,
-) -> GoogleCleanupReq {
-    GoogleCleanupReq {
-        contents: vec![GContent {
-            parts: vec![GPart {
-                text: format!("<raw_dictation>\n{text}\n</raw_dictation>"),
+) -> GeminiGenerateReq {
+    GeminiGenerateReq {
+        contents: vec![GeminiReqContent {
+            parts: vec![GeminiReqPart {
+                inline_data: None,
+                text: Some(format!("<raw_dictation>\n{text}\n</raw_dictation>")),
             }],
         }],
-        system_instruction: GContent {
-            parts: vec![GPart {
-                text: prompt.to_owned(),
+        system_instruction: GeminiReqContent {
+            parts: vec![GeminiReqPart {
+                inline_data: None,
+                text: Some(prompt.to_owned()),
             }],
         },
         generation_config: gemini_generation_config(model, max_output_tokens),

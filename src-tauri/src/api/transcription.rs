@@ -4,13 +4,7 @@ use reqwest::multipart;
 
 use super::gemini_types::GeminiResp;
 use super::prompts::{gemini_generation_config, get_transcription_prompt};
-
-#[derive(Clone, Debug)]
-pub enum Provider {
-    Groq,
-    OpenAI,
-    Google,
-}
+use super::ProviderId;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct WhisperFormFields {
@@ -20,43 +14,17 @@ struct WhisperFormFields {
     prompt: String,
 }
 
-/// Single Gemini call that both transcribes the audio and applies the cleanup
-/// profile. Used when Google is selected for both transcription and cleanup so
-/// we only pay one API round trip instead of two.
-#[expect(
-    dead_code,
-    reason = "Planned Google fast path, but pipeline still needs raw text for history"
-)]
-pub async fn transcribe_and_cleanup_gemini(
-    wav: Bytes,
-    api_key: &str,
-    profile_prompt: &str,
-) -> Result<String> {
-    let instruction = format!(
-        "Transcribe this audio, then immediately apply the following formatting rules to your \
-         transcription output.\n\n{profile_prompt}\n\nReturn ONLY the final cleaned text, \
-         no commentary, no quotes, no explanation."
-    );
-    transcribe_gemini_with_prompt(wav, api_key, &instruction, "gemini-3.5-flash").await
-}
-
 pub async fn transcribe(
     wav: Bytes,
-    provider: Provider,
+    provider: ProviderId,
     api_key: &str,
     language: &str,
     model: &str,
 ) -> Result<String> {
     #[cfg(any(test, debug_assertions))]
-    if let Some(result) = crate::testing::resolve_provider_fixture(
-        "transcription",
-        match &provider {
-            Provider::Groq => "groq",
-            Provider::OpenAI => "openai",
-            Provider::Google => "google",
-        },
-        model,
-    ) {
+    if let Some(result) =
+        crate::testing::resolve_provider_fixture("transcription", provider.as_str(), model)
+    {
         return result;
     }
 
@@ -66,34 +34,19 @@ pub async fn transcribe(
         language,
         wav.len()
     );
-    match provider {
-        Provider::Groq => {
-            transcribe_whisper(
-                wav,
-                api_key,
-                "https://api.groq.com/openai/v1/audio/transcriptions",
-                "Groq",
-                "groq",
-                model,
-                language,
-            )
-            .await
-        }
-
-        Provider::OpenAI => {
-            transcribe_whisper(
-                wav,
-                api_key,
-                "https://api.openai.com/v1/audio/transcriptions",
-                "OpenAI",
-                "openai",
-                model,
-                language,
-            )
-            .await
-        }
-
-        Provider::Google => transcribe_gemini(wav, api_key, language, model).await,
+    if let Some(url) = provider.whisper_url() {
+        transcribe_whisper(
+            wav,
+            api_key,
+            url,
+            provider.label(),
+            provider.as_str(),
+            model,
+            language,
+        )
+        .await
+    } else {
+        transcribe_gemini(wav, api_key, language, model).await
     }
 }
 

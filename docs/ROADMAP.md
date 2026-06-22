@@ -176,7 +176,7 @@ LaunchServices caches these and keeps them visible even after the bundles are mo
 
 These are educated guesses at problems that are likely to exist in the fully installed build but have not yet been confirmed:
 
-- **Keychain access differs between dev and production builds**: API keys are stored via `tauri-plugin-store` / macOS Keychain. If the bundle identifier or code-signing team changes between a dev build and the production build, Keychain access may fail silently or prompt with unexpected dialogs. Relevant: `src-tauri/src/data/credentials.rs`.
+- **Keychain access differs between dev and production builds**: API keys are stored via macOS Keychain. If the bundle identifier or code-signing team changes between a dev build and the production build, Keychain access may fail silently or prompt with unexpected dialogs. Relevant: `src-tauri/src/data/credentials.rs`.
 - **Pill window may not appear correctly without Accessibility/Screen Recording permission**: The always-on-top pill window uses a high window level. On macOS, windows above a certain level may require Screen Recording permission to be visible over other apps' content. Relevant: `src-tauri/tauri.conf.json`, `src/PillApp.svelte`.
 - **Text injection (Cmd+V) may fail silently**: `core/injection/macos.rs` on macOS uses `CGEventCreateKeyboardEvent` to synthesize Cmd+V. This requires Accessibility permission (same as the hotkey tap). If Accessibility was denied or the tap setup failed (see macOS-2), injection will fail with no visible error. Relevant: `src-tauri/src/core/injection/mod.rs`.
 
