@@ -429,7 +429,9 @@ pub async fn save_setting(
     } else {
         None
     };
-    store::settings_handle(&app)?.save_value(key.clone(), value)?;
+    let settings = store::settings_handle(&app)?;
+    let key_clone = key.clone();
+    run_blocking("save_setting", move || settings.save_value(key_clone, value)).await?;
 
     if key == store::APPEARANCE_MODE {
         crate::apply_runtime_icons(&app, None);

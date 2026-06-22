@@ -63,7 +63,11 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
         return Err(format!("Unrecognized key code: {key2}"));
     }
     crate::core::hotkey::update_keys(vk1, vk2);
-    store::settings_handle(&app)?.save_value(store::HOTKEY, serde_json::json!([key1, key2]))
+    let settings = store::settings_handle(&app)?;
+    run_blocking("save_hotkey", move || {
+        settings.save_value(store::HOTKEY, serde_json::json!([key1, key2]))
+    })
+    .await
 }
 
 // ---------- autostart ----------
@@ -220,7 +224,11 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
         .map_err(|e| e.to_string())??;
     }
 
-    store::settings_handle(&_app)?.save_value(store::AUTOSTART_ENABLED, serde_json::json!(enabled))
+    let settings = store::settings_handle(&_app)?;
+    run_blocking("set_autostart", move || {
+        settings.save_value(store::AUTOSTART_ENABLED, serde_json::json!(enabled))
+    })
+    .await
 }
 
 #[cfg(target_os = "macos")]

@@ -203,7 +203,12 @@ fn redact_quoted_field_value_ci(input: &str, token: &str) -> String {
             }
         }
 
-        cursor = value_start.saturating_add(1);
+        // Advance by a whole char so cursor stays on a UTF-8 boundary.
+        cursor = remaining[value_start..]
+            .char_indices()
+            .nth(1)
+            .map(|(idx, _)| value_start + idx)
+            .unwrap_or(remaining.len());
     }
 
     remaining
