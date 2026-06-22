@@ -47,10 +47,13 @@ impl SettingsHandle {
     }
 
     pub fn get(&self, key: &str) -> Option<Value> {
-        self.values
-            .lock()
-            .ok()
-            .and_then(|values| values.get(key).cloned())
+        match self.values.lock() {
+            Ok(values) => values.get(key).cloned(),
+            Err(_) => {
+                log::error!("Settings lock was poisoned when reading key: {key}");
+                None
+            }
+        }
     }
 
     pub fn set(&self, key: impl Into<String>, value: Value) -> Result<(), String> {
@@ -146,8 +149,12 @@ fn write_settings_file(path: &Path, values: &Map<String, Value>) -> Result<(), S
     let tmp_path = path.with_extension("json.tmp");
     std::fs::write(&tmp_path, json)
         .map_err(|e| format!("Failed to write temporary settings file: {e}"))?;
-    std::fs::rename(&tmp_path, path)
-        .map_err(|e| format!("Failed to replace settings.json atomically: {e}"))
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        // Don't leave the temp file behind if the swap failed.
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("Failed to replace settings.json atomically: {e}"));
+    }
+    Ok(())
 }
 
 /// API key names in the store — never expose values to the frontend after write.
