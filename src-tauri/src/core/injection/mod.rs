@@ -104,6 +104,40 @@ mod tests {
     }
 
     #[test]
+    fn sniff_verification_gate_only_for_caret_local_mid_sentence() {
+        use crate::core::text_context::SentenceContext;
+        // The one case that needs verification: caps on, caret-local, mid-sentence.
+        assert!(caret_local_needs_sniff_verification(
+            true,
+            ContextProbeSource::CaretLocal,
+            SentenceContext::MidSentence,
+        ));
+        // A caret read that already says "new sentence" capitalizes — no sniff.
+        assert!(!caret_local_needs_sniff_verification(
+            true,
+            ContextProbeSource::CaretLocal,
+            SentenceContext::NewSentence,
+        ));
+        // Empty-field and history sources are already trustworthy.
+        assert!(!caret_local_needs_sniff_verification(
+            true,
+            ContextProbeSource::EmptyField,
+            SentenceContext::MidSentence,
+        ));
+        assert!(!caret_local_needs_sniff_verification(
+            true,
+            ContextProbeSource::HistoryFallback,
+            SentenceContext::MidSentence,
+        ));
+        // Contextual caps off: never sniff.
+        assert!(!caret_local_needs_sniff_verification(
+            false,
+            ContextProbeSource::CaretLocal,
+            SentenceContext::MidSentence,
+        ));
+    }
+
+    #[test]
     fn uppercase_first_word_handles_prefix_symbols() {
         assert_eq!(uppercase_first_word("hello world"), "Hello world");
         assert_eq!(uppercase_first_word("\"hello world"), "\"Hello world");
@@ -468,6 +502,22 @@ fn fallback_probe_from_history(target_hwnd: usize) -> Option<InjectionContextPro
     }
 }
 
+/// Whether a UIA caret-local read that classified as mid-sentence should be
+/// double-checked with a clipboard sniff before lowercasing. Only caret-local
+/// reads are verified: that's the source that can return phantom text before the
+/// caret in a visually empty box (Chromium/Electron). Other sources are either
+/// already trustworthy (history) or already a new sentence (empty field).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn caret_local_needs_sniff_verification(
+    contextual_caps: bool,
+    source: ContextProbeSource,
+    context: crate::core::text_context::SentenceContext,
+) -> bool {
+    contextual_caps
+        && source == ContextProbeSource::CaretLocal
+        && context == crate::core::text_context::SentenceContext::MidSentence
+}
+
 fn apply_probe_adjustments(
     text: &str,
     contextual_caps: bool,
@@ -536,7 +586,41 @@ fn apply_probe_adjustments(
         adjusted = format!(" {adjusted}");
     }
 
+    // Redacted diagnostics for capitalization decisions (issue follow-up: CLI /
+    // terminal inputs being read as mid-sentence). Logs the control identity and
+    // the *class* of the last char before the caret — never the tail content.
+    log::debug!(
+        "injection: caps decision control_type={} probe_source={} context={} prefix={} tail_len={} tail_signal={} case_decision={}",
+        probe.control_type,
+        probe.source.as_str(),
+        probe.context.as_str(),
+        prefix_class.as_str(),
+        probe.context_tail.chars().count(),
+        context_tail_signal(&probe.context_tail),
+        case_decision.as_str(),
+    );
+
     (adjusted, context_kind, case_decision)
+}
+
+/// Redacted classification of the last meaningful character before the caret,
+/// for diagnosing contextual-capitalization decisions. Returns only a category
+/// label, never the tail content.
+fn context_tail_signal(tail: &str) -> &'static str {
+    match tail.chars().rev().find(|c| !c.is_whitespace()) {
+        None => {
+            if tail.contains('\n') || tail.contains('\r') {
+                "newline_only"
+            } else {
+                "empty_or_ws"
+            }
+        }
+        Some('.') | Some('!') | Some('?') => "sentence_end",
+        Some(ch) if ch.is_alphanumeric() => "alnum",
+        Some(',') | Some(';') | Some(':') | Some('-') | Some('–') | Some('—') | Some('/')
+        | Some('\\') => "soft_punct",
+        Some(_) => "other",
+    }
 }
 #[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
 pub fn reset_injection_history() {

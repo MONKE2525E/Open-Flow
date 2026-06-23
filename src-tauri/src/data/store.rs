@@ -25,6 +25,12 @@ impl SettingsSnapshot {
         self.values.get(key).cloned()
     }
 
+    #[cfg(test)]
+    pub fn from_pairs(pairs: impl IntoIterator<Item = (String, Value)>) -> Self {
+        SettingsSnapshot {
+            values: pairs.into_iter().collect(),
+        }
+    }
 }
 
 impl SettingsHandle {
