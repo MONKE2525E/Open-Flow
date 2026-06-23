@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::window_geometry::WindowTarget;
 
 // ---------- recording session helpers ----------
 
@@ -150,7 +151,7 @@ pub fn spawn_level_emitter(
 }
 pub(super) fn take_pipeline_session(
     state: &SharedState,
-) -> Option<(audio::RecordingSession, usize)> {
+) -> Option<(audio::RecordingSession, WindowTarget)> {
     let mut st = match lock_state(state) {
         Ok(st) => st,
         Err(e) => {
@@ -159,5 +160,5 @@ pub(super) fn take_pipeline_session(
         }
     };
     let session = st.session.take()?;
-    Some((session, st.target_hwnd))
+    Some((session, st.target))
 }

@@ -1,4 +1,6 @@
 use super::*;
+use crate::core::window_geometry::WindowTarget;
+use crate::pipeline::pill_position::PillPlacement;
 
 pub(super) const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
 // ---------- shared state ----------
@@ -7,7 +9,9 @@ pub struct AppState {
     pub session: Option<audio::RecordingSession>,
     pub starting: bool,
     pub handless: bool,
-    pub target_hwnd: usize,
+    pub target: WindowTarget,
+    pub pill_placement: Option<PillPlacement>,
+    pub pill_placement_stale: bool,
     pub retry_capture: Option<RetryCapture>,
 }
 
@@ -18,7 +22,7 @@ pub struct RetryCapture {
     pub wav: bytes::Bytes,
     pub captured_at: std::time::Instant,
     pub duration_ms: u64,
-    pub target_hwnd: usize,
+    pub target: WindowTarget,
     pub process_name: String,
     pub profile: String,
     pub app_context: Option<String>,
@@ -82,4 +86,4 @@ pub(super) fn hwnd_is_own_process(hwnd: usize) -> bool {
     {
         false
     }
-}
+}

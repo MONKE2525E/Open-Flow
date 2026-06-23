@@ -1,6 +1,7 @@
 //! Microphone + recording/calibration session control commands.
 
 use super::*;
+use crate::core::window_geometry::{capture_webview_center, WindowTarget};
 
 fn lock_state<'a>(
     state: &'a tauri::State<'_, SharedState>,
@@ -8,6 +9,16 @@ fn lock_state<'a>(
     state
         .lock()
         .map_err(|_| "Recording state lock was poisoned".to_string())
+}
+
+fn capture_in_app_target(app: &AppHandle) -> WindowTarget {
+    let mut target = WindowTarget::capture_display_only();
+    if let Some(window) = app.get_webview_window("main") {
+        if let Some(display_point) = capture_webview_center(&window) {
+            target.display_point = Some(display_point);
+        }
+    }
+    target
 }
 // ---------- microphone ----------
 
@@ -35,6 +46,13 @@ pub async fn start_input_recording(
             return Err("Already recording".to_string());
         }
         st.starting = true;
+    }
+
+    let target = capture_in_app_target(&app);
+    {
+        let mut st = lock_state(&state)?;
+        st.target = target;
+        st.pill_placement_stale = true;
     }
 
     let state_clone = state.inner().clone();
@@ -81,7 +99,13 @@ pub async fn start_setup_try_recording(
             return Err("Already recording".to_string());
         }
         st.starting = true;
-        st.target_hwnd = 0;
+    }
+
+    let target = capture_in_app_target(&app);
+    {
+        let mut st = lock_state(&state)?;
+        st.target = target;
+        st.pill_placement_stale = true;
     }
 
     let state_clone = state.inner().clone();
@@ -145,6 +169,13 @@ pub async fn start_calibration_monitoring(
             return Err("Already recording".to_string());
         }
         st.starting = true;
+    }
+
+    let target = capture_in_app_target(&app);
+    {
+        let mut st = lock_state(&state)?;
+        st.target = target;
+        st.pill_placement_stale = true;
     }
 
     let state_clone = state.inner().clone();

@@ -19,6 +19,7 @@ mod finalize;
 mod fixture;
 mod gates;
 mod pill;
+mod pill_position;
 mod session;
 mod stages;
 mod state;
@@ -152,7 +153,7 @@ pub async fn run_pipeline_event_only(app: AppHandle, state: SharedState) {
 
 async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_only: bool) {
     let started_at = std::time::Instant::now();
-    let Some((session, target_hwnd)) = take_pipeline_session(&state) else {
+    let Some((session, target)) = take_pipeline_session(&state) else {
         log::debug!("pipeline: no session - recording never started or was already consumed");
         return;
     };
@@ -166,12 +167,12 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // into (captured at record-start), not the live foreground at release — the
     // two can diverge (handsfree, focus shifts) and that divergence let one
     // app's mapping style leak into another app. Issue #144. Falls back to the
-    // live foreground only when the captured hwnd is unavailable (null/0).
-    let process_name = window_context::get_process_name_for_hwnd(target_hwnd)
+    // live foreground only when the captured target id is unavailable (null/0).
+    let process_name = window_context::get_process_name_for_hwnd(target.id)
         .or_else(window_context::get_active_process_name)
         .unwrap_or_else(|| "unknown".into())
         .to_lowercase();
-    log::info!("pipeline: start process={process_name} target_hwnd={target_hwnd}");
+    log::info!("pipeline: start target_id={}", target.id);
 
     std::thread::spawn(crate::system::volume::unmute);
     show_pill(&app, "processing");
@@ -215,8 +216,8 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         profile
     );
     log::debug!(
-        "pipeline: context resolved app_context={} stage_ms={}",
-        app_context.as_deref().unwrap_or("none"),
+        "pipeline: context resolved app_context_present={} stage_ms={}",
+        app_context.is_some(),
         stage_config.elapsed().as_millis()
     );
 
@@ -226,7 +227,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             wav: wav.clone(),
             captured_at: retry_captured_at,
             duration_ms,
-            target_hwnd,
+            target,
             process_name: process_name.clone(),
             profile: profile.clone(),
             app_context: app_context.clone(),
@@ -290,7 +291,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             dict_entries: &dict_entries,
             duration_ms,
             api_used: &api_used,
-            target_hwnd,
+            target_hwnd: target.id,
             cfg: &cfg,
             profile: &profile,
             process_name,
@@ -321,7 +322,6 @@ pub async fn retry_transcription_impl(
     app: &AppHandle,
     state: &SharedState,
 ) -> anyhow::Result<db::RecentEntry> {
-    show_pill(app, "processing");
     let mut retry_expired = false;
     let capture = {
         let mut st = lock_state(state)?;
@@ -346,6 +346,13 @@ pub async fn retry_transcription_impl(
         hide_pill(app);
         anyhow::bail!("No retry available");
     };
+
+    capture.target = capture.target.refreshed();
+    if let Ok(mut st) = lock_state(state) {
+        st.target = capture.target;
+        st.pill_placement_stale = true;
+    }
+    show_pill(app, "processing");
 
     let settings_store = store::settings_snapshot(app).map_err(anyhow::Error::msg)?;
     let mut cfg = store::load_pipeline_config(&settings_store);
@@ -390,7 +397,7 @@ pub async fn retry_transcription_impl(
             dict_entries: &dict_entries,
             duration_ms: capture.duration_ms,
             api_used: &api_used,
-            target_hwnd: capture.target_hwnd,
+            target_hwnd: capture.target.id,
             cfg: &cfg,
             profile: &capture.profile,
             process_name: capture.process_name,
