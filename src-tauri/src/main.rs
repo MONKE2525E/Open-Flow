@@ -10,6 +10,7 @@ mod system;
 #[cfg(any(test, debug_assertions))]
 mod testing;
 
+use crate::core::window_geometry::WindowTarget;
 use crate::data::db;
 use crate::pipeline::{hide_pill, start_recording_session, AppState, SharedState};
 
@@ -131,7 +132,9 @@ fn main() {
         session: None,
         starting: false,
         handless: false,
-        target_hwnd: 0,
+        target: WindowTarget::default(),
+        pill_placement: None,
+        pill_placement_stale: false,
         retry_capture: None,
     }));
 
@@ -166,8 +169,10 @@ fn main() {
                                 #[cfg(target_os = "macos")]
                                 let (k1, k2) = if !crate::core::hotkey::is_hotkey_available(k1, k2)
                                 {
-                                    let _ = settings
-                                        .set(crate::data::store::HOTKEY, serde_json::json!(["AltLeft", "Space"]));
+                                    let _ = settings.set(
+                                        crate::data::store::HOTKEY,
+                                        serde_json::json!(["AltLeft", "Space"]),
+                                    );
                                     if let Err(e) = settings.save() {
                                         log::warn!(
                                             "Failed to save migrated hotkey to settings.json: {e:?}"
@@ -707,9 +712,10 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         // Capture the target window before recording starts so
                         // inject_text can restore focus to it after the pipeline,
                         // even if the user switched windows during transcription.
-                        let hwnd = crate::core::window_context::get_foreground_hwnd();
+                        let target = WindowTarget::capture_foreground();
                         if let Some(mut st) = lock_app_state(&state_hk) {
-                            st.target_hwnd = hwnd;
+                            st.target = target;
+                            st.pill_placement_stale = true;
                         }
                         start_recording_session(&app_hk, &state_hk, "recording", false);
                     }
@@ -742,9 +748,10 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             state_hk.clone(),
                         ));
                     } else if !has_session {
-                        let hwnd = crate::core::window_context::get_foreground_hwnd();
+                        let target = WindowTarget::capture_foreground();
                         if let Some(mut st) = lock_app_state(&state_hk) {
-                            st.target_hwnd = hwnd;
+                            st.target = target;
+                            st.pill_placement_stale = true;
                         }
                         start_recording_session(&app_hk, &state_hk, "handsfree", true);
                         core::hotkey::set_handless_active(true);

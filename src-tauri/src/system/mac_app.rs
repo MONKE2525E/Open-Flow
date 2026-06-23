@@ -40,63 +40,6 @@ unsafe impl objc2::Encode for NSApplicationActivationPolicy {
     const ENCODING: objc2::Encoding = isize::ENCODING;
 }
 
-// CGRect-compatible structs for msg_send! return values (64-bit macOS).
-// AppKit returns CGRect here; objc2 checks the exact type code at runtime, so
-// we mirror the CoreGraphics encodings rather than the NS* aliases.
-#[repr(C)]
-#[derive(Copy, Clone, Default)]
-struct MacPoint {
-    x: f64,
-    y: f64,
-}
-#[repr(C)]
-#[derive(Copy, Clone, Default)]
-struct MacSize {
-    width: f64,
-    height: f64,
-}
-#[repr(C)]
-#[derive(Copy, Clone, Default)]
-struct MacRect {
-    origin: MacPoint,
-    size: MacSize,
-}
-
-unsafe impl objc2::Encode for MacPoint {
-    const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
-        "CGPoint",
-        &[objc2::Encoding::Double, objc2::Encoding::Double],
-    );
-}
-unsafe impl objc2::Encode for MacSize {
-    const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
-        "CGSize",
-        &[objc2::Encoding::Double, objc2::Encoding::Double],
-    );
-}
-unsafe impl objc2::Encode for MacRect {
-    const ENCODING: objc2::Encoding =
-        objc2::Encoding::Struct("CGRect", &[MacPoint::ENCODING, MacSize::ENCODING]);
-}
-
-/// Height of the Dock in logical points when it is positioned at the bottom of
-/// the screen. Returns 0.0 if the Dock is on a side or auto-hidden, in which
-/// case the caller should use its own fallback gap.
-pub fn dock_height_points() -> f64 {
-    autoreleasepool(|_| unsafe {
-        let main: *mut AnyObject = msg_send![class!(NSScreen), mainScreen];
-        if main.is_null() {
-            return 0.0;
-        }
-        let frame: MacRect = msg_send![main, frame];
-        let visible: MacRect = msg_send![main, visibleFrame];
-        // NSScreen uses a bottom-left origin (Y increases upward).
-        // When the Dock is at the bottom, visibleFrame.origin.y > frame.origin.y
-        // by exactly the Dock height. Side-positioned or hidden Dock → no Y inset.
-        (visible.origin.y - frame.origin.y).max(0.0)
-    })
-}
-
 /// Apply the current bundled PNG as the macOS application icon at runtime.
 /// This sidesteps Dock/LaunchServices caching during development and keeps the
 /// visible Dock icon in sync with `icons/icon-source.svg`.
@@ -157,7 +100,7 @@ pub fn set_regular_activation_policy_on_main_thread(app: &AppHandle) {
 
 /// Float the pill window above other apps' windows *without* activating Open
 /// Flow. Tauri's `show()` maps to `-[NSWindow orderFront:]`, which AppKit
-/// suppresses for a background (non-active) app — so the pill only appeared
+/// suppresses for a background (non-active) app - so the pill only appeared
 /// while Verenu was frontmost. We instead:
 ///   1. raise the window level above normal windows (NSStatusWindowLevel = 25),
 ///   2. let it appear on every Space and over full-screen apps,
@@ -293,7 +236,7 @@ pub fn refresh_dock_icon() {
 
 /// Latched once a `cpal` input stream opens successfully. macOS only hands out a
 /// working audio stream when the microphone permission is actually granted, so a
-/// successful capture is authoritative proof — unlike
+/// successful capture is authoritative proof - unlike
 /// `AVCaptureDevice authorizationStatusForMediaType:`, which can return a value
 /// cached at first call for the lifetime of the process and never refresh after
 /// the user grants access mid-session.
@@ -309,7 +252,7 @@ pub fn is_microphone_verified() -> bool {
     MIC_VERIFIED.load(Ordering::SeqCst)
 }
 
-/// Latched once a cross-process Accessibility (AX) read succeeds — i.e. the app
+/// Latched once a cross-process Accessibility (AX) read succeeds - i.e. the app
 /// actually read another application's focused-element tree. Like the microphone
 /// latch, an empirically successful AX call is authoritative proof the permission
 /// is granted, which matters when `AXIsProcessTrusted()` reports a stale `false`
@@ -356,7 +299,7 @@ pub fn microphone_permission_status() -> &'static str {
 }
 
 /// Request microphone access, showing the macOS consent prompt when the
-/// permission is undetermined. The completion handler is a no-op — callers read
+/// permission is undetermined. The completion handler is a no-op - callers read
 /// the resulting status separately via `microphone_permission_status()` once the
 /// user responds. Safe to call when already authorized (no prompt is shown).
 pub async fn request_microphone() -> bool {
@@ -380,7 +323,7 @@ pub async fn request_microphone() -> bool {
     rx.await.unwrap_or(false)
 }
 
-// UTI for plain UTF-8 text — the value of `NSPasteboardTypeString`.
+// UTI for plain UTF-8 text - the value of `NSPasteboardTypeString`.
 const PASTEBOARD_TYPE_STRING: &str = "public.utf8-plain-text";
 
 /// PID of the frontmost (active) application, or `None` if unavailable.
