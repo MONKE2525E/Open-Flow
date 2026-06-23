@@ -16,6 +16,38 @@
 
   const BARS = 12;
 
+  // Snap CSS-px lengths to a whole number of device pixels. On fractional DPI
+  // scaling (e.g. 1.25×/1.5×) a hardcoded 3px bar maps to a fractional device
+  // width, and Chromium rounds each bar's edges independently — so neighboring
+  // bars rasterize at different physical widths and the row looks uneven. When
+  // every bar width/gap is an exact integer device-px, all edges land on the
+  // grid and every bar renders identically.
+  //
+  // `dpr` MUST track the monitor the pill is actually on. The pill window is
+  // created once and reused, so it first mounts on the user's primary display
+  // and is later moved to other monitors (which may have a different scale).
+  // A stale dpr is worse than none: snapping 3px with the *wrong* dpr produces
+  // a fractional CSS width (e.g. 3.2px) that then rounds unevenly at the real
+  // scale. WebView2 does not reliably fire matchMedia on a cross-monitor DPI
+  // change, so we also re-read devicePixelRatio live each animation frame
+  // (see refreshDpr / animateBars).
+  //
+  // `dpr` is passed explicitly into snap() so the reactive statements below name
+  // it as a dependency. Svelte's `$:` tracking is syntactic — if `snap` closed
+  // over `dpr` instead, `barW`/`barGap` would be computed once and never update
+  // when the pill moves to a monitor with a different scale.
+  let dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+  const snap = (px: number, d: number) => Math.round(px * d) / d;
+  $: barW = snap(3, dpr);
+  $: barGap = snap(2, dpr);
+
+  // Re-read the live devicePixelRatio; assigning only on change keeps Svelte
+  // from re-running barW/barGap (and the bar template) every single frame.
+  function refreshDpr() {
+    const live = window.devicePixelRatio || 1;
+    if (live !== dpr) dpr = live;
+  }
+
   // Level from Rust is already 0–1 (raw_rms × 15, capped).
   // Gate: ignore anything below 4% of full scale (background noise).
   const GATE = 0.04;
@@ -43,6 +75,9 @@
     if (!lastAnimTime) lastAnimTime = time;
     const dt = Math.min(time - lastAnimTime, 50);
     lastAnimTime = time;
+
+    // Keep bar snapping aligned to whichever monitor the pill is currently on.
+    refreshDpr();
 
     // Extremely smooth, premium rise and fall (high inertia)
     // Rise: ~12% per 16ms frame (takes ~100-150ms to swell up smoothly)
@@ -166,6 +201,18 @@
     const unlisteners: Array<() => void> = [];
     let mounted = true;
 
+    // Re-snap bar dimensions when the pill moves to a monitor with a different
+    // scale factor. A (resolution: Xdppx) query stops matching once dpr
+    // changes, so the watcher re-arms itself each time.
+    let mq: MediaQueryList | null = null;
+    const onDprChange = () => { dpr = window.devicePixelRatio || 1; armDprWatch(); };
+    function armDprWatch() {
+      mq?.removeEventListener('change', onDprChange);
+      mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      mq.addEventListener('change', onDprChange);
+    }
+    armDprWatch();
+
     (async () => {
       const { listen } = await import('@tauri-apps/api/event');
 
@@ -188,6 +235,7 @@
         prevState = state;
         state = incoming;
         if (state === 'recording' || state === 'handsfree') {
+          refreshDpr(); // align snapping to the current monitor before first paint
           startRaf();
         } else {
           stopRaf();
@@ -232,6 +280,7 @@
 
     return () => {
       mounted = false;
+      mq?.removeEventListener('change', onDprChange);
       cancelAnimationFrame(rafId);
       if (errorTimer) clearTimeout(errorTimer);
       if (dyingTimer) clearTimeout(dyingTimer);
@@ -256,9 +305,9 @@
 
 <div class="wrap">
   {#if state === 'recording'}
-    <div class="pill recording" class:dying={dying}>
+    <div class="pill recording" class:dying={dying} style="--bar-w:{barW}px; --bar-gap:{barGap}px">
       {#each barHeights as h, i (i)}
-        <div class="bar" style="height: {h}px"></div>
+        <div class="bar" style="height: {snap(h, dpr)}px"></div>
       {/each}
     </div>
 
@@ -285,9 +334,9 @@
           </svg>
         </button>
       {/if}
-      <div class="bars-hf">
+      <div class="bars-hf" style="--bar-w:{barW}px; --bar-gap:{barGap}px">
         {#each barHeights as h, i (i)}
-          <div class="bar" style="height: {h}px"></div>
+          <div class="bar" style="height: {snap(h, dpr)}px"></div>
         {/each}
       </div>
       {#if showHfButtons}
@@ -353,14 +402,14 @@
   /* Recording: snug wrap — 12 bars × 3px + 11 gaps × 2px + 14px padding = 72px */
   /* 0.25s delay keeps it invisible during a fast double-click handsfree activation */
   .pill.recording {
-    gap: 2px;
+    gap: var(--bar-gap, 2px);
     padding: 0 7px;
     width: 72px;
     animation: pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) 0.25s both;
   }
 
   .bar {
-    width: 3px;
+    width: var(--bar-w, 3px);
     background: var(--pill-bar);
     border-radius: 999px;
     flex-shrink: 0;
@@ -460,7 +509,7 @@
   }
   .pill.handsfree.hf-expanded { width: 112px; padding: 0 5px; gap: 4px; }
 
-  .bars-hf { display: flex; align-items: center; gap: 2px; flex: 1; justify-content: center; }
+  .bars-hf { display: flex; align-items: center; gap: var(--bar-gap, 2px); flex: 1; justify-content: center; }
 
   .hf-btn {
     width: 18px; height: 18px;
