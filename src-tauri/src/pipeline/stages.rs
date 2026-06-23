@@ -126,11 +126,23 @@ pub(super) fn ensure_terminal_punctuation(
     let trimmed = text.trim_end();
     match trimmed.chars().next_back() {
         Some(last) if last.is_alphanumeric() => {
+            // Chinese/Japanese text uses the full-width period; a Western "."
+            // reads as out of place after CJK ideographs or kana.
+            let punct = if is_cjk(last) { "。" } else { "." };
             // Preserve any trailing whitespace the model emitted after the word.
-            format!("{trimmed}.{}", &text[trimmed.len()..])
+            format!("{trimmed}{punct}{}", &text[trimmed.len()..])
         }
         _ => text.to_owned(),
     }
+}
+
+fn is_cjk(c: char) -> bool {
+    matches!(c,
+        '\u{4e00}'..='\u{9fff}'   // CJK Unified Ideographs
+        | '\u{3400}'..='\u{4dbf}' // CJK Unified Ideographs Extension A
+        | '\u{3040}'..='\u{309f}' // Hiragana
+        | '\u{30a0}'..='\u{30ff}' // Katakana
+    )
 }
 // session.stop() blocks until the audio thread finishes (denoise + resample + WAV encode).
 // spawn_blocking keeps the tokio worker free during that wait.

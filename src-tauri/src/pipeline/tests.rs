@@ -180,6 +180,27 @@
         assert_eq!(ensure_terminal_punctuation("   ", "casual", "medium"), "   ");
     }
 
+    #[test]
+    fn terminal_punctuation_uses_fullwidth_period_for_cjk() {
+        assert_eq!(
+            ensure_terminal_punctuation("今晩予定がある", "casual", "medium"),
+            "今晩予定がある。"
+        );
+        assert_eq!(
+            ensure_terminal_punctuation("这是一个决定", "formal", "high"),
+            "这是一个决定。"
+        );
+        assert_eq!(
+            ensure_terminal_punctuation("コーヒーを飲む", "casual", "medium"),
+            "コーヒーを飲む。"
+        );
+        // Already terminated with a fullwidth period stays untouched.
+        assert_eq!(
+            ensure_terminal_punctuation("今晩予定がある。", "casual", "medium"),
+            "今晩予定がある。"
+        );
+    }
+
     fn mapping(exe: &str, profile: &str, cleanup_intensity: Option<&str>) -> AppMapping {
         AppMapping {
             exe: exe.into(),
