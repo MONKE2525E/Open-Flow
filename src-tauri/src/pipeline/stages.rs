@@ -101,6 +101,37 @@ pub(super) fn apply_app_style_overrides(
         .filter(|p| !p.is_empty())
         .unwrap_or_else(|| cfg.default_tone.clone())
 }
+
+/// Casual/formal cleanup sometimes omits a closing period on short utterances.
+/// That leaves a bare word before the caret, which the contextual-capitalization
+/// probe then reads as a mid-sentence continuation — so the *next* dictation has
+/// its first letter lowercased. Appending a period when the cleaned text ends on
+/// a plain word makes consecutive dictations read as separate sentences and
+/// capitalize naturally.
+///
+/// Deliberately conservative:
+/// - `very_casual` is skipped (its style is intentionally near-punctuation-free).
+/// - `none`/verbatim intensity is skipped (must echo speech without editorializing).
+/// - Only acts when the last non-space character is alphanumeric. Text already
+///   ending in terminal punctuation, a comma/colon/dash (intentional
+///   continuation), or a closing bracket/quote is left untouched.
+pub(super) fn ensure_terminal_punctuation(
+    text: &str,
+    profile: &str,
+    cleanup_intensity: &str,
+) -> String {
+    if profile == "very_casual" || cleanup_intensity == "none" {
+        return text.to_owned();
+    }
+    let trimmed = text.trim_end();
+    match trimmed.chars().next_back() {
+        Some(last) if last.is_alphanumeric() => {
+            // Preserve any trailing whitespace the model emitted after the word.
+            format!("{trimmed}.{}", &text[trimmed.len()..])
+        }
+        _ => text.to_owned(),
+    }
+}
 // session.stop() blocks until the audio thread finishes (denoise + resample + WAV encode).
 // spawn_blocking keeps the tokio worker free during that wait.
 pub(super) async fn stop_and_validate_audio(
@@ -182,6 +213,12 @@ pub(super) async fn open_config_and_context(
     }
     let mapping = resolve_app_mapping(Some(&settings_store), process_name);
     let profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
+    log::debug!(
+        "pipeline: app mapping resolved process={process_name} matched={} profile={profile} cleanup_intensity={} default_tone={}",
+        mapping.as_ref().map(|m| m.exe.as_str()).unwrap_or("none"),
+        cfg.cleanup_intensity,
+        cfg.default_tone,
+    );
     let app_context = if cfg.app_context_hint {
         window_context::get_app_context_hint(process_name)
     } else {
@@ -395,8 +432,13 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                     new_hit_count,
                     new_expires_at
                 );
-                let overridden = snippets::apply_cleanup_instruction_overrides(
+                let punctuated = ensure_terminal_punctuation(
                     &entry.clean_text,
+                    profile,
+                    &cfg.cleanup_intensity,
+                );
+                let overridden = snippets::apply_cleanup_instruction_overrides(
+                    &punctuated,
                     &snippet_instructions,
                 );
                 return Ok((overridden, dict_entries, cache_key));
@@ -497,6 +539,10 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
 
         match guarded {
             Some(cleaned) => {
+                // Punctuate before caching + overrides so the cache stores the
+                // normalized text and snippet "no period" instructions can still
+                // override it afterward.
+                let cleaned = ensure_terminal_punctuation(&cleaned, profile, &cfg.cleanup_intensity);
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
                 if !cache_key.is_empty() {

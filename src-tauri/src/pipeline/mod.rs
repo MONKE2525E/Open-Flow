@@ -162,7 +162,13 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // typing (toggling Caps Lock) while it runs.
     let caps_lock_on = crate::core::hotkey::caps_lock_is_on();
 
-    let process_name = window_context::get_active_process_name()
+    // Resolve the app identity from the window text will actually be injected
+    // into (captured at record-start), not the live foreground at release — the
+    // two can diverge (handsfree, focus shifts) and that divergence let one
+    // app's mapping style leak into another app. Issue #144. Falls back to the
+    // live foreground only when the captured hwnd is unavailable (null/0).
+    let process_name = window_context::get_process_name_for_hwnd(target_hwnd)
+        .or_else(window_context::get_active_process_name)
         .unwrap_or_else(|| "unknown".into())
         .to_lowercase();
     log::info!("pipeline: start process={process_name} target_hwnd={target_hwnd}");

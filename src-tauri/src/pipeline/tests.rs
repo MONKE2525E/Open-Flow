@@ -1,9 +1,11 @@
     use super::{
-        is_transcription_hallucination, normalize_transcription_math_artifacts, preview_text,
-        recording_gate_rms, run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
+        apply_app_style_overrides, ensure_terminal_punctuation, is_transcription_hallucination,
+        normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
+        resolve_app_mapping, run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
         style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
         PipelineTestSnippet,
     };
+    use crate::system::apps::AppMapping;
 
     #[test]
     fn preview_text_redacts_dictation_content_when_not_verbose() {
@@ -122,6 +124,114 @@
         assert!((default_gate - 0.008).abs() < f32::EPSILON);
         assert!(high_gain_gate < default_gate);
         assert!((high_gain_gate - 0.0035).abs() < 0.0001);
+    }
+
+    #[test]
+    fn terminal_punctuation_added_for_casual_bare_word() {
+        assert_eq!(
+            ensure_terminal_punctuation("smart decision", "casual", "medium"),
+            "smart decision."
+        );
+        assert_eq!(
+            ensure_terminal_punctuation("the report is done", "formal", "high"),
+            "the report is done."
+        );
+    }
+
+    #[test]
+    fn terminal_punctuation_left_alone_when_already_terminated() {
+        assert_eq!(
+            ensure_terminal_punctuation("all good.", "casual", "medium"),
+            "all good."
+        );
+        assert_eq!(
+            ensure_terminal_punctuation("really?", "casual", "medium"),
+            "really?"
+        );
+        assert_eq!(
+            ensure_terminal_punctuation("wait,", "casual", "medium"),
+            "wait,"
+        );
+        assert_eq!(
+            ensure_terminal_punctuation("as follows:", "casual", "medium"),
+            "as follows:"
+        );
+    }
+
+    #[test]
+    fn terminal_punctuation_skipped_for_very_casual_and_verbatim() {
+        assert_eq!(
+            ensure_terminal_punctuation("smart decision", "very_casual", "medium"),
+            "smart decision"
+        );
+        assert_eq!(
+            ensure_terminal_punctuation("smart decision", "casual", "none"),
+            "smart decision"
+        );
+    }
+
+    #[test]
+    fn terminal_punctuation_preserves_trailing_whitespace_and_empty() {
+        assert_eq!(
+            ensure_terminal_punctuation("hello ", "casual", "medium"),
+            "hello. "
+        );
+        assert_eq!(ensure_terminal_punctuation("", "casual", "medium"), "");
+        assert_eq!(ensure_terminal_punctuation("   ", "casual", "medium"), "   ");
+    }
+
+    fn mapping(exe: &str, profile: &str, cleanup_intensity: Option<&str>) -> AppMapping {
+        AppMapping {
+            exe: exe.into(),
+            profile: profile.into(),
+            name: String::new(),
+            cleanup_intensity: cleanup_intensity.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn app_mapping_override_applies_for_matching_app() {
+        // base_config(): default_tone = "casual", cleanup_intensity = "medium".
+        let mut cfg = base_config();
+        let m = mapping("appa.exe", "very_casual", Some("high"));
+        let profile = apply_app_style_overrides(&mut cfg, Some(&m));
+        assert_eq!(profile, "very_casual");
+        assert_eq!(cfg.cleanup_intensity, "high");
+    }
+
+    #[test]
+    fn app_mapping_no_match_leaves_global_defaults_untouched() {
+        // Regression for issue #144: when no mapping matches the active app, the
+        // effective tone falls back to default_tone and the global cleanup
+        // intensity must NOT be mutated by a different app's override.
+        let mut cfg = base_config();
+        let profile = apply_app_style_overrides(&mut cfg, None);
+        assert_eq!(profile, "casual");
+        assert_eq!(cfg.cleanup_intensity, "medium");
+    }
+
+    #[test]
+    fn app_mapping_empty_override_fields_fall_back_to_globals() {
+        let mut cfg = base_config();
+        let m = mapping("appa.exe", "   ", Some("   "));
+        let profile = apply_app_style_overrides(&mut cfg, Some(&m));
+        assert_eq!(profile, "casual");
+        assert_eq!(cfg.cleanup_intensity, "medium");
+    }
+
+    #[test]
+    fn resolve_app_mapping_is_scoped_to_matching_exe() {
+        let mappings = serde_json::json!([
+            { "exe": "appa.exe", "profile": "very_casual", "cleanup_intensity": "high" }
+        ]);
+        let snap = store::SettingsSnapshot::from_pairs([(store::APP_MAPPINGS.to_string(), mappings)]);
+
+        let matched = resolve_app_mapping(Some(&snap), "appa.exe").expect("App A should match");
+        assert_eq!(matched.profile, "very_casual");
+        assert_eq!(matched.cleanup_intensity.as_deref(), Some("high"));
+
+        // A different foreground app must not resolve App A's mapping.
+        assert!(resolve_app_mapping(Some(&snap), "appb.exe").is_none());
     }
 
     fn base_config() -> store::PipelineConfig {
@@ -359,8 +469,8 @@
         let result = run_pipeline_fixture(base_request(config))
             .await
             .expect("cleanup fallback should succeed");
-        assert_eq!(result.final_text_before_dictionary, "clean fallback result");
-        assert_eq!(result.history_entry.clean_text, "clean fallback result");
+        assert_eq!(result.final_text_before_dictionary, "clean fallback result.");
+        assert_eq!(result.history_entry.clean_text, "clean fallback result.");
         assert_eq!(result.stats.total_words, 4);
         assert_eq!(result.recent.len(), 1);
         assert_eq!(
@@ -442,6 +552,8 @@
         let result = run_pipeline_fixture(base_request(base_config()))
             .await
             .expect("model refusal should fall back to pre-cleanup text");
+        // Cleanup refused, so the pipeline falls back to the pre-cleanup text via
+        // the non-cleaned path — which is intentionally left unpunctuated.
         assert_eq!(
             result.final_text_before_dictionary,
             "what time is it in tokyo right now"
@@ -530,8 +642,10 @@
         let result = run_pipeline_fixture(request)
             .await
             .expect("instruction and dictionary path should succeed");
-        assert_eq!(result.final_text_before_dictionary, "ACME ALERT");
-        assert_eq!(result.injected_text, "Verenu ALERT");
+        // Casual cleanup now guarantees a terminal period (so consecutive
+        // dictations capitalize); the "all capitals" override still applies.
+        assert_eq!(result.final_text_before_dictionary, "ACME ALERT.");
+        assert_eq!(result.injected_text, "Verenu ALERT.");
         reset();
     }
 
