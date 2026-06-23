@@ -41,11 +41,29 @@
   $: barW = snap(3, dpr);
   $: barGap = snap(2, dpr);
 
+  // matchMedia watcher for cross-monitor DPI changes. Kept at component scope
+  // (not inside onMount) so refreshDpr can re-arm it: a (resolution: Xdppx)
+  // query only fires when *that* resolution's match state flips, so once dpr
+  // moves the watcher must be rebound to the new value or it goes stale and
+  // stops catching subsequent changes.
+  let mq: MediaQueryList | null = null;
+  const onDprChange = () => { dpr = window.devicePixelRatio || 1; armDprWatch(); };
+  function armDprWatch() {
+    if (typeof window === 'undefined') return;
+    mq?.removeEventListener('change', onDprChange);
+    mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    mq.addEventListener('change', onDprChange);
+  }
+
   // Re-read the live devicePixelRatio; assigning only on change keeps Svelte
-  // from re-running barW/barGap (and the bar template) every single frame.
+  // from re-running barW/barGap (and the bar template) every frame, and re-arms
+  // the matchMedia watcher so it stays in sync with the current DPI.
   function refreshDpr() {
     const live = window.devicePixelRatio || 1;
-    if (live !== dpr) dpr = live;
+    if (live !== dpr) {
+      dpr = live;
+      armDprWatch();
+    }
   }
 
   // Level from Rust is already 0–1 (raw_rms × 15, capped).
@@ -201,16 +219,8 @@
     const unlisteners: Array<() => void> = [];
     let mounted = true;
 
-    // Re-snap bar dimensions when the pill moves to a monitor with a different
-    // scale factor. A (resolution: Xdppx) query stops matching once dpr
-    // changes, so the watcher re-arms itself each time.
-    let mq: MediaQueryList | null = null;
-    const onDprChange = () => { dpr = window.devicePixelRatio || 1; armDprWatch(); };
-    function armDprWatch() {
-      mq?.removeEventListener('change', onDprChange);
-      mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-      mq.addEventListener('change', onDprChange);
-    }
+    // Arm the cross-monitor DPI watcher (defined at component scope above so
+    // refreshDpr can re-arm it as the pill moves between displays).
     armDprWatch();
 
     (async () => {
