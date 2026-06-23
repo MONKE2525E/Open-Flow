@@ -61,6 +61,7 @@
   // from re-running barW/barGap (and the bar template) every frame, and re-arms
   // the matchMedia watcher so it stays in sync with the current DPI.
   function refreshDpr() {
+    if (typeof window === 'undefined') return;
     const live = window.devicePixelRatio || 1;
     if (live !== dpr) {
       dpr = live;
@@ -315,9 +316,11 @@
   }
 </script>
 
-<div class="wrap">
+<!-- --bar-w/--bar-gap live on .wrap so every pill state (incl. processing, which
+     has no bars of its own) inherits the DPI-snapped values for its width calc. -->
+<div class="wrap" style="--bar-w:{barW}px; --bar-gap:{barGap}px">
   {#if state === 'recording'}
-    <div class="pill recording" class:dying={dying} style="--bar-w:{barW}px; --bar-gap:{barGap}px">
+    <div class="pill recording" class:dying={dying}>
       {#each barHeights as h, i (i)}
         <div class="bar" style="height: {snap(h, dpr)}px"></div>
       {/each}
@@ -338,7 +341,7 @@
     </div>
 
   {:else if state === 'handsfree'}
-    <div class="pill handsfree" class:dying={dying} class:hf-expanded={showHfButtons && !dying} class:no-anim={prevState === 'recording'} style="--bar-w:{barW}px; --bar-gap:{barGap}px">
+    <div class="pill handsfree" class:dying={dying} class:hf-expanded={showHfButtons && !dying} class:no-anim={prevState === 'recording'}>
       {#if showHfButtons}
         <button class="hf-btn cancel" onclick={cancelHandless} aria-label="Cancel">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
@@ -438,7 +441,8 @@
     animation: processIn 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
   @keyframes processIn {
-    from { width: 72px; }
+    /* start from the recording pill's DPI-snapped width so there's no jump */
+    from { width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 14px); }
     to   { width: 100px; }
   }
   /* Scan line fades in after the pill has grown */
@@ -451,7 +455,9 @@
     animation: processFromHf 0.25s ease-out both;
   }
   @keyframes processFromHf {
-    from { width: 112px; }
+    /* start from the expanded handsfree pill's DPI-snapped width (bars + 54px of
+       buttons/padding/gaps) so there's no jump at fractional DPI */
+    from { width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 54px); }
     to   { width: 100px; }
   }
   .pill.processing.from-hf .scan-line {
@@ -522,7 +528,9 @@
                 padding 0.18s ease,
                 gap 0.18s ease;
   }
-  .pill.handsfree.hf-expanded { width: 112px; padding: 0 5px; gap: 4px; }
+  /* Expanded width = snapped bars + 54px (two 18px buttons + 10px padding + two
+     4px gaps) so the bars never overflow / push the buttons out at fractional DPI. */
+  .pill.handsfree.hf-expanded { width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 54px); padding: 0 5px; gap: 4px; }
 
   .bars-hf { display: flex; align-items: center; gap: var(--bar-gap, 2px); flex: 1; justify-content: center; }
 
