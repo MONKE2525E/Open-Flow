@@ -51,7 +51,9 @@
   function armDprWatch() {
     if (typeof window === 'undefined') return;
     mq?.removeEventListener('change', onDprChange);
-    mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    // Use the already-fallback-guarded `dpr` (set right before every call) so a
+    // falsy devicePixelRatio can't produce `(resolution: undefineddppx)`.
+    mq = window.matchMedia(`(resolution: ${dpr}dppx)`);
     mq.addEventListener('change', onDprChange);
   }
 
@@ -409,12 +411,14 @@
   /* Skip entry animation for seamless continuations from recording */
   .pill.no-anim { animation: none; }
 
-  /* Recording: snug wrap — 12 bars × 3px + 11 gaps × 2px + 14px padding = 72px */
+  /* Recording: snug wrap — 12 bars + 11 gaps + 14px padding. Width is derived
+     from the snapped --bar-w/--bar-gap so the wrap stays snug at fractional DPI
+     (where snapped bars sum to more than the integer-scale 72px). */
   /* 0.25s delay keeps it invisible during a fast double-click handsfree activation */
   .pill.recording {
     gap: var(--bar-gap, 2px);
     padding: 0 7px;
-    width: 72px;
+    width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 14px);
     animation: pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) 0.25s both;
   }
 
