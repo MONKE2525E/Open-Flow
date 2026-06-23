@@ -338,7 +338,7 @@
     </div>
 
   {:else if state === 'handsfree'}
-    <div class="pill handsfree" class:dying={dying} class:hf-expanded={showHfButtons && !dying} class:no-anim={prevState === 'recording'}>
+    <div class="pill handsfree" class:dying={dying} class:hf-expanded={showHfButtons && !dying} class:no-anim={prevState === 'recording'} style="--bar-w:{barW}px; --bar-gap:{barGap}px">
       {#if showHfButtons}
         <button class="hf-btn cancel" onclick={cancelHandless} aria-label="Cancel">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
@@ -346,7 +346,7 @@
           </svg>
         </button>
       {/if}
-      <div class="bars-hf" style="--bar-w:{barW}px; --bar-gap:{barGap}px">
+      <div class="bars-hf">
         {#each barHeights as h, i (i)}
           <div class="bar" style="height: {snap(h, dpr)}px"></div>
         {/each}
@@ -512,9 +512,10 @@
   }
   .pill.error.err-open .err-text { opacity: 1; }
 
-  /* Handsfree: starts compact (mirrors recording), expands to 112px after 450ms */
+  /* Handsfree: starts compact (mirrors recording — same DPI-snapped width so the
+     recording→handsfree continuation doesn't jump), expands to 112px after 450ms */
   .pill.handsfree {
-    width: 72px;
+    width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 14px);
     padding: 0 7px;
     gap: 2px;
     transition: width 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
