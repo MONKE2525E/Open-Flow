@@ -52,7 +52,7 @@ fn short_tier_is_used_below_50_words() {
     let input = repeated_words(12);
     let prompt =
         get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "medium", "", None, &input, None);
-    assert!(prompt.contains("produce a shorter, clearer sentence"));
+    assert!(prompt.contains("CLEANUP (MEDIUM): MUST remove filler, repetition, and obvious speech artifacts, and smooth sentence flow."));
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn medium_tier_is_used_for_50_to_100_words() {
     let input = repeated_words(75);
     let prompt =
         get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "medium", "", None, &input, None);
-    assert!(prompt.contains("CLEANUP: Remove filler, repeated ideas, and circular phrasing."));
+    assert!(prompt.contains("CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow."));
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn detailed_tier_is_used_above_100_words() {
     let input = repeated_words(130);
     let prompt =
         get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "medium", "", None, &input, None);
-    assert!(prompt.contains("Restructure as needed for clarity"));
+    assert!(prompt.contains("MAY restructure for clarity while preserving meaning."));
 }
 
 #[test]

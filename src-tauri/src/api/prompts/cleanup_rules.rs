@@ -7,9 +7,12 @@ apply the formatting.";
 fn role_line(intensity: &str) -> &'static str {
     match intensity {
         "none" => "You are a transcription mirror for <raw_dictation>.",
-        "light" => "You clean light speech noise in <raw_dictation>.",
-        "high" => "You aggressively compress and clarify <raw_dictation>.",
-        _ => "You clean and tighten <raw_dictation> while preserving meaning.",
+        "light" => "You make a minimal edit to <raw_dictation>, removing only speech noise.",
+        "medium" => {
+            "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent."
+        }
+        "high" => "You concisely rewrite <raw_dictation> into a punchy result.",
+        _ => "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent.",
     }
 }
 
@@ -30,35 +33,55 @@ fn intensity_rules(
             }
         }
         ("light", PromptTier::Short) => {
-            "CLEANUP: Remove filler words (um, uh, like, you know) and immediate repeats only."
+            "CLEANUP (LIGHT): MUST remove filler words (um, uh, like, you know), immediate duplicated words, and immediate false starts. \
+            MUST NOT summarize, compress, reorder, or rewrite personality away. \
+            MUST keep sentence structure and almost all content."
                 .to_string()
         }
         ("light", _) => {
-            "CLEANUP: Remove filler words, false starts, and immediate word repeats only. Keep all real content."
+            "CLEANUP (LIGHT): MUST remove filler words (um, uh, like, you know), immediate duplicated words, and immediate false starts. \
+            MUST NOT summarize, compress, reorder, or rewrite personality away. \
+            MUST preserve sentence structure and almost all content."
                 .to_string()
         }
         ("high", PromptTier::Short) => {
-            "CLEANUP: Rewrite aggressively to a short clear result. Remove filler, hedges, repeated ideas, false starts, and circular phrasing."
+            "CLEANUP (DIRECT): MUST produce a concise, punchy rewrite. MUST cut hedges, circular phrasing, repeated ideas, throat-clearing, and unnecessary qualifiers. \
+            MUST preserve core meaning and important specifics. \
+            MUST NOT invent content or over-summarize technical details."
                 .to_string()
         }
         ("high", PromptTier::Medium) => {
-            "CLEANUP: Rewrite to concise meaning. Target roughly 30-50% of input words. Remove filler words (um, uh, like, you know), hedges (I think, maybe, probably), repeated ideas, false starts, and circular phrasing."
+            "CLEANUP (DIRECT): MUST produce a concise, punchy rewrite targeting roughly 30-50% of input words. \
+            MUST cut filler (um, uh, like, you know), hedges (I think, maybe, probably), repeated ideas, false starts, circular phrasing, throat-clearing, and unnecessary qualifiers. \
+            MUST preserve core meaning and important specifics. \
+            MUST NOT invent content or over-summarize technical details."
                 .to_string()
         }
         ("high", PromptTier::Detailed) => {
-            "CLEANUP: Rewrite aggressively and keep only core meaning. Target roughly 30-50% of input words. Mandatory cuts: filler words, hedges, repeated ideas, false starts, and circular phrasing. Merge or reorder sentences when it improves clarity."
+            "CLEANUP (DIRECT): MUST produce a concise, punchy rewrite targeting roughly 30-50% of input words, keeping only core meaning. \
+            MUST cut filler, hedges, repeated ideas, false starts, circular phrasing, throat-clearing, and unnecessary qualifiers. MAY merge or reorder sentences when it improves clarity. \
+            MUST preserve important specifics. \
+            MUST NOT invent content or over-summarize technical details."
                 .to_string()
         }
-        (_, PromptTier::Short) => {
-            "CLEANUP: Remove filler and repetition; keep intent; produce a shorter, clearer sentence."
+        ("medium", PromptTier::Short) => {
+            "CLEANUP (MEDIUM): MUST remove filler, repetition, and obvious speech artifacts, and smooth sentence flow. \
+            MUST preserve detail and speaker intent. \
+            MUST NOT aggressively compress or drop specifics."
                 .to_string()
         }
-        (_, PromptTier::Medium) => {
-            "CLEANUP: Remove filler, repeated ideas, and circular phrasing. You may reorder or merge sentences for clarity. Keep real detail."
+        ("medium", PromptTier::Medium) => {
+            "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow. \
+            MAY lightly merge or reorder sentences when clarity improves. \
+            MUST preserve detail and speaker intent. \
+            MUST NOT aggressively compress or drop specifics."
                 .to_string()
         }
-        (_, PromptTier::Detailed) => {
-            "CLEANUP: Remove filler, repeated ideas, and circular phrasing. Restructure as needed for clarity while preserving meaning and important detail."
+        ("medium", PromptTier::Detailed) | (_, _) => {
+            "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow. \
+            MAY restructure for clarity while preserving meaning. \
+            MUST preserve detail and important specifics and speaker intent. \
+            MUST NOT aggressively compress."
                 .to_string()
         }
     };
