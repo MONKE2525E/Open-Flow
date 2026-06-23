@@ -383,6 +383,19 @@ impl FocusedTextReader {
             }
             let selection_state = describe_selection_state(range_seen, range_collapsed);
 
+            // Structural diagnostics for "blank box reads as full" (Antigravity /
+            // Chromium controls). App-control metadata only — never tail content.
+            log::debug!(
+                "injection: probe detail control_type={control_type} class={class_name} automation_id={automation_id} value_empty={value_is_empty:?} read_only={read_only:?} caret_active={range_seen} collapsed={range_collapsed} source={} context={} tail_len={} tail_newline={}",
+                source.as_str(),
+                context.as_str(),
+                caret_context.as_deref().map(|t| t.chars().count()).unwrap_or(0),
+                caret_context
+                    .as_deref()
+                    .map(|t| t.contains('\n') || t.contains('\r'))
+                    .unwrap_or(false),
+            );
+
             InjectionContextProbe {
                 context,
                 source,

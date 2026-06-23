@@ -157,6 +157,49 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
     }
 }
 
+// Reads CF_UNICODETEXT from the clipboard. Returns `Some("")` when the format
+// is present but empty, and `None` only when the clipboard can't be read.
+unsafe fn read_clipboard_text() -> Option<String> {
+    use ::windows::Win32::Foundation::HGLOBAL;
+    use ::windows::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, OpenClipboard,
+    };
+    use ::windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+
+    const CF_UNICODETEXT: u32 = 13;
+
+    let opened = (0..3).any(|i| {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS));
+        }
+        OpenClipboard(None).is_ok()
+    });
+    if !opened {
+        return None;
+    }
+
+    let mut text: Option<String> = None;
+    if let Ok(h) = GetClipboardData(CF_UNICODETEXT) {
+        let hg = HGLOBAL(h.0);
+        let size = GlobalSize(hg);
+        if size == 0 {
+            text = Some(String::new());
+        } else {
+            let ptr = GlobalLock(hg) as *const u16;
+            if !ptr.is_null() {
+                let units = size / 2;
+                let slice = std::slice::from_raw_parts(ptr, units);
+                let end = slice.iter().position(|&c| c == 0).unwrap_or(units);
+                text = Some(String::from_utf16_lossy(&slice[..end]));
+                let _ = GlobalUnlock(hg);
+            }
+        }
+    }
+
+    CloseClipboard().ok();
+    text
+}
+
 pub(super) async fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     for attempt in 0..3u32 {
@@ -168,6 +211,110 @@ pub(super) async fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
         }
     }
     anyhow::bail!("copy_to_clipboard: clipboard held after 3 attempts")
+}
+
+// Chromium/Electron populate the clipboard asynchronously after Ctrl+C, so the
+// sniff polls a few times before concluding the field is empty.
+const SNIFF_READ_ATTEMPTS: usize = 4;
+const SNIFF_READ_INTERVAL_MS: u64 = 25;
+
+// Verifies what is actually selectable immediately before the caret. UIA can
+// report phantom text before the cursor in a visually empty box (Chromium /
+// Electron controls), which makes contextual-caps wrongly lowercase. Selecting
+// one char back reflects what the user actually sees. Mirrors
+// `macos_clipboard_sniff_context`. Relies on the caller (`inject_text`) having
+// already saved the clipboard before the probe step; the caller's paste and
+// final `restore_clipboard_all(&saved)` put the user's clipboard back.
+async fn windows_clipboard_sniff_context(target_hwnd: usize) -> Option<InjectionContextProbe> {
+    use ::windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+        VK_C, VK_CONTROL, VK_LEFT, VK_RIGHT, VK_SHIFT,
+    };
+
+    // Don't send keystrokes to the wrong window if focus moved mid-pipeline.
+    if crate::core::window_context::get_foreground_hwnd() != target_hwnd {
+        return None;
+    }
+
+    unsafe {
+        let ki = |vk, flags: u32| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: KEYBD_EVENT_FLAGS(flags),
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+
+        // Seed an empty sentinel so a failed copy (empty box) reads as empty
+        // rather than as a stale clipboard value. Bail if it can't be set so we
+        // never misread leftover clipboard text as content before the caret.
+        if write_clipboard_unicode(&[0u16]).is_err() {
+            return None;
+        }
+
+        let one = std::mem::size_of::<INPUT>() as i32;
+
+        // Select one character back. Press Shift, tap Left, release Shift as
+        // separate sends with gaps: an atomic Shift+Left batch is seen as a plain
+        // Left in some controls (Chromium/Electron), which moves the caret
+        // instead of selecting — that both fooled the sniff and corrupted the
+        // paste ("HellHi.o").
+        SendInput(&[ki(VK_SHIFT, 0)], one);
+        tokio::time::sleep(tokio::time::Duration::from_millis(MODIFIER_GAP_MS)).await;
+        SendInput(&[ki(VK_LEFT, 0), ki(VK_LEFT, KEYEVENTF_KEYUP.0)], one);
+        tokio::time::sleep(tokio::time::Duration::from_millis(MODIFIER_GAP_MS)).await;
+        SendInput(&[ki(VK_SHIFT, KEYEVENTF_KEYUP.0)], one);
+        tokio::time::sleep(tokio::time::Duration::from_millis(MODIFIER_GAP_MS)).await;
+
+        // Ctrl+C: copy the selection, if any.
+        let copy = [
+            ki(VK_CONTROL, 0),
+            ki(VK_C, 0),
+            ki(VK_C, KEYEVENTF_KEYUP.0),
+            ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
+        ];
+        SendInput(&copy, one);
+
+        // Poll the clipboard — Chromium/Electron populate it asynchronously, so a
+        // single immediate read can miss the copied character.
+        let mut sniffed = String::new();
+        for _ in 0..SNIFF_READ_ATTEMPTS {
+            tokio::time::sleep(tokio::time::Duration::from_millis(SNIFF_READ_INTERVAL_MS)).await;
+            if let Some(s) = read_clipboard_text() {
+                if !s.is_empty() {
+                    sniffed = s;
+                    break;
+                }
+            }
+        }
+
+        // ALWAYS collapse back to the original caret. Right moves to the right
+        // edge of a selection, or undoes a Left that merely moved the caret —
+        // either way the caret returns to where it started. Skipping this on a
+        // failed read is what corrupted the paste, so it runs unconditionally.
+        SendInput(&[ki(VK_RIGHT, 0), ki(VK_RIGHT, KEYEVENTF_KEYUP.0)], one);
+        tokio::time::sleep(tokio::time::Duration::from_millis(MODIFIER_GAP_MS)).await;
+
+        let context = if sniffed.is_empty() {
+            crate::core::text_context::SentenceContext::NewSentence
+        } else {
+            crate::core::text_context::classify_context_tail(&sniffed)
+        };
+
+        Some(InjectionContextProbe {
+            context,
+            source: ContextProbeSource::ClipboardSniff,
+            context_tail: sniffed,
+            control_type: "clipboard_sniff".to_string(),
+            selection_state: SelectionState::Unknown,
+            control_identity_hash: "clipboard_sniff".to_string(),
+        })
+    }
 }
 
 #[allow(unused_variables)]
@@ -217,6 +364,24 @@ pub(super) async fn inject_text(
                 injection_probe = history_probe;
             }
         }
+        // A caret-local read that says "mid-sentence" can be wrong in Chromium /
+        // Electron controls that report phantom text before the caret in an empty
+        // box. Verify against what's actually selectable before lowercasing.
+        if caret_local_needs_sniff_verification(
+            contextual_caps,
+            injection_probe.source,
+            injection_probe.context,
+        ) {
+            if let Some(mut sniff) = windows_clipboard_sniff_context(target_hwnd).await {
+                // Spacing must follow the reliable UIA tail ("is there a visible
+                // char before the caret?"), not the sniff: in Chromium/Electron
+                // editors synthetic Ctrl+C is a no-op, so the sniff always reads
+                // empty there. Let the sniff drive only the capitalization
+                // decision, keeping UIA's tail so appends still get a space.
+                sniff.context_tail = injection_probe.context_tail.clone();
+                injection_probe = sniff;
+            }
+        }
         let (adjusted, context_kind, case_decision) = apply_probe_adjustments(
             text,
             contextual_caps,
@@ -244,6 +409,8 @@ pub(super) async fn inject_text(
             }
         }
         if !clipboard_written {
+            // Put the user's clipboard back — a sniff may have left its sentinel.
+            restore_clipboard_all(&saved);
             return Err(anyhow::anyhow!(
                 "OpenClipboard failed after 3 attempts - clipboard held by another process"
             ));
