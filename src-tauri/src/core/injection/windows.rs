@@ -158,8 +158,10 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
 }
 
 // Reads CF_UNICODETEXT from the clipboard. Returns `Some("")` when the format
-// is present but empty, and `None` only when the clipboard can't be read.
-unsafe fn read_clipboard_text() -> Option<String> {
+// is present but empty, and `None` only when the clipboard can't be read. Async
+// so the OpenClipboard retry backoff yields to the runtime instead of blocking
+// the executor thread with a synchronous sleep.
+async fn read_clipboard_text() -> Option<String> {
     use ::windows::Win32::Foundation::HGLOBAL;
     use ::windows::Win32::System::DataExchange::{
         CloseClipboard, GetClipboardData, OpenClipboard,
@@ -168,35 +170,40 @@ unsafe fn read_clipboard_text() -> Option<String> {
 
     const CF_UNICODETEXT: u32 = 13;
 
-    let opened = (0..3).any(|i| {
+    let mut opened = false;
+    for i in 0..3 {
         if i > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS));
+            tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS)).await;
         }
-        OpenClipboard(None).is_ok()
-    });
+        if unsafe { OpenClipboard(None) }.is_ok() {
+            opened = true;
+            break;
+        }
+    }
     if !opened {
         return None;
     }
 
     let mut text: Option<String> = None;
-    if let Ok(h) = GetClipboardData(CF_UNICODETEXT) {
-        let hg = HGLOBAL(h.0);
-        let size = GlobalSize(hg);
-        if size == 0 {
-            text = Some(String::new());
-        } else {
-            let ptr = GlobalLock(hg) as *const u16;
-            if !ptr.is_null() {
-                let units = size / 2;
-                let slice = std::slice::from_raw_parts(ptr, units);
-                let end = slice.iter().position(|&c| c == 0).unwrap_or(units);
-                text = Some(String::from_utf16_lossy(&slice[..end]));
-                let _ = GlobalUnlock(hg);
+    unsafe {
+        if let Ok(h) = GetClipboardData(CF_UNICODETEXT) {
+            let hg = HGLOBAL(h.0);
+            let size = GlobalSize(hg);
+            if size == 0 {
+                text = Some(String::new());
+            } else {
+                let ptr = GlobalLock(hg) as *const u16;
+                if !ptr.is_null() {
+                    let units = size / 2;
+                    let slice = std::slice::from_raw_parts(ptr, units);
+                    let end = slice.iter().position(|&c| c == 0).unwrap_or(units);
+                    text = Some(String::from_utf16_lossy(&slice[..end]));
+                    let _ = GlobalUnlock(hg);
+                }
             }
         }
+        CloseClipboard().ok();
     }
-
-    CloseClipboard().ok();
     text
 }
 
@@ -285,7 +292,7 @@ async fn windows_clipboard_sniff_context(target_hwnd: usize) -> Option<Injection
         let mut sniffed = String::new();
         for _ in 0..SNIFF_READ_ATTEMPTS {
             tokio::time::sleep(tokio::time::Duration::from_millis(SNIFF_READ_INTERVAL_MS)).await;
-            if let Some(s) = read_clipboard_text() {
+            if let Some(s) = read_clipboard_text().await {
                 if !s.is_empty() {
                     sniffed = s;
                     break;
