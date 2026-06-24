@@ -94,7 +94,7 @@ fn tone_rules(profile: &str) -> &'static str {
         }
         "very_casual" => {
             "TONE: Very casual. Mostly lowercase, minimal punctuation, keep contractions. \
-            MUST affect voice and capitalization only; MUST NOT change how much content is removed."
+            MUST affect voice and capitalization only; MUST NOT alter the level of content pruning or detail preservation specified by the cleanup rules."
         }
         _ => {
             "TONE: Casual. Natural conversational phrasing, sentence capitalization, light punctuation."
