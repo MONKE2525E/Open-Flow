@@ -183,7 +183,7 @@ tests/
   manual/                   # Manual test scripts (hotkey, layout bounds) — not automated
 ```
 
-The pill window is created at runtime by `create_pill_if_needed()` in `pipeline/mod.rs` (`WebviewWindowBuilder`, always-on-top, transparent, decorations off, initial size 140x44) — it is resized per recording state rather than recreated, so don't look for its dimensions in `tauri.conf.json`.
+The pill window is created at runtime by `create_pill_if_needed()` in `pipeline/mod.rs` (`WebviewWindowBuilder`, always-on-top, transparent, decorations off, initial size 380x44) — it is resized per recording state rather than recreated, so don't look for its dimensions in `tauri.conf.json`.
 
 ## Core Data Flow
 

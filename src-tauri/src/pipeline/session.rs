@@ -45,7 +45,8 @@ pub fn start_recording_session_ex(
     #[cfg(target_os = "macos")]
     {
         // `AXIsProcessTrustedWithOptions` can return a stale cached `false` for the
-        // Check Accessibility strictly rather than using is_tap_active() as a proxy.
+        // life of the process. Check Accessibility strictly rather than using
+        // is_tap_active() as a proxy.
         // The CGEventTap can be active on Input Monitoring alone — so a running tap
         // does NOT prove Accessibility is granted. Without Accessibility, synthetic
         // Cmd+V (posting events to the HID tap) silently fails. Using the real TCC
