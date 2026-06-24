@@ -378,6 +378,7 @@ pub(super) async fn inject_text(
             contextual_caps,
             injection_probe.source,
             injection_probe.context,
+            profile,
         ) {
             if let Some(mut sniff) = windows_clipboard_sniff_context(target_hwnd).await {
                 // Spacing must follow the reliable UIA tail ("is there a visible
