@@ -152,7 +152,7 @@ fn short_prompt_stays_compact_without_overrides() {
         &input,
         None,
     );
-    assert!(count_words(&prompt) < 320);
+    assert!(count_words(&prompt) < 340);
 }
 
 #[test]
@@ -200,6 +200,27 @@ fn overrides_are_numbered() {
     );
     assert!(prompt.contains("1. MUST no period"));
     assert!(prompt.contains("2. MUST all caps"));
+}
+
+#[test]
+fn default_templates_demonstrate_filler_removal() {
+    // The few-shot examples must show real cleanup (filler removed), not only
+    // identity/anti-injection cases, or models anchor on "leave text untouched".
+    for (provider, model) in [
+        ("groq", "llama-3.3-70b-versatile"),
+        ("groq", "llama-3.1-8b-instant"),
+        ("openai", "gpt-4o"),
+        ("openai", "gpt-4o-mini"),
+        ("google", "gemini-3.5-flash"),
+        ("google", "gemini-2.5-flash"),
+        ("custom", "unknown"),
+    ] {
+        let template = cleanup_template_for(provider, model);
+        assert!(
+            template.contains("So I was thinking we should probably head to Tokyo on Friday."),
+            "{provider}/{model} template lost the filler-removal example"
+        );
+    }
 }
 
 #[test]
