@@ -111,29 +111,42 @@ mod tests {
             true,
             ContextProbeSource::CaretLocal,
             SentenceContext::MidSentence,
+            "casual",
         ));
         // A caret read that already says "new sentence" capitalizes — no sniff.
         assert!(!caret_local_needs_sniff_verification(
             true,
             ContextProbeSource::CaretLocal,
             SentenceContext::NewSentence,
+            "casual",
         ));
         // Empty-field and history sources are already trustworthy.
         assert!(!caret_local_needs_sniff_verification(
             true,
             ContextProbeSource::EmptyField,
             SentenceContext::MidSentence,
+            "casual",
         ));
         assert!(!caret_local_needs_sniff_verification(
             true,
             ContextProbeSource::HistoryFallback,
             SentenceContext::MidSentence,
+            "casual",
         ));
         // Contextual caps off: never sniff.
         assert!(!caret_local_needs_sniff_verification(
             false,
             ContextProbeSource::CaretLocal,
             SentenceContext::MidSentence,
+            "casual",
+        ));
+        // very_casual: the sniff can't change the lowercase outcome, so skip its
+        // destructive keystrokes even on a caret-local mid-sentence read.
+        assert!(!caret_local_needs_sniff_verification(
+            true,
+            ContextProbeSource::CaretLocal,
+            SentenceContext::MidSentence,
+            "very_casual",
         ));
     }
 
@@ -507,13 +520,22 @@ fn fallback_probe_from_history(target_hwnd: usize) -> Option<InjectionContextPro
 /// reads are verified: that's the source that can return phantom text before the
 /// caret in a visually empty box (Chromium/Electron). Other sources are either
 /// already trustworthy (history) or already a new sentence (empty field).
+///
+/// The sniff fires synthetic Shift+Left/Ctrl+C/Right keystrokes, which can
+/// corrupt the subsequent paste in Chromium-backed rich editors (Quill/Slack/
+/// Discord). It only earns that risk when its result could change the casing
+/// decision. For the `very_casual` profile it never can: both new-sentence and
+/// mid-sentence preserve the model's lowercase output, so we skip the sniff
+/// entirely and just paste.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn caret_local_needs_sniff_verification(
     contextual_caps: bool,
     source: ContextProbeSource,
     context: crate::core::text_context::SentenceContext,
+    profile: &str,
 ) -> bool {
     contextual_caps
+        && profile != "very_casual"
         && source == ContextProbeSource::CaretLocal
         && context == crate::core::text_context::SentenceContext::MidSentence
 }
