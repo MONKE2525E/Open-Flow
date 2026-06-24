@@ -2,7 +2,7 @@
 // Verifies the app mounts without JS errors and exposes required DOM structure.
 const path = require('path');
 const { chromium } = require('playwright');
-const { tauriMock } = require('./_tauri-mock.cjs');
+const { tauriMock, APP_VERSION } = require('./_tauri-mock.cjs');
 
 const TARGET_URL = process.env.TEST_URL || 'http://localhost:1420';
 const SCREENSHOT_PATH = path.join(__dirname, 'screenshot.png');
@@ -14,7 +14,7 @@ const TIMEOUT = 10_000;
   const errors = [];
 
   // Inject Tauri IPC mock before the page loads so setup_complete = true
-  await page.addInitScript(tauriMock);
+  await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
 
   page.on('pageerror', err => errors.push(`Page exception: ${err.message}`));
   page.on('console', msg => {

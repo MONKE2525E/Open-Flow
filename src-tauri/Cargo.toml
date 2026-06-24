@@ -1,6 +1,6 @@
 [package]
 name = "verenu"
-version = "0.14.1"
+version = "0.15.0"
 description = "Verenu — local-first AI dictation"
 authors = ["Verenu Team"]
 edition = "2021"
@@ -15,15 +15,15 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-ico", "macos-private-api"] }
-tauri-plugin-store       = "2"
+tauri-plugin-notification = "2.3.3"
 tauri-plugin-shell       = "2"
 tauri-plugin-single-instance = "2"
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 
 serde       = { version = "1", features = ["derive"] }
 serde_json  = "1"
-tokio       = { version = "1", features = ["full"] }
-reqwest     = { version = "0.12", features = ["json", "multipart", "stream"] }
+tokio       = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
+reqwest     = { version = "0.12", default-features = false, features = ["json", "multipart", "native-tls", "charset"] }
 bytes       = "1"
 cpal        = "0.15"
 hound       = "3.5"
@@ -55,12 +55,12 @@ windows = { version = "0.61", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-core-graphics      = "0.24"   # CGEventTap, CGEvent post (Cmd+V)
-foreign-types-shared = "0.3"
+global-hotkey      = "0.8"    # Carbon RegisterEventHotKey global hotkey (no Input Monitoring / Accessibility needed)
+core-graphics      = "0.24"   # CGEvent post (Cmd+V), Caps-Lock state
 core-foundation    = "0.10"   # CFRunLoop, CFString, CFRunLoopSource
-core-foundation-sys = "0.8"   # CFGetTypeID / CFRelease for AX value handling
 objc2              = "0.5"     # msg_send! for AppKit (NSWorkspace, NSPasteboard)
 objc2-foundation   = { version = "0.2", features = ["NSData", "NSString"] }  # NSData/NSString conversions
+block2             = "0.5"     # ObjC completion blocks (AVCaptureDevice mic request)
 accessibility-sys  = "0.1"     # AXUIElement (auto-learn focused text + AX prompt)
 libproc            = "0.14"    # process RSS for memory monitor
 libc               = "0.2"     # statvfs (free disk space)

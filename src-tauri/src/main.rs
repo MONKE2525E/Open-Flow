@@ -10,16 +10,16 @@ mod system;
 #[cfg(any(test, debug_assertions))]
 mod testing;
 
+use crate::core::window_geometry::WindowTarget;
 use crate::data::db;
 use crate::pipeline::{hide_pill, start_recording_session, AppState, SharedState};
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, Theme,
 };
-use tauri_plugin_store::StoreExt;
 
 pub type DbHandle = db::Db;
 
@@ -132,7 +132,9 @@ fn main() {
         session: None,
         starting: false,
         handless: false,
-        target_hwnd: 0,
+        target: WindowTarget::default(),
+        pill_placement: None,
+        pill_placement_stale: false,
         retry_capture: None,
     }));
 
@@ -141,7 +143,7 @@ fn main() {
     let _ = db::cleanup_cache_prune_expired(&db_handle);
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main_window(app);
@@ -150,15 +152,36 @@ fn main() {
         .manage(db_handle.clone())
         .setup(move |app| {
             crate::system::logger::init(app.handle())?;
-            let _first_launch = if let Ok(store) =
-                tauri_plugin_store::StoreExt::store(app.handle(), "settings.json")
-            {
-                let _ = store.reload();
-                crate::data::credentials::migrate_from_store(app.handle(), &store);
-                if let Some(val) = store.get("hotkey") {
+            let settings = crate::data::store::SettingsHandle::open(app.handle())
+                .map_err(std::io::Error::other)?;
+            crate::data::credentials::migrate_from_store(app.handle(), &settings);
+            let _first_launch = {
+                if let Some(val) = settings.get(crate::data::store::HOTKEY) {
                     if let Some(arr) = val.as_array() {
                         if arr.len() == 2 {
                             if let (Some(k1), Some(k2)) = (arr[0].as_str(), arr[1].as_str()) {
+                                let (k1, k2) = (k1, k2);
+                                // On macOS the hotkey is now a modifier+key combo
+                                // (RegisterEventHotKey, no Input Monitoring). A stored
+                                // modifier-only chord from an earlier build (e.g. Fn+Control)
+                                // is not registrable — migrate it to the ⌥+Space default so
+                                // the backend and the settings label stay in sync.
+                                #[cfg(target_os = "macos")]
+                                let (k1, k2) = if !crate::core::hotkey::is_hotkey_available(k1, k2)
+                                {
+                                    let _ = settings.set(
+                                        crate::data::store::HOTKEY,
+                                        serde_json::json!(["AltLeft", "Space"]),
+                                    );
+                                    if let Err(e) = settings.save() {
+                                        log::warn!(
+                                            "Failed to save migrated hotkey to settings.json: {e:?}"
+                                        );
+                                    }
+                                    ("AltLeft", "Space")
+                                } else {
+                                    (k1, k2)
+                                };
                                 let vk1 = crate::core::hotkey::map_code_to_vk(k1);
                                 let vk2 = crate::core::hotkey::map_code_to_vk(k2);
                                 crate::core::hotkey::update_keys(vk1, vk2);
@@ -166,7 +189,7 @@ fn main() {
                         }
                     }
                 }
-                let retention_value = store.get(crate::data::store::HISTORY_RETENTION);
+                let retention_value = settings.get(crate::data::store::HISTORY_RETENTION);
                 let retention = retention_value
                     .as_ref()
                     .and_then(|v| v.as_str())
@@ -188,12 +211,12 @@ fn main() {
                         }
                     });
                 }
-                !store
-                    .get("setup_complete")
+                let first_launch = !settings
+                    .get(crate::data::store::SETUP_COMPLETE)
                     .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-            } else {
-                true
+                    .unwrap_or(false);
+                app.manage(settings.clone());
+                first_launch
             };
 
             setup_tray(app)?;
@@ -205,12 +228,6 @@ fn main() {
                 crate::system::mac_app::set_accessory_activation_policy_on_main_thread(
                     app.handle(),
                 );
-            }
-            // macOS requires Accessibility permission for the global hotkey, Cmd+V
-            // injection, and auto-learn. Prompt on launch when not yet trusted.
-            #[cfg(target_os = "macos")]
-            if !commands::check_accessibility_permission(false) {
-                let _ = commands::check_accessibility_permission(true);
             }
             crate::pipeline::show_pill(app.handle(), "idle");
 
@@ -272,10 +289,17 @@ fn main() {
             commands::get_all_settings,
             commands::set_autostart,
             commands::check_accessibility_permission,
+            commands::get_macos_permission_snapshot,
+            commands::request_accessibility_permission,
             commands::open_accessibility_settings,
             commands::get_accessibility_permission_status,
             commands::get_microphone_permission_status,
+            commands::request_microphone_permission,
+            commands::request_microphone_permission_snapshot,
             commands::open_microphone_settings,
+            commands::restart_app,
+            commands::open_privacy_security_settings,
+            commands::reset_macos_core_permissions,
             commands::check_keychain_access,
             commands::show_main,
             commands::hide_main,
@@ -317,6 +341,7 @@ fn main() {
             commands::get_recent_logs,
             commands::download_logs,
             commands::set_dev_logging_enabled,
+            commands::get_dev_logging_enabled,
             commands::export_data,
             commands::import_data,
             commands::log_frontend,
@@ -332,43 +357,49 @@ fn main() {
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    let title_i = MenuItem::with_id(app, "title", "Verenu", false, None::<&str>)?;
+    let open_i = MenuItem::with_id(app, "open", "Open Verenu", true, None::<&str>)?;
+    let permissions_i =
+        MenuItem::with_id(app, "permissions", "Permissions...", true, None::<&str>)?;
+    let settings_i = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
-    let show_i = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
+    let relaunch_i = MenuItem::with_id(app, "relaunch", "Relaunch", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&title_i, &sep, &show_i, &quit_i])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &open_i,
+            &permissions_i,
+            &settings_i,
+            &sep,
+            &relaunch_i,
+            &quit_i,
+        ],
+    )?;
 
     let icon_theme = resolve_icon_theme(app.handle(), None);
     let tray_icon = runtime_tray_icon_image(icon_theme, 32);
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_icon)
+        .icon_as_template(cfg!(target_os = "macos"))
         .menu(&menu)
-        .show_menu_on_left_click(false)
-        .tooltip("Verenu - Ctrl+Windows to record")
+        .show_menu_on_left_click(true)
+        .tooltip("Verenu")
         .on_menu_event(|app, ev| match ev.id.as_ref() {
-            "show" => {
+            "open" => {
                 show_main_window(app);
             }
+            "permissions" => {
+                show_main_window(app);
+                let _ = app.emit("open-flow:open-settings-section", "permissions");
+            }
+            "settings" => {
+                show_main_window(app);
+                let _ = app.emit("open-flow:open-settings-section", "general");
+            }
+            "relaunch" => app.restart(),
             "quit" => app.exit(0),
             _ => {}
-        })
-        .on_tray_icon_event(|tray, ev| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = ev
-            {
-                let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("main") {
-                    if w.is_visible().unwrap_or(false) {
-                        w.hide().ok();
-                    } else {
-                        show_main_window(app);
-                    }
-                }
-            }
         })
         .build(app)?;
 
@@ -395,7 +426,11 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
     }
 
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        if let Err(err) = tray.set_icon(Some(runtime_tray_icon_image(icon_theme, 32))) {
+        let result = tray.set_icon_with_as_template(
+            Some(runtime_tray_icon_image(icon_theme, 32)),
+            cfg!(target_os = "macos"),
+        );
+        if let Err(err) = result {
             log::warn!("Failed to update tray icon: {err}");
         }
     }
@@ -476,9 +511,9 @@ fn resolve_icon_theme(app: &AppHandle, theme_hint: Option<Theme>) -> IconTheme {
 }
 
 fn appearance_mode(app: &AppHandle) -> Option<String> {
-    app.store("settings.json")
+    crate::data::store::settings_handle(app)
         .ok()
-        .and_then(|store| store.get(crate::data::store::APPEARANCE_MODE))
+        .and_then(|settings| settings.get(crate::data::store::APPEARANCE_MODE))
         .and_then(|value| value.as_str().map(String::from))
 }
 
@@ -677,9 +712,10 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         // Capture the target window before recording starts so
                         // inject_text can restore focus to it after the pipeline,
                         // even if the user switched windows during transcription.
-                        let hwnd = crate::core::window_context::get_foreground_hwnd();
+                        let target = WindowTarget::capture_foreground();
                         if let Some(mut st) = lock_app_state(&state_hk) {
-                            st.target_hwnd = hwnd;
+                            st.target = target;
+                            st.pill_placement_stale = true;
                         }
                         start_recording_session(&app_hk, &state_hk, "recording", false);
                     }
@@ -712,9 +748,10 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             state_hk.clone(),
                         ));
                     } else if !has_session {
-                        let hwnd = crate::core::window_context::get_foreground_hwnd();
+                        let target = WindowTarget::capture_foreground();
                         if let Some(mut st) = lock_app_state(&state_hk) {
-                            st.target_hwnd = hwnd;
+                            st.target = target;
+                            st.pill_placement_stale = true;
                         }
                         start_recording_session(&app_hk, &state_hk, "handsfree", true);
                         core::hotkey::set_handless_active(true);

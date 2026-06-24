@@ -1,7 +1,6 @@
+use tauri::AppHandle;
 #[cfg(target_os = "macos")]
 use tauri::Manager;
-use tauri::{AppHandle, Wry};
-use tauri_plugin_store::Store;
 
 #[cfg(windows)]
 use std::ptr;
@@ -372,9 +371,14 @@ fn cleanup_legacy_plaintext_entries(app: &AppHandle, providers: &[&str]) {
             continue;
         }
         if let Err(err) = write_legacy_creds_file(&legacy.path, &legacy.map) {
+            let legacy_label = legacy
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("credentials.json");
             log::warn!(
                 "Could not clean legacy plaintext credentials file {}: {}",
-                legacy.path.display(),
+                legacy_label,
                 err
             );
         }
@@ -472,8 +476,8 @@ pub fn delete(_provider: &str) -> Result<(), String> {
 /// Moves any plaintext API keys from settings.json or legacy macOS
 /// credentials.json files into the OS secret store, then keeps retrying cleanup
 /// until plaintext remnants are gone.
-pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
-    let already_marked = store
+pub fn migrate_from_store(_app: &AppHandle, settings: &crate::data::store::SettingsHandle) {
+    let already_marked = settings
         .get(crate::data::store::CREDENTIALS_MIGRATED)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
@@ -488,7 +492,7 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
     ]
     .into_iter()
     .any(|store_key| {
-        store
+        settings
             .get(store_key)
             .and_then(|v| v.as_str().map(str::to_owned))
             .is_some_and(|value| !normalize_key(&value).is_empty())
@@ -518,7 +522,7 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
         (crate::data::store::OPENAI, crate::data::store::KEY_OPENAI),
         (crate::data::store::GOOGLE, crate::data::store::KEY_GOOGLE),
     ] {
-        let store_plaintext = store
+        let store_plaintext = settings
             .get(store_key)
             .and_then(|v| v.as_str().map(String::from))
             .map(|value| normalize_key(&value).to_string())
@@ -557,7 +561,7 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
             log::info!("Migration: moved {provider} API key to OS secret store");
         }
 
-        let _ = store.delete(store_key);
+        let _ = settings.delete(store_key);
         #[cfg(target_os = "macos")]
         if let Some(user) = user_for(provider) {
             for legacy in &mut legacy_files {
@@ -571,9 +575,14 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
     #[cfg(target_os = "macos")]
     for legacy in &legacy_files {
         if let Err(e) = write_legacy_creds_file(&legacy.path, &legacy.map) {
+            let legacy_label = legacy
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("credentials.json");
             log::warn!(
                 "Migration: could not persist legacy credentials cleanup for {}: {}",
-                legacy.path.display(),
+                legacy_label,
                 e
             );
             any_failed = true;
@@ -581,12 +590,12 @@ pub fn migrate_from_store(_app: &AppHandle, store: &Store<Wry>) {
     }
 
     if !any_failed {
-        store.set(
+        let _ = settings.set(
             crate::data::store::CREDENTIALS_MIGRATED,
             serde_json::json!(true),
         );
     }
-    if let Err(e) = store.save() {
+    if let Err(e) = settings.save() {
         log::warn!("Migration: could not persist settings.json after key removal: {e}");
     }
 }

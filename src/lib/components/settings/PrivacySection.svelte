@@ -4,6 +4,7 @@
   import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
   import { saveSetting, type HistoryRetention } from '../../settings';
+  import { modalFocusTrap } from '../../modalFocus';
   import { animateWidth, modalBackdrop, modalCard, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
 
   const historyOptions = ['7 days', '30 days', '90 days', 'Forever'];
@@ -177,6 +178,8 @@
   let importMsg = $state('');
   let importMsgKind = $state<'ok' | 'err' | ''>('');
   let fileInput: HTMLInputElement | null = $state(null);
+  let historyRetentionButton: HTMLButtonElement | null = $state(null);
+  let retentionCancelButton: HTMLButtonElement | null = $state(null);
 
   async function handleExport() {
     exporting = true;
@@ -275,6 +278,7 @@
   <div><div class="label">Transcription history</div><div class="desc">How long to keep past dictations</div></div>
   <div class="history-dropdown">
     <button
+      bind:this={historyRetentionButton}
       class="btn-ghost mic-btn"
       use:animateWidth={{ text: historyRetention }}
       onclick={() => (historyDropdownOpen = !historyDropdownOpen)}
@@ -385,9 +389,15 @@
   <button class="modal-backdrop" aria-label="Close dialog" onclick={() => (confirmRetention = null)} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
   <div
     class="modal-card"
+    use:modalFocusTrap={{
+      active: !!confirmRetention,
+      initialFocus: () => retentionCancelButton,
+      restoreFocus: () => historyRetentionButton,
+    }}
     role="dialog"
     aria-modal="true"
     aria-labelledby="retention-confirm-title"
+    tabindex="-1"
     in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel), scaleFrom: 0.97 }}
     out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}
   >
@@ -401,7 +411,7 @@
     </div>
     <div class="modal-footer">
       <div class="footer-actions">
-        <button class="btn-ghost" onclick={() => (confirmRetention = null)}>Cancel</button>
+        <button bind:this={retentionCancelButton} class="btn-ghost" onclick={() => (confirmRetention = null)}>Cancel</button>
         <button class="btn-danger" onclick={confirmHistoryRetention}>Delete history</button>
       </div>
     </div>

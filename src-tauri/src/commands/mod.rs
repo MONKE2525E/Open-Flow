@@ -4,9 +4,8 @@
 //! each submodule picks them up via `use super::*`.
 
 pub(crate) use tauri::{AppHandle, Emitter, Manager};
-pub(crate) use tauri_plugin_store::StoreExt;
 
-pub(crate) use crate::api::{cleanup, prompts};
+pub(crate) use crate::api::{cleanup, prompts, ProviderId};
 pub(crate) use crate::data::{db, store};
 pub(crate) use crate::media::audio;
 pub(crate) use crate::pipeline::{self, SharedState};
@@ -20,6 +19,16 @@ mod recording;
 mod settings;
 mod system;
 mod updater;
+
+pub(crate) async fn run_blocking<T, F>(label: &'static str, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("{label} task panicked: {e}"))?
+}
 
 pub use history::*;
 pub use library::*;
@@ -109,6 +118,67 @@ mod tests {
     fn validate_setting_requires_two_hotkey_parts() {
         let err = validate_setting(crate::data::store::HOTKEY, &json!(["ControlLeft"]))
             .expect_err("single hotkey part should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_unknown_history_retention() {
+        let err = validate_setting(crate::data::store::HISTORY_RETENTION, &json!("365 days"))
+            .expect_err("unknown history retention should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_unknown_default_tone() {
+        let err = validate_setting(crate::data::store::DEFAULT_TONE, &json!("business"))
+            .expect_err("unknown default tone should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_unknown_cleanup_intensity() {
+        let err = validate_setting(crate::data::store::CLEANUP_INTENSITY, &json!("extreme"))
+            .expect_err("unknown cleanup intensity should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_invalid_app_mapping_profile() {
+        let err = validate_setting(
+            crate::data::store::APP_MAPPINGS,
+            &json!([{
+                "exe": "chrome.exe",
+                "profile": "business"
+            }]),
+        )
+        .expect_err("invalid app mapping profile should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_invalid_app_mapping_cleanup_intensity() {
+        let err = validate_setting(
+            crate::data::store::APP_MAPPINGS,
+            &json!([{
+                "exe": "chrome.exe",
+                "profile": "casual",
+                "cleanup_intensity": "extreme"
+            }]),
+        )
+        .expect_err("invalid app mapping cleanup intensity should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_rejects_oversized_cleanup_prompt_override() {
+        let too_long = "x".repeat(20_001);
+        let err = validate_setting(
+            crate::data::store::CLEANUP_PROMPT_OVERRIDES,
+            &json!({
+                "groq/llama-3.3-70b-versatile": too_long
+            }),
+        )
+        .expect_err("oversized cleanup prompt override should fail");
         assert!(err.contains("Invalid or unsupported setting"));
     }
 

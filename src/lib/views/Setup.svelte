@@ -241,7 +241,13 @@
       return bar({ leftLabel: 'Skip for now', rightLabel: 'Continue', onRight: goNext });
     }
     if (isMac && step === permissionStep) {
-      return bar({ leftLabel: 'Skip for now', rightLabel: 'Next', rightGlow: allCoreGranted, onRight: goNext });
+      return bar({
+        leftLabel: null,
+        rightLabel: allCoreGranted ? 'Next' : 'Grant permissions to continue',
+        rightDisabled: !allCoreGranted,
+        rightGlow: allCoreGranted,
+        onRight: goNext,
+      });
     }
     if (step === calibrationStep) {
       const calibrated = $calibratedGain !== null;

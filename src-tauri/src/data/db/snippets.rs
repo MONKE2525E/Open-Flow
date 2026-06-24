@@ -24,7 +24,17 @@ pub fn insert_snippet(db: &Db, trigger: &str, expansion: &str, instructions: &st
     if normalized_expansion.is_empty() {
         return Err(anyhow::anyhow!("Expansion cannot be empty"));
     }
+    validate_char_limit(
+        "Expansion",
+        &normalized_expansion,
+        SNIPPET_EXPANSION_CHAR_LIMIT,
+    )?;
     let normalized_instructions = normalize_multiline(instructions);
+    validate_char_limit(
+        "Cleanup instructions",
+        &normalized_instructions,
+        SNIPPET_INSTRUCTIONS_CHAR_LIMIT,
+    )?;
 
     let conn = lock_conn(db)?;
     conn.execute(
@@ -65,7 +75,17 @@ pub fn insert_snippet_returning_conn(
     if normalized_expansion.is_empty() {
         return Err(anyhow::anyhow!("Expansion cannot be empty"));
     }
+    validate_char_limit(
+        "Expansion",
+        &normalized_expansion,
+        SNIPPET_EXPANSION_CHAR_LIMIT,
+    )?;
     let normalized_instructions = normalize_multiline(instructions);
+    validate_char_limit(
+        "Cleanup instructions",
+        &normalized_instructions,
+        SNIPPET_INSTRUCTIONS_CHAR_LIMIT,
+    )?;
 
     conn.execute(
         "INSERT INTO snippets (trigger, expansion, instructions) VALUES (?1, ?2, ?3)",
@@ -97,7 +117,17 @@ pub fn update_snippet(
     if normalized_expansion.is_empty() {
         return Err(anyhow::anyhow!("Expansion cannot be empty"));
     }
+    validate_char_limit(
+        "Expansion",
+        &normalized_expansion,
+        SNIPPET_EXPANSION_CHAR_LIMIT,
+    )?;
     let normalized_instructions = normalize_multiline(instructions);
+    validate_char_limit(
+        "Cleanup instructions",
+        &normalized_instructions,
+        SNIPPET_INSTRUCTIONS_CHAR_LIMIT,
+    )?;
 
     let conn = lock_conn(db)?;
     let changed = conn.execute(

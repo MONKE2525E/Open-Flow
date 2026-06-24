@@ -3,6 +3,8 @@
 use anyhow::Result;
 
 pub const SNIPPET_TRIGGER_CHAR_LIMIT: usize = 300;
+pub const SNIPPET_EXPANSION_CHAR_LIMIT: usize = 8_000;
+pub const SNIPPET_INSTRUCTIONS_CHAR_LIMIT: usize = 4_000;
 pub const DICTIONARY_ENTRY_CHAR_LIMIT: usize = 120;
 
 pub fn require_nonempty_trimmed(field: &str, value: &str) -> Result<String> {

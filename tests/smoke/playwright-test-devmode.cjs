@@ -1,5 +1,5 @@
 const { chromium } = require('playwright');
-const { tauriMock } = require('./_tauri-mock.cjs');
+const { tauriMock, APP_VERSION } = require('./_tauri-mock.cjs');
 
 const TARGET_URL = 'http://localhost:1420';
 const TIMEOUT = 8_000;
@@ -9,7 +9,7 @@ const TIMEOUT = 8_000;
   const page = await browser.newPage();
   const errors = [];
 
-  await page.addInitScript(tauriMock);
+  await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
 
   page.on('pageerror', err => errors.push(`Page exception: ${err.message}`));
   page.on('console', msg => {
@@ -37,6 +37,10 @@ const TIMEOUT = 8_000;
     await page.locator('.settings-nav-item:has-text("Developer")').waitFor({ state: 'visible', timeout: TIMEOUT });
     await page.locator('.settings-nav-item:has-text("Developer")').click();
     await page.locator('h2.settings-h:has-text("Developer")').waitFor({ state: 'visible', timeout: TIMEOUT });
+    const verboseButton = page.getByRole('button', { name: 'Verbose: Off' });
+    if (!(await verboseButton.isVisible().catch(() => false))) {
+      errors.push('Developer verbose logging should default to off after unlock.');
+    }
 
     if (errors.length > 0) {
       console.error('\nFAIL - errors:');

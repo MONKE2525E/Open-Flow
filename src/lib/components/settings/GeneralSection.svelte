@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { emit, invoke } from '../../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
@@ -70,14 +71,20 @@
     return formatKeyLabel(code);
   }
 
+  // A macOS hotkey can be a single key (e.g. F5) — its second slot is empty.
+  function formatHotkeyDisplay(hk: string[]): string {
+    const first = formatHotkeyBadgeLabel(hk[0] ?? '');
+    return hk[1] ? `${first} + ${formatHotkeyBadgeLabel(hk[1])}` : first;
+  }
+
   let buttonText = $derived(
     recordingHotkey
       ? capturedKeys[0] === '__bad__'
-        ? isMac ? 'Must be ⌘/⌃/⌥/⇧' : 'Must be Alt/Ctrl/Shift/Win'
+        ? isMac ? 'Pick a key like F5' : 'Must be Alt/Ctrl/Shift/Win'
         : capturedKeys.length === 0
-          ? isMac ? 'Press modifier key...' : 'Press Alt/Ctrl/Shift/Win...'
+          ? isMac ? 'Press a key (e.g. F5)…' : 'Press Alt/Ctrl/Shift/Win...'
           : 'Press 2nd key...'
-      : `${formatHotkeyBadgeLabel(hotkey[0])} + ${formatHotkeyBadgeLabel(hotkey[1])}`
+      : formatHotkeyDisplay(hotkey)
   );
 
   $effect.pre(() => {
@@ -253,12 +260,16 @@
     window.addEventListener('mousedown', cancelRecordingHotkey, { capture: true });
   }
 
+  function removeHotkeyCaptureListeners() {
+    window.removeEventListener('keydown', handleHotkeyKeydown, { capture: true });
+    window.removeEventListener('keyup', handleHotkeyKeyup, { capture: true });
+    window.removeEventListener('mousedown', cancelRecordingHotkey, { capture: true });
+  }
+
   function cancelRecordingHotkey(e?: MouseEvent | KeyboardEvent) {
     if (e && (e.target as HTMLElement).closest('.keybind-btn')) return;
     if (recordingHotkey) {
-      window.removeEventListener('keydown', handleHotkeyKeydown, { capture: true });
-      window.removeEventListener('keyup', handleHotkeyKeyup, { capture: true });
-      window.removeEventListener('mousedown', cancelRecordingHotkey, { capture: true });
+      removeHotkeyCaptureListeners();
       recordingHotkey = false;
       hotkeyState = 'idle';
       capturedKeys = [];
@@ -271,13 +282,20 @@
     if (e.repeat) return;
     if (capturedKeys.length === 0) {
       if (e.code === 'Escape') { cancelRecordingHotkey(); return; }
-      if (!MODIFIER_CODES.has(e.code)) {
+      if (MODIFIER_CODES.has(e.code)) {
+        // A modifier first — wait for the key it pairs with (modifier+key chord).
+        capturedKeys = [e.code];
+        hotkeyState = 'first';
+      } else if (isMac && /^F([1-9]|1[0-2])$/.test(e.code)) {
+        // macOS allows a single-key hotkey, but only function keys (F1–F12):
+        // a bare letter/Space would be consumed system-wide and hijack typing.
+        capturedKeys = [e.code, ''];
+        hotkeyState = 'saving';
+        finishRecordingHotkey();
+      } else {
         capturedKeys = ['__bad__'];
         setTimeout(() => { capturedKeys = []; }, 800);
-        return;
       }
-      capturedKeys = [e.code];
-      hotkeyState = 'first';
     } else if (capturedKeys.length === 1 && e.code !== capturedKeys[0]) {
       capturedKeys = [...capturedKeys, e.code];
       hotkeyState = 'saving';
@@ -291,9 +309,7 @@
   }
 
   async function finishRecordingHotkey() {
-    window.removeEventListener('keydown', handleHotkeyKeydown, { capture: true });
-    window.removeEventListener('keyup', handleHotkeyKeyup, { capture: true });
-    window.removeEventListener('mousedown', cancelRecordingHotkey, { capture: true });
+    removeHotkeyCaptureListeners();
     recordingHotkey = false;
     if (capturedKeys.length === 2) {
       try {
@@ -322,6 +338,11 @@
     }
   }
 
+  onDestroy(() => {
+    removeHotkeyCaptureListeners();
+    recordingHotkey = false;
+  });
+
   loadSettings();
 </script>
 <svelte:window onclick={handleWindowClick} />
@@ -346,6 +367,13 @@
     {/key}
   </button>
 </div>
+{#if isMac && hotkey[0] === 'F5'}
+  <p class="hotkey-tip">
+    F5 is the 🎤 key on Mac keyboards. If pressing it opens macOS Dictation instead of
+    Verenu, turn off Dictation in <strong>System Settings → Keyboard → Dictation</strong>
+    (or hold <strong>Fn</strong> with F5). You can also pick any other key above.
+  </p>
+{/if}
 <div class="setting-row">
   <div><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect</div></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -472,6 +500,15 @@
 </div>
 
 <style>
+  .hotkey-tip {
+    margin: -2px 0 2px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--ink-mute);
+    max-width: 52ch;
+  }
+  .hotkey-tip strong { color: var(--ink-soft); font-weight: 600; }
+
   .keybind-btn {
     cursor: pointer;
     border: 1px solid transparent;

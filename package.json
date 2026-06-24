@@ -1,6 +1,6 @@
 {
   "name": "verenu",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "description": "Verenu - An open-source AI dictation app for Windows and macOS",
   "type": "module",
   "scripts": {
@@ -25,13 +25,9 @@
   "license": "MIT",
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.1.1",
-    "@tailwindcss/postcss": "^4.2.4",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/cli": "^2.11.1",
-    "autoprefixer": "^10.5.0",
-    "esbuild": "^0.28.0",
     "playwright": "^1.60.0",
-    "postcss": "^8.5.14",
     "svelte": "^5.55.5",
     "svelte-check": "^4.4.8",
     "typescript": "^6.0.3",
@@ -41,6 +37,7 @@
     "@fontsource-variable/fraunces": "^5.2.9",
     "@fontsource-variable/inter-tight": "^5.2.7",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-shell": "^2.3.5"
   }
 }

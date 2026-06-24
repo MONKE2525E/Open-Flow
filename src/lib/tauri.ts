@@ -32,10 +32,13 @@ type DevDictionaryEntry = {
   last_seen_at: string | null;
   created_at: string;
 };
+type DevPermissionStatus = 'authorized' | 'needs_permission' | 'not_determined' | 'denied' | 'restricted' | 'unknown';
+type DevKeychainStatus = 'authorized' | 'not_configured' | 'denied' | 'unknown';
 
 const DEV_STORAGE_KEY = 'verenu:dev-settings';
 const DEV_SNIPPETS_KEY = 'verenu:dev-snippets';
 const DEV_DICTIONARY_KEY = 'verenu:dev-dictionary';
+let devEventId = 0;
 
 const defaultProviderModels = {
   groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
@@ -79,6 +82,7 @@ const defaultSettings: Record<string, unknown> = {
   history_retention: '30 days',
   microphone_device: null,
   update_dismissed_version: null,
+  update_notified_version: null,
   advanced_model_ui: false,
   hotkey: defaultHotkey,
 };
@@ -144,6 +148,35 @@ function devCreated(id: number): CreatedRecordMeta {
   return { id, created_at: new Date().toISOString() };
 }
 
+function devPermissionSnapshot(provider?: unknown) {
+  const accessibility = String(getDevSetting('accessibility_permission_status') ?? 'authorized') as DevPermissionStatus;
+  const microphone = String(getDevSetting('microphone_permission_status') ?? 'authorized') as DevPermissionStatus;
+  const saved = (getDevSetting('__provider_connected') as Record<string, boolean> | null) ?? {};
+  const providerKey = typeof provider === 'string' ? provider : '';
+  const keychain = providerKey && saved[providerKey]
+    ? String(getDevSetting('keychain_permission_status') ?? 'authorized') as DevKeychainStatus
+    : 'not_configured';
+
+  return {
+    accessibility,
+    microphone,
+    keychain,
+    allCoreGranted: accessibility === 'authorized' && microphone === 'authorized',
+    lastCheckedAt: new Date().toISOString(),
+    sourceHints: {
+      microphoneVerified: Boolean(getDevSetting('microphone_verified') ?? microphone === 'authorized'),
+      accessibilityVerified: Boolean(getDevSetting('accessibility_verified') ?? accessibility === 'authorized'),
+    },
+    diagnostics: {
+      bundleIdentifier: String(getDevSetting('bundle_identifier') ?? 'com.verenu.app'),
+      bundlePath: String(getDevSetting('bundle_path') ?? '/Applications/Verenu.app'),
+      executablePath: String(getDevSetting('executable_path') ?? '/Applications/Verenu.app/Contents/MacOS/Verenu'),
+      processId: 12345,
+      accessibilityTrusted: accessibility === 'authorized',
+    },
+  };
+}
+
 function assertDevText(value: unknown, field: string): string {
   if (typeof value !== 'string') {
     throw new Error(`${field} must be text.`);
@@ -194,10 +227,34 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return String(getDevSetting('accessibility_permission_status') ?? 'authorized') as T;
     case 'get_microphone_permission_status':
       return String(getDevSetting('microphone_permission_status') ?? 'authorized') as T;
+    case 'get_macos_permission_snapshot':
+      return devPermissionSnapshot(args?.provider) as T;
+    case 'request_accessibility_permission':
+      writeDevSetting('accessibility_permission_status', 'authorized');
+      return devPermissionSnapshot(args?.provider) as T;
+    case 'request_microphone_permission':
+      writeDevSetting('microphone_permission_status', 'authorized');
+      return 'authorized' as T;
+    case 'request_microphone_permission_snapshot':
+      writeDevSetting('microphone_permission_status', 'authorized');
+      writeDevSetting('microphone_verified', true);
+      return devPermissionSnapshot(args?.provider) as T;
+    case 'check_keychain_access':
+      return 'authorized' as T;
+    case 'reset_macos_core_permissions':
+      writeDevSetting('accessibility_permission_status', 'not_determined');
+      return {
+        bundleIdentifier: 'com.verenu.app',
+        steps: [
+          { service: 'Accessibility', ok: true, message: 'Reset' },
+        ],
+      } as T;
     case 'check_for_update':
       return null as T;
     case 'check_connectivity':
       return (typeof navigator === 'undefined' ? true : navigator.onLine) as T;
+    case 'get_dev_logging_enabled':
+      return Boolean(getDevSetting('dev_logging_enabled') ?? false) as T;
     case 'get_cleanup_cache_status':
       return { entry_count: 0, is_space_constrained: false, free_bytes: null } as T;
     case 'get_auto_learn_status_summary':
@@ -226,17 +283,21 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       }
       return undefined as T;
     }
+    case 'set_dev_logging_enabled':
+      writeDevSetting('dev_logging_enabled', Boolean(args?.enabled));
+      return undefined as T;
     case 'set_autostart':
     case 'save_hotkey':
     case 'hide_main':
     case 'open_accessibility_settings':
     case 'open_microphone_settings':
+    case 'open_privacy_security_settings':
+    case 'restart_app':
     case 'start_input_recording':
     case 'start_setup_try_recording':
     case 'stop_setup_try_recording':
     case 'retry_transcription':
     case 'install_update':
-    case 'set_dev_logging_enabled':
     case 'start_calibration_monitoring':
     case 'stop_calibration_monitoring':
       return undefined as T;
@@ -387,12 +448,25 @@ export function listen<T>(
   if (hasTauriInternals()) {
     return tauriListen<T>(event, handler as Parameters<typeof tauriListen<T>>[1]);
   }
-  return Promise.resolve(() => {});
+  if (typeof window === 'undefined') return Promise.resolve(() => {});
+  const eventName = `tauri:${event}`;
+  const listener = (ev: Event) => {
+    handler({
+      event,
+      id: ++devEventId,
+      payload: (ev as CustomEvent<T>).detail,
+    });
+  };
+  window.addEventListener(eventName, listener);
+  return Promise.resolve(() => window.removeEventListener(eventName, listener));
 }
 
 export function emit<T>(event: string, payload?: T): Promise<void> {
   if (hasTauriInternals()) {
     return tauriEmit(event, payload);
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(`tauri:${event}`, { detail: payload }));
   }
   return Promise.resolve();
 }

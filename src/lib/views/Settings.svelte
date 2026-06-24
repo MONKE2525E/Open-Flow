@@ -2,7 +2,7 @@
   import { appStore } from '../stores';
   import { icons } from '../icons';
   import { onMount } from 'svelte';
-  import { getVersion } from '../tauri';
+  import { getVersion, listen } from '../tauri';
   import { MOTION_MS, MOTION_PX, SETTINGS_SECTION_ORDER, directionFromOrder, modalBackdrop, modalCard, motionMs, motionPx, pageSwap } from '../motion';
 
   import GeneralSection from '../components/settings/GeneralSection.svelte';
@@ -11,8 +11,10 @@
   import ModelsSection from '../components/settings/ModelsSection.svelte';
   import PrivacySection from '../components/settings/PrivacySection.svelte';
   import AudioSection from '../components/settings/AudioSection.svelte';
+  import PermissionsSection from '../components/settings/PermissionsSection.svelte';
   import AboutSection from '../components/settings/AboutSection.svelte';
   import DeveloperSection from '../components/settings/DeveloperSection.svelte';
+  import { isMac } from '../platform';
 
   let section = $state('general');
   let animDir: 1 | -1 = $state(1);
@@ -30,6 +32,7 @@
       { id: 'models',   label: 'Models',       icon: 'command'  as keyof typeof icons },
       { id: 'privacy',  label: 'Privacy',      icon: 'lock'     as keyof typeof icons },
       { id: 'advanced', label: 'Microphone',  icon: 'mic'      as keyof typeof icons },
+      ...(isMac ? [{ id: 'permissions', label: 'Permissions', icon: 'shield' as keyof typeof icons }] : []),
       ...(appStore.devModeEnabled ? [{ id: 'developer', label: 'Developer', icon: 'command' as keyof typeof icons }] : []),
     ]},
     { group: 'Verenu', items: [
@@ -37,8 +40,22 @@
     ]},
   ]);
 
-  onMount(async () => {
-    appVersion = await getVersion();
+  onMount(() => {
+    void getVersion().then((version) => {
+      appVersion = version;
+    });
+    const unlistenPromise = listen<string>('open-flow:open-settings-section', (event) => {
+      const target = event.payload;
+      if (target && sectionOrder.includes(target as typeof sectionOrder[number])) {
+        section = target;
+      } else {
+        section = 'general';
+      }
+      appStore.settingsOpen = true;
+    });
+    return () => {
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
   });
 
   function close() { appStore.settingsOpen = false; }
@@ -191,6 +208,8 @@
               <PrivacySection />
             {:else if section === 'advanced'}
               <AudioSection />
+            {:else if section === 'permissions' && isMac}
+              <PermissionsSection />
             {:else if section === 'about'}
               <AboutSection {appVersion} />
             {:else if section === 'developer' && appStore.devModeEnabled}

@@ -4,6 +4,11 @@ use std::time::{Duration, Instant};
 use crate::core::context_probe::{ContextProbeSource, InjectionContextProbe, SelectionState};
 use crate::core::text_context;
 
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
+
 // Maximum bytes stored for backspace-tracking. Covers any practical editing sequence
 // while keeping the per-injection allocation bounded.
 const HISTORY_TAIL: usize = 512;
@@ -95,6 +100,53 @@ mod tests {
         assert!(matches!(
             classify_context("label:"),
             ContextKind::Continuation
+        ));
+    }
+
+    #[test]
+    fn sniff_verification_gate_only_for_caret_local_mid_sentence() {
+        use crate::core::text_context::SentenceContext;
+        // The one case that needs verification: caps on, caret-local, mid-sentence.
+        assert!(caret_local_needs_sniff_verification(
+            true,
+            ContextProbeSource::CaretLocal,
+            SentenceContext::MidSentence,
+            "casual",
+        ));
+        // A caret read that already says "new sentence" capitalizes — no sniff.
+        assert!(!caret_local_needs_sniff_verification(
+            true,
+            ContextProbeSource::CaretLocal,
+            SentenceContext::NewSentence,
+            "casual",
+        ));
+        // Empty-field and history sources are already trustworthy.
+        assert!(!caret_local_needs_sniff_verification(
+            true,
+            ContextProbeSource::EmptyField,
+            SentenceContext::MidSentence,
+            "casual",
+        ));
+        assert!(!caret_local_needs_sniff_verification(
+            true,
+            ContextProbeSource::HistoryFallback,
+            SentenceContext::MidSentence,
+            "casual",
+        ));
+        // Contextual caps off: never sniff.
+        assert!(!caret_local_needs_sniff_verification(
+            false,
+            ContextProbeSource::CaretLocal,
+            SentenceContext::MidSentence,
+            "casual",
+        ));
+        // very_casual: the sniff can't change the lowercase outcome, so skip its
+        // destructive keystrokes even on a caret-local mid-sentence read.
+        assert!(!caret_local_needs_sniff_verification(
+            true,
+            ContextProbeSource::CaretLocal,
+            SentenceContext::MidSentence,
+            "very_casual",
         ));
     }
 
@@ -463,6 +515,31 @@ fn fallback_probe_from_history(target_hwnd: usize) -> Option<InjectionContextPro
     }
 }
 
+/// Whether a UIA caret-local read that classified as mid-sentence should be
+/// double-checked with a clipboard sniff before lowercasing. Only caret-local
+/// reads are verified: that's the source that can return phantom text before the
+/// caret in a visually empty box (Chromium/Electron). Other sources are either
+/// already trustworthy (history) or already a new sentence (empty field).
+///
+/// The sniff fires synthetic Shift+Left/Ctrl+C/Right keystrokes, which can
+/// corrupt the subsequent paste in Chromium-backed rich editors (Quill/Slack/
+/// Discord). It only earns that risk when its result could change the casing
+/// decision. For the `very_casual` profile it never can: both new-sentence and
+/// mid-sentence preserve the model's lowercase output, so we skip the sniff
+/// entirely and just paste.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn caret_local_needs_sniff_verification(
+    contextual_caps: bool,
+    source: ContextProbeSource,
+    context: crate::core::text_context::SentenceContext,
+    profile: &str,
+) -> bool {
+    contextual_caps
+        && profile != "very_casual"
+        && source == ContextProbeSource::CaretLocal
+        && context == crate::core::text_context::SentenceContext::MidSentence
+}
+
 fn apply_probe_adjustments(
     text: &str,
     contextual_caps: bool,
@@ -531,7 +608,41 @@ fn apply_probe_adjustments(
         adjusted = format!(" {adjusted}");
     }
 
+    // Redacted diagnostics for capitalization decisions (issue follow-up: CLI /
+    // terminal inputs being read as mid-sentence). Logs the control identity and
+    // the *class* of the last char before the caret — never the tail content.
+    log::debug!(
+        "injection: caps decision control_type={} probe_source={} context={} prefix={} tail_len={} tail_signal={} case_decision={}",
+        probe.control_type,
+        probe.source.as_str(),
+        probe.context.as_str(),
+        prefix_class.as_str(),
+        probe.context_tail.chars().count(),
+        context_tail_signal(&probe.context_tail),
+        case_decision.as_str(),
+    );
+
     (adjusted, context_kind, case_decision)
+}
+
+/// Redacted classification of the last meaningful character before the caret,
+/// for diagnosing contextual-capitalization decisions. Returns only a category
+/// label, never the tail content.
+fn context_tail_signal(tail: &str) -> &'static str {
+    match tail.chars().rev().find(|c| !c.is_whitespace()) {
+        None => {
+            if tail.contains('\n') || tail.contains('\r') {
+                "newline_only"
+            } else {
+                "empty_or_ws"
+            }
+        }
+        Some('.') | Some('!') | Some('?') => "sentence_end",
+        Some(ch) if ch.is_alphanumeric() => "alnum",
+        Some(',') | Some(';') | Some(':') | Some('-') | Some('–') | Some('—') | Some('/')
+        | Some('\\') => "soft_punct",
+        Some(_) => "other",
+    }
 }
 #[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
 pub fn reset_injection_history() {
@@ -585,279 +696,23 @@ pub fn append_or_reset_injection_history(hwnd: usize, ch: char) {
         }
     }
 }
-
-#[cfg(target_os = "windows")]
-struct SavedClipboard {
-    entries: Vec<(u32, Vec<u8>)>,
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn save_clipboard_all() -> SavedClipboard {
-    use windows::Win32::Foundation::HGLOBAL;
-    use windows::Win32::System::DataExchange::{
-        CloseClipboard, EnumClipboardFormats, GetClipboardData, OpenClipboard,
-    };
-    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
-
-    // GDI object formats - GetClipboardData returns an opaque GDI handle for these,
-    // not an HGLOBAL, so GlobalSize/GlobalLock are undefined on them.
-    const CF_BITMAP: u32 = 2;
-    const CF_METAFILEPICT: u32 = 3;
-    const CF_PALETTE: u32 = 9;
-    const CF_ENHMETAFILE: u32 = 14;
-
-    // Per-format cap: skip anything larger than 32 MB to stay within the 200 MB
-    // RAM budget. Typical screenshots are 2-8 MB as CF_DIB; 32 MB is generous.
-    const MAX_FORMAT_BYTES: usize = 32 * 1024 * 1024;
-
-    let mut entries = Vec::new();
-
-    let opened = (0..3).any(|i| {
-        if i > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS));
-        }
-        OpenClipboard(None).is_ok()
-    });
-    if !opened {
-        return SavedClipboard { entries };
-    }
-
-    let mut fmt = 0u32;
-    loop {
-        fmt = EnumClipboardFormats(fmt);
-        if fmt == 0 {
-            break;
-        }
-        if matches!(
-            fmt,
-            CF_BITMAP | CF_METAFILEPICT | CF_PALETTE | CF_ENHMETAFILE
-        ) {
-            continue;
-        }
-        if let Ok(h) = GetClipboardData(fmt) {
-            let hg = HGLOBAL(h.0);
-            let size = GlobalSize(hg);
-            if size > 0 && size <= MAX_FORMAT_BYTES {
-                let ptr = GlobalLock(hg) as *const u8;
-                if !ptr.is_null() {
-                    let data = std::slice::from_raw_parts(ptr, size).to_vec();
-                    let _ = GlobalUnlock(hg);
-                    entries.push((fmt, data));
-                }
-            }
-        }
-    }
-
-    CloseClipboard().ok();
-    SavedClipboard { entries }
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
-    use windows::Win32::Foundation::{GlobalFree, HANDLE};
-    use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-    };
-    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-
-    if saved.entries.is_empty() {
-        return;
-    }
-
-    for attempt in 0..CLIPBOARD_RESTORE_ATTEMPTS {
-        let opened = (0..3).any(|i| {
-            if i > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_OPEN_RETRY_MS));
-            }
-            OpenClipboard(None).is_ok()
-        });
-        if !opened {
-            if attempt + 1 == CLIPBOARD_RESTORE_ATTEMPTS {
-                log::warn!("clipboard restore failed: OpenClipboard unavailable");
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_RESTORE_RETRY_MS));
-            continue;
-        }
-
-        EmptyClipboard().ok();
-        let mut restored = 0usize;
-        for (fmt, data) in &saved.entries {
-            if let Ok(hg) = GlobalAlloc(GMEM_MOVEABLE, data.len()) {
-                let ptr = GlobalLock(hg) as *mut u8;
-                if ptr.is_null() {
-                    let _ = GlobalFree(Some(hg));
-                    continue;
-                }
-                std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
-                let _ = GlobalUnlock(hg);
-                if SetClipboardData(*fmt, Some(HANDLE(hg.0))).is_ok() {
-                    restored += 1;
-                } else {
-                    let _ = GlobalFree(Some(hg));
-                }
-            }
-        }
-        CloseClipboard().ok();
-
-        if restored == saved.entries.len() {
-            return;
-        }
-
-        log::warn!(
-            "clipboard restore incomplete: restored {} of {} formats",
-            restored,
-            saved.entries.len()
-        );
-        if attempt + 1 < CLIPBOARD_RESTORE_ATTEMPTS {
-            std::thread::sleep(std::time::Duration::from_millis(CLIPBOARD_RESTORE_RETRY_MS));
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-    };
-    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-
-    const CF_UNICODETEXT: u32 = 13;
-
-    if OpenClipboard(None).is_ok() {
-        EmptyClipboard().ok();
-        let hg = GlobalAlloc(GMEM_MOVEABLE, data.len() * 2)?;
-        let ptr = GlobalLock(hg) as *mut u16;
-        std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
-        let _ = GlobalUnlock(hg);
-        SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hg.0)))
-            .map_err(|e| anyhow::anyhow!("SetClipboardData failed: {e}"))?;
-        CloseClipboard().ok();
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!("OpenClipboard failed"))
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn post_key_event(
-    src: core_graphics::event_source::CGEventSource,
-    keycode: core_graphics::event::CGKeyCode,
-    down: bool,
-    flags: core_graphics::event::CGEventFlags,
-) {
-    use core_graphics::event::{CGEvent, CGEventTapLocation};
-    if let Ok(e) = CGEvent::new_keyboard_event(src, keycode, down) {
-        e.set_flags(flags);
-        e.post(CGEventTapLocation::HID);
-    }
-}
-
 /// Write `text` to the OS clipboard without injecting. Used as a fallback
 /// when Verenu itself holds foreground focus and a normal paste would
 /// land in our own WebView.
 pub async fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
     #[cfg(windows)]
     {
-        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        for attempt in 0..3u32 {
-            if unsafe { write_clipboard_unicode(&wide) }.is_ok() {
-                return Ok(());
-            }
-            if attempt < 2 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-            }
-        }
-        anyhow::bail!("copy_to_clipboard: clipboard held after 3 attempts")
+        return windows::copy_to_clipboard(text).await;
     }
     #[cfg(target_os = "macos")]
     {
-        crate::system::mac_app::pasteboard_set_string(text);
-        Ok(())
+        return macos::copy_to_clipboard(text).await;
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = text;
         anyhow::bail!("copy_to_clipboard: unsupported platform")
     }
-}
-
-#[cfg(target_os = "macos")]
-async fn macos_clipboard_sniff_context(target_hwnd: usize) -> Option<InjectionContextProbe> {
-    use core_graphics::event::{CGEventFlags, CGKeyCode};
-    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-
-    const KEY_LEFT_ARROW: CGKeyCode = 123;
-    const KEY_RIGHT_ARROW: CGKeyCode = 124;
-    const VK_ANSI_C: CGKeyCode = 8;
-
-    if crate::core::window_context::get_foreground_hwnd() != target_hwnd {
-        return None;
-    }
-
-    if crate::system::mac_app::pasteboard_has_non_text_formats() {
-        log::info!("bypassing macOS clipboard sniff fallback because pasteboard contains non-text or rich-text formats");
-        return None;
-    }
-
-    // Clear clipboard so empty selection stays empty, not previous clipboard content.
-    crate::system::mac_app::pasteboard_set_string("");
-
-    // Shift+Left: select one char back (no-op if cursor is at field start).
-    // src is scoped to the block so it is dropped before the await.
-    {
-        let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
-        post_key_event(
-            src.clone(),
-            KEY_LEFT_ARROW,
-            true,
-            CGEventFlags::CGEventFlagShift,
-        );
-        post_key_event(src, KEY_LEFT_ARROW, false, CGEventFlags::CGEventFlagShift);
-    }
-    tokio::time::sleep(Duration::from_millis(30)).await;
-
-    // Cmd+C: copy selection to clipboard.
-    {
-        let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
-        post_key_event(
-            src.clone(),
-            VK_ANSI_C,
-            true,
-            CGEventFlags::CGEventFlagCommand,
-        );
-        post_key_event(src, VK_ANSI_C, false, CGEventFlags::CGEventFlagCommand);
-    }
-    tokio::time::sleep(Duration::from_millis(30)).await;
-
-    let sniffed = crate::system::mac_app::pasteboard_get_string().unwrap_or_default();
-
-    // Right: deselect and restore cursor position.
-    // Skipped when nothing was selected (cursor was at field start).
-    if !sniffed.is_empty() {
-        {
-            let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
-            post_key_event(src.clone(), KEY_RIGHT_ARROW, true, CGEventFlags::empty());
-            post_key_event(src, KEY_RIGHT_ARROW, false, CGEventFlags::empty());
-        }
-        tokio::time::sleep(Duration::from_millis(15)).await;
-    }
-
-    let context = if sniffed.is_empty() {
-        crate::core::text_context::SentenceContext::NewSentence
-    } else {
-        crate::core::text_context::classify_context_tail(&sniffed)
-    };
-
-    Some(InjectionContextProbe {
-        context,
-        source: ContextProbeSource::ClipboardSniff,
-        context_tail: sniffed,
-        control_type: "clipboard_sniff".to_string(),
-        selection_state: SelectionState::Unknown,
-        control_identity_hash: "clipboard_sniff".to_string(),
-    })
 }
 
 #[allow(unused_variables)]
@@ -889,234 +744,28 @@ pub async fn inject_text(
 
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::Input::KeyboardAndMouse::{
-            SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-            KEYEVENTF_KEYUP, VK_CONTROL, VK_LMENU, VK_V,
-        };
-        use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
-
-        unsafe {
-            // Save all clipboard formats so non-text content (images, files, etc.)
-            // survives the injection and is restored afterward.
-            let saved = save_clipboard_all();
-
-            // Restore focus to the window the user was dictating into.
-            // The user may have switched windows during the transcription/cleanup
-            // pipeline; without this the Ctrl+V paste lands in the wrong app.
-            // WH_KEYBOARD_LL hooks give the process implicit foreground lock
-            // permission, so SetForegroundWindow succeeds from here.
-            if target_hwnd != 0 {
-                let _ = SetForegroundWindow(HWND(target_hwnd as *mut core::ffi::c_void));
-                tokio::time::sleep(tokio::time::Duration::from_millis(REFOCUS_SETTLE_MS)).await;
-            }
-
-            let ki = |vk, flags: u32| INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: vk,
-                        wScan: 0,
-                        dwFlags: KEYBD_EVENT_FLAGS(flags),
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            };
-
-            // Read cursor context from the focused control when possible.
-            // If Windows UIA cannot provide any probe at all, fall back to the
-            // recent injection tail for the same target window.
-            let mut injection_probe = if contextual_caps || auto_spacing {
-                crate::core::context_probe::read_injection_context_probe().await
-            } else {
-                unavailable_injection_probe()
-            };
-            if (contextual_caps || auto_spacing) && injection_probe.source.allows_history_fallback()
-            {
-                if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
-                    injection_probe = history_probe;
-                }
-            }
-            let (adjusted, context_kind, case_decision) = apply_probe_adjustments(
-                text,
-                contextual_caps,
-                auto_spacing,
-                profile,
-                &injection_probe,
-            );
-
-            let text_to_inject = adjusted.as_str();
-
-            // Write injection text - retry up to 3 times if another process holds the clipboard.
-            let wide: Vec<u16> = text_to_inject
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect();
-            let mut clipboard_written = false;
-            for attempt in 0..3u32 {
-                if write_clipboard_unicode(&wide).is_ok() {
-                    clipboard_written = true;
-                    break;
-                }
-                if attempt < 2 {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(
-                        CLIPBOARD_WRITE_RETRY_MS,
-                    ))
-                    .await;
-                }
-            }
-            if !clipboard_written {
-                return Err(anyhow::anyhow!(
-                    "OpenClipboard failed after 3 attempts - clipboard held by another process"
-                ));
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(
-                CLIPBOARD_WRITE_SETTLE_MS,
-            ))
-            .await;
-
-            // Step 1 - clear any dangling Alt the target app may have from the
-            // recording gesture.  Ctrl-down is sent first so that the Alt-up is
-            // NOT the message immediately following Alt-down; this prevents
-            // DefWindowProc from firing SC_KEYMENU (menu-bar activation).
-            // We then release Ctrl so the app fully settles before the paste.
-            let clear = [
-                ki(VK_CONTROL, 0),
-                ki(VK_LMENU, KEYEVENTF_KEYUP.0),
-                ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
-            ];
-            SendInput(&clear, std::mem::size_of::<INPUT>() as i32);
-
-            // Step 2 - let the app process the modifier-state change before we
-            // inject Ctrl+V.  Without this pause, some apps (browsers, IDEs) end
-            // up processing V without Ctrl because the Alt-up and V-down land in
-            // the same message-pump cycle.
-            tokio::time::sleep(tokio::time::Duration::from_millis(MODIFIER_GAP_MS)).await;
-
-            // Step 3 - clean Ctrl+V with no dangling modifiers.
-            let paste = [
-                ki(VK_CONTROL, 0),
-                ki(VK_V, 0),
-                ki(VK_V, KEYEVENTF_KEYUP.0),
-                ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
-            ];
-            SendInput(&paste, std::mem::size_of::<INPUT>() as i32);
-            tokio::time::sleep(tokio::time::Duration::from_millis(PASTE_SETTLE_MS)).await;
-
-            // Restore all previously saved clipboard formats.
-            restore_clipboard_all(&saved);
-
-            if target_hwnd != 0 && !adjusted.is_empty() {
-                if let Ok(mut guard) = last_injection().lock() {
-                    let mut tail = adjusted.clone();
-                    trim_tail_to_limit(&mut tail);
-                    *guard = CursorContextState::Known {
-                        hwnd: target_hwnd,
-                        tail,
-                        instant: Instant::now(),
-                    };
-                }
-            }
-
-            Ok(InjectionOutcome {
-                text: adjusted,
-                context_state: context_kind.as_str(),
-                case_decision: case_decision.as_str(),
-                probe_source: injection_probe.source.as_str(),
-                selection_state: injection_probe.selection_state.as_str(),
-            })
-        }
+        return windows::inject_text(
+            text,
+            target_hwnd,
+            contextual_caps,
+            auto_spacing,
+            profile,
+            clipboard_sniff_enabled,
+        )
+        .await;
     }
 
     #[cfg(target_os = "macos")]
     {
-        use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
-        use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-
-        const VK_ANSI_V: CGKeyCode = 9;
-
-        if target_hwnd != 0 {
-            let pid = (target_hwnd & 0xFFFFFFFF) as i32;
-            crate::system::mac_app::activate_pid(pid);
-            tokio::time::sleep(Duration::from_millis(120)).await;
-        }
-
-        // Save original clipboard before any sniff that might clear it.
-        let saved = crate::system::mac_app::pasteboard_get_string();
-
-        let mut injection_probe = if contextual_caps || auto_spacing {
-            crate::core::context_probe::read_injection_context_probe().await
-        } else {
-            unavailable_injection_probe()
-        };
-        if (contextual_caps || auto_spacing) && injection_probe.source.allows_history_fallback() {
-            if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
-                injection_probe = history_probe;
-            } else if clipboard_sniff_enabled {
-                if let Some(sniff_probe) = macos_clipboard_sniff_context(target_hwnd).await {
-                    injection_probe = sniff_probe;
-                }
-            }
-        }
-        let (adjusted, context_kind, case_decision) = apply_probe_adjustments(
+        return macos::inject_text(
             text,
+            target_hwnd,
             contextual_caps,
             auto_spacing,
             profile,
-            &injection_probe,
-        );
-
-        crate::system::mac_app::pasteboard_set_string(&adjusted);
-        tokio::time::sleep(Duration::from_millis(20)).await;
-
-        let posted = (|| -> Option<()> {
-            let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
-            crate::core::hotkey::begin_synthetic_paste_suppression(400);
-            let down = CGEvent::new_keyboard_event(src.clone(), VK_ANSI_V, true).ok()?;
-            // core-graphics 0.24.x exposes the Command modifier under the
-            // CGEventFlagCommand name.
-            down.set_flags(CGEventFlags::CGEventFlagCommand);
-            down.post(CGEventTapLocation::HID);
-            let up = CGEvent::new_keyboard_event(src, VK_ANSI_V, false).ok()?;
-            up.set_flags(CGEventFlags::CGEventFlagCommand);
-            up.post(CGEventTapLocation::HID);
-            Some(())
-        })();
-
-        tokio::time::sleep(Duration::from_millis(120)).await;
-
-        match saved {
-            Some(prev) => crate::system::mac_app::pasteboard_set_string(&prev),
-            None => crate::system::mac_app::pasteboard_set_string(""),
-        }
-
-        if posted.is_none() {
-            return Err(anyhow::anyhow!(
-                "inject_text: failed to synthesise Cmd+V — grant Verenu Accessibility permission"
-            ));
-        }
-
-        if target_hwnd != 0 && !adjusted.is_empty() {
-            if let Ok(mut guard) = last_injection().lock() {
-                let mut tail = adjusted.clone();
-                trim_tail_to_limit(&mut tail);
-                *guard = CursorContextState::Known {
-                    hwnd: target_hwnd,
-                    tail,
-                    instant: Instant::now(),
-                };
-            }
-        }
-
-        Ok(InjectionOutcome {
-            text: adjusted,
-            context_state: context_kind.as_str(),
-            case_decision: case_decision.as_str(),
-            probe_source: injection_probe.source.as_str(),
-            selection_state: injection_probe.selection_state.as_str(),
-        })
+            clipboard_sniff_enabled,
+        )
+        .await;
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]

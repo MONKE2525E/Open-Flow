@@ -37,6 +37,14 @@ pub struct GeminiTranscribeReq {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct GeminiGenerateReq {
+    pub contents: Vec<GeminiReqContent>,
+    pub system_instruction: GeminiReqContent,
+    pub generation_config: GeminiGenConfig,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct GeminiReqContent {
     pub parts: Vec<GeminiReqPart>,
 }

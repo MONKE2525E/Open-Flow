@@ -3,6 +3,7 @@ name: Dependency Review
 on:
   pull_request:
     branches:
+      - dev
       - master
 
 permissions:

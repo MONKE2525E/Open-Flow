@@ -6,10 +6,14 @@ use super::*;
 
 #[tauri::command]
 pub async fn get_installed_apps() -> Vec<InstalledApp> {
-    match tokio::task::spawn_blocking(crate::system::apps::list_installed_apps).await {
+    match run_blocking("get_installed_apps", || {
+        Ok(crate::system::apps::list_installed_apps())
+    })
+    .await
+    {
         Ok(apps) => apps,
         Err(e) => {
-            log::error!("Task to get installed apps panicked: {e}");
+            log::error!("{e}");
             Vec::new()
         }
     }
@@ -17,8 +21,8 @@ pub async fn get_installed_apps() -> Vec<InstalledApp> {
 
 #[tauri::command]
 pub async fn get_app_mappings(app: AppHandle) -> Result<Vec<AppMapping>, String> {
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    let mappings = store
+    let settings = store::settings_handle(&app)?;
+    let mappings = settings
         .get(store::APP_MAPPINGS)
         .and_then(|v| serde_json::from_value::<Vec<AppMapping>>(v).ok())
         .unwrap_or_default();
@@ -27,10 +31,13 @@ pub async fn get_app_mappings(app: AppHandle) -> Result<Vec<AppMapping>, String>
 
 #[tauri::command]
 pub async fn save_app_mappings(app: AppHandle, mappings: Vec<AppMapping>) -> Result<(), String> {
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
     let value = serde_json::to_value(mappings).map_err(|e| e.to_string())?;
-    store.set(store::APP_MAPPINGS, value);
-    store.save().map_err(|e| e.to_string())
+    super::validate_setting(store::APP_MAPPINGS, &value)?;
+    let settings = store::settings_handle(&app)?;
+    run_blocking("save_app_mappings", move || {
+        settings.save_value(store::APP_MAPPINGS, value)
+    })
+    .await
 }
 
 // ---------- snippets ----------
@@ -38,7 +45,7 @@ pub async fn save_app_mappings(app: AppHandle, mappings: Vec<AppMapping>) -> Res
 #[tauri::command]
 pub async fn get_snippets(app: AppHandle) -> Result<Vec<db::Snippet>, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || {
+    run_blocking("get_snippets", move || {
         let rows = db::query_snippets(&db).map_err(|e| e.to_string())?;
         if crate::system::logger::is_verbose() {
             log::info!("snippets:get count={}", rows.len());
@@ -46,7 +53,6 @@ pub async fn get_snippets(app: AppHandle) -> Result<Vec<db::Snippet>, String> {
         Ok(rows)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -57,7 +63,7 @@ pub async fn create_snippet(
     instructions: String,
 ) -> Result<db::CreatedRecordMeta, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || {
+    run_blocking("create_snippet", move || {
         log::info!(
             "snippets:create trigger_chars={} expansion_chars={} instructions_chars={}",
             trigger.chars().count(),
@@ -73,7 +79,6 @@ pub async fn create_snippet(
         Ok(created)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -85,19 +90,19 @@ pub async fn edit_snippet(
     instructions: String,
 ) -> Result<(), String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || {
+    run_blocking("edit_snippet", move || {
         db::update_snippet(&db, id, &trigger, &expansion, &instructions).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn remove_snippet(app: AppHandle, id: i64) -> Result<(), String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || db::delete_snippet(&db, id).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| e.to_string())?
+    run_blocking("remove_snippet", move || {
+        db::delete_snippet(&db, id).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 // ---------- dictionary ----------
@@ -105,9 +110,10 @@ pub async fn remove_snippet(app: AppHandle, id: i64) -> Result<(), String> {
 #[tauri::command]
 pub async fn get_dictionary(app: AppHandle) -> Result<Vec<db::DictionaryEntry>, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || db::query_dictionary(&db).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| e.to_string())?
+    run_blocking("get_dictionary", move || {
+        db::query_dictionary(&db).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -117,7 +123,7 @@ pub async fn create_dictionary_entry(
     mistake: Option<String>,
 ) -> Result<db::CreatedRecordMeta, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || {
+    run_blocking("create_dictionary_entry", move || {
         log::info!(
             "dictionary:create term_chars={} mistake_chars={}",
             term.chars().count(),
@@ -129,7 +135,6 @@ pub async fn create_dictionary_entry(
         })
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -140,21 +145,19 @@ pub async fn edit_dictionary_entry(
     mistake: Option<String>,
 ) -> Result<(), String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || {
+    run_blocking("edit_dictionary_entry", move || {
         db::update_dictionary_entry(&db, id, &term, mistake.as_deref()).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn remove_dictionary_entry(app: AppHandle, id: i64) -> Result<(), String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || {
+    run_blocking("remove_dictionary_entry", move || {
         db::delete_dictionary_entry(&db, id).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -162,11 +165,10 @@ pub async fn get_auto_learn_status_summary(
     app: AppHandle,
 ) -> Result<db::AutoLearnStatusSummary, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || {
+    run_blocking("get_auto_learn_status_summary", move || {
         db::get_auto_learn_status_summary(&db).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -175,10 +177,8 @@ pub async fn get_recent_auto_learn_activity(
     limit: Option<i64>,
 ) -> Result<Vec<db::AutoLearnEvent>, String> {
     let db = app.state::<DbHandle>().inner().clone();
-    tokio::task::spawn_blocking(move || {
+    run_blocking("get_recent_auto_learn_activity", move || {
         db::get_recent_auto_learn_activity(&db, limit.unwrap_or(20)).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
-

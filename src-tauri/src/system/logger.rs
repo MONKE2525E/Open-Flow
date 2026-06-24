@@ -9,6 +9,19 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const MAX_LOG_LINES: usize = 1000;
 const LOG_EVENT: &str = "verenu:log";
+const MAX_FRONTEND_LOG_CHARS: usize = 1_000;
+const REDACTED_TEXT_FIELD_TOKENS: &[&str] = &[
+    "raw_full=",
+    "input_full=",
+    "prompt_full=",
+    "output_full=",
+    "final_text_full=",
+    "app_context_full=",
+    "raw_text=",
+    "clean_text=",
+    "dictation=",
+    "clipboard=",
+];
 
 static LOG_BUFFER: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
@@ -81,9 +94,42 @@ fn redact_message(input: &str) -> String {
     out = redact_after_token_ci(&out, "bearer ");
     out = redact_after_token_ci(&out, "api_key=");
     out = redact_after_token_ci(&out, "x-api-key:");
+    out = redact_after_token_ci(&out, "x-goog-api-key:");
+    // Google's legacy query-param key. Match the `?key=`/`&key=` URL markers
+    // specifically: avoids a per-message lowercase allocation and won't clobber
+    // unrelated params like `cache_key=` the way a bare `key=` would.
+    out = redact_after_token_ci(&out, "?key=");
+    out = redact_after_token_ci(&out, "&key=");
     out = redact_json_key_ci(&out, "api_key");
     out = redact_json_key_ci(&out, "authorization");
+    for token in REDACTED_TEXT_FIELD_TOKENS {
+        out = redact_quoted_field_value_ci(&out, token);
+    }
     out
+}
+
+pub fn sanitize_frontend_log_message(message: &str) -> String {
+    let trimmed = message.trim();
+    // Cap the input before redaction so an enormous frontend message can't make
+    // the case-insensitive redaction passes burn CPU. Keep headroom above the
+    // final limit so we don't slice through a sensitive token near the boundary.
+    let to_redact = if trimmed.len() > MAX_FRONTEND_LOG_CHARS * 4 {
+        trimmed
+            .chars()
+            .take(MAX_FRONTEND_LOG_CHARS * 2)
+            .collect::<String>()
+    } else {
+        trimmed.to_string()
+    };
+    let mut sanitized = redact_message(&to_redact);
+    if sanitized.chars().count() > MAX_FRONTEND_LOG_CHARS {
+        sanitized = sanitized
+            .chars()
+            .take(MAX_FRONTEND_LOG_CHARS)
+            .collect::<String>();
+        sanitized.push_str("...[truncated]");
+    }
+    sanitized
 }
 
 fn redact_after_token_ci(input: &str, token: &str) -> String {
@@ -91,13 +137,21 @@ fn redact_after_token_ci(input: &str, token: &str) -> String {
     let mut remaining = input.to_string();
 
     while let Some(found_idx) = find_ascii_case_insensitive_from(&remaining, token, cursor) {
-        let idx = found_idx + token.len();
-        let end_rel = remaining[idx..]
+        let mut value_start = found_idx + token.len();
+        while value_start < remaining.len()
+            && remaining.as_bytes()[value_start].is_ascii_whitespace()
+        {
+            value_start += 1;
+        }
+        if value_start >= remaining.len() {
+            break;
+        }
+        let end_rel = remaining[value_start..]
             .find(|ch: char| ch.is_whitespace() || ch == ',' || ch == ';' || ch == '"')
-            .unwrap_or(remaining.len() - idx);
-        let end = idx + end_rel;
-        remaining.replace_range(idx..end, "[REDACTED]");
-        cursor = idx + "[REDACTED]".len();
+            .unwrap_or(remaining.len() - value_start);
+        let end = value_start + end_rel;
+        remaining.replace_range(value_start..end, "[REDACTED]");
+        cursor = value_start + "[REDACTED]".len();
     }
     remaining
 }
@@ -125,6 +179,38 @@ fn redact_json_key_ci(input: &str, key: &str) -> String {
         }
         cursor = value_start;
     }
+    remaining
+}
+
+fn redact_quoted_field_value_ci(input: &str, token: &str) -> String {
+    let mut cursor = 0usize;
+    let mut remaining = input.to_string();
+
+    while let Some(found_idx) = find_ascii_case_insensitive_from(&remaining, token, cursor) {
+        let mut value_start = found_idx + token.len();
+        while value_start < remaining.len()
+            && remaining.as_bytes()[value_start].is_ascii_whitespace()
+        {
+            value_start += 1;
+        }
+
+        if value_start < remaining.len() && remaining.as_bytes()[value_start] == b'"' {
+            let content_start = value_start + 1;
+            if let Some(content_end) = find_json_string_end(&remaining, content_start) {
+                remaining.replace_range(content_start..content_end, "[REDACTED]");
+                cursor = content_start + "[REDACTED]".len();
+                continue;
+            }
+        }
+
+        // Advance by a whole char so cursor stays on a UTF-8 boundary.
+        cursor = remaining[value_start..]
+            .char_indices()
+            .nth(1)
+            .map(|(idx, _)| value_start + idx)
+            .unwrap_or(remaining.len());
+    }
+
     remaining
 }
 
@@ -194,7 +280,6 @@ impl Log for SessionLogger {
         let verbose = is_verbose();
         if !verbose
             && record.level() <= log::Level::Debug
-            && !record.target().starts_with("open_flow")
             && !record.target().starts_with("verenu")
             && !record.target().starts_with("src_tauri")
         {
@@ -248,6 +333,37 @@ mod tests {
         let s = r#""abc\"def""#;
         let end = find_json_string_end(s, 1).expect("expected end quote");
         assert_eq!(&s[end..=end], "\"");
+    }
+
+    #[test]
+    fn redacts_google_url_key_query_param() {
+        let input = "POST https://generativelanguage.googleapis.com/v1beta/models/gemini:generateContent?key=AIzaSECRET status=200";
+        let out = super::redact_message(input);
+        assert!(!out.contains("AIzaSECRET"));
+        assert!(out.contains("key=[REDACTED]"));
+    }
+
+    #[test]
+    fn does_not_redact_unrelated_key_param() {
+        let input = "cleanup cache key=mysession123 stored";
+        let out = super::redact_message(input);
+        assert!(out.contains("mysession123"));
+    }
+
+    #[test]
+    fn redacts_verbose_dictation_fields() {
+        let input = r#"pipeline: transcription raw_full="my private dictated text""#;
+        let out = super::redact_message(input);
+        assert!(!out.contains("my private dictated text"));
+        assert!(out.contains(r#"raw_full="[REDACTED]""#));
+    }
+
+    #[test]
+    fn frontend_logs_are_redacted_and_capped() {
+        let input = format!("authorization: secret {}", "x".repeat(1_200));
+        let out = super::sanitize_frontend_log_message(&input);
+        assert!(!out.contains("secret"));
+        assert!(out.contains("[truncated]"));
     }
 
     #[test]

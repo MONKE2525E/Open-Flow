@@ -1,17 +1,15 @@
 //! Update check + in-app install, with pre-update DB backup.
 
 use super::*;
+#[cfg(target_os = "macos")]
+use tauri_plugin_shell::ShellExt;
 
 // ---------- updates ----------
 
 #[tauri::command]
-pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
+pub async fn check_for_update() -> Result<Option<crate::api::updater::UpdateInfo>, String> {
     match crate::api::updater::check().await {
-        Ok(Some(info)) => Ok(Some(serde_json::json!({
-            "version": info.version,
-            "downloadUrl": info.download_url,
-        }))),
-        Ok(None) => Ok(None),
+        Ok(update) => Ok(update),
         Err(e) => {
             log::warn!("Update check failed: {e}");
             Ok(None)
@@ -21,13 +19,34 @@ pub async fn check_for_update() -> Result<Option<serde_json::Value>, String> {
 
 #[tauri::command]
 pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), String> {
-    #[cfg(not(windows))]
+    // Defense-in-depth: `download_url` ultimately originates from a GitHub
+    // release asset (`browser_download_url`), but this command accepts it
+    // straight from the frontend and either opens it (macOS) or downloads and
+    // executes it (Windows). Refuse anything that isn't an official release
+    // asset URL so a compromised/spoofed frontend can't turn this into an
+    // arbitrary download-and-execute primitive.
+    if !crate::api::updater::is_authorized_release_asset_url(&download_url) {
+        return Err("Refusing to install update from an unauthorized URL.".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // `Shell::open` is soft-deprecated in favour of tauri-plugin-opener,
+        // but the shell plugin is already the only one wired up here and
+        // opening the verified release URL in the user's browser to start the
+        // DMG download is exactly what we want. Allow the deprecation rather
+        // than pulling in (and configuring capabilities for) another plugin.
+        #[allow(deprecated)]
+        app.shell()
+            .open(download_url, None)
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (&app, &download_url);
-        Err(
-            "In-app update is only available on Windows. Download the latest release from GitHub."
-                .into(),
-        )
+        Err("Updates are only supported on Windows and macOS.".into())
     }
 
     #[cfg(windows)]
@@ -123,4 +142,3 @@ pub fn backup_sqlite_database(
         other => Err(format!("Backup did not complete in a single step: {other:?}")),
     }
 }
-

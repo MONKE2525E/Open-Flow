@@ -19,6 +19,11 @@ use tauri::AppHandle;
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {}
 
+// The global hotkey now uses Carbon `RegisterEventHotKey` (see
+// `core::hotkey::mac`), which needs no Input Monitoring permission, so the old
+// IOKit HID-listen probing has been removed. The only remaining macOS
+// permissions are Accessibility (Cmd+V injection / AX reads) and Microphone.
+
 const APP_ICON_ICNS: &[u8] = include_bytes!("../../icons/icon.icns");
 
 const POLICY_UNKNOWN: u8 = 0;
@@ -33,63 +38,6 @@ struct NSApplicationActivationPolicy(isize);
 
 unsafe impl objc2::Encode for NSApplicationActivationPolicy {
     const ENCODING: objc2::Encoding = isize::ENCODING;
-}
-
-// CGRect-compatible structs for msg_send! return values (64-bit macOS).
-// AppKit returns CGRect here; objc2 checks the exact type code at runtime, so
-// we mirror the CoreGraphics encodings rather than the NS* aliases.
-#[repr(C)]
-#[derive(Copy, Clone, Default)]
-struct MacPoint {
-    x: f64,
-    y: f64,
-}
-#[repr(C)]
-#[derive(Copy, Clone, Default)]
-struct MacSize {
-    width: f64,
-    height: f64,
-}
-#[repr(C)]
-#[derive(Copy, Clone, Default)]
-struct MacRect {
-    origin: MacPoint,
-    size: MacSize,
-}
-
-unsafe impl objc2::Encode for MacPoint {
-    const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
-        "CGPoint",
-        &[objc2::Encoding::Double, objc2::Encoding::Double],
-    );
-}
-unsafe impl objc2::Encode for MacSize {
-    const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
-        "CGSize",
-        &[objc2::Encoding::Double, objc2::Encoding::Double],
-    );
-}
-unsafe impl objc2::Encode for MacRect {
-    const ENCODING: objc2::Encoding =
-        objc2::Encoding::Struct("CGRect", &[MacPoint::ENCODING, MacSize::ENCODING]);
-}
-
-/// Height of the Dock in logical points when it is positioned at the bottom of
-/// the screen. Returns 0.0 if the Dock is on a side or auto-hidden, in which
-/// case the caller should use its own fallback gap.
-pub fn dock_height_points() -> f64 {
-    autoreleasepool(|_| unsafe {
-        let main: *mut AnyObject = msg_send![class!(NSScreen), mainScreen];
-        if main.is_null() {
-            return 0.0;
-        }
-        let frame: MacRect = msg_send![main, frame];
-        let visible: MacRect = msg_send![main, visibleFrame];
-        // NSScreen uses a bottom-left origin (Y increases upward).
-        // When the Dock is at the bottom, visibleFrame.origin.y > frame.origin.y
-        // by exactly the Dock height. Side-positioned or hidden Dock → no Y inset.
-        (visible.origin.y - frame.origin.y).max(0.0)
-    })
 }
 
 /// Apply the current bundled PNG as the macOS application icon at runtime.
@@ -150,6 +98,35 @@ pub fn set_regular_activation_policy_on_main_thread(app: &AppHandle) {
     });
 }
 
+/// Float the pill window above other apps' windows *without* activating Open
+/// Flow. Tauri's `show()` maps to `-[NSWindow orderFront:]`, which AppKit
+/// suppresses for a background (non-active) app - so the pill only appeared
+/// while Verenu was frontmost. We instead:
+///   1. raise the window level above normal windows (NSStatusWindowLevel = 25),
+///   2. let it appear on every Space and over full-screen apps,
+///   3. order it front with `orderFrontRegardless`, which ignores active state.
+///
+/// `ns_window` is the `*mut NSWindow` obtained from `WebviewWindow::ns_window()`.
+pub fn float_pill_window(ns_window: *mut std::ffi::c_void) {
+    if ns_window.is_null() {
+        return;
+    }
+    autoreleasepool(|_| unsafe {
+        let win = ns_window as *mut AnyObject;
+        // NSStatusWindowLevel keeps the pill above ordinary app windows while
+        // staying below system menus.
+        let level: isize = 25;
+        let _: () = msg_send![win, setLevel: level];
+        // NSWindowCollectionBehaviorCanJoinAllSpaces (1<<0) |
+        // NSWindowCollectionBehaviorFullScreenAuxiliary (1<<8): show on the
+        // active Space and over full-screen apps without switching Spaces.
+        let behavior: usize = (1 << 0) | (1 << 8);
+        let _: () = msg_send![win, setCollectionBehavior: behavior];
+        // Order front even though Verenu is not the active application.
+        let _: () = msg_send![win, orderFrontRegardless];
+    })
+}
+
 /// Ask macOS to activate the current app and bring its windows forward.
 pub fn activate_current_app() -> bool {
     autoreleasepool(|_| unsafe {
@@ -184,6 +161,28 @@ pub fn set_process_name(display_name: &str) -> bool {
         let display_name = NSString::from_str(display_name);
         let _: () = msg_send![process_info, setProcessName: &*display_name];
         true
+    })
+}
+
+pub fn bundle_identifier() -> Option<String> {
+    autoreleasepool(|_| unsafe {
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        if bundle.is_null() {
+            return None;
+        }
+        let identifier: *mut AnyObject = msg_send![bundle, bundleIdentifier];
+        nsstring_to_string(identifier)
+    })
+}
+
+pub fn bundle_path() -> Option<String> {
+    autoreleasepool(|_| unsafe {
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        if bundle.is_null() {
+            return None;
+        }
+        let path: *mut AnyObject = msg_send![bundle, bundlePath];
+        nsstring_to_string(path)
     })
 }
 
@@ -235,11 +234,56 @@ pub fn refresh_dock_icon() {
     })
 }
 
+/// Latched once a `cpal` input stream opens successfully. macOS only hands out a
+/// working audio stream when the microphone permission is actually granted, so a
+/// successful capture is authoritative proof - unlike
+/// `AVCaptureDevice authorizationStatusForMediaType:`, which can return a value
+/// cached at first call for the lifetime of the process and never refresh after
+/// the user grants access mid-session.
+static MIC_VERIFIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Record that the microphone was successfully opened for capture. Call this from
+/// the audio backend once a recording stream is confirmed playing.
+pub fn mark_microphone_verified() {
+    MIC_VERIFIED.store(true, Ordering::SeqCst);
+}
+
+pub fn is_microphone_verified() -> bool {
+    MIC_VERIFIED.load(Ordering::SeqCst)
+}
+
+/// Latched once a cross-process Accessibility (AX) read succeeds - i.e. the app
+/// actually read another application's focused-element tree. Like the microphone
+/// latch, an empirically successful AX call is authoritative proof the permission
+/// is granted, which matters when `AXIsProcessTrusted()` reports a stale `false`
+/// (most often after an ad-hoc rebuild changes the code signature the TCC grant
+/// was tied to). This is a process-lifetime latch: if the user revokes access the
+/// OS tears the capability down and a relaunch resets the flag, mirroring the
+/// accepted behaviour of [`MIC_VERIFIED`].
+static ACCESSIBILITY_VERIFIED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Record that a cross-process AX read succeeded. Call from the AX caret probe
+/// whenever the OS returned real element data (any source other than
+/// "permission missing" / "unavailable").
+pub fn mark_accessibility_verified() {
+    ACCESSIBILITY_VERIFIED.store(true, Ordering::SeqCst);
+}
+
+pub fn is_accessibility_verified() -> bool {
+    ACCESSIBILITY_VERIFIED.load(Ordering::SeqCst)
+}
+
 /// Current macOS microphone permission status for the app.
 ///
 /// Returns one of: `authorized`, `not_determined`, `denied`, `restricted`,
 /// or `unknown`.
 pub fn microphone_permission_status() -> &'static str {
+    // A previously successful capture is proof the permission is granted, even if
+    // the cached AV authorization status is stale.
+    if MIC_VERIFIED.load(Ordering::SeqCst) {
+        return "authorized";
+    }
     autoreleasepool(|_| unsafe {
         let media_type = NSString::from_str("soun");
         let status: isize =
@@ -254,10 +298,40 @@ pub fn microphone_permission_status() -> &'static str {
     })
 }
 
-// UTI for plain UTF-8 text — the value of `NSPasteboardTypeString`.
+/// Request microphone access, showing the macOS consent prompt when the
+/// permission is undetermined. The completion handler is a no-op - callers read
+/// the resulting status separately via `microphone_permission_status()` once the
+/// user responds. Safe to call when already authorized (no prompt is shown).
+pub async fn request_microphone() -> bool {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = std::sync::Mutex::new(Some(tx));
+    autoreleasepool(|_| unsafe {
+        let media_type = NSString::from_str("soun");
+        let handler = block2::RcBlock::new(move |granted: objc2::runtime::Bool| {
+            if let Ok(mut guard) = tx.lock() {
+                if let Some(tx) = guard.take() {
+                    let _ = tx.send(granted.as_bool());
+                }
+            }
+        });
+        let _: () = msg_send![
+            class!(AVCaptureDevice),
+            requestAccessForMediaType: &*media_type,
+            completionHandler: &*handler
+        ];
+    });
+    rx.await.unwrap_or(false)
+}
+
+// UTI for plain UTF-8 text - the value of `NSPasteboardTypeString`.
 const PASTEBOARD_TYPE_STRING: &str = "public.utf8-plain-text";
 
 /// PID of the frontmost (active) application, or `None` if unavailable.
+///
+/// Reverted to using AppKit's `NSWorkspace` because `CGWindowListCopyWindowInfo`
+/// triggers a system-wide Screen Recording permission prompt on macOS 15 Sequoia,
+/// which is highly undesirable for a dictation app. `NSWorkspace` is thread-safe
+/// since macOS 10.6 and safe to call from background threads.
 pub fn frontmost_pid() -> Option<i32> {
     autoreleasepool(|_| unsafe {
         let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -384,120 +458,4 @@ unsafe fn nsstring_to_string(ns: *mut AnyObject) -> Option<String> {
         return None;
     }
     Some(CStr::from_ptr(utf8).to_string_lossy().into_owned())
-}
-
-#[allow(dead_code)]
-#[link(name = "CoreGraphics", kind = "framework")]
-extern "C" {
-    fn CGWindowListCopyWindowInfo(
-        option: u32,
-        relativeToWindow: u32,
-    ) -> core_foundation_sys::array::CFArrayRef;
-    static kCGWindowNumber: core_foundation_sys::string::CFStringRef;
-    static kCGWindowOwnerPID: core_foundation_sys::string::CFStringRef;
-    static kCGWindowLayer: core_foundation_sys::string::CFStringRef;
-}
-
-/// Returns the frontmost window ID and the frontmost application PID.
-#[allow(dead_code)]
-pub fn get_active_window_id_and_pid() -> (u32, i32) {
-    use core_foundation::base::TCFType;
-
-    let target_pid = frontmost_pid().unwrap_or(0);
-    if target_pid <= 0 {
-        return (0, 0);
-    }
-
-    unsafe {
-        // kCGWindowListOptionOnScreenOnly = (1 << 0)
-        // kCGWindowListOptionExcludeDesktopElements = (1 << 1)
-        let array_ref = CGWindowListCopyWindowInfo(3, 0);
-        if array_ref.is_null() {
-            return (0, target_pid);
-        }
-
-        let count = core_foundation_sys::array::CFArrayGetCount(array_ref);
-        let mut found_window_id = None;
-
-        for i in 0..count {
-            let dict_ref = core_foundation_sys::array::CFArrayGetValueAtIndex(array_ref, i)
-                as core_foundation_sys::dictionary::CFDictionaryRef;
-            if dict_ref.is_null() {
-                continue;
-            }
-
-            // Get owner PID
-            let pid_ref = core_foundation_sys::dictionary::CFDictionaryGetValue(
-                dict_ref,
-                kCGWindowOwnerPID as *const std::ffi::c_void,
-            );
-            if pid_ref.is_null() {
-                continue;
-            }
-            let pid_num = core_foundation::number::CFNumber::wrap_under_get_rule(
-                pid_ref as core_foundation_sys::number::CFNumberRef,
-            );
-            let pid = match pid_num.to_i32() {
-                Some(p) => p,
-                None => continue,
-            };
-
-            if pid != target_pid {
-                continue;
-            }
-
-            // Get Layer
-            let layer_ref = core_foundation_sys::dictionary::CFDictionaryGetValue(
-                dict_ref,
-                kCGWindowLayer as *const std::ffi::c_void,
-            );
-            if layer_ref.is_null() {
-                continue;
-            }
-            let layer_num = core_foundation::number::CFNumber::wrap_under_get_rule(
-                layer_ref as core_foundation_sys::number::CFNumberRef,
-            );
-            let layer = match layer_num.to_i32() {
-                Some(l) => l,
-                None => continue,
-            };
-
-            // We only care about normal window layer (0)
-            if layer != 0 {
-                continue;
-            }
-
-            // Get Window Number
-            let win_num_ref = core_foundation_sys::dictionary::CFDictionaryGetValue(
-                dict_ref,
-                kCGWindowNumber as *const std::ffi::c_void,
-            );
-            if win_num_ref.is_null() {
-                continue;
-            }
-            let win_num = core_foundation::number::CFNumber::wrap_under_get_rule(
-                win_num_ref as core_foundation_sys::number::CFNumberRef,
-            );
-            if let Some(w) = win_num.to_i64() {
-                found_window_id = Some(w as u32);
-                break;
-            }
-        }
-
-        // Release the array returned by Copy function
-        core_foundation_sys::base::CFRelease(array_ref as *const std::ffi::c_void);
-
-        (found_window_id.unwrap_or(0), target_pid)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_get_active_window_id_and_pid() {
-        let (win_id, pid) = get_active_window_id_and_pid();
-        println!("Active window ID: {}, PID: {}", win_id, pid);
-    }
 }

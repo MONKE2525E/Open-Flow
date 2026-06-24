@@ -16,6 +16,59 @@
 
   const BARS = 12;
 
+  // Snap CSS-px lengths to a whole number of device pixels. On fractional DPI
+  // scaling (e.g. 1.25×/1.5×) a hardcoded 3px bar maps to a fractional device
+  // width, and Chromium rounds each bar's edges independently — so neighboring
+  // bars rasterize at different physical widths and the row looks uneven. When
+  // every bar width/gap is an exact integer device-px, all edges land on the
+  // grid and every bar renders identically.
+  //
+  // `dpr` MUST track the monitor the pill is actually on. The pill window is
+  // created once and reused, so it first mounts on the user's primary display
+  // and is later moved to other monitors (which may have a different scale).
+  // A stale dpr is worse than none: snapping 3px with the *wrong* dpr produces
+  // a fractional CSS width (e.g. 3.2px) that then rounds unevenly at the real
+  // scale. WebView2 does not reliably fire matchMedia on a cross-monitor DPI
+  // change, so we also re-read devicePixelRatio live each animation frame
+  // (see refreshDpr / animateBars).
+  //
+  // `dpr` is passed explicitly into snap() so the reactive statements below name
+  // it as a dependency. Svelte's `$:` tracking is syntactic — if `snap` closed
+  // over `dpr` instead, `barW`/`barGap` would be computed once and never update
+  // when the pill moves to a monitor with a different scale.
+  let dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+  const snap = (px: number, d: number) => Math.round(px * d) / d;
+  $: barW = snap(3, dpr);
+  $: barGap = snap(2, dpr);
+
+  // matchMedia watcher for cross-monitor DPI changes. Kept at component scope
+  // (not inside onMount) so refreshDpr can re-arm it: a (resolution: Xdppx)
+  // query only fires when *that* resolution's match state flips, so once dpr
+  // moves the watcher must be rebound to the new value or it goes stale and
+  // stops catching subsequent changes.
+  let mq: MediaQueryList | null = null;
+  const onDprChange = () => { dpr = window.devicePixelRatio || 1; armDprWatch(); };
+  function armDprWatch() {
+    if (typeof window === 'undefined') return;
+    mq?.removeEventListener('change', onDprChange);
+    // Use the already-fallback-guarded `dpr` (set right before every call) so a
+    // falsy devicePixelRatio can't produce `(resolution: undefineddppx)`.
+    mq = window.matchMedia(`(resolution: ${dpr}dppx)`);
+    mq.addEventListener('change', onDprChange);
+  }
+
+  // Re-read the live devicePixelRatio; assigning only on change keeps Svelte
+  // from re-running barW/barGap (and the bar template) every frame, and re-arms
+  // the matchMedia watcher so it stays in sync with the current DPI.
+  function refreshDpr() {
+    if (typeof window === 'undefined') return;
+    const live = window.devicePixelRatio || 1;
+    if (live !== dpr) {
+      dpr = live;
+      armDprWatch();
+    }
+  }
+
   // Level from Rust is already 0–1 (raw_rms × 15, capped).
   // Gate: ignore anything below 4% of full scale (background noise).
   const GATE = 0.04;
@@ -43,6 +96,9 @@
     if (!lastAnimTime) lastAnimTime = time;
     const dt = Math.min(time - lastAnimTime, 50);
     lastAnimTime = time;
+
+    // Keep bar snapping aligned to whichever monitor the pill is currently on.
+    refreshDpr();
 
     // Extremely smooth, premium rise and fall (high inertia)
     // Rise: ~12% per 16ms frame (takes ~100-150ms to swell up smoothly)
@@ -166,6 +222,10 @@
     const unlisteners: Array<() => void> = [];
     let mounted = true;
 
+    // Arm the cross-monitor DPI watcher (defined at component scope above so
+    // refreshDpr can re-arm it as the pill moves between displays).
+    armDprWatch();
+
     (async () => {
       const { listen } = await import('@tauri-apps/api/event');
 
@@ -188,6 +248,7 @@
         prevState = state;
         state = incoming;
         if (state === 'recording' || state === 'handsfree') {
+          refreshDpr(); // align snapping to the current monitor before first paint
           startRaf();
         } else {
           stopRaf();
@@ -232,6 +293,7 @@
 
     return () => {
       mounted = false;
+      mq?.removeEventListener('change', onDprChange);
       cancelAnimationFrame(rafId);
       if (errorTimer) clearTimeout(errorTimer);
       if (dyingTimer) clearTimeout(dyingTimer);
@@ -254,11 +316,13 @@
   }
 </script>
 
-<div class="wrap">
+<!-- --bar-w/--bar-gap live on .wrap so every pill state (incl. processing, which
+     has no bars of its own) inherits the DPI-snapped values for its width calc. -->
+<div class="wrap" style="--bar-w:{barW}px; --bar-gap:{barGap}px">
   {#if state === 'recording'}
     <div class="pill recording" class:dying={dying}>
       {#each barHeights as h, i (i)}
-        <div class="bar" style="height: {h}px"></div>
+        <div class="bar" style="height: {snap(h, dpr)}px"></div>
       {/each}
     </div>
 
@@ -287,7 +351,7 @@
       {/if}
       <div class="bars-hf">
         {#each barHeights as h, i (i)}
-          <div class="bar" style="height: {h}px"></div>
+          <div class="bar" style="height: {snap(h, dpr)}px"></div>
         {/each}
       </div>
       {#if showHfButtons}
@@ -350,17 +414,19 @@
   /* Skip entry animation for seamless continuations from recording */
   .pill.no-anim { animation: none; }
 
-  /* Recording: snug wrap — 12 bars × 3px + 11 gaps × 2px + 14px padding = 72px */
+  /* Recording: snug wrap — 12 bars + 11 gaps + 14px padding. Width is derived
+     from the snapped --bar-w/--bar-gap so the wrap stays snug at fractional DPI
+     (where snapped bars sum to more than the integer-scale 72px). */
   /* 0.25s delay keeps it invisible during a fast double-click handsfree activation */
   .pill.recording {
-    gap: 2px;
+    gap: var(--bar-gap, 2px);
     padding: 0 7px;
-    width: 72px;
+    width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 14px);
     animation: pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) 0.25s both;
   }
 
   .bar {
-    width: 3px;
+    width: var(--bar-w, 3px);
     background: var(--pill-bar);
     border-radius: 999px;
     flex-shrink: 0;
@@ -375,7 +441,8 @@
     animation: processIn 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
   @keyframes processIn {
-    from { width: 72px; }
+    /* start from the recording pill's DPI-snapped width so there's no jump */
+    from { width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 14px); }
     to   { width: 100px; }
   }
   /* Scan line fades in after the pill has grown */
@@ -388,7 +455,9 @@
     animation: processFromHf 0.25s ease-out both;
   }
   @keyframes processFromHf {
-    from { width: 112px; }
+    /* start from the expanded handsfree pill's DPI-snapped width (bars + 54px of
+       buttons/padding/gaps) so there's no jump at fractional DPI */
+    from { width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 54px); }
     to   { width: 100px; }
   }
   .pill.processing.from-hf .scan-line {
@@ -449,18 +518,21 @@
   }
   .pill.error.err-open .err-text { opacity: 1; }
 
-  /* Handsfree: starts compact (mirrors recording), expands to 112px after 450ms */
+  /* Handsfree: starts compact (mirrors recording — same DPI-snapped width so the
+     recording→handsfree continuation doesn't jump), expands to 112px after 450ms */
   .pill.handsfree {
-    width: 72px;
+    width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 14px);
     padding: 0 7px;
     gap: 2px;
     transition: width 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
                 padding 0.18s ease,
                 gap 0.18s ease;
   }
-  .pill.handsfree.hf-expanded { width: 112px; padding: 0 5px; gap: 4px; }
+  /* Expanded width = snapped bars + 54px (two 18px buttons + 10px padding + two
+     4px gaps) so the bars never overflow / push the buttons out at fractional DPI. */
+  .pill.handsfree.hf-expanded { width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 54px); padding: 0 5px; gap: 4px; }
 
-  .bars-hf { display: flex; align-items: center; gap: 2px; flex: 1; justify-content: center; }
+  .bars-hf { display: flex; align-items: center; gap: var(--bar-gap, 2px); flex: 1; justify-content: center; }
 
   .hf-btn {
     width: 18px; height: 18px;

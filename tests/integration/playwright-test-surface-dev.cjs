@@ -30,7 +30,17 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
 
     await page.locator('.nav-item:has-text("Snippets")').click();
     await page.locator('h1.page-h:has-text("Snippets")').waitFor({ state: 'visible', timeout: TIMEOUT });
-    await page.locator('.toolbar .btn-primary:has-text("New snippet")').click();
+    const newSnippetButton = page.locator('.toolbar .btn-primary:has-text("New snippet")');
+    await newSnippetButton.click();
+    const snippetModal = page.locator('.modal-card');
+    const snippetFocusInside = await snippetModal.evaluate((el) => el.contains(document.activeElement));
+    if (!snippetFocusInside) errors.push('Snippet modal did not move focus inside the dialog');
+    await page.keyboard.press('Escape');
+    await snippetModal.waitFor({ state: 'hidden', timeout: TIMEOUT });
+    if (!(await newSnippetButton.evaluate((el) => document.activeElement === el))) {
+      errors.push('Snippet modal did not restore focus to the trigger');
+    }
+    await newSnippetButton.click();
     await page.locator('#trigger-input').fill('sig');
     await page.locator('#expansion-input').fill('Best regards,\nThe Team');
     await page.locator('#instructions-input').fill('all capitals');
@@ -44,7 +54,17 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
 
     await page.locator('.nav-item:has-text("Dictionary")').click();
     await page.locator('h1.page-h:has-text("Dictionary")').waitFor({ state: 'visible', timeout: TIMEOUT });
-    await page.locator('.toolbar .btn-primary:has-text("Add term")').click();
+    const addTermButton = page.locator('.toolbar .btn-primary:has-text("Add term")');
+    await addTermButton.click();
+    const dictionaryModal = page.locator('.modal-card');
+    const dictionaryFocusInside = await dictionaryModal.evaluate((el) => el.contains(document.activeElement));
+    if (!dictionaryFocusInside) errors.push('Dictionary modal did not move focus inside the dialog');
+    await page.keyboard.press('Escape');
+    await dictionaryModal.waitFor({ state: 'hidden', timeout: TIMEOUT });
+    if (!(await addTermButton.evaluate((el) => document.activeElement === el))) {
+      errors.push('Dictionary modal did not restore focus to the trigger');
+    }
+    await addTermButton.click();
     await page.locator('#dict-term').fill('Verenu');
     await page.locator('#dict-mistake').fill('verenu');
     await page.locator('.modal-card .btn-primary:has-text("Add term")').click();
@@ -63,7 +83,8 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
 
     await openSettings(page);
     await page.locator('.settings-nav-item:has-text("Privacy")').click();
-    await page.getByRole('button', { name: 'Transcription history retention' }).click();
+    const historyRetentionButton = page.getByRole('button', { name: 'Transcription history retention' });
+    await historyRetentionButton.click();
     await page.locator('.mic-item:has-text("Forever")').click();
     await page.getByLabel('Auto-learn corrections').click();
 

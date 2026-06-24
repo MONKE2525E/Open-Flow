@@ -11,11 +11,9 @@
     "core:window:allow-show",
     "core:window:allow-set-focus",
     "core:window:allow-start-dragging",
-    "shell:allow-open",
-    "store:allow-get",
-    "store:allow-set",
-    "store:allow-delete",
-    "store:allow-save",
-    "store:allow-load"
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify",
+    "shell:default"
   ]
 }

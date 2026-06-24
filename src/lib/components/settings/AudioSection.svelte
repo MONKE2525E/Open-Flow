@@ -18,7 +18,8 @@
     startCalibration,
     cancelCalibration,
     speechDetected,
-    calibrationPhase
+    calibrationPhase,
+    calibrationError
   } from '../../calibration';
 
   let noiseReduction = $state(true);
@@ -30,6 +31,7 @@
   // Reset any stale calibrated gain on mount so it cannot override the saved
   // manual gain before the next calibration run starts.
   calibratedGain.set(null);
+  calibrationError.set(null);
 
   $effect(() => {
     if ($calibratedGain !== null) {
@@ -86,6 +88,7 @@
 
   onDestroy(() => {
     void cancelCalibration();
+    calibrationError.set(null);
   });
 
   loadSettings();
@@ -194,6 +197,17 @@
   <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
   <Toggle checked={noiseReduction} onchange={handleNoiseReduction} label="Noise reduction" />
 </div>
+
+{#if $calibrationError}
+  <div class="cal-error" transition:slide={{ duration: 200 }}>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;margin-top:1px">
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="12" x2="12" y1="8" y2="12"/>
+      <line x1="12" x2="12.01" y1="16" y2="16"/>
+    </svg>
+    <span>{$calibrationError}</span>
+  </div>
+{/if}
 
 <style>
 
@@ -401,4 +415,21 @@
   }
   .gain-tip svg { flex-shrink: 0; color: var(--warning); }
   .gain-tip strong { font-weight: 600; }
+
+  .cal-error {
+    display: flex;
+    gap: 7px;
+    align-items: flex-start;
+    margin-top: 8px;
+    padding: 9px 11px;
+    border-radius: var(--r-sm);
+    background: var(--warning-bg, #fff3cd);
+    background: color-mix(in srgb, var(--warning, oklch(72% 0.13 55)) 10%, var(--paper));
+    border: 1px solid var(--line);
+    border: 1px solid color-mix(in srgb, var(--warning, oklch(72% 0.13 55)) 28%, var(--line));
+    font-size: 12px;
+    color: var(--ink-soft);
+    line-height: 1.45;
+  }
+  .cal-error svg { color: var(--warning, oklch(72% 0.13 55)); margin-top: 1px; }
 </style>

@@ -32,6 +32,34 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+  dependency-audits:
+    name: Dependency audits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Audit npm dependencies
+        run: npm audit --audit-level=moderate
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit Rust dependencies
+        run: cargo audit --file src-tauri/Cargo.lock
+
   rust:
     name: Rust checks
     strategy:
@@ -54,7 +82,7 @@ jobs:
 
   all-in-one-fast:
     name: All-in-one fast profile
-    needs: [frontend, rust]
+    needs: [frontend, dependency-audits, rust]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

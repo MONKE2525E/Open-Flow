@@ -34,10 +34,10 @@ pub async fn hide_main(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn get_memory_mb() -> u64 {
-    match tokio::task::spawn_blocking(crate::system::memory::measure).await {
+    match run_blocking("get_memory_mb", || Ok(crate::system::memory::measure())).await {
         Ok(v) => v,
         Err(e) => {
-            log::error!("Task to get memory usage panicked: {e}");
+            log::error!("{e}");
             0
         }
     }
@@ -57,13 +57,17 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
     if vk1 == 0 {
         return Err(format!("Unrecognized key code: {key1}"));
     }
-    if vk2 == 0 {
+    // An empty second slot is allowed (a single-key hotkey, e.g. macOS F5);
+    // only reject a non-empty key code that we can't recognise.
+    if !key2.is_empty() && vk2 == 0 {
         return Err(format!("Unrecognized key code: {key2}"));
     }
     crate::core::hotkey::update_keys(vk1, vk2);
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    store.set("hotkey", serde_json::json!([key1, key2]));
-    store.save().map_err(|e| e.to_string())
+    let settings = store::settings_handle(&app)?;
+    run_blocking("save_hotkey", move || {
+        settings.save_value(store::HOTKEY, serde_json::json!([key1, key2]))
+    })
+    .await
 }
 
 // ---------- autostart ----------
@@ -220,9 +224,11 @@ pub async fn set_autostart(_app: AppHandle, enabled: bool) -> Result<(), String>
         .map_err(|e| e.to_string())??;
     }
 
-    let store = _app.store("settings.json").map_err(|e| e.to_string())?;
-    store.set(store::AUTOSTART_ENABLED, serde_json::json!(enabled));
-    store.save().map_err(|e| e.to_string())
+    let settings = store::settings_handle(&_app)?;
+    run_blocking("set_autostart", move || {
+        settings.save_value(store::AUTOSTART_ENABLED, serde_json::json!(enabled))
+    })
+    .await
 }
 
 #[cfg(target_os = "macos")]
@@ -267,20 +273,26 @@ fn run_launchctl(args: &[&str]) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn check_connectivity() -> bool {
-    let client = match reqwest::Client::builder()
+    // Probe github.com (a host Verenu already contacts for release downloads)
+    // rather than a third-party beacon like google.com, so the connectivity check
+    // doesn't quietly phone a separate domain. Deliberately NOT api.github.com:
+    // at a 60s poll that would consume the entire 60/hr unauthenticated GitHub
+    // API budget and starve the updater's release checks with 403s. Reuses the
+    // shared client for connection pooling; GitHub requires a User-Agent.
+    crate::api::client::get()
+        .head("https://github.com")
+        .header("User-Agent", "verenu")
         .timeout(std::time::Duration::from_secs(3))
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    client.head("https://www.google.com").send().await.is_ok()
+        .send()
+        .await
+        .is_ok()
 }
 
 // ---------- developer logs ----------
 
 #[tauri::command]
 pub fn log_frontend(level: String, message: String) {
+    let message = crate::system::logger::sanitize_frontend_log_message(&message);
     match level.as_str() {
         "warn" => log::warn!("fe: {message}"),
         "error" => log::error!("fe: {message}"),
@@ -295,9 +307,10 @@ pub fn get_recent_logs(limit: Option<usize>) -> Vec<String> {
 
 #[tauri::command]
 pub async fn download_logs(app: AppHandle) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || crate::system::logger::export_to_downloads(&app))
-        .await
-        .map_err(|e| e.to_string())?
+    run_blocking("download_logs", move || {
+        crate::system::logger::export_to_downloads(&app)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -305,3 +318,7 @@ pub fn set_dev_logging_enabled(enabled: bool) {
     crate::system::logger::set_verbose(enabled);
 }
 
+#[tauri::command]
+pub fn get_dev_logging_enabled() -> bool {
+    crate::system::logger::is_verbose()
+}
