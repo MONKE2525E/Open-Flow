@@ -54,6 +54,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     };
 
     std::thread::spawn(crate::system::volume::unmute);
+    std::thread::spawn(crate::system::volume::release_mic);
     show_pill(&app, "processing");
 
     let settings_store = match store::settings_snapshot(&app) {
@@ -175,6 +176,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     log::info!("pipeline: start target_id={}", target.id);
 
     std::thread::spawn(crate::system::volume::unmute);
+    std::thread::spawn(crate::system::volume::release_mic);
     show_pill(&app, "processing");
 
     // Keep the quiet-audio gate permissive at high gain. Whisper recordings can

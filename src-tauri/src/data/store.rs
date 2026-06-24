@@ -194,6 +194,7 @@ pub const CLEANUP_INTENSITY: &str = "cleanup_intensity";
 pub const APP_MAPPINGS: &str = "app_mappings";
 pub const NOISE_REDUCTION: &str = "noise_reduction";
 pub const MUTE_AUDIO: &str = "mute_audio";
+pub const EXCLUSIVE_MIC: &str = "exclusive_mic";
 pub const MIC_GAIN: &str = "mic_gain";
 pub const SETUP_COMPLETE: &str = "setup_complete";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
@@ -545,6 +546,7 @@ pub struct AudioConfig {
     pub noise_reduction: bool,
     pub mic_gain: f32,
     pub mute_audio: bool,
+    pub exclusive_mic: bool,
 }
 
 impl Default for AudioConfig {
@@ -554,6 +556,7 @@ impl Default for AudioConfig {
             noise_reduction: true,
             mic_gain: DEFAULT_MIC_GAIN,
             mute_audio: false,
+            exclusive_mic: false,
         }
     }
 }
@@ -576,12 +579,17 @@ pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
         .get(MUTE_AUDIO)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let exclusive_mic = store
+        .get(EXCLUSIVE_MIC)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     AudioConfig {
         device,
         noise_reduction,
         mic_gain,
         mute_audio,
+        exclusive_mic,
     }
 }
 

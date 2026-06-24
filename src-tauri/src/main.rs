@@ -783,6 +783,7 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             .is_some();
                         if had_session {
                             std::thread::spawn(crate::system::volume::unmute);
+                            std::thread::spawn(crate::system::volume::release_mic);
                         }
                         hide_pill(&app_hk);
                     }
@@ -802,6 +803,7 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             let _ = s.stop();
                         });
                         std::thread::spawn(crate::system::volume::unmute);
+                        std::thread::spawn(crate::system::volume::release_mic);
                     }
                     hide_pill(&app_hk);
                 }

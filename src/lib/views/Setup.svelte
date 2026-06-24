@@ -63,6 +63,7 @@
     autoLearn: false,
     autostart: false,
     muteAudio: false,
+    exclusiveMic: false,
   });
 
   let providerDisplayName = $derived(providers.find((p) => p.id === provider)?.name ?? '');
@@ -80,7 +81,7 @@
     try {
       const [
         savedAppearance, savedLanguage, savedProvider, savedIntensity, savedTone, keyStatus,
-        savedCleanup, savedNoise, savedCaps, savedAutoSpacing, savedCapsLock, savedAppContextHint, savedAutoLearn, savedMute, savedAutostart,
+        savedCleanup, savedNoise, savedCaps, savedAutoSpacing, savedCapsLock, savedAppContextHint, savedAutoLearn, savedMute, savedAutostart, savedExclusiveMic,
       ] = await Promise.all([
         invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
         invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
@@ -97,6 +98,7 @@
         invoke<boolean | null>('get_setting', { key: 'auto_learn_enabled' }),
         invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
         invoke<boolean | null>('get_setting', { key: 'autostart_enabled' }),
+        invoke<boolean | null>('get_setting', { key: 'exclusive_mic' }),
       ]);
       if (savedAppearance === 'system' || savedAppearance === 'light' || savedAppearance === 'dark') appearance = savedAppearance;
       if (savedLanguage && transcriptionLanguages.some((o) => o.code === savedLanguage)) language = savedLanguage;
@@ -114,6 +116,7 @@
         autoLearn: savedAutoLearn ?? quickPrefs.autoLearn,
         autostart: savedAutostart ?? quickPrefs.autostart,
         muteAudio: savedMute ?? quickPrefs.muteAudio,
+        exclusiveMic: savedExclusiveMic ?? quickPrefs.exclusiveMic,
       };
     } catch {}
   });
@@ -188,6 +191,7 @@
       await saveSetting('app_context_hint', quickPrefs.appContextHint);
       await saveSetting('auto_learn_enabled', quickPrefs.autoLearn);
       await saveSetting('mute_audio', quickPrefs.muteAudio);
+      await saveSetting('exclusive_mic', quickPrefs.exclusiveMic);
       await invoke('set_autostart', { enabled: quickPrefs.autostart });
       await saveSetting('setup_complete', true);
     } catch {}

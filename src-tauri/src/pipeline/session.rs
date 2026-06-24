@@ -73,12 +73,16 @@ pub fn start_recording_session_ex(
     let device = audio_config.device;
     let noise_reduction = audio_config.noise_reduction;
     let mute_audio = audio_config.mute_audio;
+    let exclusive_mic = audio_config.exclusive_mic;
     let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
 
     match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
         Ok(session) => {
             if mute_audio && gain_override.is_none() {
                 std::thread::spawn(crate::system::volume::mute);
+            }
+            if exclusive_mic && gain_override.is_none() {
+                std::thread::spawn(crate::system::volume::hog_mic);
             }
             let level_arc = session.level.clone();
             let raw_level_arc = session.raw_level.clone();

@@ -242,6 +242,7 @@ pub async fn stop_recording(
     if let Some(s) = session {
         let _ = s.stop();
         std::thread::spawn(crate::system::volume::unmute);
+        std::thread::spawn(crate::system::volume::release_mic);
     }
     pipeline::hide_pill(&app);
     Ok(())

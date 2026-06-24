@@ -119,6 +119,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
     setting_spec(store::APP_MAPPINGS, SettingKind::AppMappings, true, true),
     setting_spec(store::NOISE_REDUCTION, SettingKind::Bool, true, true),
     setting_spec(store::MUTE_AUDIO, SettingKind::Bool, true, true),
+    setting_spec(store::EXCLUSIVE_MIC, SettingKind::Bool, true, true),
     setting_spec(store::MIC_GAIN, SettingKind::MicGain, true, false),
     setting_spec(store::SETUP_COMPLETE, SettingKind::Bool, true, false),
     setting_spec(store::APP_CONTEXT_HINT, SettingKind::Bool, true, true),

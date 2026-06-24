@@ -24,6 +24,7 @@
 
   let noiseReduction = $state(true);
   let muteAudio = $state(false);
+  let exclusiveMic = $state(false);
   let micGain = $state(3.5);
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
@@ -41,14 +42,16 @@
 
   async function loadSettings() {
     try {
-      const [nr, mute, savedGain, language] = await Promise.all([
+      const [nr, mute, exclusive, savedGain, language] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
         invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
+        invoke<boolean | null>('get_setting', { key: 'exclusive_mic' }),
         invoke<number | null>('get_setting', { key: 'mic_gain' }),
         invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       ]);
       noiseReduction = nr ?? true;
       muteAudio = mute ?? false;
+      exclusiveMic = exclusive ?? false;
       if (savedGain !== null && savedGain !== undefined) {
         micGain = Math.max(1, Math.min(8, savedGain));
       }
@@ -75,6 +78,16 @@
     } catch (err) {
       muteAudio = !value;
       console.error('save mute_audio failed:', err);
+    }
+  }
+
+  async function handleExclusiveMic(value: boolean) {
+    exclusiveMic = value;
+    try {
+      await saveSetting('exclusive_mic', value);
+    } catch (err) {
+      exclusiveMic = !value;
+      console.error('save exclusive_mic failed:', err);
     }
   }
 
@@ -193,6 +206,12 @@
   <div><div class="label">{isMac ? 'Mute System Audio' : 'Mute PC Audio'}</div><div class="desc">{isMac ? 'Mutes system volume while dictating to prevent audio interference' : 'Mutes Windows volume while dictating to prevent audio interference'}</div></div>
   <Toggle checked={muteAudio} onchange={handleMuteAudio} label={isMac ? 'Mute system audio' : 'Mute PC audio'} />
 </div>
+{#if isMac}
+<div class="setting-row">
+  <div><div class="label">Exclusive microphone access</div><div class="desc">Reserves the mic for Verenu while dictating, muting it for all other apps</div></div>
+  <Toggle checked={exclusiveMic} onchange={handleExclusiveMic} label="Exclusive microphone access" />
+</div>
+{/if}
 <div class="setting-row">
   <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
   <Toggle checked={noiseReduction} onchange={handleNoiseReduction} label="Noise reduction" />
