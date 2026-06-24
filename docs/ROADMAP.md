@@ -1,6 +1,6 @@
 # Roadmap: Verenu
 
-## In Progress - 0.14.1
+## In Progress - 0.15.0
 
 ## 1. Models and Settings Redesign
 - **Goal**: Finish the model picker cleanup so provider selection, advanced mode, and key validation feel predictable instead of fragile.
