@@ -52,7 +52,7 @@ fn short_tier_is_used_below_50_words() {
     let input = repeated_words(12);
     let prompt =
         get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "medium", "", None, &input, None);
-    assert!(prompt.contains("produce a shorter, clearer sentence"));
+    assert!(prompt.contains("CLEANUP (MEDIUM): MUST remove filler, repetition, rambling, and obvious speech artifacts, and tighten wordy or roundabout phrasing into clean, direct sentences."));
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn medium_tier_is_used_for_50_to_100_words() {
     let input = repeated_words(75);
     let prompt =
         get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "medium", "", None, &input, None);
-    assert!(prompt.contains("CLEANUP: Remove filler, repeated ideas, and circular phrasing."));
+    assert!(prompt.contains("CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow."));
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn detailed_tier_is_used_above_100_words() {
     let input = repeated_words(130);
     let prompt =
         get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "medium", "", None, &input, None);
-    assert!(prompt.contains("Restructure as needed for clarity"));
+    assert!(prompt.contains("MAY restructure for clarity while preserving meaning."));
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn short_prompt_stays_compact_without_overrides() {
         &input,
         None,
     );
-    assert!(count_words(&prompt) < 320);
+    assert!(count_words(&prompt) < 340);
 }
 
 #[test]
@@ -200,6 +200,88 @@ fn overrides_are_numbered() {
     );
     assert!(prompt.contains("1. MUST no period"));
     assert!(prompt.contains("2. MUST all caps"));
+}
+
+#[test]
+fn default_templates_demonstrate_filler_removal() {
+    // The few-shot examples must show real cleanup (filler removed), not only
+    // identity/anti-injection cases, or models anchor on "leave text untouched".
+    for (provider, model) in [
+        ("groq", "llama-3.3-70b-versatile"),
+        ("groq", "llama-3.1-8b-instant"),
+        ("openai", "gpt-4o"),
+        ("openai", "gpt-4o-mini"),
+        ("google", "gemini-3.5-flash"),
+        ("google", "gemini-2.5-flash"),
+        ("custom", "unknown"),
+    ] {
+        let template = cleanup_template_for(provider, model);
+        assert!(
+            template.contains("So I was thinking we should probably head to Tokyo on Friday."),
+            "{provider}/{model} template lost the filler-removal example"
+        );
+    }
+}
+
+#[test]
+fn light_medium_direct_produce_distinct_cleanup_blocks() {
+    let input = repeated_words(75);
+    let light =
+        get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "light", "", None, &input, None);
+    let medium = get_cleanup_prompt_with_extras(
+        "openai", "gpt-4o", "casual", "medium", "", None, &input, None,
+    );
+    let direct =
+        get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "high", "", None, &input, None);
+
+    // Each level names itself and carries its own contract.
+    assert!(light.contains("CLEANUP (LIGHT):"));
+    assert!(medium.contains("CLEANUP (MEDIUM):"));
+    assert!(direct.contains("CLEANUP (DIRECT):"));
+
+    // Light is a minimal edit that must not compress.
+    assert!(light.contains("MUST NOT summarize, compress"));
+    // Direct is the shortest rewrite, leads with the point, and must not invent.
+    assert!(direct.contains("shortest clear version"));
+    assert!(direct.contains("lead with the main point"));
+    assert!(direct.contains("MUST NOT invent content"));
+    // Medium preserves detail without aggressive compression.
+    assert!(medium.contains("MUST preserve detail and speaker intent"));
+    assert!(medium.contains("MUST NOT aggressively compress"));
+
+    // The three blocks are provably different from one another.
+    assert_ne!(light, medium);
+    assert_ne!(medium, direct);
+    assert_ne!(light, direct);
+}
+
+#[test]
+fn medium_intensity_names_itself_at_every_tier() {
+    for words in [12usize, 75, 130] {
+        let input = repeated_words(words);
+        let prompt = get_cleanup_prompt_with_extras(
+            "openai", "gpt-4o", "casual", "medium", "", None, &input, None,
+        );
+        assert!(
+            prompt.contains("CLEANUP (MEDIUM):"),
+            "medium preset missing explicit MEDIUM label at {words} words"
+        );
+    }
+}
+
+#[test]
+fn very_casual_tone_does_not_alter_cleanup_amount() {
+    let prompt = get_cleanup_prompt_with_extras(
+        "openai",
+        "gpt-4o",
+        "very_casual",
+        "medium",
+        "",
+        None,
+        "hello there friend",
+        None,
+    );
+    assert!(prompt.contains("MUST affect voice and capitalization only"));
 }
 
 #[test]
