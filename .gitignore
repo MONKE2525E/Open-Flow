@@ -2,8 +2,9 @@ node_modules/
 dist/
 src-tauri/gen/
 
-# Build artifacts — never track the Rust build tree. Ship installers via
-# GitHub Releases, not inside the source tree.
+# Build artifacts — never track the Rust build tree. Release installers are
+# kept under /installers (and attached to GitHub Releases); the raw build
+# output below stays untracked.
 src-tauri/target/
 
 # Generated screenshots
