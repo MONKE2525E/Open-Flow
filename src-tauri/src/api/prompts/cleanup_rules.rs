@@ -70,7 +70,7 @@ fn intensity_rules(
             MUST NOT aggressively compress or drop specifics."
                 .to_string()
         }
-        ("medium", PromptTier::Detailed) | (_, _) => {
+        _ => {
             "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow. \
             MAY restructure for clarity while preserving meaning. \
             MUST preserve detail, important specifics, and speaker intent. \
