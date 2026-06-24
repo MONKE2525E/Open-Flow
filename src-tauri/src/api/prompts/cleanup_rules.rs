@@ -101,7 +101,8 @@ fn tone_rules(profile: &str) -> &'static str {
             "TONE: Formal. Full sentences, proper capitalization, complete punctuation, expanded contractions."
         }
         "very_casual" => {
-            "TONE: Very casual. Mostly lowercase, minimal punctuation, keep contractions."
+            "TONE: Very casual. Mostly lowercase, minimal punctuation, keep contractions. \
+            Affects voice and capitalization only; do not change how much content is removed."
         }
         _ => {
             "TONE: Casual. Natural conversational phrasing, sentence capitalization, light punctuation."

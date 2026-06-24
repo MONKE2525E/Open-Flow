@@ -203,6 +203,66 @@ fn overrides_are_numbered() {
 }
 
 #[test]
+fn light_medium_direct_produce_distinct_cleanup_blocks() {
+    let input = repeated_words(75);
+    let light =
+        get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "light", "", None, &input, None);
+    let medium = get_cleanup_prompt_with_extras(
+        "openai", "gpt-4o", "casual", "medium", "", None, &input, None,
+    );
+    let direct =
+        get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "high", "", None, &input, None);
+
+    // Each level names itself and carries its own contract.
+    assert!(light.contains("CLEANUP (LIGHT):"));
+    assert!(medium.contains("CLEANUP (MEDIUM):"));
+    assert!(direct.contains("CLEANUP (DIRECT):"));
+
+    // Light is a minimal edit that must not compress.
+    assert!(light.contains("MUST NOT summarize, compress"));
+    // Direct is a concise rewrite that must not invent or over-summarize.
+    assert!(direct.contains("concise, punchy rewrite"));
+    assert!(direct.contains("MUST NOT invent content or over-summarize technical details"));
+    // Medium preserves detail without aggressive compression.
+    assert!(medium.contains("MUST preserve detail and speaker intent"));
+    assert!(medium.contains("MUST NOT aggressively compress"));
+
+    // The three blocks are provably different from one another.
+    assert_ne!(light, medium);
+    assert_ne!(medium, direct);
+    assert_ne!(light, direct);
+}
+
+#[test]
+fn medium_intensity_names_itself_at_every_tier() {
+    for words in [12usize, 75, 130] {
+        let input = repeated_words(words);
+        let prompt = get_cleanup_prompt_with_extras(
+            "openai", "gpt-4o", "casual", "medium", "", None, &input, None,
+        );
+        assert!(
+            prompt.contains("CLEANUP (MEDIUM):"),
+            "medium preset missing explicit MEDIUM label at {words} words"
+        );
+    }
+}
+
+#[test]
+fn very_casual_tone_does_not_alter_cleanup_amount() {
+    let prompt = get_cleanup_prompt_with_extras(
+        "openai",
+        "gpt-4o",
+        "very_casual",
+        "medium",
+        "",
+        None,
+        "hello there friend",
+        None,
+    );
+    assert!(prompt.contains("Affects voice and capitalization only"));
+}
+
+#[test]
 fn non_formal_intensities_keep_profanity() {
     for intensity in ["none", "light", "medium", "high"] {
         let prompt = get_cleanup_prompt_with_extras(
