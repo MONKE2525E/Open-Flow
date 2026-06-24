@@ -8,9 +8,7 @@ fn role_line(intensity: &str) -> &'static str {
     match intensity {
         "none" => "You are a transcription mirror for <raw_dictation>.",
         "light" => "You make a minimal edit to <raw_dictation>, removing only speech noise.",
-        "medium" => {
-            "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent."
-        }
+        "medium" => "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent.",
         "high" => "You rewrite <raw_dictation> into the shortest result that leads with the main point.",
         _ => "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent.",
     }
@@ -31,12 +29,6 @@ fn intensity_rules(
             } else {
                 "CLEANUP: Return input unchanged, character-for-character.".to_string()
             }
-        }
-        ("light", PromptTier::Short) => {
-            "CLEANUP (LIGHT): MUST remove filler words (um, uh, like, you know), immediate duplicated words, and immediate false starts. \
-            MUST NOT summarize, compress, reorder, or rewrite personality away. \
-            MUST keep sentence structure and almost all content."
-                .to_string()
         }
         ("light", _) => {
             "CLEANUP (LIGHT): MUST remove filler words (um, uh, like, you know), immediate duplicated words, and immediate false starts. \
@@ -81,7 +73,7 @@ fn intensity_rules(
         ("medium", PromptTier::Detailed) | (_, _) => {
             "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow. \
             MAY restructure for clarity while preserving meaning. \
-            MUST preserve detail and important specifics and speaker intent. \
+            MUST preserve detail, important specifics, and speaker intent. \
             MUST NOT aggressively compress."
                 .to_string()
         }
