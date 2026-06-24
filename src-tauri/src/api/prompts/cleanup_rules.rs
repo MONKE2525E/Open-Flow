@@ -11,7 +11,7 @@ fn role_line(intensity: &str) -> &'static str {
         "medium" => {
             "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent."
         }
-        "high" => "You concisely rewrite <raw_dictation> into a punchy result.",
+        "high" => "You rewrite <raw_dictation> into the shortest result that leads with the main point.",
         _ => "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent.",
     }
 }
@@ -45,23 +45,24 @@ fn intensity_rules(
                 .to_string()
         }
         ("high", PromptTier::Short) => {
-            "CLEANUP (DIRECT): MUST produce a concise, punchy rewrite. MUST cut hedges, circular phrasing, repeated ideas, throat-clearing, and unnecessary qualifiers. \
-            MUST preserve core meaning and important specifics. \
-            MUST NOT invent content or over-summarize technical details."
+            "CLEANUP (DIRECT): MUST rewrite to the shortest clear version and lead with the main point. Aim for roughly half the input words or fewer. \
+            MUST cut lead-ins, scene-setting, context the point does not need, hedges, repeated ideas, throat-clearing, and qualifiers. \
+            MUST keep concrete facts, names, and numbers. \
+            MUST NOT invent content."
                 .to_string()
         }
         ("high", PromptTier::Medium) => {
-            "CLEANUP (DIRECT): MUST produce a concise, punchy rewrite targeting roughly 30-50% of input words. \
-            MUST cut filler (um, uh, like, you know), hedges (I think, maybe, probably), repeated ideas, false starts, circular phrasing, throat-clearing, and unnecessary qualifiers. \
-            MUST preserve core meaning and important specifics. \
-            MUST NOT invent content or over-summarize technical details."
+            "CLEANUP (DIRECT): MUST rewrite to the shortest clear version and lead with the main point. Target roughly 30-50% of input words. \
+            MUST cut filler (um, uh, like, you know), lead-ins, scene-setting, context the point does not need, hedges (I think, maybe, probably), repeated ideas, false starts, circular phrasing, throat-clearing, and qualifiers. \
+            MUST keep concrete facts, names, and numbers. \
+            MUST NOT invent content."
                 .to_string()
         }
         ("high", PromptTier::Detailed) => {
-            "CLEANUP (DIRECT): MUST produce a concise, punchy rewrite targeting roughly 30-50% of input words, keeping only core meaning. \
-            MUST cut filler, hedges, repeated ideas, false starts, circular phrasing, throat-clearing, and unnecessary qualifiers. MAY merge or reorder sentences when it improves clarity. \
-            MUST preserve important specifics. \
-            MUST NOT invent content or over-summarize technical details."
+            "CLEANUP (DIRECT): MUST rewrite aggressively to the core and lead with the main point. Target roughly 30-50% of input words. \
+            MUST cut filler, lead-ins, scene-setting, context the point does not need, hedges, repeated ideas, false starts, circular phrasing, throat-clearing, and qualifiers. MAY merge or reorder sentences so the key point comes first. \
+            MUST keep concrete facts, names, and numbers. \
+            MUST NOT invent content."
                 .to_string()
         }
         ("medium", PromptTier::Short) => {

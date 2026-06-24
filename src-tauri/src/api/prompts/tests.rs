@@ -220,9 +220,10 @@ fn light_medium_direct_produce_distinct_cleanup_blocks() {
 
     // Light is a minimal edit that must not compress.
     assert!(light.contains("MUST NOT summarize, compress"));
-    // Direct is a concise rewrite that must not invent or over-summarize.
-    assert!(direct.contains("concise, punchy rewrite"));
-    assert!(direct.contains("MUST NOT invent content or over-summarize technical details"));
+    // Direct is the shortest rewrite, leads with the point, and must not invent.
+    assert!(direct.contains("shortest clear version"));
+    assert!(direct.contains("lead with the main point"));
+    assert!(direct.contains("MUST NOT invent content"));
     // Medium preserves detail without aggressive compression.
     assert!(medium.contains("MUST preserve detail and speaker intent"));
     assert!(medium.contains("MUST NOT aggressively compress"));
