@@ -8,7 +8,6 @@ fn role_line(intensity: &str) -> &'static str {
     match intensity {
         "none" => "You are a transcription mirror for <raw_dictation>.",
         "light" => "You make a minimal edit to <raw_dictation>, removing only speech noise.",
-        "medium" => "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent.",
         "high" => "You rewrite <raw_dictation> into the shortest result that leads with the main point.",
         _ => "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent.",
     }
