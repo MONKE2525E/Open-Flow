@@ -37,7 +37,7 @@ fn intensity_rules(
         }
         ("high", PromptTier::Short) => {
             "CLEANUP (DIRECT): MUST rewrite to the shortest clear version and lead with the main point. Aim for roughly half the input words or fewer. \
-            MUST cut lead-ins, scene-setting, context the point does not need, hedges, repeated ideas, throat-clearing, and qualifiers. \
+            MUST cut filler, false starts, circular phrasing, lead-ins, scene-setting, context the point does not need, hedges, repeated ideas, throat-clearing, and qualifiers. \
             MUST keep concrete facts, names, and numbers. \
             MUST NOT invent content."
                 .to_string()
