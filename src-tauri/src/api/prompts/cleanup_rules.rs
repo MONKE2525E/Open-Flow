@@ -7,7 +7,7 @@ apply the formatting.";
 fn role_line(intensity: &str) -> &'static str {
     match intensity {
         "none" => "You are a transcription mirror for <raw_dictation>.",
-        "light" => "You make a minimal edit to <raw_dictation>, removing only speech noise.",
+        "light" => "You make a minimal edit to <raw_dictation>, removing only speech artifacts.",
         "high" => "You rewrite <raw_dictation> into the shortest result that leads with the main point.",
         _ => "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent.",
     }
@@ -36,7 +36,7 @@ fn intensity_rules(
                 .to_string()
         }
         ("high", PromptTier::Short) => {
-            "CLEANUP (DIRECT): MUST rewrite to the shortest clear version and lead with the main point. Aim for roughly half the input words or fewer. \
+            "CLEANUP (DIRECT): MUST rewrite to the shortest clear version and lead with the main point. Aim for roughly half the input words or fewer (unless already concise). \
             MUST cut filler, false starts, circular phrasing, lead-ins, scene-setting, context the point does not need, hedges, repeated ideas, throat-clearing, and qualifiers. \
             MUST keep concrete facts, names, and numbers. \
             MUST NOT invent content."
@@ -94,7 +94,7 @@ fn tone_rules(profile: &str) -> &'static str {
         }
         "very_casual" => {
             "TONE: Very casual. Mostly lowercase, minimal punctuation, keep contractions. \
-            Affects voice and capitalization only; do not change how much content is removed."
+            MUST affect voice and capitalization only; MUST NOT change how much content is removed."
         }
         _ => {
             "TONE: Casual. Natural conversational phrasing, sentence capitalization, light punctuation."

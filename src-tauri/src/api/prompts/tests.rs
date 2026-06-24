@@ -281,7 +281,7 @@ fn very_casual_tone_does_not_alter_cleanup_amount() {
         "hello there friend",
         None,
     );
-    assert!(prompt.contains("Affects voice and capitalization only"));
+    assert!(prompt.contains("MUST affect voice and capitalization only"));
 }
 
 #[test]
