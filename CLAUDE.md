@@ -4,7 +4,7 @@
 - Github Repo: https://github.com/MONKE2525E/Verenu
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
 - docs/ROADMAP.md keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
-- currently working towards Verenu 0.14.1.
+- currently working towards Verenu 0.15.0.
 - Always add yourself as a co-author  in all commits you make e.g @Claude, @Codex, @google-antigravity, etc but dont add a note at the bottom of the PR description
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
