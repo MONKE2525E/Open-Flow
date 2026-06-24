@@ -52,7 +52,7 @@ fn short_tier_is_used_below_50_words() {
     let input = repeated_words(12);
     let prompt =
         get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "medium", "", None, &input, None);
-    assert!(prompt.contains("CLEANUP (MEDIUM): MUST remove filler, repetition, and obvious speech artifacts, and smooth sentence flow."));
+    assert!(prompt.contains("CLEANUP (MEDIUM): MUST remove filler, repetition, rambling, and obvious speech artifacts, and tighten wordy or roundabout phrasing into clean, direct sentences."));
 }
 
 #[test]

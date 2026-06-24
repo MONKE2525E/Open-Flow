@@ -66,9 +66,9 @@ fn intensity_rules(
                 .to_string()
         }
         ("medium", PromptTier::Short) => {
-            "CLEANUP (MEDIUM): MUST remove filler, repetition, and obvious speech artifacts, and smooth sentence flow. \
-            MUST preserve detail and speaker intent. \
-            MUST NOT aggressively compress or drop specifics."
+            "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling, and obvious speech artifacts, and tighten wordy or roundabout phrasing into clean, direct sentences. \
+            MUST keep the meaning, key detail, and speaker intent. \
+            MUST NOT drop specifics or rewrite into a terse summary."
                 .to_string()
         }
         ("medium", PromptTier::Medium) => {
