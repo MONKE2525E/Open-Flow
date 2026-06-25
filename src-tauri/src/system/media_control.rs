@@ -1,3 +1,4 @@
+#[cfg(any(test, windows))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MediaPlaybackState {
     Closed,
@@ -8,10 +9,12 @@ pub(crate) enum MediaPlaybackState {
     Paused,
 }
 
+#[cfg(any(test, windows))]
 pub(crate) fn should_pause_for_dictation(state: MediaPlaybackState) -> bool {
     matches!(state, MediaPlaybackState::Playing)
 }
 
+#[cfg(any(test, windows))]
 pub(crate) fn should_resume_after_dictation(state: MediaPlaybackState) -> bool {
     matches!(state, MediaPlaybackState::Paused)
 }
