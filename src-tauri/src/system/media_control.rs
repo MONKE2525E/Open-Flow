@@ -16,7 +16,7 @@ pub(crate) fn should_pause_for_dictation(state: MediaPlaybackState) -> bool {
 
 #[cfg(any(test, windows))]
 pub(crate) fn should_resume_after_dictation(state: MediaPlaybackState) -> bool {
-    matches!(state, MediaPlaybackState::Paused)
+    !matches!(state, MediaPlaybackState::Stopped | MediaPlaybackState::Closed)
 }
 
 pub struct DictationMediaPauseGuard {
@@ -371,15 +371,22 @@ mod tests {
     }
 
     #[test]
-    fn only_still_paused_sessions_are_resumed() {
+    fn resume_is_skipped_only_for_terminal_sessions() {
+        // Anything short of Stopped/Closed is resumed: state can lag behind
+        // an actual pause (or the session can drift to Playing/Changing by
+        // the time we check), so gating strictly on Paused risked leaving
+        // media paused forever. Resuming an already-playing session is a
+        // harmless no-op, not a fight with a user who resumed it manually.
         assert!(should_resume_after_dictation(MediaPlaybackState::Paused));
-        assert!(!should_resume_after_dictation(MediaPlaybackState::Playing));
+        assert!(should_resume_after_dictation(MediaPlaybackState::Playing));
+        assert!(should_resume_after_dictation(MediaPlaybackState::Changing));
+        assert!(should_resume_after_dictation(MediaPlaybackState::Opened));
         assert!(!should_resume_after_dictation(MediaPlaybackState::Stopped));
-        assert!(!should_resume_after_dictation(MediaPlaybackState::Changing));
+        assert!(!should_resume_after_dictation(MediaPlaybackState::Closed));
     }
 
     #[test]
-    fn restore_requires_successful_pause_and_still_paused_session() {
+    fn restore_requires_successful_pause_and_non_terminal_session_state() {
         fn would_restore(
             initial_state: MediaPlaybackState,
             pause_succeeded: bool,
@@ -394,6 +401,13 @@ mod tests {
             true,
             MediaPlaybackState::Paused
         ));
+        // A session that drifted back to Playing by restore time is still
+        // resumed - TryPlayAsync on an already-playing session is a no-op.
+        assert!(would_restore(
+            MediaPlaybackState::Playing,
+            true,
+            MediaPlaybackState::Playing
+        ));
         assert!(!would_restore(
             MediaPlaybackState::Paused,
             true,
@@ -403,11 +417,6 @@ mod tests {
             MediaPlaybackState::Playing,
             false,
             MediaPlaybackState::Paused
-        ));
-        assert!(!would_restore(
-            MediaPlaybackState::Playing,
-            true,
-            MediaPlaybackState::Playing
         ));
         assert!(!would_restore(
             MediaPlaybackState::Playing,
