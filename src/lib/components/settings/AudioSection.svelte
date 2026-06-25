@@ -24,6 +24,7 @@
 
   let noiseReduction = $state(true);
   let muteAudio = $state(false);
+  let playSounds = $state(true);
   let micGain = $state(3.5);
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
@@ -41,14 +42,16 @@
 
   async function loadSettings() {
     try {
-      const [nr, mute, savedGain, language] = await Promise.all([
+      const [nr, mute, sounds, savedGain, language] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
         invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
+        invoke<boolean | null>('get_setting', { key: 'play_start_stop_sounds' }),
         invoke<number | null>('get_setting', { key: 'mic_gain' }),
         invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       ]);
       noiseReduction = nr ?? true;
       muteAudio = mute ?? false;
+      playSounds = sounds ?? true;
       if (savedGain !== null && savedGain !== undefined) {
         micGain = Math.max(1, Math.min(8, savedGain));
       }
@@ -75,6 +78,16 @@
     } catch (err) {
       muteAudio = !value;
       console.error('save mute_audio failed:', err);
+    }
+  }
+
+  async function handlePlaySounds(value: boolean) {
+    playSounds = value;
+    try {
+      await saveSetting('play_start_stop_sounds', value);
+    } catch (err) {
+      playSounds = !value;
+      console.error('save play_start_stop_sounds failed:', err);
     }
   }
 
@@ -196,6 +209,12 @@
 <div class="setting-row">
   <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
   <Toggle checked={noiseReduction} onchange={handleNoiseReduction} label="Noise reduction" />
+</div>
+
+<h3 class="settings-subhead">Sound effects</h3>
+<div class="setting-row">
+  <div><div class="label">Dictation sounds</div><div class="desc">Play a soft chime when dictation starts, stops, is cancelled, or fails</div></div>
+  <Toggle checked={playSounds} onchange={handlePlaySounds} label="Dictation sounds" />
 </div>
 
 {#if $calibrationError}

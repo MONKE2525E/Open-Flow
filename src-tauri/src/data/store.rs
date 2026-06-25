@@ -195,6 +195,7 @@ pub const APP_MAPPINGS: &str = "app_mappings";
 pub const NOISE_REDUCTION: &str = "noise_reduction";
 pub const MUTE_AUDIO: &str = "mute_audio";
 pub const MIC_GAIN: &str = "mic_gain";
+pub const PLAY_START_STOP_SOUNDS: &str = "play_start_stop_sounds";
 pub const SETUP_COMPLETE: &str = "setup_complete";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
@@ -545,6 +546,7 @@ pub struct AudioConfig {
     pub noise_reduction: bool,
     pub mic_gain: f32,
     pub mute_audio: bool,
+    pub play_start_stop_sounds: bool,
 }
 
 impl Default for AudioConfig {
@@ -554,6 +556,7 @@ impl Default for AudioConfig {
             noise_reduction: true,
             mic_gain: DEFAULT_MIC_GAIN,
             mute_audio: false,
+            play_start_stop_sounds: true,
         }
     }
 }
@@ -576,12 +579,17 @@ pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
         .get(MUTE_AUDIO)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let play_start_stop_sounds = store
+        .get(PLAY_START_STOP_SOUNDS)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
 
     AudioConfig {
         device,
         noise_reduction,
         mic_gain,
         mute_audio,
+        play_start_stop_sounds,
     }
 }
 
@@ -635,5 +643,25 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&backup);
+    }
+
+    // Start/stop sound cues default ON when the key is absent, and honor an
+    // explicit false.
+    #[test]
+    fn load_audio_config_play_start_stop_sounds_default_and_override() {
+        let empty = SettingsSnapshot::from_pairs([]);
+        assert!(
+            load_audio_config(&empty).play_start_stop_sounds,
+            "should default to enabled"
+        );
+
+        let disabled = SettingsSnapshot::from_pairs([(
+            PLAY_START_STOP_SOUNDS.to_string(),
+            json!(false),
+        )]);
+        assert!(
+            !load_audio_config(&disabled).play_start_stop_sounds,
+            "explicit false must be honored"
+        );
     }
 }

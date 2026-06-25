@@ -2,14 +2,14 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::api::{auto_learn, cleanup, prompts, transcription, ProviderId};
+use crate::DbHandle;
+use crate::api::{ProviderId, auto_learn, cleanup, prompts, transcription};
 use crate::core::{injection, window_context};
 use crate::data::{db, dictionary, snippets, store};
 use crate::media::audio;
 use crate::system::apps::AppMapping;
 use crate::system::number_parser;
 use crate::system::text::is_number_word_token;
-use crate::DbHandle;
 use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 
 mod cache;
@@ -25,16 +25,16 @@ mod stages;
 mod state;
 use cache::*;
 use chains::*;
-use finalize::{finalize_pipeline_completion, PipelineCompletionContext};
+use finalize::{PipelineCompletionContext, finalize_pipeline_completion};
 #[cfg(any(test, debug_assertions))]
 #[allow(unused_imports)]
 pub use fixture::{
-    run_pipeline_fixture, PipelineTestDictionaryEntry, PipelineTestRequest, PipelineTestResult,
-    PipelineTestSnippet,
+    PipelineTestDictionaryEntry, PipelineTestRequest, PipelineTestResult, PipelineTestSnippet,
+    run_pipeline_fixture,
 };
 use gates::{
-    is_transcription_hallucination, normalize_transcription_math_artifacts, preview_text,
-    recording_gate_rms, MIN_RECORDING_MS, MIN_RECORDING_RMS,
+    MIN_RECORDING_MS, MIN_RECORDING_RMS, is_transcription_hallucination,
+    normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
 };
 pub(crate) use pill::{hide_pill, show_pill};
 use pill::{reject_with_pill, show_error_pill};
@@ -53,7 +53,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         anyhow::bail!("No active recording");
     };
 
-    std::thread::spawn(crate::system::volume::unmute);
+    crate::media::sound::coordinated_unmute();
     show_pill(&app, "processing");
 
     let settings_store = match store::settings_snapshot(&app) {
@@ -174,25 +174,36 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         .to_lowercase();
     log::info!("pipeline: start target_id={}", target.id);
 
-    std::thread::spawn(crate::system::volume::unmute);
+    // Mark the session inactive before unmuting or waiting on stop() so the
+    // delayed mute helper cannot wake up and re-mute the system mid-shutdown.
+    session.active.store(false, Ordering::Relaxed);
+    crate::media::sound::cancel_pending_start();
+    crate::media::sound::coordinated_unmute();
     show_pill(&app, "processing");
 
     // Keep the quiet-audio gate permissive at high gain. Whisper recordings can
     // still have low post-denoise RMS, even after amplification.
-    let active_gain = match store::settings_snapshot(&app) {
-        Ok(s) => store::load_audio_config(&s).mic_gain,
+    let audio_cfg = match store::settings_snapshot(&app) {
+        Ok(s) => store::load_audio_config(&s),
         Err(e) => {
-            log::warn!("pipeline: failed to load audio config, using default gain: {e}");
-            store::DEFAULT_MIC_GAIN
+            log::warn!("pipeline: failed to load audio config, using defaults: {e}");
+            store::AudioConfig::default()
         }
     };
+    let active_gain = audio_cfg.mic_gain;
     let min_rms = recording_gate_rms(active_gain);
     log::debug!("pipeline: audio gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
 
     let stage_audio = std::time::Instant::now();
+    // Quiet/short recordings are rejected inside stop_and_validate_audio, which
+    // plays the error cue via reject_with_pill — so only play the stop cue once
+    // the audio is *accepted*, otherwise a rejection would sound stop + error.
     let Some((wav, duration_ms)) = stop_and_validate_audio(&app, session, min_rms).await else {
         return;
     };
+    if audio_cfg.play_start_stop_sounds {
+        crate::media::sound::play(crate::media::sound::SoundCue::Stop);
+    }
     log::debug!(
         "pipeline: audio accepted duration_ms={duration_ms} wav_bytes={} stage_ms={}",
         wav.len(),

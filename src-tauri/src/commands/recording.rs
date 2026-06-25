@@ -1,7 +1,7 @@
 //! Microphone + recording/calibration session control commands.
 
 use super::*;
-use crate::core::window_geometry::{capture_webview_center, WindowTarget};
+use crate::core::window_geometry::{WindowTarget, capture_webview_center};
 
 fn lock_state<'a>(
     state: &'a tauri::State<'_, SharedState>,
@@ -64,8 +64,11 @@ pub async fn start_input_recording(
             "recording",
             false,
             None,
-            true,
-            false,
+            pipeline::RecordingStartOptions {
+                show_recording_pill: true,
+                emit_globally: false,
+                start_cue_delay_ms: None,
+            },
         )
     })
     .await;
@@ -117,8 +120,15 @@ pub async fn start_setup_try_recording(
             "recording",
             false,
             None,
-            true,
-            false,
+            pipeline::RecordingStartOptions {
+                show_recording_pill: true,
+                emit_globally: false,
+                start_cue_delay_ms: if pipeline::start_stop_sounds_enabled(&app_clone) {
+                    Some(0)
+                } else {
+                    None
+                },
+            },
         )
     })
     .await;
@@ -187,8 +197,11 @@ pub async fn start_calibration_monitoring(
             "calibration",
             false,
             Some(1.0),
-            false,
-            true,
+            pipeline::RecordingStartOptions {
+                show_recording_pill: false,
+                emit_globally: true,
+                start_cue_delay_ms: None,
+            },
         )
     })
     .await;
@@ -241,7 +254,7 @@ pub async fn stop_recording(
     };
     if let Some(s) = session {
         let _ = s.stop();
-        std::thread::spawn(crate::system::volume::unmute);
+        crate::media::sound::coordinated_unmute();
     }
     pipeline::hide_pill(&app);
     Ok(())
