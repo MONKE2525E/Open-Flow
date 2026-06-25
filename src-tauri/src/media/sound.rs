@@ -186,6 +186,8 @@ fn sound_tx() -> &'static mpsc::Sender<SoundCommand> {
 
 fn sound_worker(rx: mpsc::Receiver<SoundCommand>) {
     let mut output: Option<(rodio::OutputStream, rodio::OutputStreamHandle)> = None;
+    let playback_id = Arc::new(AtomicU64::new(0));
+    let mut current_sink: Option<Arc<rodio::Sink>> = None;
 
     while let Ok(command) = rx.recv() {
         let SoundCommand::Play {
@@ -198,17 +200,50 @@ fn sound_worker(rx: mpsc::Receiver<SoundCommand>) {
             continue;
         }
 
-        if let Err(e) = play_with_cached_output(&mut output, cue) {
-            log::debug!("sound cue failed: {e:?}");
-            output = None;
+        let this_playback_id = playback_id.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+
+        if let Some(sink) = current_sink.take() {
+            sink.stop();
         }
 
+        let sink = match play_with_cached_output(&mut output, cue) {
+            Ok(sink) => Arc::new(sink),
+            Err(e) => {
+                log::debug!("sound cue failed: {e:?}");
+                output = None;
+
+                if generation.is_some_and(|g| START_CUE_GEN.load(Ordering::SeqCst) != g) {
+                    continue;
+                }
+
+                if let Some(after) = after {
+                    after();
+                }
+                continue;
+            }
+        };
+
+        current_sink = Some(sink.clone());
+
         if generation.is_some_and(|g| START_CUE_GEN.load(Ordering::SeqCst) != g) {
+            sink.stop();
             continue;
         }
 
         if let Some(after) = after {
-            after();
+            let playback_id = playback_id.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                sink.sleep_until_end();
+
+                if playback_id.load(Ordering::SeqCst) != this_playback_id {
+                    return;
+                }
+                if generation.is_some_and(|g| START_CUE_GEN.load(Ordering::SeqCst) != g) {
+                    return;
+                }
+
+                after();
+            });
         }
     }
 }
@@ -216,7 +251,7 @@ fn sound_worker(rx: mpsc::Receiver<SoundCommand>) {
 fn play_with_cached_output(
     output: &mut Option<(rodio::OutputStream, rodio::OutputStreamHandle)>,
     cue: SoundCue,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<rodio::Sink> {
     if output.is_none() {
         *output = Some(rodio::OutputStream::try_default()?);
     }
@@ -240,8 +275,7 @@ fn play_with_cached_output(
     };
 
     sink.append(render(notes(cue)));
-    sink.sleep_until_end();
-    Ok(())
+    Ok(sink)
 }
 
 fn harmonics(timbre: Timbre) -> &'static [Harmonic] {
