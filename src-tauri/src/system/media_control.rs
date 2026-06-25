@@ -60,6 +60,31 @@ mod platform {
         paused_sessions: Vec::new(),
     });
 
+    /// WinRT session APIs require the calling thread to be in a COM apartment.
+    /// `spawn_blocking` hands these closures a fresh thread-pool thread, which
+    /// has no apartment by default, so each closure must init its own.
+    struct ComGuard;
+
+    impl ComGuard {
+        fn new() -> Self {
+            unsafe {
+                let _ = windows::Win32::System::Com::CoInitializeEx(
+                    None,
+                    windows::Win32::System::Com::COINIT_MULTITHREADED,
+                );
+            }
+            ComGuard
+        }
+    }
+
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            unsafe {
+                windows::Win32::System::Com::CoUninitialize();
+            }
+        }
+    }
+
     pub fn begin() {
         let (generation, stale_sessions) = match PAUSE_STATE.lock() {
             Ok(mut state) => {
@@ -77,6 +102,7 @@ mod platform {
         };
 
         tauri::async_runtime::spawn_blocking(move || {
+            let _com_guard = ComGuard::new();
             if !stale_sessions.is_empty() {
                 log::debug!("media pause: restoring stale sessions before generation={generation}");
                 restore_sessions(stale_sessions);
@@ -105,7 +131,10 @@ mod platform {
             return;
         }
 
-        tauri::async_runtime::spawn_blocking(move || restore_sessions(sessions));
+        tauri::async_runtime::spawn_blocking(move || {
+            let _com_guard = ComGuard::new();
+            restore_sessions(sessions)
+        });
     }
 
     fn pause_playing_sessions(generation: u64) -> windows::core::Result<()> {

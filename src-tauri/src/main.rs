@@ -775,12 +775,12 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         // re-trigger a fresh handsfree session.
                         core::hotkey::set_handless_active(false);
                         core::hotkey::reset_chord_state();
-                        let has_session = lock_app_state(&state_hk)
-                            .map(|st| st.session.is_some())
-                            .unwrap_or(false);
-                        if let Some(mut st) = lock_app_state(&state_hk) {
+                        let has_session = if let Some(mut st) = lock_app_state(&state_hk) {
                             st.handless = false;
-                        }
+                            st.session.is_some()
+                        } else {
+                            false
+                        };
                         if has_session {
                             tauri::async_runtime::spawn(pipeline::run_pipeline(
                                 app_hk.clone(),
