@@ -191,10 +191,17 @@ mod platform {
                         log::debug!("media pause: paused source_app_id={source_app_id}");
 
                         if restore_immediately {
-                            restore_session_if_still_paused(PausedSession {
-                                source_app_id,
-                                session,
-                            });
+                            // The session was just told to pause moments ago; its
+                            // playback status may not have caught up to `Paused`
+                            // yet, so skip the staleness check that gates a normal
+                            // end-of-dictation restore and resume unconditionally.
+                            restore_session(
+                                PausedSession {
+                                    source_app_id,
+                                    session,
+                                },
+                                true,
+                            );
                         }
                     }
                     Ok(false) => {
@@ -252,7 +259,7 @@ mod platform {
         let mut resumed = 0_usize;
 
         for session in sessions {
-            if restore_session_if_still_paused(session) {
+            if restore_session(session, false) {
                 resumed += 1;
             }
         }
@@ -260,16 +267,18 @@ mod platform {
         log::debug!("media pause: restore attempted={total} resumed={resumed}");
     }
 
-    fn restore_session_if_still_paused(session: PausedSession) -> bool {
-        match playback_state(&session.session) {
-            Ok(state) if should_resume_after_dictation(state) => {}
-            Ok(_) => return false,
-            Err(err) => {
-                log::debug!(
-                    "media pause: failed to read restore state source_app_id={}: {err}",
-                    session.source_app_id
-                );
-                return false;
+    fn restore_session(session: PausedSession, force: bool) -> bool {
+        if !force {
+            match playback_state(&session.session) {
+                Ok(state) if should_resume_after_dictation(state) => {}
+                Ok(_) => return false,
+                Err(err) => {
+                    log::debug!(
+                        "media pause: failed to read restore state source_app_id={}: {err}",
+                        session.source_app_id
+                    );
+                    return false;
+                }
             }
         }
 
