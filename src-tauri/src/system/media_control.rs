@@ -51,6 +51,7 @@ mod platform {
     struct PauseState {
         generation: u64,
         paused_sessions: Vec<PausedSession>,
+        is_active: bool,
     }
 
     struct PausedSession {
@@ -61,6 +62,7 @@ mod platform {
     static PAUSE_STATE: Mutex<PauseState> = Mutex::new(PauseState {
         generation: 0,
         paused_sessions: Vec::new(),
+        is_active: false,
     });
 
     /// WinRT session APIs require the calling thread to be in a COM apartment.
@@ -101,6 +103,7 @@ mod platform {
                 }
             };
             state.generation = state.generation.wrapping_add(1);
+            state.is_active = true;
             let stale_sessions = std::mem::take(&mut state.paused_sessions);
             (state.generation, stale_sessions)
         };
@@ -127,6 +130,7 @@ mod platform {
                 }
             };
             state.generation = state.generation.wrapping_add(1);
+            state.is_active = false;
             std::mem::take(&mut state.paused_sessions)
         };
 
@@ -246,7 +250,12 @@ mod platform {
                 poisoned.into_inner()
             }
         };
-        if state.generation == generation {
+        // A late-arriving TryPauseAsync confirmation from an older generation
+        // can resolve after a newer dictation session has already started.
+        // As long as some dictation is still active, hand the session off to
+        // it instead of force-resuming media a still-running session needs
+        // kept paused.
+        if state.is_active && state.generation >= generation {
             state.paused_sessions.push(session);
             true
         } else {
