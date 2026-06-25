@@ -143,7 +143,7 @@ mod platform {
     fn pause_playing_sessions(generation: u64) -> windows::core::Result<()> {
         let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()?.get()?;
         let sessions = manager.GetSessions()?;
-        let total = sessions.Size().unwrap_or(0);
+        let total = sessions.Size()?;
         let mut inspected = 0_u32;
         let mut paused = 0_u32;
 
