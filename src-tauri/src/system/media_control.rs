@@ -86,19 +86,17 @@ mod platform {
     }
 
     pub fn begin() {
-        let (generation, stale_sessions) = match PAUSE_STATE.lock() {
-            Ok(mut state) => {
-                state.generation = state.generation.wrapping_add(1);
-                let stale_sessions = std::mem::take(&mut state.paused_sessions);
-                (state.generation, stale_sessions)
-            }
-            Err(poisoned) => {
-                log::warn!("media pause state lock was poisoned; recovering");
-                let mut state = poisoned.into_inner();
-                state.generation = state.generation.wrapping_add(1);
-                let stale_sessions = std::mem::take(&mut state.paused_sessions);
-                (state.generation, stale_sessions)
-            }
+        let (generation, stale_sessions) = {
+            let mut state = match PAUSE_STATE.lock() {
+                Ok(state) => state,
+                Err(poisoned) => {
+                    log::warn!("media pause state lock was poisoned; recovering");
+                    poisoned.into_inner()
+                }
+            };
+            state.generation = state.generation.wrapping_add(1);
+            let stale_sessions = std::mem::take(&mut state.paused_sessions);
+            (state.generation, stale_sessions)
         };
 
         tauri::async_runtime::spawn_blocking(move || {
@@ -114,17 +112,16 @@ mod platform {
     }
 
     pub fn end() {
-        let sessions = match PAUSE_STATE.lock() {
-            Ok(mut state) => {
-                state.generation = state.generation.wrapping_add(1);
-                std::mem::take(&mut state.paused_sessions)
-            }
-            Err(poisoned) => {
-                log::warn!("media pause state lock was poisoned; recovering");
-                let mut state = poisoned.into_inner();
-                state.generation = state.generation.wrapping_add(1);
-                std::mem::take(&mut state.paused_sessions)
-            }
+        let sessions = {
+            let mut state = match PAUSE_STATE.lock() {
+                Ok(state) => state,
+                Err(poisoned) => {
+                    log::warn!("media pause state lock was poisoned; recovering");
+                    poisoned.into_inner()
+                }
+            };
+            state.generation = state.generation.wrapping_add(1);
+            std::mem::take(&mut state.paused_sessions)
         };
 
         if sessions.is_empty() {
@@ -218,28 +215,29 @@ mod platform {
     }
 
     fn is_current_generation(generation: u64) -> bool {
-        match PAUSE_STATE.lock() {
-            Ok(state) => state.generation == generation,
-            Err(poisoned) => poisoned.into_inner().generation == generation,
-        }
+        let guard = match PAUSE_STATE.lock() {
+            Ok(state) => state,
+            Err(poisoned) => {
+                log::warn!("media pause state lock was poisoned; recovering");
+                poisoned.into_inner()
+            }
+        };
+        guard.generation == generation
     }
 
     fn store_paused_session(generation: u64, session: PausedSession) -> bool {
-        match PAUSE_STATE.lock() {
-            Ok(mut state) if state.generation == generation => {
-                state.paused_sessions.push(session);
-                true
-            }
-            Ok(_) => false,
+        let mut state = match PAUSE_STATE.lock() {
+            Ok(state) => state,
             Err(poisoned) => {
-                let mut state = poisoned.into_inner();
-                if state.generation == generation {
-                    state.paused_sessions.push(session);
-                    true
-                } else {
-                    false
-                }
+                log::warn!("media pause state lock was poisoned; recovering");
+                poisoned.into_inner()
             }
+        };
+        if state.generation == generation {
+            state.paused_sessions.push(session);
+            true
+        } else {
+            false
         }
     }
 
