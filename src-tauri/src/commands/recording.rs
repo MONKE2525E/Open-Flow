@@ -1,7 +1,7 @@
 //! Microphone + recording/calibration session control commands.
 
 use super::*;
-use crate::core::window_geometry::{capture_webview_center, WindowTarget};
+use crate::core::window_geometry::{WindowTarget, capture_webview_center};
 
 fn lock_state<'a>(
     state: &'a tauri::State<'_, SharedState>,
@@ -66,6 +66,7 @@ pub async fn start_input_recording(
             None,
             true,
             false,
+            None,
         )
     })
     .await;
@@ -101,12 +102,6 @@ pub async fn start_setup_try_recording(
         st.starting = true;
     }
 
-    // The first-run "Try It" demo is genuine dictation, so play the start cue to
-    // mirror the hotkey flow (its stop cue fires via run_pipeline).
-    if pipeline::start_stop_sounds_enabled(&app) {
-        crate::media::sound::play(crate::media::sound::SoundCue::Start);
-    }
-
     let target = capture_in_app_target(&app);
     {
         let mut st = lock_state(&state)?;
@@ -125,6 +120,11 @@ pub async fn start_setup_try_recording(
             None,
             true,
             false,
+            if pipeline::start_stop_sounds_enabled(&app_clone) {
+                Some(0)
+            } else {
+                None
+            },
         )
     })
     .await;
@@ -195,6 +195,7 @@ pub async fn start_calibration_monitoring(
             Some(1.0),
             false,
             true,
+            None,
         )
     })
     .await;

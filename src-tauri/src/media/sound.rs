@@ -14,7 +14,9 @@
 
 use rodio::buffer::SamplesBuffer;
 use std::f32::consts::{PI, TAU};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 
 /// Which dictation transition the cue represents.
 #[derive(Clone, Copy)]
@@ -46,6 +48,17 @@ pub const START_CUE_HANDSFREE_DELAY_MS: u64 = 700;
 /// cancelling supersedes any still-pending one, so the discarded first tap of a
 /// handsfree double-tap never sounds and the cue can be held back cleanly.
 static START_CUE_GEN: AtomicU64 = AtomicU64::new(0);
+static SOUND_TX: OnceLock<mpsc::Sender<SoundCommand>> = OnceLock::new();
+
+type AfterPlay = Box<dyn FnOnce() + Send + 'static>;
+
+enum SoundCommand {
+    Play {
+        cue: SoundCue,
+        generation: Option<u64>,
+        after: Option<AfterPlay>,
+    },
+}
 
 /// Instrument/voice a note is played with — the main lever for making cues
 /// sound like different *kinds* of event rather than the same beep.
@@ -79,11 +92,16 @@ struct Note {
 
 /// Play the cue on a background thread. Returns immediately.
 pub fn play(cue: SoundCue) {
-    std::thread::spawn(move || {
-        if let Err(e) = play_blocking(cue) {
-            log::debug!("sound cue failed: {e:?}");
-        }
-    });
+    if sound_tx()
+        .send(SoundCommand::Play {
+            cue,
+            generation: None,
+            after: None,
+        })
+        .is_err()
+    {
+        log::debug!("sound cue failed: playback worker is unavailable");
+    }
 }
 
 /// Schedule the start cue after `delay_ms`. Claims a new generation, so any
@@ -91,14 +109,36 @@ pub fn play(cue: SoundCue) {
 /// the discarded first tap of a handsfree double-tap is silenced and how the
 /// handsfree cue is held back until its entry animation has played.
 pub fn play_start_delayed(delay_ms: u64) {
+    play_start_delayed_then(delay_ms, || {});
+}
+
+/// Schedule the start cue after `delay_ms`, then run `after` once that same cue
+/// has either finished playing or failed. Superseded or cancelled generations
+/// never invoke the callback.
+pub fn play_start_delayed_then<F>(delay_ms: u64, after: F)
+where
+    F: FnOnce() + Send + 'static,
+{
     let generation = START_CUE_GEN.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        if delay_ms != 0 {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        }
         if START_CUE_GEN.load(Ordering::SeqCst) != generation {
             return; // superseded or cancelled
         }
-        if let Err(e) = play_blocking(SoundCue::Start) {
-            log::debug!("sound cue failed: {e:?}");
+
+        let mut after = Some(Box::new(after) as AfterPlay);
+        let send_result = sound_tx().send(SoundCommand::Play {
+            cue: SoundCue::Start,
+            generation: Some(generation),
+            after: after.take(),
+        });
+        if send_result.is_err() {
+            log::debug!("sound cue failed: playback worker is unavailable");
+            if let Some(after) = after {
+                after();
+            }
         }
     });
 }
@@ -109,9 +149,69 @@ pub fn cancel_pending_start() {
     START_CUE_GEN.fetch_add(1, Ordering::SeqCst);
 }
 
-fn play_blocking(cue: SoundCue) -> anyhow::Result<()> {
-    let (_stream, handle) = rodio::OutputStream::try_default()?;
-    let sink = rodio::Sink::try_new(&handle)?;
+fn sound_tx() -> &'static mpsc::Sender<SoundCommand> {
+    SOUND_TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<SoundCommand>();
+        std::thread::spawn(move || sound_worker(rx));
+        tx
+    })
+}
+
+fn sound_worker(rx: mpsc::Receiver<SoundCommand>) {
+    let mut output: Option<(rodio::OutputStream, rodio::OutputStreamHandle)> = None;
+
+    while let Ok(command) = rx.recv() {
+        let SoundCommand::Play {
+            cue,
+            generation,
+            after,
+        } = command;
+
+        if generation.is_some_and(|g| START_CUE_GEN.load(Ordering::SeqCst) != g) {
+            continue;
+        }
+
+        if let Err(e) = play_with_cached_output(&mut output, cue) {
+            log::debug!("sound cue failed: {e:?}");
+            output = None;
+        }
+
+        if generation.is_some_and(|g| START_CUE_GEN.load(Ordering::SeqCst) != g) {
+            continue;
+        }
+
+        if let Some(after) = after {
+            after();
+        }
+    }
+}
+
+fn play_with_cached_output(
+    output: &mut Option<(rodio::OutputStream, rodio::OutputStreamHandle)>,
+    cue: SoundCue,
+) -> anyhow::Result<()> {
+    if output.is_none() {
+        *output = Some(rodio::OutputStream::try_default()?);
+    }
+
+    let sink_result = {
+        let (_, handle) = output
+            .as_ref()
+            .expect("cached output stream must exist before creating a sink");
+        rodio::Sink::try_new(handle)
+    };
+
+    let sink = match sink_result {
+        Ok(sink) => sink,
+        Err(_) => {
+            *output = Some(rodio::OutputStream::try_default()?);
+            let (_, handle) = output
+                .as_ref()
+                .expect("cached output stream must exist after reinitialization");
+            rodio::Sink::try_new(handle)?
+        }
+    };
+
     sink.append(render(notes(cue)));
     sink.sleep_until_end();
     Ok(())

@@ -11,25 +11,30 @@ pub fn start_recording_session(
     pill_state: &str,
     handless: bool,
 ) {
-    if let Err(e) = start_recording_session_ex(app, state, pill_state, handless, None, true, false)
-    {
+    let start_cue_delay_ms = if start_stop_sounds_enabled(app) {
+        Some(if handless {
+            crate::media::sound::START_CUE_HANDSFREE_DELAY_MS
+        } else {
+            crate::media::sound::START_CUE_NORMAL_DELAY_MS
+        })
+    } else {
+        None
+    };
+
+    if let Err(e) = start_recording_session_ex(
+        app,
+        state,
+        pill_state,
+        handless,
+        None,
+        true,
+        false,
+        start_cue_delay_ms,
+    ) {
         log::error!("start recording: {e}");
         hide_pill(app);
         app.emit("verenu:error", format!("Failed to start recording: {e}"))
             .ok();
-        return;
-    }
-
-    // Schedule the start cue only after the session is live. That avoids a
-    // bogus chirp if audio setup fails, while keeping the cue deferred and
-    // cancellable for quick taps and handsfree toggles.
-    if start_stop_sounds_enabled(app) {
-        let delay = if handless {
-            crate::media::sound::START_CUE_HANDSFREE_DELAY_MS
-        } else {
-            crate::media::sound::START_CUE_NORMAL_DELAY_MS
-        };
-        crate::media::sound::play_start_delayed(delay);
     }
 }
 
@@ -42,6 +47,7 @@ pub fn start_recording_session_ex(
     gain_override: Option<f32>,
     show_recording_pill: bool,
     emit_globally: bool,
+    start_cue_delay_ms: Option<u64>,
 ) -> Result<(), String> {
     let settings = store::settings_snapshot(app);
     let audio_config = match settings {
@@ -87,39 +93,14 @@ pub fn start_recording_session_ex(
     let device = audio_config.device;
     let noise_reduction = audio_config.noise_reduction;
     let mute_audio = audio_config.mute_audio;
-    let play_sounds = audio_config.play_start_stop_sounds;
     let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
 
     match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
         Ok(session) => {
-            if mute_audio && gain_override.is_none() {
-                // Muting silences the default render endpoint — the same device
-                // the start cue plays through. When sounds are on, hold the mute
-                // until the cue has played, guarded by the session's `active`
-                // flag so a quick stop/escape can't leave the system stuck muted.
-                let mute_delay = if play_sounds {
-                    if handless {
-                        std::time::Duration::from_millis(1200)
-                    } else {
-                        std::time::Duration::from_millis(750)
-                    }
-                } else {
-                    std::time::Duration::ZERO
-                };
-                let active = session.active.clone();
-                std::thread::spawn(move || {
-                    if !mute_delay.is_zero() {
-                        std::thread::sleep(mute_delay);
-                        if !active.load(Ordering::Relaxed) {
-                            return; // recording already ended; don't strand the mute
-                        }
-                    }
-                    crate::system::volume::mute();
-                });
-            }
             let level_arc = session.level.clone();
             let raw_level_arc = session.raw_level.clone();
             let active_arc = session.active.clone();
+            let start_cue_active = session.active.clone();
             {
                 let mut st = match lock_state(state) {
                     Ok(st) => st,
@@ -138,6 +119,19 @@ pub fn start_recording_session_ex(
                 active_arc,
                 emit_globally,
             );
+            if let Some(delay_ms) = start_cue_delay_ms {
+                if mute_audio && gain_override.is_none() {
+                    crate::media::sound::play_start_delayed_then(delay_ms, move || {
+                        if start_cue_active.load(Ordering::Relaxed) {
+                            crate::system::volume::mute();
+                        }
+                    });
+                } else {
+                    crate::media::sound::play_start_delayed(delay_ms);
+                }
+            } else if mute_audio && gain_override.is_none() {
+                std::thread::spawn(crate::system::volume::mute);
+            }
             Ok(())
         }
         Err(e) => Err(e.to_string()),
