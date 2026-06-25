@@ -137,7 +137,7 @@ pub fn start_recording_session_ex(
                     crate::media::sound::play_start_delayed(delay_ms);
                 }
             } else if mute_audio && gain_override.is_none() {
-                std::thread::spawn(crate::system::volume::mute);
+                tauri::async_runtime::spawn_blocking(crate::system::volume::mute);
             }
             Ok(())
         }

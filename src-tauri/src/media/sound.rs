@@ -122,9 +122,9 @@ where
     F: FnOnce() + Send + 'static,
 {
     let generation = START_CUE_GEN.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
-    std::thread::spawn(move || {
+    tauri::async_runtime::spawn(async move {
         if delay_ms != 0 {
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
         if START_CUE_GEN.load(Ordering::SeqCst) != generation {
             return; // superseded or cancelled
@@ -157,7 +157,7 @@ pub fn coordinated_mute(active: Arc<std::sync::atomic::AtomicBool>) {
     let session_id = VOLUME_SESSION
         .fetch_add(1, Ordering::SeqCst)
         .wrapping_add(1);
-    std::thread::spawn(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         if !active.load(Ordering::Relaxed) || VOLUME_SESSION.load(Ordering::SeqCst) != session_id {
             return;
         }
@@ -173,7 +173,7 @@ pub fn coordinated_mute(active: Arc<std::sync::atomic::AtomicBool>) {
 /// Invalidate any pending coordinated mute before unmuting the system.
 pub fn coordinated_unmute() {
     VOLUME_SESSION.fetch_add(1, Ordering::SeqCst);
-    std::thread::spawn(crate::system::volume::unmute);
+    tauri::async_runtime::spawn_blocking(crate::system::volume::unmute);
 }
 
 fn sound_tx() -> &'static mpsc::Sender<SoundCommand> {
