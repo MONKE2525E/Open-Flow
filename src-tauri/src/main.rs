@@ -12,13 +12,13 @@ mod testing;
 
 use crate::core::window_geometry::WindowTarget;
 use crate::data::db;
-use crate::pipeline::{hide_pill, start_recording_session, AppState, SharedState};
+use crate::pipeline::{AppState, SharedState, hide_pill, start_recording_session};
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{
+    AppHandle, Emitter, Manager, Theme,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager, Theme,
 };
 
 pub type DbHandle = db::Db;
@@ -475,7 +475,7 @@ fn runtime_tray_icon_color(theme: IconTheme) -> [u8; 4] {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-    use super::{runtime_tray_icon_color, IconTheme};
+    use super::{IconTheme, runtime_tray_icon_color};
 
     #[test]
     fn tray_icon_uses_black_in_light_mode() {
@@ -785,7 +785,7 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             .and_then(|mut st| st.session.take())
                             .is_some();
                         if had_session {
-                            std::thread::spawn(crate::system::volume::unmute);
+                            crate::media::sound::coordinated_unmute();
                         }
                         hide_pill(&app_hk);
                     }
@@ -806,7 +806,7 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         std::thread::spawn(move || {
                             let _ = s.stop();
                         });
-                        std::thread::spawn(crate::system::volume::unmute);
+                        crate::media::sound::coordinated_unmute();
                         if pipeline::start_stop_sounds_enabled(&app_hk) {
                             crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
                         }

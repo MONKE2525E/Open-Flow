@@ -123,7 +123,7 @@ pub fn start_recording_session_ex(
                 if mute_audio && gain_override.is_none() {
                     crate::media::sound::play_start_delayed_then(delay_ms, move || {
                         if start_cue_active.load(Ordering::Relaxed) {
-                            crate::system::volume::mute();
+                            crate::media::sound::coordinated_mute(start_cue_active);
                         }
                     });
                 } else {

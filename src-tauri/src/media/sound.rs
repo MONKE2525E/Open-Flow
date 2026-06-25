@@ -14,6 +14,7 @@
 
 use rodio::buffer::SamplesBuffer;
 use std::f32::consts::{PI, TAU};
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -49,6 +50,7 @@ pub const START_CUE_HANDSFREE_DELAY_MS: u64 = 700;
 /// handsfree double-tap never sounds and the cue can be held back cleanly.
 static START_CUE_GEN: AtomicU64 = AtomicU64::new(0);
 static SOUND_TX: OnceLock<mpsc::Sender<SoundCommand>> = OnceLock::new();
+static VOLUME_SESSION: AtomicU64 = AtomicU64::new(0);
 
 type AfterPlay = Box<dyn FnOnce() + Send + 'static>;
 
@@ -147,6 +149,31 @@ where
 /// discarded or the recording is escaped before the cue fires.
 pub fn cancel_pending_start() {
     START_CUE_GEN.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Mute only if the same volume session is still current after the call
+/// returns. If an unmute raced in between, immediately undo the stale mute.
+pub fn coordinated_mute(active: Arc<std::sync::atomic::AtomicBool>) {
+    let session_id = VOLUME_SESSION
+        .fetch_add(1, Ordering::SeqCst)
+        .wrapping_add(1);
+    std::thread::spawn(move || {
+        if !active.load(Ordering::Relaxed) || VOLUME_SESSION.load(Ordering::SeqCst) != session_id {
+            return;
+        }
+
+        crate::system::volume::mute();
+
+        if !active.load(Ordering::Relaxed) || VOLUME_SESSION.load(Ordering::SeqCst) != session_id {
+            crate::system::volume::unmute();
+        }
+    });
+}
+
+/// Invalidate any pending coordinated mute before unmuting the system.
+pub fn coordinated_unmute() {
+    VOLUME_SESSION.fetch_add(1, Ordering::SeqCst);
+    std::thread::spawn(crate::system::volume::unmute);
 }
 
 fn sound_tx() -> &'static mpsc::Sender<SoundCommand> {
