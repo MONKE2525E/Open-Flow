@@ -100,6 +100,7 @@ pub fn start_recording_session_ex(
     let device = audio_config.device;
     let noise_reduction = audio_config.noise_reduction;
     let mute_audio = audio_config.mute_audio;
+    let pause_media = audio_config.pause_media_during_dictation && gain_override.is_none();
     let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
 
     match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
@@ -126,6 +127,9 @@ pub fn start_recording_session_ex(
                 active_arc,
                 options.emit_globally,
             );
+            if pause_media {
+                crate::system::media_control::begin_dictation_media_pause();
+            }
             if let Some(delay_ms) = options.start_cue_delay_ms {
                 if mute_audio && gain_override.is_none() {
                     crate::media::sound::play_start_delayed_then(delay_ms, move || {

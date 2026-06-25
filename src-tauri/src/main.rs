@@ -743,10 +743,14 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         if let Some(mut st) = lock_app_state(&state_hk) {
                             st.handless = false;
                         }
-                        tauri::async_runtime::spawn(pipeline::run_pipeline(
-                            app_hk.clone(),
-                            state_hk.clone(),
-                        ));
+                        if has_session {
+                            tauri::async_runtime::spawn(pipeline::run_pipeline(
+                                app_hk.clone(),
+                                state_hk.clone(),
+                            ));
+                        } else {
+                            crate::system::media_control::end_dictation_media_pause();
+                        }
                     } else if !has_session {
                         let target = WindowTarget::capture_foreground();
                         if let Some(mut st) = lock_app_state(&state_hk) {
@@ -771,13 +775,20 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         // re-trigger a fresh handsfree session.
                         core::hotkey::set_handless_active(false);
                         core::hotkey::reset_chord_state();
-                        if let Some(mut st) = lock_app_state(&state_hk) {
+                        let has_session = if let Some(mut st) = lock_app_state(&state_hk) {
                             st.handless = false;
+                            st.session.is_some()
+                        } else {
+                            false
+                        };
+                        if has_session {
+                            tauri::async_runtime::spawn(pipeline::run_pipeline(
+                                app_hk.clone(),
+                                state_hk.clone(),
+                            ));
+                        } else {
+                            crate::system::media_control::end_dictation_media_pause();
                         }
-                        tauri::async_runtime::spawn(pipeline::run_pipeline(
-                            app_hk.clone(),
-                            state_hk.clone(),
-                        ));
                     } else {
                         // First click of a double-tap gesture outside handsfree —
                         // discard the short recording that just started.
@@ -786,6 +797,7 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             .is_some();
                         if had_session {
                             crate::media::sound::coordinated_unmute();
+                            crate::system::media_control::end_dictation_media_pause();
                         }
                         hide_pill(&app_hk);
                     }
@@ -807,6 +819,7 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             let _ = s.stop();
                         });
                         crate::media::sound::coordinated_unmute();
+                        crate::system::media_control::end_dictation_media_pause();
                         if pipeline::start_stop_sounds_enabled(&app_hk) {
                             crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
                         }

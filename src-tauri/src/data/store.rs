@@ -194,6 +194,7 @@ pub const CLEANUP_INTENSITY: &str = "cleanup_intensity";
 pub const APP_MAPPINGS: &str = "app_mappings";
 pub const NOISE_REDUCTION: &str = "noise_reduction";
 pub const MUTE_AUDIO: &str = "mute_audio";
+pub const PAUSE_MEDIA_DURING_DICTATION: &str = "pause_media_during_dictation";
 pub const MIC_GAIN: &str = "mic_gain";
 pub const PLAY_START_STOP_SOUNDS: &str = "play_start_stop_sounds";
 pub const SETUP_COMPLETE: &str = "setup_complete";
@@ -546,6 +547,7 @@ pub struct AudioConfig {
     pub noise_reduction: bool,
     pub mic_gain: f32,
     pub mute_audio: bool,
+    pub pause_media_during_dictation: bool,
     pub play_start_stop_sounds: bool,
 }
 
@@ -556,6 +558,7 @@ impl Default for AudioConfig {
             noise_reduction: true,
             mic_gain: DEFAULT_MIC_GAIN,
             mute_audio: false,
+            pause_media_during_dictation: false,
             play_start_stop_sounds: true,
         }
     }
@@ -579,6 +582,10 @@ pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
         .get(MUTE_AUDIO)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let pause_media_during_dictation = store
+        .get(PAUSE_MEDIA_DURING_DICTATION)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let play_start_stop_sounds = store
         .get(PLAY_START_STOP_SOUNDS)
         .and_then(|v| v.as_bool())
@@ -589,6 +596,7 @@ pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
         noise_reduction,
         mic_gain,
         mute_audio,
+        pause_media_during_dictation,
         play_start_stop_sounds,
     }
 }
@@ -662,6 +670,22 @@ mod tests {
         assert!(
             !load_audio_config(&disabled).play_start_stop_sounds,
             "explicit false must be honored"
+        );
+    }
+
+    #[test]
+    fn load_audio_config_pause_media_default_and_override() {
+        let empty = SettingsSnapshot::from_pairs([]);
+        assert!(
+            !load_audio_config(&empty).pause_media_during_dictation,
+            "media pause should default to disabled"
+        );
+
+        let enabled =
+            SettingsSnapshot::from_pairs([(PAUSE_MEDIA_DURING_DICTATION.to_string(), json!(true))]);
+        assert!(
+            load_audio_config(&enabled).pause_media_during_dictation,
+            "explicit true must be honored"
         );
     }
 }

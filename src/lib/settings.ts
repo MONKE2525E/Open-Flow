@@ -34,6 +34,7 @@ type SettingsValueMap = {
   app_mappings: AppMapping[];
   noise_reduction: boolean;
   mute_audio: boolean;
+  pause_media_during_dictation: boolean;
   play_start_stop_sounds: boolean;
   mic_gain: number;
   setup_complete: boolean;

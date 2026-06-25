@@ -255,6 +255,7 @@ pub async fn stop_recording(
     if let Some(s) = session {
         let _ = s.stop();
         crate::media::sound::coordinated_unmute();
+        crate::system::media_control::end_dictation_media_pause();
     }
     pipeline::hide_pill(&app);
     Ok(())
@@ -267,7 +268,15 @@ pub async fn stop_handless_mode(
 ) -> Result<(), String> {
     crate::core::hotkey::set_handless_active(false);
     crate::core::hotkey::reset_chord_state();
-    lock_state(&state)?.handless = false;
-    tauri::async_runtime::spawn(pipeline::run_pipeline(app, state.inner().clone()));
+    let has_session = {
+        let mut st = lock_state(&state)?;
+        st.handless = false;
+        st.session.is_some()
+    };
+    if has_session {
+        tauri::async_runtime::spawn(pipeline::run_pipeline(app, state.inner().clone()));
+    } else {
+        crate::system::media_control::end_dictation_media_pause();
+    }
     Ok(())
 }
