@@ -121,16 +121,40 @@ fn harmonics(timbre: Timbre) -> &'static [Harmonic] {
     match timbre {
         // Near-sine with a whisper of octave for warmth.
         Timbre::Soft => &[
-            Harmonic { ratio: 1.0, gain: 1.0, decay_mult: 1.0 },
-            Harmonic { ratio: 2.0, gain: 0.08, decay_mult: 1.6 },
+            Harmonic {
+                ratio: 1.0,
+                gain: 1.0,
+                decay_mult: 1.0,
+            },
+            Harmonic {
+                ratio: 2.0,
+                gain: 0.08,
+                decay_mult: 1.6,
+            },
         ],
         // Odd harmonics for a reedy "buzzer" edge, but softened: dropped the
         // bright 7th, eased the 3rd/5th so it reads as "wrong" without being harsh.
         Timbre::Buzz => &[
-            Harmonic { ratio: 1.0, gain: 1.0, decay_mult: 1.0 },
-            Harmonic { ratio: 2.0, gain: 0.20, decay_mult: 1.0 },
-            Harmonic { ratio: 3.0, gain: 0.34, decay_mult: 1.0 },
-            Harmonic { ratio: 5.0, gain: 0.12, decay_mult: 1.0 },
+            Harmonic {
+                ratio: 1.0,
+                gain: 1.0,
+                decay_mult: 1.0,
+            },
+            Harmonic {
+                ratio: 2.0,
+                gain: 0.20,
+                decay_mult: 1.0,
+            },
+            Harmonic {
+                ratio: 3.0,
+                gain: 0.34,
+                decay_mult: 1.0,
+            },
+            Harmonic {
+                ratio: 5.0,
+                gain: 0.12,
+                decay_mult: 1.0,
+            },
         ],
     }
 }
@@ -145,26 +169,80 @@ fn notes(cue: SoundCue) -> &'static [Note] {
     match cue {
         // Begin listening: a soft, airy rising arpeggio — anticipatory, light.
         SoundCue::Start => &[
-            Note { freq: 523.25, start_ms: 0.0, dur_ms: 220.0, gain: 1.0, timbre: Timbre::Soft }, // C5
-            Note { freq: 659.25, start_ms: 60.0, dur_ms: 240.0, gain: 1.05, timbre: Timbre::Soft }, // E5
-            Note { freq: 783.99, start_ms: 120.0, dur_ms: 340.0, gain: 1.1, timbre: Timbre::Soft }, // G5
+            Note {
+                freq: 523.25,
+                start_ms: 0.0,
+                dur_ms: 220.0,
+                gain: 1.0,
+                timbre: Timbre::Soft,
+            }, // C5
+            Note {
+                freq: 659.25,
+                start_ms: 60.0,
+                dur_ms: 240.0,
+                gain: 1.05,
+                timbre: Timbre::Soft,
+            }, // E5
+            Note {
+                freq: 783.99,
+                start_ms: 120.0,
+                dur_ms: 340.0,
+                gain: 1.1,
+                timbre: Timbre::Soft,
+            }, // G5
         ],
         // Completed: a plain, clean rising tone (perfect fifth) — a simple "done",
         // no bell shimmer.
         SoundCue::Stop => &[
-            Note { freq: 587.33, start_ms: 0.0, dur_ms: 200.0, gain: 1.0, timbre: Timbre::Soft }, // D5
-            Note { freq: 880.00, start_ms: 90.0, dur_ms: 360.0, gain: 1.05, timbre: Timbre::Soft }, // A5
+            Note {
+                freq: 587.33,
+                start_ms: 0.0,
+                dur_ms: 200.0,
+                gain: 1.0,
+                timbre: Timbre::Soft,
+            }, // D5
+            Note {
+                freq: 880.00,
+                start_ms: 90.0,
+                dur_ms: 360.0,
+                gain: 1.05,
+                timbre: Timbre::Soft,
+            }, // A5
         ],
         // Failure: a low, buzzy descending "womp" — shorter and a touch softer,
         // low register + reedy edge still read clearly as "wrong".
         SoundCue::Error => &[
-            Note { freq: 220.00, start_ms: 0.0, dur_ms: 150.0, gain: 0.6, timbre: Timbre::Buzz }, // A3
-            Note { freq: 174.61, start_ms: 165.0, dur_ms: 240.0, gain: 0.6, timbre: Timbre::Buzz }, // F3
+            Note {
+                freq: 220.00,
+                start_ms: 0.0,
+                dur_ms: 150.0,
+                gain: 0.6,
+                timbre: Timbre::Buzz,
+            }, // A3
+            Note {
+                freq: 174.61,
+                start_ms: 165.0,
+                dur_ms: 240.0,
+                gain: 0.6,
+                timbre: Timbre::Buzz,
+            }, // F3
         ],
         // Cancelled: a quiet, soft, neutral two-note dismiss.
         SoundCue::Cancel => &[
-            Note { freq: 392.00, start_ms: 0.0, dur_ms: 150.0, gain: 0.5, timbre: Timbre::Soft }, // G4
-            Note { freq: 293.66, start_ms: 70.0, dur_ms: 220.0, gain: 0.5, timbre: Timbre::Soft }, // D4
+            Note {
+                freq: 392.00,
+                start_ms: 0.0,
+                dur_ms: 150.0,
+                gain: 0.5,
+                timbre: Timbre::Soft,
+            }, // G4
+            Note {
+                freq: 293.66,
+                start_ms: 70.0,
+                dur_ms: 220.0,
+                gain: 0.5,
+                timbre: Timbre::Soft,
+            }, // D4
         ],
     }
 }
@@ -203,6 +281,8 @@ fn render_samples(notes: &[Note]) -> Vec<f32> {
             let amp = AMPLITUDE * note.gain * h.gain;
             let h_decay = base_decay * h.decay_mult;
             let w = TAU * freq / sr;
+            let decay_step = (-h_decay).exp();
+            let mut decay_env = (-(attack.ceil() - attack) * h_decay).exp();
             for i in 0..len {
                 let idx = start + i;
                 if idx >= total {
@@ -219,7 +299,9 @@ fn render_samples(notes: &[Note]) -> Vec<f32> {
                         1.0
                     }
                 } else {
-                    (-(n - attack) * h_decay).exp()
+                    let current = decay_env;
+                    decay_env *= decay_step;
+                    current
                 };
                 buf[idx] += (w * n).sin() * env * amp;
             }

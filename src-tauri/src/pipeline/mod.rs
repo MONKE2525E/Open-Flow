@@ -174,6 +174,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         .to_lowercase();
     log::info!("pipeline: start target_id={}", target.id);
 
+    // Mark the session inactive before unmuting or waiting on stop() so the
+    // delayed mute helper cannot wake up and re-mute the system mid-shutdown.
+    session.active.store(false, Ordering::Relaxed);
     std::thread::spawn(crate::system::volume::unmute);
     show_pill(&app, "processing");
 
