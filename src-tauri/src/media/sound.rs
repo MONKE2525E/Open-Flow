@@ -1,0 +1,270 @@
+//! Short synthesized audio cues for dictation start / stop / error / cancel.
+//!
+//! Each cue is built by additive synthesis into a small PCM buffer, then played
+//! on a background thread that opens the default output device, plays the buffer,
+//! and drops the stream. No shared state, no held device, no `Send`/lifetime
+//! juggling. Playback is fire-and-forget and never panics the pipeline.
+//!
+//! The cues are designed to be *categorically* distinguishable, which (per UI
+//! sound-design research — auditory icons / earcons) comes from **timbre, register
+//! and gesture**, not pitch alone:
+//! - Complete: a clean "soft" tone, higher register, rising — a plain "done".
+//! - Error: a low, **buzzy** reed (odd harmonics, sustained), descending — "wrong".
+//! - Start / Cancel: the same soft tone, kept unobtrusive.
+
+use rodio::buffer::SamplesBuffer;
+use std::f32::consts::{PI, TAU};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Which dictation transition the cue represents.
+#[derive(Clone, Copy)]
+pub enum SoundCue {
+    /// Recording started (hotkey pressed) — a soft, airy rising arpeggio.
+    Start,
+    /// Recording finished (hotkey released) — a clean rising tone: "done".
+    Stop,
+    /// Processing failed — a low, buzzy descending "womp": "wrong".
+    Error,
+    /// Recording cancelled (Escape) — a quiet, soft two-note dismiss.
+    Cancel,
+}
+
+const SAMPLE_RATE: u32 = 44_100;
+const ATTACK_MS: f32 = 6.0; // smooth swell-in so the onset never clicks
+const RELEASE_MS: f32 = 60.0; // release for sustained (buzz) voices
+const AMPLITUDE: f32 = 0.30; // gentle, fixed master level
+
+/// Delay before the start cue for a normal hold-to-talk press. Long enough that
+/// the discarded first tap of a handsfree double-tap (held <200ms, then
+/// cancelled) is suppressed before it sounds, while a genuine hold still chimes.
+pub const START_CUE_NORMAL_DELAY_MS: u64 = 260;
+/// Delay before the start cue when entering handsfree, so it lands after the
+/// pill's entry animation rather than before it looks like it's listening.
+pub const START_CUE_HANDSFREE_DELAY_MS: u64 = 700;
+
+/// Generation counter for the pending start cue. Scheduling a new start cue or
+/// cancelling supersedes any still-pending one, so the discarded first tap of a
+/// handsfree double-tap never sounds and the cue can be held back cleanly.
+static START_CUE_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// Instrument/voice a note is played with — the main lever for making cues
+/// sound like different *kinds* of event rather than the same beep.
+#[derive(Clone, Copy)]
+enum Timbre {
+    /// Near-sine, faintly warm — a clean, "normal" tone (start, complete, cancel).
+    Soft,
+    /// Reedy buzzer — odd harmonics, sustained, a "wrong" edge (error).
+    Buzz,
+}
+
+/// One harmonic of a timbre: frequency `ratio` to the fundamental, relative
+/// `gain`, and `decay_mult` (>1 = decays faster than the body, which gives bells
+/// their bright-onset/mellow-tail shimmer). `decay_mult` is unused for sustained
+/// voices.
+struct Harmonic {
+    ratio: f32,
+    gain: f32,
+    decay_mult: f32,
+}
+
+/// One note in a cue: fundamental `freq`, when it begins, how long it rings, a
+/// relative `gain`, and the `timbre` it is voiced with.
+struct Note {
+    freq: f32,
+    start_ms: f32,
+    dur_ms: f32,
+    gain: f32,
+    timbre: Timbre,
+}
+
+/// Play the cue on a background thread. Returns immediately.
+pub fn play(cue: SoundCue) {
+    std::thread::spawn(move || {
+        if let Err(e) = play_blocking(cue) {
+            log::debug!("sound cue failed: {e:?}");
+        }
+    });
+}
+
+/// Schedule the start cue after `delay_ms`. Claims a new generation, so any
+/// previously scheduled start cue is superseded and will not sound. This is how
+/// the discarded first tap of a handsfree double-tap is silenced and how the
+/// handsfree cue is held back until its entry animation has played.
+pub fn play_start_delayed(delay_ms: u64) {
+    let generation = START_CUE_GEN.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        if START_CUE_GEN.load(Ordering::SeqCst) != generation {
+            return; // superseded or cancelled
+        }
+        if let Err(e) = play_blocking(SoundCue::Start) {
+            log::debug!("sound cue failed: {e:?}");
+        }
+    });
+}
+
+/// Cancel a pending (not-yet-played) start cue — e.g. when a quick tap is
+/// discarded or the recording is escaped before the cue fires.
+pub fn cancel_pending_start() {
+    START_CUE_GEN.fetch_add(1, Ordering::SeqCst);
+}
+
+fn play_blocking(cue: SoundCue) -> anyhow::Result<()> {
+    let (_stream, handle) = rodio::OutputStream::try_default()?;
+    let sink = rodio::Sink::try_new(&handle)?;
+    sink.append(render(notes(cue)));
+    sink.sleep_until_end();
+    Ok(())
+}
+
+fn harmonics(timbre: Timbre) -> &'static [Harmonic] {
+    match timbre {
+        // Near-sine with a whisper of octave for warmth.
+        Timbre::Soft => &[
+            Harmonic { ratio: 1.0, gain: 1.0, decay_mult: 1.0 },
+            Harmonic { ratio: 2.0, gain: 0.08, decay_mult: 1.6 },
+        ],
+        // Odd harmonics for a reedy "buzzer" edge, but softened: dropped the
+        // bright 7th, eased the 3rd/5th so it reads as "wrong" without being harsh.
+        Timbre::Buzz => &[
+            Harmonic { ratio: 1.0, gain: 1.0, decay_mult: 1.0 },
+            Harmonic { ratio: 2.0, gain: 0.20, decay_mult: 1.0 },
+            Harmonic { ratio: 3.0, gain: 0.34, decay_mult: 1.0 },
+            Harmonic { ratio: 5.0, gain: 0.12, decay_mult: 1.0 },
+        ],
+    }
+}
+
+/// Sustained voices hold at full level (attack → sustain → release) like a
+/// buzzer; plucked voices decay exponentially like a struck bell.
+fn is_sustained(timbre: Timbre) -> bool {
+    matches!(timbre, Timbre::Buzz)
+}
+
+fn notes(cue: SoundCue) -> &'static [Note] {
+    match cue {
+        // Begin listening: a soft, airy rising arpeggio — anticipatory, light.
+        SoundCue::Start => &[
+            Note { freq: 523.25, start_ms: 0.0, dur_ms: 220.0, gain: 1.0, timbre: Timbre::Soft }, // C5
+            Note { freq: 659.25, start_ms: 60.0, dur_ms: 240.0, gain: 1.05, timbre: Timbre::Soft }, // E5
+            Note { freq: 783.99, start_ms: 120.0, dur_ms: 340.0, gain: 1.1, timbre: Timbre::Soft }, // G5
+        ],
+        // Completed: a plain, clean rising tone (perfect fifth) — a simple "done",
+        // no bell shimmer.
+        SoundCue::Stop => &[
+            Note { freq: 587.33, start_ms: 0.0, dur_ms: 200.0, gain: 1.0, timbre: Timbre::Soft }, // D5
+            Note { freq: 880.00, start_ms: 90.0, dur_ms: 360.0, gain: 1.05, timbre: Timbre::Soft }, // A5
+        ],
+        // Failure: a low, buzzy descending "womp" — shorter and a touch softer,
+        // low register + reedy edge still read clearly as "wrong".
+        SoundCue::Error => &[
+            Note { freq: 220.00, start_ms: 0.0, dur_ms: 150.0, gain: 0.6, timbre: Timbre::Buzz }, // A3
+            Note { freq: 174.61, start_ms: 165.0, dur_ms: 240.0, gain: 0.6, timbre: Timbre::Buzz }, // F3
+        ],
+        // Cancelled: a quiet, soft, neutral two-note dismiss.
+        SoundCue::Cancel => &[
+            Note { freq: 392.00, start_ms: 0.0, dur_ms: 150.0, gain: 0.5, timbre: Timbre::Soft }, // G4
+            Note { freq: 293.66, start_ms: 70.0, dur_ms: 220.0, gain: 0.5, timbre: Timbre::Soft }, // D4
+        ],
+    }
+}
+
+fn render(notes: &[Note]) -> SamplesBuffer<f32> {
+    SamplesBuffer::new(1, SAMPLE_RATE, render_samples(notes))
+}
+
+fn render_samples(notes: &[Note]) -> Vec<f32> {
+    let sr = SAMPLE_RATE as f32;
+    let total_ms = notes
+        .iter()
+        .map(|n| n.start_ms + n.dur_ms)
+        .fold(0.0_f32, f32::max);
+    let total = ((total_ms / 1000.0) * sr).ceil() as usize + 1;
+    let mut buf = vec![0.0_f32; total];
+
+    let attack = (ATTACK_MS / 1000.0) * sr;
+    for note in notes {
+        let start = ((note.start_ms / 1000.0) * sr) as usize;
+        let len = ((note.dur_ms / 1000.0) * sr) as usize;
+        if len == 0 {
+            continue;
+        }
+        let lenf = len as f32;
+        let sustained = is_sustained(note.timbre);
+        // Plucked bodies decay to roughly -60 dB by the note's end.
+        let base_decay = 6.9 / lenf;
+        let release = ((RELEASE_MS / 1000.0) * sr).min(lenf * 0.5);
+
+        for h in harmonics(note.timbre) {
+            let freq = note.freq * h.ratio;
+            if freq > 18_000.0 {
+                continue; // skip inaudible/aliasing partials
+            }
+            let amp = AMPLITUDE * note.gain * h.gain;
+            let h_decay = base_decay * h.decay_mult;
+            let w = TAU * freq / sr;
+            for i in 0..len {
+                let idx = start + i;
+                if idx >= total {
+                    break;
+                }
+                let n = i as f32;
+                let env = if n < attack {
+                    0.5 - 0.5 * (PI * n / attack).cos()
+                } else if sustained {
+                    let tail = lenf - n;
+                    if tail < release {
+                        0.5 - 0.5 * (PI * tail / release).cos()
+                    } else {
+                        1.0
+                    }
+                } else {
+                    (-(n - attack) * h_decay).exp()
+                };
+                buf[idx] += (w * n).sin() * env * amp;
+            }
+        }
+    }
+
+    // Guard against summed overlap/harmonic clipping.
+    for s in &mut buf {
+        *s = s.clamp(-1.0, 1.0);
+    }
+    buf
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Audition the cues without launching the app: renders each to a 16-bit WAV
+    /// in `$VERENU_CUE_OUT` (or the cwd). Ignored by default; run explicitly:
+    ///   cargo test -p verenu --manifest-path src-tauri/Cargo.toml \
+    ///     render_cue_previews -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn render_cue_previews() {
+        let out_dir = std::env::var("VERENU_CUE_OUT").unwrap_or_else(|_| ".".to_string());
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: SAMPLE_RATE,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        for (name, cue) in [
+            ("start", SoundCue::Start),
+            ("stop", SoundCue::Stop),
+            ("error", SoundCue::Error),
+            ("cancel", SoundCue::Cancel),
+        ] {
+            let path = format!("{out_dir}/cue_{name}.wav");
+            let mut writer = hound::WavWriter::create(&path, spec).expect("create wav");
+            for s in render_samples(notes(cue)) {
+                let v = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+                writer.write_sample(v).expect("write sample");
+            }
+            writer.finalize().expect("finalize wav");
+            eprintln!("wrote {path}");
+        }
+    }
+}

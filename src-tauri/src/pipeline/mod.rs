@@ -179,20 +179,27 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
 
     // Keep the quiet-audio gate permissive at high gain. Whisper recordings can
     // still have low post-denoise RMS, even after amplification.
-    let active_gain = match store::settings_snapshot(&app) {
-        Ok(s) => store::load_audio_config(&s).mic_gain,
+    let audio_cfg = match store::settings_snapshot(&app) {
+        Ok(s) => store::load_audio_config(&s),
         Err(e) => {
-            log::warn!("pipeline: failed to load audio config, using default gain: {e}");
-            store::DEFAULT_MIC_GAIN
+            log::warn!("pipeline: failed to load audio config, using defaults: {e}");
+            store::AudioConfig::default()
         }
     };
+    let active_gain = audio_cfg.mic_gain;
     let min_rms = recording_gate_rms(active_gain);
     log::debug!("pipeline: audio gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
 
     let stage_audio = std::time::Instant::now();
+    // Quiet/short recordings are rejected inside stop_and_validate_audio, which
+    // plays the error cue via reject_with_pill — so only play the stop cue once
+    // the audio is *accepted*, otherwise a rejection would sound stop + error.
     let Some((wav, duration_ms)) = stop_and_validate_audio(&app, session, min_rms).await else {
         return;
     };
+    if audio_cfg.play_start_stop_sounds {
+        crate::media::sound::play(crate::media::sound::SoundCue::Stop);
+    }
     log::debug!(
         "pipeline: audio accepted duration_ms={duration_ms} wav_bytes={} stage_ms={}",
         wav.len(),

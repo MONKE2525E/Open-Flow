@@ -142,6 +142,9 @@ pub(crate) fn hide_pill(app: &AppHandle) {
 pub(super) async fn show_error_pill(app: &AppHandle, msg: &str) {
     log::error!("pipeline error: {msg}");
     app.emit("verenu:error", msg).ok();
+    if super::start_stop_sounds_enabled(app) {
+        crate::media::sound::play(crate::media::sound::SoundCue::Error);
+    }
     // Auto-hide is handled by the frontend (PillApp.svelte), which can check
     // its own state before reverting to idle, avoiding a race where a new
     // recording session's pill gets hidden by this error's timeout.
@@ -152,6 +155,12 @@ pub(super) async fn show_error_pill(app: &AppHandle, msg: &str) {
 /// focusing the main window or blocking the pipeline task.
 pub(super) fn reject_with_pill(app: &AppHandle, msg: &str) {
     app.emit("verenu:error", msg).ok();
+    // A quality-gate rejection (too short / too quiet) is an error from the
+    // user's point of view, so play the error cue here too — not just on API
+    // failures in show_error_pill.
+    if super::start_stop_sounds_enabled(app) {
+        crate::media::sound::play(crate::media::sound::SoundCue::Error);
+    }
     // Auto-hide is handled by the frontend (PillApp.svelte), matching
     // show_error_pill's clean implementation.
     show_pill_msg(app, "error", Some(msg));

@@ -26,6 +26,7 @@ tokio       = { version = "1", features = ["rt", "rt-multi-thread", "macros", "s
 reqwest     = { version = "0.12", default-features = false, features = ["json", "multipart", "native-tls", "charset"] }
 bytes       = "1"
 cpal        = "0.15"
+rodio       = { version = "0.20", default-features = false }
 hound       = "3.5"
 nnnoiseless = "0.4"
 base64      = "0.22"

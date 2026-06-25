@@ -759,6 +759,9 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                 }
 
                 HotkeyEvent::Cancel => {
+                    // A discarded first tap (or a quick handsfree stop) must not
+                    // let the pending start cue sound.
+                    crate::media::sound::cancel_pending_start();
                     let Some(is_handless) = lock_app_state(&state_hk).map(|st| st.handless) else {
                         continue;
                     };
@@ -790,6 +793,8 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
 
                 HotkeyEvent::EscapeCancel => {
                     core::hotkey::set_handless_active(false);
+                    // If escape lands before the start cue fired, suppress it.
+                    crate::media::sound::cancel_pending_start();
                     let session = {
                         let Some(mut st) = lock_app_state(&state_hk) else {
                             continue;
@@ -802,6 +807,9 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             let _ = s.stop();
                         });
                         std::thread::spawn(crate::system::volume::unmute);
+                        if pipeline::start_stop_sounds_enabled(&app_hk) {
+                            crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
+                        }
                     }
                     hide_pill(&app_hk);
                 }

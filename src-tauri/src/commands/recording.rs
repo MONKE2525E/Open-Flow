@@ -101,6 +101,12 @@ pub async fn start_setup_try_recording(
         st.starting = true;
     }
 
+    // The first-run "Try It" demo is genuine dictation, so play the start cue to
+    // mirror the hotkey flow (its stop cue fires via run_pipeline).
+    if pipeline::start_stop_sounds_enabled(&app) {
+        crate::media::sound::play(crate::media::sound::SoundCue::Start);
+    }
+
     let target = capture_in_app_target(&app);
     {
         let mut st = lock_state(&state)?;
