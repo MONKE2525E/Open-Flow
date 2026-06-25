@@ -66,24 +66,27 @@ mod platform {
     /// WinRT session APIs require the calling thread to be in a COM apartment.
     /// `spawn_blocking` hands these closures a fresh thread-pool thread, which
     /// has no apartment by default, so each closure must init its own.
-    struct ComGuard;
+    struct ComGuard(bool);
 
     impl ComGuard {
         fn new() -> Self {
-            unsafe {
-                let _ = windows::Win32::System::Com::CoInitializeEx(
+            let initialized = unsafe {
+                windows::Win32::System::Com::CoInitializeEx(
                     None,
                     windows::Win32::System::Com::COINIT_MULTITHREADED,
-                );
+                )
             }
-            ComGuard
+            .is_ok();
+            ComGuard(initialized)
         }
     }
 
     impl Drop for ComGuard {
         fn drop(&mut self) {
-            unsafe {
-                windows::Win32::System::Com::CoUninitialize();
+            if self.0 {
+                unsafe {
+                    windows::Win32::System::Com::CoUninitialize();
+                }
             }
         }
     }
