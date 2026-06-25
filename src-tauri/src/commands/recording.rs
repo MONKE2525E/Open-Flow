@@ -64,9 +64,11 @@ pub async fn start_input_recording(
             "recording",
             false,
             None,
-            true,
-            false,
-            None,
+            pipeline::RecordingStartOptions {
+                show_recording_pill: true,
+                emit_globally: false,
+                start_cue_delay_ms: None,
+            },
         )
     })
     .await;
@@ -118,12 +120,14 @@ pub async fn start_setup_try_recording(
             "recording",
             false,
             None,
-            true,
-            false,
-            if pipeline::start_stop_sounds_enabled(&app_clone) {
-                Some(0)
-            } else {
-                None
+            pipeline::RecordingStartOptions {
+                show_recording_pill: true,
+                emit_globally: false,
+                start_cue_delay_ms: if pipeline::start_stop_sounds_enabled(&app_clone) {
+                    Some(0)
+                } else {
+                    None
+                },
             },
         )
     })
@@ -193,9 +197,11 @@ pub async fn start_calibration_monitoring(
             "calibration",
             false,
             Some(1.0),
-            false,
-            true,
-            None,
+            pipeline::RecordingStartOptions {
+                show_recording_pill: false,
+                emit_globally: true,
+                start_cue_delay_ms: None,
+            },
         )
     })
     .await;

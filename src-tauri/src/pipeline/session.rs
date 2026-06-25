@@ -3,6 +3,13 @@ use crate::core::window_geometry::WindowTarget;
 
 // ---------- recording session helpers ----------
 
+#[derive(Clone, Copy, Default)]
+pub struct RecordingStartOptions {
+    pub show_recording_pill: bool,
+    pub emit_globally: bool,
+    pub start_cue_delay_ms: Option<u64>,
+}
+
 /// Starts a new recording session, stores it in shared state, shows the pill,
 /// and spawns the audio-level emitter task.
 pub fn start_recording_session(
@@ -27,9 +34,11 @@ pub fn start_recording_session(
         pill_state,
         handless,
         None,
-        true,
-        false,
-        start_cue_delay_ms,
+        RecordingStartOptions {
+            show_recording_pill: true,
+            emit_globally: false,
+            start_cue_delay_ms,
+        },
     ) {
         log::error!("start recording: {e}");
         hide_pill(app);
@@ -45,9 +54,7 @@ pub fn start_recording_session_ex(
     pill_state: &str,
     handless: bool,
     gain_override: Option<f32>,
-    show_recording_pill: bool,
-    emit_globally: bool,
-    start_cue_delay_ms: Option<u64>,
+    options: RecordingStartOptions,
 ) -> Result<(), String> {
     let settings = store::settings_snapshot(app);
     let audio_config = match settings {
@@ -109,7 +116,7 @@ pub fn start_recording_session_ex(
                 st.session = Some(session);
                 st.handless = handless;
             }
-            if show_recording_pill {
+            if options.show_recording_pill {
                 show_pill(app, pill_state);
             }
             spawn_level_emitter(
@@ -117,9 +124,9 @@ pub fn start_recording_session_ex(
                 level_arc,
                 raw_level_arc,
                 active_arc,
-                emit_globally,
+                options.emit_globally,
             );
-            if let Some(delay_ms) = start_cue_delay_ms {
+            if let Some(delay_ms) = options.start_cue_delay_ms {
                 if mute_audio && gain_override.is_none() {
                     crate::media::sound::play_start_delayed_then(delay_ms, move || {
                         if start_cue_active.load(Ordering::Relaxed) {
