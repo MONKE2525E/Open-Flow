@@ -119,13 +119,14 @@ const SETTING_SPECS: &[SettingSpec] = &[
     setting_spec(store::APP_MAPPINGS, SettingKind::AppMappings, true, true),
     setting_spec(store::NOISE_REDUCTION, SettingKind::Bool, true, true),
     setting_spec(store::MUTE_AUDIO, SettingKind::Bool, true, true),
-    setting_spec(store::MIC_GAIN, SettingKind::MicGain, true, false),
     setting_spec(
-        store::PLAY_START_STOP_SOUNDS,
+        store::PAUSE_MEDIA_DURING_DICTATION,
         SettingKind::Bool,
         true,
         true,
     ),
+    setting_spec(store::MIC_GAIN, SettingKind::MicGain, true, false),
+    setting_spec(store::PLAY_START_STOP_SOUNDS, SettingKind::Bool, true, true),
     setting_spec(store::SETUP_COMPLETE, SettingKind::Bool, true, false),
     setting_spec(store::APP_CONTEXT_HINT, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_ENABLED, SettingKind::Bool, true, true),
@@ -293,6 +294,24 @@ mod setting_key_tests {
         assert!(!is_exportable_setting_key(store::KEY_GROQ));
         assert!(!is_exportable_setting_key(store::KEY_OPENAI));
         assert!(!is_exportable_setting_key(store::KEY_GOOGLE));
+    }
+
+    #[test]
+    fn pause_media_during_dictation_is_boolean_setting() {
+        assert!(is_readable_setting_key(store::PAUSE_MEDIA_DURING_DICTATION));
+        assert!(is_exportable_setting_key(
+            store::PAUSE_MEDIA_DURING_DICTATION
+        ));
+        assert!(validate_setting(
+            store::PAUSE_MEDIA_DURING_DICTATION,
+            &serde_json::json!(true)
+        )
+        .is_ok());
+        assert!(validate_setting(
+            store::PAUSE_MEDIA_DURING_DICTATION,
+            &serde_json::json!("yes")
+        )
+        .is_err());
     }
 }
 // ---------- API keys ----------
@@ -483,6 +502,7 @@ pub struct AllSettings {
     pub cleanup_enabled: Option<bool>,
     pub noise_reduction: Option<bool>,
     pub mute_audio: Option<bool>,
+    pub pause_media_during_dictation: Option<bool>,
     pub play_start_stop_sounds: Option<bool>,
     pub autostart_enabled: Option<bool>,
     pub app_context_hint: Option<bool>,
@@ -593,6 +613,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         cleanup_enabled: bool_val(store::CLEANUP_ENABLED),
         noise_reduction: bool_val(store::NOISE_REDUCTION),
         mute_audio: bool_val(store::MUTE_AUDIO),
+        pause_media_during_dictation: bool_val(store::PAUSE_MEDIA_DURING_DICTATION),
         play_start_stop_sounds: bool_val(store::PLAY_START_STOP_SOUNDS),
         autostart_enabled: bool_val(store::AUTOSTART_ENABLED),
         app_context_hint: bool_val(store::APP_CONTEXT_HINT),

@@ -53,6 +53,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         anyhow::bail!("No active recording");
     };
 
+    let _media_pause_guard = crate::system::media_control::DictationMediaPauseGuard::new();
     crate::media::sound::coordinated_unmute();
     show_pill(&app, "processing");
 
@@ -157,6 +158,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         log::debug!("pipeline: no session - recording never started or was already consumed");
         return;
     };
+    let _media_pause_guard = crate::system::media_control::DictationMediaPauseGuard::new();
 
     // Read once, synchronously, as close to the hotkey-release moment as
     // possible — the rest of the pipeline is async and the user may keep

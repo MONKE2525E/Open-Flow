@@ -4,7 +4,7 @@
   import { expoOut } from 'svelte/easing';
   import { onDestroy } from 'svelte';
   import Toggle from '../Toggle.svelte';
-  import { isMac } from '../../platform';
+  import { isMac, isWindows } from '../../platform';
   import { saveSetting } from '../../settings';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import { getAudioCalibrationCopy } from '../../calibrationCopy';
@@ -24,6 +24,7 @@
 
   let noiseReduction = $state(true);
   let muteAudio = $state(false);
+  let pauseMediaDuringDictation = $state(false);
   let playSounds = $state(true);
   let micGain = $state(3.5);
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
@@ -42,15 +43,17 @@
 
   async function loadSettings() {
     try {
-      const [nr, mute, sounds, savedGain, language] = await Promise.all([
+      const [nr, mute, pauseMedia, sounds, savedGain, language] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
         invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
+        invoke<boolean | null>('get_setting', { key: 'pause_media_during_dictation' }),
         invoke<boolean | null>('get_setting', { key: 'play_start_stop_sounds' }),
         invoke<number | null>('get_setting', { key: 'mic_gain' }),
         invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       ]);
       noiseReduction = nr ?? true;
       muteAudio = mute ?? false;
+      pauseMediaDuringDictation = pauseMedia ?? false;
       playSounds = sounds ?? true;
       if (savedGain !== null && savedGain !== undefined) {
         micGain = Math.max(1, Math.min(8, savedGain));
@@ -78,6 +81,16 @@
     } catch (err) {
       muteAudio = !value;
       console.error('save mute_audio failed:', err);
+    }
+  }
+
+  async function handlePauseMedia(value: boolean) {
+    pauseMediaDuringDictation = value;
+    try {
+      await saveSetting('pause_media_during_dictation', value);
+    } catch (err) {
+      pauseMediaDuringDictation = !value;
+      console.error('save pause_media_during_dictation failed:', err);
     }
   }
 
@@ -206,6 +219,12 @@
   <div><div class="label">{isMac ? 'Mute System Audio' : 'Mute PC Audio'}</div><div class="desc">{isMac ? 'Mutes system volume while dictating to prevent audio interference' : 'Mutes Windows volume while dictating to prevent audio interference'}</div></div>
   <Toggle checked={muteAudio} onchange={handleMuteAudio} label={isMac ? 'Mute system audio' : 'Mute PC audio'} />
 </div>
+{#if isWindows}
+  <div class="setting-row">
+    <div><div class="label">Pause media while dictating</div><div class="desc">Pauses active Windows media sessions and resumes them after transcription finishes. Works with apps that expose Windows media controls.</div></div>
+    <Toggle checked={pauseMediaDuringDictation} onchange={handlePauseMedia} label="Pause media while dictating" />
+  </div>
+{/if}
 <div class="setting-row">
   <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
   <Toggle checked={noiseReduction} onchange={handleNoiseReduction} label="Noise reduction" />
