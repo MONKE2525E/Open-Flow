@@ -119,18 +119,21 @@ pub(super) fn animate_pill_placement<R: Runtime>(
             if PILL_TWEEN_GEN.load(Ordering::SeqCst) != generation {
                 return; // superseded — cede the window to the newer move.
             }
-            if let Ok(hwnd) = pill.hwnd() {
-                unsafe {
-                    let _ = SetWindowPos(
-                        hwnd,
-                        None,
-                        frame.x,
-                        frame.y,
-                        frame.width,
-                        frame.height,
-                        SWP_NOZORDER | SWP_NOACTIVATE,
-                    );
-                }
+            // If the window was closed/destroyed mid-tween, stop immediately
+            // instead of sleeping through the remaining frames for nothing.
+            let Ok(hwnd) = pill.hwnd() else {
+                return;
+            };
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    frame.x,
+                    frame.y,
+                    frame.width,
+                    frame.height,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
             }
             std::thread::sleep(std::time::Duration::from_millis(TWEEN_STEP_MS));
         }

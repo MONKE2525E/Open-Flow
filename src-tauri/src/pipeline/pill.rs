@@ -56,8 +56,7 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
     };
 
     #[cfg(target_os = "windows")]
-    {
-        let current = super::pill_position::current_placement(&pill);
+    if let Some(current) = super::pill_position::current_placement(&pill) {
         let needs_animated_move =
             super::pill_position::dimension_changed(current.width as f64, placement.width as f64)
                 || super::pill_position::dimension_changed(

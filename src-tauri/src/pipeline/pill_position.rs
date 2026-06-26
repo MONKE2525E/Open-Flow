@@ -86,20 +86,25 @@ pub(super) fn resolve_pill_placement<R: Runtime>(
 /// animated cross-monitor path (`pill_animation.rs`) as the tween's starting
 /// point — it needs the literal current placement to interpolate from, not
 /// just a changed/unchanged boolean. Only called from the Windows-only
-/// animated branch in `pill.rs`'s `show_pill_msg`.
+/// animated branch in `pill.rs`'s `show_pill_msg`. Returns `None` if the
+/// geometry can't be read or comes back zero-sized (e.g. very early in
+/// window initialization) rather than guessing `(0, 0)` — a tween that
+/// actually started from `(0, 0, 0, 0)` would visibly grow in from the
+/// screen's top-left corner, which is worse than just skipping the
+/// animation for that one call.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-pub(super) fn current_placement<R: Runtime>(pill: &WebviewWindow<R>) -> PillPlacement {
-    let (width, height) = pill
-        .inner_size()
-        .map(|s| (s.width as i32, s.height as i32))
-        .unwrap_or((0, 0));
-    let (x, y) = pill.outer_position().map(|p| (p.x, p.y)).unwrap_or((0, 0));
-    PillPlacement {
-        x,
-        y,
-        width,
-        height,
+pub(super) fn current_placement<R: Runtime>(pill: &WebviewWindow<R>) -> Option<PillPlacement> {
+    let size = pill.inner_size().ok()?;
+    let pos = pill.outer_position().ok()?;
+    if size.width == 0 || size.height == 0 {
+        return None;
     }
+    Some(PillPlacement {
+        x: pos.x,
+        y: pos.y,
+        width: size.width as i32,
+        height: size.height as i32,
+    })
 }
 
 pub(super) fn dimension_changed(current: f64, desired: f64) -> bool {
