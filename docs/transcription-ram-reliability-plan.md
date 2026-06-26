@@ -77,3 +77,11 @@ These are tracked elsewhere but are relevant to this plan:
 - Contextual capitalization reliability in `docs/ROADMAP.md`.
 - Model-specific cleanup prompt contracts in `docs/ROADMAP.md`.
 - macOS production permission and signing notes in `docs/macos-code-signing.md`.
+
+## Related Docs
+
+<p align="center">
+  <a href="ARCHITECTURE.md"><img alt="Architecture" src="https://img.shields.io/badge/Architecture-Overview-5b554a"></a>
+  <a href="TESTING.md"><img alt="Testing" src="https://img.shields.io/badge/Testing-Guide-c44632"></a>
+  <a href="README.md"><img alt="Docs Index" src="https://img.shields.io/badge/Docs-Index-2b2422"></a>
+</p>
