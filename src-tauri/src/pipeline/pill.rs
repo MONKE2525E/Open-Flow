@@ -5,10 +5,29 @@
 
 use super::SharedState;
 use crate::pipeline::pill_position::PillPlacement;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 const PILL_WIDTH_POINTS: f64 = 380.0;
 const PILL_HEIGHT_POINTS: f64 = 44.0;
+
+/// Guards the animated path's deferred reveal against being overtaken by a
+/// newer `show_pill_msg` call. The animated cross-monitor move (see
+/// `pill_animation.rs`) defers its `reveal_pill` until the ~180ms tween
+/// lands; if the dictation state moves on (e.g. recording -> processing, or
+/// `hide_pill`) before that tween finishes, the newer call already revealed
+/// the correct state synchronously (since `next_pill_placement` returns
+/// `None` once the placement is no longer stale), and the stale deferred
+/// reveal must not clobber it by re-emitting the *old* state afterward.
+/// Every `show_pill_msg` call claims a new generation; a deferred reveal
+/// only runs if its generation is still current.
+static REVEAL_GEN: AtomicU64 = AtomicU64::new(0);
+/// Tracks whether the pill is currently showing a non-idle frontend state.
+/// The native window itself stays visible even in idle so WebView2 doesn't
+/// suspend, which makes `pill.is_visible()` a bad proxy for "the user can
+/// already see the pill." We only animate when a prior non-idle state was
+/// actually on screen; otherwise the first visible reveal should be instant.
+static PILL_VISUALLY_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 fn create_pill_if_needed(app: &AppHandle) {
     if app.get_webview_window("pill").is_some() {
@@ -35,63 +54,122 @@ pub(crate) fn show_pill(app: &AppHandle, state: &str) {
 
 /// Shows the pill window in the given state, optionally carrying an error
 /// message. The window is always kept at the same width regardless of state
-/// (room enough for the error text to expand into) so it never needs to
-/// resize or reposition after its first appearance. Handsfree's click-capture
-/// zone is therefore wider than the visible pill; clicks in the empty space
-/// around it are swallowed instead of passing through while handsfree is
-/// active.
+/// (room enough for the error text to expand into), so within a single
+/// monitor it never needs to resize or reposition after its first
+/// appearance. Handsfree's click-capture zone is therefore wider than the
+/// visible pill; clicks in the empty space around it are swallowed instead
+/// of passing through while handsfree is active. Moving to a different
+/// monitor, whether or not its scale factor differs, animates the move on
+/// Windows (see `pill_animation.rs`) instead of jumping instantly, since an
+/// instant cross-monitor move on this always-visible window either visibly
+/// snapped (same-DPI repositions) or made WebView2 stutter recreating its
+/// swap chain (cross-DPI resizes). Only animates if the pill was already
+/// visible - the very first reveal (or one after a long idle period where
+/// its cached geometry might be stale) should never be held back by an
+/// animation nobody can see yet.
 fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
     create_pill_if_needed(app);
-    if let Some(pill) = app.get_webview_window("pill") {
-        if let Some(placement) = next_pill_placement(app, &pill) {
-            super::pill_position::apply_pill_placement(&pill, placement);
-        }
+    let Some(pill) = app.get_webview_window("pill") else {
+        return;
+    };
 
-        // Click-through for passive states so nothing behind the pill is blocked.
-        // Handsfree needs real cursor events for its cancel/confirm buttons.
-        pill.set_ignore_cursor_events(state != "handsfree").ok();
+    let generation = REVEAL_GEN.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    #[cfg(not(target_os = "windows"))]
+    let _ = generation; // only the Windows animated path below reads this.
 
-        // Show the window before emitting state so WebView2 is active when it
-        // receives the event. WebView2 suspends event processing while hidden;
-        // emitting into a suspended view causes the first state to be dropped or
-        // overtaken by the next emit (e.g. "recording" lost, only "processing" seen).
-        // SW_SHOWNOACTIVATE: appears without stealing keyboard focus from
-        // whatever window the user is dictating into.
-        #[cfg(target_os = "windows")]
-        {
-            use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
-            if let Ok(hwnd) = pill.hwnd() {
-                unsafe {
-                    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    let Some(placement) = next_pill_placement(app, &pill) else {
+        reveal_pill(app, &pill, state, message);
+        return;
+    };
+
+    #[cfg(target_os = "windows")]
+    if let Some(current) = super::pill_position::current_placement(&pill) {
+        let visually_active = PILL_VISUALLY_ACTIVE.load(Ordering::SeqCst);
+        let needs_animated_move = visually_active
+            && (super::pill_position::dimension_changed(
+                current.width as f64,
+                placement.width as f64,
+            ) || super::pill_position::dimension_changed(
+                current.height as f64,
+                placement.height as f64,
+            ) || super::pill_position::position_changed(current.x, placement.x)
+                || super::pill_position::position_changed(current.y, placement.y));
+
+        if needs_animated_move {
+            let app = app.clone();
+            let state = state.to_string();
+            let message = message.map(str::to_string);
+            super::pill_animation::animate_pill_placement(&pill, current, placement, move || {
+                if REVEAL_GEN.load(Ordering::SeqCst) != generation {
+                    return; // a newer show_pill_msg call already revealed the real state.
                 }
-            }
-        }
-        #[cfg(not(target_os = "windows"))]
-        pill.show().ok();
-
-        // macOS: `show()` (orderFront:) is ignored for a background app, so the
-        // pill only appeared when Verenu was frontmost. Force it above the
-        // active app's windows without stealing focus. AppKit window calls must
-        // run on the main thread - show_pill is invoked from pipeline worker
-        // threads, so dispatch there (a raw msg_send off-thread raises an ObjC
-        // exception and aborts the process).
-        #[cfg(target_os = "macos")]
-        {
-            let pill_for_main = pill.clone();
-            let _ = app.run_on_main_thread(move || {
-                if let Ok(ns_window) = pill_for_main.ns_window() {
-                    crate::system::mac_app::float_pill_window(ns_window);
+                if let Some(pill) = app.get_webview_window("pill") {
+                    reveal_pill(&app, &pill, &state, message.as_deref());
                 }
             });
+            return;
         }
-
-        // Emit the message before the state so the pill has the error text
-        // ready before it measures and animates open.
-        if let Some(msg) = message {
-            pill.emit("pill-error", msg).ok();
-        }
-        pill.emit("pill-state", state).ok();
     }
+
+    super::pill_position::apply_pill_placement(&pill, placement);
+    reveal_pill(app, &pill, state, message);
+}
+
+/// The non-placement part of showing the pill: click-through flag, bringing
+/// it to the front without stealing focus, and emitting the state (plus
+/// optional error message) the frontend reacts to. Shared by both the
+/// synchronous same-monitor path and the animated cross-monitor path in
+/// `show_pill_msg` — the animated path just defers this until its tween
+/// lands.
+fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Option<&str>) {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app; // only the macOS float-above-foreground-app step below reads this.
+    PILL_VISUALLY_ACTIVE.store(true, Ordering::SeqCst);
+
+    // Click-through for passive states so nothing behind the pill is blocked.
+    // Handsfree needs real cursor events for its cancel/confirm buttons.
+    pill.set_ignore_cursor_events(state != "handsfree").ok();
+
+    // Show the window before emitting state so WebView2 is active when it
+    // receives the event. WebView2 suspends event processing while hidden;
+    // emitting into a suspended view causes the first state to be dropped or
+    // overtaken by the next emit (e.g. "recording" lost, only "processing" seen).
+    // SW_SHOWNOACTIVATE: appears without stealing keyboard focus from
+    // whatever window the user is dictating into.
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+        if let Ok(hwnd) = pill.hwnd() {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    pill.show().ok();
+
+    // macOS: `show()` (orderFront:) is ignored for a background app, so the
+    // pill only appeared when Verenu was frontmost. Force it above the
+    // active app's windows without stealing focus. AppKit window calls must
+    // run on the main thread - show_pill is invoked from pipeline worker
+    // threads, so dispatch there (a raw msg_send off-thread raises an ObjC
+    // exception and aborts the process).
+    #[cfg(target_os = "macos")]
+    {
+        let pill_for_main = pill.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Ok(ns_window) = pill_for_main.ns_window() {
+                crate::system::mac_app::float_pill_window(ns_window);
+            }
+        });
+    }
+
+    // Emit the message before the state so the pill has the error text
+    // ready before it measures and animates open.
+    if let Some(msg) = message {
+        pill.emit("pill-error", msg).ok();
+    }
+    pill.emit("pill-state", state).ok();
 }
 
 fn next_pill_placement<R: Runtime>(
@@ -130,6 +208,15 @@ fn next_pill_placement<R: Runtime>(
 
 pub(crate) fn hide_pill(app: &AppHandle) {
     if let Some(pill) = app.get_webview_window("pill") {
+        // Invalidate any in-flight animated move's deferred reveal - without
+        // this, a tween started by an earlier show_pill_msg call could land
+        // after this "idle" and re-emit its own (now stale) state, reverting
+        // the pill right back to looking like it's recording/processing.
+        // Also stop the tween itself from continuing to move the window.
+        PILL_VISUALLY_ACTIVE.store(false, Ordering::SeqCst);
+        REVEAL_GEN.fetch_add(1, Ordering::SeqCst);
+        super::pill_animation::cancel_pending_pill_tween();
+
         pill.emit("pill-state", "idle").ok();
         // Do not call pill.hide() - hiding the window suspends the WebView2
         // renderer. The next show_pill("recording") emit would then be lost
