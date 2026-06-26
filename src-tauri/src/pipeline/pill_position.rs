@@ -85,7 +85,9 @@ pub(super) fn resolve_pill_placement<R: Runtime>(
 /// Reads the pill's actual on-screen geometry right now. Used by the
 /// animated cross-monitor path (`pill_animation.rs`) as the tween's starting
 /// point — it needs the literal current placement to interpolate from, not
-/// just a changed/unchanged boolean.
+/// just a changed/unchanged boolean. Only called from the Windows-only
+/// animated branch in `pill.rs`'s `show_pill_msg`.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(super) fn current_placement<R: Runtime>(pill: &WebviewWindow<R>) -> PillPlacement {
     let (width, height) = pill
         .inner_size()
