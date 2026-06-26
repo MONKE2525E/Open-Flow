@@ -91,13 +91,16 @@ pub(super) fn cancel_pending_pill_tween() {
     PILL_TWEEN_GEN.fetch_add(1, Ordering::SeqCst);
 }
 
-/// Starts an animated move/resize from `from` to `to` on a dedicated thread
-/// and returns immediately. `on_complete` runs once the tween lands exactly
-/// on `to` — never if a newer tween or instant move superseded this one
-/// first. Win32 `SetWindowPos` can be called from any thread (thread
+/// Starts an animated move/resize from `from` to `to` on Tauri's async
+/// runtime and returns immediately. `on_complete` runs once the tween lands
+/// exactly on `to` — never if a newer tween or instant move superseded this
+/// one first. Win32 `SetWindowPos` can be called from any thread (thread
 /// affinity governs who *receives* a window's messages, not who can issue
 /// commands to it), and this codebase already calls it from non-main
-/// threads today (`pill_position::apply_pill_placement`).
+/// threads today (`pill_position::apply_pill_placement`). Uses
+/// `tauri::async_runtime::spawn` + `tokio::time::sleep` rather than a raw OS
+/// thread, matching the same generation-counter-guarded delayed-action shape
+/// already used in `media::sound::play_start_delayed_then`.
 #[cfg(target_os = "windows")]
 pub(super) fn animate_pill_placement<R: Runtime>(
     pill: &WebviewWindow<R>,
@@ -114,7 +117,7 @@ pub(super) fn animate_pill_placement<R: Runtime>(
     let step_count = (TWEEN_DURATION_MS / TWEEN_STEP_MS).max(1) as u32;
     let frames = build_tween_frames(from, to, step_count);
 
-    std::thread::spawn(move || {
+    tauri::async_runtime::spawn(async move {
         for frame in frames {
             if PILL_TWEEN_GEN.load(Ordering::SeqCst) != generation {
                 return; // superseded — cede the window to the newer move.
@@ -135,7 +138,7 @@ pub(super) fn animate_pill_placement<R: Runtime>(
                     SWP_NOZORDER | SWP_NOACTIVATE,
                 );
             }
-            std::thread::sleep(std::time::Duration::from_millis(TWEEN_STEP_MS));
+            tokio::time::sleep(std::time::Duration::from_millis(TWEEN_STEP_MS)).await;
         }
 
         if PILL_TWEEN_GEN.load(Ordering::SeqCst) == generation {
