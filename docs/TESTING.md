@@ -56,7 +56,7 @@ node tests/smoke/playwright-test-fixes.cjs
 node tests/smoke/playwright-test-state.cjs
 ```
 
-`tests/smoke/` is a frozen contract. Do not edit those files unless the user explicitly asks. Fix app code to satisfy them. Add new browser coverage in `tests/integration/`.
+[`../tests/smoke/`](../tests/smoke/) is a frozen contract. Do not edit those files unless the user explicitly asks. Fix app code to satisfy them. Add new browser coverage in [`../tests/integration/`](../tests/integration/).
 
 ## Rust Tests
 

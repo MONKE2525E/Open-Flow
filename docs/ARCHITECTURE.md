@@ -4,10 +4,10 @@ Verenu is a Tauri 2 desktop app. The frontend is Svelte 5 and TypeScript. The ba
 
 ## Runtime Shape
 
-- `src/` contains the Svelte app shown in the main window and the floating pill window.
-- `src-tauri/src/` contains the Rust backend, native OS integration, provider clients, local storage, and the dictation pipeline.
-- `src-tauri/tauri.conf.json` declares the main window. The floating pill window is created at runtime by Rust.
-- `tests/` contains deterministic smoke, integration, native, and manual-adjacent tests.
+- [`../src/`](../src/) contains the Svelte app shown in the main window and the floating pill window.
+- [`../src-tauri/src/`](../src-tauri/src/) contains the Rust backend, native OS integration, provider clients, local storage, and the dictation pipeline.
+- [`../src-tauri/tauri.conf.json`](../src-tauri/tauri.conf.json) declares the main window. The floating pill window is created at runtime by Rust.
+- [`../tests/`](../tests/) contains deterministic smoke, integration, native, and manual-adjacent tests.
 
 ## Dictation Pipeline
 
@@ -26,17 +26,17 @@ Verenu is a Tauri 2 desktop app. The frontend is Svelte 5 and TypeScript. The ba
 
 | Area | Files |
 | --- | --- |
-| Tauri setup and command registration | `src-tauri/src/main.rs`, `src-tauri/src/commands/` |
-| Pipeline orchestration | `src-tauri/src/pipeline/` |
-| Provider requests and cleanup prompts | `src-tauri/src/api/` |
-| Audio capture | `src-tauri/src/media/audio.rs` |
-| Hotkeys | `src-tauri/src/core/hotkey/` |
-| Text injection | `src-tauri/src/core/injection/` |
-| Context probing and capitalization | `src-tauri/src/core/context_probe.rs`, `src-tauri/src/core/text_context.rs` |
-| Local database and settings | `src-tauri/src/data/` |
-| Frontend settings and stores | `src/lib/settings.ts`, `src/lib/stores.ts`, `src/lib/stores.svelte.ts` |
-| Main app views | `src/lib/views/` |
-| First-run setup | `src/lib/setup/` |
+| Tauri setup and command registration | [`../src-tauri/src/main.rs`](../src-tauri/src/main.rs), [`../src-tauri/src/commands/`](../src-tauri/src/commands/) |
+| Pipeline orchestration | [`../src-tauri/src/pipeline/`](../src-tauri/src/pipeline/) |
+| Provider requests and cleanup prompts | [`../src-tauri/src/api/`](../src-tauri/src/api/) |
+| Audio capture | [`../src-tauri/src/media/audio.rs`](../src-tauri/src/media/audio.rs) |
+| Hotkeys | [`../src-tauri/src/core/hotkey/`](../src-tauri/src/core/hotkey/) |
+| Text injection | [`../src-tauri/src/core/injection/`](../src-tauri/src/core/injection/) |
+| Context probing and capitalization | [`../src-tauri/src/core/context_probe.rs`](../src-tauri/src/core/context_probe.rs), [`../src-tauri/src/core/text_context.rs`](../src-tauri/src/core/text_context.rs) |
+| Local database and settings | [`../src-tauri/src/data/`](../src-tauri/src/data/) |
+| Frontend settings and stores | [`../src/lib/settings.ts`](../src/lib/settings.ts), [`../src/lib/stores.ts`](../src/lib/stores.ts), [`../src/lib/stores.svelte.ts`](../src/lib/stores.svelte.ts) |
+| Main app views | [`../src/lib/views/`](../src/lib/views/) |
+| First-run setup | [`../src/lib/setup/`](../src/lib/setup/) |
 
 ## Storage Boundaries
 

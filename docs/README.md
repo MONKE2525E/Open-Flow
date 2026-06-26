@@ -35,9 +35,9 @@ This directory contains user, contributor, release, and architecture docs for Ve
 
 ## Maintainer Notes
 
-- `CLAUDE.md` is the detailed agent and architecture context used by AI coding tools.
-- `Agent-Skills/` contains task-specific agent playbooks.
-- `.github/` contains GitHub Actions, PR templates, issue forms, and review instructions.
+- [`../CLAUDE.md`](../CLAUDE.md) is the detailed agent and architecture context used by AI coding tools.
+- [`../Agent-Skills/`](../Agent-Skills/) contains task-specific agent playbooks.
+- [`../.github/`](../.github/) contains GitHub Actions, PR templates, issue forms, and review instructions.
 
 ## Related Docs
 

@@ -41,7 +41,7 @@ The core dictation loop matters more than feature count:
 - Keep API keys in OS credential storage only.
 - Keep settings validation on both frontend and backend.
 - Keep history pagination. Do not load the whole database into the Home view.
-- Keep `tests/smoke/` frozen and fix app code instead.
+- Keep [`../tests/smoke/`](../tests/smoke/) frozen and fix app code instead.
 - Use redacted diagnostics: counts, ids, source labels, model names, status codes, and stable fingerprints.
 - Do not log dictated text, clipboard contents, prompt bodies, API keys, raw dictionary terms, snippet expansions, or full local paths.
 
@@ -73,10 +73,10 @@ If the answer is vague, do not add the dependency.
 
 These are tracked elsewhere but are relevant to this plan:
 
-- Model fallback and persistence hardening in `docs/ROADMAP.md`.
-- Contextual capitalization reliability in `docs/ROADMAP.md`.
-- Model-specific cleanup prompt contracts in `docs/ROADMAP.md`.
-- macOS production permission and signing notes in `docs/macos-code-signing.md`.
+- Model fallback and persistence hardening in [ROADMAP.md](ROADMAP.md).
+- Contextual capitalization reliability in [ROADMAP.md](ROADMAP.md).
+- Model-specific cleanup prompt contracts in [ROADMAP.md](ROADMAP.md).
+- macOS production permission and signing notes in [macos-code-signing.md](macos-code-signing.md).
 
 ## Related Docs
 

@@ -1,6 +1,6 @@
 # Release Process
 
-This document is the practical release checklist for Verenu. For release note wording, use `Agent-Skills/Release_Description_Writing.md`.
+This document is the practical release checklist for Verenu. For release note wording, use [`../Agent-Skills/Release_Description_Writing.md`](../Agent-Skills/Release_Description_Writing.md).
 
 ## Branch Flow
 
@@ -14,8 +14,8 @@ This document is the practical release checklist for Verenu. For release note wo
 Update these three files together:
 
 - `package.json`
-- `src-tauri/tauri.conf.json`
-- `src-tauri/Cargo.toml`
+- [`../src-tauri/tauri.conf.json`](../src-tauri/tauri.conf.json)
+- [`../src-tauri/Cargo.toml`](../src-tauri/Cargo.toml)
 
 The version strings must match exactly. The frontend reads the version dynamically through Tauri, so do not hardcode release versions in Svelte files.
 
@@ -35,7 +35,7 @@ For UI-affecting work, also run the relevant Playwright smoke or integration tes
 
 ## Build Installers
 
-The manual GitHub Actions workflow `.github/workflows/build-installers.yml` builds:
+The manual GitHub Actions workflow [`../.github/workflows/build-installers.yml`](../.github/workflows/build-installers.yml) builds:
 
 - Windows NSIS installer
 - Windows MSI installer
@@ -50,11 +50,11 @@ The release folder should contain:
 - `Verenu_<version>_Intel.dmg`
 - `SHA256SUMS.txt`
 
-Installer artifacts are committed under `installers/<version>/` and also attached to the GitHub Release.
+Installer artifacts are committed under [`../installers/`](../installers/) with a versioned subfolder and also attached to the GitHub Release.
 
 ## Hashes
 
-After placing the installers in `installers/<version>/`, regenerate hashes from that folder:
+After placing the installers in the correct version folder under [`../installers/`](../installers/), regenerate hashes from that folder:
 
 ```bash
 shasum -a 256 *.exe *.msi *.dmg > SHA256SUMS.txt

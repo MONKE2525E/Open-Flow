@@ -10,7 +10,7 @@ On Windows, SmartScreen may show "Windows protected your PC". Click **More info*
 
 On macOS, Gatekeeper may block first launch. Right-click Verenu, choose **Open**, then confirm. If that is unavailable, use **System Settings > Privacy & Security > Open Anyway**.
 
-Download installers from GitHub Releases or the tracked `installers/<version>/` folders. Verify hashes with `SHA256SUMS.txt` when in doubt.
+Download installers from GitHub Releases or the tracked [`../installers/`](../installers/) tree. Verify hashes with `SHA256SUMS.txt` when in doubt.
 
 ## Setup Cannot Save An API Key
 
