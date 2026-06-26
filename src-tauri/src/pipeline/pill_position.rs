@@ -112,7 +112,7 @@ pub(super) fn dimension_changed(current: f64, desired: f64) -> bool {
 }
 
 fn position_changed(current: i32, desired: i32) -> bool {
-    (current - desired).abs() > 1
+    current.abs_diff(desired) > 1
 }
 
 /// Moves/resizes the pill to `placement` if it isn't already there. Returns

@@ -118,12 +118,14 @@ pub(super) fn animate_pill_placement<R: Runtime>(
     let frames = build_tween_frames(from, to, step_count);
 
     tauri::async_runtime::spawn(async move {
-        for frame in frames {
+        let mut remaining = frames.into_iter().peekable();
+        while let Some(frame) = remaining.next() {
             if PILL_TWEEN_GEN.load(Ordering::SeqCst) != generation {
                 return; // superseded — cede the window to the newer move.
             }
-            // If the window was closed/destroyed mid-tween, stop immediately
-            // instead of sleeping through the remaining frames for nothing.
+            // Re-checked every frame (not cached) so a window closed/destroyed
+            // mid-tween is caught immediately instead of sleeping through the
+            // remaining frames for nothing.
             let Ok(hwnd) = pill.hwnd() else {
                 return;
             };
@@ -138,7 +140,11 @@ pub(super) fn animate_pill_placement<R: Runtime>(
                     SWP_NOZORDER | SWP_NOACTIVATE,
                 );
             }
-            tokio::time::sleep(std::time::Duration::from_millis(TWEEN_STEP_MS)).await;
+            // Skip the sleep after the last frame — nothing left to wait for
+            // before revealing, so don't add a pointless ~12ms of latency.
+            if remaining.peek().is_some() {
+                tokio::time::sleep(std::time::Duration::from_millis(TWEEN_STEP_MS)).await;
+            }
         }
 
         if PILL_TWEEN_GEN.load(Ordering::SeqCst) == generation {

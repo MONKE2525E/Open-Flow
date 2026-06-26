@@ -63,7 +63,9 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
         return;
     };
 
-    let _generation = REVEAL_GEN.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    let generation = REVEAL_GEN.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    #[cfg(not(target_os = "windows"))]
+    let _ = generation; // only the Windows animated path below reads this.
 
     let Some(placement) = next_pill_placement(app, &pill) else {
         reveal_pill(app, &pill, state, message);
@@ -84,7 +86,7 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
             let state = state.to_string();
             let message = message.map(str::to_string);
             super::pill_animation::animate_pill_placement(&pill, current, placement, move || {
-                if REVEAL_GEN.load(Ordering::SeqCst) != _generation {
+                if REVEAL_GEN.load(Ordering::SeqCst) != generation {
                     return; // a newer show_pill_msg call already revealed the real state.
                 }
                 if let Some(pill) = app.get_webview_window("pill") {
@@ -105,7 +107,10 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
 /// synchronous same-monitor path and the animated cross-monitor path in
 /// `show_pill_msg` — the animated path just defers this until its tween
 /// lands.
-fn reveal_pill(_app: &AppHandle, pill: &WebviewWindow, state: &str, message: Option<&str>) {
+fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Option<&str>) {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app; // only the macOS float-above-foreground-app step below reads this.
+
     // Click-through for passive states so nothing behind the pill is blocked.
     // Handsfree needs real cursor events for its cancel/confirm buttons.
     pill.set_ignore_cursor_events(state != "handsfree").ok();
@@ -137,7 +142,7 @@ fn reveal_pill(_app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opt
     #[cfg(target_os = "macos")]
     {
         let pill_for_main = pill.clone();
-        let _ = _app.run_on_main_thread(move || {
+        let _ = app.run_on_main_thread(move || {
             if let Ok(ns_window) = pill_for_main.ns_window() {
                 crate::system::mac_app::float_pill_window(ns_window);
             }
