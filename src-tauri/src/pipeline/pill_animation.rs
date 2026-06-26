@@ -1,7 +1,7 @@
 //! Animated cross-monitor pill move: a hand-rolled `SetWindowPos` tween so a
 //! cross-DPI monitor switch reads as a deliberate glide instead of an
 //! instant jump. Pure interpolation math (testable without a window) is kept
-//! apart from the Windows-only driver that actually touches the HWND — same
+//! apart from the Windows-only driver that actually touches the HWND - same
 //! split as `pill_position.rs`'s placement math vs `pill.rs`'s lifecycle.
 
 use crate::pipeline::pill_position::PillPlacement;
@@ -93,7 +93,7 @@ pub(super) fn cancel_pending_pill_tween() {
 
 /// Starts an animated move/resize from `from` to `to` on Tauri's async
 /// runtime and returns immediately. `on_complete` runs once the tween lands
-/// exactly on `to` — never if a newer tween or instant move superseded this
+/// exactly on `to` - never if a newer tween or instant move superseded this
 /// one first. Win32 `SetWindowPos` can be called from any thread (thread
 /// affinity governs who *receives* a window's messages, not who can issue
 /// commands to it), and this codebase already calls it from non-main
@@ -108,7 +108,9 @@ pub(super) fn animate_pill_placement<R: Runtime>(
     to: PillPlacement,
     on_complete: impl FnOnce() + Send + 'static,
 ) {
-    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOZORDER,
+    };
 
     let generation = PILL_TWEEN_GEN
         .fetch_add(1, Ordering::SeqCst)
@@ -130,6 +132,14 @@ pub(super) fn animate_pill_placement<R: Runtime>(
                 return;
             };
             unsafe {
+                // SWP_ASYNCWINDOWPOS: this runs on a tokio worker thread, not
+                // the pill's owning (main/UI) thread. Without this flag,
+                // SetWindowPos posts the request to the owning thread's
+                // message queue and *blocks the caller* until that thread
+                // processes it - tying up the worker for however long the
+                // main thread takes, and making the animation's cadence
+                // depend on how busy the UI thread is. With it, the call
+                // posts and returns immediately.
                 let _ = SetWindowPos(
                     hwnd,
                     None,
@@ -137,10 +147,10 @@ pub(super) fn animate_pill_placement<R: Runtime>(
                     frame.y,
                     frame.width,
                     frame.height,
-                    SWP_NOZORDER | SWP_NOACTIVATE,
+                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
                 );
             }
-            // Skip the sleep after the last frame — nothing left to wait for
+            // Skip the sleep after the last frame - nothing left to wait for
             // before revealing, so don't add a pointless ~12ms of latency.
             if remaining.peek().is_some() {
                 tokio::time::sleep(std::time::Duration::from_millis(TWEEN_STEP_MS)).await;

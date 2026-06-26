@@ -5,7 +5,7 @@
 
 use super::SharedState;
 use crate::pipeline::pill_position::PillPlacement;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 const PILL_WIDTH_POINTS: f64 = 380.0;
@@ -22,6 +22,12 @@ const PILL_HEIGHT_POINTS: f64 = 44.0;
 /// Every `show_pill_msg` call claims a new generation; a deferred reveal
 /// only runs if its generation is still current.
 static REVEAL_GEN: AtomicU64 = AtomicU64::new(0);
+/// Tracks whether the pill is currently showing a non-idle frontend state.
+/// The native window itself stays visible even in idle so WebView2 doesn't
+/// suspend, which makes `pill.is_visible()` a bad proxy for "the user can
+/// already see the pill." We only animate when a prior non-idle state was
+/// actually on screen; otherwise the first visible reveal should be instant.
+static PILL_VISUALLY_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 fn create_pill_if_needed(app: &AppHandle) {
     if app.get_webview_window("pill").is_some() {
@@ -52,11 +58,15 @@ pub(crate) fn show_pill(app: &AppHandle, state: &str) {
 /// monitor it never needs to resize or reposition after its first
 /// appearance. Handsfree's click-capture zone is therefore wider than the
 /// visible pill; clicks in the empty space around it are swallowed instead
-/// of passing through while handsfree is active. Moving to a monitor with a
-/// different scale factor still resizes it — on Windows that resize is
-/// animated (see `pill_animation.rs`) instead of jumping instantly, since an
-/// instant cross-DPI resize on this always-visible window made WebView2
-/// visibly stutter recreating its swap chain.
+/// of passing through while handsfree is active. Moving to a different
+/// monitor, whether or not its scale factor differs, animates the move on
+/// Windows (see `pill_animation.rs`) instead of jumping instantly, since an
+/// instant cross-monitor move on this always-visible window either visibly
+/// snapped (same-DPI repositions) or made WebView2 stutter recreating its
+/// swap chain (cross-DPI resizes). Only animates if the pill was already
+/// visible - the very first reveal (or one after a long idle period where
+/// its cached geometry might be stale) should never be held back by an
+/// animation nobody can see yet.
 fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
     create_pill_if_needed(app);
     let Some(pill) = app.get_webview_window("pill") else {
@@ -74,12 +84,16 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
 
     #[cfg(target_os = "windows")]
     if let Some(current) = super::pill_position::current_placement(&pill) {
-        let needs_animated_move =
-            super::pill_position::dimension_changed(current.width as f64, placement.width as f64)
-                || super::pill_position::dimension_changed(
-                    current.height as f64,
-                    placement.height as f64,
-                );
+        let visually_active = PILL_VISUALLY_ACTIVE.load(Ordering::SeqCst);
+        let needs_animated_move = visually_active
+            && (super::pill_position::dimension_changed(
+                current.width as f64,
+                placement.width as f64,
+            ) || super::pill_position::dimension_changed(
+                current.height as f64,
+                placement.height as f64,
+            ) || super::pill_position::position_changed(current.x, placement.x)
+                || super::pill_position::position_changed(current.y, placement.y));
 
         if needs_animated_move {
             let app = app.clone();
@@ -110,6 +124,7 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
 fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Option<&str>) {
     #[cfg(not(target_os = "macos"))]
     let _ = app; // only the macOS float-above-foreground-app step below reads this.
+    PILL_VISUALLY_ACTIVE.store(true, Ordering::SeqCst);
 
     // Click-through for passive states so nothing behind the pill is blocked.
     // Handsfree needs real cursor events for its cancel/confirm buttons.
@@ -193,11 +208,12 @@ fn next_pill_placement<R: Runtime>(
 
 pub(crate) fn hide_pill(app: &AppHandle) {
     if let Some(pill) = app.get_webview_window("pill") {
-        // Invalidate any in-flight animated move's deferred reveal — without
+        // Invalidate any in-flight animated move's deferred reveal - without
         // this, a tween started by an earlier show_pill_msg call could land
         // after this "idle" and re-emit its own (now stale) state, reverting
         // the pill right back to looking like it's recording/processing.
         // Also stop the tween itself from continuing to move the window.
+        PILL_VISUALLY_ACTIVE.store(false, Ordering::SeqCst);
         REVEAL_GEN.fetch_add(1, Ordering::SeqCst);
         super::pill_animation::cancel_pending_pill_tween();
 

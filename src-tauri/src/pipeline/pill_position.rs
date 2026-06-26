@@ -111,7 +111,7 @@ pub(super) fn dimension_changed(current: f64, desired: f64) -> bool {
     (current - desired).abs() > 1.0
 }
 
-fn position_changed(current: i32, desired: i32) -> bool {
+pub(super) fn position_changed(current: i32, desired: i32) -> bool {
     current.abs_diff(desired) > 1
 }
 
