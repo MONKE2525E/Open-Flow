@@ -19,6 +19,7 @@ mod finalize;
 mod fixture;
 mod gates;
 mod pill;
+mod pill_animation;
 mod pill_position;
 mod session;
 mod stages;
