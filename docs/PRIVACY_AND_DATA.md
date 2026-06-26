@@ -1,6 +1,6 @@
 # Privacy & Data
 
-Verenu doesn't run its own servers, doesn't have an account system, and doesn't collect telemetry or analytics. Your data either stays on your device, or goes directly to the AI provider you chose — and nothing else.
+Verenu doesn't run its own servers, doesn't have an account system, and doesn't collect telemetry or analytics. Your data either stays on your device, or goes directly to the AI provider you chose, and nothing else.
 
 ## What stays on your device
 
@@ -12,16 +12,24 @@ Verenu doesn't run its own servers, doesn't have an account system, and doesn't 
 
 ## What leaves your device
 
-- **Recorded audio** — sent to the transcription provider you chose, when you finish a dictation
-- **Raw transcription text** — sent to your chosen cleanup provider, if cleanup is enabled
-- **Cleanup context** — snippet instructions, cleanup settings, and model metadata, sent along with cleanup requests
-- **Active app context** — only if you've enabled app-context hints
-- **Update checks** — a request to GitHub for release metadata (no dictated text, history, or keys included)
+- **Recorded audio** goes to the transcription provider you chose when you finish a dictation
+- **Raw transcription text** goes to your chosen cleanup provider if cleanup is enabled
+- **Cleanup context** goes along with cleanup requests, including snippet instructions, cleanup settings, and model metadata
+- **Active app context** leaves your device only if you've enabled app-context hints
+- **Update checks** request GitHub release metadata without sending dictated text, history, or keys
 
 ## One important caveat
 
-Once your audio or text reaches a third-party AI provider (Groq, OpenAI, or Google — whichever you chose), that provider's own retention and privacy policies apply. Verenu has no control over what happens on their end — choose a provider whose policies you're comfortable with.
+Once your audio or text reaches a third-party AI provider like Groq, OpenAI, or Google, that provider's own retention and privacy policies apply. Verenu has no control over what happens on their end.
 
 ## Want the full breakdown?
 
-This page covers the essentials. For the complete technical breakdown — including a feature-by-feature data map, backup/export contents, and key storage details — see [DATA_AND_PRIVACY.md](DATA_AND_PRIVACY.md).
+This page covers the essentials. For the full technical breakdown, including a feature-by-feature data map, backup and export contents, and key storage details, see [DATA_AND_PRIVACY.md](DATA_AND_PRIVACY.md).
+
+## Related Docs
+
+<p align="center">
+  <a href="DATA_AND_PRIVACY.md"><img alt="Full Privacy Doc" src="https://img.shields.io/badge/Full-Privacy%20Doc-c44632"></a>
+  <a href="API_KEYS.md"><img alt="API Keys" src="https://img.shields.io/badge/API-Keys-5b554a"></a>
+  <a href="SECURITY.md"><img alt="Security Policy" src="https://img.shields.io/badge/Security-Policy-2b2422"></a>
+</p>

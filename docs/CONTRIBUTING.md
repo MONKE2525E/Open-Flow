@@ -10,7 +10,7 @@ The default workflow is:
 
 1. Most changes go straight onto `dev`.
 2. `dev` gets reviewed and tested.
-3. Once `dev` is in good shape, it is merged into `main`.
+3. Once `dev` is in good shape, it is merged into `master`.
 4. Releases are cut from that stabilized path.
 
 If you have direct write access and the change is normal project work, commit to `dev`.
@@ -25,6 +25,8 @@ Use a PR when one of these is true:
 ## Before You Start
 
 - Read `CLAUDE.md` for repo architecture, platform gotchas, and testing notes.
+- Read `docs/ARCHITECTURE.md` for the public architecture map.
+- Read `docs/TESTING.md` for the full test matrix.
 - Check `docs/ROADMAP.md` for current bugs and long-term context.
 - Do not treat roadmap ideas as approved scope by default.
 - Do not commit personal information, API keys, clipboard contents, local secrets, or screenshots with private text.
@@ -155,3 +157,12 @@ Whether work lands by direct commit or PR, the bar is the same:
 - Say plainly if something was not tested
 
 If you open a PR, target `dev` unless there is a specific reason not to.
+
+## Related Docs
+
+<p align="center">
+  <a href="ARCHITECTURE.md"><img alt="Architecture" src="https://img.shields.io/badge/Architecture-Overview-5b554a"></a>
+  <a href="TESTING.md"><img alt="Testing" src="https://img.shields.io/badge/Testing-Guide-c44632"></a>
+  <a href="RELEASE.md"><img alt="Release Process" src="https://img.shields.io/badge/Release-Process-7e7266"></a>
+  <a href="ROADMAP.md"><img alt="Roadmap" src="https://img.shields.io/badge/Roadmap-Status-2b2422"></a>
+</p>

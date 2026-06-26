@@ -37,3 +37,12 @@ If you'd rather keep the emoji picker on <kbd>Fn</kbd>, you can change Verenu's 
 ## Next step
 
 Want more control over how your text is cleaned up? See [Cleanup Levels](CLEANUP_LEVELS.md).
+
+## Related Docs
+
+<p align="center">
+  <a href="API_KEYS.md"><img alt="API Keys" src="https://img.shields.io/badge/Back-API%20Keys-7e7266"></a>
+  <a href="CLEANUP_LEVELS.md"><img alt="Cleanup Levels" src="https://img.shields.io/badge/Next-Cleanup%20Levels-c44632"></a>
+  <a href="TROUBLESHOOTING.md"><img alt="Troubleshooting" src="https://img.shields.io/badge/Help-Troubleshooting-5b554a"></a>
+  <a href="README.md"><img alt="Docs Index" src="https://img.shields.io/badge/Docs-Index-2b2422"></a>
+</p>

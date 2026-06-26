@@ -7,7 +7,7 @@
   Aim for 5-8 steps.
 -->
 
-> - Verenu is a Windows AI dictation app - hotkey hold -> audio capture -> transcription -> LLM cleanup -> text injection
+> - Verenu is a Windows and macOS AI dictation app - hotkey hold -> audio capture -> transcription -> LLM cleanup -> text injection
 > - [Which subsystem: hotkey / audio / pipeline / injection / settings / UI / data]
 > - [What problem or gap exists]
 > - [Why it needs to be addressed now]

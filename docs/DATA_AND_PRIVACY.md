@@ -160,3 +160,12 @@ If you contribute code that changes any of the following, update this file and t
 - updater download or installer behavior
 
 If you cannot explain the data flow in plain English, the feature is not documented well enough yet.
+
+## Related Docs
+
+<p align="center">
+  <a href="PRIVACY_AND_DATA.md"><img alt="Privacy Summary" src="https://img.shields.io/badge/Privacy-Summary-c44632"></a>
+  <a href="API_KEYS.md"><img alt="API Keys" src="https://img.shields.io/badge/API-Keys-5b554a"></a>
+  <a href="TROUBLESHOOTING.md"><img alt="Troubleshooting" src="https://img.shields.io/badge/Help-Troubleshooting-7e7266"></a>
+  <a href="README.md"><img alt="Docs Index" src="https://img.shields.io/badge/Docs-Index-2b2422"></a>
+</p>
