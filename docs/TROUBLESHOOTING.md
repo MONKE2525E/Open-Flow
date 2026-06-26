@@ -57,14 +57,14 @@ Verenu captures the focused app before provider calls start, then tries to resto
 
 ## Cleanup Output Is Too Edited
 
-Change cleanup intensity:
+Change cleanup intensity in [Cleanup Levels](CLEANUP_LEVELS.md):
 
 - **Verbatim** for exact wording.
 - **Light** for filler removal only.
 - **Medium** for normal cleanup.
 - **Direct** for aggressive shortening.
 
-For app-specific behavior, configure App Mappings so code editors, chat apps, and email clients can use different cleanup settings.
+For app-specific behavior, configure [App Mappings](APP_MAPPINGS.md) so code editors, chat apps, and email clients can use different cleanup settings.
 
 ## Development Server Problems
 

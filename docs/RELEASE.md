@@ -60,6 +60,15 @@ After placing the installers in the correct version folder under [`../installers
 shasum -a 256 *.exe *.msi *.dmg > SHA256SUMS.txt
 ```
 
+On Windows PowerShell, generate the same file with:
+
+```powershell
+Get-ChildItem *.exe,*.msi,*.dmg | ForEach-Object {
+  $hash = (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower()
+  "{0} *{1}" -f $hash, $_.Name
+} | Set-Content SHA256SUMS.txt
+```
+
 On Windows PowerShell, verify a file manually with:
 
 ```powershell
