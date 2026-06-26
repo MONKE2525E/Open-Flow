@@ -43,7 +43,7 @@ const AMPLITUDE: f32 = 0.30; // gentle, fixed master level
 pub const START_CUE_NORMAL_DELAY_MS: u64 = 260;
 /// Delay before the start cue when entering handsfree, so it lands after the
 /// pill's entry animation rather than before it looks like it's listening.
-pub const START_CUE_HANDSFREE_DELAY_MS: u64 = 700;
+pub const START_CUE_HANDSFREE_DELAY_MS: u64 = 220;
 
 /// Generation counter for the pending start cue. Scheduling a new start cue or
 /// cancelling supersedes any still-pending one, so the discarded first tap of a
