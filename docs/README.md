@@ -16,7 +16,7 @@ This directory contains user, contributor, release, and architecture docs for Ve
 - [Dictionary](DICTIONARY.md)
 - [Snippets](SNIPPETS.md)
 - [App Mappings & Profiles](APP_MAPPINGS.md)
-- [Privacy & Data summary](PRIVACY_AND_DATA.md)
+- [Privacy & Data summary](PRIVACY_SUMMARY.md)
 
 ## Project And Contributor Docs
 

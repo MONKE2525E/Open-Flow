@@ -41,8 +41,8 @@ npm run test:native
 You can target suites directly:
 
 ```bash
-python tests/OnePyFone.py --suite ui,state
-python tests/OnePyFone.py --suite ui,animation --parallel --workers 3 --fresh-server
+python3 tests/OnePyFone.py --suite ui,state
+python3 tests/OnePyFone.py --suite ui,animation --parallel --workers 3 --fresh-server
 ```
 
 ## Playwright

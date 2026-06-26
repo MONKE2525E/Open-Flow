@@ -100,7 +100,7 @@ You choose the providers. Verenu does not lock you into one stack.
 
 If you care about privacy, speed, retention, or cost, judge the provider on its own policy. Once data leaves Verenu and hits a provider API, that provider's rules apply.
 
-For more details: [Add Your API Key](docs/API_KEYS.md) and [Privacy & Data](docs/PRIVACY_AND_DATA.md).
+For more details: [Add Your API Key](docs/API_KEYS.md) and [Privacy & Data](docs/PRIVACY_SUMMARY.md).
 
 ## Setup
 

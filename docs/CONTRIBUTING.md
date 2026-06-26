@@ -126,7 +126,7 @@ npm audit --audit-level=moderate
 
 ```bash
 npm run dev
-python tests/OnePyFone.py --suite ui,state --no-server
+python3 tests/OnePyFone.py --suite ui,state --no-server
 ```
 
 Rules:

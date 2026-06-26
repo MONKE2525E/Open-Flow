@@ -83,7 +83,7 @@ npm run dev
 If Playwright or smoke tests behave strangely, restart with a fresh server:
 
 ```bash
-python tests/OnePyFone.py --suite ui,state --fresh-server
+python3 tests/OnePyFone.py --suite ui,state --fresh-server
 ```
 
 ## Reporting A Problem

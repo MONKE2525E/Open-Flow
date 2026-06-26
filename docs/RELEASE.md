@@ -57,7 +57,7 @@ Installer artifacts are committed under `installers/<version>/` and also attache
 After placing the installers in `installers/<version>/`, regenerate hashes from that folder:
 
 ```bash
-sha256sum *.exe *.msi *.dmg > SHA256SUMS.txt
+shasum -a 256 *.exe *.msi *.dmg > SHA256SUMS.txt
 ```
 
 On Windows PowerShell, verify a file manually with:

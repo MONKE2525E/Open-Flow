@@ -8,7 +8,7 @@ Security fixes are targeted at the current development line and the latest publi
 
 ## Reporting A Vulnerability
 
-Use GitHub private vulnerability reporting if it is available for this repository. If it is not available, open a minimal public issue that says you need a private security contact, but do not include exploit details, API keys, private dictated text, logs with secrets, or screenshots with private content.
+Use GitHub private vulnerability reporting if it is available for this repository. If it is not enabled, do not open a public issue or disclose vulnerability details publicly. Contact the maintainers privately to request a secure reporting channel before sharing exploit details, API keys, private dictated text, logs with secrets, or screenshots with private content.
 
 Good reports include:
 
