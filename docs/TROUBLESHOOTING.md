@@ -37,7 +37,7 @@ macOS needs permissions for real use:
 - Microphone for recording.
 - Accessibility for text injection and focused text reads.
 
-Recent macOS builds use a hotkey path that does not require Input Monitoring for the default global hotkey, but older permission state can still be stale. If permissions look granted in System Settings but Verenu behaves as if they are missing:
+If Microphone or Accessibility permissions look granted in System Settings but Verenu behaves as if they are missing:
 
 1. Fully quit Verenu.
 2. Reopen Verenu from the installed app location.
