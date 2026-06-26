@@ -5,10 +5,23 @@
 
 use super::SharedState;
 use crate::pipeline::pill_position::PillPlacement;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 const PILL_WIDTH_POINTS: f64 = 380.0;
 const PILL_HEIGHT_POINTS: f64 = 44.0;
+
+/// Guards the animated path's deferred reveal against being overtaken by a
+/// newer `show_pill_msg` call. The animated cross-monitor move (see
+/// `pill_animation.rs`) defers its `reveal_pill` until the ~180ms tween
+/// lands; if the dictation state moves on (e.g. recording -> processing, or
+/// `hide_pill`) before that tween finishes, the newer call already revealed
+/// the correct state synchronously (since `next_pill_placement` returns
+/// `None` once the placement is no longer stale), and the stale deferred
+/// reveal must not clobber it by re-emitting the *old* state afterward.
+/// Every `show_pill_msg` call claims a new generation; a deferred reveal
+/// only runs if its generation is still current.
+static REVEAL_GEN: AtomicU64 = AtomicU64::new(0);
 
 fn create_pill_if_needed(app: &AppHandle) {
     if app.get_webview_window("pill").is_some() {
@@ -50,6 +63,8 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
         return;
     };
 
+    let _generation = REVEAL_GEN.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+
     let Some(placement) = next_pill_placement(app, &pill) else {
         reveal_pill(app, &pill, state, message);
         return;
@@ -69,6 +84,9 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
             let state = state.to_string();
             let message = message.map(str::to_string);
             super::pill_animation::animate_pill_placement(&pill, current, placement, move || {
+                if REVEAL_GEN.load(Ordering::SeqCst) != _generation {
+                    return; // a newer show_pill_msg call already revealed the real state.
+                }
                 if let Some(pill) = app.get_webview_window("pill") {
                     reveal_pill(&app, &pill, &state, message.as_deref());
                 }
@@ -170,6 +188,14 @@ fn next_pill_placement<R: Runtime>(
 
 pub(crate) fn hide_pill(app: &AppHandle) {
     if let Some(pill) = app.get_webview_window("pill") {
+        // Invalidate any in-flight animated move's deferred reveal — without
+        // this, a tween started by an earlier show_pill_msg call could land
+        // after this "idle" and re-emit its own (now stale) state, reverting
+        // the pill right back to looking like it's recording/processing.
+        // Also stop the tween itself from continuing to move the window.
+        REVEAL_GEN.fetch_add(1, Ordering::SeqCst);
+        super::pill_animation::cancel_pending_pill_tween();
+
         pill.emit("pill-state", "idle").ok();
         // Do not call pill.hide() - hiding the window suspends the WebView2
         // renderer. The next show_pill("recording") emit would then be lost
