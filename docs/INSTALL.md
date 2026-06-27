@@ -75,3 +75,12 @@ If you want independent confirmation that an installer is clean, every release o
 ## Next step
 
 Once Verenu is installed, continue with [Add Your API Key](API_KEYS.md).
+
+## Related Docs
+
+<p align="center">
+  <a href="API_KEYS.md"><img alt="Add API Key" src="https://img.shields.io/badge/Next-Add%20API%20Key-c44632"></a>
+  <a href="FIRST_DICTATION.md"><img alt="First Dictation" src="https://img.shields.io/badge/Then-First%20Dictation-5b554a"></a>
+  <a href="TROUBLESHOOTING.md"><img alt="Troubleshooting" src="https://img.shields.io/badge/Help-Troubleshooting-7e7266"></a>
+  <a href="README.md"><img alt="Docs Index" src="https://img.shields.io/badge/Docs-Index-2b2422"></a>
+</p>

@@ -27,3 +27,12 @@ Verenu can also learn corrections automatically — no manual entry required. Wh
 ## Next step
 
 Set up [Snippets](SNIPPETS.md) for phrases you say often, or [App Mappings & Profiles](APP_MAPPINGS.md) for per-app behavior.
+
+## Related Docs
+
+<p align="center">
+  <a href="CLEANUP_LEVELS.md"><img alt="Cleanup Levels" src="https://img.shields.io/badge/Back-Cleanup%20Levels-7e7266"></a>
+  <a href="SNIPPETS.md"><img alt="Snippets" src="https://img.shields.io/badge/Next-Snippets-c44632"></a>
+  <a href="APP_MAPPINGS.md"><img alt="App Mappings" src="https://img.shields.io/badge/App-Mappings-5b554a"></a>
+  <a href="README.md"><img alt="Docs Index" src="https://img.shields.io/badge/Docs-Index-2b2422"></a>
+</p>

@@ -24,3 +24,12 @@ This is separate from **tone** (Casual, Formal, or Very Casual), which controls 
 ## Next step
 
 Explore the [Dictionary](DICTIONARY.md) and [Snippets](SNIPPETS.md) features to make Verenu recognize your vocabulary and shortcuts.
+
+## Related Docs
+
+<p align="center">
+  <a href="FIRST_DICTATION.md"><img alt="First Dictation" src="https://img.shields.io/badge/Back-First%20Dictation-7e7266"></a>
+  <a href="APP_MAPPINGS.md"><img alt="App Mappings" src="https://img.shields.io/badge/App-Mappings-c44632"></a>
+  <a href="DICTIONARY.md"><img alt="Dictionary" src="https://img.shields.io/badge/Dictionary-Guide-5b554a"></a>
+  <a href="SNIPPETS.md"><img alt="Snippets" src="https://img.shields.io/badge/Snippets-Guide-a3352b"></a>
+</p>
