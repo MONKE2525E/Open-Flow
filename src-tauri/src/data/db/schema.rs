@@ -186,7 +186,7 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
         }
     }
     if user_version < 4 {
-        run_migration(&conn, |conn| {
+        run_migration(&mut conn, |conn| {
             ensure_table_column(
                 conn,
                 "dictionary",
@@ -232,21 +232,21 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
         })?;
     }
     if user_version < 5 {
-        run_migration(&conn, |conn| {
+        run_migration(&mut conn, |conn| {
             ensure_cleanup_cache_schema(conn)?;
             conn.execute_batch("PRAGMA user_version = 5;")?;
             Ok(())
         })?;
     }
     if user_version < 6 {
-        run_migration(&conn, |conn| {
+        run_migration(&mut conn, |conn| {
             ensure_cleanup_cache_schema(conn)?;
             conn.execute_batch("PRAGMA user_version = 6;")?;
             Ok(())
         })?;
     }
     if user_version < 7 {
-        run_migration(&conn, |conn| {
+        run_migration(&mut conn, |conn| {
             ensure_table_column(
                 conn,
                 "transcriptions",
@@ -318,13 +318,10 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
     Ok(Arc::new(Mutex::new(conn)))
 }
 
-fn run_migration(conn: &Connection, f: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
-    conn.execute_batch("BEGIN;")?;
-    if let Err(err) = f(conn) {
-        let _ = conn.execute_batch("ROLLBACK;");
-        return Err(err);
-    }
-    conn.execute_batch("COMMIT;")?;
+fn run_migration(conn: &mut Connection, f: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
+    let tx = conn.transaction()?;
+    f(&tx)?;
+    tx.commit()?;
     Ok(())
 }
 

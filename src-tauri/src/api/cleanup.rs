@@ -235,7 +235,8 @@ async fn google_cleanup(
         request_started.elapsed().as_millis()
     );
 
-    let resp = match super::ensure_provider_success(resp, "Google", None).await {
+    let resp = match super::ensure_provider_success(resp, "Google", Some(("Google", model))).await
+    {
         Ok(resp) => resp,
         Err(super::ProviderHttpError::Quota(e)) => return Err(e),
         Err(super::ProviderHttpError::Auth { error, .. }) => return Err(error),
