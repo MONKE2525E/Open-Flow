@@ -134,7 +134,10 @@ pub(super) fn position_changed(current: i32, desired: i32) -> bool {
 /// every later reveal still gets the swap-chain-safe glide whenever the
 /// resolved placement actually differs from where the window currently sits
 /// — including a reveal that follows a `hide_pill` idle cycle, whose stale
-/// geometry still belongs to whatever monitor it was last shown on.
+/// geometry still belongs to whatever monitor it was last shown on. Only
+/// called from the Windows-only animated branch in `pill.rs`'s
+/// `show_pill_msg`, same as `current_placement` above.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(super) fn should_animate_cross_monitor_move(
     already_placed: bool,
     current: PillPlacement,

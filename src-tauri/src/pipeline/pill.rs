@@ -96,9 +96,18 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
         return;
     };
 
+    // Marks "the pill has a real placement now" as soon as we have one to
+    // apply, independent of whether `current_placement()` below succeeds.
+    // Gating this swap on that `if let` instead (as an earlier version did)
+    // meant a `None` read on the very first call - e.g. WebView2 not yet
+    // settled right after `create_pill_if_needed` - left the flag `false`
+    // forever, so the *next* reveal would also skip animating, thinking
+    // *it* was the first ever placement.
+    #[cfg(target_os = "windows")]
+    let already_placed = PILL_PLACED_ONCE.swap(true, Ordering::SeqCst);
+
     #[cfg(target_os = "windows")]
     if let Some(current) = super::pill_position::current_placement(&pill) {
-        let already_placed = PILL_PLACED_ONCE.swap(true, Ordering::SeqCst);
         let needs_animated_move = super::pill_position::should_animate_cross_monitor_move(
             already_placed,
             current,
