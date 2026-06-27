@@ -188,7 +188,7 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         st.session.take()
                     };
                     if let Some(s) = session {
-                        std::thread::spawn(move || {
+                        tauri::async_runtime::spawn_blocking(move || {
                             let _ = s.stop();
                         });
                         crate::media::sound::coordinated_unmute();
