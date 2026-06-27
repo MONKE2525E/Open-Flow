@@ -130,13 +130,8 @@ async fn openai_compat(
         .json(&body)
         .send()
         .await?;
-    let request_id = resp
-        .headers()
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("-")
-        .to_string();
     let status = resp.status();
+    let request_id = super::response_request_id(&resp);
     log::debug!(
         "cleanup: openai_compat response provider={} status={} request_id={} latency_ms={}",
         provider_label,
@@ -145,46 +140,47 @@ async fn openai_compat(
         request_started.elapsed().as_millis()
     );
 
-    if status.as_u16() == 429 {
-        return Err(crate::api::quota_bail(model));
-    }
-
-    if status.as_u16() == 401 {
-        let body = resp.text().await.unwrap_or_default();
-        let preview = crate::api::sanitize_error_body_preview(&body);
-        let category = crate::api::classify_unauthorized_body(&body);
-        log::warn!(
-            "cleanup: openai_compat unauthorized provider={} model={} status={} request_id={} body_preview=\"{}\"",
-            provider_label,
-            model,
+    let resp = match super::ensure_provider_success(resp, model, Some((provider_label, model)))
+        .await
+    {
+        Ok(resp) => resp,
+        Err(super::ProviderHttpError::Quota(e)) => return Err(e),
+        Err(super::ProviderHttpError::Auth {
+            error,
             status,
             request_id,
-            preview
-        );
-        return Err(crate::api::auth_401_error(
-            provider_label,
-            model,
-            &request_id,
-            category,
-        ));
-    }
-
-    if let Err(e) = resp.error_for_status_ref() {
-        let body = resp.text().await.unwrap_or_default();
-        let preview = crate::api::sanitize_error_body_preview(&body);
-        log::warn!(
-            "cleanup: openai_compat non_success provider={} model={} status={} request_id={} body_preview=\"{}\"",
-            provider_label,
-            model,
+            preview,
+        }) => {
+            log::warn!(
+                "cleanup: openai_compat unauthorized provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                provider_label,
+                model,
+                status,
+                request_id,
+                preview
+            );
+            return Err(error);
+        }
+        Err(super::ProviderHttpError::NonSuccess {
+            source,
             status,
             request_id,
-            preview
-        );
-        return Err(anyhow::Error::new(e).context(format!(
-            "Cleanup API error provider={} model={} status={} request_id={} body_preview={}",
-            provider_label, model, status, request_id, preview
-        )));
-    }
+            preview,
+        }) => {
+            log::warn!(
+                "cleanup: openai_compat non_success provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                provider_label,
+                model,
+                status,
+                request_id,
+                preview
+            );
+            return Err(anyhow::Error::new(source).context(format!(
+                "Cleanup API error provider={} model={} status={} request_id={} body_preview={}",
+                provider_label, model, status, request_id, preview
+            )));
+        }
+    };
 
     let data: ChatResp = resp.json().await?;
     let output = data
@@ -230,13 +226,8 @@ async fn google_cleanup(
         .json(&req)
         .send()
         .await?;
-    let request_id = resp
-        .headers()
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("-")
-        .to_string();
     let status = resp.status();
+    let request_id = super::response_request_id(&resp);
     log::debug!(
         "cleanup: google response status={} request_id={} latency_ms={}",
         status,
@@ -244,25 +235,29 @@ async fn google_cleanup(
         request_started.elapsed().as_millis()
     );
 
-    if status.as_u16() == 429 {
-        return Err(crate::api::quota_bail("Google"));
-    }
-
-    if let Err(e) = resp.error_for_status_ref() {
-        let body = resp.text().await.unwrap_or_default();
-        let preview = crate::api::sanitize_error_body_preview(&body);
-        log::warn!(
-            "cleanup: google non_success model={} status={} request_id={} body_preview=\"{}\"",
-            model,
+    let resp = match super::ensure_provider_success(resp, "Google", None).await {
+        Ok(resp) => resp,
+        Err(super::ProviderHttpError::Quota(e)) => return Err(e),
+        Err(super::ProviderHttpError::Auth { error, .. }) => return Err(error),
+        Err(super::ProviderHttpError::NonSuccess {
+            source,
             status,
             request_id,
-            preview
-        );
-        return Err(anyhow::Error::new(e).context(format!(
-            "Google Cleanup API error status={} request_id={} body_preview={}",
-            status, request_id, preview
-        )));
-    }
+            preview,
+        }) => {
+            log::warn!(
+                "cleanup: google non_success model={} status={} request_id={} body_preview=\"{}\"",
+                model,
+                status,
+                request_id,
+                preview
+            );
+            return Err(anyhow::Error::new(source).context(format!(
+                "Google Cleanup API error status={} request_id={} body_preview={}",
+                status, request_id, preview
+            )));
+        }
+    };
 
     let data: GeminiResp = resp.json().await?;
     let output = data

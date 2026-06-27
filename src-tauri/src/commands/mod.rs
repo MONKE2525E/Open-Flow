@@ -5,7 +5,6 @@
 
 pub(crate) use tauri::{AppHandle, Emitter, Manager};
 
-pub(crate) use crate::api::{cleanup, prompts, ProviderId};
 pub(crate) use crate::data::{db, store};
 pub(crate) use crate::media::audio;
 pub(crate) use crate::pipeline::{self, SharedState};
@@ -28,6 +27,10 @@ where
     tokio::task::spawn_blocking(f)
         .await
         .map_err(|e| format!("{label} task panicked: {e}"))?
+}
+
+pub(crate) fn db_state(app: &AppHandle) -> DbHandle {
+    app.state::<DbHandle>().inner().clone()
 }
 
 pub use history::*;

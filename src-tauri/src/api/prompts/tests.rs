@@ -9,6 +9,12 @@ fn repeated_words(count: usize) -> String {
     vec!["word"; count].join(" ")
 }
 
+fn openai_cleanup_prompt(input: &str, intensity: &str) -> String {
+    get_cleanup_prompt_with_extras(
+        "openai", "gpt-4o", "casual", intensity, "", None, input, None,
+    )
+}
+
 #[test]
 fn transcription_prompts_exist_for_all_recommended_models() {
     for (provider, model) in [
@@ -48,27 +54,21 @@ fn groq_turbo_transcription_prompt_stays_under_budget() {
 }
 
 #[test]
-fn short_tier_is_used_below_50_words() {
-    let input = repeated_words(12);
-    let prompt =
-        get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "medium", "", None, &input, None);
-    assert!(prompt.contains("CLEANUP (MEDIUM): MUST remove filler, repetition, rambling, and obvious speech artifacts, and tighten wordy or roundabout phrasing into clean, direct sentences."));
-}
-
-#[test]
-fn medium_tier_is_used_for_50_to_100_words() {
-    let input = repeated_words(75);
-    let prompt =
-        get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "medium", "", None, &input, None);
-    assert!(prompt.contains("CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow."));
-}
-
-#[test]
-fn detailed_tier_is_used_above_100_words() {
-    let input = repeated_words(130);
-    let prompt =
-        get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "medium", "", None, &input, None);
-    assert!(prompt.contains("MAY restructure for clarity while preserving meaning."));
+fn cleanup_tier_rules_follow_input_length() {
+    for (words, expected) in [
+        (
+            12,
+            "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling, and obvious speech artifacts, and tighten wordy or roundabout phrasing into clean, direct sentences.",
+        ),
+        (
+            75,
+            "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow.",
+        ),
+        (130, "MAY restructure for clarity while preserving meaning."),
+    ] {
+        let input = repeated_words(words);
+        assert!(openai_cleanup_prompt(&input, "medium").contains(expected));
+    }
 }
 
 #[test]
@@ -226,13 +226,11 @@ fn default_templates_demonstrate_filler_removal() {
 #[test]
 fn light_medium_direct_produce_distinct_cleanup_blocks() {
     let input = repeated_words(75);
-    let light =
-        get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "light", "", None, &input, None);
+    let light = openai_cleanup_prompt(&input, "light");
     let medium = get_cleanup_prompt_with_extras(
         "openai", "gpt-4o", "casual", "medium", "", None, &input, None,
     );
-    let direct =
-        get_cleanup_prompt_with_extras("openai", "gpt-4o", "casual", "high", "", None, &input, None);
+    let direct = openai_cleanup_prompt(&input, "high");
 
     // Each level names itself and carries its own contract.
     assert!(light.contains("CLEANUP (LIGHT):"));
@@ -259,9 +257,7 @@ fn light_medium_direct_produce_distinct_cleanup_blocks() {
 fn medium_intensity_names_itself_at_every_tier() {
     for words in [12usize, 75, 130] {
         let input = repeated_words(words);
-        let prompt = get_cleanup_prompt_with_extras(
-            "openai", "gpt-4o", "casual", "medium", "", None, &input, None,
-        );
+        let prompt = openai_cleanup_prompt(&input, "medium");
         assert!(
             prompt.contains("CLEANUP (MEDIUM):"),
             "medium preset missing explicit MEDIUM label at {words} words"
@@ -443,8 +439,14 @@ fn every_default_template_renders_without_unfilled_tags() {
             "you should send me the file",
             None,
         );
-        assert!(!prompt.contains("{{"), "{provider}/{model} left an unfilled tag");
-        assert!(prompt.contains("Slack"), "{provider}/{model} missing active_app");
+        assert!(
+            !prompt.contains("{{"),
+            "{provider}/{model} left an unfilled tag"
+        );
+        assert!(
+            prompt.contains("Slack"),
+            "{provider}/{model} missing active_app"
+        );
         assert!(
             prompt.contains("FINAL OUTPUT OVERRIDES"),
             "{provider}/{model} missing overrides"

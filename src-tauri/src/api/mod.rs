@@ -125,6 +125,71 @@ pub fn sanitize_error_body_preview(body: &str) -> String {
     }
 }
 
+pub(crate) enum ProviderHttpError {
+    Quota(anyhow::Error),
+    Auth {
+        error: anyhow::Error,
+        status: reqwest::StatusCode,
+        request_id: String,
+        preview: String,
+    },
+    NonSuccess {
+        source: reqwest::Error,
+        status: reqwest::StatusCode,
+        request_id: String,
+        preview: String,
+    },
+}
+
+pub(crate) fn response_request_id(resp: &reqwest::Response) -> String {
+    resp.headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-")
+        .to_string()
+}
+
+pub(crate) async fn ensure_provider_success(
+    resp: reqwest::Response,
+    quota_label: &str,
+    auth: Option<(&str, &str)>,
+) -> Result<reqwest::Response, ProviderHttpError> {
+    let status = resp.status();
+    let request_id = response_request_id(&resp);
+
+    if status.as_u16() == 429 {
+        return Err(ProviderHttpError::Quota(quota_bail(quota_label)));
+    }
+
+    if status.as_u16() == 401 {
+        if let Some((provider, model)) = auth {
+            let body = resp.text().await.unwrap_or_default();
+            let preview = sanitize_error_body_preview(&body);
+            let category = classify_unauthorized_body(&body);
+            let error = auth_401_error(provider, model, &request_id, category);
+            return Err(ProviderHttpError::Auth {
+                error,
+                status,
+                request_id,
+                preview,
+            });
+        }
+    }
+
+    if let Err(source) = resp.error_for_status_ref() {
+        let body = resp.text().await.unwrap_or_default();
+        let preview = sanitize_error_body_preview(&body);
+        return Err(ProviderHttpError::NonSuccess {
+            source,
+            status,
+            request_id,
+            preview,
+        });
+    }
+
+    Ok(resp)
+}
+
 pub fn classify_unauthorized_body(body: &str) -> AuthErrorCategory {
     let lower = body.to_lowercase();
 

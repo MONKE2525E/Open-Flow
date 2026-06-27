@@ -85,13 +85,8 @@ async fn transcribe_whisper(
         .multipart(form)
         .send()
         .await?;
-    let request_id = resp
-        .headers()
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("-")
-        .to_string();
     let status = resp.status();
+    let request_id = super::response_request_id(&resp);
     log::debug!(
         "transcription: whisper response provider={} status={} request_id={} latency_ms={}",
         provider_label,
@@ -100,46 +95,47 @@ async fn transcribe_whisper(
         request_started.elapsed().as_millis()
     );
 
-    if status.as_u16() == 429 {
-        return Err(crate::api::quota_bail(model));
-    }
-
-    if status.as_u16() == 401 {
-        let body = resp.text().await.unwrap_or_default();
-        let preview = crate::api::sanitize_error_body_preview(&body);
-        let category = crate::api::classify_unauthorized_body(&body);
-        log::warn!(
-            "transcription: whisper unauthorized provider={} model={} status={} request_id={} body_preview=\"{}\"",
-            provider_label,
-            model,
+    let resp = match super::ensure_provider_success(resp, model, Some((provider_label, model)))
+        .await
+    {
+        Ok(resp) => resp,
+        Err(super::ProviderHttpError::Quota(e)) => return Err(e),
+        Err(super::ProviderHttpError::Auth {
+            error,
             status,
             request_id,
-            preview
-        );
-        return Err(crate::api::auth_401_error(
-            provider_label,
-            model,
-            &request_id,
-            category,
-        ));
-    }
-
-    if let Err(e) = resp.error_for_status_ref() {
-        let body = resp.text().await.unwrap_or_default();
-        let preview = crate::api::sanitize_error_body_preview(&body);
-        log::warn!(
-            "transcription: whisper non_success provider={} model={} status={} request_id={} body_preview=\"{}\"",
-            provider_label,
-            model,
+            preview,
+        }) => {
+            log::warn!(
+                "transcription: whisper unauthorized provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                provider_label,
+                model,
+                status,
+                request_id,
+                preview
+            );
+            return Err(error);
+        }
+        Err(super::ProviderHttpError::NonSuccess {
+            source,
             status,
             request_id,
-            preview
-        );
-        return Err(anyhow::Error::new(e).context(format!(
-            "Transcription API error provider={} model={} status={} request_id={} body_preview={}",
-            provider_label, model, status, request_id, preview
-        )));
-    }
+            preview,
+        }) => {
+            log::warn!(
+                "transcription: whisper non_success provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                provider_label,
+                model,
+                status,
+                request_id,
+                preview
+            );
+            return Err(anyhow::Error::new(source).context(format!(
+                "Transcription API error provider={} model={} status={} request_id={} body_preview={}",
+                provider_label, model, status, request_id, preview
+            )));
+        }
+    };
 
     let body: WhisperResponse = resp.json().await?;
     log::debug!(
@@ -190,38 +186,36 @@ async fn transcribe_gemini_with_prompt(
         .await?;
 
     let status = resp.status();
-    let request_id = resp
-        .headers()
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("-")
-        .to_string();
+    let request_id = super::response_request_id(&resp);
     log::debug!(
         "transcription: gemini response status={} request_id={} latency_ms={}",
         status,
         request_id,
         request_started.elapsed().as_millis()
     );
-    if status.as_u16() == 429 {
-        return Err(crate::api::quota_bail("Google"));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        let preview = crate::api::sanitize_error_body_preview(&body);
-        log::warn!(
-            "transcription: gemini non_success model={} status={} request_id={} body_preview=\"{}\"",
-            model,
+    let resp = match super::ensure_provider_success(resp, "Google", None).await {
+        Ok(resp) => resp,
+        Err(super::ProviderHttpError::Quota(e)) => return Err(e),
+        Err(super::ProviderHttpError::Auth { error, .. }) => return Err(error),
+        Err(super::ProviderHttpError::NonSuccess {
+            source,
             status,
             request_id,
-            preview
-        );
-        anyhow::bail!(
-            "Gemini error status={} request_id={} body_preview={}",
-            status,
-            request_id,
-            preview
-        );
-    }
+            preview,
+        }) => {
+            log::warn!(
+                "transcription: gemini non_success model={} status={} request_id={} body_preview=\"{}\"",
+                model,
+                status,
+                request_id,
+                preview
+            );
+            return Err(anyhow::Error::new(source).context(format!(
+                "Gemini error status={} request_id={} body_preview={}",
+                status, request_id, preview
+            )));
+        }
+    };
 
     let raw_body = resp.text().await?;
     let data: GeminiResp =

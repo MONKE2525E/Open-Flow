@@ -44,7 +44,7 @@ pub async fn save_app_mappings(app: AppHandle, mappings: Vec<AppMapping>) -> Res
 
 #[tauri::command]
 pub async fn get_snippets(app: AppHandle) -> Result<Vec<db::Snippet>, String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("get_snippets", move || {
         let rows = db::query_snippets(&db).map_err(|e| e.to_string())?;
         if crate::system::logger::is_verbose() {
@@ -62,7 +62,7 @@ pub async fn create_snippet(
     expansion: String,
     instructions: String,
 ) -> Result<db::CreatedRecordMeta, String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("create_snippet", move || {
         log::info!(
             "snippets:create trigger_chars={} expansion_chars={} instructions_chars={}",
@@ -89,7 +89,7 @@ pub async fn edit_snippet(
     expansion: String,
     instructions: String,
 ) -> Result<(), String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("edit_snippet", move || {
         db::update_snippet(&db, id, &trigger, &expansion, &instructions).map_err(|e| e.to_string())
     })
@@ -98,7 +98,7 @@ pub async fn edit_snippet(
 
 #[tauri::command]
 pub async fn remove_snippet(app: AppHandle, id: i64) -> Result<(), String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("remove_snippet", move || {
         db::delete_snippet(&db, id).map_err(|e| e.to_string())
     })
@@ -109,7 +109,7 @@ pub async fn remove_snippet(app: AppHandle, id: i64) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn get_dictionary(app: AppHandle) -> Result<Vec<db::DictionaryEntry>, String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("get_dictionary", move || {
         db::query_dictionary(&db).map_err(|e| e.to_string())
     })
@@ -122,7 +122,7 @@ pub async fn create_dictionary_entry(
     term: String,
     mistake: Option<String>,
 ) -> Result<db::CreatedRecordMeta, String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("create_dictionary_entry", move || {
         log::info!(
             "dictionary:create term_chars={} mistake_chars={}",
@@ -144,7 +144,7 @@ pub async fn edit_dictionary_entry(
     term: String,
     mistake: Option<String>,
 ) -> Result<(), String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("edit_dictionary_entry", move || {
         db::update_dictionary_entry(&db, id, &term, mistake.as_deref()).map_err(|e| e.to_string())
     })
@@ -153,7 +153,7 @@ pub async fn edit_dictionary_entry(
 
 #[tauri::command]
 pub async fn remove_dictionary_entry(app: AppHandle, id: i64) -> Result<(), String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("remove_dictionary_entry", move || {
         db::delete_dictionary_entry(&db, id).map_err(|e| e.to_string())
     })
@@ -164,7 +164,7 @@ pub async fn remove_dictionary_entry(app: AppHandle, id: i64) -> Result<(), Stri
 pub async fn get_auto_learn_status_summary(
     app: AppHandle,
 ) -> Result<db::AutoLearnStatusSummary, String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("get_auto_learn_status_summary", move || {
         db::get_auto_learn_status_summary(&db).map_err(|e| e.to_string())
     })
@@ -176,7 +176,7 @@ pub async fn get_recent_auto_learn_activity(
     app: AppHandle,
     limit: Option<i64>,
 ) -> Result<Vec<db::AutoLearnEvent>, String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("get_recent_auto_learn_activity", move || {
         db::get_recent_auto_learn_activity(&db, limit.unwrap_or(20)).map_err(|e| e.to_string())
     })
