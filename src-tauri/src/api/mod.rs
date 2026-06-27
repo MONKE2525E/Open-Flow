@@ -125,6 +125,71 @@ pub fn sanitize_error_body_preview(body: &str) -> String {
     }
 }
 
+pub(crate) enum ProviderHttpError {
+    Quota(anyhow::Error),
+    Auth {
+        error: anyhow::Error,
+        status: reqwest::StatusCode,
+        request_id: String,
+        preview: String,
+    },
+    NonSuccess {
+        source: reqwest::Error,
+        status: reqwest::StatusCode,
+        request_id: String,
+        preview: String,
+    },
+}
+
+pub(crate) fn response_request_id(resp: &reqwest::Response) -> String {
+    resp.headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-")
+        .to_string()
+}
+
+pub(crate) async fn ensure_provider_success(
+    resp: reqwest::Response,
+    quota_label: &str,
+    auth: Option<(&str, &str)>,
+) -> Result<reqwest::Response, ProviderHttpError> {
+    let status = resp.status();
+    let request_id = response_request_id(&resp);
+
+    if status.as_u16() == 429 {
+        return Err(ProviderHttpError::Quota(quota_bail(quota_label)));
+    }
+
+    if matches!(status.as_u16(), 401 | 403) {
+        if let Some((provider, model)) = auth {
+            let body = resp.text().await.unwrap_or_default();
+            let preview = sanitize_error_body_preview(&body);
+            let category = classify_unauthorized_body(&body);
+            let error = auth_status_error(provider, model, &request_id, status.as_u16(), category);
+            return Err(ProviderHttpError::Auth {
+                error,
+                status,
+                request_id,
+                preview,
+            });
+        }
+    }
+
+    if let Err(source) = resp.error_for_status_ref() {
+        let body = resp.text().await.unwrap_or_default();
+        let preview = sanitize_error_body_preview(&body);
+        return Err(ProviderHttpError::NonSuccess {
+            source,
+            status,
+            request_id,
+            preview,
+        });
+    }
+
+    Ok(resp)
+}
+
 pub fn classify_unauthorized_body(body: &str) -> AuthErrorCategory {
     let lower = body.to_lowercase();
 
@@ -188,9 +253,19 @@ pub fn auth_401_error(
     request_id: &str,
     category: AuthErrorCategory,
 ) -> anyhow::Error {
+    auth_status_error(provider, model, request_id, 401, category)
+}
+
+fn auth_status_error(
+    provider: &str,
+    model: &str,
+    request_id: &str,
+    status: u16,
+    category: AuthErrorCategory,
+) -> anyhow::Error {
     let user_msg = auth_401_user_message(provider, category);
     anyhow::anyhow!(
-        "{AUTH_401_PREFIX}|provider={provider}|category={}|model={model}|request_id={request_id}|status=401: {user_msg}",
+        "{AUTH_401_PREFIX}|provider={provider}|category={}|model={model}|request_id={request_id}|status={status}: {user_msg}",
         category.as_wire_value()
     )
 }
@@ -327,6 +402,20 @@ mod tests {
             request_id: None,
         });
         assert!(msg.to_lowercase().contains("invalid or revoked"));
+    }
+
+    #[test]
+    fn auth_error_can_encode_forbidden_status() {
+        let err = super::auth_status_error(
+            "Google",
+            "gemini-3.5-flash",
+            "req_403",
+            403,
+            AuthErrorCategory::ScopeOrAccountRestriction,
+        );
+        let msg = err.to_string();
+        assert!(msg.starts_with("AUTH_401|provider=Google"));
+        assert!(msg.contains("status=403"));
     }
 
     #[test]

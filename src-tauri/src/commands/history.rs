@@ -11,7 +11,7 @@ pub async fn get_recent(
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<Vec<db::RecentEntry>, String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     let limit = limit.unwrap_or(100);
     let offset = offset.unwrap_or(0);
     run_blocking("get_recent", move || {
@@ -22,7 +22,7 @@ pub async fn get_recent(
 
 #[tauri::command]
 pub async fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("get_stats", move || {
         db::query_stats(&db).map_err(|e| e.to_string())
     })
@@ -34,7 +34,7 @@ pub async fn count_old_transcriptions(app: AppHandle, retention: String) -> Resu
     let Some(days) = store::history_retention_days(&retention) else {
         return Ok(0);
     };
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("count_old_transcriptions", move || {
         db::count_transcriptions_older_than(&db, days).map_err(|e| e.to_string())
     })
@@ -101,7 +101,7 @@ fn free_bytes_for_path(_path: &std::path::Path) -> Result<u64, String> {
 
 #[tauri::command]
 pub async fn clear_cleanup_cache(app: AppHandle) -> Result<usize, String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     run_blocking("clear_cleanup_cache", move || {
         db::cleanup_cache_clear_all(&db).map_err(|e| e.to_string())
     })
@@ -110,7 +110,7 @@ pub async fn clear_cleanup_cache(app: AppHandle) -> Result<usize, String> {
 
 #[tauri::command]
 pub async fn get_cleanup_cache_status(app: AppHandle) -> Result<CleanupCacheStatus, String> {
-    let db = app.state::<DbHandle>().inner().clone();
+    let db = db_state(&app);
     let app_data = crate::app_data_dir();
     let (free_bytes, entry_count) = run_blocking("get_cleanup_cache_status", move || {
         let free = free_bytes_for_path(&app_data)

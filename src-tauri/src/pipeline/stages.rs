@@ -311,6 +311,164 @@ pub(super) async fn run_transcription(
     None
 }
 
+struct CleanupCachePlan {
+    key: String,
+    allow_cache: bool,
+    has_snippets: bool,
+}
+
+struct CleanupSuccess {
+    cleaned: String,
+    provider_id: String,
+    model: String,
+    key: String,
+}
+
+fn cleanup_cache_plan(
+    expanded: &str,
+    profile: &str,
+    intensity: &str,
+    snippet_instructions: &str,
+) -> CleanupCachePlan {
+    let has_snippets = !snippet_instructions.is_empty();
+    let (cache_tokens, cache_separators) = number_parser::tokenize_cache_key_parts(expanded);
+    let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens)
+        && (expanded.chars().count() <= 200 || has_snippets);
+    let key = if allow_cache {
+        let base_cache_key =
+            number_parser::normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators);
+        let mut key = style_scoped_cleanup_cache_key(&base_cache_key, profile, intensity);
+        if !key.is_empty() && has_snippets {
+            let fp = snippet_instructions_fingerprint(snippet_instructions);
+            key = format!("{key}|snip:{fp:x}");
+        }
+        key
+    } else {
+        String::new()
+    };
+
+    CleanupCachePlan {
+        key,
+        allow_cache,
+        has_snippets,
+    }
+}
+
+fn touch_cleanup_cache_hit(db_handle: &DbHandle, cache_key: &str, entry: &db::CleanupCacheEntry) {
+    let now = Utc::now();
+    let new_hit_count = entry.hit_count + 1;
+    let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
+    let new_expires_at =
+        next_cache_expiry(new_hit_count, &entry.created_at, &entry.expires_at, now);
+    match db::cleanup_cache_touch_hit(
+        db_handle,
+        cache_key,
+        new_hit_count,
+        &now_str,
+        &new_expires_at,
+    ) {
+        Ok(_) => log::debug!(
+            "pipeline: cleanup cache touch hit_count={} expires_at={}",
+            new_hit_count,
+            new_expires_at
+        ),
+        Err(err) => log::warn!("pipeline: cleanup cache touch failed: {err}"),
+    }
+}
+
+fn cleanup_cache_hit_text(
+    db_handle: &DbHandle,
+    cache_key: &str,
+    profile: &str,
+    intensity: &str,
+    snippet_instructions: &str,
+) -> Option<String> {
+    let entry = db::cleanup_cache_get_active(db_handle, cache_key)
+        .ok()
+        .flatten()?;
+    log::debug!(
+        "pipeline: cleanup cache hit key_len={} hit_count={}",
+        cache_key.len(),
+        entry.hit_count
+    );
+    touch_cleanup_cache_hit(db_handle, cache_key, &entry);
+    let punctuated = ensure_terminal_punctuation(&entry.clean_text, profile, intensity);
+    Some(snippets::apply_cleanup_instruction_overrides(
+        &punctuated,
+        snippet_instructions,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_cleanup_provider_chain(
+    expanded: &str,
+    cfg: &store::PipelineConfig,
+    profile: &str,
+    extra_rules: &str,
+    app_context: Option<&str>,
+) -> (Option<CleanupSuccess>, Option<anyhow::Error>) {
+    let mut last_cleanup_err: Option<anyhow::Error> = None;
+    for (provider_id, model) in cleanup_model_chain(cfg) {
+        let key = cfg.key_for(&provider_id).to_owned();
+        if key.is_empty() {
+            continue;
+        }
+        let cp = ProviderId::from_str(&provider_id);
+        let custom_template = cfg.cleanup_override_for(&provider_id, &model);
+        match cleanup::cleanup(
+            expanded,
+            cp,
+            &key,
+            &model,
+            profile,
+            &cfg.cleanup_intensity,
+            extra_rules,
+            app_context,
+            custom_template,
+        )
+        .await
+        {
+            Ok(cleaned) if !cleaned.is_empty() => {
+                log::debug!(
+                    "pipeline: cleanup provider success={} model={} cleaned_chars={}",
+                    provider_id,
+                    model,
+                    cleaned.chars().count()
+                );
+                return (
+                    Some(CleanupSuccess {
+                        cleaned,
+                        provider_id,
+                        model,
+                        key,
+                    }),
+                    None,
+                );
+            }
+            Ok(_) => {
+                last_cleanup_err = None;
+            }
+            Err(e) => {
+                let retryable = crate::api::is_retryable_provider_error(&e);
+                log::warn!(
+                    "pipeline: cleanup provider failed provider={} model={} retryable={} error={}",
+                    provider_id,
+                    model,
+                    retryable,
+                    trim_err(&e.to_string())
+                );
+                if retryable {
+                    last_cleanup_err = Some(e);
+                    continue;
+                }
+                return (None, Some(e));
+            }
+        }
+    }
+
+    (None, last_cleanup_err)
+}
+
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
 // instruction override application. Returns (final_text_before_dict, dict_entries)
 // so the caller can apply dictionary substitutions after saving to DB.
@@ -402,63 +560,32 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
         &cfg.cleanup_intensity,
         profile,
     ) {
-        let has_snippets = !snippet_instructions.is_empty();
-        let (cache_tokens, cache_separators) = number_parser::tokenize_cache_key_parts(&expanded);
-        let allow_cache = should_use_cleanup_cache_tokens(&cache_tokens)
-            && (expanded.chars().count() <= 200 || has_snippets);
-        let cache_key = if allow_cache {
-            let base_cache_key =
-                number_parser::normalize_cleanup_cache_key_parts(&cache_tokens, &cache_separators);
-            let mut key =
-                style_scoped_cleanup_cache_key(&base_cache_key, profile, &cfg.cleanup_intensity);
-            if !key.is_empty() && has_snippets {
-                let fp = snippet_instructions_fingerprint(&snippet_instructions);
-                key = format!("{key}|snip:{fp:x}");
-            }
-            key
-        } else {
-            String::new()
-        };
+        let cache_plan = cleanup_cache_plan(
+            &expanded,
+            profile,
+            &cfg.cleanup_intensity,
+            &snippet_instructions,
+        );
+        let cache_key = cache_plan.key.clone();
         if !cache_key.is_empty() {
             used_cache_key = cache_key.clone();
-            if let Ok(Some(entry)) = db::cleanup_cache_get_active(db_handle, &cache_key) {
-                log::debug!(
-                    "pipeline: cleanup cache hit key_len={} hit_count={}",
-                    cache_key.len(),
-                    entry.hit_count
-                );
-                let now = Utc::now();
-                let new_hit_count = entry.hit_count + 1;
-                let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
-                let new_expires_at =
-                    next_cache_expiry(new_hit_count, &entry.created_at, &entry.expires_at, now);
-                let _ = db::cleanup_cache_touch_hit(
-                    db_handle,
-                    &cache_key,
-                    new_hit_count,
-                    &now_str,
-                    &new_expires_at,
-                );
-                log::debug!(
-                    "pipeline: cleanup cache touch hit_count={} expires_at={}",
-                    new_hit_count,
-                    new_expires_at
-                );
-                let punctuated = ensure_terminal_punctuation(
-                    &entry.clean_text,
-                    profile,
-                    &cfg.cleanup_intensity,
-                );
-                let overridden = snippets::apply_cleanup_instruction_overrides(
-                    &punctuated,
-                    &snippet_instructions,
-                );
+            if let Some(overridden) = cleanup_cache_hit_text(
+                db_handle,
+                &cache_key,
+                profile,
+                &cfg.cleanup_intensity,
+                &snippet_instructions,
+            ) {
                 return Ok((overridden, dict_entries, cache_key));
             }
         }
         log::debug!(
             "pipeline: cleanup cache {} key_len={}",
-            if allow_cache { "miss" } else { "bypass" },
+            if cache_plan.allow_cache {
+                "miss"
+            } else {
+                "bypass"
+            },
             cache_key.len()
         );
         let dict_instructions =
@@ -475,70 +602,18 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             extra_rules.lines().filter(|l| !l.trim().is_empty()).count()
         );
 
-        let mut cleaned_res: Option<(String, String, String, String)> = None;
-        let mut last_cleanup_err: Option<anyhow::Error> = None;
-        for (provider_id, model) in cleanup_model_chain(cfg) {
-            let key = cfg.key_for(&provider_id).to_owned();
-            if key.is_empty() {
-                continue;
-            }
-            let cp = ProviderId::from_str(&provider_id);
-            let custom_template = cfg.cleanup_override_for(&provider_id, &model);
-            match cleanup::cleanup(
-                &expanded,
-                cp,
-                &key,
-                &model,
-                profile,
-                &cfg.cleanup_intensity,
-                &extra_rules,
-                app_context,
-                custom_template,
-            )
-            .await
-            {
-                Ok(cleaned) if !cleaned.is_empty() => {
-                    log::debug!(
-                        "pipeline: cleanup provider success={} model={} cleaned_chars={}",
-                        provider_id,
-                        model,
-                        cleaned.chars().count()
-                    );
-                    cleaned_res = Some((cleaned, provider_id.clone(), model.clone(), key.clone()));
-                    break;
-                }
-                Ok(_) => {
-                    last_cleanup_err = None;
-                }
-                Err(e) => {
-                    let retryable = crate::api::is_retryable_provider_error(&e);
-                    log::warn!(
-                        "pipeline: cleanup provider failed provider={} model={} retryable={} error={}",
-                        provider_id,
-                        model,
-                        retryable,
-                        trim_err(&e.to_string())
-                    );
-                    if retryable {
-                        last_cleanup_err = Some(e);
-                        continue;
-                    }
-                    last_cleanup_err = Some(e);
-                    break;
-                }
-            }
-        }
-
-        let provider_succeeded = cleaned_res.is_some();
-        let guarded = match cleaned_res {
-            Some((cleaned, provider_id, model, key)) => {
+        let (cleanup_res, last_cleanup_err) =
+            run_cleanup_provider_chain(&expanded, cfg, profile, &extra_rules, app_context).await;
+        let provider_succeeded = cleanup_res.is_some();
+        let guarded = match cleanup_res {
+            Some(success) => {
                 guard_cleanup_refusal(
-                    cleaned,
+                    success.cleaned,
                     raw,
                     &expanded,
-                    &provider_id,
-                    &model,
-                    &key,
+                    &success.provider_id,
+                    &success.model,
+                    &success.key,
                     profile,
                     &cfg.cleanup_intensity,
                     &extra_rules,
@@ -554,7 +629,8 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                 // Punctuate before caching + overrides so the cache stores the
                 // normalized text and snippet "no period" instructions can still
                 // override it afterward.
-                let cleaned = ensure_terminal_punctuation(&cleaned, profile, &cfg.cleanup_intensity);
+                let cleaned =
+                    ensure_terminal_punctuation(&cleaned, profile, &cfg.cleanup_intensity);
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
                 if !cache_key.is_empty() {
@@ -564,7 +640,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                         &cache_key,
                         &cleaned,
                         &expires,
-                        has_snippets,
+                        cache_plan.has_snippets,
                     ) {
                         Ok(_) => {
                             log::debug!("pipeline: cleanup cache insert ok expires_at={expires}")
