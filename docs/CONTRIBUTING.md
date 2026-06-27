@@ -143,7 +143,7 @@ Rules:
 
 When bumping the version, update all three files together:
 
-- `package.json`
+- [`../package.json`](../package.json)
 - [`../src-tauri/tauri.conf.json`](../src-tauri/tauri.conf.json)
 - [`../src-tauri/Cargo.toml`](../src-tauri/Cargo.toml)
 

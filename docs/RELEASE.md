@@ -13,7 +13,7 @@ This document is the practical release checklist for Verenu. For release note wo
 
 Update these three files together:
 
-- `package.json`
+- [`../package.json`](../package.json)
 - [`../src-tauri/tauri.conf.json`](../src-tauri/tauri.conf.json)
 - [`../src-tauri/Cargo.toml`](../src-tauri/Cargo.toml)
 
