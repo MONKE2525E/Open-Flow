@@ -158,6 +158,17 @@ pub(super) fn animate_pill_placement<R: Runtime>(
         }
 
         if PILL_TWEEN_GEN.load(Ordering::SeqCst) == generation {
+            // Temporary diagnostic for issue #161: the per-frame SetWindowPos
+            // calls use SWP_ASYNCWINDOWPOS (post-and-return), so the last
+            // frame's move may not have actually been processed by the
+            // window's owning thread yet when we read this back here. If
+            // `actual` doesn't match `to`, that's direct evidence the
+            // tween's final geometry hadn't landed before `on_complete`
+            // (and thus `ShowWindow`) ran.
+            if crate::system::logger::is_verbose() {
+                let actual = super::pill_position::current_placement(&pill);
+                log::debug!("pill tween landed: target={to:?} actual_immediately_after={actual:?}");
+            }
             on_complete();
         }
     });

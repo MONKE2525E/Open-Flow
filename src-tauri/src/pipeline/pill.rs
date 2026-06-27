@@ -25,9 +25,17 @@ static REVEAL_GEN: AtomicU64 = AtomicU64::new(0);
 /// Tracks whether the pill is currently showing a non-idle frontend state.
 /// The native window itself stays visible even in idle so WebView2 doesn't
 /// suspend, which makes `pill.is_visible()` a bad proxy for "the user can
-/// already see the pill." We only animate when a prior non-idle state was
-/// actually on screen; otherwise the first visible reveal should be instant.
+/// already see the pill."
 static PILL_VISUALLY_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Whether the pill has ever had a real, monitor-resolved placement applied
+/// in this process. `false` only for the very first `show_pill_msg` call —
+/// after that, even a reveal that follows a `hide_pill` idle cycle still has
+/// real (if stale) geometry on screen, so a monitor change found on that
+/// reveal is still worth animating into rather than jumping. Unlike
+/// `PILL_VISUALLY_ACTIVE`, this never resets back to `false`.
+#[cfg(target_os = "windows")]
+static PILL_PLACED_ONCE: AtomicBool = AtomicBool::new(false);
 
 fn create_pill_if_needed(app: &AppHandle) {
     if app.get_webview_window("pill").is_some() {
@@ -61,12 +69,18 @@ pub(crate) fn show_pill(app: &AppHandle, state: &str) {
 /// of passing through while handsfree is active. Moving to a different
 /// monitor, whether or not its scale factor differs, animates the move on
 /// Windows (see `pill_animation.rs`) instead of jumping instantly, since an
-/// instant cross-monitor move on this always-visible window either visibly
-/// snapped (same-DPI repositions) or made WebView2 stutter recreating its
-/// swap chain (cross-DPI resizes). Only animates if the pill was already
-/// visible - the very first reveal (or one after a long idle period where
-/// its cached geometry might be stale) should never be held back by an
-/// animation nobody can see yet.
+/// instant cross-monitor move on this window either visibly snapped
+/// (same-DPI repositions) or made WebView2 stutter recreating its swap
+/// chain (cross-DPI resizes) - the latter is what showed up as a clipped
+/// pill on the first dictation after a monitor change, since `hide_pill`
+/// resets `PILL_VISUALLY_ACTIVE` between dictations even though the window
+/// keeps its stale geometry the whole time it's idle. Animates whenever the
+/// pill has been placed at least once before (`PILL_PLACED_ONCE`) and the
+/// resolved placement actually differs from where it currently sits - that
+/// covers both a monitor change mid-session and one only discovered on the
+/// next reveal after an idle cycle. Only the very first reveal of the whole
+/// process skips the animation, since nothing has been shown yet for it to
+/// glide from.
 fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
     create_pill_if_needed(app);
     let Some(pill) = app.get_webview_window("pill") else {
@@ -84,16 +98,19 @@ fn show_pill_msg(app: &AppHandle, state: &str, message: Option<&str>) {
 
     #[cfg(target_os = "windows")]
     if let Some(current) = super::pill_position::current_placement(&pill) {
-        let visually_active = PILL_VISUALLY_ACTIVE.load(Ordering::SeqCst);
-        let needs_animated_move = visually_active
-            && (super::pill_position::dimension_changed(
-                current.width as f64,
-                placement.width as f64,
-            ) || super::pill_position::dimension_changed(
-                current.height as f64,
-                placement.height as f64,
-            ) || super::pill_position::position_changed(current.x, placement.x)
-                || super::pill_position::position_changed(current.y, placement.y));
+        let already_placed = PILL_PLACED_ONCE.swap(true, Ordering::SeqCst);
+        let needs_animated_move = super::pill_position::should_animate_cross_monitor_move(
+            already_placed,
+            current,
+            placement,
+        );
+
+        // Temporary diagnostic for issue #161.
+        if crate::system::logger::is_verbose() {
+            log::debug!(
+                "pill show_pill_msg: state={state} already_placed={already_placed} current={current:?} target={placement:?} animate={needs_animated_move}"
+            );
+        }
 
         if needs_animated_move {
             let app = app.clone();

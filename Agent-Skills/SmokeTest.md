@@ -77,6 +77,14 @@ the relevant subsystem:
   watch promotion behavior. Run: `pwsh tests/manual/auto-learn-harness.ps1`.
 - `tests/manual/hotkey.cjs` — manual hotkey/injection probe against the dev server.
 - `tests/manual/setup-layout-bounds.js` — manual setup-wizard layout-bounds check.
+- Pill cross-monitor placement (no script, requires real mixed-DPI hardware):
+  on a Windows dual-monitor setup with different scale factors (e.g. 1440p +
+  1080p), dictate on one monitor, switch focus to the other, dictate again,
+  and confirm the pill is fully visible (no bottom clipping) on that *first*
+  dictation on the new monitor — not just the second. Repeat in both monitor
+  directions and at 100/125/150% scaling. Regression-tested at the unit
+  level by `should_animate_cross_monitor_move` in
+  `src-tauri/src/pipeline/pill_position.rs`.
 
 ## Notes
 
