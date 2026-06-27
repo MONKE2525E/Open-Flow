@@ -144,8 +144,8 @@ pub(super) fn should_animate_cross_monitor_move(
     target: PillPlacement,
 ) -> bool {
     already_placed
-        && (dimension_changed(current.width as f64, target.width as f64)
-            || dimension_changed(current.height as f64, target.height as f64)
+        && (position_changed(current.width, target.width)
+            || position_changed(current.height, target.height)
             || position_changed(current.x, target.x)
             || position_changed(current.y, target.y))
 }
