@@ -360,18 +360,20 @@ fn touch_cleanup_cache_hit(db_handle: &DbHandle, cache_key: &str, entry: &db::Cl
     let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
     let new_expires_at =
         next_cache_expiry(new_hit_count, &entry.created_at, &entry.expires_at, now);
-    let _ = db::cleanup_cache_touch_hit(
+    match db::cleanup_cache_touch_hit(
         db_handle,
         cache_key,
         new_hit_count,
         &now_str,
         &new_expires_at,
-    );
-    log::debug!(
-        "pipeline: cleanup cache touch hit_count={} expires_at={}",
-        new_hit_count,
-        new_expires_at
-    );
+    ) {
+        Ok(_) => log::debug!(
+            "pipeline: cleanup cache touch hit_count={} expires_at={}",
+            new_hit_count,
+            new_expires_at
+        ),
+        Err(err) => log::warn!("pipeline: cleanup cache touch failed: {err}"),
+    }
 }
 
 fn cleanup_cache_hit_text(
