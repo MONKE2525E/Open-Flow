@@ -129,6 +129,8 @@ npm run dev
 python3 tests/OnePyFone.py --suite ui,state --no-server
 ```
 
+On Windows, use `python` instead of `python3` if `python3` is not available in your shell.
+
 Rules:
 
 - Live API checks are opt-in.

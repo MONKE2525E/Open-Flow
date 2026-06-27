@@ -86,6 +86,8 @@ If Playwright or smoke tests behave strangely, restart with a fresh server:
 python3 tests/OnePyFone.py --suite ui,state --fresh-server
 ```
 
+On Windows, use `python` instead of `python3` if `python3` is not available in your shell.
+
 ## Reporting A Problem
 
 Use the GitHub issue forms. Include:

@@ -45,6 +45,8 @@ python3 tests/OnePyFone.py --suite ui,state
 python3 tests/OnePyFone.py --suite ui,animation --parallel --workers 3 --fresh-server
 ```
 
+On Windows, use `python` instead of `python3` if `python3` is not available in your shell.
+
 ## Playwright
 
 Use Playwright for UI-facing changes when the app can be exercised through the browser dev server.
