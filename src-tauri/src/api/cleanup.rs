@@ -239,7 +239,21 @@ async fn google_cleanup(
     {
         Ok(resp) => resp,
         Err(super::ProviderHttpError::Quota(e)) => return Err(e),
-        Err(super::ProviderHttpError::Auth { error, .. }) => return Err(error),
+        Err(super::ProviderHttpError::Auth {
+            error,
+            status,
+            request_id,
+            preview,
+        }) => {
+            log::warn!(
+                "cleanup: google unauthorized model={} status={} request_id={} body_preview=\"{}\"",
+                model,
+                status,
+                request_id,
+                preview
+            );
+            return Err(error);
+        }
         Err(super::ProviderHttpError::NonSuccess {
             source,
             status,

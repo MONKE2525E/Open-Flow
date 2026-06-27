@@ -197,7 +197,21 @@ async fn transcribe_gemini_with_prompt(
     {
         Ok(resp) => resp,
         Err(super::ProviderHttpError::Quota(e)) => return Err(e),
-        Err(super::ProviderHttpError::Auth { error, .. }) => return Err(error),
+        Err(super::ProviderHttpError::Auth {
+            error,
+            status,
+            request_id,
+            preview,
+        }) => {
+            log::warn!(
+                "transcription: gemini unauthorized model={} status={} request_id={} body_preview=\"{}\"",
+                model,
+                status,
+                request_id,
+                preview
+            );
+            return Err(error);
+        }
         Err(super::ProviderHttpError::NonSuccess {
             source,
             status,
