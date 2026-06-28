@@ -83,6 +83,9 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
     #[cfg(target_os = "macos")]
     apply_native_main_window_chrome(app, theme_hint);
 
+    #[cfg(target_os = "windows")]
+    apply_native_main_window_chrome(app, theme_hint);
+
     #[cfg(target_os = "macos")]
     if !crate::system::mac_app::apply_dock_icon() {
         log::warn!("Failed to update macOS Dock icon");
@@ -112,6 +115,106 @@ pub(crate) fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Optio
         w.set_title_bar_style(tauri::TitleBarStyle::Transparent)
             .ok();
     }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
+    use windows::Win32::Foundation::{COLORREF, LPARAM, WPARAM};
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR};
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, ICON_BIG, ICON_SMALL, WM_SETICON};
+
+    if let Some(w) = app.get_webview_window("main") {
+        // Same --paper / --ink-mute values as theme.css, recolored onto the native caption.
+        let (bg, text) = match resolve_icon_theme(app, theme_hint) {
+            IconTheme::Dark => (colorref(20, 17, 14), colorref(169, 152, 138)),
+            IconTheme::Light => (colorref(249, 247, 243), colorref(126, 114, 102)),
+        };
+        w.set_title("").ok();
+        if let Ok(hwnd) = w.hwnd() {
+            unsafe {
+                let _ = DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_CAPTION_COLOR,
+                    &bg as *const _ as *const _,
+                    std::mem::size_of::<COLORREF>() as u32,
+                );
+                let _ = DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_TEXT_COLOR,
+                    &text as *const _ as *const _,
+                    std::mem::size_of::<COLORREF>() as u32,
+                );
+                // Decouple the caption icon from the taskbar icon. A WS_SYSMENU window always
+                // paints *something* in its caption-icon slot, and the taskbar falls back to
+                // the small icon when ICON_BIG is unset — so nulling the icon either shows a
+                // default glyph or blanks the taskbar. Instead, give the taskbar its own real
+                // icon (ICON_BIG) and make only the caption's small icon fully transparent.
+                // WM_SETICON state survives — unlike the window's extended style, which tao
+                // resets after our call (so WS_EX_DLGMODALFRAME did not stick here).
+                let (small, big) = cached_caption_icons();
+                let _ = SendMessageW(hwnd, WM_SETICON, Some(WPARAM(ICON_BIG as usize)), Some(LPARAM(big)));
+                let _ =
+                    SendMessageW(hwnd, WM_SETICON, Some(WPARAM(ICON_SMALL as usize)), Some(LPARAM(small)));
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn colorref(r: u8, g: u8, b: u8) -> windows::Win32::Foundation::COLORREF {
+    windows::Win32::Foundation::COLORREF(((b as u32) << 16) | ((g as u32) << 8) | r as u32)
+}
+
+/// Returns `(transparent_small_icon, real_big_icon)` as raw HICON values, built once.
+/// The small icon is a fully transparent 16×16 used to blank the caption-icon slot; the
+/// big icon is the app's bar-chart logo, kept for the taskbar/Alt+Tab. Created lazily and
+/// never destroyed — they live for the process lifetime, so there is nothing to leak.
+#[cfg(target_os = "windows")]
+fn cached_caption_icons() -> (isize, isize) {
+    use std::sync::OnceLock;
+    static ICONS: OnceLock<(isize, isize)> = OnceLock::new();
+    *ICONS.get_or_init(|| {
+        let transparent = make_transparent_hicon(16);
+        let real = make_hicon(runtime_icon_image(IconTheme::Dark, 32).rgba(), 32);
+        (transparent, real)
+    })
+}
+
+/// Builds a fully transparent square HICON (raw handle as `isize`, `0` on failure).
+/// The AND mask must be a real 1-bit-per-pixel bitmap with every bit set (= every pixel
+/// transparent) and rows padded to a 16-bit boundary; the colour bits are all zero. This is
+/// distinct from [`make_hicon`], whose byte-per-pixel mask only renders correctly for opaque
+/// icons — reusing it here left a black square in the caption.
+#[cfg(target_os = "windows")]
+fn make_transparent_hicon(size: i32) -> isize {
+    use windows::Win32::UI::WindowsAndMessaging::CreateIcon;
+    let stride_bytes = (size as usize).div_ceil(16) * 2; // 1bpp row, padded to a WORD
+    let and_mask = vec![0xFF_u8; stride_bytes * size as usize];
+    let color = vec![0_u8; (size * size * 4) as usize];
+    // SAFETY: CreateIcon copies both buffers, which outlive the call.
+    unsafe { CreateIcon(None, size, size, 1, 32, and_mask.as_ptr(), color.as_ptr()) }
+        .map(|h| h.0 as isize)
+        .unwrap_or(0)
+}
+
+/// Builds an HICON from an RGBA buffer (returning the raw handle as `isize`, `0` on failure).
+/// Mirrors tao's own icon construction: the AND mask is the inverted alpha channel and the
+/// colour bits are the pixels swizzled to BGRA.
+#[cfg(target_os = "windows")]
+fn make_hicon(rgba: &[u8], size: i32) -> isize {
+    use windows::Win32::UI::WindowsAndMessaging::CreateIcon;
+    let pixel_count = (size * size) as usize;
+    let mut and_mask = Vec::with_capacity(pixel_count);
+    let mut bgra = rgba.to_vec();
+    for i in 0..pixel_count {
+        and_mask.push(rgba[i * 4 + 3].wrapping_sub(u8::MAX));
+        bgra[i * 4] = rgba[i * 4 + 2];
+        bgra[i * 4 + 2] = rgba[i * 4];
+    }
+    // SAFETY: CreateIcon copies the AND/colour buffers, which outlive the call.
+    unsafe { CreateIcon(None, size, size, 1, 32, and_mask.as_ptr(), bgra.as_ptr()) }
+        .map(|h| h.0 as isize)
+        .unwrap_or(0)
 }
 
 #[cfg(target_os = "macos")]
