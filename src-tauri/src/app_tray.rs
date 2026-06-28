@@ -103,7 +103,7 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
+fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
     if let Some(w) = app.get_webview_window("main") {
         let bg = match resolve_icon_theme(app, theme_hint) {
             IconTheme::Dark => tauri::utils::config::Color(20, 17, 14, 255),
@@ -118,7 +118,7 @@ pub(crate) fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Optio
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
+fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
     use windows::Win32::Foundation::{COLORREF, LPARAM, WPARAM};
     use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR};
     use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, ICON_BIG, ICON_SMALL, WM_SETICON};
