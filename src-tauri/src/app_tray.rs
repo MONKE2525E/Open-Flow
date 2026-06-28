@@ -124,8 +124,9 @@ pub(crate) fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Optio
     use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, ICON_BIG, ICON_SMALL, WM_SETICON};
 
     if let Some(w) = app.get_webview_window("main") {
+        let icon_theme = resolve_icon_theme(app, theme_hint);
         // Same --paper / --ink-mute values as theme.css, recolored onto the native caption.
-        let (bg, text) = match resolve_icon_theme(app, theme_hint) {
+        let (bg, text) = match icon_theme {
             IconTheme::Dark => (colorref(20, 17, 14), colorref(169, 152, 138)),
             IconTheme::Light => (colorref(249, 247, 243), colorref(126, 114, 102)),
         };
@@ -151,7 +152,7 @@ pub(crate) fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Optio
                 // icon (ICON_BIG) and make only the caption's small icon fully transparent.
                 // WM_SETICON state survives — unlike the window's extended style, which tao
                 // resets after our call (so WS_EX_DLGMODALFRAME did not stick here).
-                let (small, big) = cached_caption_icons();
+                let (small, big) = cached_caption_icons(icon_theme);
                 let _ = SendMessageW(hwnd, WM_SETICON, Some(WPARAM(ICON_BIG as usize)), Some(LPARAM(big)));
                 let _ =
                     SendMessageW(hwnd, WM_SETICON, Some(WPARAM(ICON_SMALL as usize)), Some(LPARAM(small)));
@@ -165,19 +166,30 @@ fn colorref(r: u8, g: u8, b: u8) -> windows::Win32::Foundation::COLORREF {
     windows::Win32::Foundation::COLORREF(((b as u32) << 16) | ((g as u32) << 8) | r as u32)
 }
 
-/// Returns `(transparent_small_icon, real_big_icon)` as raw HICON values, built once.
-/// The small icon is a fully transparent 16×16 used to blank the caption-icon slot; the
-/// big icon is the app's bar-chart logo, kept for the taskbar/Alt+Tab. Created lazily and
-/// never destroyed — they live for the process lifetime, so there is nothing to leak.
+/// Returns `(transparent_small_icon, real_big_icon)` as raw HICON values for the given
+/// theme. The small icon is a fully transparent 16×16 used to blank the caption-icon slot
+/// (theme-independent — always invisible); the big icon is the app's bar-chart logo in the
+/// requested theme's colours, kept for the taskbar/Alt+Tab. Each variant is built at most
+/// once and cached for the process lifetime, so there is nothing to leak; caching dark and
+/// light separately (rather than one cache keyed by whichever theme resolved first) is what
+/// makes the taskbar icon actually follow a later theme switch.
 #[cfg(target_os = "windows")]
-fn cached_caption_icons() -> (isize, isize) {
+fn cached_caption_icons(theme: IconTheme) -> (isize, isize) {
     use std::sync::OnceLock;
-    static ICONS: OnceLock<(isize, isize)> = OnceLock::new();
-    *ICONS.get_or_init(|| {
-        let transparent = make_transparent_hicon(16);
-        let real = make_hicon(runtime_icon_image(IconTheme::Dark, 32).rgba(), 32);
-        (transparent, real)
-    })
+    static TRANSPARENT: OnceLock<isize> = OnceLock::new();
+    static DARK_REAL: OnceLock<isize> = OnceLock::new();
+    static LIGHT_REAL: OnceLock<isize> = OnceLock::new();
+
+    let transparent = *TRANSPARENT.get_or_init(|| make_transparent_hicon(16));
+    let real = match theme {
+        IconTheme::Dark => {
+            *DARK_REAL.get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Dark, 32).rgba(), 32))
+        }
+        IconTheme::Light => {
+            *LIGHT_REAL.get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Light, 32).rgba(), 32))
+        }
+    };
+    (transparent, real)
 }
 
 /// Builds a fully transparent square HICON (raw handle as `isize`, `0` on failure).
@@ -200,9 +212,10 @@ fn make_transparent_hicon(size: i32) -> isize {
 /// Builds an HICON from an RGBA buffer (returning the raw handle as `isize`, `0` on failure).
 /// The AND mask is a proper 1-bit-per-pixel bitmap (rows padded to a `WORD` boundary, same
 /// packing as [`make_transparent_hicon`]) derived from the alpha channel; the colour bits are
-/// the pixels swizzled to BGRA. `CreateIcon` always expects a 1bpp AND mask regardless of the
-/// XOR mask's bit depth — an earlier byte-per-pixel version of this mask was read as a packed
-/// bitfield by Windows, corrupting transparency.
+/// the pixels swizzled to BGRA, zeroed wherever the AND mask marks the pixel transparent so
+/// Windows has nothing to XOR against the background there. `CreateIcon` always expects a
+/// 1bpp AND mask regardless of the XOR mask's bit depth — an earlier byte-per-pixel version
+/// of this mask was read as a packed bitfield by Windows, corrupting transparency.
 #[cfg(target_os = "windows")]
 fn make_hicon(rgba: &[u8], size: i32) -> isize {
     use windows::Win32::UI::WindowsAndMessaging::CreateIcon;
@@ -215,9 +228,11 @@ fn make_hicon(rgba: &[u8], size: i32) -> isize {
             let i = y * size_usize + x;
             if rgba[i * 4 + 3] < 128 {
                 and_mask[y * stride_bytes + x / 8] |= 1 << (7 - x % 8);
+                bgra[i * 4..i * 4 + 4].fill(0);
+            } else {
+                bgra[i * 4] = rgba[i * 4 + 2];
+                bgra[i * 4 + 2] = rgba[i * 4];
             }
-            bgra[i * 4] = rgba[i * 4 + 2];
-            bgra[i * 4 + 2] = rgba[i * 4];
         }
     }
     // SAFETY: CreateIcon copies the AND/colour buffers, which outlive the call.
