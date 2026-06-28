@@ -198,18 +198,27 @@ fn make_transparent_hicon(size: i32) -> isize {
 }
 
 /// Builds an HICON from an RGBA buffer (returning the raw handle as `isize`, `0` on failure).
-/// Mirrors tao's own icon construction: the AND mask is the inverted alpha channel and the
-/// colour bits are the pixels swizzled to BGRA.
+/// The AND mask is a proper 1-bit-per-pixel bitmap (rows padded to a `WORD` boundary, same
+/// packing as [`make_transparent_hicon`]) derived from the alpha channel; the colour bits are
+/// the pixels swizzled to BGRA. `CreateIcon` always expects a 1bpp AND mask regardless of the
+/// XOR mask's bit depth — an earlier byte-per-pixel version of this mask was read as a packed
+/// bitfield by Windows, corrupting transparency.
 #[cfg(target_os = "windows")]
 fn make_hicon(rgba: &[u8], size: i32) -> isize {
     use windows::Win32::UI::WindowsAndMessaging::CreateIcon;
-    let pixel_count = (size * size) as usize;
-    let mut and_mask = Vec::with_capacity(pixel_count);
+    let size_usize = size as usize;
+    let stride_bytes = size_usize.div_ceil(16) * 2; // 1bpp row, padded to a WORD
+    let mut and_mask = vec![0_u8; stride_bytes * size_usize];
     let mut bgra = rgba.to_vec();
-    for i in 0..pixel_count {
-        and_mask.push(rgba[i * 4 + 3].wrapping_sub(u8::MAX));
-        bgra[i * 4] = rgba[i * 4 + 2];
-        bgra[i * 4 + 2] = rgba[i * 4];
+    for y in 0..size_usize {
+        for x in 0..size_usize {
+            let i = y * size_usize + x;
+            if rgba[i * 4 + 3] < 128 {
+                and_mask[y * stride_bytes + x / 8] |= 1 << (7 - x % 8);
+            }
+            bgra[i * 4] = rgba[i * 4 + 2];
+            bgra[i * 4 + 2] = rgba[i * 4];
+        }
     }
     // SAFETY: CreateIcon copies the AND/colour buffers, which outlive the call.
     unsafe { CreateIcon(None, size, size, 1, 32, and_mask.as_ptr(), bgra.as_ptr()) }
