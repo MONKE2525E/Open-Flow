@@ -10,8 +10,12 @@
 //! up" flag, so this only checks local route reachability via
 //! `SCNetworkReachability` (zero network traffic, but a positive result just
 //! means "there's a default route", not "the WAN is actually up" — e.g. a
-//! captive portal with no real internet still reads as reachable). Callers
-//! should treat `None` as "unknown, fall back to an active probe".
+//! captive portal with no real internet still reads as reachable).
+//!
+//! Both platforms can also report false negatives (VPNs, enterprise proxies,
+//! or NCSI getting stuck) — so callers should only trust a confirmed
+//! `Some(true)` and treat `Some(false)`/`None` alike as "unknown, fall back
+//! to an active probe" rather than concluding "offline".
 
 #[cfg(windows)]
 pub fn check_native() -> Option<bool> {

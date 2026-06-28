@@ -275,10 +275,13 @@ fn run_launchctl(args: &[&str]) -> Result<(), String> {
 pub async fn check_connectivity() -> bool {
     // Prefer the OS's own network state (see system/connectivity.rs) — on
     // Windows this is a local COM call with zero network traffic; on macOS
-    // it's a local routing-table check. Only fall back to an HTTP probe when
-    // the native check is unavailable or inconclusive.
-    if let Some(connected) = native_connectivity_check().await {
-        return connected;
+    // it's a local routing-table check. Only short-circuit on a confirmed
+    // "online" (Some(true)): both NCSI and SCNetworkReachability can report
+    // false negatives behind certain VPNs/enterprise proxies, so a "false" or
+    // unavailable native result still falls through to the HTTP probe rather
+    // than risking a wrong "no internet" banner.
+    if let Some(true) = native_connectivity_check().await {
+        return true;
     }
 
     // Probe github.com (a host Verenu already contacts for release downloads)
