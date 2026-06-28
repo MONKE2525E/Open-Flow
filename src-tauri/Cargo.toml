@@ -55,6 +55,7 @@ windows = { version = "0.61", features = [
   "Win32_Storage_FileSystem",
   "Win32_Security_Credentials",
   "Win32_Networking_NetworkListManager",
+  "Win32_Graphics_Dwm",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

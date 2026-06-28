@@ -31,9 +31,6 @@
   const tryItStep = isMac ? 8 : 7;
   const doneStep = TOTAL_STEPS + 1;
 
-  type AppWindow = { minimize: () => Promise<void> };
-  let win = $state<AppWindow | null>(null);
-
   let step = $state(0);
   let direction = $state<'forward' | 'back'>('forward');
   let animating = $state(false);
@@ -74,10 +71,6 @@
 
   onMount(async () => {
     try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      win = getCurrentWindow();
-    } catch {}
-    try {
       const [
         savedAppearance, savedLanguage, savedProvider, savedIntensity, savedTone, keyStatus,
         savedCleanup, savedNoise, savedCaps, savedAutoSpacing, savedCapsLock, savedAppContextHint, savedAutoLearn, savedMute, savedAutostart,
@@ -117,11 +110,6 @@
       };
     } catch {}
   });
-
-  function minimize() { win?.minimize(); }
-  async function closeWindow() {
-    try { await invoke('hide_main'); } catch {}
-  }
 
   function delay(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -268,8 +256,6 @@
   totalSteps={TOTAL_STEPS}
   header={headerFor(step)}
   onDotClick={jumpToStep}
-  onMinimize={minimize}
-  onClose={closeWindow}
 >
   {#snippet left()}
     {#if actionBar.leftLabel}

@@ -2,8 +2,6 @@
   import { onMount } from 'svelte';
   import { appStore } from './lib/stores';
   import { cleanupPromptEditor } from './lib/stores.svelte';
-  import { isMac } from './lib/platform';
-  import TitleBar from './lib/components/layout/TitleBar.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
   import Dictionary from './lib/views/Dictionary.svelte';
@@ -134,9 +132,6 @@
 <div class="app">
   {#if appStore.setupComplete === false}
     <Setup />
-  {/if}
-  {#if !isMac}
-    <TitleBar />
   {/if}
   <div class="body">
     <Sidebar />

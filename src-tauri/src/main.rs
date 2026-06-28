@@ -179,8 +179,8 @@ fn main() {
 
             app_tray::setup_tray(app)?;
             app_hotkey::setup_hotkey(app, shared.clone());
-            #[cfg(target_os = "macos")]
-            app_tray::apply_native_main_window_chrome(app.handle(), None);
+            // setup_tray() already applies native window chrome (both platforms) via
+            // apply_runtime_icons() — no need to call apply_native_main_window_chrome again here.
             #[cfg(target_os = "macos")]
             {
                 crate::system::mac_app::set_accessory_activation_policy_on_main_thread(
@@ -230,9 +230,9 @@ fn main() {
                             .unwrap_or("system")
                             == "system"
                         {
+                            // apply_runtime_icons() already applies native window chrome
+                            // (both platforms) internally — no separate call needed here.
                             apply_runtime_icons(app, Some(*theme));
-                            #[cfg(target_os = "macos")]
-                            app_tray::apply_native_main_window_chrome(app, Some(*theme));
                         }
                     }
                     _ => {}
