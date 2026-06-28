@@ -46,7 +46,7 @@ pub fn check_native() -> Option<bool> {
         let manager: INetworkListManager =
             CoCreateInstance(&NetworkListManager, None, CLSCTX_ALL).ok()?;
         let connected = manager.IsConnectedToInternet().ok()?;
-        Some(connected.0 != 0)
+        Some(connected.as_bool())
     }
 }
 
@@ -95,14 +95,14 @@ pub fn check_native() -> Option<bool> {
 
         let mut flags: ScNetworkReachabilityFlags = 0;
         let ok = SCNetworkReachabilityGetFlags(target, &mut flags);
-        CFRelease(target as CfTypeRef);
+        CFRelease(target);
 
         if ok == 0 {
             return None;
         }
 
-        let reachable = flags & REACHABLE != 0;
-        let needs_connection = flags & CONNECTION_REQUIRED != 0;
+        let reachable = (flags & REACHABLE) != 0;
+        let needs_connection = (flags & CONNECTION_REQUIRED) != 0;
         Some(reachable && !needs_connection)
     }
 }
