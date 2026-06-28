@@ -273,6 +273,14 @@ fn run_launchctl(args: &[&str]) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn check_connectivity() -> bool {
+    // Prefer the OS's own network state (see system/connectivity.rs) — on
+    // Windows this is a local COM call with zero network traffic; on macOS
+    // it's a local routing-table check. Only fall back to an HTTP probe when
+    // the native check is unavailable or inconclusive.
+    if let Some(connected) = native_connectivity_check().await {
+        return connected;
+    }
+
     // Probe github.com (a host Verenu already contacts for release downloads)
     // rather than a third-party beacon like google.com, so the connectivity check
     // doesn't quietly phone a separate domain. Deliberately NOT api.github.com:
@@ -286,6 +294,21 @@ pub async fn check_connectivity() -> bool {
         .send()
         .await
         .is_ok()
+}
+
+#[cfg(windows)]
+async fn native_connectivity_check() -> Option<bool> {
+    // COM requires apartment init on the calling thread, so run on a
+    // dedicated blocking thread rather than whatever tokio worker polls this.
+    tokio::task::spawn_blocking(crate::system::connectivity::check_native)
+        .await
+        .ok()
+        .flatten()
+}
+
+#[cfg(not(windows))]
+async fn native_connectivity_check() -> Option<bool> {
+    crate::system::connectivity::check_native()
 }
 
 // ---------- developer logs ----------
