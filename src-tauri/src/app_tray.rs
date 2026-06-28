@@ -125,12 +125,11 @@ pub(crate) fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Optio
 
     if let Some(w) = app.get_webview_window("main") {
         let icon_theme = resolve_icon_theme(app, theme_hint);
-        // Same --paper / --ink-mute values as theme.css, recolored onto the native caption.
-        let (bg, text) = match icon_theme {
-            IconTheme::Dark => (colorref(20, 17, 14), colorref(169, 152, 138)),
-            IconTheme::Light => (colorref(249, 247, 243), colorref(126, 114, 102)),
+        // Same --paper value as theme.css, recolored onto the native caption.
+        let bg = match icon_theme {
+            IconTheme::Dark => colorref(20, 17, 14),
+            IconTheme::Light => colorref(249, 247, 243),
         };
-        w.set_title("").ok();
         if let Ok(hwnd) = w.hwnd() {
             unsafe {
                 let _ = DwmSetWindowAttribute(
@@ -139,10 +138,17 @@ pub(crate) fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Optio
                     &bg as *const _ as *const _,
                     std::mem::size_of::<COLORREF>() as u32,
                 );
+                // Match the title text color to the caption background instead of blanking the
+                // title string. Setting an empty title hides the caption text but also blanks
+                // the Taskbar/Alt+Tab label and the window's accessible name; this way the real
+                // title ("Verenu", from tauri.conf.json) stays intact for those, it's just
+                // visually invisible against the caption. Confirmed via screenshot this doesn't
+                // affect the minimize/maximize/close glyphs — Windows colors those independently
+                // based on the caption color's luminance, not DWMWA_TEXT_COLOR.
                 let _ = DwmSetWindowAttribute(
                     hwnd,
                     DWMWA_TEXT_COLOR,
-                    &text as *const _ as *const _,
+                    &bg as *const _ as *const _,
                     std::mem::size_of::<COLORREF>() as u32,
                 );
                 // Decouple the caption icon from the taskbar icon. A WS_SYSMENU window always
@@ -220,6 +226,9 @@ fn make_transparent_hicon(size: i32) -> isize {
 fn make_hicon(rgba: &[u8], size: i32) -> isize {
     use windows::Win32::UI::WindowsAndMessaging::CreateIcon;
     let size_usize = size as usize;
+    if rgba.len() < size_usize * size_usize * 4 {
+        return 0;
+    }
     let stride_bytes = size_usize.div_ceil(16) * 2; // 1bpp row, padded to a WORD
     let mut and_mask = vec![0_u8; stride_bytes * size_usize];
     let mut bgra = rgba.to_vec();
