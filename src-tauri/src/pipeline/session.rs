@@ -71,12 +71,17 @@ pub fn start_recording_session_ex(
     }
 
     let device = audio_config.device;
+    let use_default_input_device = device.is_none();
     let noise_reduction = audio_config.noise_reduction;
     let mute_audio = audio_config.mute_audio;
     let exclusive_mic = audio_config.exclusive_mic;
     let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
     let exclusive_mic_session_id =
-        if cfg!(target_os = "macos") && exclusive_mic && gain_override.is_none() {
+        if cfg!(target_os = "macos")
+            && exclusive_mic
+            && use_default_input_device
+            && gain_override.is_none()
+        {
             Some(crate::system::volume::register_session())
         } else {
             None
