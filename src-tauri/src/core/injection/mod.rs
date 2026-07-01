@@ -49,9 +49,27 @@ const MODIFIER_GAP_MS: u64 = 30;
 
 // Settle time after the paste (Ctrl+V) before restoring saved clipboard
 // formats - gives the target app time to read the clipboard before we
-// overwrite it with the original contents.
+// overwrite it with the original contents. `SendInput` only queues the
+// keystroke into the system input queue; it does not block until the target
+// window's message loop has actually processed it. Under CPU/GPU contention
+// (e.g. a local STT/LLM model still winding down on the same machine) that
+// processing can lag, and heavier editors (rich-text frameworks doing
+// paste-parsing/transaction work, not a plain textbox) take longer to read
+// the clipboard than a simple control does.
+//
+// Losing this race is not a cosmetic glitch: the target reads the clipboard
+// AFTER we've already restored it, so it pastes whatever the user's
+// clipboard held *before* dictation - silently, with no error - which can be
+// arbitrarily large/irrelevant content overwriting their actual selection
+// (observed in practice: a "ginormous" prior clipboard item pasted in place
+// of the transcription). The cost of waiting longer than necessary is a
+// fraction of a second of perceived latency; the cost of not waiting long
+// enough is silent data corruption in whatever the user was working on. That
+// asymmetry justifies a wide margin over a "usually enough" one - 80ms had
+// none, 150ms still weakly matched a real report of this exact failure, so
+// this doubles the margin again rather than inching it up.
 #[cfg(target_os = "windows")]
-const PASTE_SETTLE_MS: u64 = 80;
+const PASTE_SETTLE_MS: u64 = 300;
 
 #[cfg(test)]
 const SENTENCE_ENDERS: &[char] = &['.', '!', '?', '\n', '\r'];
