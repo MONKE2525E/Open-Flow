@@ -113,7 +113,12 @@ pub fn start_recording_session_ex(
             );
             Ok(())
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => {
+            if let Some(session_id) = exclusive_mic_session_id {
+                crate::system::volume::release_mic(session_id);
+            }
+            Err(e.to_string())
+        }
     }
 }
 

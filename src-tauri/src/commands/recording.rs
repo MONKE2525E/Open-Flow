@@ -206,16 +206,21 @@ pub async fn start_calibration_monitoring(
 pub async fn stop_calibration_monitoring(
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    let session = {
+    let (session, exclusive_mic_session_id) = {
         let mut st = lock_state(&state)?;
         let session = st.session.take();
-        st.exclusive_mic_session_id = None;
-        session
+        let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+        (session, exclusive_mic_session_id)
     };
     if let Some(s) = session {
         tauri::async_runtime::spawn_blocking(move || {
             let _ = s.stop();
+            if let Some(session_id) = exclusive_mic_session_id {
+                crate::system::volume::release_mic(session_id);
+            }
         });
+    } else if let Some(session_id) = exclusive_mic_session_id {
+        std::thread::spawn(move || crate::system::volume::release_mic(session_id));
     }
     Ok(())
 }
