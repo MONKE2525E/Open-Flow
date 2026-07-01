@@ -185,7 +185,20 @@
                   onclick={() => toggleLanguages(model.id)}
                 >
                   <span>{languageSummaryLabel(model)}</span>
-                  <span class="mini-chevron" class:is-open={areLanguagesExpanded(model.id)} aria-hidden="true"></span>
+                  <svg
+                    class:open={areLanguagesExpanded(model.id)}
+                    width="9"
+                    height="9"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
                 </button>
               {:else}
                 <span class="local-meta-langs">{model.supported_languages.join(', ')}</span>
@@ -257,8 +270,7 @@
     background: color-mix(in srgb, var(--paper) 30%, transparent);
   }
 
-  .chevron,
-  .mini-chevron {
+  .chevron {
     width: 8px;
     height: 8px;
     flex-shrink: 0;
@@ -268,9 +280,17 @@
     transition: transform 180ms ease;
   }
 
-  .chevron-open,
-  .mini-chevron.is-open {
+  .chevron-open {
     transform: rotate(225deg);
+  }
+
+  .local-meta-toggle svg {
+    flex-shrink: 0;
+    transition: transform 150ms;
+  }
+
+  .local-meta-toggle svg.open {
+    transform: rotate(180deg);
   }
 
   .head-left {
