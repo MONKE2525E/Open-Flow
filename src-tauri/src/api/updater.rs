@@ -400,6 +400,22 @@ mod tests {
         }
     }
 
+    // Regression guard for the security check in `is_authorized_release_asset_url`.
+    // The `url` crate does NOT percent-decode path segments, so the encoded-form
+    // traversal checks (`%2e`/`%2f`/`%5c`) are load-bearing, not redundant: the
+    // literal `'/'`/`'\\'`/`.`/`..` checks never see a `%2f` because it stays
+    // encoded. If a future url-crate version started decoding segments this test
+    // fails loudly, flagging that the encoded checks can be revisited.
+    #[test]
+    fn path_segments_preserve_percent_encoding() {
+        let parsed = reqwest::Url::parse(
+            "https://github.com/o/r/releases/download/v1/..%2f..%5cx%2e%2e",
+        )
+        .unwrap();
+        let segments: Vec<&str> = parsed.path_segments().unwrap().collect();
+        assert_eq!(segments.last().copied(), Some("..%2f..%5cx%2e%2e"));
+    }
+
     #[test]
     fn unsupported_target_skips_updates() {
         let assets = [asset("Verenu_0.15.0_x64-setup.exe")];

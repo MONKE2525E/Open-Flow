@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting
+    url: https://github.com/MONKE2525E/Verenu/blob/master/docs/TROUBLESHOOTING.md
+    about: Check install, permissions, dictation, and development troubleshooting first.
+  - name: Security policy
+    url: https://github.com/MONKE2525E/Verenu/blob/master/docs/SECURITY.md
+    about: Read this before reporting security-sensitive issues.

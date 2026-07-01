@@ -1,7 +1,9 @@
 pub mod apps;
+pub mod connectivity;
 pub mod logger;
 #[cfg(target_os = "macos")]
 pub mod mac_app;
+pub mod media_control;
 pub mod memory;
 pub mod number_parser;
 pub mod text;

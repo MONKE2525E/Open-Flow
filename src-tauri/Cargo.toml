@@ -1,6 +1,6 @@
 [package]
 name = "verenu"
-version = "0.14.1"
+version = "0.15.0"
 description = "Verenu — local-first AI dictation"
 authors = ["Verenu Team"]
 edition = "2021"
@@ -26,6 +26,7 @@ tokio       = { version = "1", features = ["rt", "rt-multi-thread", "macros", "s
 reqwest     = { version = "0.12", default-features = false, features = ["json", "multipart", "native-tls", "charset"] }
 bytes       = "1"
 cpal        = "0.15"
+rodio       = { version = "0.20", default-features = false }
 hound       = "3.5"
 nnnoiseless = "0.4"
 base64      = "0.22"
@@ -48,10 +49,13 @@ windows = { version = "0.61", features = [
   "Win32_System_Registry",
   "Win32_Media_Audio",
   "Win32_Media_Audio_Endpoints",
+  "Media_Control",
   "Win32_System_Com",
   "Win32_UI_Accessibility",
   "Win32_Storage_FileSystem",
   "Win32_Security_Credentials",
+  "Win32_Networking_NetworkListManager",
+  "Win32_Graphics_Dwm",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -186,16 +186,15 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
         }
     }
     if user_version < 4 {
-        conn.execute_batch("BEGIN;")?;
-        if let Err(err) = (|| -> Result<()> {
+        run_migration(&mut conn, |conn| {
             ensure_table_column(
-                &conn,
+                conn,
                 "dictionary",
                 "confidence_tier",
                 "ALTER TABLE dictionary ADD COLUMN confidence_tier TEXT NOT NULL DEFAULT 'low';",
             )?;
             ensure_table_column(
-                &conn,
+                conn,
                 "dictionary",
                 "last_seen_at",
                 "ALTER TABLE dictionary ADD COLUMN last_seen_at DATETIME;",
@@ -230,53 +229,34 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
                  PRAGMA user_version = 4;",
             )?;
             Ok(())
-        })() {
-            let _ = conn.execute_batch("ROLLBACK;");
-            return Err(err);
-        }
-        conn.execute_batch("COMMIT;")?;
+        })?;
     }
     if user_version < 5 {
-        conn.execute_batch("BEGIN;")?;
-        if let Err(err) = (|| -> Result<()> {
-            ensure_cleanup_cache_schema(&conn)?;
+        run_migration(&mut conn, |conn| {
+            ensure_cleanup_cache_schema(conn)?;
             conn.execute_batch("PRAGMA user_version = 5;")?;
             Ok(())
-        })() {
-            let _ = conn.execute_batch("ROLLBACK;");
-            return Err(err);
-        }
-        conn.execute_batch("COMMIT;")?;
+        })?;
     }
     if user_version < 6 {
-        conn.execute_batch("BEGIN;")?;
-        if let Err(err) = (|| -> Result<()> {
-            ensure_cleanup_cache_schema(&conn)?;
+        run_migration(&mut conn, |conn| {
+            ensure_cleanup_cache_schema(conn)?;
             conn.execute_batch("PRAGMA user_version = 6;")?;
             Ok(())
-        })() {
-            let _ = conn.execute_batch("ROLLBACK;");
-            return Err(err);
-        }
-        conn.execute_batch("COMMIT;")?;
+        })?;
     }
     if user_version < 7 {
-        conn.execute_batch("BEGIN;")?;
-        if let Err(err) = (|| -> Result<()> {
+        run_migration(&mut conn, |conn| {
             ensure_table_column(
-                &conn,
+                conn,
                 "transcriptions",
                 "spoken_words",
                 "ALTER TABLE transcriptions ADD COLUMN spoken_words INTEGER;",
             )?;
-            backfill_spoken_words(&conn)?;
+            backfill_spoken_words(conn)?;
             conn.execute_batch("PRAGMA user_version = 7;")?;
             Ok(())
-        })() {
-            let _ = conn.execute_batch("ROLLBACK;");
-            return Err(err);
-        }
-        conn.execute_batch("COMMIT;")?;
+        })?;
     }
     if user_version < 8 {
         let res = conn.execute_batch(
@@ -336,6 +316,13 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
     }
 
     Ok(Arc::new(Mutex::new(conn)))
+}
+
+fn run_migration(conn: &mut Connection, f: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
+    let tx = conn.transaction()?;
+    f(&tx)?;
+    tx.commit()?;
+    Ok(())
 }
 
 pub fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {

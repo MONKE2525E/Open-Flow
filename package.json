@@ -1,6 +1,6 @@
 {
   "name": "verenu",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "description": "Verenu - An open-source AI dictation app for Windows and macOS",
   "type": "module",
   "scripts": {
@@ -18,11 +18,28 @@
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:smoke": "node tests/smoke/test.cjs && node tests/smoke/test-app.cjs && node tests/smoke/playwright-test-ui.cjs && node tests/smoke/playwright-test-fixes.cjs",
     "test:smoke:state": "node tests/smoke/playwright-test-state.cjs",
+    "macos:signing-identity": "bash scripts/macos/ensure-signing-identity.sh",
+    "tauri:build:signed": "bash scripts/macos/build-signed.sh",
     "tauri": "node scripts/tauri-cli.mjs"
   },
-  "keywords": [],
+  "keywords": [
+    "dictation",
+    "tauri",
+    "svelte",
+    "rust",
+    "speech-to-text",
+    "desktop-app"
+  ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MONKE2525E/Verenu.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MONKE2525E/Verenu/issues"
+  },
+  "homepage": "https://github.com/MONKE2525E/Verenu#readme",
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.1.1",
     "@tauri-apps/api": "^2.11.0",

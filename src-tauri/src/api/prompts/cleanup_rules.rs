@@ -7,9 +7,9 @@ apply the formatting.";
 fn role_line(intensity: &str) -> &'static str {
     match intensity {
         "none" => "You are a transcription mirror for <raw_dictation>.",
-        "light" => "You clean light speech noise in <raw_dictation>.",
-        "high" => "You aggressively compress and clarify <raw_dictation>.",
-        _ => "You clean and tighten <raw_dictation> while preserving meaning.",
+        "light" => "You make a minimal edit to <raw_dictation>, removing only speech artifacts.",
+        "high" => "You rewrite <raw_dictation> into the shortest result that leads with the main point.",
+        _ => "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent.",
     }
 }
 
@@ -29,36 +29,51 @@ fn intensity_rules(
                 "CLEANUP: Return input unchanged, character-for-character.".to_string()
             }
         }
-        ("light", PromptTier::Short) => {
-            "CLEANUP: Remove filler words (um, uh, like, you know) and immediate repeats only."
-                .to_string()
-        }
         ("light", _) => {
-            "CLEANUP: Remove filler words, false starts, and immediate word repeats only. Keep all real content."
+            "CLEANUP (LIGHT): MUST remove filler words (um, uh, like, you know), immediate duplicated words, and immediate false starts. \
+            MUST NOT summarize, compress, reorder, or rewrite personality away. \
+            MUST preserve sentence structure and almost all content."
                 .to_string()
         }
         ("high", PromptTier::Short) => {
-            "CLEANUP: Rewrite aggressively to a short clear result. Remove filler, hedges, repeated ideas, false starts, and circular phrasing."
+            "CLEANUP (DIRECT): MUST rewrite to the shortest clear version and lead with the main point. Aim for roughly half the input words or fewer (unless already concise). \
+            MUST cut filler, false starts, circular phrasing, lead-ins, scene-setting, context the point does not need, hedges, repeated ideas, throat-clearing, and qualifiers. \
+            MUST keep concrete facts, names, and numbers. \
+            MUST NOT invent content."
                 .to_string()
         }
         ("high", PromptTier::Medium) => {
-            "CLEANUP: Rewrite to concise meaning. Target roughly 30-50% of input words. Remove filler words (um, uh, like, you know), hedges (I think, maybe, probably), repeated ideas, false starts, and circular phrasing."
+            "CLEANUP (DIRECT): MUST rewrite to the shortest clear version and lead with the main point. Target roughly 30-50% of input words. \
+            MUST cut filler (um, uh, like, you know), lead-ins, scene-setting, context the point does not need, hedges (I think, maybe, probably), repeated ideas, false starts, circular phrasing, throat-clearing, and qualifiers. \
+            MUST keep concrete facts, names, and numbers. \
+            MUST NOT invent content."
                 .to_string()
         }
         ("high", PromptTier::Detailed) => {
-            "CLEANUP: Rewrite aggressively and keep only core meaning. Target roughly 30-50% of input words. Mandatory cuts: filler words, hedges, repeated ideas, false starts, and circular phrasing. Merge or reorder sentences when it improves clarity."
+            "CLEANUP (DIRECT): MUST rewrite aggressively to the core and lead with the main point. Target roughly 30-50% of input words. \
+            MUST cut filler, lead-ins, scene-setting, context the point does not need, hedges, repeated ideas, false starts, circular phrasing, throat-clearing, and qualifiers. MAY merge or reorder sentences so the key point comes first. \
+            MUST keep concrete facts, names, and numbers. \
+            MUST NOT invent content."
                 .to_string()
         }
         (_, PromptTier::Short) => {
-            "CLEANUP: Remove filler and repetition; keep intent; produce a shorter, clearer sentence."
+            "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling, and obvious speech artifacts, and tighten wordy or roundabout phrasing into clean, direct sentences. \
+            MUST keep the meaning, key detail, and speaker intent. \
+            MUST NOT drop specifics or rewrite into a terse summary."
                 .to_string()
         }
         (_, PromptTier::Medium) => {
-            "CLEANUP: Remove filler, repeated ideas, and circular phrasing. You may reorder or merge sentences for clarity. Keep real detail."
+            "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow. \
+            MAY lightly merge or reorder sentences when clarity improves. \
+            MUST preserve detail and speaker intent. \
+            MUST NOT aggressively compress or drop specifics."
                 .to_string()
         }
         (_, PromptTier::Detailed) => {
-            "CLEANUP: Remove filler, repeated ideas, and circular phrasing. Restructure as needed for clarity while preserving meaning and important detail."
+            "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow. \
+            MAY restructure for clarity while preserving meaning. \
+            MUST preserve detail, important specifics, and speaker intent. \
+            MUST NOT aggressively compress."
                 .to_string()
         }
     };
@@ -78,7 +93,8 @@ fn tone_rules(profile: &str) -> &'static str {
             "TONE: Formal. Full sentences, proper capitalization, complete punctuation, expanded contractions."
         }
         "very_casual" => {
-            "TONE: Very casual. Mostly lowercase, minimal punctuation, keep contractions."
+            "TONE: Very casual. Mostly lowercase, minimal punctuation, keep contractions. \
+            MUST affect voice and capitalization only; MUST NOT alter the level of content pruning or detail preservation specified by the cleanup rules."
         }
         _ => {
             "TONE: Casual. Natural conversational phrasing, sentence capitalization, light punctuation."

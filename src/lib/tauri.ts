@@ -73,6 +73,7 @@ const defaultSettings: Record<string, unknown> = {
   app_mappings: [],
   noise_reduction: true,
   mute_audio: false,
+  pause_media_during_dictation: false,
   autostart_enabled: false,
   mic_gain: 3.5,
   app_context_hint: false,

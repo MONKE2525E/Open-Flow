@@ -132,7 +132,16 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
 
     if OpenClipboard(None).is_ok() {
         EmptyClipboard().ok();
-        let hg = GlobalAlloc(GMEM_MOVEABLE, data.len() * 2)?;
+        let hg = match GlobalAlloc(GMEM_MOVEABLE, data.len() * 2) {
+            Ok(hg) => hg,
+            Err(e) => {
+                // Allocation failed after the clipboard was opened: release it
+                // before erroring, otherwise the system clipboard stays locked
+                // for every other process until we exit.
+                CloseClipboard().ok();
+                return Err(anyhow::anyhow!("GlobalAlloc failed: {e}"));
+            }
+        };
         let ptr = GlobalLock(hg) as *mut u16;
         if ptr.is_null() {
             // GlobalLock failed: free the block we own and release the

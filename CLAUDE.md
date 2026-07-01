@@ -4,7 +4,7 @@
 - Github Repo: https://github.com/MONKE2525E/Verenu
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
 - docs/ROADMAP.md keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
-- currently working towards Verenu 0.14.1.
+- currently working towards Verenu 0.15.0.
 - Always add yourself as a co-author  in all commits you make e.g @Claude, @Codex, @google-antigravity, etc but dont add a note at the bottom of the PR description
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -183,7 +183,7 @@ tests/
   manual/                   # Manual test scripts (hotkey, layout bounds) — not automated
 ```
 
-The pill window is created at runtime by `create_pill_if_needed()` in `pipeline/mod.rs` (`WebviewWindowBuilder`, always-on-top, transparent, decorations off, initial size 140x44) — it is resized per recording state rather than recreated, so don't look for its dimensions in `tauri.conf.json`.
+The pill window is created at runtime by `create_pill_if_needed()` in `pipeline/mod.rs` (`WebviewWindowBuilder`, always-on-top, transparent, decorations off, initial size 380x44) — it is resized per recording state rather than recreated, so don't look for its dimensions in `tauri.conf.json`.
 
 ## Core Data Flow
 
@@ -336,6 +336,17 @@ Version must be updated in exactly three files simultaneously, or the build will
 3. `src-tauri/Cargo.toml` (Rust package version)
 
 The frontend reads the version dynamically via `@tauri-apps/api/app` `getVersion()` — no hardcoded version strings in Svelte files. See [`Agent-Skills/Updating_version.md`](Agent-Skills/Updating_version.md) for the exact procedure.
+
+### Release installers — tracked under `/installers`
+Built release installers are committed to the repo under `installers/<version>/` (e.g. `installers/0.15.0/`) so anyone can download a release straight from the file tree, in addition to the GitHub Release. This intentionally overrides the old "ship only via Releases" rule — only the Rust build tree (`src-tauri/target/`) stays gitignored, not these.
+
+Each version folder contains all four installers plus a `SHA256SUMS.txt`:
+- `Verenu_<version>_x64-setup.exe` (Windows NSIS)
+- `Verenu_<version>_x64_en-US.msi` (Windows MSI)
+- `Verenu_<version>_Apple_Silicon.dmg` (macOS arm64)
+- `Verenu_<version>_Intel.dmg` (macOS Intel)
+
+When cutting a release: create `installers/<version>/`, copy the four installers in (Windows from a local `npm run tauri build`, macOS DMGs from the `build-installers.yml` CI run), regenerate `SHA256SUMS.txt` (`sha256sum *.exe *.msi *.dmg > SHA256SUMS.txt`), and commit alongside the version bump. The hashes must match the files attached to the GitHub Release and the VirusTotal entries in the release notes. See [`installers/README.md`](installers/README.md) for layout and verification.
 
 ### Smoke test contracts
 Files in `tests/smoke/` are a frozen contract — **never edit them**. Fix the app code to satisfy the tests, not the reverse. CSS classes that tests assert by exact name:

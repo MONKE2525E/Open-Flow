@@ -1,7 +1,7 @@
 //! Microphone + recording/calibration session control commands.
 
 use super::*;
-use crate::core::window_geometry::{capture_webview_center, WindowTarget};
+use crate::core::window_geometry::{WindowTarget, capture_webview_center};
 
 fn lock_state<'a>(
     state: &'a tauri::State<'_, SharedState>,
@@ -64,8 +64,11 @@ pub async fn start_input_recording(
             "recording",
             false,
             None,
-            true,
-            false,
+            pipeline::RecordingStartOptions {
+                show_recording_pill: true,
+                emit_globally: false,
+                start_cue_delay_ms: None,
+            },
         )
     })
     .await;
@@ -117,8 +120,15 @@ pub async fn start_setup_try_recording(
             "recording",
             false,
             None,
-            true,
-            false,
+            pipeline::RecordingStartOptions {
+                show_recording_pill: true,
+                emit_globally: false,
+                start_cue_delay_ms: if pipeline::start_stop_sounds_enabled(&app_clone) {
+                    Some(0)
+                } else {
+                    None
+                },
+            },
         )
     })
     .await;
@@ -187,8 +197,11 @@ pub async fn start_calibration_monitoring(
             "calibration",
             false,
             Some(1.0),
-            false,
-            true,
+            pipeline::RecordingStartOptions {
+                show_recording_pill: false,
+                emit_globally: true,
+                start_cue_delay_ms: None,
+            },
         )
     })
     .await;
@@ -257,12 +270,18 @@ pub async fn stop_recording(
             if let Some(session_id) = exclusive_mic_session_id {
                 crate::system::volume::release_mic(session_id);
             }
+            crate::media::sound::coordinated_unmute();
+            crate::system::media_control::end_dictation_media_pause();
         });
-        tauri::async_runtime::spawn_blocking(crate::system::volume::unmute);
     } else if let Some(session_id) = exclusive_mic_session_id {
         tauri::async_runtime::spawn_blocking(move || {
-            crate::system::volume::release_mic(session_id)
+            crate::system::volume::release_mic(session_id);
+            crate::media::sound::coordinated_unmute();
+            crate::system::media_control::end_dictation_media_pause();
         });
+    } else {
+        crate::media::sound::coordinated_unmute();
+        crate::system::media_control::end_dictation_media_pause();
     }
     pipeline::hide_pill(&app);
     Ok(())
@@ -275,7 +294,15 @@ pub async fn stop_handless_mode(
 ) -> Result<(), String> {
     crate::core::hotkey::set_handless_active(false);
     crate::core::hotkey::reset_chord_state();
-    lock_state(&state)?.handless = false;
-    tauri::async_runtime::spawn(pipeline::run_pipeline(app, state.inner().clone()));
+    let has_session = {
+        let mut st = lock_state(&state)?;
+        st.handless = false;
+        st.session.is_some()
+    };
+    if has_session {
+        tauri::async_runtime::spawn(pipeline::run_pipeline(app, state.inner().clone()));
+    } else {
+        crate::system::media_control::end_dictation_media_pause();
+    }
     Ok(())
 }
