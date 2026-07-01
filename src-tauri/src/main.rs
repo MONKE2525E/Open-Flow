@@ -114,6 +114,9 @@ fn main() {
     std::fs::create_dir_all(app_data_dir()).ok();
     let db_handle: DbHandle = db::open(app_db_path()).expect("failed to open database");
     let _ = db::cleanup_cache_prune_expired(&db_handle);
+    if let Err(e) = db::seed_default_dictionary_entries(&db_handle) {
+        log::warn!("failed to seed default dictionary entries: {e}");
+    }
     let local_cleanup_manager = crate::local_llm::LocalLlmManager::new();
     let local_transcription_manager = crate::local_stt::LocalTranscriptionManager::new();
 

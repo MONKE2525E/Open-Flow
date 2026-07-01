@@ -91,6 +91,9 @@ CREATE INDEX IF NOT EXISTS idx_cleanup_cache_expires_at
   ON cleanup_cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
   ON cleanup_cache(last_hit_at);
+CREATE TABLE IF NOT EXISTS seeded_defaults (
+  key TEXT PRIMARY KEY
+);
 ";
 
 pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
