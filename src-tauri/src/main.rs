@@ -6,6 +6,8 @@ mod app_tray;
 mod commands;
 mod core;
 mod data;
+mod local_llm;
+mod local_stt;
 mod media;
 mod pipeline;
 mod system;
@@ -54,8 +56,15 @@ fn hide_main_window(app: &AppHandle) {
 /// [`app_db_path`]). Do NOT use Tauri's `app.path().app_data_dir()` for the
 /// database: that resolves against the bundle identifier and is not guaranteed
 /// to equal this path, so backups would silently target a different file.
+fn app_data_dir_override() -> Option<std::path::PathBuf> {
+    std::env::var_os("VERENU_APP_DATA_DIR_OVERRIDE").map(std::path::PathBuf::from)
+}
+
 #[cfg(windows)]
 pub(crate) fn app_data_dir() -> std::path::PathBuf {
+    if let Some(path) = app_data_dir_override() {
+        return path;
+    }
     std::env::var("APPDATA")
         .map(|p| std::path::PathBuf::from(p).join("Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -63,6 +72,9 @@ pub(crate) fn app_data_dir() -> std::path::PathBuf {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn app_data_dir() -> std::path::PathBuf {
+    if let Some(path) = app_data_dir_override() {
+        return path;
+    }
     std::env::var("HOME")
         .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -70,6 +82,9 @@ pub(crate) fn app_data_dir() -> std::path::PathBuf {
 
 #[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn app_data_dir() -> std::path::PathBuf {
+    if let Some(path) = app_data_dir_override() {
+        return path;
+    }
     std::env::var("HOME")
         .map(|h| std::path::PathBuf::from(h).join(".config/Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -99,6 +114,8 @@ fn main() {
     std::fs::create_dir_all(app_data_dir()).ok();
     let db_handle: DbHandle = db::open(app_db_path()).expect("failed to open database");
     let _ = db::cleanup_cache_prune_expired(&db_handle);
+    let local_cleanup_manager = crate::local_llm::LocalLlmManager::new();
+    let local_transcription_manager = crate::local_stt::LocalTranscriptionManager::new();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
@@ -108,6 +125,8 @@ fn main() {
         }))
         .manage(shared.clone())
         .manage(db_handle.clone())
+        .manage(local_cleanup_manager.clone())
+        .manage(local_transcription_manager.clone())
         .setup(move |app| {
             crate::system::logger::init(app.handle())?;
             let settings = crate::data::store::SettingsHandle::open(app.handle())
@@ -188,6 +207,60 @@ fn main() {
                 );
             }
             crate::pipeline::show_pill(app.handle(), "idle");
+            let local_stt_manager = local_transcription_manager.clone();
+            let local_llm_manager = local_cleanup_manager.clone();
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    if local_stt_manager
+                        .shutdown_signal
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                        || local_llm_manager
+                            .shutdown_signal
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        break;
+                    }
+                    let _ = local_stt_manager.unload_if_idle(&app_handle);
+                    let _ = local_llm_manager.unload_if_idle(&app_handle);
+
+                    // Proactive safety unload: don't wait out the configured
+                    // idle timeout if the system is genuinely low on RAM or
+                    // (NVIDIA) VRAM right now — e.g. launching a demanding
+                    // game shouldn't have to wait 15 minutes for Verenu to
+                    // give back memory its local models are holding.
+                    let stt_loaded = local_stt_manager
+                        .current_model_id
+                        .lock()
+                        .map(|guard| guard.is_some())
+                        .unwrap_or(false);
+                    let llm_loaded = local_llm_manager
+                        .current_model_id
+                        .lock()
+                        .map(|guard| guard.is_some())
+                        .unwrap_or(false);
+                    if stt_loaded || llm_loaded {
+                        // detect_resource_pressure() does blocking process
+                        // I/O (bounded by its own internal timeout) — run it
+                        // off the async worker thread so a slow/wedged
+                        // nvidia-smi can never stall this loop or other
+                        // tasks sharing the runtime.
+                        let pressure = tauri::async_runtime::spawn_blocking(
+                            crate::system::memory::detect_resource_pressure,
+                        )
+                        .await
+                        .unwrap_or(None);
+                        if let Some(reason) = pressure {
+                            log::warn!(
+                                "local models: system resource pressure detected ({reason}), unloading proactively"
+                            );
+                            local_stt_manager.unload_for_resource_pressure(&app_handle);
+                            local_llm_manager.unload_for_resource_pressure(&app_handle);
+                        }
+                    }
+                }
+            });
 
             // Keep the main UI visible on startup so normal launches don't
             // feel like the app disappeared into the tray.
@@ -249,6 +322,22 @@ fn main() {
             commands::save_setting,
             commands::get_setting,
             commands::get_all_settings,
+            commands::list_local_stt_models,
+            commands::list_local_llm_models,
+            commands::download_local_stt_model,
+            commands::download_local_llm_model,
+            commands::cancel_local_stt_model_download,
+            commands::cancel_local_llm_model_download,
+            commands::delete_local_stt_model,
+            commands::delete_local_llm_model,
+            commands::open_local_stt_models_folder,
+            commands::open_local_models_folder,
+            commands::get_local_transcription_state,
+            commands::get_local_llm_state,
+            commands::get_local_llm_runtime_info,
+            commands::download_local_llm_runtime,
+            commands::cancel_local_llm_runtime_download,
+            commands::delete_local_llm_runtime,
             commands::set_autostart,
             commands::check_accessibility_permission,
             commands::get_macos_permission_snapshot,
@@ -314,6 +403,16 @@ fn main() {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {
                 show_main_window(_app);
+            }
+            // Local cleanup runs llama-server.exe as a real child OS process
+            // (unlike local_stt, which is in-process). Child processes are
+            // not automatically killed when their parent exits on Windows —
+            // without this, quitting Verenu while a local cleanup model is
+            // loaded would orphan llama-server.exe, leaving it running
+            // indefinitely and holding the loaded model's RAM/VRAM.
+            if let tauri::RunEvent::Exit = _event {
+                _app.state::<crate::local_llm::LocalLlmManager>()
+                    .unload(_app);
             }
         });
 }

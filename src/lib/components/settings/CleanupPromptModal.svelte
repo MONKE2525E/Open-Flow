@@ -35,6 +35,7 @@
     passed: boolean;
     static_warnings: string[];
     live_results: PromptTestCaseResult[];
+    live_warnings: string[];
   }
 
   type TestStatus =
@@ -67,7 +68,13 @@
   const model = $derived(cleanupPromptEditor.model!);
 
   const providerLabel = $derived(
-    provider === 'groq' ? 'Groq' : provider === 'openai' ? 'OpenAI' : 'Gemini'
+    provider === 'groq'
+      ? 'Groq'
+      : provider === 'openai'
+        ? 'OpenAI'
+        : provider === 'local'
+          ? 'Local'
+          : 'Gemini'
   );
 
   const statusKind = $derived((): 'clean' | 'warn' | 'error' | 'testing' | 'passed' => {
@@ -264,7 +271,11 @@
   );
   const allErrors = $derived(
     testState.status === 'failed' && testState.report
-      ? [...testState.report.static_warnings, ...failedLiveResults.map((r) => `${r.name}: ${r.detail}`)]
+      ? [
+          ...testState.report.static_warnings,
+          ...testState.report.live_warnings,
+          ...failedLiveResults.map((r) => `${r.name}: ${r.detail}`),
+        ]
       : testState.status === 'failed' && testState.error
         ? [testState.error]
         : liveWarnings

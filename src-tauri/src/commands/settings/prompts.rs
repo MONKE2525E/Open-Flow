@@ -13,6 +13,7 @@ pub struct PromptTestReport {
     pub passed: bool,
     pub static_warnings: Vec<String>,
     pub live_results: Vec<PromptTestCaseResult>,
+    pub live_warnings: Vec<String>,
 }
 
 /// (case name, dictation input) pairs used by [`test_cleanup_prompt`] to probe
@@ -39,11 +40,72 @@ pub fn lint_cleanup_prompt(template: String) -> Vec<String> {
 
 #[tauri::command]
 pub async fn test_cleanup_prompt(
+    app: AppHandle,
     provider: String,
     model: String,
     template: String,
 ) -> Result<PromptTestReport, String> {
     let static_warnings = prompts::lint_cleanup_template(&template);
+    let mut live_warnings = Vec::new();
+
+    if provider == crate::data::store::LOCAL {
+        let root = crate::local_llm::LocalLlmManager::models_root();
+        let is_downloaded = crate::local_llm::model::manifest_by_id(&model)
+            .map(|manifest| manifest.is_downloaded(&root))
+            .unwrap_or(false);
+
+        if !is_downloaded {
+            live_warnings.push(
+                "Model not installed. Saved after static lint only.".to_string(),
+            );
+            return Ok(PromptTestReport {
+                passed: static_warnings.is_empty(),
+                static_warnings,
+                live_results: Vec::new(),
+                live_warnings,
+            });
+        }
+
+        let manager = app
+            .state::<crate::local_llm::LocalLlmManager>()
+            .inner()
+            .clone();
+        let mut live_results = Vec::with_capacity(PROMPT_TEST_CASES.len());
+        for &(name, input) in PROMPT_TEST_CASES {
+            let prompt = prompts::get_cleanup_prompt_with_extras(
+                &provider,
+                &model,
+                "casual",
+                "medium",
+                "",
+                None,
+                input,
+                Some(template.as_str()),
+            );
+            let max_tokens = prompts::cleanup_max_output_tokens("medium", input);
+            let outcome = manager
+                .cleanup_with_prompt(&app, &model, input, &prompt, max_tokens)
+                .await;
+
+            let (passed, detail) = match outcome {
+                Ok(output) => evaluate_prompt_test_case(name, &output),
+                Err(e) => (false, format!("Request failed: {e}")),
+            };
+            live_results.push(PromptTestCaseResult {
+                name: name.to_string(),
+                passed,
+                detail,
+            });
+        }
+
+        let passed = static_warnings.is_empty() && live_results.iter().all(|r| r.passed);
+        return Ok(PromptTestReport {
+            passed,
+            static_warnings,
+            live_results,
+            live_warnings,
+        });
+    }
 
     let key_provider = provider.clone();
     let key = run_blocking("test_cleanup_prompt", move || {
@@ -89,6 +151,7 @@ pub async fn test_cleanup_prompt(
         passed,
         static_warnings,
         live_results,
+        live_warnings,
     })
 }
 

@@ -13,6 +13,8 @@ pub(crate) use crate::DbHandle;
 
 mod history;
 mod library;
+mod local_llm;
+mod local_stt;
 mod permissions;
 mod recording;
 mod settings;
@@ -35,6 +37,8 @@ pub(crate) fn db_state(app: &AppHandle) -> DbHandle {
 
 pub use history::*;
 pub use library::*;
+pub use local_llm::*;
+pub use local_stt::*;
 pub use permissions::*;
 pub use recording::*;
 pub use settings::*;

@@ -19,16 +19,16 @@
   let tone = $state('casual');
 
   const tabs = [
-    { id: 'cleanup', label: 'Auto-cleanup', pill: '' },
+    { id: 'cleanup', label: 'Cleanup', pill: '' },
     { id: 'personal', label: 'Personal Tone', pill: '' },
     { id: 'apps', label: 'App Mappings', pill: 'New' },
   ];
 
   const cleanupCards = [
-    { id: 'none', name: 'Verbatim', desc: 'Exactly what you said, word for word.', sample: "so um i was thinking like we should probably leave a bit earlier you know cause there's gonna be traffic i think" },
+    { id: 'none', name: 'Off', desc: 'Skip cleanup and keep the raw transcript.', sample: "so um i was thinking like we should probably leave a bit earlier you know cause there's gonna be traffic i think" },
     { id: 'light', name: 'Light', desc: 'Removes filler words, nothing else.', sample: "i was thinking we should probably leave a bit earlier, cause there's gonna be traffic i think" },
     { id: 'medium', name: 'Medium', desc: 'Cleans it up, keeps your words.', sample: "I think we should leave a bit earlier, there's going to be traffic." },
-    { id: 'high', name: 'Direct', desc: 'Rewrites for max brevity.', sample: 'Leave early. Traffic.' },
+    { id: 'high', name: 'Strong', desc: 'Rewrites more aggressively for brevity.', sample: 'Leave early. Traffic.' },
   ];
 
   const personalCards = [
@@ -99,7 +99,7 @@
         out:pageSwap={{ axis: 'x', distance: -tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.base + 40) }}
       >
         {#if tab === 'cleanup'}
-          <p class="style-intro">Auto-cleanup runs on every dictation. <span>Choose how much rewriting Verenu does.</span></p>
+          <p class="style-intro">Cleanup runs after transcription unless it is turned Off. <span>Choose how much rewriting Verenu does.</span></p>
           <div class="style-grid four">
             {#each cleanupCards as c}
               <button

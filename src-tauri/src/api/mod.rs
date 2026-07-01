@@ -13,6 +13,7 @@ pub enum ProviderId {
     Groq,
     OpenAI,
     Google,
+    Local,
 }
 
 impl ProviderId {
@@ -20,6 +21,7 @@ impl ProviderId {
         match value {
             "openai" => Self::OpenAI,
             "google" => Self::Google,
+            "local" => Self::Local,
             _ => Self::Groq,
         }
     }
@@ -29,6 +31,7 @@ impl ProviderId {
             Self::Groq => "groq",
             Self::OpenAI => "openai",
             Self::Google => "google",
+            Self::Local => "local",
         }
     }
 
@@ -37,6 +40,7 @@ impl ProviderId {
             Self::Groq => "Groq",
             Self::OpenAI => "OpenAI",
             Self::Google => "Google",
+            Self::Local => "Local",
         }
     }
 
@@ -45,6 +49,7 @@ impl ProviderId {
             Self::Groq => Some("https://api.groq.com/openai/v1/audio/transcriptions"),
             Self::OpenAI => Some("https://api.openai.com/v1/audio/transcriptions"),
             Self::Google => None,
+            Self::Local => None,
         }
     }
 
@@ -53,6 +58,7 @@ impl ProviderId {
             Self::Groq => Some("https://api.groq.com/openai/v1/chat/completions"),
             Self::OpenAI => Some("https://api.openai.com/v1/chat/completions"),
             Self::Google => None,
+            Self::Local => None,
         }
     }
 }

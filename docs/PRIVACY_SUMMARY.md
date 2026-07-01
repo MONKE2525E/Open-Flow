@@ -12,7 +12,7 @@ Verenu doesn't run its own servers, doesn't have an account system, and doesn't 
 
 ## What leaves your device
 
-- **Recorded audio** goes to the transcription provider you chose when you finish a dictation
+- **Recorded audio** goes to the transcription provider you chose when you finish a dictation unless transcription is local
 - **Raw transcription text** goes to your chosen cleanup provider if cleanup is enabled
 - **Cleanup context** goes along with cleanup requests, including snippet instructions, cleanup settings, and model metadata
 - **Active app context** leaves your device only if you've enabled app-context hints
@@ -21,6 +21,8 @@ Verenu doesn't run its own servers, doesn't have an account system, and doesn't 
 ## One important caveat
 
 Once your audio or text reaches a third-party AI provider like Groq, OpenAI, or Google, that provider's own retention and privacy policies apply. Verenu has no control over what happens on their end.
+
+If you want the strictest local path today, use local transcription with `Cleanup: Off`. Local transcription with cloud cleanup still sends transcript text to the cleanup provider.
 
 ## Want the full breakdown?
 

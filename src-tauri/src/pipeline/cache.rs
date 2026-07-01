@@ -75,12 +75,9 @@ pub(super) fn should_run_cleanup_llm(
     has_cleanup_key: bool,
     no_pure_expansion: bool,
     cleanup_intensity: &str,
-    profile: &str,
+    _profile: &str,
 ) -> bool {
-    cleanup_enabled
-        && has_cleanup_key
-        && no_pure_expansion
-        && (cleanup_intensity != "none" || profile == "formal")
+    cleanup_enabled && has_cleanup_key && no_pure_expansion && cleanup_intensity != "none"
 }
 
 pub(super) fn style_scoped_cleanup_cache_key(

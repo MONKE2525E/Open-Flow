@@ -61,13 +61,16 @@ Import and restore paths validate supported setting values and reject oversized 
 
 ### Audio
 
-When you finish a dictation, Verenu sends recorded audio to the transcription provider you selected.
+When you finish a dictation, Verenu either transcribes audio locally or sends recorded audio to the transcription provider you selected.
 
 That can be:
 
+- Local Parakeet V3
 - Groq
 - OpenAI
 - Google
+
+If transcription is local, audio stays on the device after the model download.
 
 ### Text sent to cleanup models
 
@@ -79,7 +82,7 @@ After transcription, Verenu can send text to a cleanup model so it can:
 - apply snippet instructions
 - apply tone or cleanup intensity
 
-That means raw transcription text leaves your device when cleanup is enabled.
+That means raw transcription text leaves your device when cleanup is enabled, including when transcription itself ran locally.
 
 ### Optional context
 
@@ -129,7 +132,9 @@ That said, once data is sent to a third-party AI provider, that provider's reten
 | Feature | Stays local | Leaves device |
 | --- | --- | --- |
 | Hold-to-record audio capture | audio before release | nothing until transcription starts |
-| Transcription | local capture state | audio to selected transcription provider |
+| Local transcription + Cleanup Off | audio, transcript, settings, and history | nothing after the model download |
+| Local transcription + cloud cleanup | audio, local model, local capture state | transcript text and cleanup context to selected cleanup provider |
+| Cloud transcription | local capture state | audio to selected transcription provider |
 | Cleanup | local settings and local cache | raw transcription text and cleanup context to selected cleanup provider |
 | Dictionary and snippets | SQLite | nothing by default |
 | Auto-learn | local monitoring data and promoted entries | nothing by default |
@@ -158,6 +163,7 @@ If you contribute code that changes any of the following, update this file and t
 - logging behavior
 - new network calls
 - updater download or installer behavior
+- local transcription model behavior or privacy claims
 
 If you cannot explain the data flow in plain English, the feature is not documented well enough yet.
 

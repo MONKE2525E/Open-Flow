@@ -10,6 +10,13 @@ export type SetupProvider = {
 
 export const providers: SetupProvider[] = [
   {
+    id: 'local',
+    name: 'Local/offline',
+    tagline: 'Parakeet V3 · Private',
+    badge: 'Beta',
+    desc: 'Runs transcription on this device after you download the local model.',
+  },
+  {
     id: 'groq',
     name: 'Groq',
     tagline: 'Free tier · Fastest',
@@ -33,6 +40,15 @@ export const providers: SetupProvider[] = [
 ];
 
 export const providerGuides: Record<ProviderId, { url: string; steps: string[] }> = {
+  local: {
+    url: 'No API key needed',
+    steps: [
+      'Choose Local/offline for transcription',
+      'Download Parakeet V3 from Settings → Models',
+      'Set Cleanup to Off if you want the transcript to stay local too',
+      'You can still add a cloud cleanup provider later',
+    ],
+  },
   groq: {
     url: 'console.groq.com/keys',
     steps: ['Go to console.groq.com/keys', 'Sign in or create a free account', 'Click "Create API Key"', 'Copy and paste it below'],
@@ -50,10 +66,10 @@ export const providerGuides: Record<ProviderId, { url: string; steps: string[] }
 export type CleanupCard = { id: CleanupIntensity; name: string; desc: string };
 
 export const cleanupCards: CleanupCard[] = [
-  { id: 'none', name: 'Verbatim', desc: 'No cleanup at all' },
+  { id: 'none', name: 'Off', desc: 'No cleanup provider call' },
   { id: 'light', name: 'Light', desc: 'Light touch-ups only' },
   { id: 'medium', name: 'Medium', desc: 'Fillers and repetition removed' },
-  { id: 'high', name: 'Direct', desc: 'Short and punchy' },
+  { id: 'high', name: 'Strong', desc: 'Shorter and more aggressive cleanup' },
 ];
 
 export type ToneCard = { id: ToneId; name: string; desc: string };

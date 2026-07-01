@@ -2,8 +2,8 @@ use super::{
     apply_app_style_overrides, ensure_terminal_punctuation, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms, resolve_app_mapping,
     run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
-    style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
-    PipelineTestSnippet,
+    strip_trailing_hallucination, style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry,
+    PipelineTestRequest, PipelineTestSnippet,
 };
 use crate::system::apps::AppMapping;
 
@@ -22,6 +22,10 @@ use crate::testing::{
     fixture_hit_count, register_fixture, reset, set_enabled, take_injections, FixtureSpec,
 };
 use bytes::Bytes;
+use std::ffi::OsString;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn hallucination_gate_catches_prompt_echo() {
@@ -46,6 +50,18 @@ fn hallucination_gate_catches_common_whisper_artifacts() {
 }
 
 #[test]
+fn hallucination_gate_catches_pure_glossary_echo_on_silence() {
+    // After switching Whisper/Groq priming to vocabulary-only text (no more
+    // "Return only spoken words" for the model to echo), silent audio is
+    // expected to instead echo the vocabulary list itself.
+    assert!(is_transcription_hallucination(
+        "Verenu. Tauri. Svelte. Groq. Gemini. OpenAI."
+    ));
+    assert!(is_transcription_hallucination("Verenu."));
+    assert!(is_transcription_hallucination("groq, gemini, openai"));
+}
+
+#[test]
 fn hallucination_gate_passes_real_speech() {
     assert!(!is_transcription_hallucination(
         "Return the package to me by Thursday."
@@ -54,6 +70,66 @@ fn hallucination_gate_passes_real_speech() {
         "Why does YouTube's algorithm feel like doo-doo?"
     ));
     assert!(!is_transcription_hallucination("Thank you for your help."));
+}
+
+#[test]
+fn strip_trailing_hallucination_drops_prompt_echo_appended_after_real_speech() {
+    // Real production example: Groq Whisper transcribed genuine speech
+    // correctly, then appended a verbatim prompt echo followed by a garbled
+    // fragment of the prompt's spelling glossary ("Groq, Gemini, OpenAI"
+    // mis-heard as "Prenz, Gremi, OpenAI").
+    let raw = "Turns out downloading local models is really fun. Return only spoken words. Prenz, Gremi, OpenAI.";
+    assert_eq!(
+        strip_trailing_hallucination(raw),
+        "Turns out downloading local models is really fun."
+    );
+
+    // Another real example: trailing echo followed by an unrelated garbled
+    // fragment, then a second echo of the same phrase.
+    let raw2 = "Actual TikTok hell. A cool widget. Return only spoken words. Prens the word. Return only spoken words.";
+    assert_eq!(
+        strip_trailing_hallucination(raw2),
+        "Actual TikTok hell. A cool widget."
+    );
+
+    // Real example using the OpenAI-style "preserve pronouns exactly" + glossary tail.
+    let raw3 = "How about you try to see if you can get some sense into Kai. Return only spoken words. Preserve exact words, pronouns, punctuation style, and spellings.";
+    assert_eq!(
+        strip_trailing_hallucination(raw3),
+        "How about you try to see if you can get some sense into Kai."
+    );
+}
+
+#[test]
+fn strip_trailing_hallucination_leaves_genuine_speech_untouched() {
+    let raw = "Can you remind me to return the package to the post office?";
+    assert_eq!(strip_trailing_hallucination(raw), raw);
+}
+
+#[test]
+fn strip_trailing_hallucination_does_not_clip_mid_sentence_mentions() {
+    // Reported false positives: the trigger phrase appears as a genuine part
+    // of the sentence (not preceded by a hard sentence boundary), so it must
+    // not be treated as a trailing echo.
+    let raw = "I want Verenu to return only spoken words.";
+    assert_eq!(strip_trailing_hallucination(raw), raw);
+
+    let raw2 = "The prompt says return only spoken words.";
+    assert_eq!(strip_trailing_hallucination(raw2), raw2);
+
+    // No trigger phrase at all — must stay untouched regardless.
+    let raw3 = "Spell Verenu, Tauri, Svelte, Groq, Gemini, OpenAI.";
+    assert_eq!(strip_trailing_hallucination(raw3), raw3);
+}
+
+#[test]
+fn strip_trailing_hallucination_does_not_touch_whole_output_echo() {
+    // When the ENTIRE output is the echo (idx == 0), leave it untouched —
+    // is_transcription_hallucination is responsible for rejecting that case
+    // outright rather than this function silently emptying it.
+    let raw = "Return only spoken words.";
+    assert_eq!(strip_trailing_hallucination(raw), raw);
+    assert!(is_transcription_hallucination(raw));
 }
 
 #[test]
@@ -93,8 +169,8 @@ fn transcription_does_not_fold_mixed_multiplication_chunks() {
 }
 
 #[test]
-fn cleanup_llm_runs_for_formal_even_when_none_intensity() {
-    assert!(should_run_cleanup_llm(true, true, true, "none", "formal"));
+fn cleanup_llm_skips_when_cleanup_is_off_even_for_formal() {
+    assert!(!should_run_cleanup_llm(true, true, true, "none", "formal"));
 }
 
 #[test]
@@ -280,15 +356,24 @@ fn base_config() -> store::PipelineConfig {
         caps_lock_uppercase_enabled: false,
         macos_clipboard_sniff_enabled: false,
         advanced_model_ui: false,
+        local_model_memory_policy: "unload_after_5m".into(),
         cleanup_prompt_overrides: std::collections::HashMap::new(),
+    }
+}
+
+fn test_audio(duration_ms: u64) -> super::CapturedAudio {
+    super::CapturedAudio {
+        wav: Bytes::from_static(b"fixture-wav"),
+        samples_16k: Arc::new(vec![0.0; 16_000]),
+        sample_rate: 16_000,
+        duration_ms,
     }
 }
 
 fn base_request(config: store::PipelineConfig) -> PipelineTestRequest {
     PipelineTestRequest {
         db: None,
-        wav: Bytes::from_static(b"fixture-wav"),
-        duration_ms: 1200,
+        audio: test_audio(1200),
         rms: 0.2,
         config,
         profile: "casual".into(),
@@ -297,6 +382,92 @@ fn base_request(config: store::PipelineConfig) -> PipelineTestRequest {
         snippets: Vec::new(),
         dictionary: Vec::new(),
         caps_lock_on: false,
+    }
+}
+
+struct LocalModelsTestGuard {
+    root: PathBuf,
+    previous_override: Option<OsString>,
+}
+
+impl Drop for LocalModelsTestGuard {
+    fn drop(&mut self) {
+        // Tests hold the harness lock while this override is active.
+        unsafe {
+            match &self.previous_override {
+                Some(value) => std::env::set_var("VERENU_APP_DATA_DIR_OVERRIDE", value),
+                None => std::env::remove_var("VERENU_APP_DATA_DIR_OVERRIDE"),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn install_local_models(downloaded_model_ids: &[&str]) -> LocalModelsTestGuard {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock before unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("verenu-local-stt-tests-{unique}"));
+    let previous_override = std::env::var_os("VERENU_APP_DATA_DIR_OVERRIDE");
+    std::fs::create_dir_all(root.join("models").join("stt")).expect("create local model root");
+    // Tests hold the harness lock while this override is active.
+    unsafe {
+        std::env::set_var("VERENU_APP_DATA_DIR_OVERRIDE", &root);
+    }
+
+    let models_root = crate::local_stt::LocalTranscriptionManager::models_root();
+    for model_id in downloaded_model_ids {
+        let manifest = crate::local_stt::model::manifest_by_id(model_id)
+            .unwrap_or_else(|| panic!("missing local manifest for {model_id}"));
+        let final_path = manifest.final_path(&models_root);
+        if manifest.is_directory {
+            std::fs::create_dir_all(&final_path)
+                .unwrap_or_else(|err| panic!("create local model dir failed: {err}"));
+        } else {
+            if let Some(parent) = final_path.parent() {
+                std::fs::create_dir_all(parent).expect("create local model parent");
+            }
+            std::fs::write(&final_path, b"fixture-model")
+                .unwrap_or_else(|err| panic!("write local model file failed: {err}"));
+        }
+    }
+
+    LocalModelsTestGuard {
+        root,
+        previous_override,
+    }
+}
+
+fn install_local_cleanup_models(downloaded_model_ids: &[&str]) -> LocalModelsTestGuard {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock before unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("verenu-local-cleanup-tests-{unique}"));
+    let previous_override = std::env::var_os("VERENU_APP_DATA_DIR_OVERRIDE");
+    std::fs::create_dir_all(root.join("models").join("cleanup"))
+        .expect("create local cleanup model root");
+    unsafe {
+        std::env::set_var("VERENU_APP_DATA_DIR_OVERRIDE", &root);
+    }
+
+    let models_root = crate::local_llm::LocalLlmManager::models_root();
+    for model_id in downloaded_model_ids {
+        let manifest = crate::local_llm::model::manifest_by_id(model_id)
+            .unwrap_or_else(|| panic!("missing local cleanup manifest for {model_id}"));
+        let final_path = manifest.final_path(&models_root);
+        std::fs::create_dir_all(&final_path)
+            .unwrap_or_else(|err| panic!("create local cleanup model dir failed: {err}"));
+        for artifact in manifest.artifacts {
+            std::fs::write(final_path.join(artifact.filename), b"fixture-model")
+                .unwrap_or_else(|err| panic!("write local cleanup model file failed: {err}"));
+        }
+    }
+
+    LocalModelsTestGuard {
+        root,
+        previous_override,
     }
 }
 
@@ -338,7 +509,7 @@ async fn pipeline_fixture_rejects_short_recordings_before_provider_calls() {
     );
 
     let mut request = base_request(base_config());
-    request.duration_ms = 300;
+    request.audio.duration_ms = 300;
     let err = run_pipeline_fixture(request)
         .await
         .expect_err("short recording should fail");
@@ -389,7 +560,9 @@ async fn pipeline_fixture_requires_transcription_key_before_provider_calls() {
     let err = run_pipeline_fixture(base_request(config))
         .await
         .expect_err("missing key should fail");
-    assert!(err.to_string().contains("No API key configured"));
+    assert!(err
+        .to_string()
+        .contains("No configured transcription backend is available"));
     reset();
 }
 
@@ -750,7 +923,7 @@ async fn pipeline_fixture_uppercases_output_only_when_setting_and_caps_lock_both
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn pipeline_fixture_honors_formal_cleanup_even_with_none_intensity() {
+async fn pipeline_fixture_skips_cleanup_for_formal_when_intensity_is_off() {
     let _guard = harness_test_lock().lock().expect("harness lock");
     reset();
     set_enabled(true);
@@ -777,15 +950,209 @@ async fn pipeline_fixture_honors_formal_cleanup_even_with_none_intensity() {
     request.profile = "formal".into();
     let result = run_pipeline_fixture(request)
         .await
-        .expect("formal none intensity should still run cleanup");
+        .expect("formal cleanup should stay off when intensity is none");
     assert_eq!(
         result.final_text_before_dictionary,
-        "I am sending the note."
+        "im sending the note"
     );
     assert_eq!(
         fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+        0
+    );
+    reset();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pipeline_fixture_accepts_downloaded_local_model_without_api_keys() {
+    let _guard = harness_test_lock().lock().expect("harness lock");
+    let _local_models = install_local_models(&["parakeet-v3"]);
+    reset();
+    set_enabled(true);
+
+    let mut config = base_config();
+    config.transcription_provider = store::LOCAL.into();
+    config.transcription_default_model = "local/parakeet-v3".into();
+    config.cleanup_enabled = false;
+    config.cleanup_intensity = "none".into();
+    config.key_groq.clear();
+    config.key_openai.clear();
+    config.key_google.clear();
+
+    fixture(
+        "transcription",
+        "local",
+        "parakeet-v3",
+        Some("local transcript"),
+        None,
+        None,
+    );
+
+    let result = run_pipeline_fixture(base_request(config))
+        .await
+        .expect("downloaded local model should run without cloud keys");
+    assert_eq!(result.raw_text, "local transcript");
+    assert_eq!(result.final_text_before_dictionary, "local transcript");
+    assert_eq!(result.api_used, "local/parakeet-v3/transcription");
+    reset();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pipeline_fixture_reports_missing_selected_local_model() {
+    let _guard = harness_test_lock().lock().expect("harness lock");
+    let _local_models = install_local_models(&[]);
+    reset();
+    set_enabled(true);
+
+    let mut config = base_config();
+    config.transcription_provider = store::LOCAL.into();
+    config.transcription_default_model = "local/parakeet-v3".into();
+    config.cleanup_enabled = false;
+    config.cleanup_intensity = "none".into();
+    config.key_groq.clear();
+    config.key_openai.clear();
+    config.key_google.clear();
+
+    let err = run_pipeline_fixture(base_request(config))
+        .await
+        .expect_err("missing local model should fail with a download message");
+    assert!(err
+        .to_string()
+        .contains("Download the selected local model."));
+    reset();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pipeline_fixture_falls_back_from_retryable_local_failure_to_cloud() {
+    let _guard = harness_test_lock().lock().expect("harness lock");
+    let _local_models = install_local_models(&["parakeet-v3"]);
+    reset();
+    set_enabled(true);
+
+    let mut config = base_config();
+    config.transcription_provider = store::LOCAL.into();
+    config.transcription_default_model = "local/parakeet-v3".into();
+    config.transcription_fallback_models = vec!["openai/gpt-4o-transcribe".into()];
+    config.cleanup_enabled = false;
+    config.cleanup_intensity = "none".into();
+    config.key_groq.clear();
+    config.key_google.clear();
+
+    fixture(
+        "transcription",
+        "local",
+        "parakeet-v3",
+        None,
+        Some("timeout"),
+        Some("local runtime timed out"),
+    );
+    fixture(
+        "transcription",
+        "openai",
+        "gpt-4o-transcribe",
+        Some("cloud fallback transcript"),
+        None,
+        None,
+    );
+
+    let result = run_pipeline_fixture(base_request(config))
+        .await
+        .expect("retryable local failure should fall back to cloud");
+    assert_eq!(result.raw_text, "cloud fallback transcript");
+    assert_eq!(result.api_used, "openai/gpt-4o-transcribe/transcription");
+    assert_eq!(fixture_hit_count("transcription", "local", "parakeet-v3"), 1);
+    assert_eq!(
+        fixture_hit_count("transcription", "openai", "gpt-4o-transcribe"),
         1
     );
+    reset();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pipeline_fixture_runs_local_cleanup_without_cloud_credentials() {
+    let _guard = harness_test_lock().lock().expect("harness lock");
+    let _local_models = install_local_cleanup_models(&["gemma-4-e2b"]);
+    reset();
+    set_enabled(true);
+
+    let mut config = base_config();
+    config.cleanup_provider = store::LOCAL.into();
+    config.cleanup_default_model = "local/gemma-4-e2b".into();
+    config.key_openai.clear();
+    config.key_google.clear();
+
+    fixture(
+        "transcription",
+        "groq",
+        "whisper-large-v3-turbo",
+        Some("send the report now"),
+        None,
+        None,
+    );
+    fixture(
+        "cleanup",
+        "local",
+        "gemma-4-e2b",
+        Some("Send the report now."),
+        None,
+        None,
+    );
+
+    let result = run_pipeline_fixture(base_request(config))
+        .await
+        .expect("downloaded local cleanup model should run without cloud cleanup keys");
+    assert_eq!(result.raw_text, "send the report now");
+    assert_eq!(result.final_text_before_dictionary, "Send the report now.");
+    assert_eq!(fixture_hit_count("cleanup", "local", "gemma-4-e2b"), 1);
+    reset();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pipeline_fixture_falls_back_from_retryable_local_cleanup_failure_to_cloud() {
+    let _guard = harness_test_lock().lock().expect("harness lock");
+    let _local_models = install_local_cleanup_models(&["gemma-4-e2b"]);
+    reset();
+    set_enabled(true);
+
+    let mut config = base_config();
+    config.cleanup_provider = store::LOCAL.into();
+    config.cleanup_default_model = "local/gemma-4-e2b".into();
+    config.cleanup_fallback_models = vec!["openai/gpt-4o-mini".into()];
+    config.key_groq = "fixture-groq-key".into();
+
+    fixture(
+        "transcription",
+        "groq",
+        "whisper-large-v3-turbo",
+        Some("please send that note to sam"),
+        None,
+        None,
+    );
+    fixture(
+        "cleanup",
+        "local",
+        "gemma-4-e2b",
+        None,
+        Some("timeout"),
+        Some("local cleanup runtime timed out"),
+    );
+    fixture(
+        "cleanup",
+        "openai",
+        "gpt-4o-mini",
+        Some("Please send that note to Sam."),
+        None,
+        None,
+    );
+
+    let result = run_pipeline_fixture(base_request(config))
+        .await
+        .expect("retryable local cleanup failure should fall back to cloud");
+    assert_eq!(
+        result.final_text_before_dictionary,
+        "Please send that note to Sam."
+    );
+    assert_eq!(fixture_hit_count("cleanup", "local", "gemma-4-e2b"), 1);
+    assert_eq!(fixture_hit_count("cleanup", "openai", "gpt-4o-mini"), 1);
     reset();
 }
 
@@ -824,6 +1191,63 @@ async fn pipeline_fixture_uses_cleanup_cache_on_repeat_runs() {
     assert_eq!(
         fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
         1
+    );
+    reset();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pipeline_evicts_a_poisoned_cleanup_cache_entry_instead_of_serving_it() {
+    // A cache entry written before the artifact-leak guard existed (or by
+    // any future bug) must not be served forever just because it's a cache
+    // hit — cache hits skip generation entirely, so they also skip the
+    // guard that would otherwise have caught it.
+    let _guard = harness_test_lock().lock().expect("harness lock");
+    reset();
+    set_enabled(true);
+    register_fixture(FixtureSpec {
+        task: "transcription".into(),
+        provider: "groq".into(),
+        model: "whisper-large-v3-turbo".into(),
+        response: Some("cache me please".into()),
+        error_kind: None,
+        error_message: None,
+    });
+    register_fixture(FixtureSpec {
+        task: "cleanup".into(),
+        provider: "groq".into(),
+        model: "llama-3.3-70b-versatile".into(),
+        response: Some("Cache me please.".into()),
+        error_kind: None,
+        error_message: None,
+    });
+
+    let mut request = base_request(base_config());
+    request.db = Some(crate::data::db::open(":memory:").expect("shared test db"));
+    let first = run_pipeline_fixture(request.clone())
+        .await
+        .expect("first run should succeed");
+    assert!(!first.cleanup_cache_key.is_empty());
+
+    // Simulate a stale poisoned entry sitting at that same cache key.
+    crate::data::db::cleanup_cache_insert_new(
+        request.db.as_ref().expect("shared test db"),
+        &first.cleanup_cache_key,
+        "Thinking Process: 1. Analyze the request...",
+        "2999-01-01 00:00:00",
+        false,
+    )
+    .expect("poison cache entry");
+
+    let second = run_pipeline_fixture(request)
+        .await
+        .expect("second run should succeed");
+
+    assert!(!second.injected_text.contains("Thinking Process"));
+    assert_eq!(second.injected_text, "Cache me please.");
+    // Regenerated rather than served from the poisoned entry.
+    assert_eq!(
+        fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
+        2
     );
     reset();
 }

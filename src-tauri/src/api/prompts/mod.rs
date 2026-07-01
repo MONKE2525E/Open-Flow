@@ -11,12 +11,19 @@ mod transcription;
 
 pub use cleanup_rules::cleanup_max_output_tokens;
 pub use cleanup_templates::{
-    cleanup_template_for, hardened_retry_template, lint_cleanup_template, looks_like_refusal,
+    cleanup_template_for, hardened_retry_template, lint_cleanup_template,
+    looks_like_degenerate_repetition, looks_like_excessive_content_loss, looks_like_fabricated_content,
+    looks_like_model_artifact_leak, looks_like_perspective_flip, looks_like_refusal,
+    looks_like_unwanted_expansion,
 };
 pub use gemini::gemini_generation_config;
 pub use transcription::get_transcription_prompt;
 
-const TRANSCRIPTION_GLOSSARY: &str = "Verenu, Tauri, Svelte, Groq, Gemini, OpenAI";
+// Period-separated, not comma-separated: Whisper-family models treat this
+// `prompt` field as a continuation seed rather than an instruction, and a
+// flowing comma list reads more like a sentence the model might try to
+// finish. Short, punctuated terms are less likely to invite continuation.
+const TRANSCRIPTION_GLOSSARY: &str = "Verenu. Tauri. Svelte. Groq. Gemini. OpenAI.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PromptTier {
@@ -67,15 +74,6 @@ fn is_gemini_3_model(model: &str) -> bool {
 fn model_supports_gemini_thinking(model: &str) -> bool {
     let model = normalized_model(model);
     is_gemini_25_model(&model) || is_gemini_3_model(&model) || model.contains("thinking")
-}
-
-fn is_openai_whisper_model(model: &str) -> bool {
-    normalized_model(model).contains("whisper")
-}
-
-fn is_openai_mini_transcription_model(model: &str) -> bool {
-    let model = normalized_model(model);
-    model.contains("mini") || !model.contains("gpt-4o-transcribe")
 }
 
 fn is_openai_large_cleanup_model(model: &str) -> bool {

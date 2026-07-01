@@ -13,6 +13,9 @@
   import Setup from './lib/views/Setup.svelte';
   import { invoke, listen } from './lib/tauri';
   import { startAutomaticUpdateChecks } from './lib/updates';
+  import { startLocalSttListeners } from './lib/localSttStore.svelte';
+  import { startLocalLlmListeners } from './lib/localLlmStore.svelte';
+  import { refreshTranscriptionModel } from './lib/transcriptionModelStore.svelte';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
@@ -69,6 +72,8 @@
   onMount(() => {
     let cleanupFn: (() => void) | undefined;
     let stopAutomaticUpdateChecks: (() => void) | undefined;
+    let stopLocalSttListeners: (() => void) | undefined;
+    let stopLocalLlmListeners: (() => void) | undefined;
 
     (async () => {
       try {
@@ -102,6 +107,22 @@
       console.error('Failed to start automatic update checks:', error);
     }
 
+    try {
+      stopLocalSttListeners = startLocalSttListeners();
+    } catch (error) {
+      console.error('Failed to start local STT listeners:', error);
+    }
+
+    try {
+      stopLocalLlmListeners = startLocalLlmListeners();
+    } catch (error) {
+      console.error('Failed to start local cleanup listeners:', error);
+    }
+
+    refreshTranscriptionModel().catch((error) => {
+      console.error('Failed to load transcription model:', error);
+    });
+
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
     const onSystemThemeChange = () => {
       if (appStore.appearanceMode === 'system') applyTheme();
@@ -122,6 +143,8 @@
     return () => {
       if (cleanupFn) cleanupFn();
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
+      if (stopLocalSttListeners) stopLocalSttListeners();
+      if (stopLocalLlmListeners) stopLocalLlmListeners();
       media?.removeEventListener?.('change', onSystemThemeChange);
       clearInterval(connectivityTimer);
       document.removeEventListener('visibilitychange', handleVisibility);

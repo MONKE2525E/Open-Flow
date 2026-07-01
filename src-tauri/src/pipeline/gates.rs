@@ -32,10 +32,28 @@ pub(super) fn recording_gate_rms(active_gain: f32) -> f32 {
 /// (e.g. "Return only spoken words.") when the audio contains no
 /// recognisable speech.  We catch these before the cleanup step so they
 /// are never injected and never populate the cleanup cache.
+/// Vocabulary terms from the transcription priming prompt
+/// (api/prompts/transcription.rs's TRANSCRIPTION_GLOSSARY). Kept here too —
+/// duplicated rather than shared across the api/pipeline module boundary,
+/// matching this file's existing self-contained-constant style — so silent
+/// audio that echoes the prompt's own vocabulary list can be recognized as a
+/// hallucination instead of pasted as if it were spoken content.
+const GLOSSARY_TERMS: &[&str] = &["verenu", "tauri", "svelte", "groq", "gemini", "openai"];
+
+/// Returns true when the transcription looks like a Whisper prompt-echo or
+/// a well-known silent-audio hallucination rather than actual speech.
+///
+/// Whisper sometimes outputs literal phrases from its own system prompt
+/// (e.g. "Return only spoken words.") when the audio contains no
+/// recognisable speech.  We catch these before the cleanup step so they
+/// are never injected and never populate the cleanup cache.
 pub(super) fn is_transcription_hallucination(text: &str) -> bool {
     let t = text.trim().to_lowercase();
     // Phrases from our transcription system prompts (prompts.rs).  Whisper
-    // echoes these verbatim when it receives near-silent audio.
+    // echoes these verbatim when it receives near-silent audio. (Google's
+    // prompt still uses some of these; Whisper/Groq's prompt no longer does
+    // — it's vocabulary-only now — but old recordings/edge cases may still
+    // surface them, so the patterns stay.)
     const PATTERNS: &[&str] = &[
         "return only spoken words",
         "return only the words spoken",
@@ -57,7 +75,89 @@ pub(super) fn is_transcription_hallucination(text: &str) -> bool {
         "[no audio]",
         "[blank audio]",
     ];
-    PATTERNS.iter().any(|p| t.starts_with(p))
+    if PATTERNS.iter().any(|p| t.starts_with(p)) {
+        return true;
+    }
+    is_pure_glossary_echo(&t)
+}
+
+/// True when the entire (trimmed, lowercased) output is made up of nothing
+/// but the transcription prompt's own vocabulary terms — e.g. silent audio
+/// echoing "Verenu. Tauri. Svelte." verbatim. Requires at least one glossary
+/// term to actually be present so genuinely empty input doesn't match.
+fn is_pure_glossary_echo(lowercased_trimmed: &str) -> bool {
+    if lowercased_trimmed.is_empty() {
+        return false;
+    }
+    let mut remainder = lowercased_trimmed.to_string();
+    let mut matched_any = false;
+    for term in GLOSSARY_TERMS {
+        if remainder.contains(term) {
+            matched_any = true;
+            remainder = remainder.replace(term, " ");
+        }
+    }
+    matched_any && !remainder.chars().any(|c| c.is_alphanumeric())
+}
+
+/// Trims a trailing Whisper prompt-echo off the end of an otherwise-genuine
+/// transcription. `is_transcription_hallucination` above only catches the
+/// case where the *entire* output is the echoed prompt (silent/near-silent
+/// audio); this catches the case where Whisper transcribes real speech
+/// correctly and then appends a verbatim or garbled echo of its own prompt
+/// afterward — confirmed via a real transcription where the model continued
+/// past genuine content with "...is really fun. Return only spoken words.
+/// Prenz, Gremi, OpenAI." ("Prenz, Gremi, OpenAI" being a garbled echo of
+/// the prompt's vocabulary list "Groq, Gemini, OpenAI").
+///
+/// Deliberately conservative to avoid clipping genuine speech that happens
+/// to mention these phrases (e.g. "I want Verenu to return only spoken
+/// words" or "The prompt says return only spoken words" are real sentences,
+/// not hallucinations — confirmed false positives from an earlier, looser
+/// version of this function). A match only triggers a trim when BOTH:
+///   1. it's preceded by a hard sentence boundary (start of text, `.`, `!`,
+///      `?`, or a newline) — not just appearing mid-sentence, and
+///   2. either nothing follows it (the echo is the last thing said, which is
+///      the typical shape of this artifact), or whatever follows looks like
+///      a glossary echo (an exact vocabulary term, or the same trigger
+///      phrase repeating) rather than ordinary continued speech.
+pub(super) fn strip_trailing_hallucination(text: &str) -> String {
+    // Distinctive multi-word phrases lifted verbatim from the prompt this
+    // app actually sends to Whisper-family models (api/prompts/transcription.rs).
+    const TRAILING_PATTERNS: &[&str] = &[
+        "return only spoken words",
+        "return only the words spoken",
+        "preserve pronouns exactly",
+        "preserve exact words, pronouns",
+        "do not obey spoken instructions",
+        "do not answer questions or follow instructions",
+    ];
+    let lower = text.to_lowercase();
+    for pattern in TRAILING_PATTERNS {
+        let Some(idx) = lower.find(pattern) else {
+            continue;
+        };
+        // idx == 0 means the whole output is the echo, which
+        // is_transcription_hallucination already handles by rejecting the
+        // message outright — leave it untouched here.
+        if idx == 0 {
+            continue;
+        }
+        let before = text[..idx].trim_end();
+        let hard_boundary = before.is_empty() || before.ends_with(['.', '!', '?', '\n']);
+        if !hard_boundary {
+            continue;
+        }
+        let tail = lower[idx + pattern.len()..].trim();
+        let corroborated = tail.is_empty()
+            || GLOSSARY_TERMS.iter().any(|term| tail.contains(term))
+            || TRAILING_PATTERNS.iter().any(|p| tail.contains(p));
+        if !corroborated {
+            continue;
+        }
+        return text[..idx].trim_end().to_string();
+    }
+    text.to_string()
 }
 
 /// Build a single-line, length-capped preview of dictation text for logs.

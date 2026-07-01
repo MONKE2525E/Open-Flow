@@ -13,10 +13,26 @@
     transcriptionLanguages,
     type TranscriptionLanguageCode,
   } from '../../transcriptionLanguages';
+  import { getLanguageSupport } from '../../transcriptionLanguageSupport';
+  import { transcriptionModelStore } from '../../transcriptionModelStore.svelte';
+  import { modelDisplayLabel, splitModelId } from './models';
 
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   let languageDropdownOpen = $state(false);
   let languageTouched = false;
+  // Guards the language auto-correct effect below until the real persisted
+  // selection has loaded — without this, the effect could see the placeholder
+  // initial state (selectedLanguage='en', transcriptionModelStore at its
+  // default) as "unsupported," call saveLanguage('en'), and that call's
+  // languageTouched=true side effect would then make loadSettings() skip
+  // applying the user's actual saved language once it resolves.
+  //
+  // Must be $state, not a plain let: the auto-correct effect's first line is
+  // `if (!initialLanguageLoaded) return`, which on the mount run short-circuits
+  // before reading any reactive value — so unless THIS flag is reactive, the
+  // effect registers no dependencies and never re-runs when loadSettings later
+  // flips it true.
+  let initialLanguageLoaded = $state(false);
   let microphones = $state<string[]>([]);
   let selectedMic = $state('');
   let micDropdownOpen = $state(false);
@@ -152,6 +168,7 @@
     if (!languageTouched && language && transcriptionLanguages.some((option) => option.code === language)) {
       selectedLanguage = language;
     }
+    initialLanguageLoaded = true;
 
     microphones = val<string[]>(8, []);
     selectedMic = val<string | null>(9, null) ?? '';
@@ -187,6 +204,47 @@
       console.error('save transcription_language failed:', err);
     }
   }
+
+  // Which of the 57 Spoken Language options the active transcription model
+  // actually supports — 'all' for every current cloud model (Verenu's full
+  // list already matches Whisper's official language support exactly, and
+  // Gemini publishes no narrower restriction), a real subset for most local
+  // models (e.g. Moonshine is English-only).
+  const languageScope = $derived.by(() => {
+    const parsed = splitModelId(transcriptionModelStore.defaultModel);
+    return parsed ? getLanguageSupport(parsed.provider, parsed.model) : 'all';
+  });
+  const visibleLanguages = $derived(
+    languageScope === 'all'
+      ? transcriptionLanguages
+      : transcriptionLanguages.filter((language) => languageScope.includes(language.code)),
+  );
+  const languageScopeNote = $derived.by(() => {
+    if (languageScope === 'all') return '';
+    const parsed = splitModelId(transcriptionModelStore.defaultModel);
+    const modelName = parsed ? modelDisplayLabel(parsed.provider, parsed.model) : 'this model';
+    const count = visibleLanguages.length;
+    return ` · ${count} ${count === 1 ? 'language' : 'languages'} for ${modelName}`;
+  });
+
+  // If switching models drops the currently selected language out of the
+  // now-narrower list, snap back to a supported one rather than leaving a
+  // silently unsupported selection in place. Prefer English (most models
+  // include it), but fall back to the model's first supported language for
+  // the English-excluding ones (e.g. GigaAM is Russian-only). Gated on
+  // initialLanguageLoaded so this never fires during the initial hydration
+  // race (see the flag's declaration comment).
+  $effect(() => {
+    if (!initialLanguageLoaded) return;
+    if (languageScope === 'all') return;
+    if (visibleLanguages.some((language) => language.code === selectedLanguage)) return;
+    const fallback = visibleLanguages.some((language) => language.code === 'en')
+      ? 'en'
+      : visibleLanguages[0]?.code;
+    if (fallback) {
+      saveLanguage(fallback).catch((err) => console.error('auto-correct transcription_language failed:', err));
+    }
+  });
 
   async function handleAutostart(value: boolean) {
     autostart = value;
@@ -375,7 +433,7 @@
   </p>
 {/if}
 <div class="setting-row">
-  <div><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect</div></div>
+  <div class="lang-setting-text"><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect{languageScopeNote}</div></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="language-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && languageDropdownOpen) { languageDropdownOpen = false; e.stopPropagation(); } }}>
     <button
@@ -403,7 +461,7 @@
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
-        {#each transcriptionLanguages as language}
+        {#each visibleLanguages as language}
           <button
             class="language-item"
             class:active={selectedLanguage === language.code}
@@ -483,8 +541,8 @@
 </div>
 <h3 class="settings-subhead">Text processing</h3>
 <div class="setting-row">
-  <div><div class="label">Auto-cleanup</div><div class="desc">Run LLM cleanup on every transcription</div></div>
-  <Toggle checked={cleanup} onchange={handleCleanup} label="Auto-cleanup" />
+  <div><div class="label">Cleanup</div><div class="desc">Run cloud cleanup after transcription when it is enabled</div></div>
+  <Toggle checked={cleanup} onchange={handleCleanup} label="Cleanup" />
 </div>
 <div class="setting-row">
   <div><div class="label">Contextual capitalization</div><div class="desc">Lowercases the first word when injecting mid-sentence</div></div>
@@ -594,6 +652,10 @@
   .mic-item:hover { background: var(--paper-2); color: var(--ink); }
   .mic-item.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
   .mic-empty { padding: 8px 10px; font-size: 12px; color: var(--ink-mute); text-align: center; }
+  /* Let the label+desc column take remaining width and wrap within itself,
+     so the (sometimes long) language-scope note never runs under the
+     fixed-width dropdown button to its right. */
+  .lang-setting-text { min-width: 0; flex: 1; padding-right: 14px; }
   .language-dropdown { position: relative; flex-shrink: 0; }
   .language-btn { max-width: 210px; }
   .language-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }

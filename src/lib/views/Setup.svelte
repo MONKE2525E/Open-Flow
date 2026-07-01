@@ -39,6 +39,12 @@
   let provider = $state<ProviderId>('groq');
   let apiKeyDraft = $state('');
   let keySaved = $state(false);
+  let providerKeyStatus = $state<Record<ProviderId, boolean>>({
+    groq: false,
+    openai: false,
+    google: false,
+    local: true,
+  });
   let keySaving = $state(false);
   let keyError = $state('');
   let showKey = $state(false);
@@ -96,7 +102,9 @@
       if (savedProvider && providers.some((p) => p.id === savedProvider)) provider = savedProvider;
       if (savedIntensity && cleanupCards.some((c) => c.id === savedIntensity)) cleanupIntensity = savedIntensity;
       if (savedTone && toneCards.some((t) => t.id === savedTone)) tone = savedTone;
-      if (keyStatus) keySaved = !!keyStatus[provider];
+      if (keyStatus) {
+        providerKeyStatus = { ...providerKeyStatus, ...keyStatus, local: true };
+      }
       quickPrefs = {
         cleanup: savedCleanup ?? quickPrefs.cleanup,
         noise: savedNoise ?? quickPrefs.noise,
@@ -109,6 +117,14 @@
         muteAudio: savedMute ?? quickPrefs.muteAudio,
       };
     } catch {}
+  });
+
+  $effect(() => {
+    keySaved = provider === 'local' ? true : !!providerKeyStatus[provider];
+    if (provider === 'local') {
+      keyError = '';
+      keyValidation = { status: 'idle', message: '' };
+    }
   });
 
   function delay(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
@@ -132,6 +148,7 @@
   }
 
   async function saveKey() {
+    if (provider === 'local') return;
     const trimmed = apiKeyDraft.trim();
     if (!trimmed) return;
     keySaving = true;
@@ -139,6 +156,7 @@
     keyValidation = { status: 'idle', message: '' };
     try {
       await invoke('save_api_key', { provider, key: trimmed });
+      providerKeyStatus = { ...providerKeyStatus, [provider]: true };
       keySaved = true;
       apiKeyDraft = '';
     } catch {
@@ -151,6 +169,10 @@
   }
 
   async function validateKey(key: string) {
+    if (provider === 'local') {
+      keyValidation = { status: 'idle', message: '' };
+      return;
+    }
     keyValidation = { status: 'checking', message: '' };
     try {
       const result = await invoke<{ ok: boolean; status: 'valid' | 'invalid' | 'unknown'; message: string }>('validate_api_key', { provider, key });
@@ -161,12 +183,36 @@
   }
 
   async function finish() {
+    const transcriptionDefaultModel = provider === 'local'
+      ? 'local/parakeet-v3'
+      : provider === 'openai'
+        ? 'openai/gpt-4o-transcribe'
+        : provider === 'google'
+          ? 'google/gemini-3.5-flash'
+          : 'groq/whisper-large-v3-turbo';
+    const cleanupProvider = provider === 'local' ? 'groq' : provider;
+    const cleanupDefaultModel = cleanupProvider === 'openai'
+      ? 'openai/gpt-4o-mini'
+      : cleanupProvider === 'google'
+        ? 'google/gemini-3.5-flash'
+        : 'groq/llama-3.3-70b-versatile';
+
     try {
       await saveSetting('cleanup_intensity', cleanupIntensity);
       await saveSetting('default_tone', tone);
       await saveSetting('transcription_provider', provider);
+      await saveSetting('transcription_model', transcriptionDefaultModel);
+      await saveSetting('transcription_default_model', transcriptionDefaultModel);
+      await saveSetting('transcription_models_by_provider', {
+        groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
+        openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
+        google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+        local: ['parakeet-v3'],
+      });
       await saveSetting('transcription_language', language);
-      await saveSetting('cleanup_provider', provider);
+      await saveSetting('cleanup_provider', cleanupProvider);
+      await saveSetting('cleanup_model', cleanupDefaultModel);
+      await saveSetting('cleanup_default_model', cleanupDefaultModel);
       await saveSetting('appearance_mode', appearance);
       await saveSetting('cleanup_enabled', quickPrefs.cleanup);
       await saveSetting('noise_reduction', quickPrefs.noise);
@@ -186,7 +232,9 @@
   type HeaderInfo = { title: string; subtitle: string; name: string } | null;
   function headerFor(s: number): HeaderInfo {
     if (s === providerStep) return { name: 'Provider', title: 'Choose your AI provider', subtitle: 'This powers both transcription and text cleanup. You can switch anytime in Settings.' };
-    if (s === apiKeyStep) return { name: 'API Key', title: `Enter your ${providerDisplayName} API key`, subtitle: 'Keys are stored locally and never leave your machine.' };
+    if (s === apiKeyStep) return provider === 'local'
+      ? { name: 'Local', title: 'No API key needed for local transcription', subtitle: 'Download Parakeet V3 later in Settings → Models. Cleanup Off keeps the transcript local too.' }
+      : { name: 'API Key', title: `Enter your ${providerDisplayName} API key`, subtitle: 'Keys are stored locally and never leave your machine.' };
     if (isMac && s === permissionStep) return { name: 'Permissions', title: 'Check your macOS permissions', subtitle: 'Verenu needs these to hear your voice and type for you.' };
     if (s === writingStyleStep) return { name: 'Writing Style', title: 'How should your dictation sound?', subtitle: 'Cleanup intensity and tone shape every transcription. You can override both per-app later.' };
     if (s === appearanceStep) return { name: 'Appearance', title: 'Choose your appearance', subtitle: 'Choose your default theme mode. You can change this later in Settings.' };
@@ -224,6 +272,9 @@
     if (step === doneStep) return bar({ rightLabel: 'Start dictating', rightLg: true, onRight: finish });
     if (step === providerStep) return bar({ rightLabel: 'Next', onRight: goNext });
     if (step === apiKeyStep) {
+      if (provider === 'local') {
+        return bar({ leftLabel: 'Skip for now', rightLabel: 'Continue', onRight: goNext });
+      }
       if (keySaving) return bar({ leftLabel: 'Skip for now', rightLabel: 'Saving…', rightDisabled: true, onRight: () => {} });
       if (apiKeyDraft.trim()) return bar({ leftLabel: 'Skip for now', rightLabel: 'Save Key', onRight: saveKey });
       return bar({ leftLabel: 'Skip for now', rightLabel: 'Continue', onRight: goNext });

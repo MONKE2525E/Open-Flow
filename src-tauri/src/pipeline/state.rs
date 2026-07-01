@@ -19,9 +19,8 @@ pub type SharedState = Arc<Mutex<AppState>>;
 
 #[derive(Clone)]
 pub struct RetryCapture {
-    pub wav: bytes::Bytes,
+    pub audio: CapturedAudio,
     pub captured_at: std::time::Instant,
-    pub duration_ms: u64,
     pub target: WindowTarget,
     pub process_name: String,
     pub profile: String,

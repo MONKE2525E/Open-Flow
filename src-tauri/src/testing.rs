@@ -62,6 +62,7 @@ fn provider_label(provider: &str) -> &'static str {
     match provider {
         "openai" => "OpenAI",
         "google" => "Google",
+        "local" => "Local",
         _ => "Groq",
     }
 }

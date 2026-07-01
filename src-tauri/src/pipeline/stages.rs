@@ -9,6 +9,85 @@ use super::*;
 /// `None` if the retry also looks like a refusal/failed and the caller
 /// should skip cleanup entirely and use the pre-cleanup text.
 #[allow(clippy::too_many_arguments)]
+async fn run_local_cleanup_request(
+    app: Option<&AppHandle>,
+    model: &str,
+    expanded: &str,
+    profile: &str,
+    intensity: &str,
+    extra_rules: &str,
+    app_context: Option<&str>,
+    custom_template: Option<&str>,
+) -> anyhow::Result<String> {
+    #[cfg(any(test, debug_assertions))]
+    if let Some(result) = crate::testing::resolve_provider_fixture("cleanup", "local", model) {
+        return result;
+    }
+
+    let app = app.ok_or_else(|| anyhow::anyhow!("Local cleanup runtime unavailable"))?;
+    let prompt = prompts::get_cleanup_prompt_with_extras(
+        "local",
+        model,
+        profile,
+        intensity,
+        extra_rules,
+        app_context,
+        expanded,
+        custom_template,
+    );
+    // Local builds can spend a roughly fixed amount of budget on hidden
+    // reasoning before producing visible output — observed across many
+    // requests: gemma-4-e2b consistently burns 430-460 tokens on internal
+    // reasoning alone, regardless of how short the input is, leaving as
+    // little as 50-80 tokens for the actual cleaned text under a flat
+    // budget. That's tight enough that a longer dictation can get its
+    // content cut off mid-sentence (finish_reason="length" with non-empty
+    // content — accepted as a "success" since the artifact-leak guard only
+    // inspects text, not whether generation was truncated). Add the
+    // reasoning overhead on top of the normal content budget rather than
+    // using it as a flat floor, so a longer dictation still gets adequate
+    // room for its own (longer) cleaned output, not just the same total cap
+    // a short one gets.
+    const LOCAL_REASONING_OVERHEAD_TOKENS: u32 = 512;
+    let max_output_tokens =
+        prompts::cleanup_max_output_tokens(intensity, expanded) + LOCAL_REASONING_OVERHEAD_TOKENS;
+    let manager = app
+        .state::<crate::local_llm::LocalLlmManager>()
+        .inner()
+        .clone();
+    manager
+        .cleanup_with_prompt(app, model, expanded, &prompt, max_output_tokens)
+        .await
+}
+
+/// Refusal text ("I am an AI..."), leaked model internals (chat-template
+/// control tokens, chain-of-thought preamble), degenerate repetition,
+/// fabricated content (output sharing almost no words with what was
+/// actually dictated), excessive content loss (a "light"/"none" intensity
+/// result missing a large chunk of what was actually dictated), unwanted
+/// expansion (a "light"/"none" intensity result padded with extra words
+/// built mostly from vocabulary that genuinely appears in the input, so
+/// fabrication's word-overlap check doesn't catch it), and perspective flip
+/// (the model answers dictation that sounds like it's addressed to someone,
+/// swapping every "you" for "I" or vice versa — pronouns are too small a
+/// fraction of total words to move the fabrication/length checks) are all
+/// "the model didn't return usable cleaned dictation" — none of these are
+/// ever safe to inject as if they were the user's speech. `reference` is the
+/// text `text` is judged against for the fabrication/length/perspective
+/// checks (the actual LLM input); pass the same string for both when there's
+/// no meaningful baseline to compare against (e.g. judging the raw dictation
+/// on its own, where these checks relative to itself are moot).
+fn cleanup_output_is_unusable(intensity: &str, reference: &str, text: &str) -> bool {
+    prompts::looks_like_refusal(text)
+        || prompts::looks_like_model_artifact_leak(text)
+        || prompts::looks_like_degenerate_repetition(text)
+        || prompts::looks_like_fabricated_content(reference, text)
+        || prompts::looks_like_excessive_content_loss(intensity, reference, text)
+        || prompts::looks_like_unwanted_expansion(intensity, reference, text)
+        || prompts::looks_like_perspective_flip(reference, text)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn guard_cleanup_refusal(
     cleaned: String,
     raw: &str,
@@ -20,33 +99,51 @@ pub(super) async fn guard_cleanup_refusal(
     intensity: &str,
     extra_rules: &str,
     app_context: Option<&str>,
+    app: Option<&AppHandle>,
 ) -> Option<String> {
-    if !prompts::looks_like_refusal(&cleaned) || prompts::looks_like_refusal(raw) {
+    if !cleanup_output_is_unusable(intensity, expanded, &cleaned)
+        || cleanup_output_is_unusable(intensity, raw, raw)
+    {
         return Some(cleaned);
     }
 
     log::warn!(
-        "pipeline: cleanup output looks like a model refusal, retrying once with hardened prompt provider={provider_id} model={model}"
+        "pipeline: cleanup output looks like a refusal, leaked model internals, or fabricated content, retrying once with hardened prompt provider={provider_id} model={model}"
     );
 
-    let cp = ProviderId::from_str(provider_id);
-    let retried = cleanup::cleanup(
-        expanded,
-        cp,
-        key,
-        model,
-        profile,
-        intensity,
-        extra_rules,
-        app_context,
-        Some(prompts::hardened_retry_template()),
-    )
-    .await;
+    let retried = if provider_id == store::LOCAL {
+        run_local_cleanup_request(
+            app,
+            model,
+            expanded,
+            profile,
+            intensity,
+            extra_rules,
+            app_context,
+            Some(prompts::hardened_retry_template()),
+        )
+        .await
+    } else {
+        let cp = ProviderId::from_str(provider_id);
+        cleanup::cleanup(
+            expanded,
+            cp,
+            key,
+            model,
+            profile,
+            intensity,
+            extra_rules,
+            app_context,
+            Some(prompts::hardened_retry_template()),
+        )
+        .await
+    };
 
     match retried {
         Ok(retried)
             if !retried.is_empty()
-                && (!prompts::looks_like_refusal(&retried) || prompts::looks_like_refusal(raw)) =>
+                && (!cleanup_output_is_unusable(intensity, expanded, &retried)
+                    || cleanup_output_is_unusable(intensity, raw, raw)) =>
         {
             log::debug!(
                 "pipeline: cleanup refusal retry succeeded provider={provider_id} model={model}"
@@ -55,7 +152,7 @@ pub(super) async fn guard_cleanup_refusal(
         }
         Ok(_) => {
             log::warn!(
-                "pipeline: cleanup refusal retry still looks like a refusal, falling back to pre-cleanup text provider={provider_id} model={model}"
+                "pipeline: cleanup refusal retry still unusable, falling back to pre-cleanup text provider={provider_id} model={model}"
             );
             None
         }
@@ -150,10 +247,15 @@ pub(super) async fn stop_and_validate_audio(
     app: &AppHandle,
     session: audio::RecordingSession,
     min_rms: f32,
-) -> Option<(bytes::Bytes, u64)> {
+) -> Option<CapturedAudio> {
     let stop_result = tokio::task::spawn_blocking(move || session.stop()).await;
+    if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
+        manager.set_recording_active(false);
+    }
     let audio::RecordingResult {
         wav,
+        samples_16k,
+        sample_rate,
         duration_ms,
         rms,
         truncated,
@@ -199,7 +301,12 @@ pub(super) async fn stop_and_validate_audio(
         reject_with_pill(app, msg);
         return None;
     }
-    Some((bytes::Bytes::from(wav), duration_ms))
+    Some(CapturedAudio {
+        wav: bytes::Bytes::from(wav),
+        samples_16k: Arc::new(samples_16k),
+        sample_rate,
+        duration_ms,
+    })
 }
 
 pub(super) async fn open_config_and_context(
@@ -215,12 +322,8 @@ pub(super) async fn open_config_and_context(
         }
     };
     let mut cfg = store::load_pipeline_config(&settings_store);
-    if !has_transcription_key_in_chain(&cfg) {
-        show_error_pill(
-            app,
-            "No API key saved for selected transcription model chain",
-        )
-        .await;
+    if let Err(message) = validate_transcription_chain(&cfg, None) {
+        show_error_pill(app, &message).await;
         return None;
     }
     let mapping = resolve_app_mapping(Some(&settings_store), process_name);
@@ -239,29 +342,87 @@ pub(super) async fn open_config_and_context(
     Some((cfg, profile, app_context))
 }
 
+pub(super) async fn transcribe_any(
+    app: &AppHandle,
+    audio: &CapturedAudio,
+    provider_id: &str,
+    api_key: Option<&str>,
+    language: &str,
+    model: &str,
+) -> anyhow::Result<String> {
+    if provider_id == store::LOCAL {
+        let manager = app
+            .state::<crate::local_stt::LocalTranscriptionManager>()
+            .inner()
+            .clone();
+        // Only show the "loading model" pill when this specific model
+        // actually needs to load — previously shown unconditionally for
+        // every local transcription, so it flashed even when the model was
+        // already warm in memory (e.g. dictating twice in a row).
+        let state = manager.state();
+        let already_warm = state.is_loaded && state.current_model_id.as_deref() == Some(model);
+        if !already_warm {
+            show_pill(app, "loading_local_model");
+        }
+        let result = crate::local_stt::transcribe::transcribe(
+            manager,
+            app.clone(),
+            model.to_string(),
+            Arc::clone(&audio.samples_16k),
+            audio.sample_rate,
+            language.to_string(),
+        )
+        .await;
+        // Only switch back to "processing" if we actually left it for
+        // "loading_local_model" above — re-emitting the same state the pill
+        // is already in is a no-op for the frontend, but it's still a wasted
+        // Rust -> IPC -> WebView2 round trip and window re-show call on the
+        // (common) warm-model path.
+        if !already_warm {
+            show_pill(app, "processing");
+        }
+        return result;
+    }
+
+    let key = api_key.ok_or_else(|| anyhow::anyhow!("No API key saved for {provider_id}"))?;
+    transcription::transcribe(
+        audio.wav.clone(),
+        ProviderId::from_str(provider_id),
+        key,
+        language,
+        model,
+    )
+    .await
+}
+
 pub(super) async fn run_transcription(
     app: &AppHandle,
-    wav: &bytes::Bytes,
+    audio: &CapturedAudio,
     cfg: &store::PipelineConfig,
 ) -> Option<(String, String)> {
-    let wav = wav.clone();
     log::debug!(
-        "pipeline: transcription stage start provider={} model={} language={} bytes={}",
+        "pipeline: transcription stage start provider={} model={} language={} wav_bytes={} pcm_samples={}",
         cfg.transcription_provider,
         cfg.transcription_default_model,
         cfg.transcription_language,
-        wav.len()
+        audio.wav.len(),
+        audio.samples_16k.len()
     );
 
     let mut last_err: Option<anyhow::Error> = None;
     for (provider_id, model) in transcription_model_chain(cfg) {
         let key = cfg.key_for(&provider_id).to_owned();
-        if key.is_empty() {
-            continue;
-        }
-        let provider = ProviderId::from_str(&provider_id);
         let language = cfg.transcription_language.clone();
-        match transcription::transcribe(wav.clone(), provider, &key, &language, &model).await {
+        match transcribe_any(
+            app,
+            audio,
+            &provider_id,
+            if key.is_empty() { None } else { Some(key.as_str()) },
+            &language,
+            &model,
+        )
+        .await
+        {
             Ok(raw) if !raw.is_empty() => {
                 log::debug!(
                     "pipeline: transcription provider success={} model={} chars={}",
@@ -386,6 +547,25 @@ fn cleanup_cache_hit_text(
     let entry = db::cleanup_cache_get_active(db_handle, cache_key)
         .ok()
         .flatten()?;
+    // A cache hit skips generation entirely, so it also skips
+    // guard_cleanup_refusal — an entry written before that guard existed (or
+    // from any future bug) would otherwise be served forever until its
+    // expiry, regardless of how good the guard gets. Validate on every read,
+    // not just on write, and drop poisoned entries so the next miss
+    // regenerates and overwrites them with a clean result. The cache only
+    // stores the cleaned output, not the original dictation (by design —
+    // raw dictation must not be persisted), so the fabrication and
+    // content-loss checks have no baseline to compare against here and are
+    // effectively a no-op; refusal, artifact-leak, and repetition checks
+    // still apply.
+    if cleanup_output_is_unusable(intensity, &entry.clean_text, &entry.clean_text) {
+        log::warn!(
+            "pipeline: cleanup cache entry looks unusable (model artifact leak/refusal), evicting and treating as miss key_len={}",
+            cache_key.len()
+        );
+        let _ = db::cleanup_cache_delete_by_key(db_handle, cache_key);
+        return None;
+    }
     log::debug!(
         "pipeline: cleanup cache hit key_len={} hit_count={}",
         cache_key.len(),
@@ -406,28 +586,44 @@ async fn run_cleanup_provider_chain(
     profile: &str,
     extra_rules: &str,
     app_context: Option<&str>,
+    app: Option<&AppHandle>,
 ) -> (Option<CleanupSuccess>, Option<anyhow::Error>) {
     let mut last_cleanup_err: Option<anyhow::Error> = None;
     for (provider_id, model) in cleanup_model_chain(cfg) {
+        let is_local = provider_id == store::LOCAL;
         let key = cfg.key_for(&provider_id).to_owned();
-        if key.is_empty() {
+        if key.is_empty() && !is_local {
             continue;
         }
-        let cp = ProviderId::from_str(&provider_id);
         let custom_template = cfg.cleanup_override_for(&provider_id, &model);
-        match cleanup::cleanup(
-            expanded,
-            cp,
-            &key,
-            &model,
-            profile,
-            &cfg.cleanup_intensity,
-            extra_rules,
-            app_context,
-            custom_template,
-        )
-        .await
-        {
+        let outcome = if is_local {
+            run_local_cleanup_request(
+                app,
+                &model,
+                expanded,
+                profile,
+                &cfg.cleanup_intensity,
+                extra_rules,
+                app_context,
+                custom_template,
+            )
+            .await
+        } else {
+            let cp = ProviderId::from_str(&provider_id);
+            cleanup::cleanup(
+                expanded,
+                cp,
+                &key,
+                &model,
+                profile,
+                &cfg.cleanup_intensity,
+                extra_rules,
+                app_context,
+                custom_template,
+            )
+            .await
+        };
+        match outcome {
             Ok(cleaned) if !cleaned.is_empty() => {
                 log::debug!(
                     "pipeline: cleanup provider success={} model={} cleaned_chars={}",
@@ -480,7 +676,16 @@ pub(super) async fn run_cleanup_and_snippets(
     app_context: Option<&str>,
 ) -> Option<(String, Vec<db::DictionaryEntry>, String)> {
     let db_handle = app.state::<DbHandle>();
-    match run_cleanup_and_snippets_for_db(db_handle.inner(), raw, cfg, profile, app_context).await {
+    match run_cleanup_and_snippets_for_db(
+        db_handle.inner(),
+        raw,
+        cfg,
+        profile,
+        app_context,
+        Some(app),
+    )
+    .await
+    {
         Ok(result) => Some(result),
         Err(e) => {
             let mut user_msg = format!("Cleanup failed: {}", trim_err(&e.to_string()));
@@ -506,6 +711,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
+    app: Option<&AppHandle>,
 ) -> anyhow::Result<(String, Vec<db::DictionaryEntry>, String)> {
     let mut db_snippets = db::query_snippets(db_handle).unwrap_or_default();
     let dict_entries = db::query_dictionary(db_handle).unwrap_or_default();
@@ -602,8 +808,15 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             extra_rules.lines().filter(|l| !l.trim().is_empty()).count()
         );
 
-        let (cleanup_res, last_cleanup_err) =
-            run_cleanup_provider_chain(&expanded, cfg, profile, &extra_rules, app_context).await;
+        let (cleanup_res, last_cleanup_err) = run_cleanup_provider_chain(
+            &expanded,
+            cfg,
+            profile,
+            &extra_rules,
+            app_context,
+            app,
+        )
+        .await;
         let provider_succeeded = cleanup_res.is_some();
         let guarded = match cleanup_res {
             Some(success) => {
@@ -618,6 +831,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                     &cfg.cleanup_intensity,
                     &extra_rules,
                     app_context,
+                    app,
                 )
                 .await
             }
@@ -626,6 +840,10 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
 
         match guarded {
             Some(cleaned) => {
+                // Strip em dashes the model introduced (vs. ones the speaker
+                // actually dictated) before caching, so a poisoned-by-style
+                // result never gets baked into the cache.
+                let cleaned = crate::system::text::strip_unspoken_em_dashes(&expanded, &cleaned);
                 // Punctuate before caching + overrides so the cache stores the
                 // normalized text and snippet "no period" instructions can still
                 // override it afterward.

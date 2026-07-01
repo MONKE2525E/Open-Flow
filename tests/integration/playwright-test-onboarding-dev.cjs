@@ -43,7 +43,7 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     }
 
     // Writing Style merges cleanup intensity and tone onto one screen.
-    await page.locator('button.option-card', { has: page.locator('.option-name', { hasText: 'Direct' }) }).click();
+    await page.locator('button.option-card', { has: page.locator('.option-name', { hasText: 'Strong' }) }).click();
     await page.locator('.tone-card:has-text("Formal")').click();
     await page.getByRole('button', { name: 'Next' }).click();
 
@@ -87,7 +87,7 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
 
     const summaryText = (await page.locator('.done-summary').textContent()) || '';
     if (!summaryText.includes('OpenAI')) errors.push('Done summary did not keep provider choice');
-    if (!summaryText.includes('Direct')) errors.push('Done summary did not keep cleanup choice');
+    if (!summaryText.includes('Strong')) errors.push('Done summary did not keep cleanup choice');
     if (!summaryText.includes('Formal')) errors.push('Done summary did not keep tone choice');
     if (!summaryText.includes('Spanish')) errors.push('Done summary did not keep language choice');
     if (!summaryText.includes('Dark')) errors.push('Done summary did not keep appearance choice');
@@ -97,7 +97,7 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
 
     const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('verenu:dev-settings') || '{}'));
     if (persisted.transcription_provider !== 'openai') errors.push('Provider did not persist to dev settings');
-    if (persisted.cleanup_intensity !== 'high') errors.push('Cleanup intensity did not persist as Direct/high');
+    if (persisted.cleanup_intensity !== 'high') errors.push('Cleanup intensity did not persist as Strong/high');
     if (persisted.default_tone !== 'formal') errors.push('Tone did not persist');
     if (persisted.transcription_language !== 'es') errors.push('Language did not persist');
     if (persisted.appearance_mode !== 'dark') errors.push('Appearance did not persist');

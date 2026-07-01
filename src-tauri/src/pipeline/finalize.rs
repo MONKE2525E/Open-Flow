@@ -26,6 +26,16 @@ pub(super) async fn finalize_pipeline_completion(
         dictionary::apply_substitutions_from(ctx.final_text_before_dict, ctx.dict_entries);
     let dict_changed = !applied_dict_ids.is_empty();
     let apply_caps_lock_upper = ctx.cfg.caps_lock_uppercase_enabled && ctx.caps_lock_on;
+    // Logged unconditionally (not just when applied) so a report of
+    // unexpected ALL CAPS output is actually diagnosable: did the setting
+    // fire on a stale/incorrect caps_lock_on read, or is the uppercasing
+    // coming from somewhere else entirely (e.g. the cleanup model itself)?
+    log::debug!(
+        "pipeline: caps lock uppercase setting_enabled={} detected_caps_lock_on={} applied={}",
+        ctx.cfg.caps_lock_uppercase_enabled,
+        ctx.caps_lock_on,
+        apply_caps_lock_upper
+    );
     let final_text_substituted = if apply_caps_lock_upper {
         final_text_substituted.to_uppercase()
     } else {
@@ -93,7 +103,6 @@ pub(super) async fn finalize_pipeline_completion(
         }
     }
 
-    hide_pill(app);
     let inject_stage = std::time::Instant::now();
 
     // If Verenu itself has foreground focus, a Ctrl+V / Cmd+V paste would
@@ -163,8 +172,11 @@ pub(super) async fn finalize_pipeline_completion(
     app.emit("verenu:transcribed", &injected_text).ok();
 
     if ctx.event_only {
+        hide_pill(app);
         return Ok(entry);
     }
+
+    hide_pill(app);
 
     if !ctx.cleanup_cache_key.is_empty() {
         auto_learn::start_cache_rejection_monitor(

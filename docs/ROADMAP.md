@@ -2,6 +2,15 @@
 
 ## In Progress - 0.15.0
 
+## 0. Local Transcription Beta
+- **Goal**: Ship local transcription as a first-class backend in the normal pipeline instead of as a separate workflow.
+- **Current Scope**:
+    - Recommended local path is `local/parakeet-v3`
+    - Cleanup can be `Off` or a cloud provider
+    - "Fully local" only applies when local transcription is paired with `Cleanup: Off`
+    - Moonshine, Whisper.cpp, and custom local models stay behind advanced UI until Parakeet is boringly reliable
+- **Relevant Files**: `src-tauri/src/local_stt/`, `src-tauri/src/pipeline/`, `src/lib/components/settings/ModelsSection.svelte`, `src/PillApp.svelte`, `docs/LOCAL_TRANSCRIPTION.md`.
+
 ## 1. Models and Settings Redesign
 - **Goal**: Finish the model picker cleanup so provider selection, advanced mode, and key validation feel predictable instead of fragile.
 - **Implementation Plan**:

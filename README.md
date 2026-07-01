@@ -23,12 +23,12 @@ It records locally, sends audio and text only to the AI providers you choose, ke
 ## What It Does
 
 - Hold-to-record dictation with global hotkeys
-- Provider choice for transcription and cleanup
+- Provider choice for transcription and cleanup, including local Parakeet V3 transcription
 - Snippets, personal dictionary, and app-specific formatting profiles
 - Local history, local settings, and local data export/import
 - Optional auto-learn from repeated manual corrections
 
-For more details: [Cleanup Levels](docs/CLEANUP_LEVELS.md), [Dictionary](docs/DICTIONARY.md), [Snippets](docs/SNIPPETS.md), and [App Mappings & Profiles](docs/APP_MAPPINGS.md).
+For more details: [Cleanup Levels](docs/CLEANUP_LEVELS.md), [Local Transcription](docs/LOCAL_TRANSCRIPTION.md), [Dictionary](docs/DICTIONARY.md), [Snippets](docs/SNIPPETS.md), and [App Mappings & Profiles](docs/APP_MAPPINGS.md).
 
 ## Platform Support
 
@@ -58,8 +58,8 @@ For more details: [Install Verenu](docs/INSTALL.md), [Troubleshooting](docs/TROU
 ## How It Works
 
 1. Verenu records audio locally while you hold the hotkey.
-2. When you release, it sends the audio to your chosen transcription provider.
-3. It sends the resulting raw text to your chosen cleanup model so filler words, punctuation, tone, snippets, and formatting rules can be applied.
+2. When you release, it either transcribes locally or sends the audio to your chosen cloud transcription provider.
+3. If cleanup is enabled, it sends the resulting raw text to your chosen cleanup model so filler words, punctuation, tone, snippets, and formatting rules can be applied.
 4. It pastes the final text back into the app that had focus when you started.
 5. It stores local history and optional learning data on your machine.
 
@@ -80,8 +80,9 @@ Verenu does not run its own servers. Your data either stays on your device or go
 
 ### Leaves your device
 
-- Recorded audio goes to your chosen transcription provider
-- Raw transcription text goes to your chosen cleanup provider
+- Local transcription plus Cleanup Off keeps both audio and transcript on device after the model download
+- Local transcription plus cloud cleanup keeps audio on device but sends transcript text to the cleanup provider
+- Cloud transcription sends recorded audio to your chosen transcription provider
 - Snippet instructions, cleanup settings, and selected model metadata go with cleanup requests
 - Active app context may be sent if you enable app-context hints
 - Update checks hit GitHub release metadata
@@ -94,11 +95,12 @@ You choose the providers. Verenu does not lock you into one stack.
 
 | Provider | Transcription | Cleanup |
 | --- | --- | --- |
+| Local | `parakeet-v3` | none |
 | Groq | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` |
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
 | Google | `gemini-3.5-flash` | `gemini-3.5-flash` |
 
-If you care about privacy, speed, retention, or cost, judge the provider on its own policy. Once data leaves Verenu and hits a provider API, that provider's rules apply.
+If you care about privacy, speed, retention, or cost, judge the provider on its own policy. Once data leaves Verenu and hits a provider API, that provider's rules apply. Local transcription with cloud cleanup is still not fully local because the transcript text leaves the device.
 
 For more details: [Add Your API Key](docs/API_KEYS.md) and [Privacy & Data](docs/PRIVACY_SUMMARY.md).
 

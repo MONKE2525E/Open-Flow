@@ -1,0 +1,179 @@
+import {
+  invoke,
+  listen,
+  type LocalLlmDownloadProgressPayload,
+  type LocalLlmModelEventPayload,
+  type LocalLlmModelInfo,
+  type LocalLlmRuntimeDownloadProgressPayload,
+  type LocalLlmRuntimeEventPayload,
+  type LocalLlmRuntimeInfo,
+  type LocalLlmState,
+} from './tauri';
+
+export const localLlmStore = $state({
+  models: [] as LocalLlmModelInfo[],
+  state: {
+    current_model_id: null,
+    is_loaded: false,
+    is_loading: false,
+    is_downloading: false,
+    downloading_model_id: null,
+    endpoint: null,
+  } as LocalLlmState,
+  downloadProgress: {} as Record<string, LocalLlmDownloadProgressPayload | undefined>,
+  runtime: {
+    installed: false,
+    is_downloading: false,
+    backend: 'vulkan',
+    approx_download_mb: 0,
+  } as LocalLlmRuntimeInfo,
+  runtimeDownloadProgress: undefined as LocalLlmRuntimeDownloadProgressPayload | undefined,
+});
+
+export async function refreshLocalLlmModels() {
+  try {
+    localLlmStore.models = await invoke<LocalLlmModelInfo[]>('list_local_llm_models');
+  } catch (err) {
+    console.error('load local cleanup models failed', err);
+  }
+}
+
+export async function refreshLocalLlmState() {
+  try {
+    localLlmStore.state = await invoke<LocalLlmState>('get_local_llm_state');
+  } catch (err) {
+    console.error('load local cleanup state failed', err);
+  }
+}
+
+export async function refreshLocalLlmRuntimeInfo() {
+  try {
+    localLlmStore.runtime = await invoke<LocalLlmRuntimeInfo>('get_local_llm_runtime_info');
+  } catch (err) {
+    console.error('load local cleanup runtime info failed', err);
+  }
+}
+
+export async function downloadLocalLlmRuntime() {
+  try {
+    await invoke('download_local_llm_runtime');
+    await refreshLocalLlmRuntimeInfo();
+  } catch (err) {
+    console.error('download local cleanup runtime failed', err);
+  }
+}
+
+export async function cancelLocalLlmRuntimeDownload() {
+  try {
+    await invoke('cancel_local_llm_runtime_download');
+    await refreshLocalLlmRuntimeInfo();
+    localLlmStore.runtimeDownloadProgress = undefined;
+  } catch (err) {
+    console.error('cancel local cleanup runtime download failed', err);
+  }
+}
+
+export async function deleteLocalLlmRuntime() {
+  try {
+    await invoke('delete_local_llm_runtime');
+    await refreshLocalLlmRuntimeInfo();
+    localLlmStore.runtimeDownloadProgress = undefined;
+  } catch (err) {
+    console.error('delete local cleanup runtime failed', err);
+  }
+}
+
+export async function downloadLocalLlmModel(modelIdValue: string) {
+  try {
+    await invoke('download_local_llm_model', { modelId: modelIdValue });
+    await Promise.all([refreshLocalLlmModels(), refreshLocalLlmState()]);
+  } catch (err) {
+    console.error('download local cleanup model failed', err);
+  }
+}
+
+export async function cancelLocalLlmModelDownload(modelIdValue: string) {
+  try {
+    await invoke('cancel_local_llm_model_download', { modelId: modelIdValue });
+    await Promise.all([refreshLocalLlmModels(), refreshLocalLlmState()]);
+    delete localLlmStore.downloadProgress[modelIdValue];
+    localLlmStore.downloadProgress = { ...localLlmStore.downloadProgress };
+  } catch (err) {
+    console.error('cancel local cleanup model download failed', err);
+  }
+}
+
+export async function deleteLocalLlmModel(modelIdValue: string) {
+  try {
+    await invoke('delete_local_llm_model', { modelId: modelIdValue });
+    await Promise.all([refreshLocalLlmModels(), refreshLocalLlmState()]);
+    delete localLlmStore.downloadProgress[modelIdValue];
+    localLlmStore.downloadProgress = { ...localLlmStore.downloadProgress };
+  } catch (err) {
+    console.error('delete local cleanup model failed', err);
+  }
+}
+
+const unlisteners: Array<() => void> = [];
+let listenersStarted = false;
+
+export function startLocalLlmListeners(): () => void {
+  if (listenersStarted) {
+    return () => {};
+  }
+  listenersStarted = true;
+
+  (async () => {
+    unlisteners.push(
+      await listen<LocalLlmDownloadProgressPayload>('local-llm-model-download-progress', (event) => {
+        localLlmStore.downloadProgress = {
+          ...localLlmStore.downloadProgress,
+          [event.payload.model_id]: event.payload,
+        };
+      }),
+    );
+    for (const eventName of [
+      'local-llm-model-download-complete',
+      'local-llm-model-download-failed',
+      'local-llm-model-deleted',
+    ]) {
+      unlisteners.push(
+        await listen<LocalLlmModelEventPayload>(eventName, async (event) => {
+          await Promise.all([refreshLocalLlmModels(), refreshLocalLlmState()]);
+          if (event.payload?.model_id) {
+            delete localLlmStore.downloadProgress[event.payload.model_id];
+            localLlmStore.downloadProgress = { ...localLlmStore.downloadProgress };
+          }
+        }),
+      );
+    }
+    unlisteners.push(
+      await listen<Record<string, unknown>>('local-llm-model-state', async () => {
+        await refreshLocalLlmState();
+      }),
+    );
+    unlisteners.push(
+      await listen<LocalLlmRuntimeDownloadProgressPayload>('local-llm-runtime-download-progress', (event) => {
+        localLlmStore.runtimeDownloadProgress = event.payload;
+      }),
+    );
+    for (const eventName of [
+      'local-llm-runtime-download-complete',
+      'local-llm-runtime-download-failed',
+      'local-llm-runtime-deleted',
+    ]) {
+      unlisteners.push(
+        await listen<LocalLlmRuntimeEventPayload>(eventName, async () => {
+          await refreshLocalLlmRuntimeInfo();
+          localLlmStore.runtimeDownloadProgress = undefined;
+        }),
+      );
+    }
+  })().catch((err) => console.error('local cleanup listeners failed', err));
+
+  return () => {
+    listenersStarted = false;
+    for (const unlisten of unlisteners) unlisten();
+    unlisteners.length = 0;
+  };
+}
