@@ -86,6 +86,9 @@ fn main() {
         let _ = crate::system::mac_app::set_process_name("Verenu");
     }
 
+    #[cfg(target_os = "windows")]
+    wait_for_relaunch_parent_exit();
+
     let shared: SharedState = Arc::new(Mutex::new(AppState {
         session: None,
         starting: false,
@@ -316,4 +319,98 @@ fn main() {
                 show_main_window(_app);
             }
         });
+}
+
+#[cfg(target_os = "windows")]
+fn wait_for_relaunch_parent_exit() {
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    };
+
+    let Some(parent_pid) = relaunch_parent_pid() else {
+        return;
+    };
+
+    unsafe {
+        let handle = match OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) {
+            Ok(handle) => handle,
+            Err(err) => {
+                if err.code()
+                    != windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0)
+                {
+                    early_startup_warn(&format!(
+                        "Relaunch requested but could not open parent process {parent_pid}: {err}"
+                    ));
+                }
+                return;
+            }
+        };
+
+        let wait_result = WaitForSingleObject(handle, 5_000);
+        if wait_result != WAIT_OBJECT_0 {
+            early_startup_warn(&format!(
+                "Relaunch waited for parent process {parent_pid} but got result {}",
+                wait_result.0
+            ));
+        }
+
+        let _ = CloseHandle(handle);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn relaunch_parent_pid() -> Option<u32> {
+    let mut args = std::env::args_os().skip(1);
+
+    while let Some(arg) = args.next() {
+        let Some(text) = arg.to_str() else {
+            continue;
+        };
+
+        if let Some(value) = text.strip_prefix("--relaunch-parent-pid=") {
+            if let Ok(pid) = value.parse::<u32>() {
+                return Some(pid);
+            }
+            early_startup_warn(&format!(
+                "Ignoring invalid relaunch parent pid argument: {value}"
+            ));
+            return None;
+        }
+
+        if text == "--relaunch-parent-pid" {
+            let Some(value) = args.next() else {
+                early_startup_warn("Ignoring missing relaunch parent pid value");
+                return None;
+            };
+
+            match value.to_string_lossy().parse::<u32>() {
+                Ok(pid) => return Some(pid),
+                Err(_) => {
+                    early_startup_warn(&format!(
+                        "Ignoring invalid relaunch parent pid argument: {}",
+                        value.to_string_lossy()
+                    ));
+                    return None;
+                }
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn early_startup_warn(message: &str) {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;
+
+    eprintln!("WARN: {message}");
+
+    let mut wide: Vec<u16> = format!("WARN: {message}").encode_utf16().collect();
+    wide.push(0);
+
+    unsafe {
+        OutputDebugStringW(PCWSTR(wide.as_ptr()));
+    }
 }
