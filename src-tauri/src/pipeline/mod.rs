@@ -54,7 +54,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     let (session, exclusive_mic_session_id) = session;
     let Some(session) = session else {
         if let Some(session_id) = exclusive_mic_session_id {
-            std::thread::spawn(move || crate::system::volume::release_mic(session_id));
+            tokio::task::spawn_blocking(move || crate::system::volume::release_mic(session_id));
         }
         anyhow::bail!("No active recording");
     };
@@ -172,7 +172,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     };
     let Some(session) = session else {
         if let Some(session_id) = exclusive_mic_session_id {
-            std::thread::spawn(move || crate::system::volume::release_mic(session_id));
+            tokio::task::spawn_blocking(move || crate::system::volume::release_mic(session_id));
         }
         log::debug!("pipeline: no session - recording never started or was already consumed");
         return;

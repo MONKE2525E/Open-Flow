@@ -75,11 +75,12 @@ pub fn start_recording_session_ex(
     let mute_audio = audio_config.mute_audio;
     let exclusive_mic = audio_config.exclusive_mic;
     let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
-    let exclusive_mic_session_id = if exclusive_mic && gain_override.is_none() {
-        Some(crate::system::volume::register_session())
-    } else {
-        None
-    };
+    let exclusive_mic_session_id =
+        if cfg!(target_os = "macos") && exclusive_mic && gain_override.is_none() {
+            Some(crate::system::volume::register_session())
+        } else {
+            None
+        };
 
     match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
         Ok(session) => {
@@ -87,7 +88,9 @@ pub fn start_recording_session_ex(
                 std::thread::spawn(crate::system::volume::mute);
             }
             if let Some(session_id) = exclusive_mic_session_id {
-                std::thread::spawn(move || crate::system::volume::hog_mic(session_id));
+                tauri::async_runtime::spawn_blocking(move || {
+                    crate::system::volume::hog_mic(session_id)
+                });
             }
             let level_arc = session.level.clone();
             let raw_level_arc = session.raw_level.clone();

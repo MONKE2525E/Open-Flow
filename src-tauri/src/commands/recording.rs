@@ -220,7 +220,9 @@ pub async fn stop_calibration_monitoring(
             }
         });
     } else if let Some(session_id) = exclusive_mic_session_id {
-        std::thread::spawn(move || crate::system::volume::release_mic(session_id));
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::system::volume::release_mic(session_id)
+        });
     }
     Ok(())
 }
@@ -250,15 +252,17 @@ pub async fn stop_recording(
     };
     let (session, exclusive_mic_session_id) = session;
     if let Some(s) = session {
-        std::thread::spawn(move || {
+        tauri::async_runtime::spawn_blocking(move || {
             let _ = s.stop();
             if let Some(session_id) = exclusive_mic_session_id {
                 crate::system::volume::release_mic(session_id);
             }
         });
-        std::thread::spawn(crate::system::volume::unmute);
+        tauri::async_runtime::spawn_blocking(crate::system::volume::unmute);
     } else if let Some(session_id) = exclusive_mic_session_id {
-        std::thread::spawn(move || crate::system::volume::release_mic(session_id));
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::system::volume::release_mic(session_id)
+        });
     }
     pipeline::hide_pill(&app);
     Ok(())
