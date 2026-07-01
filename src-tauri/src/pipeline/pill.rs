@@ -61,10 +61,13 @@ fn create_pill_if_needed(app: &AppHandle) {
 
 #[cfg(target_os = "windows")]
 fn harden_pill_window<R: Runtime>(pill: &WebviewWindow<R>) {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
-        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_APPWINDOW,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    use windows::Win32::{
+        Foundation::{GetLastError, SetLastError, WIN32_ERROR},
+        UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
+            SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_APPWINDOW,
+            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        },
     };
 
     let Ok(hwnd) = pill.hwnd() else {
@@ -72,7 +75,15 @@ fn harden_pill_window<R: Runtime>(pill: &WebviewWindow<R>) {
     };
 
     unsafe {
+        SetLastError(WIN32_ERROR(0));
         let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if current == 0 {
+            let err = GetLastError();
+            if err != WIN32_ERROR(0) {
+                log::warn!("Failed to read pill extended window styles: {err:?}");
+                return;
+            }
+        }
         let desired = (current | WS_EX_NOACTIVATE.0 as isize | WS_EX_TOOLWINDOW.0 as isize)
             & !(WS_EX_APPWINDOW.0 as isize);
 

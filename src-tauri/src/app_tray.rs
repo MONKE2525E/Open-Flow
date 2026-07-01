@@ -102,13 +102,44 @@ fn spawn_relaunch_and_exit(app: &AppHandle) -> Result<(), String> {
 
     let exe = std::env::current_exe()
         .map_err(|err| format!("could not locate current executable: {err}"))?;
+    let parent_pid = std::process::id().to_string();
+    let forwarded_args = forwarded_relaunch_args();
     std::process::Command::new(exe)
+        .args(forwarded_args)
+        .arg("--relaunch-parent-pid")
+        .arg(parent_pid)
         .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
         .spawn()
         .map_err(|err| format!("could not start replacement process: {err}"))?;
 
     app.exit(0);
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn forwarded_relaunch_args() -> Vec<std::ffi::OsString> {
+    let mut filtered = Vec::new();
+    let mut args = std::env::args_os().skip(1);
+
+    while let Some(arg) = args.next() {
+        let Some(text) = arg.to_str() else {
+            filtered.push(arg);
+            continue;
+        };
+
+        if text == "--relaunch-parent-pid" {
+            let _ = args.next();
+            continue;
+        }
+
+        if text.starts_with("--relaunch-parent-pid=") {
+            continue;
+        }
+
+        filtered.push(arg);
+    }
+
+    filtered
 }
 
 pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
