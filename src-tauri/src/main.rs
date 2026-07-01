@@ -91,6 +91,7 @@ fn main() {
 
     let shared: SharedState = Arc::new(Mutex::new(AppState {
         session: None,
+        exclusive_mic_session_id: None,
         starting: false,
         handless: false,
         target: WindowTarget::default(),

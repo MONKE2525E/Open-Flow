@@ -219,13 +219,22 @@ pub async fn start_calibration_monitoring(
 pub async fn stop_calibration_monitoring(
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    let session = {
+    let (session, exclusive_mic_session_id) = {
         let mut st = lock_state(&state)?;
-        st.session.take()
+        let session = st.session.take();
+        let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+        (session, exclusive_mic_session_id)
     };
     if let Some(s) = session {
         tauri::async_runtime::spawn_blocking(move || {
             let _ = s.stop();
+            if let Some(session_id) = exclusive_mic_session_id {
+                crate::system::volume::release_mic(session_id);
+            }
+        });
+    } else if let Some(session_id) = exclusive_mic_session_id {
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::system::volume::release_mic(session_id)
         });
     }
     Ok(())
@@ -250,10 +259,27 @@ pub async fn stop_recording(
     let session = {
         let mut st = lock_state(&state)?;
         st.handless = false;
-        st.session.take()
+        let session = st.session.take();
+        let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+        (session, exclusive_mic_session_id)
     };
+    let (session, exclusive_mic_session_id) = session;
     if let Some(s) = session {
-        let _ = s.stop();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _ = s.stop();
+            if let Some(session_id) = exclusive_mic_session_id {
+                crate::system::volume::release_mic(session_id);
+            }
+            crate::media::sound::coordinated_unmute();
+            crate::system::media_control::end_dictation_media_pause();
+        });
+    } else if let Some(session_id) = exclusive_mic_session_id {
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::system::volume::release_mic(session_id);
+            crate::media::sound::coordinated_unmute();
+            crate::system::media_control::end_dictation_media_pause();
+        });
+    } else {
         crate::media::sound::coordinated_unmute();
         crate::system::media_control::end_dictation_media_pause();
     }

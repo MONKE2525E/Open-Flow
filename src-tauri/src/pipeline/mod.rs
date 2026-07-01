@@ -48,9 +48,15 @@ pub use state::*;
 pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow::Result<String> {
     let session = {
         let mut st = lock_state(&state)?;
-        st.session.take()
+        let session = st.session.take();
+        let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+        (session, exclusive_mic_session_id)
     };
+    let (session, exclusive_mic_session_id) = session;
     let Some(session) = session else {
+        if let Some(session_id) = exclusive_mic_session_id {
+            tokio::task::spawn_blocking(move || crate::system::volume::release_mic(session_id));
+        }
         anyhow::bail!("No active recording");
     };
 
@@ -69,7 +75,14 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     let min_rms = recording_gate_rms(active_gain);
     log::debug!("pipeline: input gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
 
-    let stop_result = tokio::task::spawn_blocking(move || session.stop()).await?;
+    let stop_result = tokio::task::spawn_blocking(move || {
+        let stop_result = session.stop();
+        if let Some(session_id) = exclusive_mic_session_id {
+            crate::system::volume::release_mic(session_id);
+        }
+        stop_result
+    })
+    .await?;
     let audio::RecordingResult {
         wav,
         duration_ms,
@@ -155,7 +168,14 @@ pub async fn run_pipeline_event_only(app: AppHandle, state: SharedState) {
 
 async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_only: bool) {
     let started_at = std::time::Instant::now();
-    let Some((session, target)) = take_pipeline_session(&state) else {
+    let Some((session, target, exclusive_mic_session_id)) = take_pipeline_session(&state) else {
+        log::debug!("pipeline: no session - recording never started or was already consumed");
+        return;
+    };
+    let Some(session) = session else {
+        if let Some(session_id) = exclusive_mic_session_id {
+            tokio::task::spawn_blocking(move || crate::system::volume::release_mic(session_id));
+        }
         log::debug!("pipeline: no session - recording never started or was already consumed");
         return;
     };
@@ -201,7 +221,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // Quiet/short recordings are rejected inside stop_and_validate_audio, which
     // plays the error cue via reject_with_pill — so only play the stop cue once
     // the audio is *accepted*, otherwise a rejection would sound stop + error.
-    let Some((wav, duration_ms)) = stop_and_validate_audio(&app, session, min_rms).await else {
+    let Some((wav, duration_ms)) =
+        stop_and_validate_audio(&app, session, exclusive_mic_session_id, min_rms).await
+    else {
         return;
     };
     if audio_cfg.play_start_stop_sounds {

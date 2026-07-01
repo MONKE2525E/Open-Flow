@@ -1,5 +1,5 @@
 #[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 #[cfg(windows)]
@@ -33,6 +33,24 @@ enum MacRestoreState {
     },
 }
 
+// ---- exclusive microphone access (macOS hog mode) ----
+
+#[cfg(target_os = "macos")]
+static HOG_STATE: Mutex<HogState> = Mutex::new(HogState::Idle);
+#[cfg(target_os = "macos")]
+static WARNED_HOG_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "macos")]
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+#[cfg(target_os = "macos")]
+static ACTIVE_SESSION_ID: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug)]
+enum HogState {
+    Idle,
+    Hogged { device_id: u32, session_id: u64 },
+}
+
 #[cfg(windows)]
 unsafe fn get_volume_interface() -> Result<IAudioEndpointVolume, windows::core::Error> {
     let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -52,7 +70,8 @@ fn set_system_muted(muted: bool) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 mod macos {
     use coreaudio::sys::{
-        kAudioDevicePropertyMute, kAudioDevicePropertyVolumeScalar, kAudioHardwareNoError,
+        kAudioDevicePropertyHogMode, kAudioDevicePropertyMute, kAudioDevicePropertyVolumeScalar,
+        kAudioHardwareNoError, kAudioHardwarePropertyDefaultInputDevice,
         kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyElementMaster,
         kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
         AudioDeviceID, AudioObjectGetPropertyData, AudioObjectHasProperty,
@@ -304,6 +323,132 @@ mod macos {
             ),
         }
     }
+
+    pub(super) fn default_input_device() -> Result<AudioDeviceID, String> {
+        let property_address = property_address(
+            kAudioHardwarePropertyDefaultInputDevice,
+            kAudioObjectPropertyScopeGlobal,
+        );
+        let mut device_id: AudioDeviceID = 0;
+        let mut data_size = mem::size_of::<AudioDeviceID>() as u32;
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                kAudioObjectSystemObject,
+                &property_address as *const _,
+                0,
+                null(),
+                &mut data_size,
+                &mut device_id as *mut _ as *mut _,
+            )
+        };
+        if status == kAudioHardwareNoError as OSStatus {
+            Ok(device_id)
+        } else {
+            Err(format!(
+                "Failed to get default input device for exclusive mic access: OSStatus {status}"
+            ))
+        }
+    }
+
+    fn get_i32_property(
+        device_id: AudioDeviceID,
+        selector: u32,
+        scope: u32,
+    ) -> Result<i32, String> {
+        let address = property_address(selector, scope);
+        let mut value: i32 = 0;
+        let mut data_size = mem::size_of::<i32>() as u32;
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                device_id,
+                &address as *const _,
+                0,
+                null(),
+                &mut data_size,
+                &mut value as *mut _ as *mut _,
+            )
+        };
+        if status == kAudioHardwareNoError as OSStatus {
+            Ok(value)
+        } else {
+            Err(format!(
+                "Failed to read audio property: selector={selector} status={status}"
+            ))
+        }
+    }
+
+    fn set_i32_property(
+        device_id: AudioDeviceID,
+        selector: u32,
+        scope: u32,
+        value: i32,
+    ) -> Result<(), String> {
+        let address = property_address(selector, scope);
+        let data_size = mem::size_of::<i32>() as u32;
+        let status = unsafe {
+            AudioObjectSetPropertyData(
+                device_id,
+                &address as *const _,
+                0,
+                null(),
+                data_size,
+                &value as *const _ as *const _,
+            )
+        };
+        if status == kAudioHardwareNoError as OSStatus {
+            Ok(())
+        } else {
+            Err(format!(
+                "Failed to set audio property: selector={selector} status={status}"
+            ))
+        }
+    }
+
+    /// Acquires exclusive (hog-mode) ownership of the default input device for
+    /// this process. Returns the device id on success, `None` if hog mode isn't
+    /// settable or another process already owns the device (nothing to restore).
+    pub fn snapshot_and_hog() -> Result<Option<AudioDeviceID>, String> {
+        let device_id = default_input_device()?;
+
+        if !property_is_settable(
+            device_id,
+            kAudioDevicePropertyHogMode,
+            kAudioObjectPropertyScopeGlobal,
+        )? {
+            return Ok(None);
+        }
+
+        // Hog mode owner is a pid_t; pass our pid to acquire, -1 to release.
+        let our_pid = std::process::id() as i32;
+        set_i32_property(
+            device_id,
+            kAudioDevicePropertyHogMode,
+            kAudioObjectPropertyScopeGlobal,
+            our_pid,
+        )?;
+
+        let owner = get_i32_property(
+            device_id,
+            kAudioDevicePropertyHogMode,
+            kAudioObjectPropertyScopeGlobal,
+        )?;
+        if owner == our_pid {
+            Ok(Some(device_id))
+        } else {
+            // The HAL declined or another process holds the device — we own
+            // nothing, so there is nothing to release later.
+            Ok(None)
+        }
+    }
+
+    pub fn release_hog(device_id: AudioDeviceID) -> Result<(), String> {
+        set_i32_property(
+            device_id,
+            kAudioDevicePropertyHogMode,
+            kAudioObjectPropertyScopeGlobal,
+            -1,
+        )
+    }
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -404,6 +549,131 @@ pub fn unmute() {
     }
 }
 
+/// Reserves the microphone exclusively for this process (macOS hog mode), so no
+/// other app can capture it while dictating. Safe to call repeatedly — a no-op
+/// if exclusive access is already held.
+#[cfg(target_os = "macos")]
+pub fn register_session() -> u64 {
+    let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
+    ACTIVE_SESSION_ID.store(session_id, Ordering::SeqCst);
+    session_id
+}
+
+#[cfg(target_os = "macos")]
+pub fn hog_mic(session_id: u64) {
+    if ACTIVE_SESSION_ID.load(Ordering::SeqCst) != session_id {
+        return;
+    }
+
+    let state = match HOG_STATE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("Exclusive mic state lock was poisoned; recovering");
+            poisoned.into_inner()
+        }
+    };
+
+    let mut state = state;
+    if let HogState::Hogged { device_id, .. } = *state {
+        match macos::default_input_device() {
+            Ok(default_device) if default_device == device_id => {
+                if ACTIVE_SESSION_ID.load(Ordering::SeqCst) == session_id {
+                    *state = HogState::Hogged {
+                        device_id,
+                        session_id,
+                    };
+                }
+                return;
+            }
+            _ => {
+                let _ = macos::release_hog(device_id);
+                *state = HogState::Idle;
+            }
+        }
+    }
+
+    drop(state);
+
+    let result = macos::snapshot_and_hog();
+
+    if ACTIVE_SESSION_ID.load(Ordering::SeqCst) != session_id {
+        if let Ok(Some(device_id)) = result {
+            let _ = macos::release_hog(device_id);
+        }
+        return;
+    }
+
+    let mut state = match HOG_STATE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("Exclusive mic state lock was poisoned; recovering");
+            poisoned.into_inner()
+        }
+    };
+
+    if ACTIVE_SESSION_ID.load(Ordering::SeqCst) != session_id {
+        if let Ok(Some(device_id)) = result {
+            let _ = macos::release_hog(device_id);
+        }
+        return;
+    }
+
+    if !matches!(*state, HogState::Idle) {
+        if let Ok(Some(device_id)) = result {
+            let _ = macos::release_hog(device_id);
+        }
+        return;
+    }
+
+    match result {
+        Ok(Some(device_id)) => {
+            *state = HogState::Hogged {
+                device_id,
+                session_id,
+            };
+        }
+        Ok(None) => {
+            if !WARNED_HOG_UNAVAILABLE.swap(true, Ordering::Relaxed) {
+                log::warn!(
+                    "Exclusive microphone access is unavailable for the default input device (not settable or already owned by another process)"
+                );
+            }
+        }
+        Err(err) => {
+            log::warn!("Failed to acquire exclusive microphone access: {err}");
+        }
+    }
+}
+
+/// Releases exclusive microphone access taken by [`hog_mic`]. No-op if not held.
+#[cfg(target_os = "macos")]
+pub fn release_mic(session_id: u64) {
+    let _ = ACTIVE_SESSION_ID.compare_exchange(session_id, 0, Ordering::SeqCst, Ordering::SeqCst);
+
+    let mut state = match HOG_STATE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("Exclusive mic state lock was poisoned; recovering");
+            poisoned.into_inner()
+        }
+    };
+
+    let device_id = match *state {
+        HogState::Idle => return,
+        HogState::Hogged {
+            device_id,
+            session_id: owner_session_id,
+        } if owner_session_id == session_id => device_id,
+        HogState::Hogged { .. } => return,
+    };
+
+    *state = HogState::Idle;
+
+    if let Err(err) = macos::release_hog(device_id) {
+        log::warn!("Failed to release exclusive microphone access: {err}");
+    }
+}
+
 #[cfg(not(any(windows, target_os = "macos")))]
 pub fn mute() {
     let _ = set_system_muted(true);
@@ -413,3 +683,15 @@ pub fn mute() {
 pub fn unmute() {
     let _ = set_system_muted(false);
 }
+
+/// Exclusive microphone access is macOS-only; no-op everywhere else.
+#[cfg(not(target_os = "macos"))]
+pub fn register_session() -> u64 {
+    0
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn hog_mic(_session_id: u64) {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn release_mic(_session_id: u64) {}

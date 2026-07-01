@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { isMac } from '../../platform';
   import { transcriptionLanguages, type TranscriptionLanguageCode } from '../../transcriptionLanguages';
 
   type QuickPrefs = {
@@ -12,6 +13,7 @@
     autoLearn: boolean;
     autostart: boolean;
     muteAudio: boolean;
+    exclusiveMic: boolean;
   };
   type QuickPrefKey = keyof QuickPrefs;
 
@@ -157,6 +159,17 @@
             onclick={() => toggle('muteAudio')} onkeydown={handleKeydown} onkeyup={(e) => handleKeyup(e, 'muteAudio')}
           ></div>
         </div>
+        {#if isMac}
+        <div class="qs-toggle-row">
+          <div>
+            <div class="qs-toggle-label">Exclusive mic</div>
+            <div class="qs-toggle-desc">Reserve the mic for Verenu while dictating</div>
+          </div>
+          <div class="qs-toggle" class:on={quickPrefs.exclusiveMic} role="switch" aria-checked={quickPrefs.exclusiveMic} aria-label="Exclusive mic" tabindex="0"
+            onclick={() => toggle('exclusiveMic')} onkeydown={handleKeydown} onkeyup={(e) => handleKeyup(e, 'exclusiveMic')}
+          ></div>
+        </div>
+        {/if}
       </div>
     </div>
 

@@ -149,9 +149,17 @@ fn is_cjk(c: char) -> bool {
 pub(super) async fn stop_and_validate_audio(
     app: &AppHandle,
     session: audio::RecordingSession,
+    exclusive_mic_session_id: Option<u64>,
     min_rms: f32,
 ) -> Option<(bytes::Bytes, u64)> {
-    let stop_result = tokio::task::spawn_blocking(move || session.stop()).await;
+    let stop_result = tokio::task::spawn_blocking(move || {
+        let stop_result = session.stop();
+        if let Some(session_id) = exclusive_mic_session_id {
+            crate::system::volume::release_mic(session_id);
+        }
+        stop_result
+    })
+    .await;
     let audio::RecordingResult {
         wav,
         duration_ms,

@@ -24,6 +24,7 @@
 
   let noiseReduction = $state(true);
   let muteAudio = $state(false);
+  let exclusiveMic = $state(false);
   let pauseMediaDuringDictation = $state(false);
   let playSounds = $state(true);
   let micGain = $state(3.5);
@@ -43,9 +44,10 @@
 
   async function loadSettings() {
     try {
-      const [nr, mute, pauseMedia, sounds, savedGain, language] = await Promise.all([
+      const [nr, mute, exclusive, pauseMedia, sounds, savedGain, language] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
         invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
+        invoke<boolean | null>('get_setting', { key: 'exclusive_mic' }),
         invoke<boolean | null>('get_setting', { key: 'pause_media_during_dictation' }),
         invoke<boolean | null>('get_setting', { key: 'play_start_stop_sounds' }),
         invoke<number | null>('get_setting', { key: 'mic_gain' }),
@@ -53,6 +55,7 @@
       ]);
       noiseReduction = nr ?? true;
       muteAudio = mute ?? false;
+      exclusiveMic = exclusive ?? false;
       pauseMediaDuringDictation = pauseMedia ?? false;
       playSounds = sounds ?? true;
       if (savedGain !== null && savedGain !== undefined) {
@@ -81,6 +84,16 @@
     } catch (err) {
       muteAudio = !value;
       console.error('save mute_audio failed:', err);
+    }
+  }
+
+  async function handleExclusiveMic(value: boolean) {
+    exclusiveMic = value;
+    try {
+      await saveSetting('exclusive_mic', value);
+    } catch (err) {
+      exclusiveMic = !value;
+      console.error('save exclusive_mic failed:', err);
     }
   }
 
@@ -219,6 +232,12 @@
   <div><div class="label">{isMac ? 'Mute System Audio' : 'Mute PC Audio'}</div><div class="desc">{isMac ? 'Mutes system volume while dictating to prevent audio interference' : 'Mutes Windows volume while dictating to prevent audio interference'}</div></div>
   <Toggle checked={muteAudio} onchange={handleMuteAudio} label={isMac ? 'Mute system audio' : 'Mute PC audio'} />
 </div>
+{#if isMac}
+  <div class="setting-row">
+    <div><div class="label">Exclusive microphone access</div><div class="desc">Reserves the mic for Verenu while dictating, muting it for all other apps</div></div>
+    <Toggle checked={exclusiveMic} onchange={handleExclusiveMic} label="Exclusive microphone access" />
+  </div>
+{/if}
 {#if isWindows}
   <div class="setting-row">
     <div><div class="label">Pause media while dictating</div><div class="desc">Pauses active Windows media sessions and resumes them after transcription finishes. Works with apps that expose Windows media controls.</div></div>
