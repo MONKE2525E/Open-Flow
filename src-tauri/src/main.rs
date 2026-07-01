@@ -334,16 +334,18 @@ fn wait_for_relaunch_parent_exit() {
 
     unsafe {
         let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) else {
-            log::warn!("Relaunch requested but could not open parent process {parent_pid}");
+            early_startup_warn(&format!(
+                "Relaunch requested but could not open parent process {parent_pid}"
+            ));
             return;
         };
 
         let wait_result = WaitForSingleObject(handle, 5_000);
         if wait_result != WAIT_OBJECT_0 {
-            log::warn!(
+            early_startup_warn(&format!(
                 "Relaunch waited for parent process {parent_pid} but got result {}",
                 wait_result.0
-            );
+            ));
         }
 
         let _ = CloseHandle(handle);
@@ -363,23 +365,25 @@ fn relaunch_parent_pid() -> Option<u32> {
             if let Ok(pid) = value.parse::<u32>() {
                 return Some(pid);
             }
-            log::warn!("Ignoring invalid relaunch parent pid argument: {value}");
+            early_startup_warn(&format!(
+                "Ignoring invalid relaunch parent pid argument: {value}"
+            ));
             return None;
         }
 
         if text == "--relaunch-parent-pid" {
             let Some(value) = args.next() else {
-                log::warn!("Ignoring missing relaunch parent pid value");
+                early_startup_warn("Ignoring missing relaunch parent pid value");
                 return None;
             };
 
             match value.to_string_lossy().parse::<u32>() {
                 Ok(pid) => return Some(pid),
                 Err(_) => {
-                    log::warn!(
+                    early_startup_warn(&format!(
                         "Ignoring invalid relaunch parent pid argument: {}",
                         value.to_string_lossy()
-                    );
+                    ));
                     return None;
                 }
             }
@@ -387,4 +391,19 @@ fn relaunch_parent_pid() -> Option<u32> {
     }
 
     None
+}
+
+#[cfg(target_os = "windows")]
+fn early_startup_warn(message: &str) {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;
+
+    eprintln!("WARN: {message}");
+
+    let mut wide: Vec<u16> = format!("WARN: {message}").encode_utf16().collect();
+    wide.push(0);
+
+    unsafe {
+        OutputDebugStringW(PCWSTR(wide.as_ptr()));
+    }
 }
