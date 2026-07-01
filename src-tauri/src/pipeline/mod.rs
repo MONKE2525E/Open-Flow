@@ -60,9 +60,6 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     };
 
     std::thread::spawn(crate::system::volume::unmute);
-    if let Some(session_id) = exclusive_mic_session_id {
-        std::thread::spawn(move || crate::system::volume::release_mic(session_id));
-    }
     show_pill(&app, "processing");
 
     let settings_store = match store::settings_snapshot(&app) {
@@ -76,7 +73,14 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     let min_rms = recording_gate_rms(active_gain);
     log::debug!("pipeline: input gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
 
-    let stop_result = tokio::task::spawn_blocking(move || session.stop()).await?;
+    let stop_result = tokio::task::spawn_blocking(move || {
+        let stop_result = session.stop();
+        if let Some(session_id) = exclusive_mic_session_id {
+            crate::system::volume::release_mic(session_id);
+        }
+        stop_result
+    })
+    .await?;
     let audio::RecordingResult {
         wav,
         duration_ms,
@@ -191,9 +195,6 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     log::info!("pipeline: start target_id={}", target.id);
 
     std::thread::spawn(crate::system::volume::unmute);
-    if let Some(session_id) = exclusive_mic_session_id {
-        std::thread::spawn(move || crate::system::volume::release_mic(session_id));
-    }
     show_pill(&app, "processing");
 
     // Keep the quiet-audio gate permissive at high gain. Whisper recordings can
@@ -209,7 +210,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     log::debug!("pipeline: audio gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
 
     let stage_audio = std::time::Instant::now();
-    let Some((wav, duration_ms)) = stop_and_validate_audio(&app, session, min_rms).await else {
+    let Some((wav, duration_ms)) =
+        stop_and_validate_audio(&app, session, exclusive_mic_session_id, min_rms).await
+    else {
         return;
     };
     log::debug!(

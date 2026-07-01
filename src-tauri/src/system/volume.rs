@@ -324,7 +324,7 @@ mod macos {
         }
     }
 
-    fn default_input_device() -> Result<AudioDeviceID, String> {
+    pub(super) fn default_input_device() -> Result<AudioDeviceID, String> {
         let property_address = property_address(
             kAudioHardwarePropertyDefaultInputDevice,
             kAudioObjectPropertyScopeGlobal,
@@ -573,8 +573,21 @@ pub fn hog_mic(session_id: u64) {
         }
     };
 
-    if !matches!(*state, HogState::Idle) {
-        return;
+    let mut state = state;
+    if let HogState::Hogged { device_id, .. } = *state {
+        match macos::default_input_device() {
+            Ok(default_device) if default_device == device_id => {
+                *state = HogState::Hogged {
+                    device_id,
+                    session_id,
+                };
+                return;
+            }
+            _ => {
+                let _ = macos::release_hog(device_id);
+                *state = HogState::Idle;
+            }
+        }
     }
 
     drop(state);
