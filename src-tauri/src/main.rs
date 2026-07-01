@@ -323,7 +323,7 @@ fn main() {
 
 #[cfg(target_os = "windows")]
 fn wait_for_relaunch_parent_exit() {
-    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
     use windows::Win32::System::Threading::{
         OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
     };
@@ -333,11 +333,18 @@ fn wait_for_relaunch_parent_exit() {
     };
 
     unsafe {
-        let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) else {
-            early_startup_warn(&format!(
-                "Relaunch requested but could not open parent process {parent_pid}"
-            ));
-            return;
+        let handle = match OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) {
+            Ok(handle) => handle,
+            Err(err) => {
+                if err.code()
+                    != windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0)
+                {
+                    early_startup_warn(&format!(
+                        "Relaunch requested but could not open parent process {parent_pid}: {err}"
+                    ));
+                }
+                return;
+            }
         };
 
         let wait_result = WaitForSingleObject(handle, 5_000);
