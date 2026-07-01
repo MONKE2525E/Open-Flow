@@ -194,11 +194,44 @@ fn verify_checksum_if_present(
     Ok(())
 }
 
+/// True for macOS's AppleDouble sidecar files (`._filename`) and
+/// `.DS_Store`, which `tar` faithfully extracts as ordinary top-level
+/// entries. These archives are packed on macOS (confirmed via
+/// `blob.handy.computer` archive listings), so every extraction gets them
+/// alongside the real payload.
+fn is_macos_extraction_junk(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    name.starts_with("._") || name == ".DS_Store"
+}
+
+fn remove_macos_extraction_junk(dir: &Path) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if is_macos_extraction_junk(&entry.file_name()) {
+            if entry.path().is_dir() {
+                std::fs::remove_dir_all(entry.path())?;
+            } else {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Archives commonly wrap their contents in a single top-level folder
 /// (e.g. `parakeet-tdt-0.6b-v3-int8/encoder-model.int8.onnx`). Model loaders
 /// expect the files directly inside the model directory, so hoist that
 /// folder's contents up one level when present.
+///
+/// The single-entry check below only works if AppleDouble junk (see
+/// `is_macos_extraction_junk`) is stripped first — the cohere archive wraps
+/// its payload in one real folder plus a `._<folder>` sidecar, which without
+/// this stripping counts as 2 top-level entries and silently skips
+/// flattening, leaving the model files a directory level too deep for
+/// `CohereModel::load` to find (observed live as a spurious "model not
+/// found" error immediately after a from-scratch download completed).
 fn flatten_single_nested_dir(dir: &Path) -> anyhow::Result<()> {
+    remove_macos_extraction_junk(dir)?;
     let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     if entries.len() != 1 {
         log::debug!(
@@ -215,6 +248,7 @@ fn flatten_single_nested_dir(dir: &Path) -> anyhow::Result<()> {
         "local-stt: flattening archive-wrapped folder {:?}",
         nested.file_name().unwrap_or_default()
     );
+    remove_macos_extraction_junk(&nested)?;
     for child in std::fs::read_dir(&nested)? {
         let child = child?;
         std::fs::rename(child.path(), dir.join(child.file_name()))?;
@@ -543,6 +577,60 @@ mod tests {
 
         assert!(dir.join("encoder-model.int8.onnx").is_file());
         assert!(dir.join("vocab.txt").is_file());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn flattens_a_wrapped_folder_even_with_a_sibling_appledouble_file() {
+        // The exact live bug: a real single wrapper folder plus a `._<name>`
+        // AppleDouble sidecar makes 2 top-level entries, which used to make
+        // the single-entry check bail without flattening.
+        let dir = temp_dir("flatten-nested-with-junk");
+        let nested = dir.join("cohere-int8");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("cohere-encoder.int8.onnx"), b"fake").unwrap();
+        fs::write(nested.join("tokens.txt"), b"fake").unwrap();
+        fs::write(dir.join("._cohere-int8"), b"junk").unwrap();
+
+        flatten_single_nested_dir(&dir).unwrap();
+
+        assert!(dir.join("cohere-encoder.int8.onnx").is_file());
+        assert!(dir.join("tokens.txt").is_file());
+        assert!(!dir.join("._cohere-int8").exists());
+        assert!(!nested.exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn drops_appledouble_siblings_inside_the_flattened_folder() {
+        let dir = temp_dir("flatten-nested-inner-junk");
+        let nested = dir.join("cohere-int8");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("cohere-encoder.int8.onnx"), b"fake").unwrap();
+        fs::write(nested.join("._cohere-encoder.int8.onnx"), b"junk").unwrap();
+
+        flatten_single_nested_dir(&dir).unwrap();
+
+        assert!(dir.join("cohere-encoder.int8.onnx").is_file());
+        assert!(!dir.join("._cohere-encoder.int8.onnx").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn drops_top_level_appledouble_junk_in_an_already_flat_archive() {
+        let dir = temp_dir("flatten-flat-with-junk");
+        fs::write(dir.join("encoder-model.int8.onnx"), b"fake").unwrap();
+        fs::write(dir.join("._encoder-model.int8.onnx"), b"junk").unwrap();
+        fs::write(dir.join(".DS_Store"), b"junk").unwrap();
+
+        flatten_single_nested_dir(&dir).unwrap();
+
+        assert!(dir.join("encoder-model.int8.onnx").is_file());
+        assert!(!dir.join("._encoder-model.int8.onnx").exists());
+        assert!(!dir.join(".DS_Store").exists());
 
         let _ = fs::remove_dir_all(&dir);
     }
