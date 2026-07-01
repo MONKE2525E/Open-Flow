@@ -245,11 +245,13 @@ pub async fn stop_recording(
     };
     let (session, exclusive_mic_session_id) = session;
     if let Some(s) = session {
-        let _ = s.stop();
+        std::thread::spawn(move || {
+            let _ = s.stop();
+            if let Some(session_id) = exclusive_mic_session_id {
+                crate::system::volume::release_mic(session_id);
+            }
+        });
         std::thread::spawn(crate::system::volume::unmute);
-        if let Some(session_id) = exclusive_mic_session_id {
-            crate::system::volume::release_mic(session_id);
-        }
     } else if let Some(session_id) = exclusive_mic_session_id {
         std::thread::spawn(move || crate::system::volume::release_mic(session_id));
     }

@@ -577,10 +577,12 @@ pub fn hog_mic(session_id: u64) {
     if let HogState::Hogged { device_id, .. } = *state {
         match macos::default_input_device() {
             Ok(default_device) if default_device == device_id => {
-                *state = HogState::Hogged {
-                    device_id,
-                    session_id,
-                };
+                if ACTIVE_SESSION_ID.load(Ordering::SeqCst) == session_id {
+                    *state = HogState::Hogged {
+                        device_id,
+                        session_id,
+                    };
+                }
                 return;
             }
             _ => {
@@ -608,6 +610,13 @@ pub fn hog_mic(session_id: u64) {
             poisoned.into_inner()
         }
     };
+
+    if ACTIVE_SESSION_ID.load(Ordering::SeqCst) != session_id {
+        if let Ok(Some(device_id)) = result {
+            let _ = macos::release_hog(device_id);
+        }
+        return;
+    }
 
     if !matches!(*state, HogState::Idle) {
         if let Ok(Some(device_id)) = result {
