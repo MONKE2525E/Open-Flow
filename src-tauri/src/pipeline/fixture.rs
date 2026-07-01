@@ -119,12 +119,12 @@ pub async fn run_pipeline_fixture(
             }
             Ok(_) => {}
             Err(e) => {
-                if crate::api::is_retryable_provider_error(&e) {
-                    last_err = Some(e);
-                    continue;
-                }
+                // Mirrors run_transcription in stages.rs: always try the
+                // next candidate regardless of retryable status — a
+                // non-retryable error on this provider (e.g. missing key)
+                // says nothing about whether a different fallback
+                // provider/model would succeed.
                 last_err = Some(e);
-                break;
             }
         }
     }
@@ -154,11 +154,10 @@ pub async fn run_pipeline_fixture(
         injected_text
     };
     let words = raw_text.split_whitespace().count() as i64;
-    let clean_for_insert = if apply_caps_lock_upper {
-        final_text_before_dictionary.to_uppercase()
-    } else {
-        final_text_before_dictionary.clone()
-    };
+    // Mirrors finalize.rs: History must save the same text that actually
+    // gets injected (dictionary substitution included), not the
+    // pre-dictionary value.
+    let clean_for_insert = injected_text.clone();
     let history_entry = db::insert_transcription_returning(
         &db_handle,
         &raw_text,

@@ -434,6 +434,16 @@ pub(super) async fn run_transcription(
             }
             Ok(_) => {}
             Err(e) => {
+                // Always move on to the next candidate, retryable or not.
+                // "Retryable" only answers "would retrying this same
+                // provider help" (no for a missing/invalid key, bad
+                // request, etc.) — it says nothing about whether a
+                // different fallback provider/model would succeed, so it
+                // must never gate whether the rest of the chain gets tried.
+                // Previously this `break`d on non-retryable errors, which
+                // meant a primary provider with no API key saved (a very
+                // common config: cloud primary + local fallback) skipped
+                // every configured fallback and failed outright.
                 let retryable = crate::api::is_retryable_provider_error(&e);
                 log::warn!(
                     "pipeline: transcription provider failed provider={} model={} retryable={} error={}",
@@ -442,12 +452,7 @@ pub(super) async fn run_transcription(
                     retryable,
                     trim_err(&e.to_string())
                 );
-                if retryable {
-                    last_err = Some(e);
-                    continue;
-                }
                 last_err = Some(e);
-                break;
             }
         }
     }
@@ -645,6 +650,13 @@ async fn run_cleanup_provider_chain(
                 last_cleanup_err = None;
             }
             Err(e) => {
+                // Same reasoning as the transcription chain in
+                // run_transcription: "retryable" only tells us whether
+                // retrying this same provider is worth it, not whether a
+                // different fallback provider/model would succeed. This
+                // used to `return` on non-retryable errors, aborting the
+                // whole fallback chain over something as unrelated as a
+                // missing/invalid key on the primary provider.
                 let retryable = crate::api::is_retryable_provider_error(&e);
                 log::warn!(
                     "pipeline: cleanup provider failed provider={} model={} retryable={} error={}",
@@ -653,11 +665,7 @@ async fn run_cleanup_provider_chain(
                     retryable,
                     trim_err(&e.to_string())
                 );
-                if retryable {
-                    last_cleanup_err = Some(e);
-                    continue;
-                }
-                return (None, Some(e));
+                last_cleanup_err = Some(e);
             }
         }
     }
@@ -844,6 +852,20 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                 // actually dictated) before caching, so a poisoned-by-style
                 // result never gets baked into the cache.
                 let cleaned = crate::system::text::strip_unspoken_em_dashes(&expanded, &cleaned);
+                // Mechanical backstop for "light" intensity: the prompt
+                // already tells every model to remove filler/hesitation
+                // words, but small local models apply that rule
+                // unreliably — observed in practice: one "um" correctly
+                // stripped while others survived untouched in the same
+                // output. Deterministic removal guarantees these are gone
+                // regardless of model behavior, unlike "like"/"you know"
+                // which have legitimate non-filler meanings and stay
+                // entirely up to the model.
+                let cleaned = if cfg.cleanup_intensity == "light" {
+                    crate::system::text::strip_filler_hesitations(&cleaned)
+                } else {
+                    cleaned
+                };
                 // Punctuate before caching + overrides so the cache stores the
                 // normalized text and snippet "no period" instructions can still
                 // override it afterward.

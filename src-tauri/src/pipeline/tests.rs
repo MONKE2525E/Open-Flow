@@ -615,7 +615,12 @@ async fn pipeline_fixture_uses_transcription_fallback_for_retryable_errors() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn pipeline_fixture_stops_on_non_retryable_transcription_error() {
+async fn pipeline_fixture_falls_back_past_a_non_retryable_transcription_error() {
+    // A non-retryable error (missing/invalid key, bad request, etc.) on the
+    // primary provider says nothing about whether a *different* fallback
+    // provider would succeed — e.g. a cloud primary with no API key saved
+    // and a local fallback that needs no key at all. The chain must still
+    // try the fallback instead of aborting outright.
     let _guard = harness_test_lock().lock().expect("harness lock");
     reset();
     set_enabled(true);
@@ -633,18 +638,27 @@ async fn pipeline_fixture_stops_on_non_retryable_transcription_error() {
         task: "transcription".into(),
         provider: "openai".into(),
         model: "gpt-4o-transcribe".into(),
-        response: Some("should not be used".into()),
+        response: Some("fallback transcript".into()),
         error_kind: None,
         error_message: None,
     });
+    fixture(
+        "cleanup",
+        "groq",
+        "llama-3.3-70b-versatile",
+        Some("fallback transcript"),
+        None,
+        None,
+    );
 
-    let err = run_pipeline_fixture(base_request(config))
+    let result = run_pipeline_fixture(base_request(config))
         .await
-        .expect_err("auth error should stop fallback");
-    assert!(err.to_string().starts_with("AUTH_401|provider=Groq"));
+        .expect("fallback should succeed past the non-retryable error");
+    assert_eq!(result.raw_text, "fallback transcript");
+    assert_eq!(result.api_used, "openai/gpt-4o-transcribe/transcription");
     assert_eq!(
         fixture_hit_count("transcription", "openai", "gpt-4o-transcribe"),
-        0
+        1
     );
     reset();
 }
@@ -864,6 +878,10 @@ async fn pipeline_fixture_applies_instruction_snippets_and_dictionary_last() {
     // dictations capitalize); the "all capitals" override still applies.
     assert_eq!(result.final_text_before_dictionary, "ACME ALERT.");
     assert_eq!(result.injected_text, "Verenu ALERT.");
+    // History must match what was actually injected, dictionary correction
+    // included — it previously saved final_text_before_dictionary instead,
+    // so a correction that changed what got pasted never showed up here.
+    assert_eq!(result.history_entry.clean_text, "Verenu ALERT.");
     reset();
 }
 

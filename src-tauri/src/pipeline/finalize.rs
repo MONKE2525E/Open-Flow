@@ -63,11 +63,14 @@ pub(super) async fn finalize_pipeline_completion(
     let words = ctx.raw.split_whitespace().count() as i64;
     let db_for_insert = db_handle.inner().clone();
     let raw_for_insert = ctx.raw.to_string();
-    let clean_for_insert = if apply_caps_lock_upper {
-        ctx.final_text_before_dict.to_uppercase()
-    } else {
-        ctx.final_text_before_dict.to_string()
-    };
+    // `final_text_substituted` already has caps-lock uppercasing AND
+    // dictionary substitution applied (see above) — it's the same text that
+    // gets injected below. History must save exactly that, not
+    // `final_text_before_dict`: saving the pre-dictionary text here meant a
+    // dictionary correction could be applied correctly to what actually got
+    // pasted while History silently kept showing the uncorrected version
+    // forever, which is also what misled diagnosis of this exact bug.
+    let clean_for_insert = final_text_substituted.clone();
     let api_used_for_insert = ctx.api_used.to_string();
     let duration_for_insert = ctx.duration_ms as i64;
     let entry = match tokio::task::spawn_blocking(move || {
