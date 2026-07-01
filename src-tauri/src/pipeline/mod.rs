@@ -162,7 +162,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     hide_pill(&app);
 
     match transcribed {
-        Some(text) => Ok(text),
+        Some(text) => Ok(crate::system::text::collapse_degenerate_word_runs(&text)),
         None => Err(last_err.unwrap_or_else(|| {
             anyhow::anyhow!("Transcription failed: no model in chain produced output")
         })),
@@ -286,6 +286,16 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             "pipeline: trimmed trailing hallucination provider={} chars_before={} chars_after={}",
             api_used,
             raw_chars_before_strip,
+            raw.chars().count()
+        );
+    }
+    let raw_chars_before_collapse = raw.chars().count();
+    let raw = crate::system::text::collapse_degenerate_word_runs(&raw);
+    if raw.chars().count() != raw_chars_before_collapse {
+        log::warn!(
+            "pipeline: collapsed degenerate word run provider={} chars_before={} chars_after={}",
+            api_used,
+            raw_chars_before_collapse,
             raw.chars().count()
         );
     }
@@ -435,6 +445,7 @@ pub async fn retry_transcription_impl(
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
     let raw = strip_trailing_hallucination(&raw);
+    let raw = crate::system::text::collapse_degenerate_word_runs(&raw);
     if raw.trim().is_empty() || is_transcription_hallucination(&raw) {
         log::warn!(
             "pipeline: retry transcription matched hallucination pattern, dropping raw=\"{}\"",
