@@ -75,14 +75,19 @@ pub fn start_recording_session_ex(
     let mute_audio = audio_config.mute_audio;
     let exclusive_mic = audio_config.exclusive_mic;
     let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
+    let exclusive_mic_session_id = if exclusive_mic && gain_override.is_none() {
+        Some(crate::system::volume::register_session())
+    } else {
+        None
+    };
 
     match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
         Ok(session) => {
             if mute_audio && gain_override.is_none() {
                 std::thread::spawn(crate::system::volume::mute);
             }
-            if exclusive_mic && gain_override.is_none() {
-                std::thread::spawn(crate::system::volume::hog_mic);
+            if let Some(session_id) = exclusive_mic_session_id {
+                std::thread::spawn(move || crate::system::volume::hog_mic(session_id));
             }
             let level_arc = session.level.clone();
             let raw_level_arc = session.raw_level.clone();
@@ -93,6 +98,7 @@ pub fn start_recording_session_ex(
                     Err(e) => return Err(e.to_string()),
                 };
                 st.session = Some(session);
+                st.exclusive_mic_session_id = exclusive_mic_session_id;
                 st.handless = handless;
             }
             if show_recording_pill {
@@ -155,7 +161,7 @@ pub fn spawn_level_emitter(
 }
 pub(super) fn take_pipeline_session(
     state: &SharedState,
-) -> Option<(audio::RecordingSession, WindowTarget)> {
+) -> Option<(audio::RecordingSession, WindowTarget, Option<u64>)> {
     let mut st = match lock_state(state) {
         Ok(st) => st,
         Err(e) => {
@@ -164,5 +170,6 @@ pub(super) fn take_pipeline_session(
         }
     };
     let session = st.session.take()?;
-    Some((session, st.target))
+    let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+    Some((session, st.target, exclusive_mic_session_id))
 }

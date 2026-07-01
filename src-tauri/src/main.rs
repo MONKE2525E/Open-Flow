@@ -130,6 +130,7 @@ fn main() {
 
     let shared: SharedState = Arc::new(Mutex::new(AppState {
         session: None,
+        exclusive_mic_session_id: None,
         starting: false,
         handless: false,
         target: WindowTarget::default(),
@@ -778,12 +779,21 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     } else {
                         // First click of a double-tap gesture outside handsfree —
                         // discard the short recording that just started.
-                        let had_session = lock_app_state(&state_hk)
-                            .and_then(|mut st| st.session.take())
-                            .is_some();
-                        if had_session {
+                        let session = lock_app_state(&state_hk).and_then(|mut st| {
+                            let session = st.session.take();
+                            let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+                            session.map(|session| (session, exclusive_mic_session_id))
+                        });
+                        if let Some((session, exclusive_mic_session_id)) = session {
+                            std::thread::spawn(move || {
+                                let _ = session.stop();
+                            });
                             std::thread::spawn(crate::system::volume::unmute);
-                            std::thread::spawn(crate::system::volume::release_mic);
+                            if let Some(session_id) = exclusive_mic_session_id {
+                                std::thread::spawn(move || {
+                                    crate::system::volume::release_mic(session_id)
+                                });
+                            }
                         }
                         hide_pill(&app_hk);
                     }
@@ -796,14 +806,20 @@ fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             continue;
                         };
                         st.handless = false;
-                        st.session.take()
+                        let session = st.session.take();
+                        let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+                        session.map(|session| (session, exclusive_mic_session_id))
                     };
-                    if let Some(s) = session {
+                    if let Some((s, exclusive_mic_session_id)) = session {
                         std::thread::spawn(move || {
                             let _ = s.stop();
                         });
                         std::thread::spawn(crate::system::volume::unmute);
-                        std::thread::spawn(crate::system::volume::release_mic);
+                        if let Some(session_id) = exclusive_mic_session_id {
+                            std::thread::spawn(move || {
+                                crate::system::volume::release_mic(session_id)
+                            });
+                        }
                     }
                     hide_pill(&app_hk);
                 }

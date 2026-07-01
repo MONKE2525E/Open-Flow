@@ -7,6 +7,7 @@ pub(super) const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_s
 
 pub struct AppState {
     pub session: Option<audio::RecordingSession>,
+    pub exclusive_mic_session_id: Option<u64>,
     pub starting: bool,
     pub handless: bool,
     pub target: WindowTarget,

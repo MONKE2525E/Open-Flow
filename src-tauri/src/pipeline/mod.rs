@@ -47,14 +47,19 @@ pub use state::*;
 pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow::Result<String> {
     let session = {
         let mut st = lock_state(&state)?;
-        st.session.take()
+        let session = st.session.take();
+        let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+        (session, exclusive_mic_session_id)
     };
+    let (session, exclusive_mic_session_id) = session;
     let Some(session) = session else {
         anyhow::bail!("No active recording");
     };
 
     std::thread::spawn(crate::system::volume::unmute);
-    std::thread::spawn(crate::system::volume::release_mic);
+    if let Some(session_id) = exclusive_mic_session_id {
+        std::thread::spawn(move || crate::system::volume::release_mic(session_id));
+    }
     show_pill(&app, "processing");
 
     let settings_store = match store::settings_snapshot(&app) {
@@ -154,7 +159,7 @@ pub async fn run_pipeline_event_only(app: AppHandle, state: SharedState) {
 
 async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_only: bool) {
     let started_at = std::time::Instant::now();
-    let Some((session, target)) = take_pipeline_session(&state) else {
+    let Some((session, target, exclusive_mic_session_id)) = take_pipeline_session(&state) else {
         log::debug!("pipeline: no session - recording never started or was already consumed");
         return;
     };
@@ -176,7 +181,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     log::info!("pipeline: start target_id={}", target.id);
 
     std::thread::spawn(crate::system::volume::unmute);
-    std::thread::spawn(crate::system::volume::release_mic);
+    if let Some(session_id) = exclusive_mic_session_id {
+        std::thread::spawn(move || crate::system::volume::release_mic(session_id));
+    }
     show_pill(&app, "processing");
 
     // Keep the quiet-audio gate permissive at high gain. Whisper recordings can

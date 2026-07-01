@@ -208,7 +208,9 @@ pub async fn stop_calibration_monitoring(
 ) -> Result<(), String> {
     let session = {
         let mut st = lock_state(&state)?;
-        st.session.take()
+        let session = st.session.take();
+        st.exclusive_mic_session_id = None;
+        session
     };
     if let Some(s) = session {
         tauri::async_runtime::spawn_blocking(move || {
@@ -237,12 +239,17 @@ pub async fn stop_recording(
     let session = {
         let mut st = lock_state(&state)?;
         st.handless = false;
-        st.session.take()
+        let session = st.session.take();
+        let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+        (session, exclusive_mic_session_id)
     };
+    let (session, exclusive_mic_session_id) = session;
     if let Some(s) = session {
         let _ = s.stop();
         std::thread::spawn(crate::system::volume::unmute);
-        std::thread::spawn(crate::system::volume::release_mic);
+        if let Some(session_id) = exclusive_mic_session_id {
+            std::thread::spawn(move || crate::system::volume::release_mic(session_id));
+        }
     }
     pipeline::hide_pill(&app);
     Ok(())

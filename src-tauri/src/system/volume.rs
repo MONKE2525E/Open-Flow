@@ -1,5 +1,5 @@
 #[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 #[cfg(windows)]
@@ -39,12 +39,16 @@ enum MacRestoreState {
 static HOG_STATE: Mutex<HogState> = Mutex::new(HogState::Idle);
 #[cfg(target_os = "macos")]
 static WARNED_HOG_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "macos")]
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+#[cfg(target_os = "macos")]
+static ACTIVE_SESSION_ID: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug)]
 enum HogState {
     Idle,
-    Hogged { device_id: u32 },
+    Hogged { device_id: u32, session_id: u64 },
 }
 
 #[cfg(windows)]
@@ -549,8 +553,19 @@ pub fn unmute() {
 /// other app can capture it while dictating. Safe to call repeatedly — a no-op
 /// if exclusive access is already held.
 #[cfg(target_os = "macos")]
-pub fn hog_mic() {
-    let mut state = match HOG_STATE.lock() {
+pub fn register_session() -> u64 {
+    let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
+    ACTIVE_SESSION_ID.store(session_id, Ordering::SeqCst);
+    session_id
+}
+
+#[cfg(target_os = "macos")]
+pub fn hog_mic(session_id: u64) {
+    if ACTIVE_SESSION_ID.load(Ordering::SeqCst) != session_id {
+        return;
+    }
+
+    let state = match HOG_STATE.lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
             log::warn!("Exclusive mic state lock was poisoned; recovering");
@@ -562,9 +577,38 @@ pub fn hog_mic() {
         return;
     }
 
-    match macos::snapshot_and_hog() {
+    drop(state);
+
+    let result = macos::snapshot_and_hog();
+
+    if ACTIVE_SESSION_ID.load(Ordering::SeqCst) != session_id {
+        if let Ok(Some(device_id)) = result {
+            let _ = macos::release_hog(device_id);
+        }
+        return;
+    }
+
+    let mut state = match HOG_STATE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("Exclusive mic state lock was poisoned; recovering");
+            poisoned.into_inner()
+        }
+    };
+
+    if !matches!(*state, HogState::Idle) {
+        if let Ok(Some(device_id)) = result {
+            let _ = macos::release_hog(device_id);
+        }
+        return;
+    }
+
+    match result {
         Ok(Some(device_id)) => {
-            *state = HogState::Hogged { device_id };
+            *state = HogState::Hogged {
+                device_id,
+                session_id,
+            };
         }
         Ok(None) => {
             if !WARNED_HOG_UNAVAILABLE.swap(true, Ordering::Relaxed) {
@@ -581,7 +625,9 @@ pub fn hog_mic() {
 
 /// Releases exclusive microphone access taken by [`hog_mic`]. No-op if not held.
 #[cfg(target_os = "macos")]
-pub fn release_mic() {
+pub fn release_mic(session_id: u64) {
+    let _ = ACTIVE_SESSION_ID.compare_exchange(session_id, 0, Ordering::SeqCst, Ordering::SeqCst);
+
     let mut state = match HOG_STATE.lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
@@ -592,7 +638,11 @@ pub fn release_mic() {
 
     let device_id = match *state {
         HogState::Idle => return,
-        HogState::Hogged { device_id } => device_id,
+        HogState::Hogged {
+            device_id,
+            session_id: owner_session_id,
+        } if owner_session_id == session_id => device_id,
+        HogState::Hogged { .. } => return,
     };
 
     *state = HogState::Idle;
@@ -614,7 +664,12 @@ pub fn unmute() {
 
 /// Exclusive microphone access is macOS-only; no-op everywhere else.
 #[cfg(not(target_os = "macos"))]
-pub fn hog_mic() {}
+pub fn register_session() -> u64 {
+    0
+}
 
 #[cfg(not(target_os = "macos"))]
-pub fn release_mic() {}
+pub fn hog_mic(_session_id: u64) {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn release_mic(_session_id: u64) {}
