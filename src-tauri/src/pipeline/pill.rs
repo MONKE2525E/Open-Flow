@@ -41,20 +41,59 @@ fn create_pill_if_needed(app: &AppHandle) {
     if app.get_webview_window("pill").is_some() {
         return;
     }
-    let _ =
-        tauri::WebviewWindowBuilder::new(app, "pill", tauri::WebviewUrl::App("/pill.html".into()))
-            .title("")
-            .inner_size(PILL_WIDTH_POINTS, PILL_HEIGHT_POINTS)
-            .decorations(false)
-            .transparent(true)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .visible(false)
-            .resizable(false)
-            .shadow(false)
-            .focused(false)
-            .build();
+    match tauri::WebviewWindowBuilder::new(app, "pill", tauri::WebviewUrl::App("/pill.html".into()))
+        .title("")
+        .inner_size(PILL_WIDTH_POINTS, PILL_HEIGHT_POINTS)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(false)
+        .resizable(false)
+        .shadow(false)
+        .focused(false)
+        .build()
+    {
+        Ok(pill) => harden_pill_window(&pill),
+        Err(err) => log::warn!("Failed to create dictation pill window: {err}"),
+    }
 }
+
+#[cfg(target_os = "windows")]
+fn harden_pill_window<R: Runtime>(pill: &WebviewWindow<R>) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_APPWINDOW,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    };
+
+    let Ok(hwnd) = pill.hwnd() else {
+        return;
+    };
+
+    unsafe {
+        let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let desired = (current | WS_EX_NOACTIVATE.0 as isize | WS_EX_TOOLWINDOW.0 as isize)
+            & !(WS_EX_APPWINDOW.0 as isize);
+
+        if desired != current {
+            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, desired);
+        }
+
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn harden_pill_window<R: Runtime>(_pill: &WebviewWindow<R>) {}
 
 pub(crate) fn show_pill(app: &AppHandle, state: &str) {
     show_pill_msg(app, state, None);
@@ -164,10 +203,22 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     // whatever window the user is dictating into.
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            SW_SHOWNOACTIVATE,
+        };
         if let Ok(hwnd) = pill.hwnd() {
             unsafe {
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
             }
         }
     }

@@ -23,12 +23,15 @@ struct IconRect {
 
 pub(crate) fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let open_i = MenuItem::with_id(app, "open", "Open Verenu", true, None::<&str>)?;
+    #[cfg(target_os = "macos")]
     let permissions_i =
         MenuItem::with_id(app, "permissions", "Permissions...", true, None::<&str>)?;
     let settings_i = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let relaunch_i = MenuItem::with_id(app, "relaunch", "Relaunch", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+
+    #[cfg(target_os = "macos")]
     let menu = Menu::with_items(
         app,
         &[
@@ -40,6 +43,8 @@ pub(crate) fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
             &quit_i,
         ],
     )?;
+    #[cfg(not(target_os = "macos"))]
+    let menu = Menu::with_items(app, &[&open_i, &settings_i, &sep, &relaunch_i, &quit_i])?;
 
     let icon_theme = resolve_icon_theme(app.handle(), None);
     let tray_icon = runtime_tray_icon_image(icon_theme, 32);
@@ -60,7 +65,7 @@ pub(crate) fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 crate::show_main_window(app);
                 let _ = app.emit("open-flow:open-settings-section", "general");
             }
-            "relaunch" => app.restart(),
+            "relaunch" => relaunch_app(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -68,6 +73,41 @@ pub(crate) fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
     apply_runtime_icons(app.handle(), None);
 
+    Ok(())
+}
+
+fn relaunch_app(app: &AppHandle) {
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(err) = spawn_relaunch_and_exit(app) {
+            log::error!("Failed to relaunch Verenu: {err}");
+            crate::show_main_window(app);
+            let _ = app.emit(
+                "verenu:error",
+                "Could not relaunch Verenu. Please quit and reopen the app.",
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    app.restart();
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_relaunch_and_exit(app: &AppHandle) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+
+    let exe = std::env::current_exe()
+        .map_err(|err| format!("could not locate current executable: {err}"))?;
+    std::process::Command::new(exe)
+        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
+        .spawn()
+        .map_err(|err| format!("could not start replacement process: {err}"))?;
+
+    app.exit(0);
     Ok(())
 }
 
@@ -120,7 +160,9 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
 #[cfg(target_os = "windows")]
 fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
     use windows::Win32::Foundation::{COLORREF, LPARAM, WPARAM};
-    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR};
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, ICON_BIG, ICON_SMALL, WM_SETICON};
 
     if let Some(w) = app.get_webview_window("main") {
@@ -159,9 +201,18 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
                 // WM_SETICON state survives — unlike the window's extended style, which tao
                 // resets after our call (so WS_EX_DLGMODALFRAME did not stick here).
                 let (small, big) = cached_caption_icons(icon_theme);
-                let _ = SendMessageW(hwnd, WM_SETICON, Some(WPARAM(ICON_BIG as usize)), Some(LPARAM(big)));
-                let _ =
-                    SendMessageW(hwnd, WM_SETICON, Some(WPARAM(ICON_SMALL as usize)), Some(LPARAM(small)));
+                let _ = SendMessageW(
+                    hwnd,
+                    WM_SETICON,
+                    Some(WPARAM(ICON_BIG as usize)),
+                    Some(LPARAM(big)),
+                );
+                let _ = SendMessageW(
+                    hwnd,
+                    WM_SETICON,
+                    Some(WPARAM(ICON_SMALL as usize)),
+                    Some(LPARAM(small)),
+                );
             }
         }
     }
@@ -188,12 +239,10 @@ fn cached_caption_icons(theme: IconTheme) -> (isize, isize) {
 
     let transparent = *TRANSPARENT.get_or_init(|| make_transparent_hicon(16));
     let real = match theme {
-        IconTheme::Dark => {
-            *DARK_REAL.get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Dark, 32).rgba(), 32))
-        }
-        IconTheme::Light => {
-            *LIGHT_REAL.get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Light, 32).rgba(), 32))
-        }
+        IconTheme::Dark => *DARK_REAL
+            .get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Dark, 32).rgba(), 32)),
+        IconTheme::Light => *LIGHT_REAL
+            .get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Light, 32).rgba(), 32)),
     };
     (transparent, real)
 }
