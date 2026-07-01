@@ -161,7 +161,7 @@ pub fn spawn_level_emitter(
 }
 pub(super) fn take_pipeline_session(
     state: &SharedState,
-) -> Option<(audio::RecordingSession, WindowTarget, Option<u64>)> {
+) -> Option<(Option<audio::RecordingSession>, WindowTarget, Option<u64>)> {
     let mut st = match lock_state(state) {
         Ok(st) => st,
         Err(e) => {
@@ -169,7 +169,7 @@ pub(super) fn take_pipeline_session(
             return None;
         }
     };
-    let session = st.session.take()?;
+    let session = st.session.take();
     let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
     Some((session, st.target, exclusive_mic_session_id))
 }

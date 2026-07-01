@@ -53,6 +53,9 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     };
     let (session, exclusive_mic_session_id) = session;
     let Some(session) = session else {
+        if let Some(session_id) = exclusive_mic_session_id {
+            std::thread::spawn(move || crate::system::volume::release_mic(session_id));
+        }
         anyhow::bail!("No active recording");
     };
 
@@ -160,6 +163,13 @@ pub async fn run_pipeline_event_only(app: AppHandle, state: SharedState) {
 async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_only: bool) {
     let started_at = std::time::Instant::now();
     let Some((session, target, exclusive_mic_session_id)) = take_pipeline_session(&state) else {
+        log::debug!("pipeline: no session - recording never started or was already consumed");
+        return;
+    };
+    let Some(session) = session else {
+        if let Some(session_id) = exclusive_mic_session_id {
+            std::thread::spawn(move || crate::system::volume::release_mic(session_id));
+        }
         log::debug!("pipeline: no session - recording never started or was already consumed");
         return;
     };
