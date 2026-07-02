@@ -15,7 +15,7 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 - Evened out the Dictionary and Snippets sort segmented controls' selection highlight.
 - Fixed Caps Lock casing getting partially undone by contextual capitalization when dictating mid-sentence.
 - Fixed the dictation pill clipping on the first recording shown after switching monitors.
-- Tightened the handsfree start chime timing and animated the pill's move across monitors.
+- Tightened the hands-free start chime timing and animated the pill's move across monitors.
 - Signed macOS release builds with a persistent self-signed identity so permission grants carry over between updates.
 - Replaced the periodic HTTP connectivity probe with native OS connectivity checks, eliminating background network traffic for that check.
 - Organized project documentation around `docs/` instead of scattering full policy files at the repository root.
