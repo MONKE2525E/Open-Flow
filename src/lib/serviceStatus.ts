@@ -7,7 +7,7 @@ const API_HEALTH_INTERVAL_MS = 20 * 60 * 1000;
 
 async function checkProviderStatus(): Promise<void> {
   try {
-    appStore.providerStatusAlerts = await invoke<ProviderStatusAlert[]>('check_provider_status');
+    appStore.providerStatusAlerts = (await invoke<ProviderStatusAlert[] | null>('check_provider_status')) ?? [];
   } catch (error) {
     console.warn('Provider status check failed:', error);
   }
