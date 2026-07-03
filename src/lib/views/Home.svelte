@@ -7,6 +7,7 @@
   import { getGreeting, HISTORY_PAGE_SIZE, type Entry, type Stats } from './home/helpers';
   import HomeHero from './home/HomeHero.svelte';
   import UpdateBanner from './home/UpdateBanner.svelte';
+  import ProviderStatusBanner from './home/ProviderStatusBanner.svelte';
   import HistoryList from './home/HistoryList.svelte';
   import StatsCard from './home/StatsCard.svelte';
 
@@ -163,7 +164,9 @@
 
       <HomeHero {hk1} {hk2} />
 
-      {#if appStore.updateInfo}
+      {#if appStore.providerStatusAlerts.length > 0}
+        <ProviderStatusBanner alerts={appStore.providerStatusAlerts} />
+      {:else if appStore.updateInfo}
         <UpdateBanner
           {currentVersion}
           updateInfo={appStore.updateInfo}

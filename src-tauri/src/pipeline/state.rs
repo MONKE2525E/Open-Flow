@@ -44,6 +44,17 @@ pub(super) fn emit_pipeline_failed(app: &AppHandle) {
     .ok();
 }
 
+/// Tells the frontend to re-poll provider status immediately rather than
+/// waiting for its next 5-minute interval, because a pipeline call just
+/// failed in a way that looks provider-side (quota or a retryable
+/// timeout/429/5xx) rather than a local/config problem. The frontend
+/// re-fetches the same filtered status it already polls periodically, so
+/// this only surfaces something if the status API independently confirms an
+/// issue with a provider the user actually has selected.
+pub(super) fn emit_provider_recheck(app: &AppHandle) {
+    app.emit("verenu:recheck-provider-status", ()).ok();
+}
+
 /// Returns true if our own process currently owns the foreground window.
 /// Catches the case where the user opened the Verenu main window while
 /// transcribing — if we tried to Ctrl+V / Cmd+V in that state the paste would

@@ -3,6 +3,7 @@ pub mod cleanup;
 pub mod client;
 pub mod gemini_types;
 pub mod prompts;
+pub mod service_status;
 pub mod transcription;
 pub mod updater;
 
