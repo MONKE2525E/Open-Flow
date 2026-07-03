@@ -1,6 +1,7 @@
 import {
   invoke,
   listen,
+  emit,
   type LocalSttDownloadProgressPayload,
   type LocalSttExtractionProgressPayload,
   type LocalSttModelEventPayload,
@@ -44,6 +45,7 @@ export async function downloadLocalModel(modelIdValue: string) {
     await refreshLocalState();
   } catch (err) {
     console.error('download local model failed', err);
+    emit('verenu:error', `Failed to start model download: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

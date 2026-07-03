@@ -254,7 +254,30 @@ fn extract_archive(archive_path: &Path, dest: &Path) -> anyhow::Result<()> {
     let mut archive = tar::Archive::new(decoder);
     for entry in archive.entries()? {
         let mut entry = entry?;
-        if !entry.header().entry_type().is_file() {
+        let entry_type = entry.header().entry_type();
+
+        if entry_type.is_symlink() {
+            let path = entry.path()?.into_owned();
+            let Some(file_name) = path.file_name() else {
+                continue;
+            };
+            let out_path = dest.join(file_name);
+            if let Some(target) = entry.link_name()? {
+                let Some(target_file_name) = target.file_name() else {
+                    continue;
+                };
+                if out_path.exists() {
+                    let _ = std::fs::remove_file(&out_path);
+                }
+                #[cfg(unix)]
+                {
+                    std::os::unix::fs::symlink(target_file_name, &out_path)?;
+                }
+            }
+            continue;
+        }
+
+        if !entry_type.is_file() {
             continue;
         }
         let path = entry.path()?.into_owned();
@@ -281,6 +304,13 @@ pub async fn ensure_llama_server_binary(
 ) -> anyhow::Result<PathBuf> {
     let root = runtime_root();
     let binary_path = root.join(runtime_binary_name());
+
+    #[cfg(target_os = "macos")]
+    if binary_path.is_file() && !root.join("libllama-common.0.dylib").exists() {
+        log::warn!("local-llm: local runtime dynamic library libllama-common.0.dylib not found, forcing repair re-download");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     if binary_path.is_file() {
         return Ok(binary_path);
     }

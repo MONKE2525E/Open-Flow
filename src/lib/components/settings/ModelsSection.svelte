@@ -616,6 +616,7 @@
   cleanupState={localLlmStore.state}
   selectedCleanupModelId={cleanupDefaultModel}
   cleanupDownloadProgress={localLlmStore.downloadProgress}
+  cleanupDownloadStage={localLlmStore.downloadStage}
   onDownloadCleanupModel={downloadLocalLlmModel}
   onCancelCleanupDownload={cancelLocalLlmModelDownload}
   onDeleteCleanupModel={handleDeleteCleanupModel}

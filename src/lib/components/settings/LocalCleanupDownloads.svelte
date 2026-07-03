@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { slide } from 'svelte/transition';
+  import { fade, slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { cleanupPromptOverridesStore, openCleanupPromptEditor } from '../../stores.svelte';
   import { MOTION_MS, motionMs } from '../../motion';
@@ -19,6 +19,7 @@
     cleanupState = { is_loading: false, is_loaded: false, current_model_id: null, is_downloading: false, downloading_model_id: null, endpoint: null } as LocalLlmState,
     selectedCleanupModelId = '',
     cleanupDownloadProgress = {} as Record<string, LocalLlmDownloadProgressPayload | undefined>,
+    cleanupDownloadStage = {} as Record<string, 'downloading' | 'verifying' | undefined>,
     onDownloadCleanupModel = (_id: string) => {},
     onCancelCleanupDownload = (_id: string) => {},
     onDeleteCleanupModel = (_id: string) => {},
@@ -35,6 +36,7 @@
     cleanupState?: LocalLlmState;
     selectedCleanupModelId?: string;
     cleanupDownloadProgress?: Record<string, LocalLlmDownloadProgressPayload | undefined>;
+    cleanupDownloadStage?: Record<string, 'downloading' | 'verifying' | undefined>;
     onDownloadCleanupModel?: (modelId: string) => void;
     onCancelCleanupDownload?: (modelId: string) => void;
     onDeleteCleanupModel?: (modelId: string) => void;
@@ -122,6 +124,15 @@
 
   function cleanupProgressPercent(modelId: string): number {
     return Math.round((cleanupDownloadProgress[modelId]?.progress ?? 0) * 100);
+  }
+
+  function cleanupProgressLabel(modelId: string): string {
+    switch (cleanupDownloadStage[modelId]) {
+      case 'verifying':
+        return 'Verifying download…';
+      default:
+        return 'Downloading';
+    }
   }
 
   function cleanupPromptCustomized(modelId: string): boolean {
@@ -266,7 +277,11 @@
               <div class="progress-block" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
                 <div class="progress-row">
                   <span class="progress-stage-slot">
-                    <span class="progress-stage">Downloading</span>
+                    {#key cleanupDownloadStage[model.id]}
+                      <span class="progress-stage" in:fade={{ duration: motionMs(MOTION_MS.fast) }} out:fade={{ duration: motionMs(MOTION_MS.fast) }}>
+                        {cleanupProgressLabel(model.id)}
+                      </span>
+                    {/key}
                   </span>
                   <span class="progress-pct">{cleanupProgressPercent(model.id)}%</span>
                 </div>

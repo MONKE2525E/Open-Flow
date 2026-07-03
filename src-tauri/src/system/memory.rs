@@ -437,3 +437,55 @@ pub fn measure() -> u64 {
         (total / (1024 * 1024)) as u64
     }
 }
+
+pub fn free_bytes_for_path(path: &std::path::Path) -> Result<u64, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+        let mut free_bytes_available: u64 = 0;
+        let mut total_bytes: u64 = 0;
+        let mut total_free_bytes: u64 = 0;
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let result = unsafe {
+            GetDiskFreeSpaceExW(
+                PCWSTR(wide.as_ptr()),
+                Some(&mut free_bytes_available),
+                Some(&mut total_bytes),
+                Some(&mut total_free_bytes),
+            )
+        };
+        result
+            .map(|_| free_bytes_available)
+            .map_err(|_| "Failed to read free disk space".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let c_path =
+            CString::new(path.as_os_str().as_bytes()).map_err(|_| "Invalid path".to_string())?;
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        let rc = unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) };
+        if rc != 0 {
+            return Err("Failed to read free disk space".to_string());
+        }
+        Ok(stat.f_bavail as u64 * stat.f_frsize as u64)
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = path;
+        Ok(u64::MAX)
+    }
+}
+

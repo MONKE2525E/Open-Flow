@@ -51,6 +51,16 @@ fn resolve_llama_server_binary(app: &AppHandle) -> anyhow::Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        let bin_dir = crate::app_data_dir().join("models").join("bin");
+        let candidate = bin_dir.join(llama_server_binary_name());
+        if candidate.is_file() && !bin_dir.join("libllama-common.0.dylib").exists() {
+            log::warn!("local-llm: local runtime dynamic library libllama-common.0.dylib not found, deleting corrupt runtime directory to force download repair");
+            let _ = std::fs::remove_dir_all(&bin_dir);
+        }
+    }
+
     let candidates = [
         crate::app_data_dir().join("models").join("bin").join(llama_server_binary_name()),
         app.path()

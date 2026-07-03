@@ -189,7 +189,21 @@ impl LocalLlmManager {
                 }
                 Err(err) => {
                     let was_cancelled = cancel.load(Ordering::Relaxed);
+                    log::error!(
+                        "local-llm: download task failed id={} elapsed_ms={} was_cancelled={} error={err:?}",
+                        manifest.id,
+                        started_at.elapsed().as_millis(),
+                        was_cancelled
+                    );
                     cleanup_failed_download_artifacts(&manifest, &root, was_cancelled);
+
+                    if !was_cancelled {
+                        let _ = app_handle.emit(
+                            "verenu:error",
+                            format!("Failed to download local model: {}", err),
+                        );
+                    }
+
                     let _ = app_handle.emit(
                         "local-llm-model-download-failed",
                         LocalLlmModelEventPayload {
@@ -254,7 +268,21 @@ impl LocalLlmManager {
                     );
                 }
                 Err(err) => {
+                    let was_cancelled = cancel.load(Ordering::Relaxed);
+                    log::error!(
+                        "local-llm: runtime download failed elapsed_ms={} was_cancelled={} error={err:?}",
+                        started_at.elapsed().as_millis(),
+                        was_cancelled
+                    );
                     super::binary::cleanup_failed_runtime_download(&super::binary::runtime_root());
+
+                    if !was_cancelled {
+                        let _ = app_handle.emit(
+                            "verenu:error",
+                            format!("Failed to download local cleanup runtime: {}", err),
+                        );
+                    }
+
                     let _ = app_handle.emit(
                         "local-llm-runtime-download-failed",
                         LocalLlmRuntimeEventPayload {

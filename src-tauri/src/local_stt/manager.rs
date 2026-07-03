@@ -238,6 +238,14 @@ impl LocalTranscriptionManager {
                     // partial file so the next attempt can resume instead of
                     // re-downloading from scratch.
                     cleanup_failed_download_artifacts(&manifest, &root, was_cancelled);
+
+                    if !was_cancelled {
+                        let _ = app_handle.emit(
+                            "verenu:error",
+                            format!("Failed to download local model: {}", err),
+                        );
+                    }
+
                     let _ = app_handle.emit(
                         "local-stt-model-download-failed",
                         LocalSttModelEventPayload {

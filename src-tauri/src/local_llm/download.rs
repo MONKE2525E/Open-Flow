@@ -26,6 +26,7 @@ pub(super) fn download_client() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
+            .user_agent("Verenu/0.15.0")
             .build()
             .expect("local cleanup model download client")
     })
@@ -293,6 +294,24 @@ pub async fn download_model(
 
     let total_bytes = negotiate_total_bytes(manifest, root).await?;
     let mut downloaded_bytes = manifest.partial_size(root);
+
+    if let Some(total) = total_bytes {
+        let required_additional = total.saturating_sub(downloaded_bytes);
+        if required_additional > 0 {
+            if let Ok(free_bytes) = crate::system::memory::free_bytes_for_path(root) {
+                if free_bytes < required_additional {
+                    let required_mb = required_additional / (1024 * 1024);
+                    let free_mb = free_bytes / (1024 * 1024);
+                    anyhow::bail!(
+                        "Not enough disk space to download model. Required: {} MB, Available: {} MB",
+                        required_mb,
+                        free_mb
+                    );
+                }
+            }
+        }
+    }
+
     emit_progress(app, manifest.id, downloaded_bytes, total_bytes);
 
     for artifact in manifest.artifacts {
