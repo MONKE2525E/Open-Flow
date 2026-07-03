@@ -100,6 +100,21 @@ fn strip_hallucinated_suffix_still_strips_bare_hallucination_sentence() {
 }
 
 #[test]
+fn strip_hallucinated_suffix_finds_boundary_after_cjk_fullwidth_period() {
+    // CJK sentences end with a fullwidth terminator and no trailing space, so
+    // the ASCII "punctuation + whitespace" boundary rule alone would miss the
+    // split point and fail to isolate the trailing English hallucination.
+    let raw = "今晩予定がある。Thank you for watching!";
+    assert_eq!(strip_hallucinated_suffix(raw), "今晩予定がある。");
+}
+
+#[test]
+fn strip_hallucinated_suffix_trims_trailing_fullwidth_punctuation_before_exact_match() {
+    let raw = "会議の議事録です。Thank you for watching！";
+    assert_eq!(strip_hallucinated_suffix(raw), "会議の議事録です。");
+}
+
+#[test]
 fn cleanup_cache_bypasses_math_like_queries() {
     assert!(!should_use_cleanup_cache("What's 67 plus 67?"));
     assert!(!should_use_cleanup_cache("what is six times seven"));

@@ -128,15 +128,20 @@ fn is_sentence_hallucination(sentence: &str) -> bool {
         "[no audio]",
         "[blank audio]",
     ];
-    let t = t.trim_end_matches(|c: char| matches!(c, '.' | '!' | '?' | ',' | ';' | ':') || c.is_whitespace());
+    let t = t.trim_end_matches(|c: char| {
+        matches!(c, '.' | '!' | '?' | ',' | ';' | ':' | '。' | '！' | '？' | '，' | '；' | '：') || c.is_whitespace()
+    });
     EXACT_PATTERNS.contains(&t)
 }
 
 /// Returns the final sentence of `text`, where a boundary is one or more of
-/// `.`/`!`/`?` followed by whitespace (or end of string), or a newline.
+/// `.`/`!`/`?` followed by whitespace (or end of string), a newline, or a
+/// CJK fullwidth terminator (`。`/`！`/`？`).
 ///
-/// Requiring trailing whitespace after the punctuation avoids treating a
-/// period inside something like "Amara.org" as a sentence boundary.
+/// Requiring trailing whitespace after ASCII punctuation avoids treating a
+/// period inside something like "Amara.org" as a sentence boundary. CJK
+/// fullwidth terminators don't need that check — they're unambiguous
+/// sentence-enders and CJK text conventionally has no space after them.
 fn last_sentence(text: &str) -> &str {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -163,6 +168,8 @@ fn last_sentence(text: &str) -> &str {
             }
             i = j;
             continue;
+        } else if matches!(c, '。' | '！' | '？') {
+            boundaries.push(chars[i].0 + c.len_utf8());
         } else if c == '\n' {
             boundaries.push(chars[i].0 + 1);
         }
