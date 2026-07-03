@@ -141,6 +141,7 @@ src-tauri/
         gemini.rs           # Gemini-specific generation config
         tests.rs            # Prompt tests
       updater.rs            # Auto-update logic
+      service_status.rs     # Client for api.verenu.com (provider status + health), filtered to selected providers
     core/
       hotkey/
         mod.rs               # Platform-dispatch + shared chord/handsfree state
@@ -236,6 +237,12 @@ The `transcription_language` setting (ISO 639-1, default `en`) is sent to Groq/O
 **API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to any configured fallback models. Fallback models are configured per task (transcription/cleanup) in the Models settings tab and stored as `transcription_fallback_models` / `cleanup_fallback_models` arrays. Fallback is implicit — if fallback models are configured, they are always tried in order. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately. `is_retryable_provider_error()` in `api/mod.rs` is the single source of truth for what counts as retryable (reqwest timeout/connect errors, HTTP 408/429/5xx, and a few message-substring heuristics).
 
 **401 handling:** `api/mod.rs` classifies unauthorized responses into `AuthErrorCategory` (`InvalidOrRevokedKey`, `ScopeOrAccountRestriction`, `UnknownUnauthorized`) via `classify_unauthorized_body()`, and encodes the result as a structured `AUTH_401|provider=...|category=...` error string (`auth_401_error()` / `parse_auth_401_error()`) so the frontend can show a category-specific message instead of a generic failure.
+
+## Verenu Status API (`api/service_status.rs`)
+
+The frontend polls `api.verenu.com/v1/provider-status` every 5 minutes (`src/lib/serviceStatus.ts`) and shows an in-app banner (`ProviderStatusBanner.svelte`, replacing the update-available banner when both are pending) only when a provider the user has actually selected for transcription or cleanup is flagged with a real issue. "Real issue" means the backend's `showToUsers` flag is true AND `status` is neither `operational` nor `unknown` (`unknown` means the provider doesn't publish a machine-readable feed, not that something is broken) — `filter_alerts()` in `service_status.rs` is the single source of truth for that gate. `api.verenu.com/v1/health` is polled every 20 minutes into `appStore.apiHealthy` with no UI yet, for future use. Settings → Developer has a "Run Check" button (`check_provider_status_raw`) that shows the unfiltered API response for debugging.
+
+If a transcription or cleanup call fails with a provider-side error (`is_retryable_provider_error()` — quota, or a retryable timeout/429/5xx), the pipeline emits `verenu:recheck-provider-status` so the frontend re-polls immediately instead of waiting for the next scheduled check. These are the app's only calls to a Verenu-owned server; they are plain GETs that never include dictated audio, text, keys, or history (see [docs/DATA_AND_PRIVACY.md](docs/DATA_AND_PRIVACY.md)).
 
 ## Global Hotkey Behavior
 
