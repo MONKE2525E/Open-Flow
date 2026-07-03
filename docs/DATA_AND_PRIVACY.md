@@ -4,10 +4,10 @@ This document explains what Verenu keeps on device, what it sends off device, an
 
 ## Core Principles
 
-- Verenu does not run its own servers.
+- Verenu's own server (`api.verenu.com`) serves only public app metadata — release info, download links, and provider status. It never receives your dictated audio, transcripts, API keys, or history.
 - There is no built-in telemetry, analytics, or ad-tech pipeline.
-- Your data either stays on your machine or goes directly to the providers you configure.
-- If data leaves your machine, it leaves because a feature needs it and the provider endpoint is part of that feature.
+- Your dictated audio and text either stay on your machine or go directly to the AI providers you configure — never through a Verenu server.
+- If data leaves your machine, it leaves because a feature needs it: either the AI provider endpoint that feature depends on, or Verenu's own public status/update endpoint.
 - Safety defaults beat convenience. On Windows, updates download or open the published installer instead of auto-executing downloaded bytes.
 
 ## What Stays On Device
@@ -104,6 +104,16 @@ While the app window is open, Verenu periodically sends a lightweight `HEAD` req
 
 That request carries no dictated text, history, snippets, or API keys.
 
+### Provider status checks
+
+Verenu periodically asks `api.verenu.com` for the operating status of the transcription and cleanup providers you have selected:
+
+- Every 5 minutes, it fetches provider status and shows an in-app banner only if the status API flags a real problem for a provider you have actually selected. A provider reporting `operational` or `unknown` does not trigger a banner, and providers you have not selected never surface regardless of their status.
+- Every 20 minutes, it does a plain up/down health check of `api.verenu.com` itself. This currently has no UI; the result is kept in memory for future features.
+- If a transcription or cleanup call fails in a way that looks provider-side (a quota error, or a retryable timeout/429/5xx), Verenu immediately re-checks provider status instead of waiting for the next scheduled poll.
+
+These are plain GET requests with no request body. They never include your dictated audio, transcripts, history, dictionary, snippets, prompts, or API keys — Verenu's server only ever sends back public status data in response, it does not receive anything from you beyond the bare HTTP request.
+
 ## History Loading
 
 The Home view loads recent transcription history in pages of 100 items by default and can request older pages on demand.
@@ -112,7 +122,7 @@ This changes UI loading behavior, not storage location. The full history databas
 
 ## What Verenu Does Not Send
 
-Verenu does not send any of this to a Verenu-owned server, because there is no Verenu-owned server in the product path today:
+`api.verenu.com` is in the product path today (release/update metadata and provider status), but even so, Verenu does not send any of this to that server or any other Verenu-owned server:
 
 - transcription history
 - dictionary entries by default
@@ -135,6 +145,8 @@ That said, once data is sent to a third-party AI provider, that provider's reten
 | Auto-learn | local monitoring data and promoted entries | nothing by default |
 | Update check | current app state stays local | GitHub release metadata request |
 | Connectivity check | current app state stays local | periodic `HEAD` request to `api.github.com` |
+| Provider status check | current app state stays local | periodic GET to `api.verenu.com/v1/provider-status` (every 5 min, plus an immediate recheck after a provider-side pipeline failure) |
+| API health check | current app state stays local | periodic GET to `api.verenu.com/v1/health` (every 20 min) |
 | Export data | backup file on local disk | nothing unless you share the file yourself |
 | Logs export | log file on local disk | nothing unless you share the file yourself |
 

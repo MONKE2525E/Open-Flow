@@ -13,13 +13,13 @@
   let devModeHintVisible = $state(false);
 
   const SOURCE_REPO = 'MONKE2525E/Verenu';
+  const WEBSITE_URL = 'https://verenu.com';
 
   $effect(() => {
     if (appStore.updateInfo) updateCheckState = 'available';
   });
 
-  async function openRepo() {
-    const url = `https://github.com/${SOURCE_REPO}`;
+  async function openExternal(url: string) {
     try {
       const { open } = await import('@tauri-apps/plugin-shell');
       await open(url);
@@ -108,8 +108,12 @@
   <span class="desc">MIT</span>
 </div>
 <div class="setting-row">
+  <div><div class="label">Website</div></div>
+  <button class="btn-ghost" onclick={() => openExternal(WEBSITE_URL)}>verenu.com</button>
+</div>
+<div class="setting-row">
   <div><div class="label">Source</div></div>
-  <button class="btn-ghost" onclick={openRepo}>github.com/{SOURCE_REPO}</button>
+  <button class="btn-ghost" onclick={() => openExternal(`https://github.com/${SOURCE_REPO}`)}>github.com/{SOURCE_REPO}</button>
 </div>
 <div class="setting-row">
   <div>

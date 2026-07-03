@@ -10,6 +10,8 @@
   let logViewport: HTMLDivElement | null = null;
   let verboseEnabled = $state(false);
   let forceSetupOnLaunch = $state(false);
+  let providerStatusRaw = $state('');
+  let providerStatusChecking = $state(false);
 
   async function loadRecentLogs() {
     try {
@@ -60,6 +62,21 @@
       verboseEnabled = verbose ?? false;
     } catch (err) {
       console.error('Failed to load dev flags:', err);
+    }
+  }
+
+  async function runProviderStatusCheck() {
+    if (providerStatusChecking) return;
+    providerStatusChecking = true;
+    providerStatusRaw = '';
+    try {
+      const raw = await invoke('check_provider_status_raw');
+      providerStatusRaw = JSON.stringify(raw, null, 2);
+    } catch (err) {
+      providerStatusRaw = `Check failed: ${err}`;
+      console.error('check_provider_status_raw failed:', err);
+    } finally {
+      providerStatusChecking = false;
     }
   }
 
@@ -151,6 +168,18 @@
     {exporting ? 'Saving...' : 'Download Logs'}
   </button>
 </div>
+<div class="setting-row">
+  <div>
+    <div class="label">Provider Status Check</div>
+    <div class="desc">Fetches api.verenu.com/v1/provider-status directly and shows the raw response.</div>
+  </div>
+  <button class="btn-ghost" onclick={runProviderStatusCheck} disabled={providerStatusChecking}>
+    {providerStatusChecking ? 'Checking...' : 'Run Check'}
+  </button>
+</div>
+{#if providerStatusRaw}
+  <pre class="raw-panel scroll-styled">{providerStatusRaw}</pre>
+{/if}
 
 <style>
   .logs-panel {
@@ -179,6 +208,22 @@
     font-size: 12px;
     color: var(--ink-mute);
     padding: 8px 2px;
+  }
+  .raw-panel {
+    max-height: 320px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--paper);
+    padding: 10px 12px;
+    overflow: auto;
+    margin-top: 12px;
+    margin-bottom: 12px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-soft);
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
   .export-status {
     margin-top: 6px;

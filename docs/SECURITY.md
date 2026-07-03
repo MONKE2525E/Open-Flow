@@ -8,7 +8,7 @@ Security fixes are targeted at the current development line and the latest publi
 
 ## Reporting A Vulnerability
 
-Use GitHub private vulnerability reporting if it is available for this repository. If it is not enabled, do not open a public issue or disclose vulnerability details publicly. Contact the maintainers privately to request a secure reporting channel before sharing exploit details, API keys, private dictated text, logs with secrets, or screenshots with private content.
+Email [security@verenu.com](mailto:security@verenu.com). GitHub private vulnerability reporting is not enabled for this repository, so do not use it. Do not open a public issue or disclose vulnerability details publicly, and do not include exploit details, API keys, private dictated text, logs with secrets, or screenshots with private content until a fix or mitigation is in place.
 
 Good reports include:
 

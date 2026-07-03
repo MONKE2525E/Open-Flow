@@ -13,6 +13,7 @@
   import Setup from './lib/views/Setup.svelte';
   import { invoke, listen } from './lib/tauri';
   import { startAutomaticUpdateChecks } from './lib/updates';
+  import { startProviderStatusChecks, startApiHealthChecks } from './lib/serviceStatus';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
@@ -69,6 +70,8 @@
   onMount(() => {
     let cleanupFn: (() => void) | undefined;
     let stopAutomaticUpdateChecks: (() => void) | undefined;
+    let stopProviderStatusChecks: (() => void) | undefined;
+    let stopApiHealthChecks: (() => void) | undefined;
 
     (async () => {
       try {
@@ -102,6 +105,13 @@
       console.error('Failed to start automatic update checks:', error);
     }
 
+    try {
+      stopProviderStatusChecks = startProviderStatusChecks();
+      stopApiHealthChecks = startApiHealthChecks();
+    } catch (error) {
+      console.error('Failed to start Verenu status checks:', error);
+    }
+
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
     const onSystemThemeChange = () => {
       if (appStore.appearanceMode === 'system') applyTheme();
@@ -122,6 +132,8 @@
     return () => {
       if (cleanupFn) cleanupFn();
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
+      if (stopProviderStatusChecks) stopProviderStatusChecks();
+      if (stopApiHealthChecks) stopApiHealthChecks();
       media?.removeEventListener?.('change', onSystemThemeChange);
       clearInterval(connectivityTimer);
       document.removeEventListener('visibilitychange', handleVisibility);

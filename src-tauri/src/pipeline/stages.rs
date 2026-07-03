@@ -308,6 +308,9 @@ pub(super) async fn run_transcription(
             "pipeline: transcription failed error={}",
             trim_err(&e.to_string())
         );
+        if crate::api::is_retryable_provider_error(&e) {
+            emit_provider_recheck(app);
+        }
         show_error_pill(app, &user_msg).await;
     } else {
         show_error_pill(
@@ -502,6 +505,9 @@ pub(super) async fn run_cleanup_and_snippets(
                 "pipeline: cleanup failed error={}",
                 trim_err(&e.to_string())
             );
+            if crate::api::is_retryable_provider_error(&e) {
+                emit_provider_recheck(app);
+            }
             show_error_pill(app, &user_msg).await;
             None
         }

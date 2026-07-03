@@ -252,6 +252,12 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       } as T;
     case 'check_for_update':
       return null as T;
+    case 'check_provider_status':
+      return [] as T;
+    case 'check_provider_status_raw':
+      return { dev: true, note: 'Not running in Tauri — no real fetch performed.' } as T;
+    case 'check_verenu_api_health':
+      return true as T;
     case 'check_connectivity':
       return (typeof navigator === 'undefined' ? true : navigator.onLine) as T;
     case 'get_dev_logging_enabled':

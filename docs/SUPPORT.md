@@ -1,6 +1,6 @@
 # Support
 
-Use GitHub Issues for bugs, troubleshooting, and feature requests.
+Use GitHub Issues for bugs, troubleshooting, and feature requests, or email [support@verenu.com](mailto:support@verenu.com) if you'd rather not post publicly.
 
 Before opening an issue:
 
