@@ -12,13 +12,14 @@ struct ProviderStatusEntry {
     id: String,
     name: String,
     status: String,
-    severity: String,
-    #[serde(rename = "showToUsers")]
-    show_to_users: bool,
-    #[serde(rename = "userMessage")]
-    user_message: String,
-    #[serde(rename = "detailsUrl")]
-    details_url: String,
+    #[serde(default)]
+    severity: Option<String>,
+    #[serde(rename = "showToUsers", default)]
+    show_to_users: Option<bool>,
+    #[serde(rename = "userMessage", default)]
+    user_message: Option<String>,
+    #[serde(rename = "detailsUrl", default)]
+    details_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,7 +50,7 @@ fn filter_alerts(
     providers
         .into_iter()
         .filter(|p| {
-            p.show_to_users
+            p.show_to_users.unwrap_or(false)
                 && p.status != "operational"
                 && p.status != "unknown"
                 && selected_providers.iter().any(|id| id == &p.id)
@@ -58,9 +59,9 @@ fn filter_alerts(
             provider_id: p.id,
             provider_name: p.name,
             status: p.status,
-            severity: p.severity,
-            message: p.user_message,
-            details_url: p.details_url,
+            severity: p.severity.unwrap_or_default(),
+            message: p.user_message.unwrap_or_default(),
+            details_url: p.details_url.unwrap_or_default(),
         })
         .collect()
 }
@@ -122,11 +123,44 @@ mod tests {
             id: id.to_string(),
             name: format!("{id} name"),
             status: status.to_string(),
-            severity: "low".to_string(),
-            show_to_users,
-            user_message: format!("{id} user message"),
-            details_url: format!("https://example.invalid/{id}"),
+            severity: Some("low".to_string()),
+            show_to_users: Some(show_to_users),
+            user_message: Some(format!("{id} user message")),
+            details_url: Some(format!("https://example.invalid/{id}")),
         }
+    }
+
+    #[test]
+    fn entry_deserializes_when_optional_fields_are_missing() {
+        // The backend is expected to omit severity/userMessage/detailsUrl/
+        // showToUsers for providers with nothing to report — this must not
+        // fail deserialization for the whole batch.
+        let json = r#"{"id":"groq","name":"Groq","status":"operational"}"#;
+        let entry: ProviderStatusEntry =
+            serde_json::from_str(json).expect("missing optional fields must not fail");
+        assert_eq!(entry.severity, None);
+        assert_eq!(entry.show_to_users, None);
+        assert_eq!(entry.user_message, None);
+        assert_eq!(entry.details_url, None);
+    }
+
+    #[test]
+    fn entry_deserializes_when_optional_fields_are_explicitly_null() {
+        let json = r#"{
+            "id": "google",
+            "name": "Google",
+            "status": "unknown",
+            "severity": null,
+            "showToUsers": null,
+            "userMessage": null,
+            "detailsUrl": null
+        }"#;
+        let entry: ProviderStatusEntry =
+            serde_json::from_str(json).expect("explicit nulls must not fail");
+        assert_eq!(entry.severity, None);
+        assert_eq!(entry.show_to_users, None);
+        assert_eq!(entry.user_message, None);
+        assert_eq!(entry.details_url, None);
     }
 
     #[test]

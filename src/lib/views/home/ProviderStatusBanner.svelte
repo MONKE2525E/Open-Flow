@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ProviderStatusAlert } from '../../stores';
 
-  export let alerts: ProviderStatusAlert[];
+  let { alerts }: { alerts: ProviderStatusAlert[] } = $props();
 
   async function openDetails(url: string) {
     try {
