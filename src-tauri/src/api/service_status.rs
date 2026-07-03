@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 const PROVIDER_STATUS_URL: &str = "https://api.verenu.com/v1/provider-status";
 const HEALTH_URL: &str = "https://api.verenu.com/v1/health";
 
+// The shared client (api/client.rs) already caps every request at 120s, but
+// these are lightweight background polls (every 5-20 min), not long-running
+// LLM calls — a much shorter timeout keeps a slow/hanging connection from
+// tying up a poll cycle for anywhere near that long.
+const STATUS_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 #[derive(Debug, Deserialize)]
 struct ProviderStatusEntry {
     id: String,
@@ -24,6 +30,7 @@ struct ProviderStatusEntry {
 
 #[derive(Debug, Deserialize)]
 struct ProviderStatusResponse {
+    #[serde(default)]
     providers: Vec<ProviderStatusEntry>,
 }
 
@@ -51,9 +58,11 @@ fn filter_alerts(
         .into_iter()
         .filter(|p| {
             p.show_to_users.unwrap_or(false)
-                && p.status != "operational"
-                && p.status != "unknown"
-                && selected_providers.iter().any(|id| id == &p.id)
+                && !p.status.eq_ignore_ascii_case("operational")
+                && !p.status.eq_ignore_ascii_case("unknown")
+                && selected_providers
+                    .iter()
+                    .any(|id| id.eq_ignore_ascii_case(&p.id))
         })
         .map(|p| ProviderStatusAlert {
             provider_id: p.id,
@@ -77,6 +86,7 @@ pub async fn fetch_relevant_alerts(
     let response: ProviderStatusResponse = super::client::get()
         .get(PROVIDER_STATUS_URL)
         .header("User-Agent", "verenu")
+        .timeout(STATUS_REQUEST_TIMEOUT)
         .send()
         .await?
         .error_for_status()?
@@ -94,6 +104,7 @@ pub async fn fetch_raw() -> anyhow::Result<serde_json::Value> {
     Ok(super::client::get()
         .get(PROVIDER_STATUS_URL)
         .header("User-Agent", "verenu")
+        .timeout(STATUS_REQUEST_TIMEOUT)
         .send()
         .await?
         .error_for_status()?
@@ -108,6 +119,7 @@ pub async fn check_health() -> bool {
         super::client::get()
             .get(HEALTH_URL)
             .header("User-Agent", "verenu")
+            .timeout(STATUS_REQUEST_TIMEOUT)
             .send()
             .await,
         Ok(resp) if resp.status().is_success()
@@ -116,7 +128,7 @@ pub async fn check_health() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{filter_alerts, ProviderStatusEntry};
+    use super::{filter_alerts, ProviderStatusEntry, ProviderStatusResponse};
 
     fn entry(id: &str, status: &str, show_to_users: bool) -> ProviderStatusEntry {
         ProviderStatusEntry {
@@ -161,6 +173,30 @@ mod tests {
         assert_eq!(entry.show_to_users, None);
         assert_eq!(entry.user_message, None);
         assert_eq!(entry.details_url, None);
+    }
+
+    #[test]
+    fn response_deserializes_when_providers_key_is_missing() {
+        let response: ProviderStatusResponse =
+            serde_json::from_str("{}").expect("missing providers key must not fail");
+        assert!(response.providers.is_empty());
+    }
+
+    #[test]
+    fn filter_ignores_status_casing_from_the_backend() {
+        let providers = vec![entry("groq", "Operational", true)];
+        assert!(filter_alerts(providers, &["groq".to_string()]).is_empty());
+
+        let providers = vec![entry("google", "UNKNOWN", true)];
+        assert!(filter_alerts(providers, &["google".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn filter_ignores_provider_id_casing_from_the_backend() {
+        let providers = vec![entry("GROQ", "degraded", true)];
+        let alerts = filter_alerts(providers, &["groq".to_string()]);
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].provider_id, "GROQ");
     }
 
     #[test]

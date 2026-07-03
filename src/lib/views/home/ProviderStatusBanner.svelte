@@ -18,7 +18,9 @@
     {#each alerts as alert (alert.providerId)}
       <div class="status-row">
         <span class="status-text">{alert.providerName}: {alert.message}</span>
-        <button class="status-link" onclick={() => openDetails(alert.detailsUrl)}>Check status</button>
+        {#if alert.detailsUrl}
+          <button class="status-link" onclick={() => openDetails(alert.detailsUrl)}>Check status</button>
+        {/if}
       </div>
     {/each}
   </div>
