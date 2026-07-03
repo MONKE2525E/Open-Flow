@@ -2,8 +2,8 @@ use super::{
     apply_app_style_overrides, ensure_terminal_punctuation, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms, resolve_app_mapping,
     run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
-    style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
-    PipelineTestSnippet,
+    strip_hallucinated_suffix, style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry,
+    PipelineTestRequest, PipelineTestSnippet,
 };
 use crate::system::apps::AppMapping;
 
@@ -54,6 +54,32 @@ fn hallucination_gate_passes_real_speech() {
         "Why does YouTube's algorithm feel like doo-doo?"
     ));
     assert!(!is_transcription_hallucination("Thank you for your help."));
+}
+
+#[test]
+fn strip_hallucinated_suffix_removes_trailing_amara_credit() {
+    let raw = "What do you mean by gated it? Like, it won't work? Subtitles by the Amara.org community.";
+    assert_eq!(
+        strip_hallucinated_suffix(raw),
+        "What do you mean by gated it? Like, it won't work?"
+    );
+}
+
+#[test]
+fn strip_hallucinated_suffix_leaves_real_speech_untouched() {
+    let raw = "Return the package to me by Thursday.";
+    assert_eq!(strip_hallucinated_suffix(raw), raw);
+}
+
+#[test]
+fn strip_hallucinated_suffix_handles_whole_output_hallucination() {
+    assert_eq!(strip_hallucinated_suffix("Thanks for watching!"), "");
+}
+
+#[test]
+fn strip_hallucinated_suffix_does_not_break_on_internal_periods() {
+    let raw = "Check out amara.org for subtitle tools.";
+    assert_eq!(strip_hallucinated_suffix(raw), raw);
 }
 
 #[test]

@@ -60,6 +60,80 @@ pub(super) fn is_transcription_hallucination(text: &str) -> bool {
     PATTERNS.iter().any(|p| t.starts_with(p))
 }
 
+/// Removes a trailing sentence that matches a known Whisper hallucination
+/// pattern, leaving any real speech before it intact.
+///
+/// Whisper sometimes bolts one of these phrases onto the *end* of an
+/// otherwise-correct transcription when the recording has a tail of
+/// near-silent or background audio after the user finishes talking (e.g. the
+/// mic keeps capturing for a moment before the hotkey is released). That
+/// differs from `is_transcription_hallucination`, which only catches the
+/// case where the *entire* output is one of these phrases.
+pub(super) fn strip_hallucinated_suffix(text: &str) -> String {
+    let mut current = text.trim().to_string();
+
+    // Bounded loop: guards against pathological repeated matches rather than
+    // expecting more than one hallucinated sentence in practice.
+    for _ in 0..4 {
+        let sentence = last_sentence(&current);
+        if sentence.is_empty() || !is_transcription_hallucination(sentence) {
+            break;
+        }
+        let cut = current.len() - sentence.len();
+        current.truncate(cut);
+        current = current.trim().to_string();
+    }
+
+    current
+}
+
+/// Returns the final sentence of `text`, where a boundary is one or more of
+/// `.`/`!`/`?` followed by whitespace (or end of string), or a newline.
+///
+/// Requiring trailing whitespace after the punctuation avoids treating a
+/// period inside something like "Amara.org" as a sentence boundary.
+fn last_sentence(text: &str) -> &str {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return trimmed;
+    }
+
+    let chars: Vec<(usize, char)> = trimmed.char_indices().collect();
+    let mut boundaries: Vec<usize> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let (_, c) = chars[i];
+        if matches!(c, '.' | '!' | '?') {
+            let mut j = i + 1;
+            while j < chars.len() && matches!(chars[j].1, '.' | '!' | '?') {
+                j += 1;
+            }
+            let end_of_run = if j < chars.len() {
+                chars[j].0
+            } else {
+                trimmed.len()
+            };
+            if j >= chars.len() || chars[j].1.is_whitespace() {
+                boundaries.push(end_of_run);
+            }
+            i = j;
+            continue;
+        } else if c == '\n' {
+            boundaries.push(chars[i].0 + 1);
+        }
+        i += 1;
+    }
+
+    // Walk boundaries from the end, skipping the one that just closes off the
+    // final sentence itself (nothing but whitespace follows it).
+    let start = boundaries
+        .into_iter()
+        .rev()
+        .find(|&b| !trimmed[b..].trim().is_empty())
+        .unwrap_or(0);
+    trimmed[start..].trim()
+}
+
 /// Build a single-line, length-capped preview of dictation text for logs.
 ///
 /// Privacy: dictation content must not land in default logs (the in-memory ring
