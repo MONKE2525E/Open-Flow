@@ -20,6 +20,9 @@ async function checkApiHealth(): Promise<void> {
   try {
     appStore.apiHealthy = await invoke<boolean>('check_verenu_api_health');
   } catch (error) {
+    // Don't leave a stale prior result in place — a failed check means we no
+    // longer know the current state, not that it's confirmed unhealthy.
+    appStore.apiHealthy = null;
     console.warn('Verenu API health check failed:', error);
   }
 }

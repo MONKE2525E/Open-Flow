@@ -4,6 +4,10 @@
   let { alerts }: { alerts: ProviderStatusAlert[] } = $props();
 
   async function openDetails(url: string) {
+    if (!url.startsWith('https://') && !url.startsWith('http://')) {
+      console.warn('Blocked opening non-HTTP(S) URL:', url);
+      return;
+    }
     try {
       const { open } = await import('@tauri-apps/plugin-shell');
       await open(url);
