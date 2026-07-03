@@ -83,6 +83,23 @@ fn strip_hallucinated_suffix_does_not_break_on_internal_periods() {
 }
 
 #[test]
+fn strip_hallucinated_suffix_preserves_legitimate_trailing_sentences() {
+    // These start with the same short, generic phrases as known Whisper
+    // hallucinations, but are real dictated speech and must survive.
+    let raw_subscribe = "We have a new blog post. Please subscribe to our newsletter.";
+    assert_eq!(strip_hallucinated_suffix(raw_subscribe), raw_subscribe);
+
+    let raw_watching = "I am so grateful for your help. Thank you for watching over my dog.";
+    assert_eq!(strip_hallucinated_suffix(raw_watching), raw_watching);
+}
+
+#[test]
+fn strip_hallucinated_suffix_still_strips_bare_hallucination_sentence() {
+    let raw = "I finished the report. Thank you for watching!";
+    assert_eq!(strip_hallucinated_suffix(raw), "I finished the report.");
+}
+
+#[test]
 fn cleanup_cache_bypasses_math_like_queries() {
     assert!(!should_use_cleanup_cache("What's 67 plus 67?"));
     assert!(!should_use_cleanup_cache("what is six times seven"));

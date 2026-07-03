@@ -76,7 +76,7 @@ pub(super) fn strip_hallucinated_suffix(text: &str) -> String {
     // expecting more than one hallucinated sentence in practice.
     for _ in 0..4 {
         let sentence = last_sentence(&current);
-        if sentence.is_empty() || !is_transcription_hallucination(sentence) {
+        if sentence.is_empty() || !is_sentence_hallucination(sentence) {
             break;
         }
         let cut = current.len() - sentence.len();
@@ -85,6 +85,50 @@ pub(super) fn strip_hallucinated_suffix(text: &str) -> String {
     }
 
     current
+}
+
+/// Like `is_transcription_hallucination`, but scoped to a single sentence
+/// pulled from the end of a transcription rather than the whole output.
+///
+/// A handful of the known hallucinations ("thank you for watching", "please
+/// subscribe", ...) are short, generic phrases that legitimate dictation can
+/// plausibly start a sentence with (e.g. "Please subscribe to our
+/// newsletter."). Matching those as a prefix — as the whole-output gate does
+/// — would silently delete real speech. So here they require an exact match
+/// on the whole sentence (ignoring trailing punctuation) instead. Patterns
+/// that are effectively unambiguous even as a prefix (credit lines, system
+/// prompt echoes) keep prefix matching.
+fn is_sentence_hallucination(sentence: &str) -> bool {
+    let t = sentence.trim().to_lowercase();
+
+    const PREFIX_PATTERNS: &[&str] = &[
+        "return only spoken words",
+        "return only the words spoken",
+        "verenu dictation in ",
+        "transcribe the audio in ",
+        "preserve pronouns exactly",
+        "subtitles by ",
+        "transcribed by ",
+    ];
+    if PREFIX_PATTERNS.iter().any(|p| t.starts_with(p)) {
+        return true;
+    }
+
+    const EXACT_PATTERNS: &[&str] = &[
+        "thank you for watching",
+        "thanks for watching",
+        "please subscribe",
+        "subscribe to my channel",
+        "[silence]",
+        "[music]",
+        "[music playing]",
+        "[applause]",
+        "[laughter]",
+        "[no audio]",
+        "[blank audio]",
+    ];
+    let t = t.trim_end_matches(|c: char| matches!(c, '.' | '!' | '?' | ',' | ';' | ':') || c.is_whitespace());
+    EXACT_PATTERNS.contains(&t)
 }
 
 /// Returns the final sentence of `text`, where a boundary is one or more of

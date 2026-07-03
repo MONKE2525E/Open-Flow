@@ -294,7 +294,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // known silent-audio artifacts before they reach cleanup or the cache.
     // (A trailing hallucinated sentence has already been trimmed above; this
     // catches the case where the whole transcription is still one.)
-    if raw.trim().is_empty() || is_transcription_hallucination(&raw) {
+    if raw.is_empty() || is_transcription_hallucination(&raw) {
         log::warn!(
             "pipeline: transcription matched hallucination pattern, dropping silently raw=\"{}\"",
             preview_text(&raw, 60)
@@ -410,7 +410,7 @@ pub async fn retry_transcription_impl(
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
     let raw = strip_hallucinated_suffix(&raw);
-    if raw.trim().is_empty() || is_transcription_hallucination(&raw) {
+    if raw.is_empty() || is_transcription_hallucination(&raw) {
         log::warn!(
             "pipeline: retry transcription matched hallucination pattern, dropping raw=\"{}\"",
             preview_text(&raw, 60)
