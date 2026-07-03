@@ -2,8 +2,8 @@ use super::{
     apply_app_style_overrides, ensure_terminal_punctuation, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms, resolve_app_mapping,
     run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
-    style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
-    PipelineTestSnippet,
+    strip_hallucinated_suffix, style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry,
+    PipelineTestRequest, PipelineTestSnippet,
 };
 use crate::system::apps::AppMapping;
 
@@ -54,6 +54,64 @@ fn hallucination_gate_passes_real_speech() {
         "Why does YouTube's algorithm feel like doo-doo?"
     ));
     assert!(!is_transcription_hallucination("Thank you for your help."));
+}
+
+#[test]
+fn strip_hallucinated_suffix_removes_trailing_amara_credit() {
+    let raw = "What do you mean by gated it? Like, it won't work? Subtitles by the Amara.org community.";
+    assert_eq!(
+        strip_hallucinated_suffix(raw),
+        "What do you mean by gated it? Like, it won't work?"
+    );
+}
+
+#[test]
+fn strip_hallucinated_suffix_leaves_real_speech_untouched() {
+    let raw = "Return the package to me by Thursday.";
+    assert_eq!(strip_hallucinated_suffix(raw), raw);
+}
+
+#[test]
+fn strip_hallucinated_suffix_handles_whole_output_hallucination() {
+    assert_eq!(strip_hallucinated_suffix("Thanks for watching!"), "");
+}
+
+#[test]
+fn strip_hallucinated_suffix_does_not_break_on_internal_periods() {
+    let raw = "Check out amara.org for subtitle tools.";
+    assert_eq!(strip_hallucinated_suffix(raw), raw);
+}
+
+#[test]
+fn strip_hallucinated_suffix_preserves_legitimate_trailing_sentences() {
+    // These start with the same short, generic phrases as known Whisper
+    // hallucinations, but are real dictated speech and must survive.
+    let raw_subscribe = "We have a new blog post. Please subscribe to our newsletter.";
+    assert_eq!(strip_hallucinated_suffix(raw_subscribe), raw_subscribe);
+
+    let raw_watching = "I am so grateful for your help. Thank you for watching over my dog.";
+    assert_eq!(strip_hallucinated_suffix(raw_watching), raw_watching);
+}
+
+#[test]
+fn strip_hallucinated_suffix_still_strips_bare_hallucination_sentence() {
+    let raw = "I finished the report. Thank you for watching!";
+    assert_eq!(strip_hallucinated_suffix(raw), "I finished the report.");
+}
+
+#[test]
+fn strip_hallucinated_suffix_finds_boundary_after_cjk_fullwidth_period() {
+    // CJK sentences end with a fullwidth terminator and no trailing space, so
+    // the ASCII "punctuation + whitespace" boundary rule alone would miss the
+    // split point and fail to isolate the trailing English hallucination.
+    let raw = "今晩予定がある。Thank you for watching!";
+    assert_eq!(strip_hallucinated_suffix(raw), "今晩予定がある。");
+}
+
+#[test]
+fn strip_hallucinated_suffix_trims_trailing_fullwidth_punctuation_before_exact_match() {
+    let raw = "会議の議事録です。Thank you for watching！";
+    assert_eq!(strip_hallucinated_suffix(raw), "会議の議事録です。");
 }
 
 #[test]

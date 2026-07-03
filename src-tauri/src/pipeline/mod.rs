@@ -36,6 +36,7 @@ pub use fixture::{
 use gates::{
     MIN_RECORDING_MS, MIN_RECORDING_RMS, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
+    strip_hallucinated_suffix,
 };
 pub(crate) use pill::{hide_pill, show_pill};
 use pill::{reject_with_pill, show_error_pill};
@@ -277,6 +278,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         return;
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
+    let raw = strip_hallucinated_suffix(&raw);
     log::debug!(
         "pipeline: transcription ok provider={} raw_chars={} raw_preview=\"{}\"",
         api_used,
@@ -290,7 +292,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
 
     // Post-transcription hallucination gate — silently drop prompt-echoes and
     // known silent-audio artifacts before they reach cleanup or the cache.
-    if is_transcription_hallucination(&raw) {
+    // (A trailing hallucinated sentence has already been trimmed above; this
+    // catches the case where the whole transcription is still one.)
+    if raw.is_empty() || is_transcription_hallucination(&raw) {
         log::warn!(
             "pipeline: transcription matched hallucination pattern, dropping silently raw=\"{}\"",
             preview_text(&raw, 60)
@@ -405,7 +409,8 @@ pub async fn retry_transcription_impl(
         anyhow::bail!("Retry transcription failed");
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
-    if is_transcription_hallucination(&raw) {
+    let raw = strip_hallucinated_suffix(&raw);
+    if raw.is_empty() || is_transcription_hallucination(&raw) {
         log::warn!(
             "pipeline: retry transcription matched hallucination pattern, dropping raw=\"{}\"",
             preview_text(&raw, 60)
