@@ -81,7 +81,8 @@ pub(super) fn strip_hallucinated_suffix(text: &str) -> String {
         }
         let cut = current.len() - sentence.len();
         current.truncate(cut);
-        current = current.trim().to_string();
+        let trimmed_len = current.trim_end().len();
+        current.truncate(trimmed_len);
     }
 
     current
