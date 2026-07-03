@@ -19,7 +19,7 @@
 
 <div class="notice-wrap">
   <div class="status-banner">
-    {#each alerts as alert (alert.providerId)}
+    {#each alerts as alert, i (alert.providerId + '-' + i)}
       <div class="status-row">
         <span class="status-text">{alert.providerName}: {alert.message}</span>
         {#if alert.detailsUrl}
