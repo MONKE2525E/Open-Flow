@@ -156,10 +156,11 @@ pub fn seed_default_dictionary_entries(db: &Db) -> Result<()> {
     // voiced/voiceless and vowel-substitution confusions the existing list
     // already covers (B/V, F/V, W/V, e/i) — invented non-words, so they
     // carry no real-word collision risk the way a plausible English word
-    // would.
-    const KNOWN_VARIANTS: [&str; 14] = [
+    // would. Varineu is also evidenced live: Cohere transcribed "named
+    // Verenu" as "named Varineu" verbatim in both raw and cleaned text.
+    const KNOWN_VARIANTS: [&str; 15] = [
         "Varinu", "Verena", "Virinu", "Varino", "Varinew", "Varina", "Verminu", "Varinian",
-        "Marino", "Zarinu", "Berenu", "Ferenu", "Werenu", "Verinu",
+        "Marino", "Zarinu", "Berenu", "Ferenu", "Werenu", "Verinu", "Varineu",
     ];
 
     let conn = lock_conn(db)?;

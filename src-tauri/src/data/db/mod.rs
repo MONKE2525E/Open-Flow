@@ -226,7 +226,7 @@ mod tests {
         let mistake = verenu.mistake.as_deref().unwrap_or_default();
         for variant in [
             "Varinu", "Verena", "Virinu", "Varino", "Varinew", "Varina", "Verminu", "Varinian",
-            "Marino", "Zarinu", "Berenu", "Ferenu", "Werenu", "Verinu",
+            "Marino", "Zarinu", "Berenu", "Ferenu", "Werenu", "Verinu", "Varineu",
         ] {
             assert!(mistake.contains(variant), "missing variant: {variant}");
         }
@@ -284,7 +284,7 @@ mod tests {
         assert!(mistake.contains("Vernu"), "user's own variant must survive");
         for variant in [
             "Varinu", "Verena", "Virinu", "Varino", "Varinew", "Varina", "Verminu", "Varinian",
-            "Marino", "Zarinu", "Berenu", "Ferenu", "Werenu", "Verinu",
+            "Marino", "Zarinu", "Berenu", "Ferenu", "Werenu", "Verinu", "Varineu",
         ] {
             assert!(mistake.contains(variant), "missing variant: {variant}");
         }
