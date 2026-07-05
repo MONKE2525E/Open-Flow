@@ -313,7 +313,18 @@ function extractJson(stdout) {
   try {
     return JSON.parse(trimmed);
   } catch {
-    // fall through to bracket-scanning recovery below
+    // fall through to markdown/bracket-scanning recovery below
+  }
+
+  // LLM-backed tools commonly wrap structured output in a markdown code
+  // fence even when a raw-JSON format is requested.
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch {
+      // fall through
+    }
   }
 
   const firstBracket = trimmed.search(/[[{]/);
