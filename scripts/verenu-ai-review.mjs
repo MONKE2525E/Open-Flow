@@ -107,7 +107,11 @@ async function resolveContext() {
     if (!event.issue.pull_request) return null; // comment on a plain issue, ignore
 
     const body = (event.comment.body || "").trim();
-    const match = /^\/verenu-review\b(.*)$/i.exec(body);
+    // Without the m flag, $ anchors to the end of the whole string and .
+    // can't cross a newline — a command followed by any extra line (very
+    // common: people add context below it) would otherwise never match.
+    const firstLine = body.split("\n")[0].trim();
+    const match = /^\/verenu-review\b(.*)$/i.exec(firstLine);
     if (!match) return null;
     const flags = match[1].toLowerCase();
 
@@ -352,7 +356,7 @@ function extractJson(stdout) {
     }
   }
 
-  const firstBracket = trimmed.search(/[[{]/);
+  const firstBracket = trimmed.search(/[\[{]/);
   if (firstBracket === -1) throw new Error("no JSON structure found in stdout");
 
   const wideClose = trimmed[firstBracket] === "{" ? "}" : "]";
@@ -368,7 +372,7 @@ function extractJson(stdout) {
   const MAX_ATTEMPTS_PER_START = 10;
   const MAX_START_POSITIONS = 5;
   let startPositionsChecked = 0;
-  for (const match of trimmed.matchAll(/[[{]/g)) {
+  for (const match of trimmed.matchAll(/[\[{]/g)) {
     if (startPositionsChecked >= MAX_START_POSITIONS) break;
     startPositionsChecked++;
     const start = match.index;
@@ -462,7 +466,7 @@ async function main() {
   const existingComment = await findStateComment(prNumber);
   const existingState = parseState(existingComment);
 
-  if (!forceFull && existingState && existingState.headSha === pr.head.sha && existingState.completed) {
+  if (!forceFull && existingState && existingState.headSha === pr.head.sha && existingState.mode === mode && existingState.completed) {
     // Don't touch the existing state comment here — it holds the last real
     // review's findings, and headSha already matches, so there's nothing to
     // update. Rewriting it would destroy that history for a no-op skip.
