@@ -298,6 +298,11 @@ async function reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome)
       await git(["worktree", "remove", "--force", quarantineDir]);
     } catch {
       rmSync(quarantineDir, { recursive: true, force: true });
+      try {
+        await git(["worktree", "prune"]);
+      } catch (pruneErr) {
+        console.error(`failed to prune git worktrees: ${pruneErr.message}`);
+      }
     }
   }
 }
@@ -341,7 +346,11 @@ function extractJson(stdout) {
   }
 
   const MAX_ATTEMPTS_PER_START = 10;
+  const MAX_START_POSITIONS = 5;
+  let startPositionsChecked = 0;
   for (const match of trimmed.matchAll(/[[{]/g)) {
+    if (startPositionsChecked >= MAX_START_POSITIONS) break;
+    startPositionsChecked++;
     const start = match.index;
     const closingChar = trimmed[start] === "{" ? "}" : "]";
     let end = trimmed.lastIndexOf(closingChar);
