@@ -139,21 +139,19 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     // A discarded first tap (or a quick handsfree stop) must not
                     // let the pending start cue sound.
                     crate::media::sound::cancel_pending_start();
-                    let Some(is_handless) = lock_app_state(&state_hk).map(|st| st.handless) else {
+                    let Some(mut st) = lock_app_state(&state_hk) else {
                         continue;
                     };
+                    let is_handless = st.handless;
                     if is_handless {
                         // Quick tap while in handsfree = stop. Clear chord state
                         // immediately so the still-open double-tap window can't
                         // re-trigger a fresh handsfree session.
                         crate::core::hotkey::set_handless_active(false);
                         crate::core::hotkey::reset_chord_state();
-                        let has_session = if let Some(mut st) = lock_app_state(&state_hk) {
-                            st.handless = false;
-                            st.session.is_some()
-                        } else {
-                            false
-                        };
+                        st.handless = false;
+                        let has_session = st.session.is_some();
+                        drop(st);
                         if has_session {
                             tauri::async_runtime::spawn(pipeline::run_pipeline(
                                 app_hk.clone(),
@@ -165,9 +163,9 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     } else {
                         // First click of a double-tap gesture outside handsfree:
                         // discard the short recording that just started.
-                        let (session, exclusive_mic_session_id) = lock_app_state(&state_hk)
-                            .map(|mut st| (st.session.take(), st.exclusive_mic_session_id.take()))
-                            .unwrap_or((None, None));
+                        let session = st.session.take();
+                        let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+                        drop(st);
                         if let Some(session) = session {
                             tauri::async_runtime::spawn_blocking(move || {
                                 let _ = session.stop();
