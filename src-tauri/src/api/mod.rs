@@ -142,7 +142,7 @@ enum ProviderHttpError {
     },
 }
 
-pub(crate) fn response_request_id(resp: &reqwest::Response) -> String {
+fn response_request_id(resp: &reqwest::Response) -> String {
     resp.headers()
         .get("x-request-id")
         .and_then(|v| v.to_str().ok())
