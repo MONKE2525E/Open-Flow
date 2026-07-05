@@ -246,9 +246,17 @@ fn is_cjk(c: char) -> bool {
 pub(super) async fn stop_and_validate_audio(
     app: &AppHandle,
     session: audio::RecordingSession,
+    exclusive_mic_session_id: Option<u64>,
     min_rms: f32,
 ) -> Option<CapturedAudio> {
-    let stop_result = tokio::task::spawn_blocking(move || session.stop()).await;
+    let stop_result = tokio::task::spawn_blocking(move || {
+        let stop_result = session.stop();
+        if let Some(session_id) = exclusive_mic_session_id {
+            crate::system::volume::release_mic(session_id);
+        }
+        stop_result
+    })
+    .await;
     if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
         manager.set_recording_active(false);
     }
@@ -466,6 +474,9 @@ pub(super) async fn run_transcription(
             "pipeline: transcription failed error={}",
             trim_err(&e.to_string())
         );
+        if crate::api::is_retryable_provider_error(&e) {
+            emit_provider_recheck(app);
+        }
         show_error_pill(app, &user_msg).await;
     } else {
         show_error_pill(
@@ -707,6 +718,9 @@ pub(super) async fn run_cleanup_and_snippets(
                 "pipeline: cleanup failed error={}",
                 trim_err(&e.to_string())
             );
+            if crate::api::is_retryable_provider_error(&e) {
+                emit_provider_recheck(app);
+            }
             show_error_pill(app, &user_msg).await;
             None
         }

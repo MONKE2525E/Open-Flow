@@ -169,6 +169,29 @@ mod tests {
     }
 
     #[test]
+    fn contextual_caps_disabled_preserves_caps_lock_uppercased_text() {
+        // Regression: caps-lock uppercasing must be the final casing decision.
+        // With contextual_caps off (as finalize.rs forces when caps lock is on),
+        // a mid-sentence continuation must not lowercase the first letter of an
+        // already-all-caps word ("THE" -> "tHE").
+        let probe = InjectionContextProbe {
+            context: crate::core::text_context::SentenceContext::MidSentence,
+            source: ContextProbeSource::CaretLocal,
+            context_tail: "hello ".to_string(),
+            selection_state: SelectionState::CollapsedCaret,
+            control_identity_hash: "test".to_string(),
+            control_type: "test".to_string(),
+        };
+        let (adjusted, _, case_decision) =
+            apply_probe_adjustments("THE REPORT IS READY", false, false, "casual", &probe);
+        assert_eq!(adjusted, "THE REPORT IS READY");
+        assert!(matches!(
+            case_decision,
+            CaseDecision::ContextualCapsDisabled
+        ));
+    }
+
+    #[test]
     fn uppercase_first_word_handles_prefix_symbols() {
         assert_eq!(uppercase_first_word("hello world"), "Hello world");
         assert_eq!(uppercase_first_word("\"hello world"), "\"Hello world");

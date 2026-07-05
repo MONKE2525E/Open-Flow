@@ -16,6 +16,7 @@
   import { startLocalSttListeners } from './lib/localSttStore.svelte';
   import { startLocalLlmListeners } from './lib/localLlmStore.svelte';
   import { refreshTranscriptionModel } from './lib/transcriptionModelStore.svelte';
+  import { startProviderStatusChecks, startApiHealthChecks } from './lib/serviceStatus';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
@@ -74,6 +75,8 @@
     let stopAutomaticUpdateChecks: (() => void) | undefined;
     let stopLocalSttListeners: (() => void) | undefined;
     let stopLocalLlmListeners: (() => void) | undefined;
+    let stopProviderStatusChecks: (() => void) | undefined;
+    let stopApiHealthChecks: (() => void) | undefined;
 
     (async () => {
       try {
@@ -111,14 +114,11 @@
 
     try {
       stopLocalSttListeners = startLocalSttListeners();
-    } catch (error) {
-      console.error('Failed to start local STT listeners:', error);
-    }
-
-    try {
       stopLocalLlmListeners = startLocalLlmListeners();
+      stopProviderStatusChecks = startProviderStatusChecks();
+      stopApiHealthChecks = startApiHealthChecks();
     } catch (error) {
-      console.error('Failed to start local cleanup listeners:', error);
+      console.error('Failed to start listeners and status checks:', error);
     }
 
     refreshTranscriptionModel().catch((error) => {
@@ -147,6 +147,8 @@
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
       if (stopLocalSttListeners) stopLocalSttListeners();
       if (stopLocalLlmListeners) stopLocalLlmListeners();
+      if (stopProviderStatusChecks) stopProviderStatusChecks();
+      if (stopApiHealthChecks) stopApiHealthChecks();
       media?.removeEventListener?.('change', onSystemThemeChange);
       clearInterval(connectivityTimer);
       document.removeEventListener('visibilitychange', handleVisibility);

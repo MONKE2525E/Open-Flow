@@ -7,6 +7,7 @@ pub(super) const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_s
 
 pub struct AppState {
     pub session: Option<audio::RecordingSession>,
+    pub exclusive_mic_session_id: Option<u64>,
     pub starting: bool,
     pub handless: bool,
     pub target: WindowTarget,
@@ -40,6 +41,17 @@ pub(super) fn emit_pipeline_failed(app: &AppHandle) {
         Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
     )
     .ok();
+}
+
+/// Tells the frontend to re-poll provider status immediately rather than
+/// waiting for its next 5-minute interval, because a pipeline call just
+/// failed in a way that looks provider-side (quota or a retryable
+/// timeout/429/5xx) rather than a local/config problem. The frontend
+/// re-fetches the same filtered status it already polls periodically, so
+/// this only surfaces something if the status API independently confirms an
+/// issue with a provider the user actually has selected.
+pub(super) fn emit_provider_recheck(app: &AppHandle) {
+    app.emit("verenu:recheck-provider-status", ()).ok();
 }
 
 /// Returns true if our own process currently owns the foreground window.

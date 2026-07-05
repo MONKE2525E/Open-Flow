@@ -36,7 +36,7 @@ pub use fixture::{
 use gates::{
     MIN_RECORDING_MS, MIN_RECORDING_RMS, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
-    strip_trailing_hallucination,
+    strip_hallucinated_suffix,
 };
 pub(crate) use pill::{hide_pill, show_pill};
 use pill::{reject_with_pill, show_error_pill};
@@ -57,9 +57,15 @@ pub struct CapturedAudio {
 pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow::Result<String> {
     let session = {
         let mut st = lock_state(&state)?;
-        st.session.take()
+        let session = st.session.take();
+        let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+        (session, exclusive_mic_session_id)
     };
+    let (session, exclusive_mic_session_id) = session;
     let Some(session) = session else {
+        if let Some(session_id) = exclusive_mic_session_id {
+            tokio::task::spawn_blocking(move || crate::system::volume::release_mic(session_id));
+        }
         anyhow::bail!("No active recording");
     };
 
@@ -78,7 +84,14 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     let min_rms = recording_gate_rms(active_gain);
     log::debug!("pipeline: input gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
 
-    let stop_result = tokio::task::spawn_blocking(move || session.stop()).await?;
+    let stop_result = tokio::task::spawn_blocking(move || {
+        let stop_result = session.stop();
+        if let Some(session_id) = exclusive_mic_session_id {
+            crate::system::volume::release_mic(session_id);
+        }
+        stop_result
+    })
+    .await?;
     if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
         manager.set_recording_active(false);
     }
@@ -179,7 +192,14 @@ pub async fn run_pipeline_event_only(app: AppHandle, state: SharedState) {
 
 async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_only: bool) {
     let started_at = std::time::Instant::now();
-    let Some((session, target)) = take_pipeline_session(&state) else {
+    let Some((session, target, exclusive_mic_session_id)) = take_pipeline_session(&state) else {
+        log::debug!("pipeline: no session - recording never started or was already consumed");
+        return;
+    };
+    let Some(session) = session else {
+        if let Some(session_id) = exclusive_mic_session_id {
+            tokio::task::spawn_blocking(move || crate::system::volume::release_mic(session_id));
+        }
         log::debug!("pipeline: no session - recording never started or was already consumed");
         return;
     };
@@ -225,7 +245,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // Quiet/short recordings are rejected inside stop_and_validate_audio, which
     // plays the error cue via reject_with_pill — so only play the stop cue once
     // the audio is *accepted*, otherwise a rejection would sound stop + error.
-    let Some(captured_audio) = stop_and_validate_audio(&app, session, min_rms).await else {
+    let Some(captured_audio) =
+        stop_and_validate_audio(&app, session, exclusive_mic_session_id, min_rms).await
+    else {
         return;
     };
     if audio_cfg.play_start_stop_sounds {
@@ -280,7 +302,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
     let raw_chars_before_strip = raw.chars().count();
-    let raw = strip_trailing_hallucination(&raw);
+    let raw = strip_hallucinated_suffix(&raw);
     if raw.chars().count() != raw_chars_before_strip {
         log::warn!(
             "pipeline: trimmed trailing hallucination provider={} chars_before={} chars_after={}",
@@ -329,7 +351,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
 
     // Post-transcription hallucination gate — silently drop prompt-echoes and
     // known silent-audio artifacts before they reach cleanup or the cache.
-    if raw.trim().is_empty() || is_transcription_hallucination(&raw) {
+    // (A trailing hallucinated sentence has already been trimmed above; this
+    // catches the case where the whole transcription is still one.)
+    if raw.is_empty() || is_transcription_hallucination(&raw) {
         log::warn!(
             "pipeline: transcription matched hallucination pattern, dropping silently raw=\"{}\"",
             preview_text(&raw, 60)
@@ -444,9 +468,9 @@ pub async fn retry_transcription_impl(
         anyhow::bail!("Retry transcription failed");
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
-    let raw = strip_trailing_hallucination(&raw);
+    let raw = strip_hallucinated_suffix(&raw);
     let raw = crate::system::text::collapse_degenerate_word_runs(&raw);
-    if raw.trim().is_empty() || is_transcription_hallucination(&raw) {
+    if raw.is_empty() || is_transcription_hallucination(&raw) {
         log::warn!(
             "pipeline: retry transcription matched hallucination pattern, dropping raw=\"{}\"",
             preview_text(&raw, 60)

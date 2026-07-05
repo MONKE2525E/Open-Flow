@@ -128,6 +128,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
     setting_spec(store::APP_MAPPINGS, SettingKind::AppMappings, true, true),
     setting_spec(store::NOISE_REDUCTION, SettingKind::Bool, true, true),
     setting_spec(store::MUTE_AUDIO, SettingKind::Bool, true, true),
+    setting_spec(store::EXCLUSIVE_MIC, SettingKind::Bool, true, true),
     setting_spec(
         store::PAUSE_MEDIA_DURING_DICTATION,
         SettingKind::Bool,
@@ -397,6 +398,7 @@ pub struct AllSettings {
     pub cleanup_enabled: Option<bool>,
     pub noise_reduction: Option<bool>,
     pub mute_audio: Option<bool>,
+    pub exclusive_mic: Option<bool>,
     pub pause_media_during_dictation: Option<bool>,
     pub play_start_stop_sounds: Option<bool>,
     pub autostart_enabled: Option<bool>,
@@ -455,6 +457,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         cleanup_enabled: bool_val(store::CLEANUP_ENABLED),
         noise_reduction: bool_val(store::NOISE_REDUCTION),
         mute_audio: bool_val(store::MUTE_AUDIO),
+        exclusive_mic: bool_val(store::EXCLUSIVE_MIC),
         pause_media_during_dictation: bool_val(store::PAUSE_MEDIA_DURING_DICTATION),
         play_start_stop_sounds: bool_val(store::PLAY_START_STOP_SOUNDS),
         autostart_enabled: bool_val(store::AUTOSTART_ENABLED),

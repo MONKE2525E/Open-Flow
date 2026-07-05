@@ -33,6 +33,15 @@ export interface UpdateInfo {
   installMode: 'install' | 'download';
 }
 
+export interface ProviderStatusAlert {
+  providerId: ProviderId;
+  providerName: string;
+  status: string;
+  severity: string;
+  message: string;
+  detailsUrl: string;
+}
+
 export const appStore = $state({
   currentPage: 'home' as PageId,
   settingsOpen: false,
@@ -54,6 +63,8 @@ export const appStore = $state({
   dictionaryFetchStatus: 'idle' as FetchStatus,
   dictionaryFetchError: '',
   updateInfo: null as UpdateInfo | null,
+  providerStatusAlerts: [] as ProviderStatusAlert[],
+  apiHealthy: null as boolean | null,
   isOnline: true,
 });
 

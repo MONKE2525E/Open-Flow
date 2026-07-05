@@ -2,7 +2,7 @@ use super::{
     apply_app_style_overrides, ensure_terminal_punctuation, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms, resolve_app_mapping,
     run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
-    strip_trailing_hallucination, style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry,
+    strip_hallucinated_suffix, style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry,
     PipelineTestRequest, PipelineTestSnippet,
 };
 use crate::system::apps::AppMapping;
@@ -73,63 +73,61 @@ fn hallucination_gate_passes_real_speech() {
 }
 
 #[test]
-fn strip_trailing_hallucination_drops_prompt_echo_appended_after_real_speech() {
-    // Real production example: Groq Whisper transcribed genuine speech
-    // correctly, then appended a verbatim prompt echo followed by a garbled
-    // fragment of the prompt's spelling glossary ("Groq, Gemini, OpenAI"
-    // mis-heard as "Prenz, Gremi, OpenAI").
-    let raw = "Turns out downloading local models is really fun. Return only spoken words. Prenz, Gremi, OpenAI.";
+fn strip_hallucinated_suffix_removes_trailing_amara_credit() {
+    let raw = "What do you mean by gated it? Like, it won't work? Subtitles by the Amara.org community.";
     assert_eq!(
-        strip_trailing_hallucination(raw),
-        "Turns out downloading local models is really fun."
-    );
-
-    // Another real example: trailing echo followed by an unrelated garbled
-    // fragment, then a second echo of the same phrase.
-    let raw2 = "Actual TikTok hell. A cool widget. Return only spoken words. Prens the word. Return only spoken words.";
-    assert_eq!(
-        strip_trailing_hallucination(raw2),
-        "Actual TikTok hell. A cool widget."
-    );
-
-    // Real example using the OpenAI-style "preserve pronouns exactly" + glossary tail.
-    let raw3 = "How about you try to see if you can get some sense into Kai. Return only spoken words. Preserve exact words, pronouns, punctuation style, and spellings.";
-    assert_eq!(
-        strip_trailing_hallucination(raw3),
-        "How about you try to see if you can get some sense into Kai."
+        strip_hallucinated_suffix(raw),
+        "What do you mean by gated it? Like, it won't work?"
     );
 }
 
 #[test]
-fn strip_trailing_hallucination_leaves_genuine_speech_untouched() {
-    let raw = "Can you remind me to return the package to the post office?";
-    assert_eq!(strip_trailing_hallucination(raw), raw);
+fn strip_hallucinated_suffix_leaves_real_speech_untouched() {
+    let raw = "Return the package to me by Thursday.";
+    assert_eq!(strip_hallucinated_suffix(raw), raw);
 }
 
 #[test]
-fn strip_trailing_hallucination_does_not_clip_mid_sentence_mentions() {
-    // Reported false positives: the trigger phrase appears as a genuine part
-    // of the sentence (not preceded by a hard sentence boundary), so it must
-    // not be treated as a trailing echo.
-    let raw = "I want Verenu to return only spoken words.";
-    assert_eq!(strip_trailing_hallucination(raw), raw);
-
-    let raw2 = "The prompt says return only spoken words.";
-    assert_eq!(strip_trailing_hallucination(raw2), raw2);
-
-    // No trigger phrase at all — must stay untouched regardless.
-    let raw3 = "Spell Verenu, Tauri, Svelte, Groq, Gemini, OpenAI.";
-    assert_eq!(strip_trailing_hallucination(raw3), raw3);
+fn strip_hallucinated_suffix_handles_whole_output_hallucination() {
+    assert_eq!(strip_hallucinated_suffix("Thanks for watching!"), "");
 }
 
 #[test]
-fn strip_trailing_hallucination_does_not_touch_whole_output_echo() {
-    // When the ENTIRE output is the echo (idx == 0), leave it untouched —
-    // is_transcription_hallucination is responsible for rejecting that case
-    // outright rather than this function silently emptying it.
-    let raw = "Return only spoken words.";
-    assert_eq!(strip_trailing_hallucination(raw), raw);
-    assert!(is_transcription_hallucination(raw));
+fn strip_hallucinated_suffix_does_not_break_on_internal_periods() {
+    let raw = "Check out amara.org for subtitle tools.";
+    assert_eq!(strip_hallucinated_suffix(raw), raw);
+}
+
+#[test]
+fn strip_hallucinated_suffix_preserves_legitimate_trailing_sentences() {
+    // These start with the same short, generic phrases as known Whisper
+    // hallucinations, but are real dictated speech and must survive.
+    let raw_subscribe = "We have a new blog post. Please subscribe to our newsletter.";
+    assert_eq!(strip_hallucinated_suffix(raw_subscribe), raw_subscribe);
+
+    let raw_watching = "I am so grateful for your help. Thank you for watching over my dog.";
+    assert_eq!(strip_hallucinated_suffix(raw_watching), raw_watching);
+}
+
+#[test]
+fn strip_hallucinated_suffix_still_strips_bare_hallucination_sentence() {
+    let raw = "I finished the report. Thank you for watching!";
+    assert_eq!(strip_hallucinated_suffix(raw), "I finished the report.");
+}
+
+#[test]
+fn strip_hallucinated_suffix_finds_boundary_after_cjk_fullwidth_period() {
+    // CJK sentences end with a fullwidth terminator and no trailing space, so
+    // the ASCII "punctuation + whitespace" boundary rule alone would miss the
+    // split point and fail to isolate the trailing English hallucination.
+    let raw = "今晩予定がある。Thank you for watching!";
+    assert_eq!(strip_hallucinated_suffix(raw), "今晩予定がある。");
+}
+
+#[test]
+fn strip_hallucinated_suffix_trims_trailing_fullwidth_punctuation_before_exact_match() {
+    let raw = "会議の議事録です。Thank you for watching！";
+    assert_eq!(strip_hallucinated_suffix(raw), "会議の議事録です。");
 }
 
 #[test]

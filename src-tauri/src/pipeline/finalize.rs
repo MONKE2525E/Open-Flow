@@ -139,7 +139,10 @@ pub(super) async fn finalize_pipeline_completion(
         match injection::inject_text(
             &final_text_substituted,
             ctx.target_hwnd,
-            ctx.cfg.contextual_caps_enabled,
+            // Caps lock must be the final word on casing: contextual capitalization
+            // (e.g. lowercasing a continuation's first letter) would otherwise run
+            // on top of the all-caps text and undo part of it.
+            ctx.cfg.contextual_caps_enabled && !apply_caps_lock_upper,
             ctx.cfg.auto_spacing_enabled,
             ctx.profile,
             ctx.cfg.macos_clipboard_sniff_enabled,

@@ -98,10 +98,22 @@ pub fn start_recording_session_ex(
     }
 
     let device = audio_config.device;
+    let use_default_input_device = device.is_none();
     let noise_reduction = audio_config.noise_reduction;
     let mute_audio = audio_config.mute_audio;
+    let exclusive_mic = audio_config.exclusive_mic;
     let pause_media = audio_config.pause_media_during_dictation && gain_override.is_none();
     let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
+    let exclusive_mic_session_id =
+        if cfg!(target_os = "macos")
+            && exclusive_mic
+            && use_default_input_device
+            && gain_override.is_none()
+        {
+            Some(crate::system::volume::register_session())
+        } else {
+            None
+        };
 
     match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
         Ok(session) => {
@@ -115,6 +127,7 @@ pub fn start_recording_session_ex(
                     Err(e) => return Err(e.to_string()),
                 };
                 st.session = Some(session);
+                st.exclusive_mic_session_id = exclusive_mic_session_id;
                 st.handless = handless;
             }
             if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
@@ -130,6 +143,11 @@ pub fn start_recording_session_ex(
                 active_arc,
                 options.emit_globally,
             );
+            if let Some(session_id) = exclusive_mic_session_id {
+                tauri::async_runtime::spawn_blocking(move || {
+                    crate::system::volume::hog_mic(session_id)
+                });
+            }
             if pause_media {
                 crate::system::media_control::begin_dictation_media_pause();
             }
@@ -148,7 +166,12 @@ pub fn start_recording_session_ex(
             }
             Ok(())
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => {
+            if let Some(session_id) = exclusive_mic_session_id {
+                crate::system::volume::release_mic(session_id);
+            }
+            Err(e.to_string())
+        }
     }
 }
 
@@ -204,7 +227,7 @@ pub(crate) fn start_stop_sounds_enabled(app: &AppHandle) -> bool {
 
 pub(super) fn take_pipeline_session(
     state: &SharedState,
-) -> Option<(audio::RecordingSession, WindowTarget)> {
+) -> Option<(Option<audio::RecordingSession>, WindowTarget, Option<u64>)> {
     let mut st = match lock_state(state) {
         Ok(st) => st,
         Err(e) => {
@@ -212,6 +235,7 @@ pub(super) fn take_pipeline_session(
             return None;
         }
     };
-    let session = st.session.take()?;
-    Some((session, st.target))
+    let session = st.session.take();
+    let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+    Some((session, st.target, exclusive_mic_session_id))
 }

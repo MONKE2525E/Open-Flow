@@ -67,7 +67,7 @@ For more details: [Your First Dictation](docs/FIRST_DICTATION.md) and [Architect
 
 ## Data And Privacy
 
-Verenu does not run its own servers. Your data either stays on your device or goes directly to the third-party providers you choose.
+Verenu's own server (`api.verenu.com`) serves only public app metadata — release info, download links, and provider status. Your dictated audio and text either stay on your device or go directly to the third-party providers you choose; they never touch a Verenu server.
 
 ### Stays on your device
 
@@ -86,6 +86,7 @@ Verenu does not run its own servers. Your data either stays on your device or go
 - Snippet instructions, cleanup settings, and selected model metadata go with cleanup requests
 - Active app context may be sent if you enable app-context hints
 - Update checks hit GitHub release metadata
+- Provider status checks hit `api.verenu.com` (public status only, no dictated content, keys, or history)
 
 Read the full breakdown in [docs/DATA_AND_PRIVACY.md](docs/DATA_AND_PRIVACY.md).
 
@@ -159,6 +160,13 @@ For more details: [Release Process](docs/RELEASE.md), [Changelog](docs/CHANGELOG
 - Better fit for a background dictation tool than a browser-shaped desktop app
 
 For more details: [Architecture](docs/ARCHITECTURE.md) and [Transcription RAM and reliability plan](docs/transcription-ram-reliability-plan.md).
+
+## Contact
+
+- Website: [verenu.com](https://verenu.com)
+- General inquiries: [hello@verenu.com](mailto:hello@verenu.com)
+- Support: [docs/SUPPORT.md](docs/SUPPORT.md) or [support@verenu.com](mailto:support@verenu.com)
+- Security: [docs/SECURITY.md](docs/SECURITY.md) or [security@verenu.com](mailto:security@verenu.com)
 
 ## License
 

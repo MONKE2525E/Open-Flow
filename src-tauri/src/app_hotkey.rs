@@ -165,12 +165,24 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     } else {
                         // First click of a double-tap gesture outside handsfree:
                         // discard the short recording that just started.
-                        let had_session = lock_app_state(&state_hk)
-                            .and_then(|mut st| st.session.take())
-                            .is_some();
-                        if had_session {
-                            crate::media::sound::coordinated_unmute();
-                            crate::system::media_control::end_dictation_media_pause();
+                        let (session, exclusive_mic_session_id) = lock_app_state(&state_hk)
+                            .map(|mut st| (st.session.take(), st.exclusive_mic_session_id.take()))
+                            .unwrap_or((None, None));
+                        if let Some(session) = session {
+                            tauri::async_runtime::spawn_blocking(move || {
+                                let _ = session.stop();
+                                if let Some(session_id) = exclusive_mic_session_id {
+                                    crate::system::volume::release_mic(session_id);
+                                }
+                                crate::media::sound::coordinated_unmute();
+                                crate::system::media_control::end_dictation_media_pause();
+                            });
+                        } else if let Some(session_id) = exclusive_mic_session_id {
+                            tauri::async_runtime::spawn_blocking(move || {
+                                crate::system::volume::release_mic(session_id);
+                                crate::media::sound::coordinated_unmute();
+                                crate::system::media_control::end_dictation_media_pause();
+                            });
                         }
                         hide_pill(&app_hk);
                     }
@@ -185,17 +197,30 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                             continue;
                         };
                         st.handless = false;
-                        st.session.take()
+                        let session = st.session.take();
+                        let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
+                        (session, exclusive_mic_session_id)
                     };
+                    let (session, exclusive_mic_session_id) = session;
+                    let had_recording = session.is_some() || exclusive_mic_session_id.is_some();
                     if let Some(s) = session {
                         tauri::async_runtime::spawn_blocking(move || {
                             let _ = s.stop();
+                            if let Some(session_id) = exclusive_mic_session_id {
+                                crate::system::volume::release_mic(session_id);
+                            }
+                            crate::media::sound::coordinated_unmute();
+                            crate::system::media_control::end_dictation_media_pause();
                         });
-                        crate::media::sound::coordinated_unmute();
-                        crate::system::media_control::end_dictation_media_pause();
-                        if pipeline::start_stop_sounds_enabled(&app_hk) {
-                            crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
-                        }
+                    } else if let Some(session_id) = exclusive_mic_session_id {
+                        tauri::async_runtime::spawn_blocking(move || {
+                            crate::system::volume::release_mic(session_id);
+                            crate::media::sound::coordinated_unmute();
+                            crate::system::media_control::end_dictation_media_pause();
+                        });
+                    }
+                    if had_recording && pipeline::start_stop_sounds_enabled(&app_hk) {
+                        crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
                     }
                     hide_pill(&app_hk);
                 }
