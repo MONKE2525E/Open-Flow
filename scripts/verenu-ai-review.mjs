@@ -4,16 +4,18 @@
 // Security model:
 //  - Runs under pull_request_target, so this process has repo write secrets.
 //  - The PR head is NEVER checked out via actions/checkout. It is fetched as
-//    git object data (refs/pull/<n>/head) into the trusted base checkout.
-//  - `ocr review` is tried first against those git objects directly, with no
-//    working tree matching the PR head. Only if that fails is a worktree
-//    materialized, and then only in a quarantined temp directory with hooks
-//    disabled, LFS smudge disabled, no submodules, and no execution of
-//    anything from it — OCR reads files, nothing in this script or workflow
-//    ever runs PR-supplied code, scripts, or installs PR dependencies.
-//  - A cheap `--preview` check runs before every real (LLM-billed) review
-//    call, at each candidate location, so a broken git state fails fast
-//    without spending tokens.
+//    git object data (exact base/head SHAs, not mutable refs) into the
+//    trusted base checkout, and only ever materialized into a quarantined
+//    temp worktree — detached, hooks disabled, no submodules, no LFS
+//    smudge — since OCR's file-read tool calls need real files on disk at
+//    the actual head commit; it never executes or installs anything from it.
+//  - A cheap `--preview` check runs in that worktree before the real
+//    (LLM-billed) review call, so a broken git state fails fast without
+//    spending tokens.
+//  - The OCR rule/background files this script points OCR at are the
+//    trusted base-branch copies, explicitly overwritten into the quarantined
+//    worktree before OCR runs — otherwise a PR could edit its own review
+//    rules (they're normal tracked files) and rewrite its own instructions.
 //  - OCR's own config/telemetry/MCP state is isolated: its child process
 //    gets HOME pointed at a fresh temp directory for the whole run, so it
 //    can never read or persist ~/.opencodereview/config.json, shell rc
@@ -24,7 +26,7 @@
 //    model to inspect, never instructions this script or OCR should obey.
 
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -32,6 +34,10 @@ const GITHUB_API = process.env.GITHUB_API_URL || "https://api.github.com";
 const [OWNER, REPO] = requireEnv("GITHUB_REPOSITORY").split("/");
 const TOKEN = requireEnv("GITHUB_TOKEN");
 const RULE_FILE_PATH = ".github/verenu-ocr-rules.json";
+const RULE_DOC_PATH = ".github/verenu-review-rules.md";
+// Trusted files OCR reads by path — must come from the base checkout, never
+// the PR head, or a PR could rewrite its own review rules.
+const TRUSTED_RULE_FILES = [RULE_FILE_PATH, RULE_DOC_PATH];
 const STATE_MARKER = "<!-- verenu-ai-review-state:v1";
 const SHA_RE = /^[0-9a-f]{40}$/i;
 
@@ -288,6 +294,16 @@ async function reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome)
     // shared .git/config (worktrees don't get their own config unless
     // extensions.worktreeConfig is set), disabling hooks repo-wide.
     await git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", quarantineDir, pr.head.sha]);
+
+    // The rule/rule-doc files are normal tracked files, so the PR head's
+    // copies could have been edited by the PR itself. Overwrite them with
+    // the trusted base-checkout versions before OCR ever reads them —
+    // otherwise a PR could rewrite its own review instructions.
+    for (const relPath of TRUSTED_RULE_FILES) {
+      const dest = path.join(quarantineDir, relPath);
+      mkdirSync(path.dirname(dest), { recursive: true });
+      writeFileSync(dest, readFileSync(relPath));
+    }
 
     if (!(await previewOk(quarantineDir, pr, providerEnvVars, ocrHome))) {
       return { code: 1, stdout: "", stderr: "ocr preview check failed in the quarantined worktree; aborting before the billed review" };
