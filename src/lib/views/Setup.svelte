@@ -43,6 +43,7 @@
     groq: false,
     openai: false,
     google: false,
+    assemblyai: false,
     local: true,
   });
   let keySaving = $state(false);
@@ -207,6 +208,7 @@
         groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
         openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
         google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+        assemblyai: [],
         local: ['parakeet-v3'],
       });
       await saveSetting('transcription_language', language);

@@ -6,6 +6,7 @@ const openaiMark = `<path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.
 
 const geminiMark = `<path d="M32.447 0c.68 0 1.273.465 1.439 1.125a38.904 38.904 0 0 0 1.999 5.905c2.152 5 5.105 9.376 8.854 13.125 3.751 3.75 8.126 6.703 13.125 8.855a38.98 38.98 0 0 0 5.906 1.999c.66.166 1.124.758 1.124 1.438 0 .68-.464 1.273-1.125 1.439a38.902 38.902 0 0 0-5.905 1.999c-5 2.152-9.375 5.105-13.125 8.854-3.749 3.751-6.702 8.126-8.854 13.125a38.973 38.973 0 0 0-2 5.906 1.485 1.485 0 0 1-1.438 1.124c-.68 0-1.272-.464-1.438-1.125a38.913 38.913 0 0 0-2-5.905c-2.151-5-5.103-9.375-8.854-13.125-3.75-3.749-8.125-6.702-13.125-8.854a38.973 38.973 0 0 0-5.905-2A1.485 1.485 0 0 1 0 32.448c0-.68.465-1.272 1.125-1.438a38.903 38.903 0 0 0 5.905-2c5-2.151 9.376-5.104 13.125-8.854 3.75-3.749 6.703-8.125 8.855-13.125a38.972 38.972 0 0 0 1.999-5.905A1.485 1.485 0 0 1 32.447 0z"/>`;
 const localMark = `<path d="M8 4h8l4 4v8l-4 4H8l-4-4V8l4-4Zm1.4 3L7 9.4v5.2L9.4 17h5.2l2.4-2.4V9.4L14.6 7H9.4ZM11 2h2v2h-2V2Zm0 18h2v2h-2v-2ZM2 11h2v2H2v-2Zm18 0h2v2h-2v-2Z"/>`;
+const assemblyaiMark = `<path d="M10.595 1.5a3.695 3.695 0 00-3.444 2.355L0 22.26h5.432l5.629-14.486h.002a.96.96 0 011.782 0h.75V4.835h-1.393L13.498 1.5h-2.902z"/><path d="M7.151 3.855a3.695 3.695 0 013.26-2.35l-.002-.005H13.405c1.524 0 2.893.936 3.444 2.355L24 22.26h-5.525L11.54 4.413a2.528 2.528 0 00-4.609.006l.22-.564z"/>`;
 
 /** Monochrome, theme-adaptive provider marks (currentColor) using each provider's official mark. */
 export function getProviderLogo(id: ProviderId): string {
@@ -16,6 +17,8 @@ export function getProviderLogo(id: ProviderId): string {
       return `<svg viewBox="0 0 24 24" fill="currentColor">${openaiMark}</svg>`;
     case 'google':
       return `<svg viewBox="0 0 65 65" fill="currentColor">${geminiMark}</svg>`;
+    case 'assemblyai':
+      return `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd">${assemblyaiMark}</svg>`;
     case 'local':
       return `<svg viewBox="0 0 24 24" fill="currentColor">${localMark}</svg>`;
   }

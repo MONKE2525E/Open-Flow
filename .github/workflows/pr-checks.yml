@@ -65,7 +65,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        # macos-latest is Apple Silicon (arm64). macos-13 is genuinely Intel
+        # (x86_64) hardware — the release pipeline's "Intel" DMG is only
+        # cross-compiled on arm64 and never actually run, so this is the one
+        # place in CI that executes real code on real Intel Mac silicon.
+        os: [windows-latest, macos-latest, macos-13]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository

@@ -9,6 +9,7 @@ import {
   type LocalLlmRuntimeEventPayload,
   type LocalLlmRuntimeInfo,
   type LocalLlmState,
+  type LocalLlmVerificationProgressPayload,
 } from './tauri';
 
 export const localLlmStore = $state({
@@ -147,6 +148,25 @@ export function startLocalLlmListeners(): () => void {
     unlisteners.push(
       await listen<LocalLlmModelEventPayload>('local-llm-model-verification-started', (event) => {
         if (!event.payload?.model_id) return;
+        localLlmStore.downloadStage = {
+          ...localLlmStore.downloadStage,
+          [event.payload.model_id]: 'verifying',
+        };
+      }),
+    );
+    unlisteners.push(
+      await listen<LocalLlmVerificationProgressPayload>('local-llm-model-verification-progress', (event) => {
+        if (!event.payload?.model_id) return;
+        localLlmStore.downloadProgress = {
+          ...localLlmStore.downloadProgress,
+          [event.payload.model_id]: {
+            model_id: event.payload.model_id,
+            downloaded_bytes: 0,
+            // Non-null total keeps the verifying bar determinate.
+            total_bytes: 1,
+            progress: event.payload.progress,
+          },
+        };
         localLlmStore.downloadStage = {
           ...localLlmStore.downloadStage,
           [event.payload.model_id]: 'verifying',

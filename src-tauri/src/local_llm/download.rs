@@ -21,6 +21,12 @@ pub struct LocalLlmModelEventPayload {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct LocalLlmVerificationProgressPayload {
+    pub model_id: String,
+    pub progress: f32,
+}
+
 pub(super) fn download_client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
@@ -92,6 +98,51 @@ pub(super) fn sha256_hex(path: &Path) -> anyhow::Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+/// Same hash as `sha256_hex`, but emits `local-llm-model-verification-progress`
+/// as it reads so the UI can show a moving bar during the checksum pass on a
+/// multi-hundred-MB weights file (which otherwise leaves the bar frozen at the
+/// download's 100%). Progress is per-file; cleanup models are typically a
+/// single `.gguf`, so that reads as whole-model progress.
+fn sha256_hex_with_progress(
+    app: &AppHandle,
+    model_id: &str,
+    path: &Path,
+) -> anyhow::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let total_bytes = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    let mut hashed_bytes: u64 = 0;
+    let mut last_emit = Instant::now() - Duration::from_secs(1);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 1024 * 128];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        hashed_bytes += read as u64;
+        if total_bytes > 0 && last_emit.elapsed() >= Duration::from_millis(150) {
+            let progress = (hashed_bytes as f32 / total_bytes as f32).clamp(0.0, 1.0);
+            let _ = app.emit(
+                "local-llm-model-verification-progress",
+                LocalLlmVerificationProgressPayload {
+                    model_id: model_id.to_string(),
+                    progress,
+                },
+            );
+            last_emit = Instant::now();
+        }
+    }
+    let _ = app.emit(
+        "local-llm-model-verification-progress",
+        LocalLlmVerificationProgressPayload {
+            model_id: model_id.to_string(),
+            progress: 1.0,
+        },
+    );
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 /// Verifies a freshly-downloaded artifact's SHA256 against its manifest
 /// checksum before it's renamed into the final model directory and made
 /// available to llama-server to load and execute. On mismatch, the
@@ -121,7 +172,7 @@ fn verify_artifact_checksum(
         },
     );
     let started_at = Instant::now();
-    let actual = sha256_hex(partial_path)?;
+    let actual = sha256_hex_with_progress(app, manifest.id, partial_path)?;
     if actual != expected {
         log::error!(
             "local-llm: checksum mismatch id={} file={} expected={} actual={}",

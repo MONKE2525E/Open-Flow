@@ -80,8 +80,11 @@
   function currentCleanupModelFor(provider: ProviderId): string {
     const parsed = splitModelId(defaultModel);
     if (parsed && parsed.provider === provider) return parsed.model;
-    return recommendedModels.cleanup[provider as UiProviderId].premium;
+    // Safe: only ever called for a section pre-filtered to cleanup-capable providers.
+    return recommendedModels.cleanup[provider as UiProviderId]!.premium;
   }
+
+  const cloudSections = $derived(providerSections.filter((section) => section.tasks.includes(type)));
 </script>
 
 <div class="task-tile" class:task-open={opened}>
@@ -106,7 +109,7 @@
       {/if}
 
       <div class="model-container">
-        {#each providerSections as section (section.id)}
+        {#each cloudSections as section (section.id)}
           <ModelProviderGroup
             {type}
             {section}
@@ -147,7 +150,7 @@
 
       {#if type === 'cleanup' && advancedModelUi}
         <div class="prompt-editor-section" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
-          {#each providerSections as section (section.id)}
+          {#each cloudSections as section (section.id)}
             {@const model = currentCleanupModelFor(section.storeProvider)}
             {@const key = modelId(section.storeProvider, model)}
             {@const isCustomized = !!cleanupPromptOverridesStore.overrides[key]?.trim()}

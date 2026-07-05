@@ -30,6 +30,17 @@ pub async fn hide_main(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ---------- local model platform support ----------
+
+/// Lets the frontend show an explanatory notice in place of the local
+/// STT/LLM download UI up front, instead of only discovering it's blocked
+/// after the user clicks Download and gets an error toast. See
+/// `system::platform::is_macos_intel` for the reasoning.
+#[tauri::command]
+pub async fn local_models_supported_on_this_platform() -> bool {
+    !crate::system::platform::is_macos_intel()
+}
+
 // ---------- memory ----------
 
 #[tauri::command]

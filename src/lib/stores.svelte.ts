@@ -38,6 +38,13 @@ export const appStore = $state({
   settingsOpen: false,
   devModeEnabled: false,
   appearanceMode: 'system' as AppearanceMode,
+  // Mirrors the `cleanup_enabled` setting. Shared here (rather than owned
+  // privately by GeneralSection) so Style.svelte and the App Mappings
+  // settings page can react live to the toggle without their own
+  // fetch/listener plumbing — both are inert once cleanup is off, since
+  // profile/tone/per-app cleanup-intensity overrides only ever feed the
+  // cleanup LLM call that this setting skips entirely.
+  cleanupEnabled: true,
   pillState: 'idle' as PillState,
   setupComplete: null as boolean | null,
   snippets: [] as Snippet[],

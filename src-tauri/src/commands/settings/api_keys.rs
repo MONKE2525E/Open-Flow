@@ -21,9 +21,10 @@ pub async fn get_api_key_status(_app: AppHandle) -> Result<serde_json::Value, St
     use crate::data::{credentials, store};
     run_blocking("get_api_key_status", move || {
         Ok(serde_json::json!({
-            "groq":   credentials::has(store::GROQ),
-            "openai": credentials::has(store::OPENAI),
-            "google": credentials::has(store::GOOGLE),
+            "groq":       credentials::has(store::GROQ),
+            "openai":     credentials::has(store::OPENAI),
+            "google":     credentials::has(store::GOOGLE),
+            "assemblyai": credentials::has(store::ASSEMBLYAI),
         }))
     })
     .await
@@ -101,6 +102,9 @@ pub async fn validate_api_key(
         store::GOOGLE => client
             .get("https://generativelanguage.googleapis.com/v1beta/models")
             .header("x-goog-api-key", trimmed),
+        store::ASSEMBLYAI => client
+            .get("https://api.assemblyai.com/v2/transcript?limit=1")
+            .header("authorization", trimmed),
         _ => return Err(format!("Unknown provider: {provider}")),
     };
 

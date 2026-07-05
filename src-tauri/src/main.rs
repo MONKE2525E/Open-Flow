@@ -367,6 +367,7 @@ fn main() {
             commands::test_cleanup_prompt,
             commands::get_microphones,
             commands::get_memory_mb,
+            commands::local_models_supported_on_this_platform,
             commands::start_input_recording,
             commands::start_setup_try_recording,
             commands::start_calibration_monitoring,

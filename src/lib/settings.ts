@@ -1,7 +1,7 @@
 import { invoke } from './tauri';
 import type { TranscriptionLanguageCode } from './transcriptionLanguages';
 
-export type ProviderId = 'groq' | 'openai' | 'google' | 'local';
+export type ProviderId = 'groq' | 'openai' | 'google' | 'assemblyai' | 'local';
 export type ProviderModelMap = Record<ProviderId, string[]>;
 export type ToneId = 'casual' | 'formal' | 'very_casual';
 export type CleanupIntensity = 'none' | 'light' | 'medium' | 'high';

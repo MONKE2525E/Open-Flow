@@ -3,25 +3,27 @@
   import { invoke } from '../../tauri';
   import { getProviderLogo } from '../../setup/ProviderLogos';
 
-  type ProviderId = 'groq' | 'openai' | 'google';
+  type ProviderId = 'groq' | 'openai' | 'google' | 'assemblyai';
   type KeyStatus = Record<ProviderId, boolean>;
   type KeyDrafts = Record<ProviderId, string>;
   type KeyValidation = { status: 'idle' | 'checking' | 'valid' | 'invalid' | 'unknown'; message: string };
 
   const keyProviders: { id: ProviderId; label: string; ph: string; models: string }[] = [
-    { id: 'groq',   label: 'Groq',   ph: 'gsk_…',  models: 'whisper-large-v3-turbo · llama-3.3-70b' },
-    { id: 'openai', label: 'OpenAI', ph: 'sk-…',   models: 'gpt-4o-transcribe · gpt-4o-mini' },
-    { id: 'google', label: 'Gemini', ph: 'AIza…',  models: 'gemini-3.5-flash · gemini-2.5-flash' },
+    { id: 'groq',       label: 'Groq',       ph: 'gsk_…',        models: 'whisper-large-v3-turbo · llama-3.3-70b' },
+    { id: 'openai',     label: 'OpenAI',     ph: 'sk-…',         models: 'gpt-4o-transcribe · gpt-4o-mini' },
+    { id: 'google',     label: 'Gemini',     ph: 'AIza…',        models: 'gemini-3.5-flash · gemini-2.5-flash' },
+    { id: 'assemblyai', label: 'AssemblyAI', ph: '32-char key',  models: 'universal-3-5-pro · universal-2' },
   ];
 
-  let keyStatus = $state<KeyStatus>({ groq: false, openai: false, google: false });
-  let draftKeys = $state<KeyDrafts>({ groq: '', openai: '', google: '' });
-  let keySaving = $state<Record<ProviderId, boolean>>({ groq: false, openai: false, google: false });
-  let keyErrors = $state<KeyDrafts>({ groq: '', openai: '', google: '' });
+  let keyStatus = $state<KeyStatus>({ groq: false, openai: false, google: false, assemblyai: false });
+  let draftKeys = $state<KeyDrafts>({ groq: '', openai: '', google: '', assemblyai: '' });
+  let keySaving = $state<Record<ProviderId, boolean>>({ groq: false, openai: false, google: false, assemblyai: false });
+  let keyErrors = $state<KeyDrafts>({ groq: '', openai: '', google: '', assemblyai: '' });
   let keyValidation = $state<Record<ProviderId, KeyValidation>>({
     groq: { status: 'idle', message: '' },
     openai: { status: 'idle', message: '' },
     google: { status: 'idle', message: '' },
+    assemblyai: { status: 'idle', message: '' },
   });
 
   async function loadKeyStatus() {
@@ -162,7 +164,18 @@
   </div>
 {/each}
 
+<p class="trademark-note">
+  The logos above belong to their respective companies. Verenu is not affiliated with, endorsed by, or sponsored by Groq, OpenAI, Google, or AssemblyAI — they are shown solely to indicate provider compatibility.
+</p>
+
 <style>
+  .trademark-note {
+    font-size: 11px;
+    color: var(--ink-faint);
+    line-height: 1.5;
+    margin: 14px 0 0;
+  }
+
   .key-row { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
   .key-left { flex: 1; min-width: 0; }
   .key-logo {

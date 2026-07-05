@@ -27,6 +27,12 @@ pub struct LocalSttExtractionProgressPayload {
     pub progress: f32,
 }
 
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct LocalSttVerificationProgressPayload {
+    pub model_id: String,
+    pub progress: f32,
+}
+
 /// Reports extraction progress as the fraction of the compressed archive's
 /// bytes read so far. The archive is read sequentially front-to-back by the
 /// gzip/tar decoders, so this tracks wall-clock progress closely even though
@@ -155,6 +161,14 @@ fn verify_checksum_if_present(
     );
     if let Some(expected) = manifest.sha256 {
         let mut file = std::fs::File::open(archive_path)?;
+        // Verification hashes the whole (often multi-hundred-MB) archive and
+        // can take tens of seconds on a large model, so emit a real fraction
+        // as we go instead of letting the bar sit frozen at the download's
+        // 100%. Reuses the archive size as the denominator; the hash reads it
+        // front-to-back, so bytes-hashed tracks wall-clock progress closely.
+        let total_bytes = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+        let mut hashed_bytes: u64 = 0;
+        let mut last_emit = Instant::now() - Duration::from_secs(1);
         let mut hasher = Sha256::new();
         let mut buffer = [0u8; 1024 * 128];
         loop {
@@ -163,7 +177,26 @@ fn verify_checksum_if_present(
                 break;
             }
             hasher.update(&buffer[..read]);
+            hashed_bytes += read as u64;
+            if total_bytes > 0 && last_emit.elapsed() >= Duration::from_millis(150) {
+                let progress = (hashed_bytes as f32 / total_bytes as f32).clamp(0.0, 1.0);
+                let _ = app.emit(
+                    "local-stt-model-verification-progress",
+                    LocalSttVerificationProgressPayload {
+                        model_id: manifest.id.to_string(),
+                        progress,
+                    },
+                );
+                last_emit = Instant::now();
+            }
         }
+        let _ = app.emit(
+            "local-stt-model-verification-progress",
+            LocalSttVerificationProgressPayload {
+                model_id: manifest.id.to_string(),
+                progress: 1.0,
+            },
+        );
         let actual = format!("{:x}", hasher.finalize());
         if actual != expected.to_lowercase() {
             log::error!(

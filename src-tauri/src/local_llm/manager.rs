@@ -406,6 +406,18 @@ impl LocalLlmManager {
     }
 
     pub fn unload_if_idle(&self, app: &AppHandle) -> anyhow::Result<()> {
+        // Same reasoning as local_stt::manager::unload_if_idle: this is
+        // polled every 30s for the app's whole lifetime, so skip the
+        // settings-snapshot + idle computation entirely once nothing is
+        // loaded rather than repeating it forever after the one real unload.
+        let is_loaded = self
+            .current_model_id
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false);
+        if !is_loaded {
+            return Ok(());
+        }
         let settings = crate::data::store::settings_snapshot(app).map_err(anyhow::Error::msg)?;
         let cfg = crate::data::store::load_pipeline_config(&settings);
         let idle_limit = match cfg.local_model_memory_policy.as_str() {

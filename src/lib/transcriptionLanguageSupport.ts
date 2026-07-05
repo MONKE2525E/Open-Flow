@@ -46,7 +46,18 @@ const CLOUD_PROVIDER_LANGUAGES: Record<'groq' | 'openai' | 'google', LanguageSup
   google: 'all',
 };
 
+/**
+ * AssemblyAI, unlike the other cloud providers, has a real per-model split:
+ * Universal 3.5 Pro natively covers only 6 languages, while Universal-2 covers
+ * the same 99+ languages our full dropdown is drawn from.
+ */
+const ASSEMBLYAI_MODEL_LANGUAGES: Record<string, LanguageSupportScope> = {
+  'universal-3-5-pro': ['en', 'es', 'de', 'fr', 'pt', 'it'],
+  'universal-2': 'all',
+};
+
 export function getLanguageSupport(provider: ProviderId, modelId: string): LanguageSupportScope {
   if (provider === 'local') return LOCAL_MODEL_LANGUAGES[modelId] ?? 'all';
+  if (provider === 'assemblyai') return ASSEMBLYAI_MODEL_LANGUAGES[modelId] ?? 'all';
   return CLOUD_PROVIDER_LANGUAGES[provider] ?? 'all';
 }

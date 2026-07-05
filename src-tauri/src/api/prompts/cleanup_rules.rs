@@ -33,6 +33,7 @@ fn intensity_rules(
         }
         ("light", _) => {
             "CLEANUP (LIGHT): MUST remove filler words (um, uh, like, you know), immediate duplicated words, and immediate false starts. \
+            MUST NOT remove any other word, including emphasis or qualifier words like 'just', 'really', 'actually', 'honestly', or 'again' — keep them even when they sound redundant, since they carry the speaker's meaning. \
             MUST NOT summarize, compress, reorder, or rewrite personality away. \
             MUST NOT add words, phrases, sentences, explanations, or clarifications that were not spoken — never pad, elaborate, or expand on what was said. \
             MUST preserve sentence structure and almost all content. \

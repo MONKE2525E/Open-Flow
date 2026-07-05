@@ -344,6 +344,21 @@ impl LocalTranscriptionManager {
         if self.recording_active.load(Ordering::Relaxed) {
             return Ok(());
         }
+        // Skip entirely once nothing is loaded — this is polled every 30s for
+        // the app's whole lifetime (see main.rs), so without this check, the
+        // "unloading idle model" log below fired every single tick forever
+        // once idle crossed the threshold, even long after the one real
+        // unload had already happened (observed live: 10+ straight minutes of
+        // identical log lines, `unload()` itself was already a safe no-op via
+        // its own `had_model` check, but this caller had no equivalent guard).
+        let is_loaded = self
+            .current_model_id
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false);
+        if !is_loaded {
+            return Ok(());
+        }
         let settings = crate::data::store::settings_snapshot(app).map_err(anyhow::Error::msg)?;
         let cfg = crate::data::store::load_pipeline_config(&settings);
         let idle_limit = match cfg.local_model_memory_policy.as_str() {

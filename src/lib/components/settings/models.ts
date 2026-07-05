@@ -1,12 +1,14 @@
 import type { ProviderId, ProviderModelMap } from '../../settings';
 
 export type TaskType = 'transcription' | 'cleanup';
-export type UiProviderId = 'groq' | 'openai' | 'google';
+export type UiProviderId = 'groq' | 'openai' | 'google' | 'assemblyai';
 
 export type ProviderSection = {
   id: UiProviderId;
   label: string;
   storeProvider: ProviderId;
+  /** Which tasks this provider's models can be selected for — AssemblyAI is transcription-only. */
+  tasks: TaskType[];
 };
 
 export type AllSettingsPayload = {
@@ -23,16 +25,18 @@ export type AllSettingsPayload = {
 };
 
 export const providerSections: ProviderSection[] = [
-  { id: 'groq', label: 'Groq', storeProvider: 'groq' },
-  { id: 'openai', label: 'OpenAI', storeProvider: 'openai' },
-  { id: 'google', label: 'Gemini', storeProvider: 'google' },
+  { id: 'groq', label: 'Groq', storeProvider: 'groq', tasks: ['transcription', 'cleanup'] },
+  { id: 'openai', label: 'OpenAI', storeProvider: 'openai', tasks: ['transcription', 'cleanup'] },
+  { id: 'google', label: 'Gemini', storeProvider: 'google', tasks: ['transcription', 'cleanup'] },
+  { id: 'assemblyai', label: 'AssemblyAI', storeProvider: 'assemblyai', tasks: ['transcription'] },
 ];
 
-export const recommendedModels: Record<TaskType, Record<UiProviderId, { premium: string; standard: string }>> = {
+export const recommendedModels: Record<TaskType, Partial<Record<UiProviderId, { premium: string; standard: string }>>> = {
   transcription: {
     groq: { premium: 'whisper-large-v3', standard: 'whisper-large-v3-turbo' },
     openai: { premium: 'gpt-4o-transcribe', standard: 'gpt-4o-mini-transcribe' },
     google: { premium: 'gemini-3.5-flash', standard: 'gemini-2.5-flash' },
+    assemblyai: { premium: 'universal-3-5-pro', standard: 'universal-2' },
   },
   cleanup: {
     groq: { premium: 'llama-3.3-70b-versatile', standard: 'llama-3.1-8b-instant' },
@@ -41,7 +45,13 @@ export const recommendedModels: Record<TaskType, Record<UiProviderId, { premium:
   },
 };
 
-export const emptyProviderModelMap = (): ProviderModelMap => ({ groq: [], openai: [], google: [], local: [] });
+export const emptyProviderModelMap = (): ProviderModelMap => ({
+  groq: [],
+  openai: [],
+  google: [],
+  assemblyai: [],
+  local: [],
+});
 
 export function modelId(provider: ProviderId, modelName: string): string {
   return `${provider}/${modelName.trim()}`;
@@ -53,7 +63,7 @@ export function splitModelId(id: string): { provider: ProviderId; model: string 
 
   const provider = id.slice(0, idx) as ProviderId;
   const model = id.slice(idx + 1).trim();
-  if (!['groq', 'openai', 'google', 'local'].includes(provider) || !model) return null;
+  if (!['groq', 'openai', 'google', 'assemblyai', 'local'].includes(provider) || !model) return null;
 
   return { provider, model };
 }
@@ -62,7 +72,7 @@ export function mergeProviderModelMap(raw: unknown): ProviderModelMap {
   const base = emptyProviderModelMap();
   if (!raw || typeof raw !== 'object') return base;
 
-  for (const provider of ['groq', 'openai', 'google', 'local'] as ProviderId[]) {
+  for (const provider of ['groq', 'openai', 'google', 'assemblyai', 'local'] as ProviderId[]) {
     const values = (raw as Record<string, unknown>)[provider];
     if (Array.isArray(values)) {
       base[provider] = values.map((value) => String(value).trim()).filter(Boolean);
@@ -82,6 +92,8 @@ export function providerDisplayLabel(provider: ProviderId): string {
       return 'OpenAI';
     case 'google':
       return 'Gemini';
+    case 'assemblyai':
+      return 'AssemblyAI';
     case 'local':
       return 'Local';
     default:
@@ -90,6 +102,16 @@ export function providerDisplayLabel(provider: ProviderId): string {
 }
 
 export function modelDisplayLabel(provider: ProviderId, model: string): string {
+  if (provider === 'assemblyai') {
+    switch (model) {
+      case 'universal-3-5-pro':
+        return 'Universal 3.5 Pro';
+      case 'universal-2':
+        return 'Universal-2';
+      default:
+        return model;
+    }
+  }
   if (provider === 'local') {
     switch (model) {
       case 'gemma-4-e2b':

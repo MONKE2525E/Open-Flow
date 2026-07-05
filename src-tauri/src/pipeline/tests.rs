@@ -347,6 +347,7 @@ fn base_config() -> store::PipelineConfig {
         key_groq: "fixture-groq-key".into(),
         key_openai: "fixture-openai-key".into(),
         key_google: "fixture-google-key".into(),
+        key_assemblyai: "fixture-assemblyai-key".into(),
         default_tone: "casual".into(),
         cleanup_intensity: "medium".into(),
         app_context_hint: false,
@@ -1011,6 +1012,39 @@ async fn pipeline_fixture_accepts_downloaded_local_model_without_api_keys() {
     assert_eq!(result.raw_text, "local transcript");
     assert_eq!(result.final_text_before_dictionary, "local transcript");
     assert_eq!(result.api_used, "local/parakeet-v3/transcription");
+    reset();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pipeline_fixture_strips_filler_words_mechanically_when_cleanup_disabled_but_intensity_is_not_none() {
+    let _guard = harness_test_lock().lock().expect("harness lock");
+    let _local_models = install_local_models(&["parakeet-v3"]);
+    reset();
+    set_enabled(true);
+
+    let mut config = base_config();
+    config.transcription_provider = store::LOCAL.into();
+    config.transcription_default_model = "local/parakeet-v3".into();
+    config.cleanup_enabled = false;
+    config.cleanup_intensity = "medium".into();
+    config.key_groq.clear();
+    config.key_openai.clear();
+    config.key_google.clear();
+
+    fixture(
+        "transcription",
+        "local",
+        "parakeet-v3",
+        Some("Just have um basically sync users, uh, to the database."),
+        None,
+        None,
+    );
+
+    let result = run_pipeline_fixture(base_request(config))
+        .await
+        .expect("should run");
+    assert_eq!(result.raw_text, "Just have um basically sync users, uh, to the database.");
+    assert_eq!(result.final_text_before_dictionary, "Just have basically sync users, to the database.");
     reset();
 }
 

@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { fade, slide } from 'svelte/transition';
+  import { slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { MOTION_MS, motionMs } from '../../motion';
+  import LocalDownloadProgress from './LocalDownloadProgress.svelte';
   import type {
     LocalSttDownloadProgressPayload,
     LocalSttModelInfo,
@@ -74,7 +75,7 @@
   }
 
   function transcriptionProgressPercent(modelId: string): number {
-    return Math.round((transcriptionDownloadProgress[modelId]?.progress ?? 0) * 100);
+    return (transcriptionDownloadProgress[modelId]?.progress ?? 0) * 100;
   }
 
   function transcriptionProgressLabel(modelId: string): string {
@@ -86,6 +87,15 @@
       default:
         return 'Downloading';
     }
+  }
+
+  // The download stage is the only one whose total can be unknown (a server
+  // that omits Content-Length); verifying and extracting always report a real
+  // fraction, so they never fall back to the indeterminate animation.
+  function transcriptionIsIndeterminate(modelId: string): boolean {
+    if (transcriptionDownloadStage[modelId] !== 'downloading') return false;
+    const progress = transcriptionDownloadProgress[modelId];
+    return progress == null || progress.total_bytes == null;
   }
 
   function shouldCollapseLanguages(model: LocalSttModelInfo): boolean {
@@ -217,20 +227,13 @@
             {/if}
 
             {#if model.is_downloading}
-              <div class="progress-block" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
-                <div class="progress-row">
-                  <span class="progress-stage-slot">
-                    {#key transcriptionDownloadStage[model.id]}
-                      <span class="progress-stage" in:fade={{ duration: motionMs(MOTION_MS.fast) }} out:fade={{ duration: motionMs(MOTION_MS.fast) }}>
-                        {transcriptionProgressLabel(model.id)}
-                      </span>
-                    {/key}
-                  </span>
-                  <span class="progress-pct">{transcriptionProgressPercent(model.id)}%</span>
-                </div>
-                <div class="progress-track">
-                  <div class="progress-fill" style={`width:${transcriptionProgressPercent(model.id)}%`}></div>
-                </div>
+              <div transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
+                <LocalDownloadProgress
+                  stage={transcriptionDownloadStage[model.id] ?? 'downloading'}
+                  percent={transcriptionProgressPercent(model.id)}
+                  label={transcriptionProgressLabel(model.id)}
+                  indeterminate={transcriptionIsIndeterminate(model.id)}
+                />
               </div>
             {/if}
           </div>
@@ -372,8 +375,7 @@
     border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
   }
 
-  .local-card-top,
-  .progress-row {
+  .local-card-top {
     display: flex;
     justify-content: space-between;
     gap: 14px;
@@ -549,39 +551,8 @@
     font-weight: 500;
   }
 
-  .progress-block {
-    margin-top: 10px;
-  }
-
-  .progress-stage-slot {
-    position: relative;
-    display: inline-block;
-  }
-
-  .progress-stage,
-  .progress-pct {
-    font-size: 11px;
-    color: var(--ink-mute);
-  }
-
-  .progress-track {
-    margin-top: 6px;
-    height: 6px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--paper) 65%, var(--bg-elev));
-    overflow: hidden;
-  }
-
-  .progress-fill {
-    height: 100%;
-    border-radius: inherit;
-    background: var(--accent);
-    transition: width 150ms linear;
-  }
-
   @media (max-width: 720px) {
-    .local-card-top,
-    .progress-row {
+    .local-card-top {
       flex-direction: column;
       align-items: stretch;
     }

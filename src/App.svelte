@@ -77,15 +77,17 @@
 
     (async () => {
       try {
-        const [done, appearance, forceSetupOnLaunch] = await Promise.all([
+        const [done, appearance, forceSetupOnLaunch, cleanupEnabled] = await Promise.all([
           invoke<boolean | null>('get_setting', { key: 'setup_complete' }),
           invoke<'system' | 'light' | 'dark' | null>('get_setting', { key: 'appearance_mode' }),
           invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' }),
+          invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
         ]);
         appStore.setupComplete = forceSetupOnLaunch ? false : done === true;
         if (appearance === 'light' || appearance === 'dark' || appearance === 'system') {
           appStore.appearanceMode = appearance;
         }
+        appStore.cleanupEnabled = cleanupEnabled ?? true;
       } catch {
         appStore.setupComplete = false;
       }

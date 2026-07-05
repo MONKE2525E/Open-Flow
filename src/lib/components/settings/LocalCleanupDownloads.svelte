@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { fade, slide } from 'svelte/transition';
+  import { slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { cleanupPromptOverridesStore, openCleanupPromptEditor } from '../../stores.svelte';
   import { MOTION_MS, motionMs } from '../../motion';
+  import LocalDownloadProgress from './LocalDownloadProgress.svelte';
   import type {
     LocalLlmDownloadProgressPayload,
     LocalLlmModelInfo,
@@ -123,7 +124,7 @@
   }
 
   function cleanupProgressPercent(modelId: string): number {
-    return Math.round((cleanupDownloadProgress[modelId]?.progress ?? 0) * 100);
+    return (cleanupDownloadProgress[modelId]?.progress ?? 0) * 100;
   }
 
   function cleanupProgressLabel(modelId: string): string {
@@ -134,6 +135,20 @@
         return 'Downloading';
     }
   }
+
+  // Only the download stage can have an unknown total (server without a
+  // Content-Length); verifying always reports a real fraction.
+  function cleanupIsIndeterminate(modelId: string): boolean {
+    if (cleanupDownloadStage[modelId] !== 'downloading') return false;
+    const progress = cleanupDownloadProgress[modelId];
+    return progress == null || progress.total_bytes == null;
+  }
+
+  const runtimeStageLabel = $derived(
+    runtimeDownloadProgress?.stage === 'extracting'
+      ? `Setting up ${backendLabel(runtimeInfo?.backend ?? 'cpu')} runtime…`
+      : `Downloading ${backendLabel(runtimeInfo?.backend ?? 'cpu')} runtime`,
+  );
 
   function cleanupPromptCustomized(modelId: string): boolean {
     return !!cleanupPromptOverridesStore.overrides[`local/${modelId}`]?.trim();
@@ -157,19 +172,12 @@
       {#if runtimeInfo}
         <div class="runtime-banner" class:is-installed={runtimeInfo.installed}>
           {#if runtimeInfo.is_downloading}
-            <div class="runtime-banner-row">
-              <span class="runtime-banner-label">
-                Downloading {backendLabel(runtimeInfo.backend)} runtime
-                {#if runtimeDownloadProgress}
-                  — {runtimeDownloadProgress.stage === 'extracting' ? 'extracting…' : `${Math.round(runtimeDownloadProgress.progress * 100)}%`}
-                {/if}
-              </span>
-            </div>
-            {#if runtimeDownloadProgress}
-              <div class="progress-track">
-                <div class="progress-fill" style={`width:${Math.round(runtimeDownloadProgress.progress * 100)}%`}></div>
-              </div>
-            {/if}
+            <LocalDownloadProgress
+              stage={runtimeDownloadProgress?.stage === 'extracting' ? 'extracting' : 'downloading'}
+              percent={(runtimeDownloadProgress?.progress ?? 0) * 100}
+              label={runtimeStageLabel}
+              indeterminate={runtimeDownloadProgress == null}
+            />
           {:else if runtimeInfo.installed}
             <div class="runtime-banner-row">
               <span class="runtime-banner-label">Local cleanup runtime installed ({backendLabel(runtimeInfo.backend)})</span>
@@ -259,35 +267,22 @@
             {/if}
 
             {#if pendingRuntimeForModelId === model.id && runtimeInfo?.is_downloading}
-              {@const runtimePct = Math.round((runtimeDownloadProgress?.progress ?? 0) * 100)}
-              <div class="progress-block" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
-                <div class="progress-row">
-                  <span class="progress-stage-slot">
-                    <span class="progress-stage">
-                      {runtimeDownloadProgress?.stage === 'extracting' ? 'Setting up model requirements…' : 'Downloading model requirements…'}
-                    </span>
-                  </span>
-                  <span class="progress-pct">{runtimePct}%</span>
-                </div>
-                <div class="progress-track">
-                  <div class="progress-fill" style={`width:${runtimePct}%`}></div>
-                </div>
+              <div transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
+                <LocalDownloadProgress
+                  stage={runtimeDownloadProgress?.stage === 'extracting' ? 'extracting' : 'downloading'}
+                  percent={(runtimeDownloadProgress?.progress ?? 0) * 100}
+                  label={runtimeDownloadProgress?.stage === 'extracting' ? 'Setting up model requirements…' : 'Downloading model requirements…'}
+                  indeterminate={runtimeDownloadProgress == null}
+                />
               </div>
             {:else if model.is_downloading}
-              <div class="progress-block" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
-                <div class="progress-row">
-                  <span class="progress-stage-slot">
-                    {#key cleanupDownloadStage[model.id]}
-                      <span class="progress-stage" in:fade={{ duration: motionMs(MOTION_MS.fast) }} out:fade={{ duration: motionMs(MOTION_MS.fast) }}>
-                        {cleanupProgressLabel(model.id)}
-                      </span>
-                    {/key}
-                  </span>
-                  <span class="progress-pct">{cleanupProgressPercent(model.id)}%</span>
-                </div>
-                <div class="progress-track">
-                  <div class="progress-fill" style={`width:${cleanupProgressPercent(model.id)}%`}></div>
-                </div>
+              <div transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
+                <LocalDownloadProgress
+                  stage={cleanupDownloadStage[model.id] ?? 'downloading'}
+                  percent={cleanupProgressPercent(model.id)}
+                  label={cleanupProgressLabel(model.id)}
+                  indeterminate={cleanupIsIndeterminate(model.id)}
+                />
               </div>
             {/if}
           </div>
@@ -427,8 +422,7 @@
   }
 
   .local-card-top,
-  .prompt-row,
-  .progress-row {
+  .prompt-row {
     display: flex;
     justify-content: space-between;
     gap: 14px;
@@ -576,21 +570,18 @@
     font-weight: 500;
   }
 
-  .progress-block {
-    margin-top: 10px;
-  }
-
-  .progress-stage-slot {
-    position: relative;
-    display: inline-block;
-  }
-
   .runtime-banner {
     padding: 10px 12px;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: color-mix(in srgb, var(--paper) 55%, var(--bg-elev));
     margin-bottom: 12px;
+  }
+
+  /* The progress component owns a top margin for card layouts; when it's the
+     lone child of the padded runtime banner that margin double-spaces it. */
+  .runtime-banner > :global(.dl-progress) {
+    margin-top: 0;
   }
 
   .runtime-banner.is-installed {
@@ -613,27 +604,6 @@
 
   .runtime-banner.is-installed .runtime-banner-label {
     color: var(--ink-soft);
-  }
-
-  .progress-stage,
-  .progress-pct {
-    font-size: 11px;
-    color: var(--ink-mute);
-  }
-
-  .progress-track {
-    margin-top: 6px;
-    height: 6px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--paper) 65%, var(--bg-elev));
-    overflow: hidden;
-  }
-
-  .progress-fill {
-    height: 100%;
-    border-radius: inherit;
-    background: var(--accent);
-    transition: width 150ms linear;
   }
 
   .prompt-row {
@@ -660,8 +630,7 @@
 
   @media (max-width: 720px) {
     .local-card-top,
-    .prompt-row,
-    .progress-row {
+    .prompt-row {
       flex-direction: column;
       align-items: stretch;
     }

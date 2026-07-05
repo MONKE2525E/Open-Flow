@@ -112,6 +112,10 @@ export type LocalSttExtractionProgressPayload = {
   model_id: string;
   progress: number;
 };
+export type LocalSttVerificationProgressPayload = {
+  model_id: string;
+  progress: number;
+};
 export type LocalLlmDownloadProgressPayload = {
   model_id: string;
   downloaded_bytes: number;
@@ -121,6 +125,10 @@ export type LocalLlmDownloadProgressPayload = {
 export type LocalLlmModelEventPayload = {
   model_id: string;
   error: string | null;
+};
+export type LocalLlmVerificationProgressPayload = {
+  model_id: string;
+  progress: number;
 };
 export type LlamaBackend = 'cuda' | 'vulkan' | 'metal' | 'cpu';
 export type LocalLlmRuntimeInfo = {
@@ -860,6 +868,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return { total_words: 0, avg_wpm: 0, day_streak: 0 } as T;
     case 'get_memory_mb':
       return 0 as T;
+    case 'local_models_supported_on_this_platform':
+      return true as T;
     case 'count_old_transcriptions':
       return 0 as T;
     case 'get_api_key_status':
@@ -892,24 +902,32 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       if (runtime.installed || runtime.is_downloading) return undefined as T;
       writeDevLocalLlmRuntimeState({ installed: false, is_downloading: true });
 
-      const checkpoints = [25, 60, 100];
-      checkpoints.forEach((percent, index) => {
+      // Runtime cycle: download the archive, then extract it (its own
+      // progress stage), then complete.
+      const runtimeSteps: Array<{ progress: number; stage: 'downloading' | 'extracting' }> = [
+        { progress: 0.25, stage: 'downloading' },
+        { progress: 0.6, stage: 'downloading' },
+        { progress: 1, stage: 'downloading' },
+        { progress: 0.45, stage: 'extracting' },
+        { progress: 1, stage: 'extracting' },
+      ];
+      runtimeSteps.forEach((step, index) => {
         setTimeout(() => {
           const latest = readDevLocalLlmRuntimeState();
           if (!latest.is_downloading) return;
           emitDevTauriEvent<LocalLlmRuntimeDownloadProgressPayload>('local-llm-runtime-download-progress', {
-            downloaded_bytes: percent,
+            downloaded_bytes: Math.round(step.progress * 100),
             total_bytes: 100,
-            progress: percent / 100,
-            stage: percent === 100 ? 'extracting' : 'downloading',
+            progress: step.progress,
+            stage: step.stage,
           });
-          if (percent === 100) {
+          if (index === runtimeSteps.length - 1) {
             writeDevLocalLlmRuntimeState({ installed: true, is_downloading: false });
             emitDevTauriEvent<LocalLlmRuntimeEventPayload>('local-llm-runtime-download-complete', {
               error: null,
             });
           }
-        }, 180 * (index + 1));
+        }, 300 * (index + 1));
       });
       return undefined as T;
     }
@@ -931,39 +949,76 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       state[modelId] = { downloaded: false, partial_size: 0 };
       writeDevLocalSttModelsState(state);
 
-      const total = 100;
-      const checkpoints = [15, 48, 79, 100];
-      checkpoints.forEach((percent, index) => {
-        setTimeout(() => {
-          const latestState = readDevLocalSttModelsState();
-          const latestLoadState = readDevLocalTranscriptionState();
-          if (latestLoadState.downloading_model_id !== modelId) return;
+      const stillDownloading = () =>
+        readDevLocalTranscriptionState().downloading_model_id === modelId;
 
-          latestState[modelId] = {
-            downloaded: percent === 100,
-            partial_size: percent === 100 ? 0 : percent,
-          };
-          writeDevLocalSttModelsState(latestState);
+      // Walk the full download → verify → extract → done cycle so the browser
+      // dev preview exercises every stage the real backend emits (STT models
+      // are archives, so they extract after verifying).
+      const steps: Array<() => void> = [];
+      for (const percent of [15, 48, 79, 100]) {
+        steps.push(() => {
+          if (!stillDownloading()) return;
+          const latest = readDevLocalSttModelsState();
+          latest[modelId] = { downloaded: false, partial_size: percent };
+          writeDevLocalSttModelsState(latest);
           emitDevTauriEvent<LocalSttDownloadProgressPayload>('local-stt-model-download-progress', {
             model_id: modelId,
             downloaded_bytes: percent,
-            total_bytes: total,
-            progress: percent / total,
+            total_bytes: 100,
+            progress: percent / 100,
           });
-
-          if (percent === 100) {
-            writeDevLocalTranscriptionState({
-              ...latestLoadState,
-              is_downloading: false,
-              downloading_model_id: null,
-            });
-            emitDevTauriEvent<LocalSttModelEventPayload>('local-stt-model-download-complete', {
-              model_id: modelId,
-              error: null,
-            });
-          }
-        }, 160 * (index + 1));
+        });
+      }
+      steps.push(() => {
+        if (!stillDownloading()) return;
+        emitDevTauriEvent<LocalSttModelEventPayload>('local-stt-model-verification-started', {
+          model_id: modelId,
+          error: null,
+        });
       });
+      for (const progress of [0.45, 0.85, 1]) {
+        steps.push(() => {
+          if (!stillDownloading()) return;
+          emitDevTauriEvent<LocalSttVerificationProgressPayload>('local-stt-model-verification-progress', {
+            model_id: modelId,
+            progress,
+          });
+        });
+      }
+      steps.push(() => {
+        if (!stillDownloading()) return;
+        emitDevTauriEvent<LocalSttModelEventPayload>('local-stt-model-extraction-started', {
+          model_id: modelId,
+          error: null,
+        });
+      });
+      for (const progress of [0.3, 0.62, 0.9, 1]) {
+        steps.push(() => {
+          if (!stillDownloading()) return;
+          emitDevTauriEvent<LocalSttExtractionProgressPayload>('local-stt-model-extraction-progress', {
+            model_id: modelId,
+            progress,
+          });
+        });
+      }
+      steps.push(() => {
+        if (!stillDownloading()) return;
+        const latest = readDevLocalSttModelsState();
+        latest[modelId] = { downloaded: true, partial_size: 0 };
+        writeDevLocalSttModelsState(latest);
+        writeDevLocalTranscriptionState({
+          ...readDevLocalTranscriptionState(),
+          is_downloading: false,
+          downloading_model_id: null,
+        });
+        emitDevTauriEvent<LocalSttModelEventPayload>('local-stt-model-download-complete', {
+          model_id: modelId,
+          error: null,
+        });
+      });
+
+      steps.forEach((step, index) => setTimeout(step, 300 * (index + 1)));
       return undefined as T;
     }
     case 'download_local_llm_model': {
@@ -978,39 +1033,59 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       state[modelId] = { downloaded: false, partial_size: 0 };
       writeDevLocalLlmModelsState(state);
 
-      const total = 100;
-      const checkpoints = [20, 52, 81, 100];
-      checkpoints.forEach((percent, index) => {
-        setTimeout(() => {
-          const latestState = readDevLocalLlmModelsState();
-          const latestLoadState = readDevLocalLlmState();
-          if (latestLoadState.downloading_model_id !== modelId) return;
+      const stillDownloadingLlm = () =>
+        readDevLocalLlmState().downloading_model_id === modelId;
 
-          latestState[modelId] = {
-            downloaded: percent === 100,
-            partial_size: percent === 100 ? 0 : percent,
-          };
-          writeDevLocalLlmModelsState(latestState);
+      // Cleanup models are raw weight files, so the cycle is download → verify
+      // → done (no extraction stage, unlike the STT archives above).
+      const llmSteps: Array<() => void> = [];
+      for (const percent of [20, 52, 81, 100]) {
+        llmSteps.push(() => {
+          if (!stillDownloadingLlm()) return;
+          const latest = readDevLocalLlmModelsState();
+          latest[modelId] = { downloaded: false, partial_size: percent };
+          writeDevLocalLlmModelsState(latest);
           emitDevTauriEvent<LocalLlmDownloadProgressPayload>('local-llm-model-download-progress', {
             model_id: modelId,
             downloaded_bytes: percent,
-            total_bytes: total,
-            progress: percent / total,
+            total_bytes: 100,
+            progress: percent / 100,
           });
-
-          if (percent === 100) {
-            writeDevLocalLlmState({
-              ...latestLoadState,
-              is_downloading: false,
-              downloading_model_id: null,
-            });
-            emitDevTauriEvent<LocalLlmModelEventPayload>('local-llm-model-download-complete', {
-              model_id: modelId,
-              error: null,
-            });
-          }
-        }, 180 * (index + 1));
+        });
+      }
+      llmSteps.push(() => {
+        if (!stillDownloadingLlm()) return;
+        emitDevTauriEvent<LocalLlmModelEventPayload>('local-llm-model-verification-started', {
+          model_id: modelId,
+          error: null,
+        });
       });
+      for (const progress of [0.5, 0.9, 1]) {
+        llmSteps.push(() => {
+          if (!stillDownloadingLlm()) return;
+          emitDevTauriEvent<LocalLlmVerificationProgressPayload>('local-llm-model-verification-progress', {
+            model_id: modelId,
+            progress,
+          });
+        });
+      }
+      llmSteps.push(() => {
+        if (!stillDownloadingLlm()) return;
+        const latest = readDevLocalLlmModelsState();
+        latest[modelId] = { downloaded: true, partial_size: 0 };
+        writeDevLocalLlmModelsState(latest);
+        writeDevLocalLlmState({
+          ...readDevLocalLlmState(),
+          is_downloading: false,
+          downloading_model_id: null,
+        });
+        emitDevTauriEvent<LocalLlmModelEventPayload>('local-llm-model-download-complete', {
+          model_id: modelId,
+          error: null,
+        });
+      });
+
+      llmSteps.forEach((step, index) => setTimeout(step, 300 * (index + 1)));
       return undefined as T;
     }
     case 'cancel_local_stt_model_download': {

@@ -893,10 +893,22 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             None if !provider_succeeded && last_cleanup_err.is_some() => {
                 return Err(last_cleanup_err.expect("checked"))
             }
-            None => snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions),
+            None => {
+                let text = snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions);
+                if cfg.cleanup_intensity != "none" {
+                    crate::system::text::strip_filler_hesitations(&text)
+                } else {
+                    text
+                }
+            }
         }
     } else {
-        snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions)
+        let text = snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions);
+        if cfg.cleanup_intensity != "none" {
+            crate::system::text::strip_filler_hesitations(&text)
+        } else {
+            text
+        }
     };
 
     Ok((final_text, dict_entries, used_cache_key))

@@ -342,6 +342,23 @@ fn light_medium_direct_produce_distinct_cleanup_blocks() {
 }
 
 #[test]
+fn light_intensity_forbids_removing_non_filler_words() {
+    // Observed live: under "light" intensity, a small local model (qwen2.5
+    // 1.5b) dropped "just" and "But again," from a dictation — neither is
+    // um/uh/like/you-know filler, an immediate duplicate, or a false start,
+    // so the old prompt's filler-removal instruction didn't cover them and
+    // the model over-trimmed on its own judgment. The prompt must name this
+    // failure mode explicitly rather than leaving it implied by "MUST NOT
+    // summarize, compress" (which reads as being about restructuring, not
+    // single-word emphasis/qualifier drops).
+    let input = repeated_words(20);
+    let light = openai_cleanup_prompt(&input, "light");
+    assert!(light.contains("MUST NOT remove any other word"));
+    assert!(light.contains("'just'"));
+    assert!(light.contains("'again'"));
+}
+
+#[test]
 fn medium_intensity_names_itself_at_every_tier() {
     for words in [12usize, 75, 130] {
         let input = repeated_words(words);

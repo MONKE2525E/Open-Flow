@@ -52,6 +52,7 @@
     groq: false,
     openai: false,
     google: false,
+    assemblyai: false,
     local: false,
   });
 
@@ -64,8 +65,8 @@
   let cleanupFallbackModels = $state<string[]>([]);
 
   let customDrafts = $state<Record<TaskType, Record<UiProviderId, string>>>({
-    transcription: { groq: '', openai: '', google: '' },
-    cleanup: { groq: '', openai: '', google: '' },
+    transcription: { groq: '', openai: '', google: '', assemblyai: '' },
+    cleanup: { groq: '', openai: '', google: '', assemblyai: '' },
   });
 
   let transcriptionOpen = $state(false);
@@ -73,6 +74,11 @@
   let advancedModelUi = $state(false);
   let localModelMemoryPolicy = $state<LocalModelMemoryPolicy>('unload_after_5m');
   let localModelMemoryDropdownOpen = $state(false);
+  // Local on-device STT/LLM inference is gated off entirely on Intel Mac
+  // builds — see system::platform::is_macos_intel on the backend for why.
+  // Defaults to true (never assume unsupported) until the one-time check
+  // resolves, since almost every user is on a supported platform.
+  let localModelsSupported = $state(true);
   // Local model lists load asynchronously (onMount), so the very first
   // render always sees an empty store regardless of what's actually
   // downloaded — defaulting open here and then never re-checking would mean
@@ -190,7 +196,8 @@
     if (otherLocal) {
       return modelId('local', otherLocal.id);
     }
-    return modelId('groq', recommendedModels[type].groq.standard);
+    // Safe: Groq always has a recommendedModels entry for both tasks.
+    return modelId('groq', recommendedModels[type].groq!.standard);
   }
 
   function reassignAfterLocalModelDeleted(type: TaskType, deletedLocalId: string) {
@@ -464,7 +471,9 @@
         setTaskFallbacks(type, remaining);
       } else {
         const safeProvider: UiProviderId = provider !== 'local' ? (provider as UiProviderId) : 'groq';
-        setTaskDefault(type, modelId(safeProvider, recommendedModels[type][safeProvider].standard));
+        // Safe: this fallback only runs for a provider/task pair that was already
+        // selectable in the UI, which guarantees a recommendedModels entry exists.
+        setTaskDefault(type, modelId(safeProvider, recommendedModels[type][safeProvider]!.standard));
       }
     }
 
@@ -485,7 +494,9 @@
         setTaskFallbacks(type, remaining);
       } else {
         const safeProvider: UiProviderId = provider !== 'local' ? (provider as UiProviderId) : 'groq';
-        setTaskDefault(type, modelId(safeProvider, recommendedModels[type][safeProvider].standard));
+        // Safe: this fallback only runs for a provider/task pair that was already
+        // selectable in the UI, which guarantees a recommendedModels entry exists.
+        setTaskDefault(type, modelId(safeProvider, recommendedModels[type][safeProvider]!.standard));
       }
     } else if (taskFallbacks(type).includes(id)) {
       setTaskFallbacks(type, taskFallbacks(type).filter((entry) => entry !== id));
@@ -548,6 +559,15 @@
     refreshLocalLlmModels().catch((err) => console.error('refresh local cleanup models failed', err));
     refreshLocalLlmState().catch((err) => console.error('refresh local cleanup state failed', err));
     refreshLocalLlmRuntimeInfo().catch((err) => console.error('refresh local cleanup runtime info failed', err));
+    // Only ever act on an explicit `false` — an unrecognized/older backend
+    // command, a transient error, or any other non-boolean response must
+    // never hide the download UI for the overwhelming majority of users on
+    // a supported platform. "Assume supported" is the only safe default.
+    invoke<boolean>('local_models_supported_on_this_platform')
+      .then((supported) => {
+        if (supported === false) localModelsSupported = false;
+      })
+      .catch((err) => console.error('check local models platform support failed', err));
   });
 
   migrateAndLoad().catch((err) => console.error('load models failed', err));
@@ -595,37 +615,49 @@
 />
 
 <h3 class="settings-subhead">Local models</h3>
-<LocalTranscriptionDownloads
-  opened={localTranscriptionDownloadsOpen}
-  onToggleOpen={() => (localTranscriptionDownloadsOpen = !localTranscriptionDownloadsOpen)}
-  transcriptionModels={localSttStore.models}
-  transcriptionState={localSttStore.state}
-  selectedTranscriptionModelId={transcriptionDefaultModel}
-  transcriptionDownloadProgress={localSttStore.downloadProgress}
-  transcriptionDownloadStage={localSttStore.downloadStage}
-  onDownloadTranscriptionModel={downloadLocalModel}
-  onCancelTranscriptionDownload={cancelLocalModelDownload}
-  onDeleteTranscriptionModel={handleDeleteTranscriptionModel}
-/>
+{#if localModelsSupported}
+  <LocalTranscriptionDownloads
+    opened={localTranscriptionDownloadsOpen}
+    onToggleOpen={() => (localTranscriptionDownloadsOpen = !localTranscriptionDownloadsOpen)}
+    transcriptionModels={localSttStore.models}
+    transcriptionState={localSttStore.state}
+    selectedTranscriptionModelId={transcriptionDefaultModel}
+    transcriptionDownloadProgress={localSttStore.downloadProgress}
+    transcriptionDownloadStage={localSttStore.downloadStage}
+    onDownloadTranscriptionModel={downloadLocalModel}
+    onCancelTranscriptionDownload={cancelLocalModelDownload}
+    onDeleteTranscriptionModel={handleDeleteTranscriptionModel}
+  />
 
-<LocalCleanupDownloads
-  opened={localCleanupDownloadsOpen}
-  onToggleOpen={() => (localCleanupDownloadsOpen = !localCleanupDownloadsOpen)}
-  advancedModelUi={advancedModelUi}
-  cleanupModels={localLlmStore.models}
-  cleanupState={localLlmStore.state}
-  selectedCleanupModelId={cleanupDefaultModel}
-  cleanupDownloadProgress={localLlmStore.downloadProgress}
-  cleanupDownloadStage={localLlmStore.downloadStage}
-  onDownloadCleanupModel={downloadLocalLlmModel}
-  onCancelCleanupDownload={cancelLocalLlmModelDownload}
-  onDeleteCleanupModel={handleDeleteCleanupModel}
-  runtimeInfo={localLlmStore.runtime}
-  runtimeDownloadProgress={localLlmStore.runtimeDownloadProgress}
-  onDownloadRuntime={downloadLocalLlmRuntime}
-  onCancelRuntimeDownload={cancelLocalLlmRuntimeDownload}
-  onDeleteRuntime={deleteLocalLlmRuntime}
-/>
+  <LocalCleanupDownloads
+    opened={localCleanupDownloadsOpen}
+    onToggleOpen={() => (localCleanupDownloadsOpen = !localCleanupDownloadsOpen)}
+    advancedModelUi={advancedModelUi}
+    cleanupModels={localLlmStore.models}
+    cleanupState={localLlmStore.state}
+    selectedCleanupModelId={cleanupDefaultModel}
+    cleanupDownloadProgress={localLlmStore.downloadProgress}
+    cleanupDownloadStage={localLlmStore.downloadStage}
+    onDownloadCleanupModel={downloadLocalLlmModel}
+    onCancelCleanupDownload={cancelLocalLlmModelDownload}
+    onDeleteCleanupModel={handleDeleteCleanupModel}
+    runtimeInfo={localLlmStore.runtime}
+    runtimeDownloadProgress={localLlmStore.runtimeDownloadProgress}
+    onDownloadRuntime={downloadLocalLlmRuntime}
+    onCancelRuntimeDownload={cancelLocalLlmRuntimeDownload}
+    onDeleteRuntime={deleteLocalLlmRuntime}
+  />
+{:else}
+  <div class="local-models-unsupported">
+    <p>
+      <strong>Not available on Intel Macs yet.</strong> On-device speech-to-text and cleanup models
+      haven't been tested on Intel hardware, and older Intel Macs are generally underpowered for
+      running a local LLM well. Rather than risk a broken first run, this is turned off here until
+      it's been validated on real Intel Mac hardware.
+    </p>
+    <p>Use a cloud provider (Groq, OpenAI, or Google) above in the meantime — full accuracy, no download.</p>
+  </div>
+{/if}
 
 <h3 class="settings-subhead">Model settings</h3>
 <div class="setting-row">
@@ -702,6 +734,28 @@
 </div>
 
 <style>
+  .local-models-unsupported {
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--paper) 55%, var(--bg-elev));
+  }
+
+  .local-models-unsupported p {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-mute);
+  }
+
+  .local-models-unsupported p + p {
+    margin-top: 8px;
+  }
+
+  .local-models-unsupported strong {
+    color: var(--ink-soft);
+  }
+
   .advanced-toggle-row {
     display: flex;
     align-items: center;

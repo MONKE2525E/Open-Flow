@@ -31,9 +31,20 @@
       </button>
     {/each}
   </div>
+
+  <p class="trademark-note">
+    The logos above belong to their respective companies. Verenu is not affiliated with, endorsed by, or sponsored by Groq, OpenAI, or Google — they are shown solely to indicate provider compatibility.
+  </p>
 </div>
 
 <style>
+  .trademark-note {
+    font-size: 11px;
+    color: var(--ink-faint);
+    line-height: 1.5;
+    margin: 4px 0 0;
+  }
+
   .provider-cards { display: flex; flex-direction: column; gap: 10px; }
 
   .provider-card {

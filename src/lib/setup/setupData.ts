@@ -61,6 +61,10 @@ export const providerGuides: Record<ProviderId, { url: string; steps: string[] }
     url: 'aistudio.google.com/app/apikey',
     steps: ['Go to aistudio.google.com', 'Sign in with your Google account', 'Click "Get API key" → "Create API key"', 'Copy and paste it below'],
   },
+  assemblyai: {
+    url: 'app.assemblyai.com',
+    steps: ['Go to app.assemblyai.com', 'Sign in or create a free account', 'Copy your API key from the dashboard', 'Paste it below'],
+  },
 };
 
 export type CleanupCard = { id: CleanupIntensity; name: string; desc: string };

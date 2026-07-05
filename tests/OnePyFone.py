@@ -321,7 +321,7 @@ class SettingsContractSyncCheck(PythonTest):
             for match in re.finditer(r'pub const ([A-Z0-9_]+): &str = "([^"]+)";', rust_text)
             if not match.group(2).startswith("api_key_")
             and match.group(2) not in {"credentials_migrated_v1", "auto_learn_event_mode"}
-            and match.group(2) not in {"groq", "openai", "google"}
+            and match.group(2) not in {"groq", "openai", "google", "assemblyai"}
         }
 
         ts_match = re.search(r"type SettingsValueMap = \{(.*?)\n\};", ts_text, re.S)

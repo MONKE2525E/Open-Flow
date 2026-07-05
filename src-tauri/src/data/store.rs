@@ -174,6 +174,7 @@ fn write_settings_file(path: &Path, values: &Map<String, Value>) -> Result<(), S
 pub const KEY_GROQ: &str = "api_key_groq";
 pub const KEY_OPENAI: &str = "api_key_openai";
 pub const KEY_GOOGLE: &str = "api_key_google";
+pub const KEY_ASSEMBLYAI: &str = "api_key_assemblyai";
 
 pub const TRANSCRIPTION_PROVIDER: &str = "transcription_provider";
 pub const TRANSCRIPTION_LANGUAGE: &str = "transcription_language";
@@ -269,6 +270,7 @@ pub struct PipelineConfig {
     pub key_groq: String,
     pub key_openai: String,
     pub key_google: String,
+    pub key_assemblyai: String,
     pub default_tone: String,
     pub cleanup_intensity: String,
     pub app_context_hint: bool,
@@ -285,14 +287,16 @@ pub struct PipelineConfig {
 pub const GROQ: &str = "groq";
 pub const OPENAI: &str = "openai";
 pub const GOOGLE: &str = "google";
+pub const ASSEMBLYAI: &str = "assemblyai";
 pub(crate) const LOCAL: &str = "local";
-pub const PROVIDERS: [&str; 4] = [GROQ, OPENAI, GOOGLE, LOCAL];
+pub const PROVIDERS: [&str; 5] = [GROQ, OPENAI, GOOGLE, ASSEMBLYAI, LOCAL];
 
 pub fn default_transcription_model_for(provider: &str) -> &'static str {
     match provider {
         LOCAL => "parakeet-v3",
         OPENAI => "gpt-4o-transcribe",
         GOOGLE => "gemini-3.5-flash",
+        ASSEMBLYAI => "universal-3-5-pro",
         _ => "whisper-large-v3-turbo",
     }
 }
@@ -384,6 +388,7 @@ impl PipelineConfig {
         match provider {
             "openai" => &self.key_openai,
             "google" => &self.key_google,
+            "assemblyai" => &self.key_assemblyai,
             "local" => "",
             _ => &self.key_groq,
         }
@@ -516,6 +521,7 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         key_groq: crate::data::credentials::get(GROQ),
         key_openai: crate::data::credentials::get(OPENAI),
         key_google: crate::data::credentials::get(GOOGLE),
+        key_assemblyai: crate::data::credentials::get(ASSEMBLYAI),
         default_tone: supported_or_default(DEFAULT_TONE, "casual", is_supported_default_tone),
         cleanup_intensity: supported_or_default(
             CLEANUP_INTENSITY,

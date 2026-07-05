@@ -6,6 +6,7 @@ import {
   type LocalSttExtractionProgressPayload,
   type LocalSttModelEventPayload,
   type LocalSttModelInfo,
+  type LocalSttVerificationProgressPayload,
   type LocalTranscriptionState,
 } from './tauri';
 
@@ -130,13 +131,32 @@ export function startLocalSttListeners(): () => void {
       );
     }
     unlisteners.push(
+      await listen<LocalSttVerificationProgressPayload>('local-stt-model-verification-progress', (event) => {
+        localSttStore.downloadProgress = {
+          ...localSttStore.downloadProgress,
+          [event.payload.model_id]: {
+            model_id: event.payload.model_id,
+            downloaded_bytes: 0,
+            // total_bytes stays non-null so the verifying bar renders as a
+            // real determinate fraction, never the indeterminate animation.
+            total_bytes: 1,
+            progress: event.payload.progress,
+          },
+        };
+        localSttStore.downloadStage = {
+          ...localSttStore.downloadStage,
+          [event.payload.model_id]: 'verifying',
+        };
+      }),
+    );
+    unlisteners.push(
       await listen<LocalSttExtractionProgressPayload>('local-stt-model-extraction-progress', (event) => {
         localSttStore.downloadProgress = {
           ...localSttStore.downloadProgress,
           [event.payload.model_id]: {
             model_id: event.payload.model_id,
             downloaded_bytes: 0,
-            total_bytes: null,
+            total_bytes: 1,
             progress: event.payload.progress,
           },
         };

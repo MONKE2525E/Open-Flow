@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { invoke } from '../tauri';
+  import { invoke, emit } from '../tauri';
   import { onMount } from 'svelte';
   import { crossfade, fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { saveSetting, type CleanupIntensity, type ToneId } from '../settings';
+  import { appStore } from '../stores';
   import AppMappingsEditor from '../components/AppMappingsEditor.svelte';
   import { MOTION_MS, MOTION_PX, STYLE_TAB_ORDER, directionFromOrder, motionMs, motionPx, pageSwap } from '../motion';
 
@@ -77,6 +78,19 @@
   <h1 class="page-h">Style</h1>
   <p class="page-sub">How Verenu shapes your dictation.</p>
 
+  {#if !appStore.cleanupEnabled}
+    <div class="cleanup-off-banner">
+      <p>
+        <strong>Cleanup is turned off</strong>, so nothing on this page has any effect right now —
+        tone, intensity, and app-specific overrides only apply during the cleanup step. Your
+        choices below are kept, just not used.
+      </p>
+      <button type="button" class="cleanup-off-link" onclick={() => emit('open-flow:open-settings-section', 'general')}>
+        Turn Cleanup back on in Settings → General
+      </button>
+    </div>
+  {/if}
+
   <div class="tabs">
     {#each tabs as t}
       <button class="tab" class:active={tab === t.id} onclick={() => selectTab(t.id)}>
@@ -91,7 +105,7 @@
     {/each}
   </div>
 
-  <div class="tab-content-area">
+  <div class="tab-content-area" class:tab-content-disabled={!appStore.cleanupEnabled} aria-disabled={!appStore.cleanupEnabled}>
     {#key tab}
       <div
         class="tab-wrapper"
@@ -163,6 +177,46 @@
     position: relative;
     flex: 1;
     display: grid;
+  }
+
+  .tab-content-disabled {
+    opacity: 0.45;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .cleanup-off-banner {
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: color-mix(in srgb, var(--paper) 55%, var(--bg-elev));
+    margin-bottom: 20px;
+  }
+
+  .cleanup-off-banner p {
+    margin: 0 0 8px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-mute);
+  }
+
+  .cleanup-off-banner strong {
+    color: var(--ink-soft);
+  }
+
+  .cleanup-off-link {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--accent-ink);
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+
+  .cleanup-off-link:hover {
+    opacity: 0.8;
   }
 
   .tab-wrapper {
