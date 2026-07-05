@@ -227,7 +227,11 @@ async function fetchPrCommits(pr) {
     await git(["fetch", "--unshallow", "--no-tags", "--no-recurse-submodules", "origin"]);
   }
   await git(["fetch", "--no-tags", "--no-recurse-submodules", "origin", pr.base.ref]);
-  await git(["fetch", "--no-tags", "--no-recurse-submodules", "origin", `refs/pull/${pr.number}/head`]);
+  // Fetch the exact head SHA we resolved, not the mutable refs/pull/<n>/head
+  // ref — if a new commit lands on the PR between event trigger and this
+  // fetch, the ref would point past pr.head.sha and this worktree add would
+  // fail to find it. GitHub serves any object present in the repo by SHA.
+  await git(["fetch", "--no-tags", "--no-recurse-submodules", "origin", pr.head.sha]);
 }
 
 // --- OCR invocation ---------------------------------------------------------
@@ -302,7 +306,14 @@ async function reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome)
 function parseOcrFindings(stdout) {
   let data;
   try {
-    data = JSON.parse(stdout);
+    // Tolerate stray non-JSON text (banners, warnings) surrounding the
+    // actual payload by slicing to the outermost bracket/brace pair.
+    const jsonStart = stdout.match(/[[{]/);
+    if (!jsonStart) throw new Error("no JSON structure found in stdout");
+    const start = jsonStart.index;
+    const end = stdout.lastIndexOf(stdout[start] === "[" ? "]" : "}");
+    if (end === -1 || end < start) throw new Error("incomplete JSON structure in stdout");
+    data = JSON.parse(stdout.slice(start, end + 1));
   } catch (err) {
     console.error(`failed to parse OCR findings JSON: ${err.message}`);
     console.error(`raw stdout: ${stdout.slice(0, 2000)}`);
