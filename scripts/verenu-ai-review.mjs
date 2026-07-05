@@ -309,16 +309,19 @@ function parseOcrFindings(stdout) {
     // (e.g. "[INFO] ..."), so try every bracket/brace position in order
     // rather than assuming the first one starts the real payload.
     data = undefined;
-    for (const match of stdout.matchAll(/[[{]/g)) {
+    outer: for (const match of stdout.matchAll(/[[{]/g)) {
       const start = match.index;
       const closingChar = stdout[start] === "{" ? "}" : "]";
-      const end = stdout.lastIndexOf(closingChar);
-      if (end <= start) continue;
-      try {
-        data = JSON.parse(stdout.slice(start, end + 1));
-        break;
-      } catch {
-        continue;
+      // A trailing log line can contain its own closing bracket, so the
+      // last occurrence isn't necessarily this structure's real end —
+      // backtrack through earlier occurrences until one parses.
+      for (let end = stdout.lastIndexOf(closingChar); end > start; end = stdout.lastIndexOf(closingChar, end - 1)) {
+        try {
+          data = JSON.parse(stdout.slice(start, end + 1));
+          break outer;
+        } catch {
+          continue;
+        }
       }
     }
     if (data === undefined) throw new Error("no valid JSON structure found in stdout");
