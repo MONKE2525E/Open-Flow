@@ -138,8 +138,13 @@ async function resolveContext() {
 // --- bot state comment ----------------------------------------------------
 
 async function findStateComment(prNumber) {
-  const comments = await gh(`/repos/${OWNER}/${REPO}/issues/${prNumber}/comments?per_page=100`);
-  return comments.find((c) => c.body && c.body.includes(STATE_MARKER)) || null;
+  for (let page = 1; ; page++) {
+    const comments = await gh(`/repos/${OWNER}/${REPO}/issues/${prNumber}/comments?per_page=100&page=${page}`);
+    if (comments.length === 0) return null;
+    const found = comments.find((c) => c.body && c.body.includes(STATE_MARKER));
+    if (found) return found;
+    if (comments.length < 100) return null;
+  }
 }
 
 function parseState(comment) {
@@ -330,7 +335,7 @@ async function postFindings(prNumber, pr, findings) {
         body: JSON.stringify({
           commit_id: pr.head.sha,
           event: "COMMENT",
-          comments: positioned.map((f) => ({ path: f.file, line: Number(f.line), body: `**[${f.severity}]** ${f.message}` })),
+          comments: positioned.map((f) => ({ path: f.file, line: Number(f.line), side: "RIGHT", body: `**[${f.severity}]** ${f.message}` })),
         }),
       });
     } catch (err) {
