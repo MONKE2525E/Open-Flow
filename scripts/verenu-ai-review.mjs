@@ -303,8 +303,10 @@ function parseOcrFindings(stdout) {
     console.error(`raw stdout: ${stdout.slice(0, 2000)}`);
     return [];
   }
-  const list = Array.isArray(data) ? data : (data && (data.findings || data.issues || data.results)) || [];
+  const rawList = Array.isArray(data) ? data : (data && (data.findings || data.issues || data.results)) || [];
+  const list = Array.isArray(rawList) ? rawList : [];
   return list
+    .filter((f) => f && typeof f === "object")
     .map((f) => ({
       file: f.file || f.path || f.filename,
       line: f.line || f.line_number || f.startLine,
@@ -404,26 +406,17 @@ async function main() {
   console.log(`running ocr review: mode=${mode} provider=${selection.provider} model=${selection.model} changedLines=${selection.changedLines}`);
 
   try {
-    let result = null;
-    let usedWorktree = false;
-
-    if (await previewOk(process.cwd(), pr, providerEnvVars, ocrHome)) {
-      result = await runOcrAt(process.cwd(), args, providerEnvVars, ocrHome);
-    } else {
-      console.log("git-object-only preview failed; skipping straight to the quarantined worktree fallback");
-    }
-
-    if (!result || result.code !== 0) {
-      if (result) {
-        console.log("git-object-only OCR run failed; retrying with a quarantined read-only worktree");
-        console.log(`ocr exit ${result.code}: ${result.stderr.slice(0, 300)}`);
-      }
-      usedWorktree = true;
-      result = await reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome);
-    }
+    // Always review from the quarantined worktree, never process.cwd(). cwd
+    // stays checked out at the base ref, so OCR's file-read tool calls would
+    // silently see base-commit content there — a git-object-only "preview
+    // succeeds" check can't detect that, since it only validates that the
+    // diff resolves, not which file content OCR's tools would actually read.
+    // Running the worktree unconditionally costs nothing extra in security
+    // (same hardening either way) and removes that silent-wrong-review risk.
+    const result = await reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome);
 
     if (!result || result.code !== 0) {
-      console.error("OCR review failed even with a materialized worktree; stopping rather than weakening the checkout security model");
+      console.error("OCR review failed even in the quarantined worktree; stopping rather than weakening the checkout security model");
       console.error((result?.stderr || "").slice(0, 800));
       process.exitCode = 1;
       return;
@@ -435,7 +428,7 @@ async function main() {
     const fallbackNote = selection.fellBack ? " (escalation requested — GLM-5.2 unavailable, fell back to DeepSeek V4 Pro)" : "";
     const summary = [
       `**Verenu AI Review** — ${mode} mode, \`${selection.model}\`${fallbackNote}.`,
-      `Reviewed \`${pr.head.sha.slice(0, 7)}\` (${findings.length} finding${findings.length === 1 ? "" : "s"})${usedWorktree ? ", using a quarantined read-only worktree" : ""}.`,
+      `Reviewed \`${pr.head.sha.slice(0, 7)}\` (${findings.length} finding${findings.length === 1 ? "" : "s"}).`,
     ].join("\n");
 
     await upsertStateComment(prNumber, existingComment, summary, {
