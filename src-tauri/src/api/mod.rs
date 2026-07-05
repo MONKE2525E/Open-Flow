@@ -126,7 +126,7 @@ pub fn sanitize_error_body_preview(body: &str) -> String {
     }
 }
 
-pub(crate) enum ProviderHttpError {
+enum ProviderHttpError {
     Quota(anyhow::Error),
     Auth {
         error: anyhow::Error,
@@ -150,7 +150,7 @@ pub(crate) fn response_request_id(resp: &reqwest::Response) -> String {
         .to_string()
 }
 
-pub(crate) async fn ensure_provider_success(
+async fn ensure_provider_success(
     resp: reqwest::Response,
     quota_label: &str,
     auth: Option<(&str, &str)>,
