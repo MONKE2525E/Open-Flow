@@ -111,7 +111,10 @@ async function resolveContext() {
     // can't cross a newline — a command followed by any extra line (very
     // common: people add context below it) would otherwise never match.
     const firstLine = body.split("\n")[0].trim();
-    const match = /^\/verenu-review\b(.*)$/i.exec(firstLine);
+    // \b alone would also match "/verenu-review-rules.md" (- is a
+    // non-word char), so require whitespace or end-of-line after the
+    // command instead.
+    const match = /^\/verenu-review(?:\s|$)(.*)$/i.exec(firstLine);
     if (!match) return null;
     const flags = match[1].toLowerCase();
 
@@ -127,7 +130,7 @@ async function resolveContext() {
       console.log(`ignoring /verenu-review from ${author}: failed to fetch permission: ${err.message}`);
       return null;
     }
-    if (!perm || !["admin", "write"].includes(perm.permission)) {
+    if (!perm || !["admin", "write", "maintain"].includes(perm.permission)) {
       console.log(`ignoring /verenu-review from ${author}: permission=${perm?.permission || "none"}`);
       return null;
     }
