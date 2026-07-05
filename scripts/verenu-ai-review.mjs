@@ -43,15 +43,16 @@ function requireEnv(name) {
 
 async function gh(pathOrUrl, init = {}) {
   const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${GITHUB_API}${pathOrUrl}`;
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(init.headers || {}),
-    },
-  });
+  const headers = {
+    Authorization: `Bearer ${TOKEN}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    ...(init.headers || {}),
+  };
+  if (init.body && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+  const res = await fetch(url, { ...init, headers });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`GitHub API ${res.status} ${url}: ${body.slice(0, 500)}`);
@@ -116,8 +117,8 @@ async function resolveContext() {
       console.log(`ignoring /verenu-review from ${author}: failed to fetch permission: ${err.message}`);
       return null;
     }
-    if (!["admin", "write"].includes(perm.permission)) {
-      console.log(`ignoring /verenu-review from ${author}: permission=${perm.permission}`);
+    if (!perm || !["admin", "write"].includes(perm.permission)) {
+      console.log(`ignoring /verenu-review from ${author}: permission=${perm?.permission || "none"}`);
       return null;
     }
 
@@ -285,7 +286,7 @@ async function reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome)
     // `git config core.hooksPath ...` afterward would instead write to the
     // shared .git/config (worktrees don't get their own config unless
     // extensions.worktreeConfig is set), disabling hooks repo-wide.
-    await git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", "--no-track", quarantineDir, pr.head.sha]);
+    await git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", quarantineDir, pr.head.sha]);
 
     if (!(await previewOk(quarantineDir, pr, providerEnvVars, ocrHome))) {
       return { code: 1, stdout: "", stderr: "ocr preview check failed in the quarantined worktree; aborting before the billed review" };
