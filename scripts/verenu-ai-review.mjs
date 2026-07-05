@@ -214,6 +214,13 @@ async function fetchPrCommits(pr) {
   if (!REF_RE.test(pr.base.ref)) {
     throw new Error("base ref failed format validation");
   }
+  // actions/checkout with fetch-depth: 0 (what our workflow uses) never
+  // leaves a shallow clone, but unshallow defensively in case that ever
+  // changes — a shallow history can make the base commit unreachable.
+  const shallowCheck = await run("git", ["rev-parse", "--is-shallow-repository"]);
+  if (shallowCheck.code === 0 && shallowCheck.stdout.trim() === "true") {
+    await git(["fetch", "--unshallow", "--no-tags", "--no-recurse-submodules", "origin"]);
+  }
   await git(["fetch", "--no-tags", "--no-recurse-submodules", "origin", pr.base.ref]);
   await git(["fetch", "--no-tags", "--no-recurse-submodules", "origin", `refs/pull/${pr.number}/head`]);
 }
@@ -268,8 +275,11 @@ async function reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome)
     // its tool-use, so we materialize the PR head here — detached, hooks
     // disabled, no submodules, no LFS smudge, and nothing in this tree is
     // ever executed or installed from.
-    await git(["worktree", "add", "--detach", "--no-track", quarantineDir, pr.head.sha]);
-    await git(["config", "core.hooksPath", "/dev/null"], { cwd: quarantineDir });
+    // -c core.hooksPath applies only to this git invocation. Running
+    // `git config core.hooksPath ...` afterward would instead write to the
+    // shared .git/config (worktrees don't get their own config unless
+    // extensions.worktreeConfig is set), disabling hooks repo-wide.
+    await git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", "--no-track", quarantineDir, pr.head.sha]);
 
     if (!(await previewOk(quarantineDir, pr, providerEnvVars, ocrHome))) {
       return { code: 1, stdout: "", stderr: "ocr preview check failed in the quarantined worktree; aborting before the billed review" };
@@ -293,7 +303,7 @@ function parseOcrFindings(stdout) {
     console.error(`raw stdout: ${stdout.slice(0, 2000)}`);
     return [];
   }
-  const list = Array.isArray(data) ? data : data.findings || data.issues || data.results || [];
+  const list = Array.isArray(data) ? data : (data && (data.findings || data.issues || data.results)) || [];
   return list
     .map((f) => ({
       file: f.file || f.path || f.filename,
@@ -307,8 +317,9 @@ function parseOcrFindings(stdout) {
 async function postFindings(prNumber, pr, findings) {
   if (findings.length === 0) return;
 
-  const positioned = findings.filter((f) => f.file && f.line);
-  const unpositioned = findings.filter((f) => !f.file || !f.line);
+  const hasValidLine = (f) => f.file && f.line && !isNaN(Number(f.line)) && Number(f.line) > 0;
+  const positioned = findings.filter(hasValidLine);
+  const unpositioned = findings.filter((f) => !hasValidLine(f));
 
   if (positioned.length > 0) {
     try {
@@ -372,7 +383,7 @@ async function main() {
       prNumber,
       existingComment,
       "No AI review provider is configured (missing `DEEPSEEK_API_KEY` and `ZAI_API_KEY`). Skipping automated review.",
-      existingState || { prNumber, headSha: pr.head.sha, mode, model: null, timestamp: new Date().toISOString(), completed: false },
+      { ...(existingState || {}), prNumber, headSha: pr.head.sha, mode, model: null, timestamp: new Date().toISOString(), completed: false },
     );
     return;
   }
