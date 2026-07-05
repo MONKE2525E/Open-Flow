@@ -313,7 +313,17 @@ async function reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome)
     for (const relPath of TRUSTED_RULE_FILES) {
       const dest = path.join(quarantineDir, relPath);
       mkdirSync(path.dirname(dest), { recursive: true });
-      writeFileSync(dest, readFileSync(relPath));
+      let content;
+      try {
+        content = readFileSync(relPath);
+      } catch (err) {
+        // No fallback to the PR head here on purpose — that's the exact
+        // untrusted-rules-override this copy step exists to prevent. If
+        // these files aren't on the base branch, that's a real config
+        // problem to fix there, not something to route around.
+        throw new Error(`trusted rule file ${relPath} not found in the base checkout: ${err.message}`);
+      }
+      writeFileSync(dest, content);
     }
 
     if (!(await previewOk(quarantineDir, pr, providerEnvVars, ocrHome))) {
