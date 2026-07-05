@@ -158,6 +158,9 @@ fn last_sentence(text: &str) -> &str {
             while j < chars.len() && matches!(chars[j].1, '.' | '!' | '?') {
                 j += 1;
             }
+            while j < chars.len() && matches!(chars[j].1, '"' | '\'' | ')' | ']' | '}' | '”' | '’' | '»' | '〉' | '》' | '」' | '』' | '）' | '】' | '〕') {
+                j += 1;
+            }
             let end_of_run = if j < chars.len() {
                 chars[j].0
             } else {
@@ -169,7 +172,18 @@ fn last_sentence(text: &str) -> &str {
             i = j;
             continue;
         } else if matches!(c, '。' | '！' | '？') {
-            boundaries.push(chars[i].0 + c.len_utf8());
+            let mut j = i + 1;
+            while j < chars.len() && matches!(chars[j].1, '"' | '\'' | ')' | ']' | '}' | '”' | '’' | '»' | '〉' | '》' | '」' | '』' | '）' | '】' | '〕') {
+                j += 1;
+            }
+            let end_of_run = if j < chars.len() {
+                chars[j].0
+            } else {
+                trimmed.len()
+            };
+            boundaries.push(end_of_run);
+            i = j;
+            continue;
         } else if c == '\n' {
             boundaries.push(chars[i].0 + 1);
         }
