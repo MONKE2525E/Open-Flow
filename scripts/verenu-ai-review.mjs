@@ -65,6 +65,8 @@ function run(cmd, args, opts = {}) {
     const child = spawn(cmd, args, { ...opts, shell: false });
     let stdout = "";
     let stderr = "";
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (d) => (stdout += d));
     child.stderr?.on("data", (d) => (stderr += d));
     child.on("error", reject);
@@ -103,8 +105,18 @@ async function resolveContext() {
     if (!match) return null;
     const flags = match[1].toLowerCase();
 
-    const author = event.comment.user.login;
-    const perm = await gh(`/repos/${OWNER}/${REPO}/collaborators/${encodeURIComponent(author)}/permission`);
+    const author = event.comment?.user?.login;
+    if (!author) return null;
+
+    let perm;
+    try {
+      perm = await gh(`/repos/${OWNER}/${REPO}/collaborators/${encodeURIComponent(author)}/permission`);
+    } catch (err) {
+      // Non-collaborators (and anyone GitHub won't disclose permission for)
+      // get a 404 here — that's an expected "ignore" case, not a crash.
+      console.log(`ignoring /verenu-review from ${author}: failed to fetch permission: ${err.message}`);
+      return null;
+    }
     if (!["admin", "write"].includes(perm.permission)) {
       console.log(`ignoring /verenu-review from ${author}: permission=${perm.permission}`);
       return null;
@@ -276,7 +288,9 @@ function parseOcrFindings(stdout) {
   let data;
   try {
     data = JSON.parse(stdout);
-  } catch {
+  } catch (err) {
+    console.error(`failed to parse OCR findings JSON: ${err.message}`);
+    console.error(`raw stdout: ${stdout.slice(0, 2000)}`);
     return [];
   }
   const list = Array.isArray(data) ? data : data.findings || data.issues || data.results || [];
@@ -345,13 +359,10 @@ async function main() {
   const existingState = parseState(existingComment);
 
   if (!forceFull && existingState && existingState.headSha === pr.head.sha && existingState.completed) {
+    // Don't touch the existing state comment here — it holds the last real
+    // review's findings, and headSha already matches, so there's nothing to
+    // update. Rewriting it would destroy that history for a no-op skip.
     console.log(`head ${pr.head.sha} already reviewed (mode=${existingState.mode}); skipping`);
-    await upsertStateComment(
-      prNumber,
-      existingComment,
-      `Commit \`${pr.head.sha.slice(0, 7)}\` was already reviewed (${existingState.model}, ${existingState.mode} mode) at ${existingState.timestamp}. Use \`/verenu-review full\` to force a new review.`,
-      existingState,
-    );
     return;
   }
 
