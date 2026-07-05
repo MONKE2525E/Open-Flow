@@ -34,7 +34,6 @@ const TOKEN = requireEnv("GITHUB_TOKEN");
 const RULE_FILE_PATH = ".github/verenu-ocr-rules.json";
 const STATE_MARKER = "<!-- verenu-ai-review-state:v1";
 const SHA_RE = /^[0-9a-f]{40}$/i;
-const REF_RE = /^[A-Za-z0-9._/-]+$/;
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -216,9 +215,6 @@ async function fetchPrCommits(pr) {
   if (!SHA_RE.test(pr.base.sha) || !SHA_RE.test(pr.head.sha)) {
     throw new Error("base/head sha failed format validation");
   }
-  if (!REF_RE.test(pr.base.ref)) {
-    throw new Error("base ref failed format validation");
-  }
   // actions/checkout with fetch-depth: 0 (what our workflow uses) never
   // leaves a shallow clone, but unshallow defensively in case that ever
   // changes — a shallow history can make the base commit unreachable.
@@ -226,11 +222,12 @@ async function fetchPrCommits(pr) {
   if (shallowCheck.code === 0 && shallowCheck.stdout.trim() === "true") {
     await git(["fetch", "--unshallow", "--no-tags", "--no-recurse-submodules", "origin"]);
   }
-  await git(["fetch", "--no-tags", "--no-recurse-submodules", "origin", pr.base.ref]);
-  // Fetch the exact head SHA we resolved, not the mutable refs/pull/<n>/head
-  // ref — if a new commit lands on the PR between event trigger and this
-  // fetch, the ref would point past pr.head.sha and this worktree add would
-  // fail to find it. GitHub serves any object present in the repo by SHA.
+  // Fetch the exact base/head SHAs we resolved, not mutable refs — if the
+  // base branch is force-pushed, or a new commit lands on the PR, between
+  // event trigger and this fetch, a ref-based fetch would point past the
+  // SHA the workflow actually resolved. GitHub serves any object present
+  // in the repo by SHA.
+  await git(["fetch", "--no-tags", "--no-recurse-submodules", "origin", pr.base.sha]);
   await git(["fetch", "--no-tags", "--no-recurse-submodules", "origin", pr.head.sha]);
 }
 
@@ -307,13 +304,23 @@ function parseOcrFindings(stdout) {
   let data;
   try {
     // Tolerate stray non-JSON text (banners, warnings) surrounding the
-    // actual payload by slicing to the outermost bracket/brace pair.
-    const jsonStart = stdout.match(/[[{]/);
-    if (!jsonStart) throw new Error("no JSON structure found in stdout");
-    const start = jsonStart.index;
-    const end = stdout.lastIndexOf(stdout[start] === "[" ? "]" : "}");
-    if (end === -1 || end < start) throw new Error("incomplete JSON structure in stdout");
-    data = JSON.parse(stdout.slice(start, end + 1));
+    // actual payload. A leading log line can itself contain a bracket
+    // (e.g. "[INFO] ..."), so try every bracket/brace position in order
+    // rather than assuming the first one starts the real payload.
+    data = undefined;
+    for (const match of stdout.matchAll(/[[{]/g)) {
+      const start = match.index;
+      const closingChar = stdout[start] === "{" ? "}" : "]";
+      const end = stdout.lastIndexOf(closingChar);
+      if (end <= start) continue;
+      try {
+        data = JSON.parse(stdout.slice(start, end + 1));
+        break;
+      } catch {
+        continue;
+      }
+    }
+    if (data === undefined) throw new Error("no valid JSON structure found in stdout");
   } catch (err) {
     console.error(`failed to parse OCR findings JSON: ${err.message}`);
     console.error(`raw stdout: ${stdout.slice(0, 2000)}`);
