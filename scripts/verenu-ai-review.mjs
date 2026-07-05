@@ -138,13 +138,15 @@ async function resolveContext() {
 // --- bot state comment ----------------------------------------------------
 
 async function findStateComment(prNumber) {
-  for (let page = 1; ; page++) {
+  const MAX_PAGES = 10; // 1000 comments — a sane hard ceiling, not a real limit
+  for (let page = 1; page <= MAX_PAGES; page++) {
     const comments = await gh(`/repos/${OWNER}/${REPO}/issues/${prNumber}/comments?per_page=100&page=${page}`);
     if (comments.length === 0) return null;
     const found = comments.find((c) => c.body && c.body.includes(STATE_MARKER));
     if (found) return found;
     if (comments.length < 100) return null;
   }
+  return null;
 }
 
 function parseState(comment) {
@@ -228,8 +230,7 @@ async function fetchPrCommits(pr) {
   // event trigger and this fetch, a ref-based fetch would point past the
   // SHA the workflow actually resolved. GitHub serves any object present
   // in the repo by SHA.
-  await git(["fetch", "--no-tags", "--no-recurse-submodules", "origin", pr.base.sha]);
-  await git(["fetch", "--no-tags", "--no-recurse-submodules", "origin", pr.head.sha]);
+  await git(["fetch", "--no-tags", "--no-recurse-submodules", "origin", pr.base.sha, pr.head.sha]);
 }
 
 // --- OCR invocation ---------------------------------------------------------
@@ -301,30 +302,53 @@ async function reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome)
   }
 }
 
+// Tolerates stray non-JSON text (banners, warnings) surrounding OCR's real
+// payload, cheapest case first: a clean parse, then the widest bracket
+// span. Only falls back to backtracking through bracket positions if
+// those fail, and caps attempts per start position so noisy output full
+// of brace/bracket characters (e.g. printed code) can't turn this into an
+// O(N^2) scan.
+function extractJson(stdout) {
+  const trimmed = stdout.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // fall through to bracket-scanning recovery below
+  }
+
+  const firstBracket = trimmed.search(/[[{]/);
+  if (firstBracket === -1) throw new Error("no JSON structure found in stdout");
+
+  const wideClose = trimmed[firstBracket] === "{" ? "}" : "]";
+  const wideEnd = trimmed.lastIndexOf(wideClose);
+  if (wideEnd > firstBracket) {
+    try {
+      return JSON.parse(trimmed.slice(firstBracket, wideEnd + 1));
+    } catch {
+      // fall through to the bounded backtracking scan below
+    }
+  }
+
+  const MAX_ATTEMPTS_PER_START = 10;
+  for (const match of trimmed.matchAll(/[[{]/g)) {
+    const start = match.index;
+    const closingChar = trimmed[start] === "{" ? "}" : "]";
+    let end = trimmed.lastIndexOf(closingChar);
+    for (let attempts = 0; attempts < MAX_ATTEMPTS_PER_START && end > start; attempts++) {
+      try {
+        return JSON.parse(trimmed.slice(start, end + 1));
+      } catch {
+        end = trimmed.lastIndexOf(closingChar, end - 1);
+      }
+    }
+  }
+  throw new Error("no valid JSON structure found in stdout");
+}
+
 function parseOcrFindings(stdout) {
   let data;
   try {
-    // Tolerate stray non-JSON text (banners, warnings) surrounding the
-    // actual payload. A leading log line can itself contain a bracket
-    // (e.g. "[INFO] ..."), so try every bracket/brace position in order
-    // rather than assuming the first one starts the real payload.
-    data = undefined;
-    outer: for (const match of stdout.matchAll(/[[{]/g)) {
-      const start = match.index;
-      const closingChar = stdout[start] === "{" ? "}" : "]";
-      // A trailing log line can contain its own closing bracket, so the
-      // last occurrence isn't necessarily this structure's real end —
-      // backtrack through earlier occurrences until one parses.
-      for (let end = stdout.lastIndexOf(closingChar); end > start; end = stdout.lastIndexOf(closingChar, end - 1)) {
-        try {
-          data = JSON.parse(stdout.slice(start, end + 1));
-          break outer;
-        } catch {
-          continue;
-        }
-      }
-    }
-    if (data === undefined) throw new Error("no valid JSON structure found in stdout");
+    data = extractJson(stdout);
   } catch (err) {
     console.error(`failed to parse OCR findings JSON: ${err.message}`);
     console.error(`raw stdout: ${stdout.slice(0, 2000)}`);
