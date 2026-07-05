@@ -69,3 +69,6 @@
 - [ ] If version bumped: all three files updated together (`package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`)
 - [ ] Relevant documentation updated to reflect changes
 - [ ] Risks documented above
+
+<!-- graphite-onboarding -->
+
