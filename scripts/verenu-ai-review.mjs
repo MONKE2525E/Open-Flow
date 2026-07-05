@@ -427,7 +427,10 @@ function parseOcrFindings(stdout) {
 async function postFindings(prNumber, pr, findings) {
   if (findings.length === 0) return;
 
-  const hasValidLine = (f) => f.file && f.line && !isNaN(Number(f.line)) && Number(f.line) > 0;
+  // Number.isInteger rejects both non-numeric junk ("12abc" -> NaN) and
+  // fractional values ("12.5" -> 12.5), either of which the GitHub review
+  // API would 422 on if we sent it through.
+  const hasValidLine = (f) => f.file && f.line && Number.isInteger(Number(f.line)) && Number(f.line) > 0;
   const positioned = findings.filter(hasValidLine);
   const unpositioned = findings.filter((f) => !hasValidLine(f));
 
