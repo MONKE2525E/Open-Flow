@@ -284,6 +284,10 @@ function ocrReviewArgs({ baseSha, headSha, model, background }) {
 
 async function reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome) {
   const quarantineDir = mkdtempSync(path.join(tmpdir(), "verenu-pr-quarantine-"));
+  // git < 2.12 refuses `worktree add` on an existing (even empty) directory.
+  // mkdtempSync's job here is just reserving a unique path; free it and let
+  // git create it.
+  rmSync(quarantineDir, { recursive: true, force: true });
   try {
     // Reviewed security exception: OCR needs real files on disk to read via
     // its tool-use, so we materialize the PR head here — detached, hooks
