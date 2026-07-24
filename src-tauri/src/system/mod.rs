@@ -4,5 +4,6 @@ pub mod logger;
 pub mod mac_app;
 pub mod memory;
 pub mod number_parser;
+pub mod review_probe;
 pub mod text;
 pub mod volume;
