@@ -401,15 +401,21 @@ function parseOcrFindings(stdout) {
     console.error(`raw stdout: ${stdout.slice(0, 2000)}`);
     return [];
   }
-  const rawList = Array.isArray(data) ? data : (data && (data.findings || data.issues || data.results)) || [];
+  // ocr's actual --format json shape is { comments: [...] }, each with
+  // path/content/start_line/severity — not the findings/issues/results
+  // shape this originally assumed (confirmed by comparing --format text
+  // output, which did surface real findings, against --format json, which
+  // silently produced zero every time). Both are accepted since the exact
+  // key names aren't documented and may vary by ocr version.
+  const rawList = Array.isArray(data) ? data : (data && (data.comments || data.findings || data.issues || data.results)) || [];
   const list = Array.isArray(rawList) ? rawList : [];
   return list
     .filter((f) => f && typeof f === "object")
     .map((f) => ({
       file: f.file || f.path || f.filename,
-      line: f.line || f.line_number || f.startLine,
+      line: f.line || f.line_number || f.startLine || f.start_line,
       severity: f.severity || f.level || "info",
-      message: f.message || f.description || f.body || "",
+      message: f.message || f.description || f.body || f.content || "",
     }))
     .filter((f) => f.message);
 }
