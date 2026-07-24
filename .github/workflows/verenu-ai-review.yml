@@ -42,11 +42,19 @@ jobs:
       - name: Install Open Code Review
         run: npm install -g @alibaba-group/open-code-review@1.7.1
 
+      # Joins the runner to the tailnet as an ephemeral node so it can reach
+      # the self-hosted CLI Proxy API on the home LAN over its Tailscale IP
+      # — that box is never exposed to the public internet. The node leaves
+      # the tailnet automatically when this job ends (ephemeral auth key).
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
       - name: Run Verenu AI review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          OPENROUTER_BASE_URL: ${{ secrets.OPENROUTER_BASE_URL }}
-          OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL }}
-          OPENROUTER_ESCALATION_MODEL: ${{ secrets.OPENROUTER_ESCALATION_MODEL }}
+          CLIPROXY_API_KEY: ${{ secrets.CLIPROXY_API_KEY }}
+          CLIPROXY_URL: ${{ secrets.CLIPROXY_URL }}
+          CLIPROXY_MODEL: ${{ secrets.CLIPROXY_MODEL }}
         run: node scripts/verenu-ai-review.mjs
