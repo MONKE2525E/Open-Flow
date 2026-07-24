@@ -3283,7 +3283,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 [[package]]
 name = "quick-xml"
 version = "0.41.0"
-source = "git+https://github.com/tafia/quick-xml?tag=v0.41.0#4deda08abeffdc188c269360229cf47e12a77a9f"
+source = "git+https://github.com/tafia/quick-xml?rev=4deda08abeffdc188c269360229cf47e12a77a9f#4deda08abeffdc188c269360229cf47e12a77a9f"
 dependencies = [
  "memchr",
 ]
