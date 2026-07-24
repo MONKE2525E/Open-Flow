@@ -191,29 +191,25 @@ async function upsertStateComment(prNumber, existing, summary, state) {
 
 // --- provider selection ----------------------------------------------------
 
-// One OpenRouter key fronts every model, so there's no separate-key fallback
-// to reason about — just pick which model tier this run wants.
-const DEFAULT_MODEL = "deepseek/deepseek-v4-pro";
-const DEFAULT_ESCALATION_MODEL = "z-ai/glm-5.2";
+// CLI Proxy API is a self-hosted OpenAI-protocol-compatible gateway (reached
+// over Tailscale, see the workflow's "Connect to Tailscale" step) fronting a
+// subscription-quota model rather than a metered API — one model tier, no
+// escalation-for-cost-reasons logic needed.
+const DEFAULT_MODEL = "gemini-3.6-flash-high";
 
 function selectProvider(pr, mode) {
   const changedLines = (pr.additions || 0) + (pr.deletions || 0);
-  const escalated = changedLines > 3000 || mode === "security";
-  if (!process.env.OPENROUTER_API_KEY) return null;
-  const model = escalated
-    ? process.env.OPENROUTER_ESCALATION_MODEL || DEFAULT_ESCALATION_MODEL
-    : process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
-  return { model, escalated, changedLines };
+  if (!process.env.CLIPROXY_API_KEY) return null;
+  const model = process.env.CLIPROXY_MODEL || DEFAULT_MODEL;
+  return { model, changedLines };
 }
 
-// OpenRouter is an OpenAI-protocol-compatible gateway in front of every
-// provider's models, never Anthropic-protocol — OCR_USE_ANTHROPIC is forced
-// to "false". OCR_LLM_MODEL is set here (not just passed as --model) because
-// the cheap --preview check below never receives --model.
+// OCR_LLM_MODEL is set here (not just passed as --model) because the cheap
+// --preview check below never receives --model.
 function providerEnv(model) {
   return {
-    OCR_LLM_URL: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
-    OCR_LLM_TOKEN: requireEnv("OPENROUTER_API_KEY"),
+    OCR_LLM_URL: requireEnv("CLIPROXY_URL"),
+    OCR_LLM_TOKEN: requireEnv("CLIPROXY_API_KEY"),
     OCR_LLM_MODEL: model,
     OCR_USE_ANTHROPIC: "false",
   };
@@ -489,7 +485,7 @@ async function main() {
     await upsertStateComment(
       prNumber,
       existingComment,
-      "No AI review provider is configured (missing `OPENROUTER_API_KEY`). Skipping automated review.",
+      "No AI review provider is configured (missing `CLIPROXY_API_KEY`). Skipping automated review.",
       { ...(existingState || {}), prNumber, headSha: pr.head.sha, mode, model: null, timestamp: new Date().toISOString(), completed: false },
     );
     return;
@@ -508,7 +504,7 @@ async function main() {
   const args = ocrReviewArgs({ baseSha: pr.base.sha, headSha: pr.head.sha, model: selection.model, background });
   const ocrHome = makeOcrHome();
 
-  console.log(`running ocr review: mode=${mode} model=${selection.model} escalated=${selection.escalated} changedLines=${selection.changedLines}`);
+  console.log(`running ocr review: mode=${mode} model=${selection.model} changedLines=${selection.changedLines}`);
 
   try {
     // Always review from the quarantined worktree, never process.cwd(). cwd
@@ -540,7 +536,7 @@ async function main() {
       headSha: pr.head.sha,
       mode,
       model: selection.model,
-      provider: "openrouter",
+      provider: "cliproxy",
       timestamp: new Date().toISOString(),
       completed: true,
     });
