@@ -45,8 +45,8 @@ jobs:
       - name: Run Verenu AI review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
-          DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
-          ZAI_BASE_URL: ${{ secrets.ZAI_BASE_URL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_BASE_URL: ${{ secrets.OPENROUTER_BASE_URL }}
+          OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL }}
+          OPENROUTER_ESCALATION_MODEL: ${{ secrets.OPENROUTER_ESCALATION_MODEL }}
         run: node scripts/verenu-ai-review.mjs

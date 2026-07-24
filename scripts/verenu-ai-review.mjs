@@ -191,38 +191,32 @@ async function upsertStateComment(prNumber, existing, summary, state) {
 
 // --- provider selection ----------------------------------------------------
 
+// One OpenRouter key fronts every model, so there's no separate-key fallback
+// to reason about — just pick which model tier this run wants.
+const DEFAULT_MODEL = "deepseek/deepseek-v4-pro";
+const DEFAULT_ESCALATION_MODEL = "z-ai/glm-5.2";
+
 function selectProvider(pr, mode) {
   const changedLines = (pr.additions || 0) + (pr.deletions || 0);
-  const wantEscalate = changedLines > 3000 || mode === "security";
-  const haveZai = !!process.env.ZAI_API_KEY;
-  const haveDeepseek = !!process.env.DEEPSEEK_API_KEY;
-
-  if (wantEscalate && haveZai) return { provider: "zai", model: "glm-5.2", fellBack: false, changedLines };
-  if (haveDeepseek) return { provider: "deepseek", model: "deepseek-v4-pro", fellBack: wantEscalate, changedLines };
-  if (haveZai) return { provider: "zai", model: "glm-5.2", fellBack: false, changedLines };
-  return null;
+  const escalated = changedLines > 3000 || mode === "security";
+  if (!process.env.OPENROUTER_API_KEY) return null;
+  const model = escalated
+    ? process.env.OPENROUTER_ESCALATION_MODEL || DEFAULT_ESCALATION_MODEL
+    : process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+  return { model, escalated, changedLines };
 }
 
-// Both DeepSeek and Z.ai are OpenAI-protocol-compatible endpoints, never
-// Anthropic-protocol — OCR_USE_ANTHROPIC is forced to "false" for both.
-function providerEnv(provider) {
-  if (provider === "deepseek") {
-    return {
-      OCR_LLM_URL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1",
-      OCR_LLM_TOKEN: process.env.DEEPSEEK_API_KEY,
-      OCR_LLM_MODEL: "deepseek-v4-pro",
-      OCR_USE_ANTHROPIC: "false",
-    };
-  }
-  if (provider === "zai") {
-    return {
-      OCR_LLM_URL: process.env.ZAI_BASE_URL || "https://api.z.ai/api/paas/v4",
-      OCR_LLM_TOKEN: process.env.ZAI_API_KEY,
-      OCR_LLM_MODEL: "glm-5.2",
-      OCR_USE_ANTHROPIC: "false",
-    };
-  }
-  throw new Error(`unknown provider ${provider}`);
+// OpenRouter is an OpenAI-protocol-compatible gateway in front of every
+// provider's models, never Anthropic-protocol — OCR_USE_ANTHROPIC is forced
+// to "false". OCR_LLM_MODEL is set here (not just passed as --model) because
+// the cheap --preview check below never receives --model.
+function providerEnv(model) {
+  return {
+    OCR_LLM_URL: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+    OCR_LLM_TOKEN: requireEnv("OPENROUTER_API_KEY"),
+    OCR_LLM_MODEL: model,
+    OCR_USE_ANTHROPIC: "false",
+  };
 }
 
 // --- git object fetch (no checkout of PR head) -----------------------------
@@ -495,7 +489,7 @@ async function main() {
     await upsertStateComment(
       prNumber,
       existingComment,
-      "No AI review provider is configured (missing `DEEPSEEK_API_KEY` and `ZAI_API_KEY`). Skipping automated review.",
+      "No AI review provider is configured (missing `OPENROUTER_API_KEY`). Skipping automated review.",
       { ...(existingState || {}), prNumber, headSha: pr.head.sha, mode, model: null, timestamp: new Date().toISOString(), completed: false },
     );
     return;
@@ -510,11 +504,11 @@ async function main() {
 
   await fetchPrCommits(pr);
 
-  const providerEnvVars = providerEnv(selection.provider);
+  const providerEnvVars = providerEnv(selection.model);
   const args = ocrReviewArgs({ baseSha: pr.base.sha, headSha: pr.head.sha, model: selection.model, background });
   const ocrHome = makeOcrHome();
 
-  console.log(`running ocr review: mode=${mode} provider=${selection.provider} model=${selection.model} changedLines=${selection.changedLines}`);
+  console.log(`running ocr review: mode=${mode} model=${selection.model} escalated=${selection.escalated} changedLines=${selection.changedLines}`);
 
   try {
     // Always review from the quarantined worktree, never process.cwd(). cwd
@@ -536,9 +530,8 @@ async function main() {
     const findings = parseOcrFindings(result.stdout);
     await postFindings(prNumber, pr, findings);
 
-    const fallbackNote = selection.fellBack ? " (escalation requested — GLM-5.2 unavailable, fell back to DeepSeek V4 Pro)" : "";
     const summary = [
-      `**Verenu AI Review** — ${mode} mode, \`${selection.model}\`${fallbackNote}.`,
+      `**Verenu AI Review** — ${mode} mode, \`${selection.model}\`.`,
       `Reviewed \`${pr.head.sha.slice(0, 7)}\` (${findings.length} finding${findings.length === 1 ? "" : "s"}).`,
     ].join("\n");
 
@@ -547,7 +540,7 @@ async function main() {
       headSha: pr.head.sha,
       mode,
       model: selection.model,
-      provider: selection.provider,
+      provider: "openrouter",
       timestamp: new Date().toISOString(),
       completed: true,
     });
