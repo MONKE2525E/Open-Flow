@@ -135,7 +135,7 @@ pub async fn run_pipeline_fixture(
         })
     })?;
 
-    let (final_text_before_dictionary, dict_entries, cleanup_cache_key) =
+    let (final_text_before_dictionary, dict_entries, cleanup_cache_key, _cleanup_api_used) =
         run_cleanup_and_snippets_for_db(
             &db_handle,
             &raw_text,

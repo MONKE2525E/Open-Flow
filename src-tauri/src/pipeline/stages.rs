@@ -98,6 +98,31 @@ fn cleanup_output_is_unusable(intensity: &str, reference: &str, text: &str) -> b
         || prompts::looks_like_perspective_flip(reference, text)
 }
 
+fn cleanup_output_is_unusable_against_candidates(
+    intensity: &str,
+    primary: &str,
+    alternate: Option<&str>,
+    text: &str,
+) -> bool {
+    let intrinsic_failure = prompts::looks_like_refusal(text)
+        || prompts::looks_like_model_artifact_leak(text)
+        || prompts::looks_like_degenerate_repetition(text);
+    if intrinsic_failure {
+        return true;
+    }
+
+    let primary_failure = cleanup_output_is_unusable(intensity, primary, text);
+    match alternate {
+        Some(alternate) => {
+            // A reconciler is allowed to choose wording that only the
+            // alternate candidate supports. Reject it only when it fails
+            // against both untrusted candidates.
+            primary_failure && cleanup_output_is_unusable(intensity, alternate, text)
+        }
+        None => primary_failure,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn guard_cleanup_refusal(
     cleaned: String,
@@ -113,7 +138,12 @@ pub(super) async fn guard_cleanup_refusal(
     app: Option<&AppHandle>,
     alternate_transcript: Option<&str>,
 ) -> Option<String> {
-    if !cleanup_output_is_unusable(intensity, expanded, &cleaned)
+    if !cleanup_output_is_unusable_against_candidates(
+        intensity,
+        expanded,
+        alternate_transcript,
+        &cleaned,
+    )
         || cleanup_output_is_unusable(intensity, raw, raw)
     {
         return Some(cleaned);
@@ -156,7 +186,12 @@ pub(super) async fn guard_cleanup_refusal(
     match retried {
         Ok(retried)
             if !retried.is_empty()
-                && (!cleanup_output_is_unusable(intensity, expanded, &retried)
+                && (!cleanup_output_is_unusable_against_candidates(
+                    intensity,
+                    expanded,
+                    alternate_transcript,
+                    &retried,
+                )
                     || cleanup_output_is_unusable(intensity, raw, raw)) =>
         {
             log::debug!(
@@ -458,13 +493,22 @@ pub(super) async fn run_transcription(
         }
     };
 
-    let primary_text = prepare_transcript_text(&raw, alternate_result.is_some());
+    let corroborated_candidate = alternate_result.as_ref().is_some_and(|(alternate, _, _)| {
+        let primary = prepare_transcript_text(alternate, false, true);
+        let alternate = prepare_transcript_text(&raw, false, true);
+        !primary.trim().is_empty() && primary.trim().eq_ignore_ascii_case(alternate.trim())
+    });
+    let primary_text = prepare_transcript_text(
+        &raw,
+        alternate_result.is_some(),
+        corroborated_candidate,
+    );
     if primary_text.is_empty() {
         show_error_pill(app, "Nothing transcribed - please try speaking more clearly").await;
         return None;
     }
     let alternate = alternate_result.and_then(|(text, provider, model)| {
-        let text = prepare_transcript_text(&text, true);
+        let text = prepare_transcript_text(&text, true, corroborated_candidate);
         (!text.is_empty()).then_some(TranscriptCandidate { text, provider, model })
     });
     let api_used = match &alternate {
@@ -621,11 +665,19 @@ fn escape_transcript_xml(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn prepare_transcript_text(raw: &str, strip_provider_artifacts: bool) -> String {
+fn prepare_transcript_text(
+    raw: &str,
+    strip_provider_artifacts: bool,
+    preserve_corroborated_artifacts: bool,
+) -> String {
     let normalized = normalize_transcription_math_artifacts(raw);
-    let normalized = strip_hallucinated_suffix(&normalized);
+    let normalized = if preserve_corroborated_artifacts {
+        normalized
+    } else {
+        strip_hallucinated_suffix(&normalized)
+    };
     let normalized = crate::system::text::collapse_degenerate_word_runs(&normalized);
-    if strip_provider_artifacts {
+    if strip_provider_artifacts && !preserve_corroborated_artifacts {
         crate::pipeline::gates::strip_provider_artifacts(&normalized)
     } else {
         normalized
@@ -688,8 +740,8 @@ async fn run_primary_transcription_chain(
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Nothing transcribed - please try speaking more clearly")))
 }
 
-struct CleanupCachePlan {
-    key: String,
+pub(super) struct CleanupCachePlan {
+    pub(super) key: String,
     allow_cache: bool,
     has_snippets: bool,
 }
@@ -701,12 +753,13 @@ struct CleanupSuccess {
     key: String,
 }
 
-fn cleanup_cache_plan(
+pub(super) fn cleanup_cache_plan(
     expanded: &str,
     profile: &str,
     intensity: &str,
     snippet_instructions: &str,
     alternate_transcript: Option<&str>,
+    dual_context_fingerprint: Option<u64>,
 ) -> CleanupCachePlan {
     let has_snippets = !snippet_instructions.is_empty();
     let (cache_tokens, cache_separators) = number_parser::tokenize_cache_key_parts(expanded);
@@ -725,6 +778,11 @@ fn cleanup_cache_plan(
                 key = format!("{key}|dual:{:x}", snippet_instructions_fingerprint(alternate));
             }
         }
+        if !key.is_empty() {
+            if let Some(fingerprint) = dual_context_fingerprint {
+                key = format!("{key}|dualctx:{fingerprint:x}");
+            }
+        }
         key
     } else {
         String::new()
@@ -735,6 +793,35 @@ fn cleanup_cache_plan(
         allow_cache,
         has_snippets,
     }
+}
+
+pub(super) fn dual_cleanup_context_fingerprint(
+    cfg: &store::PipelineConfig,
+    extra_rules: &str,
+    app_context: Option<&str>,
+) -> u64 {
+    let mut context = String::new();
+    context.push_str(&cfg.cleanup_default_model);
+    context.push('\n');
+    for fallback in &cfg.cleanup_fallback_models {
+        context.push_str(fallback);
+        context.push('\n');
+    }
+    context.push_str(extra_rules);
+    context.push('\n');
+    context.push_str(app_context.unwrap_or(""));
+    context.push('\n');
+    for (provider, model) in cleanup_model_chain(cfg) {
+        if let Some(template) = cfg.cleanup_override_for(&provider, &model) {
+            context.push_str(&provider);
+            context.push('/');
+            context.push_str(&model);
+            context.push('\n');
+            context.push_str(template);
+            context.push('\n');
+        }
+    }
+    snippet_instructions_fingerprint(&context)
 }
 
 fn touch_cleanup_cache_hit(db_handle: &DbHandle, cache_key: &str, entry: &db::CleanupCacheEntry) {
@@ -894,8 +981,8 @@ async fn run_cleanup_provider_chain(
 }
 
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
-// instruction override application. Returns (final_text_before_dict, dict_entries)
-// so the caller can apply dictionary substitutions after saving to DB.
+// instruction override application. Returns (final_text_before_dict,
+// dictionary entries, cache key, cleanup provider/model metadata).
 pub(super) async fn run_cleanup_and_snippets(
     app: &AppHandle,
     raw: &str,
@@ -903,7 +990,7 @@ pub(super) async fn run_cleanup_and_snippets(
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
-) -> Option<(String, Vec<db::DictionaryEntry>, String)> {
+) -> Option<(String, Vec<db::DictionaryEntry>, String, String)> {
     let db_handle = app.state::<DbHandle>();
     match run_cleanup_and_snippets_for_db(
         db_handle.inner(),
@@ -946,7 +1033,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
     profile: &str,
     app_context: Option<&str>,
     app: Option<&AppHandle>,
-) -> anyhow::Result<(String, Vec<db::DictionaryEntry>, String)> {
+) -> anyhow::Result<(String, Vec<db::DictionaryEntry>, String, String)> {
     let mut db_snippets = db::query_snippets(db_handle).unwrap_or_default();
     let dict_entries = db::query_dictionary(db_handle).unwrap_or_default();
     log::debug!(
@@ -992,7 +1079,22 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
         expanded.chars().count()
     );
 
+    let dict_instructions =
+        dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
+    let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str()]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    log::debug!(
+        "pipeline: cleanup extra_rules chars={} lines={}",
+        extra_rules.chars().count(),
+        extra_rules.lines().filter(|l| !l.trim().is_empty()).count()
+    );
+
     let mut used_cache_key = String::new();
+    let mut cleanup_api_used = String::new();
     let final_text = if should_run_cleanup_llm(
         cfg.cleanup_enabled,
         has_cleanup_key_in_chain(cfg),
@@ -1006,6 +1108,9 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             &cfg.cleanup_intensity,
             &snippet_instructions,
             alternate.map(|candidate| candidate.text.as_str()),
+            alternate
+                .as_ref()
+                .map(|_| dual_cleanup_context_fingerprint(cfg, &extra_rules, app_context)),
         );
         let cache_key = cache_plan.key.clone();
         if !cache_key.is_empty() {
@@ -1017,7 +1122,12 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                 &cfg.cleanup_intensity,
                 &snippet_instructions,
             ) {
-                return Ok((overridden, dict_entries, cache_key));
+                return Ok((
+                    overridden,
+                    dict_entries,
+                    cache_key,
+                    configured_cleanup_api_used(cfg),
+                ));
             }
         }
         log::debug!(
@@ -1029,20 +1139,6 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             },
             cache_key.len()
         );
-        let dict_instructions =
-            dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
-        let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str()]
-            .iter()
-            .filter(|s| !s.is_empty())
-            .copied()
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        log::debug!(
-            "pipeline: cleanup extra_rules chars={} lines={}",
-            extra_rules.chars().count(),
-            extra_rules.lines().filter(|l| !l.trim().is_empty()).count()
-        );
-
         let (cleanup_res, last_cleanup_err) = run_cleanup_provider_chain(
             &expanded,
             alternate.map(|candidate| candidate.text.as_str()),
@@ -1054,6 +1150,9 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
         )
         .await;
         let provider_succeeded = cleanup_res.is_some();
+        if let Some(success) = cleanup_res.as_ref() {
+            cleanup_api_used = format!("{}/{}", success.provider_id, success.model);
+        }
         let guarded = match cleanup_res {
             Some(success) => {
                 guard_cleanup_refusal(
@@ -1140,5 +1239,13 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
         }
     };
 
-    Ok((final_text, dict_entries, used_cache_key))
+    Ok((final_text, dict_entries, used_cache_key, cleanup_api_used))
+}
+
+fn configured_cleanup_api_used(cfg: &store::PipelineConfig) -> String {
+    cleanup_model_chain(cfg)
+        .into_iter()
+        .find(|(provider, _)| provider == store::LOCAL || !cfg.key_for(provider).is_empty())
+        .map(|(provider, model)| format!("{provider}/{model}"))
+        .unwrap_or_default()
 }

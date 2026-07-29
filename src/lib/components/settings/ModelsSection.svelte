@@ -683,7 +683,16 @@
     <div class="label">Transcription strategy</div>
     <div class="desc">Use one model, or compare two working models from the existing transcription fallback chain before cleanup.</div>
   </div>
-  <div class="models-dropdown">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="models-dropdown"
+    onkeydown={(event) => {
+      if (event.key === 'Escape' && transcriptionModeDropdownOpen) {
+        transcriptionModeDropdownOpen = false;
+        event.stopPropagation();
+      }
+    }}
+  >
     <button
       class="btn-ghost models-dropdown-btn"
       type="button"

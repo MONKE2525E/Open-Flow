@@ -6,6 +6,7 @@ use super::{
     PipelineTestRequest, PipelineTestSnippet,
 };
 use super::gates::strip_provider_artifacts;
+use super::stages::{cleanup_cache_plan, dual_cleanup_context_fingerprint};
 use crate::system::apps::AppMapping;
 
 #[test]
@@ -32,6 +33,34 @@ fn provider_artifact_filter_is_conservative() {
         strip_provider_artifacts("AssemblyAI documentation is useful."),
         "AssemblyAI documentation is useful."
     );
+}
+
+#[test]
+fn dual_cleanup_cache_key_changes_with_cleanup_context() {
+    let mut config = base_config();
+    let context = dual_cleanup_context_fingerprint(&config, "dictionary rules", Some("editor"));
+    let first = cleanup_cache_plan(
+        "hello world",
+        "casual",
+        "medium",
+        "",
+        Some("alternate world"),
+        Some(context),
+    );
+
+    config.cleanup_default_model = "google/gemini-2.5-flash".into();
+    let changed_context =
+        dual_cleanup_context_fingerprint(&config, "dictionary rules", Some("editor"));
+    let second = cleanup_cache_plan(
+        "hello world",
+        "casual",
+        "medium",
+        "",
+        Some("alternate world"),
+        Some(changed_context),
+    );
+
+    assert_ne!(first.key, second.key);
 }
 use crate::api::prompts::looks_like_refusal;
 use crate::data::store;
