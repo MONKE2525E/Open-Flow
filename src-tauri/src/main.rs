@@ -220,10 +220,12 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    // && (not ||): either manager signalling shutdown on its
+                    // own must not stop monitoring the other still-active one.
                     if local_stt_manager
                         .shutdown_signal
                         .load(std::sync::atomic::Ordering::Relaxed)
-                        || local_llm_manager
+                        && local_llm_manager
                             .shutdown_signal
                             .load(std::sync::atomic::Ordering::Relaxed)
                     {

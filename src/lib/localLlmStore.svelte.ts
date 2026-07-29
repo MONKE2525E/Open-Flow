@@ -125,15 +125,30 @@ export async function deleteLocalLlmModel(modelIdValue: string) {
 
 const unlisteners: Array<() => void> = [];
 let listenersStarted = false;
+// True once the cleanup function below has run. `listen()` calls still
+// in-flight at that point would otherwise push their unlisten functions into
+// `unlisteners` *after* it's already been cleared, leaking those listeners
+// forever instead of tearing them down — `registerUnlisten` catches that by
+// unlistening immediately instead of queuing when teardown already happened.
+let tornDown = false;
+
+function registerUnlisten(unlisten: () => void) {
+  if (tornDown) {
+    unlisten();
+  } else {
+    unlisteners.push(unlisten);
+  }
+}
 
 export function startLocalLlmListeners(): () => void {
   if (listenersStarted) {
     return () => {};
   }
   listenersStarted = true;
+  tornDown = false;
 
   (async () => {
-    unlisteners.push(
+    registerUnlisten(
       await listen<LocalLlmDownloadProgressPayload>('local-llm-model-download-progress', (event) => {
         localLlmStore.downloadProgress = {
           ...localLlmStore.downloadProgress,
@@ -145,7 +160,7 @@ export function startLocalLlmListeners(): () => void {
         };
       }),
     );
-    unlisteners.push(
+    registerUnlisten(
       await listen<LocalLlmModelEventPayload>('local-llm-model-verification-started', (event) => {
         if (!event.payload?.model_id) return;
         localLlmStore.downloadStage = {
@@ -154,7 +169,7 @@ export function startLocalLlmListeners(): () => void {
         };
       }),
     );
-    unlisteners.push(
+    registerUnlisten(
       await listen<LocalLlmVerificationProgressPayload>('local-llm-model-verification-progress', (event) => {
         if (!event.payload?.model_id) return;
         localLlmStore.downloadProgress = {
@@ -178,7 +193,7 @@ export function startLocalLlmListeners(): () => void {
       'local-llm-model-download-failed',
       'local-llm-model-deleted',
     ]) {
-      unlisteners.push(
+      registerUnlisten(
         await listen<LocalLlmModelEventPayload>(eventName, async (event) => {
           await Promise.all([refreshLocalLlmModels(), refreshLocalLlmState()]);
           if (event.payload?.model_id) {
@@ -190,12 +205,12 @@ export function startLocalLlmListeners(): () => void {
         }),
       );
     }
-    unlisteners.push(
+    registerUnlisten(
       await listen<Record<string, unknown>>('local-llm-model-state', async () => {
         await refreshLocalLlmState();
       }),
     );
-    unlisteners.push(
+    registerUnlisten(
       await listen<LocalLlmRuntimeDownloadProgressPayload>('local-llm-runtime-download-progress', (event) => {
         localLlmStore.runtimeDownloadProgress = event.payload;
       }),
@@ -205,17 +220,26 @@ export function startLocalLlmListeners(): () => void {
       'local-llm-runtime-download-failed',
       'local-llm-runtime-deleted',
     ]) {
-      unlisteners.push(
+      registerUnlisten(
         await listen<LocalLlmRuntimeEventPayload>(eventName, async () => {
           await refreshLocalLlmRuntimeInfo();
           localLlmStore.runtimeDownloadProgress = undefined;
         }),
       );
     }
-  })().catch((err) => console.error('local cleanup listeners failed', err));
+  })().catch((err) => {
+    console.error('local cleanup listeners failed', err);
+    // Registration didn't fully succeed — tear down whatever did register
+    // and reset so a future call can retry instead of permanently returning
+    // a no-op cleanup function forever.
+    listenersStarted = false;
+    for (const unlisten of unlisteners) unlisten();
+    unlisteners.length = 0;
+  });
 
   return () => {
     listenersStarted = false;
+    tornDown = true;
     for (const unlisten of unlisteners) unlisten();
     unlisteners.length = 0;
   };

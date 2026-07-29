@@ -99,7 +99,7 @@
   }
 
   function shouldCollapseLanguages(model: LocalSttModelInfo): boolean {
-    return model.supported_languages.length > COLLAPSIBLE_LANGUAGE_COUNT;
+    return (model.supported_languages?.length ?? 0) > COLLAPSIBLE_LANGUAGE_COUNT;
   }
 
   function areLanguagesExpanded(modelId: string): boolean {
@@ -113,8 +113,9 @@
   }
 
   function languageSummaryLabel(model: LocalSttModelInfo): string {
-    const count = model.supported_languages.length;
-    return count <= 1 ? model.supported_languages[0] ?? '1 language' : `${count} languages`;
+    const languages = model.supported_languages ?? [];
+    const count = languages.length;
+    return count <= 1 ? languages[0] ?? '1 language' : `${count} languages`;
   }
 </script>
 
@@ -191,7 +192,7 @@
                   class:is-open={areLanguagesExpanded(model.id)}
                   type="button"
                   aria-expanded={areLanguagesExpanded(model.id)}
-                  aria-controls={`local-languages-${model.id}`}
+                  aria-controls={areLanguagesExpanded(model.id) ? `local-languages-${model.id}` : undefined}
                   onclick={() => toggleLanguages(model.id)}
                 >
                   <span>{languageSummaryLabel(model)}</span>
@@ -211,7 +212,7 @@
                   </svg>
                 </button>
               {:else}
-                <span class="local-meta-langs">{model.supported_languages.join(', ')}</span>
+                <span class="local-meta-langs">{(model.supported_languages ?? []).join(', ')}</span>
               {/if}
             </div>
 
@@ -222,7 +223,7 @@
                 transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}
               >
                 <div class="local-language-label">Supported languages</div>
-                <p>{model.supported_languages.join(', ')}</p>
+                <p>{(model.supported_languages ?? []).join(', ')}</p>
               </div>
             {/if}
 

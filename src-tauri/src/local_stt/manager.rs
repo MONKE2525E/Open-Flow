@@ -25,6 +25,25 @@ struct DownloadTaskState {
     cancel: Arc<AtomicBool>,
 }
 
+/// Guarantees `is_loading` is cleared and waiters are woken even if
+/// `load_model_inner` panics mid-load — without this, a panic during load
+/// (unwind, not the release profile's panic=abort) leaves `is_loading` stuck
+/// `true` forever, and every future `ensure_loaded()` call deadlocks
+/// permanently waiting on a notify that will never come.
+struct LoadSlotGuard {
+    is_loading: Arc<Mutex<bool>>,
+    loading_condvar: Arc<Condvar>,
+}
+
+impl Drop for LoadSlotGuard {
+    fn drop(&mut self) {
+        if let Ok(mut loading) = self.is_loading.lock() {
+            *loading = false;
+        }
+        self.loading_condvar.notify_all();
+    }
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct LocalTranscriptionState {
     pub current_model_id: Option<String>,
@@ -300,13 +319,13 @@ impl LocalTranscriptionManager {
         let final_path = manifest.final_path(&root);
         if final_path.exists() {
             if final_path.is_dir() {
-                std::fs::remove_dir_all(&final_path)?;
+                remove_with_retry(|| std::fs::remove_dir_all(&final_path))?;
             } else {
-                std::fs::remove_file(&final_path)?;
+                remove_with_retry(|| std::fs::remove_file(&final_path))?;
             }
         }
-        let _ = std::fs::remove_file(manifest.partial_download_path(&root));
-        let _ = std::fs::remove_dir_all(manifest.extracting_path(&root));
+        let _ = remove_with_retry(|| std::fs::remove_file(manifest.partial_download_path(&root)));
+        let _ = remove_with_retry(|| std::fs::remove_dir_all(manifest.extracting_path(&root)));
         log::info!("local-stt: delete complete id={model_id}");
         let _ = app.emit(
             "local-stt-model-deleted",
@@ -450,17 +469,11 @@ impl LocalTranscriptionManager {
         *loading = true;
         drop(loading);
 
-        let load_result = self.load_model_inner(app, model_id);
-
-        let mut loading = self
-            .is_loading
-            .lock()
-            .map_err(|_| anyhow::anyhow!("local loading lock poisoned"))?;
-        *loading = false;
-        self.loading_condvar.notify_all();
-        drop(loading);
-
-        load_result
+        let _slot_guard = LoadSlotGuard {
+            is_loading: self.is_loading.clone(),
+            loading_condvar: self.loading_condvar.clone(),
+        };
+        self.load_model_inner(app, model_id)
     }
 
     fn load_model_inner(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
@@ -514,6 +527,29 @@ impl LocalTranscriptionManager {
             }
         }
     }
+}
+
+/// Retries a filesystem removal briefly before giving up. `delete_model`
+/// only signals cancellation to the background download/extraction task via
+/// an atomic flag (no handle to await its actual exit), so a task that's
+/// mid-write when deletion is requested may still hold open file handles for
+/// a moment — on Windows especially, that turns straight into an
+/// access-denied error. A short retry window covers the gap between the
+/// cancel flag being seen and the task actually unwinding and dropping its
+/// handles.
+fn remove_with_retry(mut remove: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
+    let mut last_err = None;
+    for attempt in 0..10 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        match remove() {
+            Ok(()) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.expect("loop runs at least once"))
 }
 
 fn now_ms() -> u64 {

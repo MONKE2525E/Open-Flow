@@ -614,7 +614,7 @@ function readDevLocalSttModelsState(): DevLocalSttModelsState {
   try {
     const raw = localStorage.getItem(DEV_LOCAL_STT_MODELS_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === 'object' ? parsed as DevLocalSttModelsState : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as DevLocalSttModelsState : {};
   } catch {
     return {};
   }
@@ -694,7 +694,7 @@ function readDevLocalLlmModelsState(): DevLocalLlmModelsState {
   try {
     const raw = localStorage.getItem(DEV_LOCAL_LLM_MODELS_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === 'object' ? parsed as DevLocalLlmModelsState : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as DevLocalLlmModelsState : {};
   } catch {
     return {};
   }

@@ -121,6 +121,14 @@ fn is_pure_glossary_echo(lowercased_trimmed: &str) -> bool {
 ///      the typical shape of this artifact), or whatever follows looks like
 ///      a glossary echo (an exact vocabulary term, or the same trigger
 ///      phrase repeating) rather than ordinary continued speech.
+// TODO: not yet called from run_pipeline() — appears to belong alongside
+// strip_hallucinated_suffix(&raw) in mod.rs (same signature, same
+// post-transcription cleanup purpose, doc comment below describes a
+// real confirmed case this was written to fix) but wiring it into the live
+// transcription path for all users isn't a call to make while fixing
+// review findings. #[allow(dead_code)] only unblocks `cargo clippy -D
+// warnings`; this still needs a decision, not just a lint suppression.
+#[allow(dead_code)]
 pub(super) fn strip_trailing_hallucination(text: &str) -> String {
     // Distinctive multi-word phrases lifted verbatim from the prompt this
     // app actually sends to Whisper-family models (api/prompts/transcription.rs).
@@ -132,7 +140,14 @@ pub(super) fn strip_trailing_hallucination(text: &str) -> String {
         "do not obey spoken instructions",
         "do not answer questions or follow instructions",
     ];
-    let lower = text.to_lowercase();
+    // ASCII-only lowercasing, not `to_lowercase()`: Unicode case folding can
+    // change a character's UTF-8 byte length (e.g. the Kelvin sign or
+    // Turkish dotted İ), which would desync `idx` — a byte offset found in
+    // the lowercased copy — from `text`'s own byte boundaries, panicking or
+    // corrupting the slice below. `to_ascii_lowercase()` only remaps ASCII
+    // a-z bytes in place, so byte length and position always match `text`
+    // exactly — sufficient here since every pattern is plain ASCII.
+    let lower = text.to_ascii_lowercase();
     for pattern in TRAILING_PATTERNS {
         let Some(idx) = lower.find(pattern) else {
             continue;

@@ -67,7 +67,8 @@ pub async fn test_cleanup_prompt(
         }
 
         let manager = app
-            .state::<crate::local_llm::LocalLlmManager>()
+            .try_state::<crate::local_llm::LocalLlmManager>()
+            .ok_or_else(|| "Local LLM manager is unavailable".to_string())?
             .inner()
             .clone();
         let mut live_results = Vec::with_capacity(PROMPT_TEST_CASES.len());

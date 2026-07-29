@@ -206,18 +206,17 @@ pub fn seed_default_dictionary_entries(db: &Db) -> Result<()> {
             if already_seeded > 0 {
                 return Ok(());
             }
-            let res = conn.execute_batch(&format!(
-                "BEGIN;
-                 INSERT INTO dictionary (term, mistake, confidence_tier)
-                   VALUES ('Verenu', '{}', 'manual');
-                 INSERT INTO seeded_defaults (key) VALUES ('{MARKER}');
-                 COMMIT;",
-                KNOWN_VARIANTS.join(", "),
-            ));
-            if let Err(err) = res {
-                let _ = conn.execute_batch("ROLLBACK;");
-                return Err(err.into());
-            }
+            let mut conn = conn;
+            let tx = conn.transaction()?;
+            tx.execute(
+                "INSERT INTO dictionary (term, mistake, confidence_tier) VALUES ('Verenu', ?1, 'manual')",
+                params![KNOWN_VARIANTS.join(", ")],
+            )?;
+            tx.execute(
+                "INSERT INTO seeded_defaults (key) VALUES (?1)",
+                params![MARKER],
+            )?;
+            tx.commit()?;
         }
     }
     Ok(())

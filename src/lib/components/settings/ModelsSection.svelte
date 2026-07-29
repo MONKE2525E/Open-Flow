@@ -218,7 +218,7 @@
     }
 
     const map = taskMap(type);
-    if (map.local.includes(deletedLocalId)) {
+    if (map.local?.includes(deletedLocalId)) {
       setTaskMap(type, { ...map, local: map.local.filter((id) => id !== deletedLocalId) });
     }
 

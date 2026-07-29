@@ -34,6 +34,25 @@ struct DownloadTaskState {
     cancel: Arc<AtomicBool>,
 }
 
+/// Guarantees `is_loading` is cleared and waiters are woken even if
+/// `load_model_inner` panics mid-load — without this, a panic during load
+/// (unwind, not the release profile's panic=abort) leaves `is_loading` stuck
+/// `true` forever, and every future `ensure_loaded()` call deadlocks
+/// permanently waiting on a notify that will never come.
+struct LoadSlotGuard {
+    is_loading: Arc<Mutex<bool>>,
+    loading_condvar: Arc<Condvar>,
+}
+
+impl Drop for LoadSlotGuard {
+    fn drop(&mut self) {
+        if let Ok(mut loading) = self.is_loading.lock() {
+            *loading = false;
+        }
+        self.loading_condvar.notify_all();
+    }
+}
+
 struct ActiveRequestGuard<'a>(&'a AtomicU32);
 
 impl Drop for ActiveRequestGuard<'_> {
@@ -355,9 +374,9 @@ impl LocalLlmManager {
 
         let final_path = manifest.final_path(&root);
         if final_path.exists() {
-            std::fs::remove_dir_all(&final_path)?;
+            remove_dir_all_with_retry(&final_path)?;
         }
-        let _ = std::fs::remove_dir_all(manifest.partial_download_path(&root));
+        let _ = remove_dir_all_with_retry(&manifest.partial_download_path(&root));
         let _ = app.emit(
             "local-llm-model-deleted",
             LocalLlmModelEventPayload {
@@ -478,7 +497,16 @@ impl LocalLlmManager {
         }
     }
 
-    fn wait_for_load_slot(&self, model_id: &str) -> anyhow::Result<()> {
+    /// Blocks until no other load is in progress, then either reports that
+    /// the model we wanted was the one that just finished loading (`false`
+    /// — caller must not reload it) or claims the load slot for the caller
+    /// (`true` — caller must call `load_model_inner`). Returning this as a
+    /// bool (rather than folding the "already loaded" case into an early
+    /// `Ok(())` the caller can't distinguish from "slot acquired") matters:
+    /// conflating the two used to make `ensure_loaded` call
+    /// `load_model_inner` unconditionally, which unloads-then-reloads a
+    /// model a concurrent caller just finished loading.
+    fn wait_for_load_slot(&self, model_id: &str) -> anyhow::Result<bool> {
         let mut loading = self
             .is_loading
             .lock()
@@ -488,27 +516,18 @@ impl LocalLlmManager {
                 .loading_condvar
                 .wait(loading)
                 .map_err(|_| anyhow::anyhow!("local cleanup loading wait poisoned"))?;
-            let current_model_id = self
-                .current_model_id
-                .lock()
-                .map_err(|_| anyhow::anyhow!("local cleanup model id lock poisoned"))?;
-            let already_loaded = self.server.lock().map(|guard| guard.is_some()).unwrap_or(false);
-            if current_model_id.as_deref() == Some(model_id) && already_loaded {
-                return Ok(());
-            }
         }
-        *loading = true;
-        Ok(())
-    }
-
-    fn finish_load_slot(&self) -> anyhow::Result<()> {
-        let mut loading = self
-            .is_loading
+        let current_model_id = self
+            .current_model_id
             .lock()
-            .map_err(|_| anyhow::anyhow!("local cleanup loading lock poisoned"))?;
-        *loading = false;
-        self.loading_condvar.notify_all();
-        Ok(())
+            .map_err(|_| anyhow::anyhow!("local cleanup model id lock poisoned"))?;
+        let already_loaded = self.server.lock().map(|guard| guard.is_some()).unwrap_or(false);
+        if current_model_id.as_deref() == Some(model_id) && already_loaded {
+            return Ok(false);
+        }
+        drop(current_model_id);
+        *loading = true;
+        Ok(true)
     }
 
     async fn ensure_loaded(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
@@ -522,11 +541,15 @@ impl LocalLlmManager {
                 return Ok(());
             }
         }
-        self.wait_for_load_slot(model_id)?;
+        if !self.wait_for_load_slot(model_id)? {
+            return Ok(());
+        }
 
-        let load_result = self.load_model_inner(app, model_id).await;
-        self.finish_load_slot()?;
-        load_result
+        let _slot_guard = LoadSlotGuard {
+            is_loading: self.is_loading.clone(),
+            loading_condvar: self.loading_condvar.clone(),
+        };
+        self.load_model_inner(app, model_id).await
     }
 
     async fn load_model_inner(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
@@ -557,6 +580,28 @@ impl LocalLlmManager {
         );
         Ok(())
     }
+}
+
+/// Retries `remove_dir_all` briefly before giving up. `delete_model` only
+/// signals cancellation to the background download task via an atomic flag
+/// (no handle to await its actual exit), so a download that's mid-write when
+/// deletion is requested may still hold open file handles for a moment —
+/// on Windows especially, that turns straight into an access-denied error.
+/// A short retry window covers the gap between the cancel flag being seen
+/// and the task actually unwinding and dropping its handles.
+fn remove_dir_all_with_retry(path: &std::path::Path) -> std::io::Result<()> {
+    let mut last_err = None;
+    for attempt in 0..10 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.expect("loop runs at least once"))
 }
 
 fn now_ms() -> u64 {

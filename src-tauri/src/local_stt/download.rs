@@ -205,6 +205,12 @@ fn verify_checksum_if_present(
                 expected,
                 actual
             );
+            // Otherwise the corrupted file stays on disk at its full size; a
+            // retry's range-resume request would then get back a 416 (Range
+            // Not Satisfiable, since there's nothing left to fetch), read
+            // that as "already complete", skip straight to verification, and
+            // fail this exact same check forever with no way to recover.
+            let _ = std::fs::remove_file(archive_path);
             anyhow::bail!(
                 "checksum mismatch for {}: expected {}, got {}",
                 manifest.id,

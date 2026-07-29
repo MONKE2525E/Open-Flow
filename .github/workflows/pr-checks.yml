@@ -65,11 +65,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-latest is Apple Silicon (arm64). macos-13 is genuinely Intel
-        # (x86_64) hardware — the release pipeline's "Intel" DMG is only
-        # cross-compiled on arm64 and never actually run, so this is the one
-        # place in CI that executes real code on real Intel Mac silicon.
-        os: [windows-latest, macos-latest, macos-13]
+        # macos-latest is Apple Silicon (arm64). GitHub retired the macos-13
+        # (Intel) runner image — a job pinned to it just queues forever and
+        # gets auto-cancelled after 24h, never running — so there's currently
+        # no GitHub-hosted way to test real Intel Mac silicon; the release
+        # pipeline's "Intel" DMG remains cross-compiled on arm64, untested.
+        os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository

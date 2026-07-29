@@ -69,29 +69,11 @@
         {#if isActive}
           <span class="state-pill active">Active</span>
         {:else if isFallback}
-          <button
-            type="button"
-            class="state-pill fallback pill-action"
-            title="Remove fallback"
-            aria-label="Remove fallback {fallbackModels.indexOf(modelId('local', model.id)) + 1} for {modelDisplayLabel('local', model.id)}"
-            onclick={(event) => {
-              event.stopPropagation();
-              onToggleModel(type, 'local', model.id);
-            }}
-          >
+          <span class="state-pill fallback pill-action" title="Remove fallback">
             F{fallbackModels.indexOf(modelId('local', model.id)) + 1}
-          </button>
+          </span>
         {:else}
-          <button
-            type="button"
-            class="state-pill muted pill-action"
-            onclick={(event) => {
-              event.stopPropagation();
-              onToggleModel(type, 'local', model.id);
-            }}
-          >
-            Add fallback
-          </button>
+          <span class="state-pill muted pill-action">Add fallback</span>
         {/if}
       </div>
     {/each}

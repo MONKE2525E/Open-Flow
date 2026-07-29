@@ -428,11 +428,6 @@ async fn transcribe_assemblyai(
             );
             anyhow::bail!("AssemblyAI transcription timed out waiting for a result");
         }
-        tokio::time::sleep(std::time::Duration::from_millis(
-            ASSEMBLYAI_POLL_INTERVAL_MS,
-        ))
-        .await;
-
         let poll_resp = super::client::get()
             .get(&poll_url)
             .header("authorization", api_key)
@@ -468,8 +463,13 @@ async fn transcribe_assemblyai(
                     poll.error.unwrap_or_else(|| "unknown error".to_string())
                 );
             }
-            _ => continue,
+            _ => {}
         }
+
+        tokio::time::sleep(std::time::Duration::from_millis(
+            ASSEMBLYAI_POLL_INTERVAL_MS,
+        ))
+        .await;
     }
 }
 

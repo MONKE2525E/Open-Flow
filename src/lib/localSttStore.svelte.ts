@@ -88,6 +88,20 @@ export async function openLocalModelsFolder() {
 
 const unlisteners: Array<() => void> = [];
 let listenersStarted = false;
+// True once the cleanup function below has run. `listen()` calls still
+// in-flight at that point would otherwise push their unlisten functions into
+// `unlisteners` *after* it's already been cleared, leaking those listeners
+// forever instead of tearing them down — `registerUnlisten` catches that by
+// unlistening immediately instead of queuing when teardown already happened.
+let tornDown = false;
+
+function registerUnlisten(unlisten: () => void) {
+  if (tornDown) {
+    unlisten();
+  } else {
+    unlisteners.push(unlisten);
+  }
+}
 
 /**
  * Registers local-STT Tauri event listeners for the app's lifetime, independent
@@ -102,9 +116,10 @@ export function startLocalSttListeners(): () => void {
     return () => {};
   }
   listenersStarted = true;
+  tornDown = false;
 
   (async () => {
-    unlisteners.push(
+    registerUnlisten(
       await listen<LocalSttDownloadProgressPayload>('local-stt-model-download-progress', (event) => {
         localSttStore.downloadProgress = {
           ...localSttStore.downloadProgress,
@@ -120,7 +135,7 @@ export function startLocalSttListeners(): () => void {
       ['local-stt-model-verification-started', 'verifying'],
       ['local-stt-model-extraction-started', 'extracting'],
     ] as const) {
-      unlisteners.push(
+      registerUnlisten(
         await listen<LocalSttModelEventPayload>(eventName, (event) => {
           if (!event.payload?.model_id) return;
           localSttStore.downloadStage = {
@@ -130,7 +145,7 @@ export function startLocalSttListeners(): () => void {
         }),
       );
     }
-    unlisteners.push(
+    registerUnlisten(
       await listen<LocalSttVerificationProgressPayload>('local-stt-model-verification-progress', (event) => {
         localSttStore.downloadProgress = {
           ...localSttStore.downloadProgress,
@@ -149,7 +164,7 @@ export function startLocalSttListeners(): () => void {
         };
       }),
     );
-    unlisteners.push(
+    registerUnlisten(
       await listen<LocalSttExtractionProgressPayload>('local-stt-model-extraction-progress', (event) => {
         localSttStore.downloadProgress = {
           ...localSttStore.downloadProgress,
@@ -171,7 +186,7 @@ export function startLocalSttListeners(): () => void {
       'local-stt-model-download-failed',
       'local-stt-model-deleted',
     ]) {
-      unlisteners.push(
+      registerUnlisten(
         await listen<LocalSttModelEventPayload>(eventName, async (event) => {
           // Refresh first so `models`/`state` already reflect the final
           // is_downloading/is_downloaded truth by the time we clear the
@@ -188,15 +203,24 @@ export function startLocalSttListeners(): () => void {
         }),
       );
     }
-    unlisteners.push(
+    registerUnlisten(
       await listen<Record<string, unknown>>('local-stt-model-state', async () => {
         await refreshLocalState();
       }),
     );
-  })().catch((err) => console.error('local STT listeners failed', err));
+  })().catch((err) => {
+    console.error('local STT listeners failed', err);
+    // Registration didn't fully succeed — tear down whatever did register
+    // and reset so a future call can retry instead of permanently returning
+    // a no-op cleanup function forever.
+    listenersStarted = false;
+    for (const unlisten of unlisteners) unlisten();
+    unlisteners.length = 0;
+  });
 
   return () => {
     listenersStarted = false;
+    tornDown = true;
     for (const unlisten of unlisteners) unlisten();
     unlisteners.length = 0;
   };

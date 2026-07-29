@@ -58,7 +58,15 @@
       <span class="dl-pct">{displayPercent}%</span>
     {/if}
   </div>
-  <div class="dl-track" class:is-indeterminate={indeterminate}>
+  <div
+    class="dl-track"
+    class:is-indeterminate={indeterminate}
+    role="progressbar"
+    aria-label={label}
+    aria-valuenow={indeterminate ? undefined : displayPercent}
+    aria-valuemin={indeterminate ? undefined : 0}
+    aria-valuemax={indeterminate ? undefined : 100}
+  >
     {#if indeterminate}
       <div class="dl-indeterminate" aria-hidden="true"></div>
     {:else}

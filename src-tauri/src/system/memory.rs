@@ -67,6 +67,14 @@ fn macos_free_memory_bytes() -> Option<u64> {
 /// Parses `vm_stat`'s output. Page size varies by architecture (4096 bytes
 /// on Intel, 16384 on Apple Silicon) and is reported in the header line, so
 /// it must be parsed rather than assumed.
+///
+/// Sums "Pages free" with "Pages inactive/purgeable/speculative" (the same
+/// pages Activity Monitor counts toward "Memory Used" being *not* full, i.e.
+/// reclaimable without pressure) rather than "Pages free" alone. Darwin
+/// aggressively fills otherwise-idle RAM with disk cache and keeps "Pages
+/// free" intentionally low — often under 200 MB even with ample headroom —
+/// so free-only would make `detect_resource_pressure()` read "critical" on
+/// a healthy Mac almost permanently.
 #[cfg(target_os = "macos")]
 fn parse_vm_stat_free_bytes(text: &str) -> Option<u64> {
     let page_size: u64 = text
@@ -78,16 +86,23 @@ fn parse_vm_stat_free_bytes(text: &str) -> Option<u64> {
         .next()?
         .parse()
         .ok()?;
-    let free_pages: u64 = text
-        .lines()
-        .find(|line| line.trim_start().starts_with("Pages free:"))?
-        .split(':')
-        .nth(1)?
-        .trim()
-        .trim_end_matches('.')
-        .parse()
-        .ok()?;
-    Some(free_pages * page_size)
+    let page_count = |label: &str| -> u64 {
+        text.lines()
+            .find(|line| line.trim_start().starts_with(label))
+            .and_then(|line| line.split(':').nth(1))
+            .map(|value| value.trim().trim_end_matches('.'))
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0)
+    };
+    let free_pages = page_count("Pages free:");
+    if free_pages == 0 && !text.lines().any(|line| line.trim_start().starts_with("Pages free:")) {
+        return None;
+    }
+    let reclaimable_pages = free_pages
+        + page_count("Pages inactive:")
+        + page_count("Pages purgeable:")
+        + page_count("Pages speculative:");
+    Some(reclaimable_pages * page_size)
 }
 
 /// NVIDIA-only VRAM check via `nvidia-smi` (same tool used for GPU backend
@@ -129,21 +144,35 @@ fn run_with_timeout(
     mut command: std::process::Command,
     timeout: Duration,
 ) -> Option<std::process::Output> {
-    use std::io::Read;
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .stdin(Stdio::null())
         .spawn()
         .ok()?;
+
+    // Drained on a dedicated thread concurrently with the wait loop below —
+    // if the child wrote more than the OS pipe buffer (~64KB) before
+    // exiting and nobody was reading it in the meantime, it would block
+    // inside its own write() call forever, so try_wait() below would never
+    // see it exit and this would stall for the full timeout on every call
+    // instead of returning as soon as the child actually finishes.
+    let stdout_handle = child.stdout.take().map(|mut out| {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            let _ = out.read_to_end(&mut buf);
+            buf
+        })
+    });
+
     let started_at = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let mut stdout = Vec::new();
-                if let Some(mut out) = child.stdout.take() {
-                    let _ = out.read_to_end(&mut stdout);
-                }
+                let stdout = stdout_handle
+                    .and_then(|handle| handle.join().ok())
+                    .unwrap_or_default();
                 return Some(std::process::Output {
                     status,
                     stdout,

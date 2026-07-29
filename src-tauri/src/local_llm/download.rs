@@ -107,6 +107,7 @@ fn sha256_hex_with_progress(
     app: &AppHandle,
     model_id: &str,
     path: &Path,
+    cancel: &AtomicBool,
 ) -> anyhow::Result<String> {
     let mut file = std::fs::File::open(path)?;
     let total_bytes = file.metadata().map(|meta| meta.len()).unwrap_or(0);
@@ -115,6 +116,7 @@ fn sha256_hex_with_progress(
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 1024 * 128];
     loop {
+        ensure_not_cancelled(cancel)?;
         let read = file.read(&mut buffer)?;
         if read == 0 {
             break;
@@ -155,6 +157,7 @@ fn verify_artifact_checksum(
     manifest: &LocalLlmModelManifest,
     artifact: &LocalLlmArtifact,
     partial_path: &Path,
+    cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
     let Some(expected) = artifact.sha256 else {
         return Ok(());
@@ -172,7 +175,7 @@ fn verify_artifact_checksum(
         },
     );
     let started_at = Instant::now();
-    let actual = sha256_hex_with_progress(app, manifest.id, partial_path)?;
+    let actual = sha256_hex_with_progress(app, manifest.id, partial_path, cancel)?;
     if actual != expected {
         log::error!(
             "local-llm: checksum mismatch id={} file={} expected={} actual={}",
@@ -232,9 +235,22 @@ async fn negotiate_total_bytes(
             .send()
             .await?;
         match response.status() {
-            reqwest::StatusCode::PARTIAL_CONTENT | reqwest::StatusCode::OK => {
+            // A 206 response's Content-Length is only the *remaining* bytes
+            // from the requested range, so the already-downloaded `partial`
+            // bytes must be added back on top to get the full artifact size.
+            reqwest::StatusCode::PARTIAL_CONTENT => {
                 if let Some(len) = response.content_length() {
                     total = total.saturating_add(len + partial);
+                } else {
+                    return Ok(None);
+                }
+            }
+            // A 200 means the server ignored the Range header and is
+            // sending the whole file from byte 0 — Content-Length here is
+            // already the full size, so adding `partial` would overcount.
+            reqwest::StatusCode::OK => {
+                if let Some(len) = response.content_length() {
+                    total = total.saturating_add(len);
                 } else {
                     return Ok(None);
                 }
@@ -335,13 +351,6 @@ pub async fn download_model(
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(root)?;
     let final_dir = manifest.final_path(root);
-    if final_dir.exists() {
-        if final_dir.is_dir() {
-            std::fs::remove_dir_all(&final_dir)?;
-        } else {
-            std::fs::remove_file(&final_dir)?;
-        }
-    }
 
     let total_bytes = negotiate_total_bytes(manifest, root).await?;
     let mut downloaded_bytes = manifest.partial_size(root);
@@ -383,7 +392,18 @@ pub async fn download_model(
     for artifact in manifest.artifacts {
         ensure_not_cancelled(&cancel)?;
         let partial_path = partial_file_path(root, manifest, artifact);
-        verify_artifact_checksum(app, manifest, artifact, &partial_path)?;
+        verify_artifact_checksum(app, manifest, artifact, &partial_path, &cancel)?;
+    }
+
+    // Only now, after every artifact has downloaded and passed checksum
+    // verification, replace whatever was previously in final_dir — so a
+    // failed or cancelled download never destroys a working installed model.
+    if final_dir.exists() {
+        if final_dir.is_dir() {
+            std::fs::remove_dir_all(&final_dir)?;
+        } else {
+            std::fs::remove_file(&final_dir)?;
+        }
     }
 
     let partial_dir = manifest.partial_download_path(root);

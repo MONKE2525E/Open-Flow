@@ -43,7 +43,7 @@ pub async fn delete_local_stt_model(
 
 #[tauri::command]
 pub async fn open_local_stt_models_folder(app: AppHandle) -> Result<(), String> {
-    let root = crate::local_llm::LocalLlmManager::shared_models_root();
+    let root = crate::local_stt::LocalTranscriptionManager::models_root();
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     #[allow(deprecated)]
     app.shell()

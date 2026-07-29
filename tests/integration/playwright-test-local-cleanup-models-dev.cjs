@@ -65,7 +65,17 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
     }
 
     await cleanupTile.locator('.model-row:has-text("Qwen 2.5 3B Instruct")').click();
-    await page.waitForTimeout(150);
+    await page.waitForFunction(
+      () => {
+        try {
+          return JSON.parse(localStorage.getItem('verenu:dev-settings') || '{}').cleanup_default_model === 'local/qwen2.5-3b-instruct';
+        } catch {
+          return false;
+        }
+      },
+      null,
+      { timeout: TIMEOUT },
+    );
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('verenu:dev-settings') || '{}'));
     if (stored.cleanup_default_model !== 'local/qwen2.5-3b-instruct') {
       errors.push(`cleanup_default_model did not persist local selection: ${stored.cleanup_default_model}`);
@@ -113,13 +123,13 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
     if (errors.length) {
       console.error('FAIL');
       for (const error of errors) console.error(`  ${error}`);
-      process.exit(1);
+      process.exitCode = 1;
+    } else {
+      console.log('PASS - local cleanup models UI behaved correctly in browser dev mode.');
     }
-
-    console.log('PASS - local cleanup models UI behaved correctly in browser dev mode.');
   } catch (err) {
     console.error(`FAIL - local cleanup models test threw: ${err.message}`);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await browser.close();
   }

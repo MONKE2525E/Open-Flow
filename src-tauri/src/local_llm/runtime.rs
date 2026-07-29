@@ -35,6 +35,19 @@ impl ManagedLocalLlmServer {
     }
 }
 
+impl Drop for ManagedLocalLlmServer {
+    fn drop(&mut self) {
+        // std::process::Child does NOT kill its process on drop. Every known
+        // call site already calls .stop() explicitly before replacing or
+        // dropping a server, but this is the backstop for any path that
+        // doesn't (app shutdown, a future call site, a panic mid-unload) —
+        // otherwise llama-server survives as an orphan, still holding the
+        // RAM/VRAM this whole manager exists to reclaim.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 fn llama_server_binary_name() -> &'static str {
     #[cfg(windows)]
     {
