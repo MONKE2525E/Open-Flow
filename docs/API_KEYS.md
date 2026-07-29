@@ -12,6 +12,8 @@ Verenu doesn't have its own servers or subscription — it sends your audio and 
 
 You can add keys for more than one provider and configure fallback models later in Settings, but a single Groq key is enough to start dictating immediately.
 
+The optional Dual model transcription strategy uses the existing transcription fallback chain and therefore may require API keys for more than one configured provider. It is disabled by default.
+
 ## Getting a key
 
 ### Groq

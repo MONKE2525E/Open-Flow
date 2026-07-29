@@ -105,6 +105,12 @@ const SETTING_SPECS: &[SettingSpec] = &[
         true,
     ),
     setting_spec(
+        store::DUAL_TRANSCRIPTION_ENABLED,
+        SettingKind::Bool,
+        true,
+        true,
+    ),
+    setting_spec(
         store::CLEANUP_FALLBACK_MODELS,
         SettingKind::StringArray,
         true,
@@ -393,6 +399,7 @@ pub struct AllSettings {
     pub transcription_default_model: Option<String>,
     pub cleanup_default_model: Option<String>,
     pub transcription_fallback_models: Option<Vec<String>>,
+    pub dual_transcription_enabled: Option<bool>,
     pub cleanup_fallback_models: Option<Vec<String>>,
     pub advanced_model_ui: Option<bool>,
     pub cleanup_enabled: Option<bool>,
@@ -452,6 +459,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         transcription_default_model: str_val(store::TRANSCRIPTION_DEFAULT_MODEL),
         cleanup_default_model: str_val(store::CLEANUP_DEFAULT_MODEL),
         transcription_fallback_models: str_array_val(store::TRANSCRIPTION_FALLBACK_MODELS),
+        dual_transcription_enabled: bool_val(store::DUAL_TRANSCRIPTION_ENABLED),
         cleanup_fallback_models: str_array_val(store::CLEANUP_FALLBACK_MODELS),
         advanced_model_ui: bool_val(store::ADVANCED_MODEL_UI),
         cleanup_enabled: bool_val(store::CLEANUP_ENABLED),

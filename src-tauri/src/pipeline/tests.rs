@@ -5,6 +5,7 @@ use super::{
     strip_hallucinated_suffix, style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry,
     PipelineTestRequest, PipelineTestSnippet,
 };
+use super::gates::strip_provider_artifacts;
 use crate::system::apps::AppMapping;
 
 #[test]
@@ -15,6 +16,22 @@ fn preview_text_redacts_dictation_content_when_not_verbose() {
     assert!(!out.contains("secret"));
     assert!(!out.contains("hunter2"));
     assert!(out.contains("chars redacted"));
+}
+
+#[test]
+fn provider_artifact_filter_is_conservative() {
+    assert_eq!(
+        strip_provider_artifacts("Hello there. Transcribed by AssemblyAI."),
+        "Hello there."
+    );
+    assert_eq!(
+        strip_provider_artifacts("Please subscribe to the newsletter."),
+        "Please subscribe to the newsletter."
+    );
+    assert_eq!(
+        strip_provider_artifacts("AssemblyAI documentation is useful."),
+        "AssemblyAI documentation is useful."
+    );
 }
 use crate::api::prompts::looks_like_refusal;
 use crate::data::store;
@@ -355,6 +372,7 @@ fn base_config() -> store::PipelineConfig {
         transcription_default_model: "groq/whisper-large-v3-turbo".into(),
         cleanup_default_model: "groq/llama-3.3-70b-versatile".into(),
         transcription_fallback_models: Vec::new(),
+        dual_transcription_enabled: false,
         cleanup_fallback_models: Vec::new(),
         cleanup_enabled: true,
         key_groq: "fixture-groq-key".into(),

@@ -213,6 +213,36 @@ pub(super) fn strip_hallucinated_suffix(text: &str) -> String {
     current
 }
 
+/// Removes only standalone provider-style attribution artifacts. A phrase is
+/// left alone when it appears inside a normal sentence, because users can
+/// legitimately dictate provider names or words such as "subscribe".
+pub(super) fn strip_provider_artifacts(text: &str) -> String {
+    let mut kept = Vec::new();
+    for sentence in text.split_inclusive(['.', '!', '?', '\n']) {
+        let trimmed = sentence.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        let artifact = lower.starts_with("transcribed by ")
+            || lower.starts_with("subtitles by ")
+            || matches!(
+                lower.trim_end_matches(['.', '!', '?']),
+                "thank you for watching"
+                    | "thanks for watching"
+                    | "please subscribe"
+                    | "[silence]"
+                    | "[music]"
+                    | "[music playing]"
+                    | "[applause]"
+                    | "[laughter]"
+                    | "[no audio]"
+                    | "[blank audio]"
+            );
+        if !artifact {
+            kept.push(sentence);
+        }
+    }
+    kept.concat().trim().to_string()
+}
+
 /// Like `is_transcription_hallucination`, but scoped to a single sentence
 /// pulled from the end of a transcription rather than the whole output.
 ///

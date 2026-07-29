@@ -17,6 +17,8 @@ Verenu is a Tauri 2 desktop app. The frontend is Svelte 5 and TypeScript. The ba
 4. The selected transcription provider receives audio.
 5. Snippets and cleanup settings are assembled into a cleanup prompt when cleanup is enabled.
 6. The selected cleanup model returns final text.
+
+When Dual model transcription is enabled, the primary model and the first configured transcription fallback run concurrently. Later fallback models replace failed candidates until two models succeed or the chain is exhausted. The cleanup request receives both candidates in separate data sections and reconciles them before the normal snippet, dictionary, persistence, and injection stages.
 7. Dictionary substitutions and snippet expansions are applied.
 8. The transcription is stored locally in SQLite.
 9. The text injection layer restores focus to the captured app and pastes through the clipboard.

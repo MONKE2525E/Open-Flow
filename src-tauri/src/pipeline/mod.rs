@@ -52,6 +52,13 @@ pub struct CapturedAudio {
     pub duration_ms: u64,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct TranscriptCandidate {
+    pub text: String,
+    pub provider: String,
+    pub model: String,
+}
+
 // ---------- pipeline ----------
 
 pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow::Result<String> {
@@ -296,7 +303,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     }
 
     let stage_transcribe = std::time::Instant::now();
-    let Some((raw_unorm, api_used)) = run_transcription(&app, &captured_audio, &cfg).await else {
+    let Some((raw_unorm, api_used, alternate)) = run_transcription(&app, &captured_audio, &cfg).await else {
         emit_pipeline_failed(&app);
         return;
     };
@@ -364,7 +371,15 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
 
     let stage_cleanup = std::time::Instant::now();
     let Some((final_text, dict_entries, cleanup_cache_key)) =
-        run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
+        run_cleanup_and_snippets(
+            &app,
+            &raw,
+            alternate.as_ref(),
+            &cfg,
+            &profile,
+            app_context.as_deref(),
+        )
+        .await
     else {
         emit_pipeline_failed(&app);
         return;
@@ -464,7 +479,7 @@ pub async fn retry_transcription_impl(
     let mapping = resolve_app_mapping(Some(&settings_store), &capture.process_name);
     capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
 
-    let Some((raw_unorm, api_used)) = run_transcription(app, &capture.audio, &cfg).await else {
+    let Some((raw_unorm, api_used, alternate)) = run_transcription(app, &capture.audio, &cfg).await else {
         anyhow::bail!("Retry transcription failed");
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
@@ -480,6 +495,7 @@ pub async fn retry_transcription_impl(
     let Some((final_text, dict_entries, cleanup_cache_key)) = run_cleanup_and_snippets(
         app,
         &raw,
+        alternate.as_ref(),
         &cfg,
         &capture.profile,
         capture.app_context.as_deref(),

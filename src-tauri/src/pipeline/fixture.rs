@@ -139,6 +139,7 @@ pub async fn run_pipeline_fixture(
         run_cleanup_and_snippets_for_db(
             &db_handle,
             &raw_text,
+            None,
             &request.config,
             &request.profile,
             request.app_context.as_deref(),

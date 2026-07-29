@@ -19,6 +19,7 @@ export type AllSettingsPayload = {
   transcription_default_model?: string | null;
   cleanup_default_model?: string | null;
   transcription_fallback_models?: string[] | null;
+  dual_transcription_enabled?: boolean | null;
   cleanup_fallback_models?: string[] | null;
   cleanup_prompt_overrides?: unknown;
   local_model_memory_policy?: string | null;

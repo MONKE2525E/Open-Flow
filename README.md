@@ -103,6 +103,10 @@ You choose the providers. Verenu does not lock you into one stack.
 
 If you care about privacy, speed, retention, or cost, judge the provider on its own policy. Once data leaves Verenu and hits a provider API, that provider's rules apply. Local transcription with cloud cleanup is still not fully local because the transcript text leaves the device.
 
+### Enhanced transcription
+
+Advanced Models includes an optional Dual model transcription strategy. It runs the primary model and the first configured transcription fallback together, then sends two successful candidates to the cleanup model for reconciliation. If a candidate fails, later fallbacks are tried until two models work or the chain is exhausted. This can improve word choices when providers disagree, but it uses another transcription request and may add latency.
+
 For more details: [Add Your API Key](docs/API_KEYS.md) and [Privacy & Data](docs/PRIVACY_SUMMARY.md).
 
 ## Setup

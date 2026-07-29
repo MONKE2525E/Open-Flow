@@ -18,6 +18,7 @@ async fn run_local_cleanup_request(
     extra_rules: &str,
     app_context: Option<&str>,
     custom_template: Option<&str>,
+    alternate_transcript: Option<&str>,
 ) -> anyhow::Result<String> {
     #[cfg(any(test, debug_assertions))]
     if let Some(result) = crate::testing::resolve_provider_fixture("cleanup", "local", model) {
@@ -25,7 +26,7 @@ async fn run_local_cleanup_request(
     }
 
     let app = app.ok_or_else(|| anyhow::anyhow!("Local cleanup runtime unavailable"))?;
-    let prompt = prompts::get_cleanup_prompt_with_extras(
+    let prompt = prompts::get_cleanup_prompt_with_alternate(
         "local",
         model,
         profile,
@@ -34,6 +35,7 @@ async fn run_local_cleanup_request(
         app_context,
         expanded,
         custom_template,
+        alternate_transcript,
     );
     // Local builds can spend a roughly fixed amount of budget on hidden
     // reasoning before producing visible output — observed across many
@@ -55,8 +57,17 @@ async fn run_local_cleanup_request(
         .state::<crate::local_llm::LocalLlmManager>()
         .inner()
         .clone();
+    let input = alternate_transcript
+        .map(|alternate| {
+            format!(
+                "<primary_transcript>\n{}\n</primary_transcript>\n<alternate_transcript>\n{}\n</alternate_transcript>",
+                escape_transcript_xml(expanded),
+                escape_transcript_xml(alternate),
+            )
+        })
+        .unwrap_or_else(|| expanded.to_owned());
     manager
-        .cleanup_with_prompt(app, model, expanded, &prompt, max_output_tokens)
+        .cleanup_with_prompt(app, model, &input, &prompt, max_output_tokens)
         .await
 }
 
@@ -100,6 +111,7 @@ pub(super) async fn guard_cleanup_refusal(
     extra_rules: &str,
     app_context: Option<&str>,
     app: Option<&AppHandle>,
+    alternate_transcript: Option<&str>,
 ) -> Option<String> {
     if !cleanup_output_is_unusable(intensity, expanded, &cleaned)
         || cleanup_output_is_unusable(intensity, raw, raw)
@@ -121,11 +133,12 @@ pub(super) async fn guard_cleanup_refusal(
             extra_rules,
             app_context,
             Some(prompts::hardened_retry_template()),
+            alternate_transcript,
         )
         .await
     } else {
         let cp = ProviderId::from_str(provider_id);
-        cleanup::cleanup(
+        cleanup::cleanup_with_alternate(
             expanded,
             cp,
             key,
@@ -135,6 +148,7 @@ pub(super) async fn guard_cleanup_refusal(
             extra_rules,
             app_context,
             Some(prompts::hardened_retry_template()),
+            alternate_transcript,
         )
         .await
     };
@@ -407,7 +421,7 @@ pub(super) async fn run_transcription(
     app: &AppHandle,
     audio: &CapturedAudio,
     cfg: &store::PipelineConfig,
-) -> Option<(String, String)> {
+) -> Option<(String, String, Option<TranscriptCandidate>)> {
     log::debug!(
         "pipeline: transcription stage start provider={} model={} language={} wav_bytes={} pcm_samples={}",
         cfg.transcription_provider,
@@ -417,6 +431,212 @@ pub(super) async fn run_transcription(
         audio.samples_16k.len()
     );
 
+    let dual_enabled = cfg.dual_transcription_enabled
+        && cfg.cleanup_enabled
+        && cfg.cleanup_intensity != "none"
+        && has_cleanup_key_in_chain(cfg)
+        && transcription_model_chain(cfg).len() > 1;
+    let (raw, provider_id, model, alternate_result) = match if dual_enabled {
+        run_dual_transcription_candidates(app, audio, cfg).await
+    } else {
+        run_primary_transcription_chain(app, audio, cfg)
+            .await
+            .map(|(raw, provider, model)| (raw, provider, model, None))
+    } {
+        Ok((raw, provider_id, model, alternate)) => (raw, provider_id, model, alternate),
+        Err(error) => {
+            let mut user_msg = trim_err(&error.to_string());
+            if let Some(parsed) = crate::api::parse_auth_401_error(&error.to_string()) {
+                user_msg = crate::api::auth_401_display_message(&parsed);
+            }
+            log::error!("pipeline: transcription failed error={}", trim_err(&error.to_string()));
+            if crate::api::is_retryable_provider_error(&error) {
+                emit_provider_recheck(app);
+            }
+            show_error_pill(app, &user_msg).await;
+            return None;
+        }
+    };
+
+    let primary_text = prepare_transcript_text(&raw, alternate_result.is_some());
+    if primary_text.is_empty() {
+        show_error_pill(app, "Nothing transcribed - please try speaking more clearly").await;
+        return None;
+    }
+    let alternate = alternate_result.and_then(|(text, provider, model)| {
+        let text = prepare_transcript_text(&text, true);
+        (!text.is_empty()).then_some(TranscriptCandidate { text, provider, model })
+    });
+    let api_used = match &alternate {
+        Some(candidate) => format!(
+            "primary={}/{};secondary={}/{}",
+            provider_id, model, candidate.provider, candidate.model
+        ),
+        None => format!("{provider_id}/{model}/transcription"),
+    };
+    Some((primary_text, api_used, alternate))
+}
+
+const DUAL_TRANSCRIPTION_TIMEOUT_SECS: u64 = 30;
+
+type CandidateOutcome = (usize, String, String, anyhow::Result<String>);
+
+async fn run_dual_transcription_candidates(
+    app: &AppHandle,
+    audio: &CapturedAudio,
+    cfg: &store::PipelineConfig,
+) -> anyhow::Result<(String, String, String, Option<(String, String, String)>)> {
+    let chain = transcription_model_chain(cfg);
+    let mut next_index = 0usize;
+    let mut in_flight = tokio::task::JoinSet::<CandidateOutcome>::new();
+    let mut successes = Vec::<(usize, String, String, String)>::new();
+
+    while next_index < chain.len() && in_flight.len() < 2 {
+        spawn_transcription_candidate(
+            &mut in_flight,
+            app,
+            audio,
+            cfg,
+            next_index,
+            chain[next_index].clone(),
+            next_index > 0,
+        );
+        next_index += 1;
+    }
+
+    while let Some(joined) = in_flight.join_next().await {
+        match joined {
+            Ok((index, provider, model, Ok(text))) if !text.trim().is_empty() => {
+                log::debug!(
+                    "pipeline: dual transcription candidate success index={} provider={} model={} chars={}",
+                    index,
+                    provider,
+                    model,
+                    text.chars().count()
+                );
+                successes.push((index, text, provider, model));
+                if successes.len() >= 2 {
+                    in_flight.abort_all();
+                    break;
+                }
+            }
+            Ok((index, provider, model, Ok(_))) => {
+                log::warn!(
+                    "pipeline: dual transcription candidate empty index={} provider={} model={}",
+                    index,
+                    provider,
+                    model
+                );
+            }
+            Ok((index, provider, model, Err(error))) => {
+                log::warn!(
+                    "pipeline: dual transcription candidate failed index={} provider={} model={} error={}",
+                    index,
+                    provider,
+                    model,
+                    trim_err(&error.to_string())
+                );
+            }
+            Err(error) => {
+                log::warn!("pipeline: dual transcription task failed error={error}");
+            }
+        }
+
+        if successes.len() + in_flight.len() < 2 && next_index < chain.len() {
+            spawn_transcription_candidate(
+                &mut in_flight,
+                app,
+                audio,
+                cfg,
+                next_index,
+                chain[next_index].clone(),
+                true,
+            );
+            next_index += 1;
+        }
+    }
+
+    successes.sort_by_key(|(index, _, _, _)| *index);
+    let Some((_, primary_text, primary_provider, primary_model)) = successes.first().cloned() else {
+        anyhow::bail!("Nothing transcribed - please try speaking more clearly");
+    };
+    let alternate = successes.get(1).map(|(_, text, provider, model)| {
+        (text.clone(), provider.clone(), model.clone())
+    });
+    Ok((
+        primary_text,
+        primary_provider,
+        primary_model,
+        alternate,
+    ))
+}
+
+fn spawn_transcription_candidate(
+    in_flight: &mut tokio::task::JoinSet<CandidateOutcome>,
+    app: &AppHandle,
+    audio: &CapturedAudio,
+    cfg: &store::PipelineConfig,
+    index: usize,
+    candidate: (String, String),
+    bounded: bool,
+) {
+    let app = app.clone();
+    let audio = audio.clone();
+    let cfg = cfg.clone();
+    in_flight.spawn(async move {
+        let (provider, model) = candidate;
+        let key = cfg.key_for(&provider).to_owned();
+        let language = cfg.transcription_language.clone();
+        let request = transcribe_any(
+            &app,
+            &audio,
+            &provider,
+            if key.is_empty() { None } else { Some(key.as_str()) },
+            &language,
+            &model,
+        );
+        let result = if bounded {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(DUAL_TRANSCRIPTION_TIMEOUT_SECS),
+                request,
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(anyhow::anyhow!(
+                    "secondary transcription timed out after {} seconds",
+                    DUAL_TRANSCRIPTION_TIMEOUT_SECS
+                )),
+            }
+        } else {
+            request.await
+        };
+        (index, provider, model, result)
+    });
+}
+
+fn escape_transcript_xml(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn prepare_transcript_text(raw: &str, strip_provider_artifacts: bool) -> String {
+    let normalized = normalize_transcription_math_artifacts(raw);
+    let normalized = strip_hallucinated_suffix(&normalized);
+    let normalized = crate::system::text::collapse_degenerate_word_runs(&normalized);
+    if strip_provider_artifacts {
+        crate::pipeline::gates::strip_provider_artifacts(&normalized)
+    } else {
+        normalized
+    }
+}
+
+async fn run_primary_transcription_chain(
+    app: &AppHandle,
+    audio: &CapturedAudio,
+    cfg: &store::PipelineConfig,
+) -> anyhow::Result<(String, String, String)> {
     let mut last_err: Option<anyhow::Error> = None;
     for (provider_id, model) in transcription_model_chain(cfg) {
         let key = cfg.key_for(&provider_id).to_owned();
@@ -438,7 +658,7 @@ pub(super) async fn run_transcription(
                     model,
                     raw.chars().count()
                 );
-                return Some((raw, format!("{provider_id}/{model}/transcription")));
+                return Ok((raw, provider_id, model));
             }
             Ok(_) => {}
             Err(e) => {
@@ -465,27 +685,7 @@ pub(super) async fn run_transcription(
         }
     }
 
-    if let Some(e) = last_err {
-        let mut user_msg = trim_err(&e.to_string());
-        if let Some(parsed) = crate::api::parse_auth_401_error(&e.to_string()) {
-            user_msg = crate::api::auth_401_display_message(&parsed);
-        }
-        log::error!(
-            "pipeline: transcription failed error={}",
-            trim_err(&e.to_string())
-        );
-        if crate::api::is_retryable_provider_error(&e) {
-            emit_provider_recheck(app);
-        }
-        show_error_pill(app, &user_msg).await;
-    } else {
-        show_error_pill(
-            app,
-            "Nothing transcribed - please try speaking more clearly",
-        )
-        .await;
-    }
-    None
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Nothing transcribed - please try speaking more clearly")))
 }
 
 struct CleanupCachePlan {
@@ -506,6 +706,7 @@ fn cleanup_cache_plan(
     profile: &str,
     intensity: &str,
     snippet_instructions: &str,
+    alternate_transcript: Option<&str>,
 ) -> CleanupCachePlan {
     let has_snippets = !snippet_instructions.is_empty();
     let (cache_tokens, cache_separators) = number_parser::tokenize_cache_key_parts(expanded);
@@ -518,6 +719,11 @@ fn cleanup_cache_plan(
         if !key.is_empty() && has_snippets {
             let fp = snippet_instructions_fingerprint(snippet_instructions);
             key = format!("{key}|snip:{fp:x}");
+        }
+        if !key.is_empty() {
+            if let Some(alternate) = alternate_transcript {
+                key = format!("{key}|dual:{:x}", snippet_instructions_fingerprint(alternate));
+            }
         }
         key
     } else {
@@ -598,6 +804,7 @@ fn cleanup_cache_hit_text(
 #[allow(clippy::too_many_arguments)]
 async fn run_cleanup_provider_chain(
     expanded: &str,
+    alternate_transcript: Option<&str>,
     cfg: &store::PipelineConfig,
     profile: &str,
     extra_rules: &str,
@@ -622,11 +829,12 @@ async fn run_cleanup_provider_chain(
                 extra_rules,
                 app_context,
                 custom_template,
+                alternate_transcript,
             )
             .await
         } else {
             let cp = ProviderId::from_str(&provider_id);
-            cleanup::cleanup(
+            cleanup::cleanup_with_alternate(
                 expanded,
                 cp,
                 &key,
@@ -636,6 +844,7 @@ async fn run_cleanup_provider_chain(
                 extra_rules,
                 app_context,
                 custom_template,
+                alternate_transcript,
             )
             .await
         };
@@ -690,6 +899,7 @@ async fn run_cleanup_provider_chain(
 pub(super) async fn run_cleanup_and_snippets(
     app: &AppHandle,
     raw: &str,
+    alternate: Option<&TranscriptCandidate>,
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
@@ -698,6 +908,7 @@ pub(super) async fn run_cleanup_and_snippets(
     match run_cleanup_and_snippets_for_db(
         db_handle.inner(),
         raw,
+        alternate,
         cfg,
         profile,
         app_context,
@@ -730,6 +941,7 @@ pub(super) async fn run_cleanup_and_snippets(
 pub(super) async fn run_cleanup_and_snippets_for_db(
     db_handle: &DbHandle,
     raw: &str,
+    alternate: Option<&TranscriptCandidate>,
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
@@ -793,6 +1005,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             profile,
             &cfg.cleanup_intensity,
             &snippet_instructions,
+            alternate.map(|candidate| candidate.text.as_str()),
         );
         let cache_key = cache_plan.key.clone();
         if !cache_key.is_empty() {
@@ -832,6 +1045,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
 
         let (cleanup_res, last_cleanup_err) = run_cleanup_provider_chain(
             &expanded,
+            alternate.map(|candidate| candidate.text.as_str()),
             cfg,
             profile,
             &extra_rules,
@@ -854,6 +1068,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                     &extra_rules,
                     app_context,
                     app,
+                    alternate.map(|candidate| candidate.text.as_str()),
                 )
                 .await
             }
