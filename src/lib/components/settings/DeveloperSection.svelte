@@ -222,7 +222,9 @@
     margin-bottom: 12px;
   }
   .logs-panel {
-    height: 280px;
+    /* Grows with the window now that settings is full-height, instead of being
+       a fixed 280px viewport inside a much taller page. */
+    height: clamp(280px, 42vh, 520px);
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--paper);
@@ -282,7 +284,7 @@
     padding: 8px 2px;
   }
   .raw-panel {
-    max-height: 320px;
+    max-height: clamp(320px, 46vh, 560px);
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--paper);

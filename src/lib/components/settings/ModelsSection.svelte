@@ -70,8 +70,33 @@
     cleanup: { groq: '', openai: '', google: '', assemblyai: '' },
   });
 
-  let transcriptionOpen = $state(false);
-  let cleanupOpen = $state(false);
+  /*
+   * The four expandable model panels behave as one accordion: opening any of
+   * them closes whichever was open. They're tall enough that two at once pushes
+   * the rest of the section off-screen, and only one is ever being acted on.
+   * A single id rather than four booleans makes that structural — there is no
+   * state in which two can be open.
+   */
+  type ModelPanelId = TaskType | 'local-stt' | 'local-llm';
+  let openPanel = $state<ModelPanelId | null>('local-stt');
+  // Set once the user touches any panel, so the one-shot auto-open effects
+  // below can never yank a panel closed underneath them.
+  let userChosePanel = false;
+
+  function isPanelOpen(id: ModelPanelId) {
+    return openPanel === id;
+  }
+
+  function togglePanel(id: ModelPanelId) {
+    userChosePanel = true;
+    openPanel = openPanel === id ? null : id;
+  }
+
+  function revealPanel(id: ModelPanelId) {
+    userChosePanel = true;
+    openPanel = id;
+  }
+
   let advancedModelUi = $state(false);
   let localModelMemoryPolicy = $state<LocalModelMemoryPolicy>('unload_after_5m');
   let localModelMemoryDropdownOpen = $state(false);
@@ -80,33 +105,36 @@
   // Defaults to true (never assume unsupported) until the one-time check
   // resolves, since almost every user is on a supported platform.
   let localModelsSupported = $state(true);
-  // Local model lists load asynchronously (onMount), so the very first
-  // render always sees an empty store regardless of what's actually
-  // downloaded — defaulting open here and then never re-checking would mean
-  // a returning user with models already installed always sees this section
-  // pop open anyway. Default open (a reasonable pre-data-load guess that
-  // nudges first-time users toward downloading something), then correct
-  // exactly once each, after that category's list has arrived, without
-  // fighting any manual toggle the user makes afterward. Transcription and
-  // cleanup downloads are separate flat tiles with independent state, so a
-  // user who's already installed one but not the other sees only the
-  // relevant tile open instead of both popping open together.
-  let localTranscriptionDownloadsOpen = $state(true);
-  let localCleanupDownloadsOpen = $state(true);
+  // Local model lists load asynchronously (onMount), so the very first render
+  // always sees an empty store regardless of what's actually downloaded —
+  // opening a panel here and then never re-checking would mean a returning user
+  // with models already installed still gets it popped open. So: start on the
+  // speech-to-text downloads (a reasonable pre-data-load guess that nudges
+  // first-time users toward downloading something), then correct exactly once
+  // per category as its list arrives.
+  //
+  // Each correction only acts on an untouched accordion — it will never close a
+  // panel the user opened, and never displace one another effect already chose.
+  // A user with speech-to-text installed but no cleanup model therefore lands on
+  // the cleanup downloads; a user with both installed lands with all four shut.
   let localTranscriptionAutoOpenDecided = false;
   let localCleanupAutoOpenDecided = false;
 
   $effect(() => {
-    if (!localTranscriptionAutoOpenDecided && localSttStore.models.length > 0) {
-      localTranscriptionAutoOpenDecided = true;
-      localTranscriptionDownloadsOpen = !localSttStore.models.some((model) => model.is_downloaded);
+    if (userChosePanel || localTranscriptionAutoOpenDecided) return;
+    if (localSttStore.models.length === 0) return;
+    localTranscriptionAutoOpenDecided = true;
+    if (localSttStore.models.some((model) => model.is_downloaded) && openPanel === 'local-stt') {
+      openPanel = null;
     }
   });
 
   $effect(() => {
-    if (!localCleanupAutoOpenDecided && localLlmStore.models.length > 0) {
-      localCleanupAutoOpenDecided = true;
-      localCleanupDownloadsOpen = !localLlmStore.models.some((model) => model.is_downloaded);
+    if (userChosePanel || localCleanupAutoOpenDecided) return;
+    if (localLlmStore.models.length === 0) return;
+    localCleanupAutoOpenDecided = true;
+    if (openPanel === null && !localLlmStore.models.some((model) => model.is_downloaded)) {
+      openPanel = 'local-llm';
     }
   });
 
@@ -132,15 +160,11 @@
   }
 
   function isOpen(type: TaskType) {
-    return type === 'transcription' ? transcriptionOpen : cleanupOpen;
+    return isPanelOpen(type);
   }
 
   function toggleTaskOpen(type: TaskType) {
-    if (type === 'transcription') {
-      transcriptionOpen = !transcriptionOpen;
-    } else {
-      cleanupOpen = !cleanupOpen;
-    }
+    togglePanel(type);
   }
 
   function taskMap(type: TaskType): ProviderModelMap {
@@ -561,13 +585,16 @@
     });
   }
 
+  // Reached from "Manage local models" inside a task tile — revealing the
+  // downloads necessarily closes the tile it was launched from, which is the
+  // point: the user asked to go there.
   function openLocalTranscriptionDownloads() {
-    localTranscriptionDownloadsOpen = true;
+    revealPanel('local-stt');
     scrollToAnchor('transcription-models-block');
   }
 
   function openLocalCleanupDownloads() {
-    localCleanupDownloadsOpen = true;
+    revealPanel('local-llm');
     scrollToAnchor('cleanup-models-block');
   }
 
@@ -635,8 +662,8 @@
 <h3 class="settings-subhead">Local models</h3>
 {#if localModelsSupported}
   <LocalTranscriptionDownloads
-    opened={localTranscriptionDownloadsOpen}
-    onToggleOpen={() => (localTranscriptionDownloadsOpen = !localTranscriptionDownloadsOpen)}
+    opened={isPanelOpen('local-stt')}
+    onToggleOpen={() => togglePanel('local-stt')}
     transcriptionModels={localSttStore.models}
     transcriptionState={localSttStore.state}
     selectedTranscriptionModelId={transcriptionDefaultModel}
@@ -648,8 +675,8 @@
   />
 
   <LocalCleanupDownloads
-    opened={localCleanupDownloadsOpen}
-    onToggleOpen={() => (localCleanupDownloadsOpen = !localCleanupDownloadsOpen)}
+    opened={isPanelOpen('local-llm')}
+    onToggleOpen={() => togglePanel('local-llm')}
     advancedModelUi={advancedModelUi}
     cleanupModels={localLlmStore.models}
     cleanupState={localLlmStore.state}
@@ -965,7 +992,9 @@
     font-weight: 500;
   }
 
-  @media (max-width: 700px) {
+  /* Keyed to the settings content column, not the window — this stacks when the
+     panel itself is narrow, which is what the rule was always standing in for. */
+  @container settings-panel (max-width: 700px) {
     .models-dropdown {
       width: 100%;
     }

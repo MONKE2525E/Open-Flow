@@ -297,6 +297,7 @@ pub(super) async fn stop_and_validate_audio(
     session: audio::RecordingSession,
     exclusive_mic_session_id: Option<u64>,
     min_rms: f32,
+    active_gain: f32,
 ) -> Option<CapturedAudio> {
     let stop_result = tokio::task::spawn_blocking(move || {
         let stop_result = session.stop();
@@ -315,6 +316,7 @@ pub(super) async fn stop_and_validate_audio(
         sample_rate,
         duration_ms,
         rms,
+        raw_rms,
         truncated,
     } = match stop_result {
         Ok(Ok(v)) => v,
@@ -346,7 +348,8 @@ pub(super) async fn stop_and_validate_audio(
         .await;
         return None;
     }
-    if duration_ms < MIN_RECORDING_MS || rms < min_rms {
+    let gate_rms = effective_recording_rms(rms, raw_rms, active_gain);
+    if duration_ms < MIN_RECORDING_MS || gate_rms < min_rms {
         let msg = if duration_ms < MIN_RECORDING_MS {
             "Recording too short"
         } else {

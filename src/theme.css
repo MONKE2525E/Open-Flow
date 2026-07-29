@@ -93,6 +93,17 @@
   --page-pad-y: clamp(16px, 2.4vw, 30px);
   --page-max: 1160px;
   --page-readable: 680px;
+
+  /* App chrome metrics. --app-gutter mirrors .body's padding/gap in App.svelte;
+     the full-screen settings shell offsets itself by both to sit flush beside
+     the sidebar. */
+  --sidebar-w: 220px;
+  --app-gutter: 14px;
+  /* Measure for the settings content column inside the full-width shell. */
+  --settings-measure: 760px;
+  /* Width of the custom scrollbars in app.css. Anything that has to line up
+     with a `scrollbar-gutter: stable` scroller needs to reserve the same. */
+  --scrollbar-w: 10px;
 }
 
 :root[data-theme="dark"] {

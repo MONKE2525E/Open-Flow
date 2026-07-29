@@ -1,5 +1,6 @@
 import { invoke } from './tauri';
 import type { ProviderId } from './settings';
+import type { SettingsSectionId } from './settingsSections';
 
 export type PageId = 'home' | 'dictionary' | 'snippets' | 'style';
 export type AppearanceMode = 'system' | 'light' | 'dark';
@@ -45,6 +46,11 @@ export interface ProviderStatusAlert {
 export const appStore = $state({
   currentPage: 'home' as PageId,
   settingsOpen: false,
+  // The settings rail lives in the Sidebar but the panel lives in Settings, so
+  // the active section and its swap direction have to be shared state.
+  settingsSection: 'general' as SettingsSectionId,
+  settingsAnimDir: 1 as 1 | -1,
+  appVersion: '',
   devModeEnabled: false,
   appearanceMode: 'system' as AppearanceMode,
   // Mirrors the `cleanup_enabled` setting. Shared here (rather than owned

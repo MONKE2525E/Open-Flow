@@ -698,6 +698,19 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .refresh-spin { animation: spin 0.75s linear infinite; display: inline-block; }
 
+  /*
+   * Two queries for one rule. This component renders both in settings (inside
+   * the .panel-inner measure) and in the Setup wizard (inside a 560px step with
+   * no container), so neither query alone covers both: the container query is
+   * what makes the rule mean "the column is narrow" in settings, and the
+   * viewport query preserves the original behaviour in Setup. They can both
+   * match in a narrow settings window, which is harmless — same declarations.
+   */
+  @container settings-panel (max-width: 560px) {
+    .perm-row { flex-direction: column; align-items: stretch; gap: 8px; }
+    .perm-row-side { justify-content: flex-start; }
+  }
+
   @media (max-width: 560px) {
     .perm-row { flex-direction: column; align-items: stretch; gap: 8px; }
     .perm-row-side { justify-content: flex-start; }

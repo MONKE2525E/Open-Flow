@@ -34,7 +34,7 @@ pub use fixture::{
     run_pipeline_fixture,
 };
 use gates::{
-    MIN_RECORDING_MS, MIN_RECORDING_RMS, is_transcription_hallucination,
+    MIN_RECORDING_MS, MIN_RECORDING_RMS, effective_recording_rms, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
     strip_hallucinated_suffix,
 };
@@ -108,6 +108,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         sample_rate,
         duration_ms,
         rms,
+        raw_rms,
         truncated,
     } = stop_result?;
 
@@ -119,7 +120,8 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         );
     }
 
-    if duration_ms < MIN_RECORDING_MS || rms < min_rms {
+    let gate_rms = effective_recording_rms(rms, raw_rms, active_gain);
+    if duration_ms < MIN_RECORDING_MS || gate_rms < min_rms {
         hide_pill(&app);
         if duration_ms < MIN_RECORDING_MS {
             anyhow::bail!("Recording too short");
@@ -253,7 +255,14 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // plays the error cue via reject_with_pill — so only play the stop cue once
     // the audio is *accepted*, otherwise a rejection would sound stop + error.
     let Some(captured_audio) =
-        stop_and_validate_audio(&app, session, exclusive_mic_session_id, min_rms).await
+        stop_and_validate_audio(
+            &app,
+            session,
+            exclusive_mic_session_id,
+            min_rms,
+            active_gain,
+        )
+        .await
     else {
         return;
     };

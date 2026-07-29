@@ -628,7 +628,8 @@
     text-transform: none;
   }
 
-  @media (max-width: 720px) {
+  /* Container-relative: see the note in ModelsSection. */
+  @container settings-panel (max-width: 720px) {
     .local-card-top,
     .prompt-row {
       flex-direction: column;

@@ -176,7 +176,9 @@
     margin: 14px 0 0;
   }
 
-  .key-row { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  /* Centered rather than top-aligned: the row no longer wraps at the widths the
+     settings column actually reaches, so flex-start just read as top-heavy. */
+  .key-row { align-items: center; gap: 12px; flex-wrap: wrap; }
   .key-left { flex: 1; min-width: 0; }
   .key-logo {
     display: inline-flex;
@@ -238,7 +240,7 @@
     padding: 5px 9px;
     border-radius: 6px;
     color: var(--ink-soft);
-    width: 200px;
+    width: clamp(200px, 40cqi, 320px);
     letter-spacing: 0.04em;
   }
   .key-input::-ms-reveal {

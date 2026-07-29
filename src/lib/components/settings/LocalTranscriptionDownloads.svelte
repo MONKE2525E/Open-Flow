@@ -552,7 +552,8 @@
     font-weight: 500;
   }
 
-  @media (max-width: 720px) {
+  /* Container-relative: see the note in ModelsSection. */
+  @container settings-panel (max-width: 720px) {
     .local-card-top {
       flex-direction: column;
       align-items: stretch;

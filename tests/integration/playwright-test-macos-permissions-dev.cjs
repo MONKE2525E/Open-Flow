@@ -76,7 +76,7 @@ async function reachPermissionsStep(page) {
     await settingsPage.evaluate(() => {
       window.dispatchEvent(new CustomEvent('tauri:open-flow:open-settings-section', { detail: 'permissions' }));
     });
-    await settingsPage.locator('.settings-modal').waitFor({ state: 'visible', timeout: TIMEOUT });
+    await settingsPage.locator('.settings-page').waitFor({ state: 'visible', timeout: TIMEOUT });
     await settingsPage.getByRole('heading', { name: 'Permissions' }).waitFor({ state: 'visible', timeout: TIMEOUT });
     await settingsPage.close();
 
