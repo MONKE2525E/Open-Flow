@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -219,19 +218,23 @@ async fn download_to_file(
         .await?
         .error_for_status()?;
 
-    let mut file = std::fs::File::create(dest)?;
+    // Async file I/O (rather than std::fs + sync write_all) so each chunk
+    // write can't block the Tokio executor worker thread during a
+    // multi-hundred-MB runtime archive download.
+    use tokio::io::AsyncWriteExt;
+    let mut file = tokio::fs::File::create(dest).await?;
     let mut response = response;
     let mut last_emit = Instant::now() - Duration::from_secs(1);
     while let Some(chunk) = response.chunk().await? {
         ensure_not_cancelled(cancel)?;
-        file.write_all(&chunk)?;
+        file.write_all(&chunk).await?;
         *aggregate_downloaded += chunk.len() as u64;
         if last_emit.elapsed() >= Duration::from_millis(150) {
             emit_progress(app, *aggregate_downloaded, aggregate_total, "downloading");
             last_emit = Instant::now();
         }
     }
-    file.flush()?;
+    file.flush().await?;
     Ok(())
 }
 

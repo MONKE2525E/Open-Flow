@@ -396,7 +396,17 @@ pub async fn download_model(
     for artifact in manifest.artifacts {
         ensure_not_cancelled(&cancel)?;
         let partial_path = partial_file_path(root, manifest, artifact);
-        verify_artifact_checksum(app, manifest, artifact, &partial_path, &cancel)?;
+        // Hashes a multi-hundred-MB file synchronously — run it off the
+        // Tokio worker thread so it can't stall other async tasks (audio
+        // capture, hotkey handling, etc.) for the seconds it takes.
+        let app = app.clone();
+        let manifest = manifest.clone();
+        let artifact = artifact.clone();
+        let cancel = cancel.clone();
+        tokio::task::spawn_blocking(move || {
+            verify_artifact_checksum(&app, &manifest, &artifact, &partial_path, &cancel)
+        })
+        .await??;
     }
 
     // Only now, after every artifact has downloaded and passed checksum

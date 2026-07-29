@@ -163,6 +163,7 @@ let devEventId = 0;
 // of the same model ID would fire alongside the new session's timers.
 let devSttDownloadSession = 0;
 let devLlmDownloadSession = 0;
+let devLlmRuntimeDownloadSession = 0;
 
 const defaultProviderModels = {
   groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
@@ -908,6 +909,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       const runtime = readDevLocalLlmRuntimeState();
       if (runtime.installed || runtime.is_downloading) return undefined as T;
       writeDevLocalLlmRuntimeState({ installed: false, is_downloading: true });
+      const session = ++devLlmRuntimeDownloadSession;
 
       // Runtime cycle: download the archive, then extract it (its own
       // progress stage), then complete.
@@ -920,6 +922,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       ];
       runtimeSteps.forEach((step, index) => {
         setTimeout(() => {
+          if (session !== devLlmRuntimeDownloadSession) return;
           const latest = readDevLocalLlmRuntimeState();
           if (!latest.is_downloading) return;
           emitDevTauriEvent<LocalLlmRuntimeDownloadProgressPayload>('local-llm-runtime-download-progress', {

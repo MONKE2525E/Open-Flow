@@ -457,6 +457,14 @@ impl LocalTranscriptionManager {
                 .loading_condvar
                 .wait(loading)
                 .map_err(|_| anyhow::anyhow!("local loading wait poisoned"))?;
+        }
+        // Re-check after the wait loop (not inside it) — if `*loading` was
+        // already false the moment this fn acquired the lock (a concurrent
+        // load finished between the top-of-fn check and here), the loop body
+        // above never runs, so this is the only place that recheck happens.
+        // Without it, that race unconditionally falls through to a redundant
+        // reload of a model another caller just finished loading.
+        {
             let current_model_id = self
                 .current_model_id
                 .lock()
