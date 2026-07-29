@@ -64,7 +64,26 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
       errors.push('Clean-up tile showed a non-installed local cleanup model');
     }
 
+    // Clicking an unselected model row adds it as a fallback (the row itself
+    // is labeled "Add fallback") — it does not immediately become the active
+    // default. Swapping the active model is a two-step gesture: add the new
+    // model as a fallback, then click the current active row, which demotes
+    // it and promotes the (only) fallback to take its place.
     await cleanupTile.locator('.model-row:has-text("Qwen 2.5 3B Instruct")').click();
+    await page.waitForFunction(
+      () => {
+        try {
+          return (JSON.parse(localStorage.getItem('verenu:dev-settings') || '{}').cleanup_fallback_models || []).includes(
+            'local/qwen2.5-3b-instruct',
+          );
+        } catch {
+          return false;
+        }
+      },
+      null,
+      { timeout: TIMEOUT },
+    );
+    await cleanupTile.locator('.model-row:has-text("llama-3.3-70b-versatile")').click();
     await page.waitForFunction(
       () => {
         try {
