@@ -83,3 +83,14 @@ lto        = true
 strip      = true
 panic      = "abort"
 codegen-units = 1
+
+[patch.crates-io]
+# tauri-winrt-notification 0.7.2 pins quick-xml = "^0.37" (0.37.5 in our
+# lockfile), which carries two high-severity DoS advisories with no fix in
+# the 0.37 line (RUSTSEC-2026-0194, RUSTSEC-2026-0195; fixed upstream in
+# 0.41.0). No notify-rust/tauri-winrt-notification release accepts a newer
+# quick-xml yet, so pin the patched release directly via git instead of
+# waiting. Pinned to the v0.41.0 tag's commit, not the tag name — a tag ref
+# is a mutable pointer git will happily follow if it's ever force-moved,
+# defeating the point of pinning a security fix.
+quick-xml = { git = "https://github.com/tafia/quick-xml", rev = "4deda08abeffdc188c269360229cf47e12a77a9f" }

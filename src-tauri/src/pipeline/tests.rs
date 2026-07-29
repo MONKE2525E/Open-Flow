@@ -131,6 +131,21 @@ fn strip_hallucinated_suffix_trims_trailing_fullwidth_punctuation_before_exact_m
 }
 
 #[test]
+fn strip_hallucinated_suffix_handles_closing_quotes_after_sentence_boundary() {
+    let raw = "He said, \"No!\" Thank you for watching!";
+    assert_eq!(strip_hallucinated_suffix(raw), "He said, \"No!\"");
+
+    let raw2 = "This is a test (with parentheses). Please subscribe!";
+    assert_eq!(strip_hallucinated_suffix(raw2), "This is a test (with parentheses).");
+}
+
+#[test]
+fn strip_hallucinated_suffix_handles_cjk_closing_quotes_after_sentence_boundary() {
+    let raw = "他说：“不行！”Thank you for watching!";
+    assert_eq!(strip_hallucinated_suffix(raw), "他说：“不行！”");
+}
+
+#[test]
 fn cleanup_cache_bypasses_math_like_queries() {
     assert!(!should_use_cleanup_cache("What's 67 plus 67?"));
     assert!(!should_use_cleanup_cache("what is six times seven"));

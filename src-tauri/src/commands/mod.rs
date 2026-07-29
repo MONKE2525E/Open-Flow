@@ -39,7 +39,7 @@ where
         .map_err(|e| format!("{label} task panicked: {e}"))?
 }
 
-pub(crate) fn db_state(app: &AppHandle) -> DbHandle {
+fn db_state(app: &AppHandle) -> DbHandle {
     app.state::<DbHandle>().inner().clone()
 }
 

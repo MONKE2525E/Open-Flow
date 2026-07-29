@@ -130,17 +130,16 @@ where
             return; // superseded or cancelled
         }
 
-        let mut after = Some(Box::new(after) as AfterPlay);
-        let send_result = sound_tx().send(SoundCommand::Play {
-            cue: SoundCue::Start,
-            generation: Some(generation),
-            after: after.take(),
-        });
-        if send_result.is_err() {
+        let after_cb = Box::new(after) as AfterPlay;
+        if let Err(mpsc::SendError(SoundCommand::Play { after: Some(cb), .. })) =
+            sound_tx().send(SoundCommand::Play {
+                cue: SoundCue::Start,
+                generation: Some(generation),
+                after: Some(after_cb),
+            })
+        {
             log::debug!("sound cue failed: playback worker is unavailable");
-            if let Some(after) = after {
-                after();
-            }
+            cb();
         }
     });
 }

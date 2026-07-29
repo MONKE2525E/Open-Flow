@@ -204,8 +204,8 @@ pub(super) fn strip_hallucinated_suffix(text: &str) -> String {
         if sentence.is_empty() || !is_sentence_hallucination(sentence) {
             break;
         }
-        let cut = current.len() - sentence.len();
-        current.truncate(cut);
+        let offset = sentence.as_ptr() as usize - current.as_ptr() as usize;
+        current.truncate(offset);
         let trimmed_len = current.trim_end().len();
         current.truncate(trimmed_len);
     }
@@ -283,6 +283,9 @@ fn last_sentence(text: &str) -> &str {
             while j < chars.len() && matches!(chars[j].1, '.' | '!' | '?') {
                 j += 1;
             }
+            while j < chars.len() && matches!(chars[j].1, '"' | '\'' | ')' | ']' | '}' | '”' | '’' | '»' | '〉' | '》' | '」' | '』' | '）' | '】' | '〕') {
+                j += 1;
+            }
             let end_of_run = if j < chars.len() {
                 chars[j].0
             } else {
@@ -294,7 +297,18 @@ fn last_sentence(text: &str) -> &str {
             i = j;
             continue;
         } else if matches!(c, '。' | '！' | '？') {
-            boundaries.push(chars[i].0 + c.len_utf8());
+            let mut j = i + 1;
+            while j < chars.len() && matches!(chars[j].1, '"' | '\'' | ')' | ']' | '}' | '”' | '’' | '»' | '〉' | '》' | '」' | '』' | '）' | '】' | '〕') {
+                j += 1;
+            }
+            let end_of_run = if j < chars.len() {
+                chars[j].0
+            } else {
+                trimmed.len()
+            };
+            boundaries.push(end_of_run);
+            i = j;
+            continue;
         } else if c == '\n' {
             boundaries.push(chars[i].0 + 1);
         }
