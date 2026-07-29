@@ -146,6 +146,7 @@ fn verify_checksum_if_present(
     app: &AppHandle,
     manifest: &LocalSttModelManifest,
     archive_path: &Path,
+    cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
     log::info!(
         "local-stt: verification begin id={} checksum_present={}",
@@ -172,6 +173,7 @@ fn verify_checksum_if_present(
         let mut hasher = Sha256::new();
         let mut buffer = [0u8; 1024 * 128];
         loop {
+            ensure_not_cancelled(cancel)?;
             let read = file.read(&mut buffer)?;
             if read == 0 {
                 break;
@@ -553,10 +555,30 @@ pub async fn download_model(
         overall_started_at.elapsed().as_millis()
     );
 
-    verify_checksum_if_present(app, manifest, &partial_path)?;
+    // Checksum hashing (hundreds of MB) and archive extraction are heavy
+    // synchronous CPU/disk work; running them on the Tokio worker thread
+    // (this fn is invoked via `tauri::async_runtime::spawn`) would block
+    // other async IPC/tasks for as long as they take. spawn_blocking hands
+    // them a dedicated thread-pool thread instead.
+    {
+        let app = app.clone();
+        let manifest = manifest.clone();
+        let partial_path = partial_path.clone();
+        let cancel = cancel.clone();
+        tokio::task::spawn_blocking(move || verify_checksum_if_present(&app, &manifest, &partial_path, &cancel))
+            .await??;
+    }
 
     if manifest.is_directory {
-        extract_archive(app, manifest, &partial_path, root, &cancel)?;
+        {
+            let app = app.clone();
+            let manifest = manifest.clone();
+            let partial_path = partial_path.clone();
+            let root = root.to_path_buf();
+            let cancel = cancel.clone();
+            tokio::task::spawn_blocking(move || extract_archive(&app, &manifest, &partial_path, &root, &cancel))
+                .await??;
+        }
         let _ = std::fs::remove_file(&partial_path);
     } else {
         let final_path = manifest.final_path(root);

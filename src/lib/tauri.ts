@@ -156,6 +156,13 @@ const DEV_LOCAL_LLM_MODELS_KEY = 'verenu:dev-local-llm-models';
 const DEV_LOCAL_LLM_STATE_KEY = 'verenu:dev-local-llm-state';
 const DEV_LOCAL_LLM_RUNTIME_KEY = 'verenu:dev-local-llm-runtime';
 let devEventId = 0;
+// Bumped each time a dev-mock model download starts. Captured per-call below
+// so `stillDownloading`/`stillDownloadingLlm` can tell a cancelled-then-
+// restarted download's stale `setTimeout` steps apart from the current
+// session's — without this, orphaned timers from a prior cancelled download
+// of the same model ID would fire alongside the new session's timers.
+let devSttDownloadSession = 0;
+let devLlmDownloadSession = 0;
 
 const defaultProviderModels = {
   groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
@@ -949,7 +956,9 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       state[modelId] = { downloaded: false, partial_size: 0 };
       writeDevLocalSttModelsState(state);
 
+      const session = ++devSttDownloadSession;
       const stillDownloading = () =>
+        session === devSttDownloadSession &&
         readDevLocalTranscriptionState().downloading_model_id === modelId;
 
       // Walk the full download → verify → extract → done cycle so the browser
@@ -1033,7 +1042,9 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       state[modelId] = { downloaded: false, partial_size: 0 };
       writeDevLocalLlmModelsState(state);
 
+      const session = ++devLlmDownloadSession;
       const stillDownloadingLlm = () =>
+        session === devLlmDownloadSession &&
         readDevLocalLlmState().downloading_model_id === modelId;
 
       // Cleanup models are raw weight files, so the cycle is download → verify

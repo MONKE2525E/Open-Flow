@@ -79,7 +79,7 @@ fn macos_free_memory_bytes() -> Option<u64> {
 fn parse_vm_stat_free_bytes(text: &str) -> Option<u64> {
     let page_size: u64 = text
         .lines()
-        .next()?
+        .find(|line| line.contains("page size of "))?
         .split("page size of ")
         .nth(1)?
         .split_whitespace()

@@ -52,12 +52,28 @@ pub fn strip_unspoken_em_dashes(raw: &str, cleaned: &str) -> String {
     if raw.contains(EM_DASH) || !cleaned.contains(EM_DASH) {
         return cleaned.to_string();
     }
-    cleaned
+    let parts: Vec<&str> = cleaned
         .split(EM_DASH)
         .map(str::trim)
         .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect();
+    let mut result = String::new();
+    for part in parts {
+        if !result.is_empty() {
+            // A part that already ends in punctuation (e.g. "Hello, —" or
+            // "First sentence. —") gets a plain space instead of another
+            // ", " — otherwise joining unconditionally produces malformed
+            // doubled punctuation like "Hello,, " or "sentence., ".
+            let prev_ends_with_punct = result
+                .trim_end()
+                .chars()
+                .last()
+                .is_some_and(|c| matches!(c, '.' | '!' | '?' | ',' | ';' | ':'));
+            result.push_str(if prev_ends_with_punct { " " } else { ", " });
+        }
+        result.push_str(part);
+    }
+    result
 }
 
 /// Standalone filler/hesitation words mechanically stripped from "light"
@@ -261,10 +277,18 @@ pub fn collapse_degenerate_word_runs(text: &str) -> String {
         .collect();
 
     let mut merged: Vec<FillerTok> = Vec::with_capacity(kept.len());
+    let mut recapitalize_next_word = false;
     for tok in kept {
         if let (Some(FillerTok::Other(prev)), FillerTok::Other(cur)) = (merged.last_mut(), &tok) {
-            merge_adjacent_separators(prev, cur);
+            recapitalize_next_word = merge_adjacent_separators(prev, cur);
             continue;
+        }
+        if recapitalize_next_word {
+            if let FillerTok::Word(w) = &tok {
+                merged.push(FillerTok::Word(capitalize_first_char(w)));
+                recapitalize_next_word = false;
+                continue;
+            }
         }
         merged.push(tok);
     }

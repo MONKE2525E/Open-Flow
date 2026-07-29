@@ -83,21 +83,31 @@ pub(super) fn is_transcription_hallucination(text: &str) -> bool {
 
 /// True when the entire (trimmed, lowercased) output is made up of nothing
 /// but the transcription prompt's own vocabulary terms — e.g. silent audio
-/// echoing "Verenu. Tauri. Svelte." verbatim. Requires at least one glossary
-/// term to actually be present so genuinely empty input doesn't match.
+/// echoing "Verenu. Tauri. Svelte." verbatim. A single match on "verenu"
+/// alone still counts (dictating just the app's own name is effectively
+/// never real user speech, and it's the term most likely to leak from
+/// priming), but any other single glossary term requires a second distinct
+/// match before triggering — otherwise a genuine single-word dictation of
+/// one brand/tech name (e.g. someone just saying "Svelte") would be
+/// misidentified as a hallucinated prompt echo.
 fn is_pure_glossary_echo(lowercased_trimmed: &str) -> bool {
     if lowercased_trimmed.is_empty() {
         return false;
     }
     let mut remainder = lowercased_trimmed.to_string();
-    let mut matched_any = false;
+    let mut matched_terms = 0;
+    let mut matched_verenu = false;
     for term in GLOSSARY_TERMS {
         if remainder.contains(term) {
-            matched_any = true;
+            matched_terms += 1;
+            if *term == "verenu" {
+                matched_verenu = true;
+            }
             remainder = remainder.replace(term, " ");
         }
     }
-    matched_any && !remainder.chars().any(|c| c.is_alphanumeric())
+    let enough_matches = matched_terms >= 2 || matched_verenu;
+    enough_matches && !remainder.chars().any(|c| c.is_alphanumeric())
 }
 
 /// Trims a trailing Whisper prompt-echo off the end of an otherwise-genuine

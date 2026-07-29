@@ -307,6 +307,16 @@ async fn download_one_artifact(
         _ => Some(probe.error_for_status()?),
     };
 
+    if already_complete {
+        // `partial_size` is already folded into `*aggregate_downloaded` by
+        // the caller's `manifest.partial_size(root)` accounting, so it must
+        // not be added again here. The file itself is left untouched — it
+        // must NOT be opened with `truncate(true)` below, or the completed
+        // download gets zeroed out right before checksum verification.
+        emit_progress(app, manifest.id, *aggregate_downloaded, aggregate_total);
+        return Ok(());
+    }
+
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -316,12 +326,6 @@ async fn download_one_artifact(
 
     if !resumed && partial_size > 0 {
         *aggregate_downloaded = aggregate_downloaded.saturating_sub(partial_size);
-    }
-
-    if already_complete {
-        *aggregate_downloaded = aggregate_downloaded.saturating_add(partial_size);
-        emit_progress(app, manifest.id, *aggregate_downloaded, aggregate_total);
-        return Ok(());
     }
 
     let mut last_emit = Instant::now() - Duration::from_secs(1);

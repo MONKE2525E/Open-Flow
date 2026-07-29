@@ -194,12 +194,14 @@
         : provider === 'google'
           ? 'google/gemini-3.5-flash'
           : 'groq/whisper-large-v3-turbo';
-    const cleanupProvider = provider === 'local' ? 'groq' : provider;
-    const cleanupDefaultModel = cleanupProvider === 'openai'
-      ? 'openai/gpt-4o-mini'
-      : cleanupProvider === 'google'
-        ? 'google/gemini-3.5-flash'
-        : 'groq/llama-3.3-70b-versatile';
+    const cleanupProvider = provider;
+    const cleanupDefaultModel = cleanupProvider === 'local'
+      ? 'local/qwen2.5-3b-instruct'
+      : cleanupProvider === 'openai'
+        ? 'openai/gpt-4o-mini'
+        : cleanupProvider === 'google'
+          ? 'google/gemini-3.5-flash'
+          : 'groq/llama-3.3-70b-versatile';
 
     try {
       await saveSetting('cleanup_intensity', cleanupIntensity);

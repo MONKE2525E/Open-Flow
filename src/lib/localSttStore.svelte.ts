@@ -86,22 +86,14 @@ export async function openLocalModelsFolder() {
   }
 }
 
-const unlisteners: Array<() => void> = [];
 let listenersStarted = false;
-// True once the cleanup function below has run. `listen()` calls still
-// in-flight at that point would otherwise push their unlisten functions into
-// `unlisteners` *after* it's already been cleared, leaking those listeners
-// forever instead of tearing them down — `registerUnlisten` catches that by
-// unlistening immediately instead of queuing when teardown already happened.
-let tornDown = false;
-
-function registerUnlisten(unlisten: () => void) {
-  if (tornDown) {
-    unlisten();
-  } else {
-    unlisteners.push(unlisten);
-  }
-}
+// Bumped on every `startLocalSttListeners` call. Captured per-invocation
+// below so `registerUnlisten` can tell whether it belongs to the *current*
+// session — if `startLocalSttListeners` is torn down and restarted while a
+// previous invocation's `listen()` promises are still in-flight, those
+// stale promises must unlisten immediately instead of registering into the
+// new session's `unlisteners` array (or leaking forever).
+let currentSession = 0;
 
 /**
  * Registers local-STT Tauri event listeners for the app's lifetime, independent
@@ -116,7 +108,16 @@ export function startLocalSttListeners(): () => void {
     return () => {};
   }
   listenersStarted = true;
-  tornDown = false;
+  const session = ++currentSession;
+  const unlisteners: Array<() => void> = [];
+
+  function registerUnlisten(unlisten: () => void) {
+    if (session !== currentSession) {
+      unlisten();
+    } else {
+      unlisteners.push(unlisten);
+    }
+  }
 
   (async () => {
     registerUnlisten(
@@ -213,14 +214,18 @@ export function startLocalSttListeners(): () => void {
     // Registration didn't fully succeed — tear down whatever did register
     // and reset so a future call can retry instead of permanently returning
     // a no-op cleanup function forever.
-    listenersStarted = false;
+    if (session === currentSession) {
+      listenersStarted = false;
+    }
     for (const unlisten of unlisteners) unlisten();
     unlisteners.length = 0;
   });
 
   return () => {
-    listenersStarted = false;
-    tornDown = true;
+    if (session === currentSession) {
+      listenersStarted = false;
+    }
+    currentSession += 1;
     for (const unlisten of unlisteners) unlisten();
     unlisteners.length = 0;
   };

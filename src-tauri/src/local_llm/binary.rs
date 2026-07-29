@@ -113,11 +113,14 @@ pub fn detect_backend() -> LlamaBackend {
 
 #[cfg(windows)]
 fn nvidia_gpu_present() -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
     std::process::Command::new("nvidia-smi")
         .arg("--query-gpu=name")
         .arg("--format=csv,noheader")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
@@ -341,7 +344,12 @@ pub async fn ensure_llama_server_binary(
         // or a tampered/substituted asset; either way, the .tmp dir (and
         // anything already extracted from a prior asset in this loop) is
         // discarded so no partially-verified install can be used.
-        let actual = super::download::sha256_hex(&archive_path)?;
+        // Hashing (up to ~600MB) and extraction are heavy synchronous CPU/disk
+        // work — run them off the Tokio worker thread so they can't stall the
+        // async executor (audio capture, hotkey handling, etc.) for seconds
+        // at a time.
+        let hash_path = archive_path.clone();
+        let actual = tokio::task::spawn_blocking(move || super::download::sha256_hex(&hash_path)).await??;
         if actual != asset.sha256 {
             log::error!(
                 "local-llm: runtime asset checksum mismatch url={} expected={} actual={}",
@@ -355,7 +363,9 @@ pub async fn ensure_llama_server_binary(
         }
 
         emit_progress(app, downloaded, None, "extracting");
-        extract_archive(&archive_path, &root)?;
+        let extract_archive_path = archive_path.clone();
+        let extract_root = root.clone();
+        tokio::task::spawn_blocking(move || extract_archive(&extract_archive_path, &extract_root)).await??;
         let _ = std::fs::remove_file(&archive_path);
     }
     let _ = std::fs::remove_dir_all(&tmp_dir);
