@@ -63,9 +63,19 @@
   $effect(() => {
     const idx = appearanceOptions.findIndex(o => o.id === appStore.appearanceMode);
     if (!segmentEl) return;
-    const btn = segmentEl.querySelectorAll<HTMLElement>('.appearance-option')[idx];
-    if (!btn) return;
-    indicatorStyle = `left:${btn.offsetLeft}px;width:${btn.offsetWidth}px`;
+
+    const measure = () => {
+      const btn = segmentEl?.querySelectorAll<HTMLElement>('.appearance-option')[idx];
+      if (!btn) return;
+      indicatorStyle = `left:${btn.offsetLeft}px;width:${btn.offsetWidth}px`;
+    };
+
+    measure();
+    // The settings column is fluid now, so a one-shot measurement goes stale as
+    // soon as the window is resized.
+    const observer = new ResizeObserver(measure);
+    observer.observe(segmentEl);
+    return () => observer.disconnect();
   });
 
   const readableMac: Record<string, string> = {

@@ -361,14 +361,31 @@ Files in `tests/smoke/` are a frozen contract — **never edit them**. Fix the a
 | Element | Required class / selector |
 |---|---|
 | Sidebar nav buttons | `nav-item` |
-| Settings container | `settings-modal` |
+| Settings container | `settings-page` |
 | Settings section buttons | `settings-nav-item` |
+| Leave-settings control | `settings-back` |
+| About version footer | `settings-foot` (**only** rendered on the About section) |
 | Privacy toggles | `toggle` with `role="switch"` and `aria-checked` |
 | Info badges | `badge` on a `<div>` |
 | Hotkey badge | `badge key-badge` on a `<kbd>` (contains "Ctrl") |
 | About GitHub button | `btn-ghost` on a `<button>` |
 | Model selector rows | `model-row` (active row also has `active`) |
 | Advanced gain display | `span.gain-value` |
+
+Since 0.15.0 settings is a full-screen page beside the sidebar, not a modal:
+`.settings-page` is a plain content surface, so don't give it card styling
+(elevated background, border, radius). It was called `.settings-modal` until
+that release — expect the old name in older branches and issues.
+
+The smoke files were amended once, with explicit owner sign-off, when settings
+became full-screen: the version footer moved to the About section only, routine
+open/close now uses `.settings-back` instead of a click at viewport (10, 10),
+and `.settings-modal` was renamed. Treat them as frozen again — that was a
+one-off, not a precedent.
+Behaviour specific to the full-screen settings page (rail morph, travelling
+highlight, page transition, footer placement) is covered separately in
+`tests/integration/playwright-test-fullscreen-settings-dev.cjs`, which is *not*
+frozen and is the right place to add new settings coverage.
 
 
 

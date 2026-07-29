@@ -11,7 +11,7 @@
   import CleanupPromptModal from './lib/components/settings/CleanupPromptModal.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
-  import { invoke, listen } from './lib/tauri';
+  import { getVersion, invoke, listen } from './lib/tauri';
   import { startAutomaticUpdateChecks } from './lib/updates';
   import { startLocalSttListeners } from './lib/localSttStore.svelte';
   import { startLocalLlmListeners } from './lib/localLlmStore.svelte';
@@ -125,6 +125,11 @@
       console.error('Failed to load transcription model:', error);
     });
 
+    // Shown in the sidebar footer and About; fetched once here since both read it.
+    getVersion()
+      .then((version) => { appStore.appVersion = version; })
+      .catch((error) => { console.error('Failed to read app version:', error); });
+
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
     const onSystemThemeChange = () => {
       if (appStore.appearanceMode === 'system') applyTheme();
@@ -162,7 +167,11 @@
   {/if}
   <div class="body">
     <Sidebar />
-    <div class="content scroll-styled" bind:this={contentEl}>
+    <div
+      class="content scroll-styled"
+      class:content-behind={appStore.settingsOpen}
+      bind:this={contentEl}
+    >
       {#key appStore.currentPage}
         <div
           class="page-wrapper"
@@ -255,8 +264,8 @@
     flex: 1;
     display: flex;
     min-height: 0;
-    padding: 0 0 14px 14px;
-    gap: 14px;
+    padding: 0 0 var(--app-gutter) var(--app-gutter);
+    gap: var(--app-gutter);
   }
 
   .content {
@@ -272,6 +281,38 @@
   }
 
   .content::-webkit-scrollbar-thumb { border: 3px solid var(--paper); }
+
+  /*
+   * Opening settings is a page change, not a panel appearing over a frozen
+   * page: the current view rises and fades out with the same vocabulary the
+   * Home/Dictionary/Style swaps use, while the settings page enters beneath the
+   * fading wash. Without this the underlying page just sat there and the
+   * transition read as nothing happening.
+   */
+  .content {
+    /* Both properties on one curve — cubic-bezier(0.33, 1, 0.68, 1) is the CSS
+       form of cubicOut, matching pageSwap. Opacity was on `ease` before, which
+       is what made the exit read as slightly out of step with the movement.
+       Keep --content-swap-y in sync with SETTINGS_SWAP_PX in Settings.svelte. */
+    transition:
+      opacity var(--content-swap-ms) cubic-bezier(0.33, 1, 0.68, 1),
+      transform var(--content-swap-ms) cubic-bezier(0.33, 1, 0.68, 1);
+    --content-swap-ms: 320ms;
+    --content-swap-y: 26px;
+  }
+
+  .content.content-behind {
+    opacity: 0;
+    transform: translate3d(0, calc(var(--content-swap-y) * -1), 0);
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .content {
+      --content-swap-ms: 190ms;
+      --content-swap-y: 10px;
+    }
+  }
 
   .page-wrapper {
     grid-area: 1 / 1;

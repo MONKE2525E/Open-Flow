@@ -1,5 +1,7 @@
 import { cubicOut } from 'svelte/easing';
 
+export { SETTINGS_SECTION_ORDER } from './settingsSections';
+
 export const MOTION_MS = {
   fast: 150,
   base: 220,
@@ -15,7 +17,6 @@ export const MOTION_PX = {
 } as const;
 
 export const NAV_ORDER = ['home', 'dictionary', 'snippets', 'style'] as const;
-export const SETTINGS_SECTION_ORDER = ['general', 'apps', 'keys', 'models', 'privacy', 'advanced', 'permissions', 'developer', 'about'] as const;
 export const STYLE_TAB_ORDER = ['cleanup', 'personal', 'apps'] as const;
 
 export function directionFromOrder(current: string, next: string, order: readonly string[]): 1 | -1 {

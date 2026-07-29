@@ -99,6 +99,7 @@ pub struct RecordingResult {
     pub sample_rate: u32,
     pub duration_ms: u64,
     pub rms: f32,
+    pub raw_rms: f32,
     pub truncated: bool,
 }
 
@@ -128,6 +129,7 @@ impl RecordingSession {
         let level = Arc::new(AtomicU32::new(0f32.to_bits()));
         let raw_level = Arc::new(AtomicU32::new(0f32.to_bits()));
         let active = Arc::new(AtomicBool::new(true));
+        let display_gain = (DISPLAY_GAIN * gain).max(0.0);
 
         let level_w = Arc::clone(&level);
         let raw_level_w = Arc::clone(&raw_level);
@@ -143,6 +145,8 @@ impl RecordingSession {
             let worker = std::thread::spawn(move || {
                 let mut processed = Vec::<f32>::new();
                 let mut batch = Vec::<f32>::with_capacity(2048);
+                let mut raw_sum_sq = 0.0f64;
+                let mut raw_sample_count = 0u64;
                 let max_processed_samples = sample_rate as usize * MAX_RECORDING_SECONDS as usize;
                 let mut recording_truncated = false;
                 let mut denoiser = if noise_reduction {
@@ -154,6 +158,9 @@ impl RecordingSession {
                 loop {
                     batch.clear();
                     while let Some(sample) = worker_queue.pop() {
+                        let raw_sample = sample as f64;
+                        raw_sum_sq += raw_sample * raw_sample;
+                        raw_sample_count += 1;
                         batch.push(clamp_unit_sample(sample * gain));
                     }
 
@@ -187,17 +194,21 @@ impl RecordingSession {
                 }
 
                 if let Some(d) = denoiser.as_mut() {
-                    if recording_truncated {
-                        return (processed, true);
-                    }
-                    d.flush(&mut processed);
-                    if processed.len() > max_processed_samples {
-                        processed.truncate(max_processed_samples);
-                        recording_truncated = true;
+                    if !recording_truncated {
+                        d.flush(&mut processed);
+                        if processed.len() > max_processed_samples {
+                            processed.truncate(max_processed_samples);
+                            recording_truncated = true;
+                        }
                     }
                 }
 
-                (processed, recording_truncated)
+                let raw_rms = if raw_sample_count == 0 {
+                    0.0
+                } else {
+                    (raw_sum_sq / raw_sample_count as f64).sqrt() as f32
+                };
+                (processed, recording_truncated, raw_rms)
             });
 
             let level_cb = Arc::clone(&level_w);
@@ -217,6 +228,7 @@ impl RecordingSession {
                             &dropped_cb,
                             &level_cb,
                             &raw_level_cb,
+                            display_gain,
                         )
                     },
                     err_fn,
@@ -232,6 +244,7 @@ impl RecordingSession {
                             &dropped_cb,
                             &level_cb,
                             &raw_level_cb,
+                            display_gain,
                         )
                     },
                     err_fn,
@@ -266,7 +279,7 @@ impl RecordingSession {
             raw_level_w.store(0f32.to_bits(), Ordering::Relaxed);
             stop_processing.store(true, Ordering::Relaxed);
 
-            let (data, recording_truncated) = match worker.join() {
+            let (data, recording_truncated, raw_rms) = match worker.join() {
                 Ok(samples) => samples,
                 Err(_) => {
                     let _ =
@@ -289,6 +302,7 @@ impl RecordingSession {
                 sample_rate: encode_rate,
                 duration_ms: dur_ms,
                 rms: overall_rms,
+                raw_rms,
                 truncated: recording_truncated,
             });
 
@@ -328,6 +342,7 @@ fn enqueue_f32_buffer(
     dropped: &AtomicU64,
     level: &AtomicU32,
     raw_level: &AtomicU32,
+    display_gain: f32,
 ) {
     if data.is_empty() {
         level.store(0f32.to_bits(), Ordering::Relaxed);
@@ -360,7 +375,7 @@ fn enqueue_f32_buffer(
         (sum / count as f32).sqrt()
     };
     raw_level.store(rms.to_bits(), Ordering::Relaxed);
-    let display = (rms * DISPLAY_GAIN).min(1.0);
+    let display = (rms * display_gain).min(1.0);
     level.store(display.to_bits(), Ordering::Relaxed);
 }
 
@@ -371,6 +386,7 @@ fn enqueue_i16_buffer(
     dropped: &AtomicU64,
     level: &AtomicU32,
     raw_level: &AtomicU32,
+    display_gain: f32,
 ) {
     if data.is_empty() {
         level.store(0f32.to_bits(), Ordering::Relaxed);
@@ -403,7 +419,7 @@ fn enqueue_i16_buffer(
         (sum / count as f32).sqrt()
     };
     raw_level.store(rms.to_bits(), Ordering::Relaxed);
-    let display = (rms * DISPLAY_GAIN).min(1.0);
+    let display = (rms * display_gain).min(1.0);
     level.store(display.to_bits(), Ordering::Relaxed);
 }
 
@@ -484,7 +500,7 @@ fn encode_wav(samples: &[f32], sample_rate: u32, channels: u16) -> Result<Vec<u8
 
 #[cfg(test)]
 mod tests {
-    use super::{append_capped_samples, enqueue_i16_buffer, push_overwriting_oldest};
+    use super::{append_capped_samples, enqueue_i16_buffer, push_overwriting_oldest, DISPLAY_GAIN};
     use crossbeam_queue::ArrayQueue;
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -514,7 +530,15 @@ mod tests {
         let raw_level = AtomicU32::new(0f32.to_bits());
         let data = [i16::MAX, i16::MAX, 0, 0];
 
-        enqueue_i16_buffer(&data, 2, &q, &dropped, &level, &raw_level);
+        enqueue_i16_buffer(
+            &data,
+            2,
+            &q,
+            &dropped,
+            &level,
+            &raw_level,
+            DISPLAY_GAIN,
+        );
 
         let first = q.pop().expect("first sample");
         let second = q.pop().expect("second sample");
@@ -522,6 +546,41 @@ mod tests {
         assert!(second.abs() < 1e-6);
         assert_eq!(dropped.load(Ordering::Relaxed), 0);
         assert!((f32::from_bits(raw_level.load(Ordering::Relaxed)) - 0.7071).abs() < 0.001);
+    }
+
+    #[test]
+    fn enqueue_level_scales_with_microphone_gain() {
+        let data = [128i16, 128i16];
+        let low_queue = ArrayQueue::<f32>::new(8);
+        let high_queue = ArrayQueue::<f32>::new(8);
+        let low_dropped = AtomicU64::new(0);
+        let high_dropped = AtomicU64::new(0);
+        let low_level = AtomicU32::new(0f32.to_bits());
+        let high_level = AtomicU32::new(0f32.to_bits());
+        let raw_level = AtomicU32::new(0f32.to_bits());
+
+        enqueue_i16_buffer(
+            &data,
+            1,
+            &low_queue,
+            &low_dropped,
+            &low_level,
+            &raw_level,
+            DISPLAY_GAIN,
+        );
+        enqueue_i16_buffer(
+            &data,
+            1,
+            &high_queue,
+            &high_dropped,
+            &high_level,
+            &raw_level,
+            DISPLAY_GAIN * 8.0,
+        );
+
+        let low = f32::from_bits(low_level.load(Ordering::Relaxed));
+        let high = f32::from_bits(high_level.load(Ordering::Relaxed));
+        assert!(high > low * 7.5);
     }
 
     #[test]

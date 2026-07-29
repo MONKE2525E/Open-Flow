@@ -271,9 +271,9 @@ fn cached_caption_icons(theme: IconTheme) -> (isize, isize) {
     let transparent = *TRANSPARENT.get_or_init(|| make_transparent_hicon(16));
     let real = match theme {
         IconTheme::Dark => *DARK_REAL
-            .get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Dark, 32).rgba(), 32)),
+            .get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Dark, 256).rgba(), 256)),
         IconTheme::Light => *LIGHT_REAL
-            .get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Light, 32).rgba(), 32)),
+            .get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Light, 256).rgba(), 256)),
     };
     (transparent, real)
 }
@@ -450,11 +450,11 @@ fn runtime_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'stati
 
     #[cfg(not(target_os = "macos"))]
     let bar_rects = [
-        (76, 302, 56, 98, 28),
-        (152, 204, 56, 196, 28),
-        (228, 120, 56, 280, 28),
-        (304, 246, 56, 154, 28),
-        (380, 330, 56, 70, 28),
+        (88, 304, 48, 112, 24),
+        (160, 192, 48, 224, 24),
+        (232, 96, 48, 320, 24),
+        (304, 240, 48, 176, 24),
+        (376, 336, 48, 80, 24),
     ];
 
     for (x, y, width, height, radius) in bar_rects {

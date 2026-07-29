@@ -285,7 +285,7 @@
 
 <style>
   .mapping-region {
-    max-width: 640px;
+    max-width: var(--mappings-measure, 640px);
     margin-bottom: 20px;
   }
 
@@ -293,7 +293,7 @@
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
     overflow: hidden;
-    max-width: 640px;
+    max-width: var(--mappings-measure, 640px);
   }
 
   .mapping-row {

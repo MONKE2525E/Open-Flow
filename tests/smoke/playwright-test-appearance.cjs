@@ -34,7 +34,7 @@ const TIMEOUT = 8_000;
 
     const settingsBtn = page.locator('.nav-item:has-text("Settings")');
     await settingsBtn.click();
-    await page.locator('.settings-modal').waitFor({ state: 'visible', timeout: 3_000 });
+    await page.locator('.settings-page').waitFor({ state: 'visible', timeout: 3_000 });
 
     const lightOption = page.locator('.appearance-option:has-text("Light")');
     await lightOption.waitFor({ state: 'visible', timeout: 3_000 });
@@ -45,8 +45,9 @@ const TIMEOUT = 8_000;
     await darkOption.click();
     await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: 3_000 });
 
-    await page.mouse.click(10, 10);
-    await page.locator('.settings-modal').waitFor({ state: 'hidden', timeout: 3_000 });
+    // Leave via the rail control — see the note in playwright-test-state.cjs.
+    await page.locator('.settings-back').click({ timeout: TIMEOUT });
+    await page.locator('.settings-page').waitFor({ state: 'hidden', timeout: 3_000 });
 
     for (const label of ['Home', 'Dictionary', 'Snippets', 'Style']) {
       const btn = page.locator(`.nav-item:has-text("${label}")`);

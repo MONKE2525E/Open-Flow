@@ -69,7 +69,7 @@
     }
   }
 
-  // Level from Rust is already 0–1 (raw_rms × 15, capped).
+  // Level from Rust is already 0–1 (raw_rms × mic_gain × 15, capped).
   // Gate: ignore anything below 4% of full scale (background noise).
   const GATE = 0.04;
 

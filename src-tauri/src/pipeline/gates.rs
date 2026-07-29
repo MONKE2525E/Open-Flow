@@ -25,6 +25,13 @@ pub(super) fn recording_gate_rms(active_gain: f32) -> f32 {
     }
 }
 
+/// Use the post-processed RMS for normal validation, but keep a quiet voice
+/// from being rejected when denoising removes energy after gain was applied.
+pub(super) fn effective_recording_rms(processed_rms: f32, raw_rms: f32, active_gain: f32) -> f32 {
+    let gain = active_gain.clamp(store::MIN_MIC_GAIN, store::MAX_MIC_GAIN);
+    processed_rms.max(raw_rms * gain)
+}
+
 /// Returns true when the transcription looks like a Whisper prompt-echo or
 /// a well-known silent-audio hallucination rather than actual speech.
 ///

@@ -27,12 +27,14 @@ async function openSettings(page) {
   const button = page.locator('.nav-item:has-text("Settings")');
   await button.waitFor({ state: 'visible', timeout: TIMEOUT });
   await button.click();
-  await page.locator('.settings-modal').waitFor({ state: 'visible', timeout: TIMEOUT });
+  await page.locator('.settings-page').waitFor({ state: 'visible', timeout: TIMEOUT });
 }
 
+// Settings is a full-screen page, so leave it the way a user would — via the
+// rail's "Back to app" control — rather than clicking the app's margin.
 async function closeSettings(page) {
-  await page.mouse.click(10, 10);
-  await page.locator('.settings-modal').waitFor({ state: 'hidden', timeout: TIMEOUT });
+  await page.locator('.settings-back').click({ timeout: TIMEOUT });
+  await page.locator('.settings-page').waitFor({ state: 'hidden', timeout: TIMEOUT });
 }
 
 module.exports = {

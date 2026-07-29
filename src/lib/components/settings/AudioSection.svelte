@@ -292,6 +292,21 @@
     opacity: 0;
     pointer-events: none;
   }
+
+  /*
+   * Collapsing the copy only exists to free room for the ~440px calibration
+   * panel in a narrow row. Once the settings column is wide enough for both,
+   * keep the label in place — otherwise the panel is left stranded on the right
+   * beside an empty half-row.
+   */
+  @container settings-panel (min-width: 620px) {
+    .cal-row.calibrating .cal-copy {
+      flex-basis: auto;
+      max-height: 80px;
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
   .cal-control {
     flex-shrink: 0;
     width: 136px;

@@ -1,6 +1,7 @@
 use super::{
     apply_app_style_overrides, ensure_terminal_punctuation, is_transcription_hallucination,
-    normalize_transcription_math_artifacts, preview_text, recording_gate_rms, resolve_app_mapping,
+    effective_recording_rms, normalize_transcription_math_artifacts, preview_text,
+    recording_gate_rms, resolve_app_mapping,
     run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
     strip_hallucinated_suffix, style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry,
     PipelineTestRequest, PipelineTestSnippet,
@@ -259,6 +260,13 @@ fn recording_gate_gets_more_permissive_at_high_gain() {
     assert!((default_gate - 0.008).abs() < f32::EPSILON);
     assert!(high_gain_gate < default_gate);
     assert!((high_gain_gate - 0.0035).abs() < 0.0001);
+}
+
+#[test]
+fn effective_recording_rms_keeps_quiet_gain_boosted_speech_from_failing() {
+    let effective = effective_recording_rms(0.002, 0.001, store::MAX_MIC_GAIN);
+
+    assert!((effective - 0.008).abs() < 0.0001);
 }
 
 #[test]

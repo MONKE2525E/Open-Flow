@@ -40,7 +40,7 @@ async function waitForMappingRowOpacity(page, exe, timeout = 1_000) {
     const settingsBtn = page.locator('.nav-item:has-text("Settings")');
     await settingsBtn.waitFor({ state: 'visible', timeout: 5_000 });
     await settingsBtn.click();
-    await page.locator('.settings-modal').waitFor({ state: 'visible', timeout: 3_000 });
+    await page.locator('.settings-page').waitFor({ state: 'visible', timeout: 3_000 });
     console.log('Settings opened.');
 
     // Navigate to App Mappings section
