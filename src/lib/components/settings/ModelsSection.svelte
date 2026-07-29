@@ -62,6 +62,7 @@
   let transcriptionDefaultModel = $state('groq/whisper-large-v3-turbo');
   let cleanupDefaultModel = $state('groq/llama-3.3-70b-versatile');
   let transcriptionFallbackModels = $state<string[]>([]);
+  let dualTranscriptionEnabled = $state(false);
   let cleanupFallbackModels = $state<string[]>([]);
 
   let customDrafts = $state<Record<TaskType, Record<UiProviderId, string>>>({
@@ -284,6 +285,7 @@
       transcriptionDefaultModel,
       cleanupDefaultModel,
       transcriptionFallbackModels,
+      dualTranscriptionEnabled,
       cleanupFallbackModels,
       transcriptionProvider,
       cleanupProvider,
@@ -298,6 +300,7 @@
         saveSetting('transcription_default_model', snapshot.transcriptionDefaultModel),
         saveSetting('cleanup_default_model', snapshot.cleanupDefaultModel),
         saveSetting('transcription_fallback_models', snapshot.transcriptionFallbackModels),
+        saveSetting('dual_transcription_enabled', snapshot.dualTranscriptionEnabled),
         saveSetting('cleanup_fallback_models', snapshot.cleanupFallbackModels),
         saveSetting('transcription_model', snapshot.transcriptionDefaultModel),
         saveSetting('cleanup_model', snapshot.cleanupDefaultModel),
@@ -336,6 +339,7 @@
     if (Array.isArray(all.transcription_fallback_models)) {
       transcriptionFallbackModels = all.transcription_fallback_models.filter((id) => !!splitModelId(id));
     }
+    dualTranscriptionEnabled = all.dual_transcription_enabled === true;
     if (Array.isArray(all.cleanup_fallback_models)) {
       cleanupFallbackModels = all.cleanup_fallback_models.filter((id) => !!splitModelId(id));
     }
@@ -519,6 +523,19 @@
     }
   }
 
+  let transcriptionModeDropdownOpen = $state(false);
+
+  async function handleDualTranscription(value: boolean) {
+    dualTranscriptionEnabled = value;
+    transcriptionModeDropdownOpen = false;
+    try {
+      await saveSetting('dual_transcription_enabled', value);
+    } catch (err) {
+      dualTranscriptionEnabled = !value;
+      console.error('save dual transcription setting failed:', err);
+    }
+  }
+
   async function updateLocalMemoryPolicy(policy: LocalModelMemoryPolicy) {
     localModelMemoryPolicy = policy;
     localModelMemoryDropdownOpen = false;
@@ -531,8 +548,9 @@
 
   function handleWindowClick(event: MouseEvent) {
     const target = event.target as HTMLElement;
-    if (localModelMemoryDropdownOpen && !target.closest('.models-dropdown')) {
+    if ((localModelMemoryDropdownOpen || transcriptionModeDropdownOpen) && !target.closest('.models-dropdown')) {
       localModelMemoryDropdownOpen = false;
+      transcriptionModeDropdownOpen = false;
     }
   }
 
@@ -660,6 +678,71 @@
 {/if}
 
 <h3 class="settings-subhead">Model settings</h3>
+<div class="setting-row transcription-mode-row">
+  <div>
+    <div class="label">Transcription strategy</div>
+    <div class="desc">Use one model, or compare two working models from the existing transcription fallback chain before cleanup.</div>
+  </div>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="models-dropdown"
+    onkeydown={(event) => {
+      if (event.key === 'Escape' && transcriptionModeDropdownOpen) {
+        transcriptionModeDropdownOpen = false;
+        event.stopPropagation();
+      }
+    }}
+  >
+    <button
+      class="btn-ghost models-dropdown-btn"
+      type="button"
+      onclick={() => (transcriptionModeDropdownOpen = !transcriptionModeDropdownOpen)}
+      aria-haspopup="listbox"
+      aria-expanded={transcriptionModeDropdownOpen}
+      aria-controls="transcription-mode-menu"
+      aria-label="Transcription strategy"
+    >
+      <span>{dualTranscriptionEnabled ? 'Dual model' : 'Single model'}</span>
+      <svg class:open={transcriptionModeDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m6 9 6 6 6-6"/>
+      </svg>
+    </button>
+    {#if transcriptionModeDropdownOpen}
+      <div
+        id="transcription-mode-menu"
+        class="models-dropdown-menu scroll-styled scroll-thumb-elev"
+        role="listbox"
+        tabindex="-1"
+        aria-label="Transcription strategy"
+        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+      >
+        <button
+          class="models-dropdown-item"
+          class:is-active={!dualTranscriptionEnabled}
+          type="button"
+          onclick={() => handleDualTranscription(false)}
+          role="option"
+          aria-selected={!dualTranscriptionEnabled}
+        >
+          <span>Single model</span>
+          <small>Fastest, uses the primary model and fallbacks only on failure.</small>
+        </button>
+        <button
+          class="models-dropdown-item"
+          class:is-active={dualTranscriptionEnabled}
+          type="button"
+          onclick={() => handleDualTranscription(true)}
+          role="option"
+          aria-selected={dualTranscriptionEnabled}
+        >
+          <span>Dual model</span>
+          <small>Compares two successful fallback-chain models before cleanup.</small>
+        </button>
+      </div>
+    {/if}
+  </div>
+</div>
 <div class="setting-row">
   <div>
     <div class="label">Memory policy</div>
@@ -686,7 +769,9 @@
       aria-label="Local model memory policy"
     >
       <span>{localMemoryPolicyLabel(localModelMemoryPolicy)}</span>
-      <span class="dropdown-chevron" class:is-open={localModelMemoryDropdownOpen} aria-hidden="true"></span>
+      <svg class:open={localModelMemoryDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m6 9 6 6 6-6"/>
+      </svg>
     </button>
     {#if localModelMemoryDropdownOpen}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -766,6 +851,23 @@
     border-bottom: 1px solid var(--line);
   }
 
+  .transcription-mode-row {
+    position: relative;
+    padding: 14px 0;
+  }
+
+  .models-dropdown-item {
+    display: grid;
+    gap: 3px;
+    text-align: left;
+  }
+
+  .models-dropdown-item small {
+    color: var(--ink-mute);
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
   .adv-text {
     display: flex;
     flex-direction: column;
@@ -793,7 +895,15 @@
   .models-dropdown-btn {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--r-md);
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 500;
     max-width: 220px;
   }
 
@@ -803,19 +913,8 @@
     white-space: nowrap;
   }
 
-  .dropdown-chevron {
-    width: 8px;
-    height: 8px;
-    flex-shrink: 0;
-    border-right: 2px solid var(--ink-mute);
-    border-bottom: 2px solid var(--ink-mute);
-    transform: rotate(45deg);
-    transition: transform 180ms ease;
-  }
-
-  .dropdown-chevron.is-open {
-    transform: rotate(225deg);
-  }
+  .models-dropdown-btn svg { transition: transform 150ms; }
+  .models-dropdown-btn svg.open { transform: rotate(180deg); }
 
   .models-dropdown-menu {
     position: absolute;
@@ -852,6 +951,12 @@
 
   .models-dropdown-item:hover {
     background: var(--paper);
+  }
+
+  .models-dropdown-item:focus-visible,
+  .models-dropdown-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .models-dropdown-item.is-active {

@@ -186,6 +186,7 @@ pub const CLEANUP_MODELS_BY_PROVIDER: &str = "cleanup_models_by_provider";
 pub const TRANSCRIPTION_DEFAULT_MODEL: &str = "transcription_default_model";
 pub const CLEANUP_DEFAULT_MODEL: &str = "cleanup_default_model";
 pub const TRANSCRIPTION_FALLBACK_MODELS: &str = "transcription_fallback_models";
+pub const DUAL_TRANSCRIPTION_ENABLED: &str = "dual_transcription_enabled";
 pub const CLEANUP_FALLBACK_MODELS: &str = "cleanup_fallback_models";
 pub const CLEANUP_ENABLED: &str = "cleanup_enabled";
 pub const HOTKEY: &str = "hotkey";
@@ -266,6 +267,7 @@ pub struct PipelineConfig {
     pub transcription_default_model: String,
     pub cleanup_default_model: String,
     pub transcription_fallback_models: Vec<String>,
+    pub dual_transcription_enabled: bool,
     pub cleanup_fallback_models: Vec<String>,
     pub cleanup_enabled: bool,
     pub key_groq: String,
@@ -498,6 +500,10 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
     );
 
     let transcription_fallback_models = parse_string_array(TRANSCRIPTION_FALLBACK_MODELS);
+    let dual_transcription_enabled = store
+        .get(DUAL_TRANSCRIPTION_ENABLED)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let cleanup_fallback_models = parse_string_array(CLEANUP_FALLBACK_MODELS);
     let cleanup_prompt_overrides = store
         .get(CLEANUP_PROMPT_OVERRIDES)
@@ -514,6 +520,7 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         transcription_default_model,
         cleanup_default_model,
         transcription_fallback_models,
+        dual_transcription_enabled,
         cleanup_fallback_models,
         cleanup_enabled: store
             .get(CLEANUP_ENABLED)

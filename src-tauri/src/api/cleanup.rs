@@ -2,9 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use super::gemini_types::{GeminiGenerateReq, GeminiReqContent, GeminiReqPart};
-use super::prompts::{
-    cleanup_max_output_tokens, gemini_generation_config, get_cleanup_prompt_with_extras,
-};
+use super::prompts::{cleanup_max_output_tokens, gemini_generation_config};
 use super::ProviderId;
 
 #[allow(clippy::too_many_arguments)]
@@ -19,13 +17,41 @@ pub async fn cleanup(
     app_context: Option<&str>,
     custom_template: Option<&str>,
 ) -> Result<String> {
+    cleanup_with_alternate(
+        text,
+        provider,
+        api_key,
+        model,
+        profile,
+        intensity,
+        snippet_instructions,
+        app_context,
+        custom_template,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn cleanup_with_alternate(
+    text: &str,
+    provider: ProviderId,
+    api_key: &str,
+    model: &str,
+    profile: &str,
+    intensity: &str,
+    snippet_instructions: &str,
+    app_context: Option<&str>,
+    custom_template: Option<&str>,
+    alternate_transcript: Option<&str>,
+) -> Result<String> {
     let provider_id = provider.as_str();
     #[cfg(any(test, debug_assertions))]
     if let Some(result) = crate::testing::resolve_provider_fixture("cleanup", provider_id, model) {
         return result;
     }
 
-    let prompt = get_cleanup_prompt_with_extras(
+    let prompt = super::prompts::get_cleanup_prompt_with_alternate(
         provider_id,
         model,
         profile,
@@ -34,6 +60,7 @@ pub async fn cleanup(
         app_context,
         text,
         custom_template,
+        alternate_transcript,
     );
     let max_output_tokens = cleanup_max_output_tokens(intensity, text);
     log::debug!(
@@ -68,10 +95,11 @@ pub async fn cleanup(
             model,
             &prompt,
             max_output_tokens,
+            alternate_transcript,
         )
         .await
     } else {
-        google_cleanup(text, api_key, &prompt, model, max_output_tokens).await
+        google_cleanup(text, api_key, &prompt, model, max_output_tokens, alternate_transcript).await
     }
 }
 
@@ -104,6 +132,7 @@ struct MsgResp {
     content: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn openai_compat(
     text: &str,
     api_key: &str,
@@ -112,8 +141,15 @@ async fn openai_compat(
     model: &str,
     prompt: &str,
     max_tokens: u32,
+    alternate_transcript: Option<&str>,
 ) -> Result<String> {
-    let body = build_openai_compat_request(text, model, prompt, max_tokens);
+    let body = build_openai_compat_request_with_alternate(
+        text,
+        model,
+        prompt,
+        max_tokens,
+        alternate_transcript,
+    );
 
     log::debug!(
         "cleanup: openai_compat request provider={} model={} url={} input_chars={} prompt_chars={}",
@@ -201,6 +237,7 @@ async fn google_cleanup(
     prompt: &str,
     model: &str,
     max_output_tokens: u32,
+    alternate_transcript: Option<&str>,
 ) -> Result<String> {
     use super::gemini_types::GeminiResp;
 
@@ -210,7 +247,13 @@ async fn google_cleanup(
         prompt.chars().count(),
         max_output_tokens
     );
-    let req = build_google_cleanup_request(text, prompt, model, max_output_tokens);
+    let req = build_google_cleanup_request_with_alternate(
+        text,
+        prompt,
+        model,
+        max_output_tokens,
+        alternate_transcript,
+    );
 
     super::validate_model_for_url(model)?;
     // Pass the key in the `x-goog-api-key` header, never in the URL query string:
@@ -289,7 +332,26 @@ async fn google_cleanup(
     Ok(output)
 }
 
+#[cfg(test)]
 fn build_openai_compat_request(text: &str, model: &str, prompt: &str, max_tokens: u32) -> ChatReq {
+    build_openai_compat_request_with_alternate(text, model, prompt, max_tokens, None)
+}
+
+fn build_openai_compat_request_with_alternate(
+    text: &str,
+    model: &str,
+    prompt: &str,
+    max_tokens: u32,
+    alternate_transcript: Option<&str>,
+) -> ChatReq {
+    let user_content = match alternate_transcript {
+        Some(alternate) => format!(
+            "<primary_transcript>\n{}\n</primary_transcript>\n<alternate_transcript>\n{}\n</alternate_transcript>",
+            escape_transcript_xml(text),
+            escape_transcript_xml(alternate),
+        ),
+        None => format!("<raw_dictation>\n{text}\n</raw_dictation>"),
+    };
     ChatReq {
         model: model.to_owned(),
         messages: vec![
@@ -299,7 +361,7 @@ fn build_openai_compat_request(text: &str, model: &str, prompt: &str, max_tokens
             },
             Msg {
                 role: "user".into(),
-                content: format!("<raw_dictation>\n{text}\n</raw_dictation>"),
+                content: user_content,
             },
         ],
         max_tokens,
@@ -307,17 +369,36 @@ fn build_openai_compat_request(text: &str, model: &str, prompt: &str, max_tokens
     }
 }
 
+#[cfg(test)]
 fn build_google_cleanup_request(
     text: &str,
     prompt: &str,
     model: &str,
     max_output_tokens: u32,
 ) -> GeminiGenerateReq {
+    build_google_cleanup_request_with_alternate(text, prompt, model, max_output_tokens, None)
+}
+
+fn build_google_cleanup_request_with_alternate(
+    text: &str,
+    prompt: &str,
+    model: &str,
+    max_output_tokens: u32,
+    alternate_transcript: Option<&str>,
+) -> GeminiGenerateReq {
+    let input = match alternate_transcript {
+        Some(alternate) => format!(
+            "<primary_transcript>\n{}\n</primary_transcript>\n<alternate_transcript>\n{}\n</alternate_transcript>",
+            escape_transcript_xml(text),
+            escape_transcript_xml(alternate),
+        ),
+        None => format!("<raw_dictation>\n{text}\n</raw_dictation>"),
+    };
     GeminiGenerateReq {
         contents: vec![GeminiReqContent {
             parts: vec![GeminiReqPart {
                 inline_data: None,
-                text: Some(format!("<raw_dictation>\n{text}\n</raw_dictation>")),
+                text: Some(input),
             }],
         }],
         system_instruction: GeminiReqContent {
@@ -332,7 +413,10 @@ fn build_google_cleanup_request(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_google_cleanup_request, build_openai_compat_request};
+    use super::{
+        build_google_cleanup_request, build_google_cleanup_request_with_alternate,
+        build_openai_compat_request, build_openai_compat_request_with_alternate,
+    };
 
     #[test]
     fn openai_compat_request_uses_dynamic_max_tokens() {
@@ -354,4 +438,40 @@ mod tests {
         assert_eq!(json["generationConfig"]["maxOutputTokens"], 256);
         assert_eq!(json["generationConfig"]["temperature"], 0.0);
     }
+
+    #[test]
+    fn enhanced_cleanup_requests_keep_candidates_in_user_data() {
+        let body = build_openai_compat_request_with_alternate(
+            "the issue was clawed",
+            "gpt-4o-mini",
+            "reconcile",
+            128,
+            Some("the issue was called"),
+        );
+        let json = serde_json::to_value(body).unwrap();
+        assert_eq!(json["messages"][0]["content"], "reconcile");
+        let user = json["messages"][1]["content"].as_str().unwrap();
+        assert!(user.contains("<primary_transcript>"));
+        assert!(user.contains("<alternate_transcript>"));
+
+        let google = build_google_cleanup_request_with_alternate(
+            "primary",
+            "reconcile",
+            "gemini-2.5-flash",
+            128,
+            Some("alternate"),
+        );
+        let google_json = serde_json::to_value(google).unwrap();
+        let input = google_json["contents"][0]["parts"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert!(input.contains("<primary_transcript>"));
+        assert!(input.contains("<alternate_transcript>"));
+    }
+}
+
+fn escape_transcript_xml(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }

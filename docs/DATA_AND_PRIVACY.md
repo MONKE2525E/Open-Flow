@@ -84,6 +84,8 @@ After transcription, Verenu can send text to a cleanup model so it can:
 
 That means raw transcription text leaves your device when cleanup is enabled, including when transcription itself ran locally.
 
+With Dual model transcription enabled, the same audio may be sent to two or more providers from the configured transcription chain until two candidates succeed. Both successful candidates are then sent to the selected cleanup provider. Failed candidates do not fail a successful transcription.
+
 ### Optional context
 
 Depending on your settings and the feature being used, Verenu may also send:

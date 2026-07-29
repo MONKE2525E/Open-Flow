@@ -52,6 +52,13 @@ pub struct CapturedAudio {
     pub duration_ms: u64,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct TranscriptCandidate {
+    pub text: String,
+    pub provider: String,
+    pub model: String,
+}
+
 // ---------- pipeline ----------
 
 pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow::Result<String> {
@@ -296,13 +303,19 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     }
 
     let stage_transcribe = std::time::Instant::now();
-    let Some((raw_unorm, api_used)) = run_transcription(&app, &captured_audio, &cfg).await else {
+    let Some((raw_unorm, api_used, alternate)) = run_transcription(&app, &captured_audio, &cfg).await else {
         emit_pipeline_failed(&app);
         return;
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
     let raw_chars_before_strip = raw.chars().count();
-    let raw = strip_hallucinated_suffix(&raw);
+    let raw = if alternate.as_ref().is_some_and(|candidate| {
+        candidate.text.trim().eq_ignore_ascii_case(raw.trim())
+    }) {
+        raw
+    } else {
+        strip_hallucinated_suffix(&raw)
+    };
     if raw.chars().count() != raw_chars_before_strip {
         log::warn!(
             "pipeline: trimmed trailing hallucination provider={} chars_before={} chars_after={}",
@@ -363,11 +376,24 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     }
 
     let stage_cleanup = std::time::Instant::now();
-    let Some((final_text, dict_entries, cleanup_cache_key)) =
-        run_cleanup_and_snippets(&app, &raw, &cfg, &profile, app_context.as_deref()).await
+    let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) =
+        run_cleanup_and_snippets(
+            &app,
+            &raw,
+            alternate.as_ref(),
+            &cfg,
+            &profile,
+            app_context.as_deref(),
+        )
+        .await
     else {
         emit_pipeline_failed(&app);
         return;
+    };
+    let api_used = if alternate.is_none() || cleanup_api_used.is_empty() {
+        api_used
+    } else {
+        format!("{api_used};cleanup={cleanup_api_used}")
     };
     log::debug!(
         "pipeline: cleanup/snippets ok final_chars={} final_preview=\"{}\" dict_entries={}",
@@ -464,11 +490,17 @@ pub async fn retry_transcription_impl(
     let mapping = resolve_app_mapping(Some(&settings_store), &capture.process_name);
     capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
 
-    let Some((raw_unorm, api_used)) = run_transcription(app, &capture.audio, &cfg).await else {
+    let Some((raw_unorm, api_used, alternate)) = run_transcription(app, &capture.audio, &cfg).await else {
         anyhow::bail!("Retry transcription failed");
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
-    let raw = strip_hallucinated_suffix(&raw);
+    let raw = if alternate.as_ref().is_some_and(|candidate| {
+        candidate.text.trim().eq_ignore_ascii_case(raw.trim())
+    }) {
+        raw
+    } else {
+        strip_hallucinated_suffix(&raw)
+    };
     let raw = crate::system::text::collapse_degenerate_word_runs(&raw);
     if raw.is_empty() || is_transcription_hallucination(&raw) {
         log::warn!(
@@ -477,9 +509,10 @@ pub async fn retry_transcription_impl(
         );
         anyhow::bail!("Recording was too quiet — nothing was transcribed");
     }
-    let Some((final_text, dict_entries, cleanup_cache_key)) = run_cleanup_and_snippets(
+    let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) = run_cleanup_and_snippets(
         app,
         &raw,
+        alternate.as_ref(),
         &cfg,
         &capture.profile,
         capture.app_context.as_deref(),
@@ -487,6 +520,11 @@ pub async fn retry_transcription_impl(
     .await
     else {
         anyhow::bail!("Retry cleanup failed");
+    };
+    let api_used = if alternate.is_none() || cleanup_api_used.is_empty() {
+        api_used
+    } else {
+        format!("{api_used};cleanup={cleanup_api_used}")
     };
 
     finalize_pipeline_completion(
