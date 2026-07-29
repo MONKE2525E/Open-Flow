@@ -318,6 +318,16 @@ fn extract_archive(archive_path: &Path, dest: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+// Not a supported release target (Windows/macOS only, see CLAUDE.md), but
+// this must still exist so the crate type-checks when built or analyzed on
+// other platforms (e.g. a Linux CI/dev machine) — mirrors detect_backend()'s
+// Linux fallback above. Never actually reached in practice since nothing
+// calls ensure_llama_server_binary on an unsupported platform.
+#[cfg(not(any(windows, target_os = "macos")))]
+fn extract_archive(_archive_path: &Path, _dest: &Path) -> anyhow::Result<()> {
+    anyhow::bail!("local LLM runtime is only supported on Windows and macOS")
+}
+
 pub async fn ensure_llama_server_binary(
     app: &AppHandle,
     cancel: &AtomicBool,
