@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { listen } from '../tauri';
   import { fade } from 'svelte/transition';
-  import { MOTION_MS, MOTION_PX, modalBackdrop, motionMs, motionPx, pageSwap } from '../motion';
+  import { MOTION_MS, MOTION_PX, SETTINGS_SECTION_ORDER, directionFromOrder, modalBackdrop, motionMs, motionPx, pageSwap } from '../motion';
   import { isSettingsSectionId } from '../settingsSections';
 
   import GeneralSection from '../components/settings/GeneralSection.svelte';
@@ -36,7 +36,15 @@
   onMount(() => {
     const unlistenPromise = listen<string>('open-flow:open-settings-section', (event) => {
       const target = event.payload;
-      appStore.settingsSection = target && isSettingsSectionId(target) ? target : 'general';
+      const nextSection = target && isSettingsSectionId(target) ? target : 'general';
+      if (nextSection !== appStore.settingsSection) {
+        appStore.settingsAnimDir = directionFromOrder(
+          appStore.settingsSection,
+          nextSection,
+          SETTINGS_SECTION_ORDER
+        );
+      }
+      appStore.settingsSection = nextSection;
       appStore.settingsOpen = true;
     });
     return () => {

@@ -45,36 +45,24 @@
   );
 
   type RailEntry =
-    | { kind: 'nav'; key: string; id: string; label: string; icon: keyof typeof icons; locked: boolean }
     | { kind: 'label'; key: string; label: string }
     | { kind: 'section'; key: string; id: SettingsSectionId; label: string; icon: keyof typeof icons };
 
   /*
-   * One keyed list rather than two {#if} branches. Keys are unique per mode, so
-   * a mode change still animates everything out and in — but re-entering a mode
-   * while the previous exit is still running reuses the outroing elements
-   * instead of mounting duplicates alongside them.
+   * Settings and app navigation use separate lists so outgoing and incoming
+   * entries can overlap in the same grid cell during the mode transition.
    */
-  const railEntries = $derived<RailEntry[]>(
-    appStore.settingsOpen
-      ? settingsGroups.flatMap((group) => [
-          { kind: 'label' as const, key: `label:${group.group}`, label: group.group },
-          ...group.items.map((item) => ({
-            kind: 'section' as const,
-            key: `section:${item.id}`,
-            id: item.id,
-            label: item.label,
-            icon: item.icon,
-          })),
-        ])
-      : navItems.map((item) => ({
-          kind: 'nav' as const,
-          key: `nav:${item.id}`,
-          id: item.id,
-          label: item.label,
-          icon: item.icon,
-          locked: item.locked,
-        }))
+  const settingsEntries = $derived<RailEntry[]>(
+    settingsGroups.flatMap((group) => [
+      { kind: 'label' as const, key: `label:${group.group}`, label: group.group },
+      ...group.items.map((item) => ({
+        kind: 'section' as const,
+        key: `section:${item.id}`,
+        id: item.id,
+        label: item.label,
+        icon: item.icon,
+      })),
+    ])
   );
 
   /*
@@ -158,7 +146,7 @@
     appStore.settingsOpen;
     appStore.currentPage;
     appStore.settingsSection;
-    railEntries;
+    settingsEntries;
     requestAnimationFrame(() => movePillTo(activeRailButton()));
   });
 </script>
@@ -174,27 +162,33 @@
   <div class="rail-pill" class:rail-pill-snap={pillSnap} style="top:{pillTop}px; height:{pillHeight}px"></div>
 
   <div class="nav-section">
-    <div class="rail-list">
-      {#each railEntries as entry, i (entry.key)}
-        {#if entry.kind === 'label'}
-          <div
-            class="settings-section-label"
-            in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: railDelay(i, RAIL_IN_DELAY_MS), easing: cubicOut }}
-            out:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_OUT_MS), delay: railDelay(i, 0, RAIL_OUT_STAGGER_MS), easing: cubicOut }}
-          >{entry.label}</div>
-        {:else if entry.kind === 'section'}
-          <button
-            type="button"
-            class="settings-nav-item"
-            class:active={appStore.settingsSection === entry.id}
-            onclick={() => goToSection(entry.id)}
-            in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: railDelay(i, RAIL_IN_DELAY_MS), easing: cubicOut }}
-            out:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_OUT_MS), delay: railDelay(i, 0, RAIL_OUT_STAGGER_MS), easing: cubicOut }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.settingsSection === entry.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[entry.icon]}</svg>
-            <span>{entry.label}</span>
-          </button>
-        {:else}
+    {#if appStore.settingsOpen}
+      <div class="rail-list">
+        {#each settingsEntries as entry, i (entry.key)}
+          {#if entry.kind === 'label'}
+            <div
+              class="settings-section-label"
+              in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: railDelay(i, RAIL_IN_DELAY_MS), easing: cubicOut }}
+              out:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_OUT_MS), delay: railDelay(i, 0, RAIL_OUT_STAGGER_MS), easing: cubicOut }}
+            >{entry.label}</div>
+          {:else}
+            <button
+              type="button"
+              class="settings-nav-item"
+              class:active={appStore.settingsSection === entry.id}
+              onclick={() => goToSection(entry.id)}
+              in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: railDelay(i, RAIL_IN_DELAY_MS), easing: cubicOut }}
+              out:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_OUT_MS), delay: railDelay(i, 0, RAIL_OUT_STAGGER_MS), easing: cubicOut }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.settingsSection === entry.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[entry.icon]}</svg>
+              <span>{entry.label}</span>
+            </button>
+          {/if}
+        {/each}
+      </div>
+    {:else}
+      <div class="rail-list">
+        {#each navItems as entry, i (entry.id)}
           <button
             type="button"
             class="nav-item"
@@ -210,9 +204,9 @@
               <span class="lock-tag">Soon</span>
             {/if}
           </button>
-        {/if}
-      {/each}
-    </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 
   <div class="sidebar-spacer"></div>

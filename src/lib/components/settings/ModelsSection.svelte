@@ -117,8 +117,8 @@
   // panel the user opened, and never displace one another effect already chose.
   // A user with speech-to-text installed but no cleanup model therefore lands on
   // the cleanup downloads; a user with both installed lands with all four shut.
-  let localTranscriptionAutoOpenDecided = false;
-  let localCleanupAutoOpenDecided = false;
+  let localTranscriptionAutoOpenDecided = $state(false);
+  let localCleanupAutoOpenDecided = $state(false);
 
   $effect(() => {
     if (userChosePanel || localTranscriptionAutoOpenDecided) return;
