@@ -270,12 +270,12 @@ async function gotoSection(page, label) {
     if (errors.length) {
       console.error('FAIL - full-screen settings:');
       for (const e of errors) console.error(`  ✗ ${e}`);
-      process.exit(1);
+      process.exitCode = 1;
     }
     console.log('PASS - full-screen settings behaves as expected.');
   } catch (err) {
     console.error(`FAIL - full-screen settings test threw: ${err.message}`);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await browser.close();
   }
