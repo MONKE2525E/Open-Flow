@@ -81,7 +81,7 @@
   let openPanel = $state<ModelPanelId | null>('local-stt');
   // Set once the user touches any panel, so the one-shot auto-open effects
   // below can never yank a panel closed underneath them.
-  let userChosePanel = false;
+  let userChosePanel = $state(false);
 
   function isPanelOpen(id: ModelPanelId) {
     return openPanel === id;
