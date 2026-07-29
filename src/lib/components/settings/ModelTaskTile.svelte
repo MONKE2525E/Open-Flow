@@ -5,7 +5,9 @@
   import { MOTION_MS, motionMs } from '../../motion';
   import type { ProviderId, ProviderModelMap } from '../../settings';
   import {
+    modelDisplayLabel,
     modelId,
+    providerDisplayLabel,
     providerSections,
     recommendedModels,
     splitModelId,
@@ -14,6 +16,7 @@
     type UiProviderId,
   } from './models';
   import ModelProviderGroup from './ModelProviderGroup.svelte';
+  import LocalModelGroup from './LocalModelGroup.svelte';
 
   let {
     type,
@@ -29,6 +32,8 @@
     onRemoveCustomModel,
     onCustomDraftChange,
     onAddCustomModel,
+    onManageLocalModels,
+    localModels = [],
   }: {
     type: TaskType;
     opened: boolean;
@@ -43,6 +48,8 @@
     onRemoveCustomModel: (type: TaskType, provider: ProviderId, modelName: string) => void;
     onCustomDraftChange: (type: TaskType, provider: UiProviderId, value: string) => void;
     onAddCustomModel: (type: TaskType, provider: ProviderId, modelName: string) => void;
+    onManageLocalModels?: () => void;
+    localModels?: Array<{ id: string; is_downloaded?: boolean }>;
   } = $props();
 
   const fallbackCount = $derived(fallbackModels.length);
@@ -51,26 +58,33 @@
     const missing = [defaultModel, ...fallbackModels]
       .map((id) => splitModelId(id)?.provider)
       .filter((provider): provider is ProviderId => !!provider)
+      .filter((provider) => provider !== 'local')
       .filter((provider, index, all) => all.indexOf(provider) === index)
       .filter((provider) => !apiKeyStatus[provider]);
 
-    return missing.length ? `Missing API keys for: ${missing.join(', ')}` : '';
+    return missing.length
+      ? `Missing API keys for: ${missing.map((provider) => providerDisplayLabel(provider)).join(', ')}`
+      : '';
   }
 
   function activeProviderLabel(): string {
     const parsed = splitModelId(defaultModel);
-    return parsed ? parsed.provider.charAt(0).toUpperCase() + parsed.provider.slice(1) : 'None';
+    return parsed ? providerDisplayLabel(parsed.provider) : 'None';
   }
 
   function activeModelLabel(): string {
-    return splitModelId(defaultModel)?.model ?? 'None';
+    const parsed = splitModelId(defaultModel);
+    return parsed ? modelDisplayLabel(parsed.provider, parsed.model) : 'None';
   }
 
   function currentCleanupModelFor(provider: ProviderId): string {
     const parsed = splitModelId(defaultModel);
     if (parsed && parsed.provider === provider) return parsed.model;
-    return recommendedModels.cleanup[provider as UiProviderId].premium;
+    // Safe: only ever called for a section pre-filtered to cleanup-capable providers.
+    return recommendedModels.cleanup[provider as UiProviderId]!.premium;
   }
+
+  const cloudSections = $derived(providerSections.filter((section) => section.tasks.includes(type)));
 </script>
 
 <div class="task-tile" class:task-open={opened}>
@@ -95,7 +109,7 @@
       {/if}
 
       <div class="model-container">
-        {#each providerSections as section (section.id)}
+        {#each cloudSections as section (section.id)}
           <ModelProviderGroup
             {type}
             {section}
@@ -111,11 +125,32 @@
             {onAddCustomModel}
           />
         {/each}
+        {#if type === 'transcription'}
+          <LocalModelGroup
+            {type}
+            models={localModels}
+            {defaultModel}
+            {fallbackModels}
+            emptyLabel="No local transcription models installed yet"
+            {onToggleModel}
+            onManageLocalModels={onManageLocalModels ?? (() => {})}
+          />
+        {:else if type === 'cleanup'}
+          <LocalModelGroup
+            {type}
+            models={localModels}
+            {defaultModel}
+            {fallbackModels}
+            emptyLabel="No local cleanup models installed yet"
+            {onToggleModel}
+            onManageLocalModels={onManageLocalModels ?? (() => {})}
+          />
+        {/if}
       </div>
 
       {#if type === 'cleanup' && advancedModelUi}
         <div class="prompt-editor-section" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
-          {#each providerSections as section (section.id)}
+          {#each cloudSections as section (section.id)}
             {@const model = currentCleanupModelFor(section.storeProvider)}
             {@const key = modelId(section.storeProvider, model)}
             {@const isCustomized = !!cleanupPromptOverridesStore.overrides[key]?.trim()}

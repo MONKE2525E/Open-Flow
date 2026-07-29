@@ -44,6 +44,14 @@ pub use session::*;
 use stages::*;
 pub use state::*;
 
+#[derive(Clone, Debug)]
+pub struct CapturedAudio {
+    pub wav: bytes::Bytes,
+    pub samples_16k: Arc<Vec<f32>>,
+    pub sample_rate: u32,
+    pub duration_ms: u64,
+}
+
 // ---------- pipeline ----------
 
 pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow::Result<String> {
@@ -84,8 +92,13 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         stop_result
     })
     .await?;
+    if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
+        manager.set_recording_active(false);
+    }
     let audio::RecordingResult {
         wav,
+        samples_16k,
+        sample_rate,
         duration_ms,
         rms,
         truncated,
@@ -106,25 +119,35 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         }
         anyhow::bail!("Audio too quiet — check your mic");
     }
-    let wav = bytes::Bytes::from(wav);
+    let captured_audio = CapturedAudio {
+        wav: bytes::Bytes::from(wav),
+        samples_16k: Arc::new(samples_16k),
+        sample_rate,
+        duration_ms,
+    };
 
     let cfg = store::load_pipeline_config(&settings_store);
 
-    if !has_transcription_key_in_chain(&cfg) {
+    if let Err(message) = validate_transcription_chain(&cfg, None) {
         hide_pill(&app);
-        anyhow::bail!("No API key configured for any model in the transcription chain");
+        anyhow::bail!(message);
     }
 
     let mut transcribed: Option<String> = None;
     let mut last_err: Option<anyhow::Error> = None;
     for (provider_id, model) in transcription_model_chain(&cfg) {
-        let key = cfg.key_for(&provider_id).to_owned();
-        if key.is_empty() {
-            continue;
-        }
-        let provider = ProviderId::from_str(&provider_id);
         let language = cfg.transcription_language.clone();
-        match transcription::transcribe(wav.clone(), provider, &key, &language, &model).await {
+        let key = cfg.key_for(&provider_id).to_owned();
+        match transcribe_any(
+            &app,
+            &captured_audio,
+            &provider_id,
+            if key.is_empty() { None } else { Some(key.as_str()) },
+            &language,
+            &model,
+        )
+        .await
+        {
             Ok(text) if !text.is_empty() => {
                 transcribed = Some(text);
                 break;
@@ -152,7 +175,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     hide_pill(&app);
 
     match transcribed {
-        Some(text) => Ok(text),
+        Some(text) => Ok(crate::system::text::collapse_degenerate_word_runs(&text)),
         None => Err(last_err.unwrap_or_else(|| {
             anyhow::anyhow!("Transcription failed: no model in chain produced output")
         })),
@@ -222,7 +245,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // Quiet/short recordings are rejected inside stop_and_validate_audio, which
     // plays the error cue via reject_with_pill — so only play the stop cue once
     // the audio is *accepted*, otherwise a rejection would sound stop + error.
-    let Some((wav, duration_ms)) =
+    let Some(captured_audio) =
         stop_and_validate_audio(&app, session, exclusive_mic_session_id, min_rms).await
     else {
         return;
@@ -231,8 +254,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         crate::media::sound::play(crate::media::sound::SoundCue::Stop);
     }
     log::debug!(
-        "pipeline: audio accepted duration_ms={duration_ms} wav_bytes={} stage_ms={}",
-        wav.len(),
+        "pipeline: audio accepted duration_ms={} wav_bytes={} stage_ms={}",
+        captured_audio.duration_ms,
+        captured_audio.wav.len(),
         stage_audio.elapsed().as_millis()
     );
 
@@ -261,9 +285,8 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     let retry_captured_at = std::time::Instant::now();
     if let Ok(mut st) = lock_state(&state) {
         st.retry_capture = Some(RetryCapture {
-            wav: wav.clone(),
+            audio: captured_audio.clone(),
             captured_at: retry_captured_at,
-            duration_ms,
             target,
             process_name: process_name.clone(),
             profile: profile.clone(),
@@ -273,18 +296,54 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     }
 
     let stage_transcribe = std::time::Instant::now();
-    let Some((raw_unorm, api_used)) = run_transcription(&app, &wav, &cfg).await else {
+    let Some((raw_unorm, api_used)) = run_transcription(&app, &captured_audio, &cfg).await else {
         emit_pipeline_failed(&app);
         return;
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
+    let raw_chars_before_strip = raw.chars().count();
     let raw = strip_hallucinated_suffix(&raw);
+    if raw.chars().count() != raw_chars_before_strip {
+        log::warn!(
+            "pipeline: trimmed trailing hallucination provider={} chars_before={} chars_after={}",
+            api_used,
+            raw_chars_before_strip,
+            raw.chars().count()
+        );
+    }
+    let raw_chars_before_collapse = raw.chars().count();
+    let raw = crate::system::text::collapse_degenerate_word_runs(&raw);
+    if raw.chars().count() != raw_chars_before_collapse {
+        log::warn!(
+            "pipeline: collapsed degenerate word run provider={} chars_before={} chars_after={}",
+            api_used,
+            raw_chars_before_collapse,
+            raw.chars().count()
+        );
+    }
     log::debug!(
         "pipeline: transcription ok provider={} raw_chars={} raw_preview=\"{}\"",
         api_used,
         raw.chars().count(),
         preview_text(&raw, 140)
     );
+    // Diagnostic only, no behavioral effect — counts and a ratio, never the
+    // text. Average conversational speech runs ~2-3 words/sec; a ratio well
+    // under that on a recording long enough to judge reliably (rules out
+    // pauses/silence at the start dominating a short clip) is a signal worth
+    // having on hand if a future report of "words missing" turns out to be
+    // the transcription itself dropping content rather than cleanup, which
+    // today has no equivalent completeness check of its own.
+    let raw_words = raw.split_whitespace().count();
+    if captured_audio.duration_ms >= 3000 {
+        let words_per_sec = raw_words as f64 / (captured_audio.duration_ms as f64 / 1000.0);
+        log::debug!(
+            "pipeline: transcription completeness words={} duration_ms={} words_per_sec={:.2}",
+            raw_words,
+            captured_audio.duration_ms,
+            words_per_sec
+        );
+    }
     log::debug!(
         "pipeline: transcription stage_ms={}",
         stage_transcribe.elapsed().as_millis()
@@ -329,7 +388,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             raw: &raw,
             final_text_before_dict: &final_text,
             dict_entries: &dict_entries,
-            duration_ms,
+            duration_ms: captured_audio.duration_ms,
             api_used: &api_used,
             target_hwnd: target.id,
             cfg: &cfg,
@@ -350,7 +409,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     log::info!(
         "pipeline: completed words={} duration_ms={} elapsed_ms={}",
         words,
-        duration_ms,
+        captured_audio.duration_ms,
         started_at.elapsed().as_millis()
     );
 }
@@ -397,19 +456,20 @@ pub async fn retry_transcription_impl(
     let settings_store = store::settings_snapshot(app).map_err(anyhow::Error::msg)?;
     let mut cfg = store::load_pipeline_config(&settings_store);
 
-    if !has_transcription_key_in_chain(&cfg) {
-        show_error_pill(app, "No API key configured").await;
-        anyhow::bail!("No API key configured");
+    if let Err(message) = validate_transcription_chain(&cfg, None) {
+        show_error_pill(app, &message).await;
+        anyhow::bail!(message);
     }
 
     let mapping = resolve_app_mapping(Some(&settings_store), &capture.process_name);
     capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
 
-    let Some((raw_unorm, api_used)) = run_transcription(app, &capture.wav, &cfg).await else {
+    let Some((raw_unorm, api_used)) = run_transcription(app, &capture.audio, &cfg).await else {
         anyhow::bail!("Retry transcription failed");
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
     let raw = strip_hallucinated_suffix(&raw);
+    let raw = crate::system::text::collapse_degenerate_word_runs(&raw);
     if raw.is_empty() || is_transcription_hallucination(&raw) {
         log::warn!(
             "pipeline: retry transcription matched hallucination pattern, dropping raw=\"{}\"",
@@ -436,7 +496,7 @@ pub async fn retry_transcription_impl(
             raw: &raw,
             final_text_before_dict: &final_text,
             dict_entries: &dict_entries,
-            duration_ms: capture.duration_ms,
+            duration_ms: capture.audio.duration_ms,
             api_used: &api_used,
             target_hwnd: capture.target.id,
             cfg: &cfg,

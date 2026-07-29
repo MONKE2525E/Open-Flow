@@ -283,6 +283,9 @@ pub async fn stop_recording(
         crate::media::sound::coordinated_unmute();
         crate::system::media_control::end_dictation_media_pause();
     }
+    if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
+        manager.set_recording_active(false);
+    }
     pipeline::hide_pill(&app);
     Ok(())
 }

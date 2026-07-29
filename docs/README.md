@@ -13,6 +13,7 @@ This directory contains user, contributor, release, and architecture docs for Ve
 ## Features
 
 - [Cleanup Levels](CLEANUP_LEVELS.md)
+- [Local Transcription](LOCAL_TRANSCRIPTION.md)
 - [Dictionary](DICTIONARY.md)
 - [Snippets](SNIPPETS.md)
 - [App Mappings & Profiles](APP_MAPPINGS.md)

@@ -52,10 +52,12 @@
     onAddCustomModel: (type: TaskType, provider: ProviderId, modelName: string) => void;
   } = $props();
 
+  // Safe: a section is only ever rendered for a task it declares support for
+  // (filtered by `tasks` in ModelTaskTile), so its recommendedModels entry always exists.
+  const tiers = $derived(recommendedModels[type][section.id]!);
+
   const customModels = $derived(
-    models.filter(
-      (model) => model !== recommendedModels[type][section.id].premium && model !== recommendedModels[type][section.id].standard,
-    ),
+    models.filter((model) => model !== tiers.premium && model !== tiers.standard),
   );
 
   function selectionState(model: string): 'active' | 'fallback' | 'none' {
@@ -74,7 +76,7 @@
 
   {#each ['premium', 'standard'] as rawTier}
     {@const tier = rawTier as 'premium' | 'standard'}
-    {@const modelName = recommendedModels[type][section.id][tier]}
+    {@const modelName = tiers[tier]}
     {@const state = selectionState(modelName)}
     {@const isActive = state === 'active'}
     {@const isFallback = state === 'fallback'}

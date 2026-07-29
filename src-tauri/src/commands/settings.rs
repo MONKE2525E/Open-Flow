@@ -20,6 +20,7 @@ enum SettingKind {
     DefaultTone,
     CleanupIntensity,
     HistoryRetention,
+    LocalModelMemoryPolicy,
     ModelMap,
     StringArray,
     CleanupPromptOverrides,
@@ -174,6 +175,12 @@ const SETTING_SPECS: &[SettingSpec] = &[
         true,
         true,
     ),
+    setting_spec(
+        store::LOCAL_MODEL_MEMORY_POLICY,
+        SettingKind::LocalModelMemoryPolicy,
+        true,
+        true,
+    ),
     setting_spec(store::AUTOSTART_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::CAPS_LOCK_UPPERCASE, SettingKind::Bool, true, true),
 ];
@@ -264,6 +271,9 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
         SettingKind::HistoryRetention => value
             .as_str()
             .is_some_and(store::is_supported_history_retention),
+        SettingKind::LocalModelMemoryPolicy => value
+            .as_str()
+            .is_some_and(store::is_supported_local_model_memory_policy),
         SettingKind::ModelMap => is_model_map(value),
         SettingKind::StringArray => is_non_empty_string_array(value),
         SettingKind::CleanupPromptOverrides => is_cleanup_prompt_override_map(value),
@@ -399,6 +409,7 @@ pub struct AllSettings {
     pub caps_lock_uppercase_enabled: Option<bool>,
     pub mic_gain: Option<f64>,
     pub history_retention: Option<String>,
+    pub local_model_memory_policy: Option<String>,
     pub microphone_device: Option<String>,
     pub update_dismissed_version: Option<String>,
     pub update_notified_version: Option<String>,
@@ -457,6 +468,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         caps_lock_uppercase_enabled: bool_val(store::CAPS_LOCK_UPPERCASE),
         mic_gain: f64_val(store::MIC_GAIN),
         history_retention: str_val(store::HISTORY_RETENTION),
+        local_model_memory_policy: str_val(store::LOCAL_MODEL_MEMORY_POLICY),
         microphone_device: str_val(store::MICROPHONE_DEVICE),
         update_dismissed_version: str_val(store::UPDATE_DISMISSED_VERSION),
         update_notified_version: str_val(store::UPDATE_NOTIFIED_VERSION),

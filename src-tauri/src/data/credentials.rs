@@ -25,6 +25,7 @@ fn user_for(provider: &str) -> Option<&'static str> {
         store::GROQ => Some(store::KEY_GROQ),
         store::OPENAI => Some(store::KEY_OPENAI),
         store::GOOGLE => Some(store::KEY_GOOGLE),
+        store::ASSEMBLYAI => Some(store::KEY_ASSEMBLYAI),
         _ => None,
     }
 }

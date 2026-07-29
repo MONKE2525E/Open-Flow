@@ -7,12 +7,20 @@ async function seedDevState(page, {
   settings = {},
   snippets = [],
   dictionary = [],
+  localSttModels = {},
+  localLlmModels = {},
+  localSttState = null,
+  localLlmState = null,
 } = {}) {
-  await page.addInitScript(({ settings, snippets, dictionary }) => {
+  await page.addInitScript(({ settings, snippets, dictionary, localSttModels, localLlmModels, localSttState, localLlmState }) => {
     localStorage.setItem('verenu:dev-settings', JSON.stringify(settings));
     localStorage.setItem('verenu:dev-snippets', JSON.stringify(snippets));
     localStorage.setItem('verenu:dev-dictionary', JSON.stringify(dictionary));
-  }, { settings, snippets, dictionary });
+    localStorage.setItem('verenu:dev-local-stt-models', JSON.stringify(localSttModels));
+    localStorage.setItem('verenu:dev-local-llm-models', JSON.stringify(localLlmModels));
+    if (localSttState) localStorage.setItem('verenu:dev-local-stt-state', JSON.stringify(localSttState));
+    if (localLlmState) localStorage.setItem('verenu:dev-local-llm-state', JSON.stringify(localLlmState));
+  }, { settings, snippets, dictionary, localSttModels, localLlmModels, localSttState, localLlmState });
 }
 
 async function openSettings(page) {

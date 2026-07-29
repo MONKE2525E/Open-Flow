@@ -7,16 +7,33 @@
   import Toggle from '../Toggle.svelte';
   import { appStore } from '../../stores';
   import { saveSetting, type AppearanceMode } from '../../settings';
-  import { MOTION_MS, MOTION_PX, motionMs, motionPx, animateWidth } from '../../motion';
+  import { modalFocusTrap } from '../../modalFocus';
+  import { MOTION_MS, MOTION_PX, modalBackdrop, modalCard, motionMs, motionPx, animateWidth } from '../../motion';
   import {
     getTranscriptionLanguageLabel,
     transcriptionLanguages,
     type TranscriptionLanguageCode,
   } from '../../transcriptionLanguages';
+  import { getLanguageSupport } from '../../transcriptionLanguageSupport';
+  import { transcriptionModelStore } from '../../transcriptionModelStore.svelte';
+  import { modelDisplayLabel, splitModelId } from './models';
 
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   let languageDropdownOpen = $state(false);
   let languageTouched = false;
+  // Guards the language auto-correct effect below until the real persisted
+  // selection has loaded — without this, the effect could see the placeholder
+  // initial state (selectedLanguage='en', transcriptionModelStore at its
+  // default) as "unsupported," call saveLanguage('en'), and that call's
+  // languageTouched=true side effect would then make loadSettings() skip
+  // applying the user's actual saved language once it resolves.
+  //
+  // Must be $state, not a plain let: the auto-correct effect's first line is
+  // `if (!initialLanguageLoaded) return`, which on the mount run short-circuits
+  // before reading any reactive value — so unless THIS flag is reactive, the
+  // effect registers no dependencies and never re-runs when loadSettings later
+  // flips it true.
+  let initialLanguageLoaded = $state(false);
   let microphones = $state<string[]>([]);
   let selectedMic = $state('');
   let micDropdownOpen = $state(false);
@@ -27,7 +44,6 @@
     noDevicesFound: 'No devices found',
   };
   let autostart = $state(false);
-  let cleanup = $state(true);
   let contextualCaps = $state(true);
   let autoSpacing = $state(true);
   let capsLockUppercase = $state(false);
@@ -135,7 +151,7 @@
       results[i].status === 'fulfilled' ? (results[i] as PromiseFulfilledResult<T>).value ?? fallback : fallback;
 
     autostart = val<boolean | null>(0, null) ?? false;
-    cleanup = val<boolean | null>(4, null) ?? true;
+    appStore.cleanupEnabled = val<boolean | null>(4, null) ?? true;
     contextualCaps = val<boolean | null>(5, null) ?? true;
     autoSpacing = val<boolean | null>(6, null) ?? true;
     capsLockUppercase = val<boolean | null>(7, null) ?? false;
@@ -152,6 +168,7 @@
     if (!languageTouched && language && transcriptionLanguages.some((option) => option.code === language)) {
       selectedLanguage = language;
     }
+    initialLanguageLoaded = true;
 
     microphones = val<string[]>(8, []);
     selectedMic = val<string | null>(9, null) ?? '';
@@ -188,6 +205,47 @@
     }
   }
 
+  // Which of the 57 Spoken Language options the active transcription model
+  // actually supports — 'all' for every current cloud model (Verenu's full
+  // list already matches Whisper's official language support exactly, and
+  // Gemini publishes no narrower restriction), a real subset for most local
+  // models (e.g. Moonshine is English-only).
+  const languageScope = $derived.by(() => {
+    const parsed = splitModelId(transcriptionModelStore.defaultModel);
+    return parsed ? getLanguageSupport(parsed.provider, parsed.model) : 'all';
+  });
+  const visibleLanguages = $derived(
+    languageScope === 'all'
+      ? transcriptionLanguages
+      : transcriptionLanguages.filter((language) => languageScope.includes(language.code)),
+  );
+  const languageScopeNote = $derived.by(() => {
+    if (languageScope === 'all') return '';
+    const parsed = splitModelId(transcriptionModelStore.defaultModel);
+    const modelName = parsed ? modelDisplayLabel(parsed.provider, parsed.model) : 'this model';
+    const count = visibleLanguages.length;
+    return ` · ${count} ${count === 1 ? 'language' : 'languages'} for ${modelName}`;
+  });
+
+  // If switching models drops the currently selected language out of the
+  // now-narrower list, snap back to a supported one rather than leaving a
+  // silently unsupported selection in place. Prefer English (most models
+  // include it), but fall back to the model's first supported language for
+  // the English-excluding ones (e.g. GigaAM is Russian-only). Gated on
+  // initialLanguageLoaded so this never fires during the initial hydration
+  // race (see the flag's declaration comment).
+  $effect(() => {
+    if (!initialLanguageLoaded) return;
+    if (languageScope === 'all') return;
+    if (visibleLanguages.some((language) => language.code === selectedLanguage)) return;
+    const fallback = visibleLanguages.some((language) => language.code === 'en')
+      ? 'en'
+      : visibleLanguages[0]?.code;
+    if (fallback) {
+      saveLanguage(fallback).catch((err) => console.error('auto-correct transcription_language failed:', err));
+    }
+  });
+
   async function handleAutostart(value: boolean) {
     autostart = value;
     try {
@@ -198,14 +256,38 @@
     }
   }
 
-  async function handleCleanup(value: boolean) {
-    cleanup = value;
+  async function applyCleanup(value: boolean) {
+    appStore.cleanupEnabled = value;
     try {
       await saveSetting('cleanup_enabled', value);
     } catch (err) {
-      cleanup = !value;
+      appStore.cleanupEnabled = !value;
       console.error('save cleanup_enabled failed:', err);
     }
+  }
+
+  // Turning Cleanup off is a bigger behavioral change than most toggles here
+  // (it silently makes the Style and App Mappings pages inert), so it gets a
+  // confirmation instead of taking effect immediately. Turning it back on
+  // needs no confirmation — that's just restoring the default.
+  let confirmCleanupOff = $state(false);
+  let cleanupCancelButton: HTMLButtonElement | null = $state(null);
+
+  function handleCleanup(value: boolean) {
+    if (!value) {
+      confirmCleanupOff = true;
+      return;
+    }
+    applyCleanup(true);
+  }
+
+  async function confirmCleanupOffAction() {
+    confirmCleanupOff = false;
+    await applyCleanup(false);
+  }
+
+  function handleCleanupModalKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && confirmCleanupOff) confirmCleanupOff = false;
   }
 
   async function handleContextualCaps(value: boolean) {
@@ -345,7 +427,7 @@
 
   loadSettings();
 </script>
-<svelte:window onclick={handleWindowClick} />
+<svelte:window onclick={handleWindowClick} onkeydown={handleCleanupModalKeydown} />
 
 <h2 class="settings-h">General</h2>
 <h3 class="settings-subhead first">Dictation</h3>
@@ -375,7 +457,7 @@
   </p>
 {/if}
 <div class="setting-row">
-  <div><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect</div></div>
+  <div class="lang-setting-text"><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect{languageScopeNote}</div></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="language-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && languageDropdownOpen) { languageDropdownOpen = false; e.stopPropagation(); } }}>
     <button
@@ -403,7 +485,7 @@
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
-        {#each transcriptionLanguages as language}
+        {#each visibleLanguages as language}
           <button
             class="language-item"
             class:active={selectedLanguage === language.code}
@@ -483,8 +565,8 @@
 </div>
 <h3 class="settings-subhead">Text processing</h3>
 <div class="setting-row">
-  <div><div class="label">Auto-cleanup</div><div class="desc">Run LLM cleanup on every transcription</div></div>
-  <Toggle checked={cleanup} onchange={handleCleanup} label="Auto-cleanup" />
+  <div><div class="label">Cleanup</div><div class="desc">Runs an LLM-powered cleanup pass after transcription for tone and formatting.</div></div>
+  <Toggle checked={appStore.cleanupEnabled} onchange={handleCleanup} label="Cleanup" />
 </div>
 <div class="setting-row">
   <div><div class="label">Contextual capitalization</div><div class="desc">Lowercases the first word when injecting mid-sentence</div></div>
@@ -498,6 +580,40 @@
   <div><div class="label">Automatic caps lock detection</div><div class="desc">When Caps Lock is on, output your dictation in ALL CAPS</div></div>
   <Toggle checked={capsLockUppercase} onchange={handleCapsLockUppercase} label="Automatic caps lock detection" />
 </div>
+
+{#if confirmCleanupOff}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <button class="modal-backdrop" aria-label="Close dialog" onclick={() => (confirmCleanupOff = false)} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
+  <div
+    class="modal-card"
+    use:modalFocusTrap={{
+      active: confirmCleanupOff,
+      initialFocus: () => cleanupCancelButton,
+    }}
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="cleanup-off-confirm-title"
+    tabindex="-1"
+    in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel), scaleFrom: 0.97 }}
+    out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}
+  >
+    <div class="modal-header">
+      <h2 id="cleanup-off-confirm-title" class="modal-title">Turn Cleanup off?</h2>
+    </div>
+    <div class="modal-body">
+      <p class="confirm-copy">
+        Dictation will keep the raw transcript as-is — faster, but tone, formatting, and the
+        Style and App Mappings pages stop having any effect. You can turn this back on anytime.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <div class="footer-actions">
+        <button bind:this={cleanupCancelButton} class="btn-ghost" onclick={() => (confirmCleanupOff = false)}>Cancel</button>
+        <button class="btn-primary" onclick={confirmCleanupOffAction}>Turn off</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .hotkey-tip {
@@ -594,6 +710,10 @@
   .mic-item:hover { background: var(--paper-2); color: var(--ink); }
   .mic-item.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
   .mic-empty { padding: 8px 10px; font-size: 12px; color: var(--ink-mute); text-align: center; }
+  /* Let the label+desc column take remaining width and wrap within itself,
+     so the (sometimes long) language-scope note never runs under the
+     fixed-width dropdown button to its right. */
+  .lang-setting-text { min-width: 0; flex: 1; padding-right: 14px; }
   .language-dropdown { position: relative; flex-shrink: 0; }
   .language-btn { max-width: 210px; }
   .language-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
@@ -680,4 +800,82 @@
   }
   .appearance-option:hover { color: var(--ink-strong); }
   .appearance-option.active { color: var(--ink); }
+
+  /* ── cleanup-off confirm modal ── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    border: 0;
+    padding: 0;
+    appearance: none;
+    background: var(--overlay);
+    z-index: 50;
+    outline: none;
+  }
+  .modal-card {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    translate: -50% -50%;
+    z-index: 51;
+    isolation: isolate;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    width: min(420px, calc(100vw - 40px));
+    box-shadow: var(--shadow-elev);
+    overflow: hidden;
+  }
+  .modal-header {
+    padding: 20px 20px 0;
+  }
+  .modal-title {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    color: var(--ink);
+    margin: 0;
+  }
+  .modal-body { padding: 10px 20px 18px; }
+  .confirm-copy {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+  .modal-footer {
+    padding: 0 20px 20px;
+  }
+  .footer-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 12.5px;
+    font-family: var(--sans);
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
+  .btn-primary {
+    background: var(--ink);
+    color: var(--amber-50);
+    border: 0;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 12.5px;
+    font-weight: 500;
+    font-family: var(--sans);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  .btn-primary:hover { opacity: 0.82; }
 </style>

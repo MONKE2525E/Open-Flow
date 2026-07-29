@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
 
-  type PillState = 'idle' | 'recording' | 'processing' | 'handsfree' | 'error';
+  type PillState = 'idle' | 'recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error';
   let state: PillState = 'idle';
   let errorMsg = '';
   let errOpen = false;
@@ -233,7 +233,7 @@
         const incoming = (ev.payload as PillState) || 'idle';
         if (hfTimer !== null) { clearTimeout(hfTimer); hfTimer = null; }
 
-        if (incoming === 'idle' && (state === 'recording' || state === 'handsfree' || state === 'error')) {
+        if (incoming === 'idle' && state !== 'idle') {
           stopRaf();
           goIdle();
           return;
@@ -327,8 +327,18 @@
     </div>
 
   {:else if state === 'processing'}
-    <div class="pill processing" class:from-rec={prevState === 'recording'} class:from-hf={prevState === 'handsfree'}>
+    <div class="pill processing"
+         class:from-rec={prevState === 'recording'}
+         class:from-hf={prevState === 'handsfree'}
+         class:from-loading={prevState === 'loading_local_model'}
+         class:dying={dying}>
       <div class="scan-line"></div>
+    </div>
+
+  {:else if state === 'loading_local_model'}
+    <div class="pill loading-local" class:from-processing={prevState === 'processing'} class:dying={dying}>
+      <div class="loading-spinner"></div>
+      <span>Loading model</span>
     </div>
 
   {:else if state === 'error'}
@@ -406,7 +416,9 @@
 
   .pill.recording.dying,
   .pill.handsfree.dying,
-  .pill.error.dying {
+  .pill.error.dying,
+  .pill.processing.dying,
+  .pill.loading-local.dying {
     animation: pillOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
     pointer-events: none;
   }
@@ -435,6 +447,7 @@
 
   /* Processing */
   .pill.processing { width: 100px; padding: 0 14px; }
+  .pill.loading-local { width: 144px; padding: 0 14px; gap: 9px; }
 
   /* Recording→processing: grow in width */
   .pill.processing.from-rec {
@@ -464,6 +477,52 @@
     animation: scanIn 0.18s ease 0.08s both;
   }
 
+  /* Processing→loading model: grow smoothly into the wider pill instead of
+     popping in fresh, so a cold local model load reads as one continuous
+     motion rather than two disconnected "new pill appeared" pops. */
+  .pill.loading-local.from-processing {
+    animation: loadingLocalIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes loadingLocalIn {
+    from { width: 100px; }
+    to   { width: 144px; }
+  }
+  /* Comma-separated, not a separate rule: the entrance fade and the
+     spinner's/label's own continuous animation (set below) both apply to
+     the same element's `animation` property, and a second declaration would
+     replace rather than layer on top of the first. */
+  .pill.loading-local.from-processing .loading-spinner {
+    animation: scanIn 0.16s ease 0.16s both, spin 0.8s linear infinite;
+  }
+  .pill.loading-local.from-processing span {
+    animation: scanIn 0.16s ease 0.16s both, loadingPulse 1.6s ease-in-out 0.4s infinite alternate;
+  }
+
+  /* Loading model→processing: shrink back down once the model is warm and
+     transcription/cleanup resumes, mirroring the handsfree→processing shrink. */
+  .pill.processing.from-loading {
+    animation: processFromLoading 0.26s ease-out both;
+  }
+  @keyframes processFromLoading {
+    from { width: 144px; }
+    to   { width: 100px; }
+  }
+  .pill.processing.from-loading .scan-line {
+    animation: scanIn 0.18s ease 0.08s both;
+  }
+
+  /* If the pipeline exits idle mid-transition (e.g. cancelled right as a
+     local model starts loading), `dying` and a `from-*` entrance class can
+     both be true on the same pill at once. Equal specificity would leave it
+     to source order, which is fragile — this 4-class override guarantees
+     the exit fade always wins over an in-progress entrance animation. */
+  .pill.processing.from-rec.dying,
+  .pill.processing.from-hf.dying,
+  .pill.processing.from-loading.dying,
+  .pill.loading-local.from-processing.dying {
+    animation: pillOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
+  }
+
   /* Scan line: dim track with a bright light sweeping back and forth */
   .scan-line {
     flex: 1;
@@ -488,6 +547,33 @@
   }
   @keyframes scanIn {
     from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  .loading-spinner {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.16);
+    border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .pill.loading-local span {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.1px;
+    white-space: nowrap;
+    /* Gentle breathing pulse reads as "still working" without being
+       distracting — starts after the entrance settles (see from-processing
+       above), not from the moment the pill first appears. */
+    animation: loadingPulse 1.6s ease-in-out 0.4s infinite alternate;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes loadingPulse {
+    from { opacity: 0.6; }
     to   { opacity: 1; }
   }
 

@@ -95,6 +95,8 @@ pub struct RecordingSession {
 
 pub struct RecordingResult {
     pub wav: Vec<u8>,
+    pub samples_16k: Vec<f32>,
+    pub sample_rate: u32,
     pub duration_ms: u64,
     pub rms: f32,
     pub truncated: bool,
@@ -283,6 +285,8 @@ impl RecordingSession {
             let (encode_data, encode_rate) = resample_to_16k(&data, sample_rate);
             let result = encode_wav(&encode_data, encode_rate, 1).map(|wav| RecordingResult {
                 wav,
+                samples_16k: encode_data,
+                sample_rate: encode_rate,
                 duration_ms: dur_ms,
                 rms: overall_rms,
                 truncated: recording_truncated,

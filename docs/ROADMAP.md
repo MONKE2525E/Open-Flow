@@ -2,6 +2,15 @@
 
 ## In Progress - 0.15.0
 
+## 0. Local Transcription Beta
+- **Goal**: Ship local transcription as a first-class backend in the normal pipeline instead of as a separate workflow.
+- **Current Scope**:
+    - Recommended local path is `local/parakeet-v3`
+    - Cleanup can be `Off` or a cloud provider
+    - "Fully local" only applies when local transcription is paired with `Cleanup: Off`
+    - Moonshine, Whisper.cpp, and custom local models stay behind advanced UI until Parakeet is boringly reliable
+- **Relevant Files**: `src-tauri/src/local_stt/`, `src-tauri/src/pipeline/`, `src/lib/components/settings/ModelsSection.svelte`, `src/PillApp.svelte`, `docs/LOCAL_TRANSCRIPTION.md`.
+
 ## 1. Models and Settings Redesign
 - **Goal**: Finish the model picker cleanup so provider selection, advanced mode, and key validation feel predictable instead of fragile.
 - **Implementation Plan**:
@@ -106,6 +115,14 @@
     - Add targeted smoke and manual checks for the failure paths reported in daily dictation use.
     - Keep release blocked until the core dictation loop is measurably better, not just feature-complete.
 - **Relevant Files**: `tests/OnePyFone.py`, `tests/smoke/`, `tests/manual/`, `src-tauri/src/pipeline/mod.rs`, `src-tauri/src/api/transcription.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/core/injection/mod.rs`.
+
+## 7. Intel Mac Support for Local Models (Currently Gated Off)
+- **Status**: Deliberately unavailable, not a bug. Local on-device STT/LLM (`local_stt`, `local_llm`) is blocked entirely on Intel (x86_64) Mac builds via `system::platform::is_macos_intel()` — the download commands return an error and the Settings → Models UI shows an explanatory notice instead of the download tiles.
+- **Why**: Zero real-world testing on Intel hardware (neither the maintainer nor any current tester owns an Intel Mac), and Intel Macs are old enough now to be both increasingly uncommon and generally underpowered for local LLM inference specifically. Shipping an untested first run there is a worse outcome than a clear "not yet" pointing at cloud providers.
+- **What already exists**: the Metal (Apple Silicon) vs. CPU (Intel) backend split for the local LLM runtime already has real code paths in `local_llm/binary.rs::detect_backend()` and downloads real `macos-x64` llama.cpp release assets — this was never architecturally impossible, just unvalidated.
+- **To unblock**: get access to real Intel Mac hardware (see options discussed with the maintainer: ask existing beta testers first, or a short paid rental from a Mac cloud provider as a fallback) and manually validate the full local-models flow — setup, download, verify/extract, and actual transcription/cleanup inference — before removing the gate in `system/platform.rs`.
+- **CI note**: `pr-checks.yml`'s `rust` job now includes `macos-13` (real Intel silicon, not the `macos-latest` arm64 runner used for the release pipeline's cross-compiled Intel DMG) so `cargo test`/`clippy` at least run natively on Intel per PR — this catches build-level regressions but not the local-model runtime behavior itself, which needs a human on real hardware.
+- **Relevant Files**: `src-tauri/src/system/platform.rs`, `src-tauri/src/commands/local_stt.rs`, `src-tauri/src/commands/local_llm.rs`, `src-tauri/src/commands/system.rs` (`local_models_supported_on_this_platform`), `src/lib/components/settings/ModelsSection.svelte`, `.github/workflows/pr-checks.yml`.
 
 ---
 

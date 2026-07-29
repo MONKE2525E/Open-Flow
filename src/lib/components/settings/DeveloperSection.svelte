@@ -2,6 +2,7 @@
   import { invoke, listen } from '../../tauri';
   import { onMount } from 'svelte';
   import Toggle from '../Toggle.svelte';
+  import { icons } from '../../icons';
 
   let logs = $state<string[]>([]);
   let autoScroll = $state(true);
@@ -10,6 +11,8 @@
   let logViewport: HTMLDivElement | null = null;
   let verboseEnabled = $state(false);
   let forceSetupOnLaunch = $state(false);
+  let copied = $state(false);
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
   let providerStatusRaw = $state('');
   let providerStatusChecking = $state(false);
 
@@ -39,6 +42,17 @@
       console.error('downloadLogs failed:', err);
     } finally {
       exporting = false;
+    }
+  }
+
+  async function copyAllLogs() {
+    try {
+      await navigator.clipboard.writeText(logs.join('\n'));
+      copied = true;
+      if (copiedTimer) clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => { copied = false; }, 1500);
+    } catch (err) {
+      console.error('copyAllLogs failed:', err);
     }
   }
 
@@ -114,6 +128,7 @@
     return () => {
       active = false;
       if (unlisten) unlisten();
+      if (copiedTimer) clearTimeout(copiedTimer);
     };
   });
 </script>
@@ -147,14 +162,33 @@
     </button>
   </div>
 </div>
-<div class="logs-panel scroll-styled" bind:this={logViewport}>
-  {#if logs.length === 0}
-    <div class="logs-empty">No logs yet.</div>
-  {:else}
-    {#each logs as line}
-      <div class="log-line">{line}</div>
-    {/each}
-  {/if}
+<div class="logs-panel-wrap">
+  <div class="logs-panel scroll-styled" bind:this={logViewport}>
+    {#if logs.length === 0}
+      <div class="logs-empty">No logs yet.</div>
+    {:else}
+      {#each logs as line}
+        <div class="log-line">{line}</div>
+      {/each}
+    {/if}
+  </div>
+  <button
+    class="copy-logs-btn"
+    class:copied
+    onclick={copyAllLogs}
+    disabled={logs.length === 0}
+    title="Copy all logs"
+    aria-label="Copy all logs"
+  >
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      {#if copied}
+        {@html icons.check}
+      {:else}
+        {@html icons.copy}
+      {/if}
+    </svg>
+    {copied ? 'Copied' : 'Copy all'}
+  </button>
 </div>
 <div class="setting-row">
   <div>
@@ -182,6 +216,11 @@
 {/if}
 
 <style>
+  .logs-panel-wrap {
+    position: relative;
+    margin-top: 12px;
+    margin-bottom: 12px;
+  }
   .logs-panel {
     height: 280px;
     border: 1px solid var(--line);
@@ -189,8 +228,41 @@
     background: var(--paper);
     padding: 8px 10px;
     overflow: auto;
-    margin-top: 12px;
-    margin-bottom: 12px;
+  }
+  .copy-logs-btn {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 9px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--paper-2);
+    color: var(--ink-mute);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    transition: color 0.12s, border-color 0.12s, opacity 0.12s;
+  }
+  .copy-logs-btn:hover:not(:disabled) {
+    color: var(--ink);
+    border-color: var(--ink-mute);
+  }
+  .copy-logs-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .copy-logs-btn.copied {
+    color: var(--jap-500, #d97757);
+    border-color: var(--jap-500, #d97757);
+  }
+  .copy-logs-btn svg {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
   }
   .log-line {
     font-family: var(--mono);

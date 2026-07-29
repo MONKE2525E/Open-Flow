@@ -174,6 +174,7 @@ fn write_settings_file(path: &Path, values: &Map<String, Value>) -> Result<(), S
 pub const KEY_GROQ: &str = "api_key_groq";
 pub const KEY_OPENAI: &str = "api_key_openai";
 pub const KEY_GOOGLE: &str = "api_key_google";
+pub const KEY_ASSEMBLYAI: &str = "api_key_assemblyai";
 
 pub const TRANSCRIPTION_PROVIDER: &str = "transcription_provider";
 pub const TRANSCRIPTION_LANGUAGE: &str = "transcription_language";
@@ -215,10 +216,17 @@ pub const UPDATE_NOTIFIED_VERSION: &str = "update_notified_version";
 pub const HISTORY_RETENTION: &str = "history_retention";
 pub const AUTOSTART_ENABLED: &str = "autostart_enabled";
 pub const CAPS_LOCK_UPPERCASE: &str = "caps_lock_uppercase_enabled";
+pub const LOCAL_MODEL_MEMORY_POLICY: &str = "local_model_memory_policy";
 
 pub const DEFAULT_TONES: &[&str] = &["casual", "formal", "very_casual"];
 pub const CLEANUP_INTENSITIES: &[&str] = &["none", "light", "medium", "high"];
 pub const HISTORY_RETENTION_OPTIONS: &[&str] = &["7 days", "30 days", "90 days", "Forever"];
+pub const LOCAL_MODEL_MEMORY_POLICY_OPTIONS: &[&str] = &[
+    "keep_loaded",
+    "unload_after_5m",
+    "unload_after_15m",
+    "unload_immediately",
+];
 
 pub fn is_supported_default_tone(value: &str) -> bool {
     DEFAULT_TONES.contains(&value)
@@ -230,6 +238,10 @@ pub fn is_supported_cleanup_intensity(value: &str) -> bool {
 
 pub fn is_supported_history_retention(value: &str) -> bool {
     HISTORY_RETENTION_OPTIONS.contains(&value)
+}
+
+pub fn is_supported_local_model_memory_policy(value: &str) -> bool {
+    LOCAL_MODEL_MEMORY_POLICY_OPTIONS.contains(&value)
 }
 
 /// Maps a `history_retention` setting value to a day count. `None` means
@@ -259,6 +271,7 @@ pub struct PipelineConfig {
     pub key_groq: String,
     pub key_openai: String,
     pub key_google: String,
+    pub key_assemblyai: String,
     pub default_tone: String,
     pub cleanup_intensity: String,
     pub app_context_hint: bool,
@@ -268,24 +281,30 @@ pub struct PipelineConfig {
     pub caps_lock_uppercase_enabled: bool,
     pub macos_clipboard_sniff_enabled: bool,
     pub advanced_model_ui: bool,
+    pub local_model_memory_policy: String,
     pub cleanup_prompt_overrides: std::collections::HashMap<String, String>,
 }
 
 pub const GROQ: &str = "groq";
 pub const OPENAI: &str = "openai";
 pub const GOOGLE: &str = "google";
-pub const PROVIDERS: [&str; 3] = [GROQ, OPENAI, GOOGLE];
+pub const ASSEMBLYAI: &str = "assemblyai";
+pub(crate) const LOCAL: &str = "local";
+pub const PROVIDERS: [&str; 5] = [GROQ, OPENAI, GOOGLE, ASSEMBLYAI, LOCAL];
 
 pub fn default_transcription_model_for(provider: &str) -> &'static str {
     match provider {
+        LOCAL => "parakeet-v3",
         OPENAI => "gpt-4o-transcribe",
         GOOGLE => "gemini-3.5-flash",
+        ASSEMBLYAI => "universal-3-5-pro",
         _ => "whisper-large-v3-turbo",
     }
 }
 
 pub fn default_cleanup_model_for(provider: &str) -> &'static str {
     match provider {
+        LOCAL => "gemma-4-e2b",
         OPENAI => "gpt-4o-mini",
         GOOGLE => "gemini-3.5-flash",
         _ => "llama-3.3-70b-versatile",
@@ -370,6 +389,8 @@ impl PipelineConfig {
         match provider {
             "openai" => &self.key_openai,
             "google" => &self.key_google,
+            "assemblyai" => &self.key_assemblyai,
+            "local" => "",
             _ => &self.key_groq,
         }
     }
@@ -501,6 +522,7 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         key_groq: crate::data::credentials::get(GROQ),
         key_openai: crate::data::credentials::get(OPENAI),
         key_google: crate::data::credentials::get(GOOGLE),
+        key_assemblyai: crate::data::credentials::get(ASSEMBLYAI),
         default_tone: supported_or_default(DEFAULT_TONE, "casual", is_supported_default_tone),
         cleanup_intensity: supported_or_default(
             CLEANUP_INTENSITY,
@@ -536,6 +558,11 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         cleanup_prompt_overrides,
+        local_model_memory_policy: supported_or_default(
+            LOCAL_MODEL_MEMORY_POLICY,
+            "unload_after_5m",
+            is_supported_local_model_memory_policy,
+        ),
     }
 }
 

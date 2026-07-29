@@ -130,6 +130,9 @@ pub fn start_recording_session_ex(
                 st.exclusive_mic_session_id = exclusive_mic_session_id;
                 st.handless = handless;
             }
+            if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
+                manager.set_recording_active(true);
+            }
             if options.show_recording_pill {
                 show_pill(app, pill_state);
             }

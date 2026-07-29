@@ -17,10 +17,10 @@ export const profileOptions = [
 ] as const;
 
 export const cleanupIntensityOptions = [
-  { id: 'none', label: 'Verbatim' },
+  { id: 'none', label: 'Off' },
   { id: 'light', label: 'Light' },
   { id: 'medium', label: 'Medium' },
-  { id: 'high', label: 'Direct' },
+  { id: 'high', label: 'Strong' },
 ] as const;
 
 export const DEFAULT_CLEANUP_INTENSITY_LABEL = 'Default';

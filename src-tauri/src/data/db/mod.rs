@@ -204,6 +204,114 @@ mod tests {
     }
 
     #[test]
+    fn open_alone_does_not_seed_the_dictionary() {
+        // seed_default_dictionary_entries is deliberately NOT part of the
+        // generic migration chain (see its doc comment) — open() alone must
+        // leave test/fixture databases pristine.
+        let db = test_db();
+        let entries = query_dictionary(&db).expect("query dictionary");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn seed_default_dictionary_entries_adds_a_verenu_entry_with_every_known_variant() {
+        let db = test_db();
+        seed_default_dictionary_entries(&db).expect("seed");
+        let entries = query_dictionary(&db).expect("query dictionary");
+        let verenu = entries
+            .iter()
+            .find(|e| e.term == "Verenu")
+            .expect("default Verenu entry seeded");
+        assert!(!verenu.auto_learned, "seeded entry must be manual, not gated by distinctiveness");
+        let mistake = verenu.mistake.as_deref().unwrap_or_default();
+        for variant in [
+            "Varinu", "Verena", "Virinu", "Varino", "Varinew", "Varina", "Verminu", "Varinian",
+            "Marino", "Zarinu", "Berenu", "Ferenu", "Werenu", "Verinu", "Varineu",
+        ] {
+            assert!(mistake.contains(variant), "missing variant: {variant}");
+        }
+    }
+
+    #[test]
+    fn seed_default_dictionary_entries_does_not_resurrect_a_deleted_entry() {
+        let path = temp_db_path("verenu_seed_deletion");
+        {
+            let db = open(path.to_str().expect("path string")).expect("first open");
+            seed_default_dictionary_entries(&db).expect("first seed");
+            let entries = query_dictionary(&db).expect("query dictionary");
+            let verenu_id = entries
+                .iter()
+                .find(|e| e.term == "Verenu")
+                .expect("seeded on first call")
+                .id;
+            delete_dictionary_entry(&db, verenu_id).expect("user deletes the default entry");
+        }
+        // Reopening and re-seeding must not resurrect it — the marker table
+        // makes this a no-op after the first successful seed, regardless of
+        // whether the user has since deleted the row.
+        let db = open(path.to_str().expect("path string")).expect("second open");
+        seed_default_dictionary_entries(&db).expect("second seed is a no-op");
+        let entries = query_dictionary(&db).expect("query dictionary after reopen");
+        assert!(!entries.iter().any(|e| e.term == "Verenu"));
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn seed_default_dictionary_entries_merges_into_a_preexisting_manual_verenu_entry() {
+        // The actual observed bug: a user who'd already hand-added a
+        // "Verenu" -> "Vernu" correction weeks before this feature existed
+        // hit the dictionary's UNIQUE(term) constraint, silently dropping
+        // every known variant from the original INSERT OR IGNORE — leaving
+        // only "Vernu", which doesn't match "Varino"/"Varinu" and so never
+        // fired. Merging into the existing row instead must add every known
+        // variant while preserving the user's own "Vernu".
+        let db = test_db();
+        insert_dictionary_entry(&db, "Verenu", Some("Vernu")).expect("user's own manual entry");
+
+        seed_default_dictionary_entries(&db).expect("seed merges into existing entry");
+
+        let entries = query_dictionary(&db).expect("query dictionary");
+        assert_eq!(
+            entries.iter().filter(|e| e.term == "Verenu").count(),
+            1,
+            "must not create a duplicate row"
+        );
+        let verenu = entries.iter().find(|e| e.term == "Verenu").expect("entry");
+        let mistake = verenu.mistake.as_deref().unwrap_or_default();
+        assert!(mistake.contains("Vernu"), "user's own variant must survive");
+        for variant in [
+            "Varinu", "Verena", "Virinu", "Varino", "Varinew", "Varina", "Verminu", "Varinian",
+            "Marino", "Zarinu", "Berenu", "Ferenu", "Werenu", "Verinu", "Varineu",
+        ] {
+            assert!(mistake.contains(variant), "missing variant: {variant}");
+        }
+    }
+
+    #[test]
+    fn seed_default_dictionary_entries_does_not_duplicate_variants_already_present() {
+        let db = test_db();
+        insert_dictionary_entry(&db, "Verenu", Some("Varinu, Verena")).expect("partial entry");
+
+        seed_default_dictionary_entries(&db).expect("seed");
+        seed_default_dictionary_entries(&db).expect("seed again is a no-op");
+
+        let entries = query_dictionary(&db).expect("query dictionary");
+        let mistake = entries
+            .iter()
+            .find(|e| e.term == "Verenu")
+            .and_then(|e| e.mistake.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            mistake.matches("Varinu").count(),
+            1,
+            "an already-present variant must not be duplicated"
+        );
+    }
+
+    #[test]
     fn auto_learn_does_not_overwrite_manual_dictionary_entry() {
         let db = test_db();
 

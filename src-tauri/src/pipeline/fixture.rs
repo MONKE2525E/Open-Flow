@@ -22,8 +22,7 @@ pub struct PipelineTestDictionaryEntry {
 #[derive(Clone, Debug)]
 pub struct PipelineTestRequest {
     pub db: Option<DbHandle>,
-    pub wav: bytes::Bytes,
-    pub duration_ms: u64,
+    pub audio: CapturedAudio,
     pub rms: f32,
     pub config: store::PipelineConfig,
     pub profile: String,
@@ -49,18 +48,45 @@ pub struct PipelineTestResult {
 }
 
 #[cfg(any(test, debug_assertions))]
+async fn transcribe_fixture_provider(
+    audio: &CapturedAudio,
+    config: &store::PipelineConfig,
+    provider_id: &str,
+    model: &str,
+) -> anyhow::Result<String> {
+    if provider_id == store::LOCAL {
+        #[cfg(any(test, debug_assertions))]
+        if let Some(result) =
+            crate::testing::resolve_provider_fixture("transcription", provider_id, model)
+        {
+            return result;
+        }
+        anyhow::bail!("Missing mock fixture for local transcription model '{model}'");
+    }
+
+    transcription::transcribe(
+        audio.wav.clone(),
+        ProviderId::from_str(provider_id),
+        config.key_for(provider_id),
+        &config.transcription_language,
+        model,
+    )
+    .await
+}
+
+#[cfg(any(test, debug_assertions))]
 #[allow(dead_code)]
 pub async fn run_pipeline_fixture(
     request: PipelineTestRequest,
 ) -> anyhow::Result<PipelineTestResult> {
-    if request.duration_ms < MIN_RECORDING_MS {
+    if request.audio.duration_ms < MIN_RECORDING_MS {
         anyhow::bail!("Recording too short");
     }
     if request.rms < MIN_RECORDING_RMS {
         anyhow::bail!("Audio too quiet - check your mic");
     }
-    if !has_transcription_key_in_chain(&request.config) {
-        anyhow::bail!("No API key configured for any model in the transcription chain");
+    if let Err(message) = validate_transcription_chain(&request.config, None) {
+        anyhow::bail!(message);
     }
 
     let db_handle = match request.db {
@@ -82,19 +108,7 @@ pub async fn run_pipeline_fixture(
     let mut transcribed: Option<(String, String)> = None;
     let mut last_err: Option<anyhow::Error> = None;
     for (provider_id, model) in transcription_model_chain(&request.config) {
-        let key = request.config.key_for(&provider_id).to_owned();
-        if key.is_empty() {
-            continue;
-        }
-        let provider = ProviderId::from_str(&provider_id);
-        match transcription::transcribe(
-            request.wav.clone(),
-            provider,
-            &key,
-            &request.config.transcription_language,
-            &model,
-        )
-        .await
+        match transcribe_fixture_provider(&request.audio, &request.config, &provider_id, &model).await
         {
             Ok(raw) if !raw.is_empty() => {
                 transcribed = Some((
@@ -105,12 +119,12 @@ pub async fn run_pipeline_fixture(
             }
             Ok(_) => {}
             Err(e) => {
-                if crate::api::is_retryable_provider_error(&e) {
-                    last_err = Some(e);
-                    continue;
-                }
+                // Mirrors run_transcription in stages.rs: always try the
+                // next candidate regardless of retryable status — a
+                // non-retryable error on this provider (e.g. missing key)
+                // says nothing about whether a different fallback
+                // provider/model would succeed.
                 last_err = Some(e);
-                break;
             }
         }
     }
@@ -128,6 +142,7 @@ pub async fn run_pipeline_fixture(
             &request.config,
             &request.profile,
             request.app_context.as_deref(),
+            None,
         )
         .await?;
     let apply_caps_lock_upper = request.config.caps_lock_uppercase_enabled && request.caps_lock_on;
@@ -139,17 +154,16 @@ pub async fn run_pipeline_fixture(
         injected_text
     };
     let words = raw_text.split_whitespace().count() as i64;
-    let clean_for_insert = if apply_caps_lock_upper {
-        final_text_before_dictionary.to_uppercase()
-    } else {
-        final_text_before_dictionary.clone()
-    };
+    // Mirrors finalize.rs: History must save the same text that actually
+    // gets injected (dictionary substitution included), not the
+    // pre-dictionary value.
+    let clean_for_insert = injected_text.clone();
     let history_entry = db::insert_transcription_returning(
         &db_handle,
         &raw_text,
         &clean_for_insert,
         words,
-        request.duration_ms as i64,
+        request.audio.duration_ms as i64,
         &api_used,
     )?;
     let injected = injection::inject_text(

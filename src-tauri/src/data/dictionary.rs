@@ -41,12 +41,26 @@ pub fn build_relevant_dictionary_prompt_from(
     build_dictionary_prompt_limited(selected.into_iter())
 }
 
+/// Split a `mistake` field into individual mistranscription variants. A
+/// dictionary entry may list several alternate mishearings of the same term
+/// separated by commas (e.g. "Varinu, Verena, Virinu"), mirroring how
+/// `snippets::parse_triggers` lets one snippet respond to several phrases —
+/// same reasoning applies here: one real term can get mangled by a
+/// transcription model in more than one way, and users need to be able to
+/// list all of them against a single correct spelling.
+fn parse_dictionary_mistakes(mistake: &str) -> impl Iterator<Item = &str> {
+    mistake
+        .split(',')
+        .map(|m| m.trim())
+        .filter(|m| !m.is_empty())
+}
+
 fn entry_matches_raw(entry: &db::DictionaryEntry, raw_lower: &str, raw_tokens: &[&str]) -> bool {
     contains_nonempty(raw_lower, &entry.term.to_lowercase())
-        || entry
-            .mistake
-            .as_ref()
-            .is_some_and(|mistake| contains_nonempty(raw_lower, &mistake.to_lowercase()))
+        || entry.mistake.as_ref().is_some_and(|mistake| {
+            parse_dictionary_mistakes(mistake)
+                .any(|variant| contains_nonempty(raw_lower, &variant.to_lowercase()))
+        })
         || fuzzy_token_match(entry, raw_tokens)
 }
 
@@ -56,10 +70,9 @@ fn contains_nonempty(haystack: &str, needle: &str) -> bool {
 
 fn fuzzy_token_match(entry: &db::DictionaryEntry, raw_tokens: &[&str]) -> bool {
     matches_source_tokens(&entry.term, raw_tokens)
-        || entry
-            .mistake
-            .as_ref()
-            .is_some_and(|mistake| matches_source_tokens(mistake, raw_tokens))
+        || entry.mistake.as_ref().is_some_and(|mistake| {
+            parse_dictionary_mistakes(mistake).any(|variant| matches_source_tokens(variant, raw_tokens))
+        })
 }
 
 fn matches_source_tokens(source: &str, raw_tokens: &[&str]) -> bool {
@@ -159,16 +172,29 @@ fn build_dictionary_prompt_limited<'a>(
 }
 
 fn format_dictionary_entry(entry: &db::DictionaryEntry) -> String {
-    if let Some(mistake) = &entry.mistake {
-        format!(
-            "- \"{}\" - transcription often writes \"{}\" instead; output \"{}\".",
-            entry.term, mistake, entry.term
-        )
-    } else {
-        format!(
+    match &entry.mistake {
+        Some(mistake) => {
+            let variants: Vec<&str> = parse_dictionary_mistakes(mistake).collect();
+            if variants.is_empty() {
+                return format!(
+                    "- \"{}\" - real user term; preserve this exact spelling.",
+                    entry.term
+                );
+            }
+            let quoted = variants
+                .iter()
+                .map(|v| format!("\"{v}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "- \"{}\" - transcription often writes {} instead; output \"{}\".",
+                entry.term, quoted, entry.term
+            )
+        }
+        None => format!(
             "- \"{}\" - real user term; preserve this exact spelling.",
             entry.term
-        )
+        ),
     }
 }
 
@@ -176,15 +202,21 @@ pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> 
     // Auto-learned mistakes that look like plain common words (no distinctive
     // features) are left to the cleanup LLM's contextual judgment instead of
     // a blunt mechanical replace, so a mis-learned pair like "rock" -> "Groq"
-    // can't clobber every legitimate use of "rock".
+    // can't clobber every legitimate use of "rock". A `mistake` field may
+    // list several comma-separated variants of the same real term (see
+    // `parse_dictionary_mistakes`) — each variant is checked against this
+    // gate and replaced independently, so one entry can carry any number of
+    // known mistranscriptions for a single correct spelling.
     let mut replaceable: Vec<(i64, &str, &str)> = entries
         .iter()
-        .filter_map(|e| {
-            let mistake = e.mistake.as_deref()?;
-            if e.auto_learned && !has_distinctive_features(mistake) {
-                return None;
-            }
-            Some((e.id, mistake, e.term.as_str()))
+        .flat_map(|e| {
+            let Some(mistake) = e.mistake.as_deref() else {
+                return Vec::new();
+            };
+            parse_dictionary_mistakes(mistake)
+                .filter(|variant| !e.auto_learned || has_distinctive_features(variant))
+                .map(|variant| (e.id, variant, e.term.as_str()))
+                .collect::<Vec<_>>()
         })
         .collect();
     replaceable.sort_by_key(|(_, mistake, _)| std::cmp::Reverse(mistake.len()));
@@ -254,7 +286,9 @@ pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_substitutions_from, build_relevant_dictionary_prompt_from};
+    use super::{
+        apply_substitutions_from, build_dictionary_prompt_limited, build_relevant_dictionary_prompt_from,
+    };
     use crate::data::db::DictionaryEntry;
 
     fn entry(id: i64, term: &str, mistake: Option<&str>) -> DictionaryEntry {
@@ -347,6 +381,44 @@ mod tests {
         let (out, applied) = apply_substitutions_from("please open vsc0de now", &entries);
         assert_eq!(out, "please open vscode now");
         assert_eq!(applied, vec![1]);
+    }
+
+    #[test]
+    fn comma_separated_mistake_variants_all_substitute_to_the_same_term() {
+        // Mirrors snippets' comma-separated trigger list: one entry can carry
+        // several known mistranscriptions of the same real term.
+        let entries = vec![entry(
+            1,
+            "Verenu",
+            Some("Varinu, Verena, Virinu, Varino, Varinew, Varina"),
+        )];
+        let (out, applied) =
+            apply_substitutions_from("I use Varinu daily but Verena crashed once", &entries);
+        assert_eq!(out, "I use Verenu daily but Verenu crashed once");
+        assert_eq!(applied, vec![1, 1]);
+    }
+
+    #[test]
+    fn comma_separated_variants_with_surrounding_whitespace_are_trimmed() {
+        let entries = vec![entry(1, "Verenu", Some(" Varinu , Verena "))];
+        let (out, applied) = apply_substitutions_from("try Varinu now", &entries);
+        assert_eq!(out, "try Verenu now");
+        assert_eq!(applied, vec![1]);
+    }
+
+    #[test]
+    fn relevant_prompt_matches_any_comma_separated_variant() {
+        let entries = vec![entry(1, "Verenu", Some("Varinu, Verena"))];
+        let prompt = build_relevant_dictionary_prompt_from(&entries, "I opened Verena today");
+        assert!(prompt.contains("Verenu"));
+    }
+
+    #[test]
+    fn prompt_lists_every_comma_separated_variant() {
+        let entries = vec![entry(1, "Verenu", Some("Varinu, Verena"))];
+        let prompt = build_dictionary_prompt_limited(entries.iter());
+        assert!(prompt.contains("\"Varinu\""));
+        assert!(prompt.contains("\"Verena\""));
     }
 
     #[test]

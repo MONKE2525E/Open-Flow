@@ -1,12 +1,17 @@
 import { invoke } from './tauri';
 import type { TranscriptionLanguageCode } from './transcriptionLanguages';
 
-export type ProviderId = 'groq' | 'openai' | 'google';
+export type ProviderId = 'groq' | 'openai' | 'google' | 'assemblyai' | 'local';
 export type ProviderModelMap = Record<ProviderId, string[]>;
 export type ToneId = 'casual' | 'formal' | 'very_casual';
 export type CleanupIntensity = 'none' | 'light' | 'medium' | 'high';
 export type HistoryRetention = '7 days' | '30 days' | '90 days' | 'Forever';
 export type AppearanceMode = 'system' | 'light' | 'dark';
+export type LocalModelMemoryPolicy =
+  | 'keep_loaded'
+  | 'unload_after_5m'
+  | 'unload_after_15m'
+  | 'unload_immediately';
 export type { TranscriptionLanguageCode } from './transcriptionLanguages';
 
 export interface AppMapping {
@@ -46,6 +51,7 @@ type SettingsValueMap = {
   auto_spacing_enabled: boolean;
   caps_lock_uppercase_enabled: boolean;
   history_retention: HistoryRetention;
+  local_model_memory_policy: LocalModelMemoryPolicy;
   microphone_device: string | null;
   update_dismissed_version: string | null;
   update_notified_version: string | null;

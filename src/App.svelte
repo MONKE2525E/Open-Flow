@@ -13,6 +13,9 @@
   import Setup from './lib/views/Setup.svelte';
   import { invoke, listen } from './lib/tauri';
   import { startAutomaticUpdateChecks } from './lib/updates';
+  import { startLocalSttListeners } from './lib/localSttStore.svelte';
+  import { startLocalLlmListeners } from './lib/localLlmStore.svelte';
+  import { refreshTranscriptionModel } from './lib/transcriptionModelStore.svelte';
   import { startProviderStatusChecks, startApiHealthChecks } from './lib/serviceStatus';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
@@ -70,20 +73,24 @@
   onMount(() => {
     let cleanupFn: (() => void) | undefined;
     let stopAutomaticUpdateChecks: (() => void) | undefined;
+    let stopLocalSttListeners: (() => void) | undefined;
+    let stopLocalLlmListeners: (() => void) | undefined;
     let stopProviderStatusChecks: (() => void) | undefined;
     let stopApiHealthChecks: (() => void) | undefined;
 
     (async () => {
       try {
-        const [done, appearance, forceSetupOnLaunch] = await Promise.all([
+        const [done, appearance, forceSetupOnLaunch, cleanupEnabled] = await Promise.all([
           invoke<boolean | null>('get_setting', { key: 'setup_complete' }),
           invoke<'system' | 'light' | 'dark' | null>('get_setting', { key: 'appearance_mode' }),
           invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' }),
+          invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
         ]);
         appStore.setupComplete = forceSetupOnLaunch ? false : done === true;
         if (appearance === 'light' || appearance === 'dark' || appearance === 'system') {
           appStore.appearanceMode = appearance;
         }
+        appStore.cleanupEnabled = cleanupEnabled ?? true;
       } catch {
         appStore.setupComplete = false;
       }
@@ -106,11 +113,17 @@
     }
 
     try {
+      stopLocalSttListeners = startLocalSttListeners();
+      stopLocalLlmListeners = startLocalLlmListeners();
       stopProviderStatusChecks = startProviderStatusChecks();
       stopApiHealthChecks = startApiHealthChecks();
     } catch (error) {
-      console.error('Failed to start Verenu status checks:', error);
+      console.error('Failed to start listeners and status checks:', error);
     }
+
+    refreshTranscriptionModel().catch((error) => {
+      console.error('Failed to load transcription model:', error);
+    });
 
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
     const onSystemThemeChange = () => {
@@ -132,6 +145,8 @@
     return () => {
       if (cleanupFn) cleanupFn();
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
+      if (stopLocalSttListeners) stopLocalSttListeners();
+      if (stopLocalLlmListeners) stopLocalLlmListeners();
       if (stopProviderStatusChecks) stopProviderStatusChecks();
       if (stopApiHealthChecks) stopApiHealthChecks();
       media?.removeEventListener?.('change', onSystemThemeChange);
