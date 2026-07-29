@@ -131,6 +131,7 @@
 
   $effect(() => {
     if (userChosePanel || localCleanupAutoOpenDecided) return;
+    if (!localTranscriptionAutoOpenDecided) return;
     if (localLlmStore.models.length === 0) return;
     localCleanupAutoOpenDecided = true;
     if (openPanel === null && !localLlmStore.models.some((model) => model.is_downloaded)) {

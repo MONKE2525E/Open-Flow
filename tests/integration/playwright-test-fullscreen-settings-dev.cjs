@@ -228,7 +228,7 @@ async function gotoSection(page, label) {
         [...document.querySelectorAll(sel)].find((e) => e.textContent.includes(text));
       const worst = { foot: 0, modal: 0, overlay: 0, pill: 0, models: 0 };
       for (const gap of [0, 40, 90, 150, 220]) {
-        document.querySelector('.settings-overlay').click();
+        document.querySelector('.settings-overlay')?.click();
         await sleep(gap);
         byText('.nav-item', 'Settings')?.click();
         const t0 = performance.now();

@@ -129,11 +129,10 @@
 
   function activeRailButton(): HTMLElement | null {
     if (!sidebarEl) return null;
-    // Only one rail list exists at a time, and only one of its entries is
-    // active, so this can't pick up a stale item from a previous mode.
-    return sidebarEl.querySelector<HTMLElement>(
-      '.rail-list .nav-item.active, .rail-list .settings-nav-item.active'
-    );
+    const selector = appStore.settingsOpen
+      ? '.rail-list .settings-nav-item.active'
+      : '.rail-list .nav-item.active';
+    return sidebarEl.querySelector<HTMLElement>(selector);
   }
 
   function movePillTo(el: HTMLElement | null, { snap = false } = {}) {
