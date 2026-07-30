@@ -450,11 +450,11 @@ fn runtime_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'stati
 
     #[cfg(not(target_os = "macos"))]
     let bar_rects = [
-        (88, 304, 48, 112, 24),
-        (160, 192, 48, 224, 24),
-        (232, 96, 48, 320, 24),
-        (304, 240, 48, 176, 24),
-        (376, 336, 48, 80, 24),
+        (88, 328, 48, 88, 24),
+        (160, 239, 48, 177, 24),
+        (232, 153, 48, 263, 24),
+        (304, 264, 48, 152, 24),
+        (376, 338, 48, 78, 24),
     ];
 
     for (x, y, width, height, radius) in bar_rects {
