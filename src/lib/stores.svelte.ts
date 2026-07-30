@@ -69,6 +69,7 @@ export const appStore = $state({
   dictionaryFetchStatus: 'idle' as FetchStatus,
   dictionaryFetchError: '',
   updateInfo: null as UpdateInfo | null,
+  betaUpdatesEnabled: false,
   providerStatusAlerts: [] as ProviderStatusAlert[],
   apiHealthy: null as boolean | null,
   isOnline: true,

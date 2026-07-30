@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize)]
 struct GhRelease {
     tag_name: String,
+    #[serde(default)]
+    target_commitish: String,
+    #[serde(default)]
+    draft: bool,
     assets: Vec<GhAsset>,
 }
 
@@ -36,6 +40,21 @@ enum UpdateTarget {
     MacOsAppleSilicon,
     MacOsIntel,
     Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateChannel {
+    Stable,
+    Beta,
+}
+
+impl UpdateChannel {
+    fn target_branch(self) -> &'static str {
+        match self {
+            Self::Stable => "master",
+            Self::Beta => "dev",
+        }
+    }
 }
 
 /// Repo to check for releases.
@@ -102,15 +121,14 @@ pub fn is_authorized_release_asset_url(url: &str) -> bool {
     !is_suspicious(tag) && !is_suspicious(asset)
 }
 
-/// Check the configured repo for a release newer than the current version. A
-/// 404 (repo has no releases yet) or other request error is treated as "no
-/// release" rather than failing the whole check.
-pub async fn check() -> anyhow::Result<Option<UpdateInfo>> {
-    check_repo(RELEASE_REPO).await
+/// Check the configured repo for a release newer than the current version on
+/// the selected release channel.
+pub async fn check(channel: UpdateChannel) -> anyhow::Result<Option<UpdateInfo>> {
+    check_repo(RELEASE_REPO, channel).await
 }
 
-async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
-    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+async fn check_repo(repo: &str, channel: UpdateChannel) -> anyhow::Result<Option<UpdateInfo>> {
+    let url = format!("https://api.github.com/repos/{repo}/releases?per_page=100");
     let resp = super::client::get()
         .get(&url)
         .header("User-Agent", "verenu")
@@ -122,8 +140,14 @@ async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
     }
     let resp = resp.error_for_status()?;
 
-    let release: GhRelease = resp.json().await?;
-    let display_version = normalize_version(&release.tag_name);
+    let releases: Vec<GhRelease> = resp.json().await?;
+    let Some(release) = select_release(&releases, channel) else {
+        return Ok(None);
+    };
+    let Some(display_version) = release_version(&release.tag_name) else {
+        log::warn!("Ignoring release with malformed version tag: {}", release.tag_name);
+        return Ok(None);
+    };
 
     if !is_newer(&display_version, env!("CARGO_PKG_VERSION")) {
         return Ok(None);
@@ -146,6 +170,44 @@ async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
         asset_name: asset.name.clone(),
         install_mode,
     }))
+}
+
+fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhRelease> {
+    releases
+        .iter()
+        .filter(|release| {
+            !release.draft
+                && release
+                    .target_commitish
+                    .eq_ignore_ascii_case(channel.target_branch())
+        })
+        .filter_map(|release| {
+            release_version(&release.tag_name)
+                .map(|version| (release, version_tuple(&version)))
+        })
+        .max_by_key(|(_, version)| *version)
+        .map(|(release, _)| release)
+}
+
+/// Release tags must contain exactly three numeric version components. Keep
+/// the more forgiving `normalize_version()` behavior for legacy comparisons,
+/// but never let a malformed release tag become a real update candidate.
+fn release_version(tag: &str) -> Option<String> {
+    let parts: Vec<u64> = tag
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|part| {
+            if part.is_empty() {
+                None
+            } else {
+                part.parse().ok()
+            }
+        })
+        .collect();
+
+    match parts.as_slice() {
+        [major, minor, patch] => Some(format!("{major}.{minor}.{patch}")),
+        _ => None,
+    }
 }
 
 /// Extract the first three numeric groups from any version string, return as "major.minor.patch".
@@ -272,7 +334,8 @@ fn find_asset_with_suffix_and_hints<'a>(
 mod tests {
     use super::{
         find_asset_with_suffix, is_authorized_release_asset_url, is_newer, normalize_version,
-        select_release_asset_for_target, GhAsset, InstallMode, UpdateTarget,
+        release_version, select_release, select_release_asset_for_target, GhAsset, GhRelease,
+        InstallMode, UpdateChannel, UpdateTarget,
     };
 
     fn asset(name: &str) -> GhAsset {
@@ -280,6 +343,84 @@ mod tests {
             name: name.to_string(),
             browser_download_url: format!("https://example.invalid/{name}"),
         }
+    }
+
+    fn release(tag_name: &str, target_commitish: &str) -> GhRelease {
+        GhRelease {
+            tag_name: tag_name.to_string(),
+            target_commitish: target_commitish.to_string(),
+            draft: false,
+            assets: vec![asset("Verenu_0.15.0_x64-setup.exe")],
+        }
+    }
+
+    #[test]
+    fn release_channels_map_to_the_expected_branches() {
+        let releases = [
+            release("Verenu-0.15.0", "master"),
+            release("Verenu-0.15.1-beta", "dev"),
+            release("Verenu-0.99.0", "feature/testing"),
+        ];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Stable)
+                .expect("stable release")
+                .tag_name,
+            "Verenu-0.15.0"
+        );
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Beta)
+                .expect("beta release")
+                .tag_name,
+            "Verenu-0.15.1-beta"
+        );
+    }
+
+    #[test]
+    fn release_channel_picks_the_highest_version_on_that_branch() {
+        let releases = [
+            release("Verenu-0.15.1-beta", "dev"),
+            release("Verenu-0.16.0-beta", "dev"),
+            release("Verenu-9.0.0", "master"),
+        ];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Beta)
+                .expect("highest beta release")
+                .tag_name,
+            "Verenu-0.16.0-beta"
+        );
+    }
+
+    #[test]
+    fn draft_releases_are_not_selected() {
+        let mut draft = release("Verenu-9.0.0-beta", "dev");
+        draft.draft = true;
+        let releases = [draft, release("Verenu-0.15.1-beta", "dev")];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Beta)
+                .expect("published beta release")
+                .tag_name,
+            "Verenu-0.15.1-beta"
+        );
+    }
+
+    #[test]
+    fn malformed_release_tags_are_not_selected() {
+        let releases = [
+            release("Verenu-013.0-beta", "master"),
+            release("Verenu-0.12.1-beta", "master"),
+        ];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Stable)
+                .expect("valid stable release")
+                .tag_name,
+            "Verenu-0.12.1-beta"
+        );
+        assert_eq!(release_version("Verenu-013.0-beta"), None);
+        assert_eq!(release_version("Verenu-0.15.1-beta"), Some("0.15.1".into()));
     }
 
     #[test]

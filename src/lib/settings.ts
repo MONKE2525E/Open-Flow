@@ -56,6 +56,7 @@ type SettingsValueMap = {
   microphone_device: string | null;
   update_dismissed_version: string | null;
   update_notified_version: string | null;
+  beta_updates_enabled: boolean;
   appearance_mode: AppearanceMode;
   advanced_model_ui: boolean;
   cleanup_prompt_overrides: Record<string, string>;

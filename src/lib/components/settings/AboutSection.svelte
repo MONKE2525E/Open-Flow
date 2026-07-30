@@ -1,7 +1,11 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { invoke } from '../../tauri';
   import { appStore, type UpdateInfo } from '../../stores';
   import { saveSetting } from '../../settings';
+  import Toggle from '../Toggle.svelte';
+  import { modalFocusTrap } from '../../modalFocus';
+  import { modalBackdrop, modalCard, MOTION_PX, motionPx } from '../../motion';
 
   let { appVersion }: { appVersion: string } = $props();
 
@@ -11,12 +15,25 @@
   let versionTapCount = $state(0);
   let versionTapTimer: ReturnType<typeof setTimeout> | null = null;
   let devModeHintVisible = $state(false);
+  let betaUpdatesEnabled = $state(false);
+  let confirmBetaUpdates = $state(false);
+  let savingBetaUpdates = $state(false);
+  let betaCancelButton = $state<HTMLButtonElement | null>(null);
 
   const SOURCE_REPO = 'MONKE2525E/Verenu';
   const WEBSITE_URL = 'https://verenu.com';
 
   $effect(() => {
     if (appStore.updateInfo) updateCheckState = 'available';
+  });
+
+  onMount(() => {
+    invoke<boolean | null>('get_setting', { key: 'beta_updates_enabled' })
+      .then((value) => {
+        betaUpdatesEnabled = value ?? false;
+        appStore.betaUpdatesEnabled = betaUpdatesEnabled;
+      })
+      .catch((error) => console.error('Failed to load beta update setting:', error));
   });
 
   async function openExternal(url: string) {
@@ -42,6 +59,49 @@
     } catch {
       updateCheckState = 'idle';
     }
+  }
+
+  function handleBetaUpdatesToggle(value: boolean) {
+    if (value) {
+      confirmBetaUpdates = true;
+      return;
+    }
+    void setBetaUpdates(false);
+  }
+
+  async function setBetaUpdates(value: boolean) {
+    if (savingBetaUpdates) return;
+    const previous = betaUpdatesEnabled;
+    savingBetaUpdates = true;
+    betaUpdatesEnabled = value;
+    appStore.betaUpdatesEnabled = value;
+    try {
+      await saveSetting('beta_updates_enabled', value);
+    } catch (error) {
+      betaUpdatesEnabled = previous;
+      appStore.betaUpdatesEnabled = previous;
+      console.error('Failed to save beta update setting:', error);
+      savingBetaUpdates = false;
+      return;
+    }
+
+    // A result from the other channel is no longer trustworthy. Re-check now
+    // so switching channels has an immediate, visible effect.
+    try { await saveSetting('update_dismissed_version', null); } catch {}
+    try { await saveSetting('update_notified_version', null); } catch {}
+    appStore.updateInfo = null;
+    updateCheckState = 'idle';
+    await checkForUpdateManual();
+    savingBetaUpdates = false;
+  }
+
+  async function confirmEnableBetaUpdates() {
+    confirmBetaUpdates = false;
+    await setBetaUpdates(true);
+  }
+
+  function handleBetaModalKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && confirmBetaUpdates) confirmBetaUpdates = false;
   }
 
   function downloadActionLabel(update: UpdateInfo): string {
@@ -92,6 +152,8 @@
     }
   }
 </script>
+
+<svelte:window onkeydown={handleBetaModalKeydown} />
 
 <h2 class="settings-h">About</h2>
 <div class="setting-row">
@@ -153,6 +215,47 @@
     {/if}
   </div>
 </div>
+<div class="setting-row">
+  <div>
+    <div class="label">Beta updates</div>
+    <div class="desc">Try early releases from the development branch. Expect bugs and possible data loss.</div>
+  </div>
+  <Toggle checked={betaUpdatesEnabled} onchange={handleBetaUpdatesToggle} label="Beta updates" />
+</div>
+
+{#if confirmBetaUpdates}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <button class="modal-backdrop" aria-label="Close dialog" onclick={() => (confirmBetaUpdates = false)} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
+  <div
+    class="modal-card"
+    use:modalFocusTrap={{
+      active: confirmBetaUpdates,
+      initialFocus: () => betaCancelButton,
+    }}
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="beta-updates-confirm-title"
+    tabindex="-1"
+    in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel), scaleFrom: 0.97 }}
+    out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}
+  >
+    <div class="modal-header">
+      <h2 id="beta-updates-confirm-title" class="modal-title">Enable beta updates?</h2>
+    </div>
+    <div class="modal-body">
+      <p class="confirm-copy">
+        Beta releases contain unfinished code from the development branch. They can be unstable,
+        break features, or cause data loss. Only enable this if you want to test early builds.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <div class="footer-actions">
+        <button bind:this={betaCancelButton} class="btn-ghost" onclick={() => (confirmBetaUpdates = false)}>Cancel</button>
+        <button class="btn-primary" onclick={confirmEnableBetaUpdates} disabled={savingBetaUpdates}>Enable beta updates</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .update-controls { flex-shrink: 0; }
@@ -178,6 +281,70 @@
   .update-status {
     animation: update-drop 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    border: 0;
+    padding: 0;
+    appearance: none;
+    background: var(--overlay);
+    z-index: 50;
+    outline: none;
+  }
+  .modal-card {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    translate: -50% -50%;
+    z-index: 51;
+    isolation: isolate;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    width: min(420px, calc(100vw - 40px));
+    box-shadow: var(--shadow-elev);
+    overflow: hidden;
+  }
+  .modal-header { padding: 20px 20px 0; }
+  .modal-title {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    color: var(--ink);
+    margin: 0;
+  }
+  .modal-body { padding: 10px 20px 18px; }
+  .confirm-copy {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+  .modal-footer { padding: 0 20px 20px; }
+  .footer-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .btn-ghost, .btn-primary {
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 12.5px;
+    font-family: var(--sans);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--ink-soft);
+  }
+  .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
+  .btn-primary {
+    background: var(--ink);
+    color: var(--amber-50);
+    border: 0;
+  }
+  .btn-primary:hover { background: var(--ink-strong); }
+  .btn-primary:disabled { opacity: 0.5; cursor: default; }
 
   @keyframes update-drop {
     from {

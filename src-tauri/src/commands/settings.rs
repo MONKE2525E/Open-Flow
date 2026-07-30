@@ -175,6 +175,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
         true,
         false,
     ),
+    setting_spec(store::BETA_UPDATES_ENABLED, SettingKind::Bool, true, true),
     setting_spec(
         store::HISTORY_RETENTION,
         SettingKind::HistoryRetention,
@@ -420,6 +421,7 @@ pub struct AllSettings {
     pub microphone_device: Option<String>,
     pub update_dismissed_version: Option<String>,
     pub update_notified_version: Option<String>,
+    pub beta_updates_enabled: Option<bool>,
     pub hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
     pub cleanup_prompt_overrides: Option<serde_json::Value>,
@@ -480,6 +482,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         microphone_device: str_val(store::MICROPHONE_DEVICE),
         update_dismissed_version: str_val(store::UPDATE_DISMISSED_VERSION),
         update_notified_version: str_val(store::UPDATE_NOTIFIED_VERSION),
+        beta_updates_enabled: bool_val(store::BETA_UPDATES_ENABLED),
         hotkey: s.get(store::HOTKEY).and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
