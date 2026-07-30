@@ -175,27 +175,25 @@ async fn check_repo(repo: &str, channel: UpdateChannel) -> anyhow::Result<Option
 fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhRelease> {
     releases
         .iter()
-        .filter(|release| {
+        .enumerate()
+        .filter(|(_, release)| {
             !release.draft
                 && release
                     .target_commitish
                     .eq_ignore_ascii_case(channel.target_branch())
         })
-        .filter_map(|release| {
+        .filter_map(|(index, release)| {
             release_version(&release.tag_name)
-                .map(|version| (release, version_tuple(&version)))
+                .map(|version| (index, release, version_tuple(&version)))
         })
         // Keep the first release when normalized versions tie. GitHub returns
         // releases newest-first, so this preserves the newest prerelease build.
-        .max_by(|(_, left), (_, right)| {
-            let ordering = left.cmp(right);
-            if ordering == std::cmp::Ordering::Equal {
-                std::cmp::Ordering::Greater
-            } else {
-                ordering
-            }
+        .max_by(|(left_index, _, left_version), (right_index, _, right_version)| {
+            left_version
+                .cmp(right_version)
+                .then_with(|| right_index.cmp(left_index))
         })
-        .map(|(release, _)| release)
+        .map(|(_, release, _)| release)
 }
 
 /// Release tags must contain at least three numeric version components. Keep
