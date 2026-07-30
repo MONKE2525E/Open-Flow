@@ -214,6 +214,7 @@ pub const CREDENTIALS_MIGRATED: &str = "credentials_migrated_v1";
 pub const MACOS_CLIPBOARD_SNIFF: &str = "macos_clipboard_sniff_enabled";
 pub const UPDATE_DISMISSED_VERSION: &str = "update_dismissed_version";
 pub const UPDATE_NOTIFIED_VERSION: &str = "update_notified_version";
+pub const BETA_UPDATES_ENABLED: &str = "beta_updates_enabled";
 pub const HISTORY_RETENTION: &str = "history_retention";
 pub const AUTOSTART_ENABLED: &str = "autostart_enabled";
 pub const CAPS_LOCK_UPPERCASE: &str = "caps_lock_uppercase_enabled";

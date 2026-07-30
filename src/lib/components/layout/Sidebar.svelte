@@ -156,7 +156,17 @@
     <div class="brand-mark">
       <LogoMark />
     </div>
-    <div class="brand-name">Verenu</div>
+    <div class="brand-name">
+      <span>Verenu</span>
+      {#if appStore.betaUpdatesEnabled}
+        <span
+          class="beta-marker"
+          aria-label="Beta updates enabled"
+          in:fly|global={{ y: -4, duration: motionMs(180), easing: cubicOut }}
+          out:fly|global={{ y: -5, duration: motionMs(220), easing: cubicOut }}
+        >BETA</span>
+      {/if}
+    </div>
   </div>
 
   <div class="rail-pill" class:rail-pill-snap={pillSnap} style="top:{pillTop}px; height:{pillHeight}px"></div>
@@ -293,6 +303,20 @@
     font-weight: 500;
     color: var(--ink);
     white-space: nowrap;
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+  }
+
+  .beta-marker {
+    font-family: var(--sans);
+    font-size: 8.5px;
+    font-weight: 750;
+    letter-spacing: 0.08em;
+    line-height: 1;
+    color: var(--accent);
+    position: relative;
+    top: -5px;
   }
 
   /*

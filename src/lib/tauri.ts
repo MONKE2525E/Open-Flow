@@ -211,6 +211,7 @@ const defaultSettings: Record<string, unknown> = {
   microphone_device: null,
   update_dismissed_version: null,
   update_notified_version: null,
+  beta_updates_enabled: false,
   advanced_model_ui: false,
   cleanup_prompt_overrides: {},
   local_model_memory_policy: 'unload_after_5m',

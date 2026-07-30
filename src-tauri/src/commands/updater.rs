@@ -7,8 +7,21 @@ use tauri_plugin_shell::ShellExt;
 // ---------- updates ----------
 
 #[tauri::command]
-pub async fn check_for_update() -> Result<Option<crate::api::updater::UpdateInfo>, String> {
-    match crate::api::updater::check().await {
+pub async fn check_for_update(
+    app: AppHandle,
+) -> Result<Option<crate::api::updater::UpdateInfo>, String> {
+    let handle = store::settings_handle(&app)?;
+    let channel = if handle
+        .get(store::BETA_UPDATES_ENABLED)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        crate::api::updater::UpdateChannel::Beta
+    } else {
+        crate::api::updater::UpdateChannel::Stable
+    };
+
+    match crate::api::updater::check(channel).await {
         Ok(update) => Ok(update),
         Err(e) => {
             log::warn!("Update check failed: {e}");
