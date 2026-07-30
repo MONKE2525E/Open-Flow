@@ -233,12 +233,7 @@ fn release_version(tag: &str) -> Option<String> {
 }
 
 fn current_package_version() -> String {
-    match option_env!("CARGO_PKG_VERSION_PRE") {
-        Some(prerelease) if !prerelease.is_empty() => {
-            format!("{}-{prerelease}", env!("CARGO_PKG_VERSION"))
-        }
-        _ => env!("CARGO_PKG_VERSION").to_owned(),
-    }
+    env!("CARGO_PKG_VERSION").to_owned()
 }
 
 fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {

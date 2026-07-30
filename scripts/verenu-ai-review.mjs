@@ -607,7 +607,7 @@ async function main() {
       stateComment = await updateProgress(
         prNumber,
         stateComment,
-        formatProgressSummary({ stage: "switching", fallbackModel: nextModel, reason, mode }),
+        formatProgressSummary({ stage: "switching", model: activeModel, fallbackModel: nextModel, reason, mode }),
         {
           ...baseState,
           model: activeModel,

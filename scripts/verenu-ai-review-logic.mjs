@@ -45,6 +45,7 @@ export function shouldFallback(result, currentModel, fallbackModel) {
 }
 
 export function failureCategory(result) {
+  if (!result || result.code === 0) return null;
   if (result?.previewFailed) return "preview_failed";
   return fallbackReason(result) || "review_failed";
 }
@@ -60,7 +61,7 @@ export function formatProgressSummary({ stage, model, fallbackModel, reason, mod
     case "reviewing":
       return `🔍 Reviewing ${shaText}${modelText}...`;
     case "switching":
-      return `🔁 Gemini ${reason === "model_unavailable" ? "model unavailable" : "quota unavailable"}, switching to Claude${fallbackModel ? ` \`${fallbackModel}\`` : ""}...`;
+      return `🔁 ${model ? `\`${model}\`` : "Primary model"} ${reason === "model_unavailable" ? "unavailable" : reason === "rate_limit" ? "rate-limited" : "quota unavailable"}, switching to ${fallbackModel ? `\`${fallbackModel}\`` : "the fallback model"}...`;
     case "complete":
       return `✅ Verenu AI review complete${modelText}. Reviewed ${shaText} (${findings} finding${findings === 1 ? "" : "s"}).`;
     case "failed":

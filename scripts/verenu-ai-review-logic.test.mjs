@@ -62,13 +62,16 @@ test("unrelated failures, preview failures, and successful reviews do not fallba
   assert.equal(shouldFallback({ code: 0, stderr: "quota exceeded" }, DEFAULT_MODEL, DEFAULT_FALLBACK_MODEL), false);
   assert.equal(failureCategory({ code: 1, previewFailed: true }), "preview_failed");
   assert.equal(failureCategory({ code: 1, stderr: "401 unauthorized" }), "review_failed");
+  assert.equal(failureCategory({ code: 0, stderr: "success" }), null);
 });
 
 test("progress summaries expose the expected review stages without provider details", () => {
   assert.match(formatProgressSummary({ stage: "preparing", mode: "normal" }), /^👀 Preparing/);
   assert.match(formatProgressSummary({ stage: "reviewing", model: DEFAULT_MODEL, headSha: "1234567890abcdef" }), /🔍 Reviewing `1234567`/);
-  assert.match(formatProgressSummary({ stage: "switching", fallbackModel: DEFAULT_FALLBACK_MODEL, reason: "quota" }), /🔁 Gemini quota unavailable/);
-  assert.match(formatProgressSummary({ stage: "switching", fallbackModel: DEFAULT_FALLBACK_MODEL, reason: "model_unavailable" }), /🔁 Gemini model unavailable/);
+  const quotaSwitch = formatProgressSummary({ stage: "switching", model: DEFAULT_MODEL, fallbackModel: DEFAULT_FALLBACK_MODEL, reason: "quota" });
+  assert.ok(quotaSwitch.includes(`\`${DEFAULT_MODEL}\` quota unavailable`));
+  assert.ok(quotaSwitch.includes(`switching to \`${DEFAULT_FALLBACK_MODEL}\``));
+  assert.match(formatProgressSummary({ stage: "switching", model: "custom-primary", fallbackModel: "custom-fallback", reason: "model_unavailable" }), /`custom-primary` unavailable, switching to `custom-fallback`/);
   assert.match(formatProgressSummary({ stage: "complete", model: DEFAULT_FALLBACK_MODEL, findings: 2, headSha: "1234567890abcdef" }), /✅ .*2 findings/);
   assert.equal(formatProgressSummary({ stage: "failed", reason: "quota exceeded for secret-token" }), "❌ Verenu AI review failed (review_failed).");
 });
