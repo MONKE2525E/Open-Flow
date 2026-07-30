@@ -120,35 +120,47 @@ function noteCompleted(key: string, name: string) {
 }
 
 let started = false;
+let listenerSession = 0;
 
 export function startDownloadManagerListeners(): () => void {
   if (started) return () => {};
   started = true;
+  const session = ++listenerSession;
+  let cancelled = false;
   const unlisteners: Array<() => void> = [];
 
+  async function register(promise: Promise<() => void>) {
+    const unlisten = await promise;
+    if (cancelled || session !== listenerSession) {
+      unlisten();
+      return;
+    }
+    unlisteners.push(unlisten);
+  }
+
   (async () => {
-    unlisteners.push(
-      await listen<{ model_id?: string }>('local-stt-model-download-complete', (event) => {
+    await register(listen<{ model_id?: string }>('local-stt-model-download-complete', (event) => {
         if (event.payload?.model_id) noteCompleted(`stt:${event.payload.model_id}`, sttName(event.payload.model_id));
-      }),
-    );
-    unlisteners.push(
-      await listen<{ model_id?: string }>('local-llm-model-download-complete', (event) => {
+      }));
+    await register(listen<{ model_id?: string }>('local-llm-model-download-complete', (event) => {
         if (event.payload?.model_id) noteCompleted(`llm:${event.payload.model_id}`, llmName(event.payload.model_id));
-      }),
-    );
-    unlisteners.push(
-      await listen('local-llm-runtime-download-complete', () => {
+      }));
+    await register(listen('local-llm-runtime-download-complete', () => {
         noteCompleted('runtime:llm', 'Local cleanup runtime');
-      }),
-    );
+      }));
   })().catch((err) => {
+    if (cancelled || session !== listenerSession) return;
     console.error('download manager listeners failed', err);
+    for (const unlisten of unlisteners) unlisten();
+    unlisteners.length = 0;
     started = false;
   });
 
   return () => {
+    cancelled = true;
+    listenerSession += 1;
     for (const unlisten of unlisteners) unlisten();
+    unlisteners.length = 0;
     started = false;
   };
 }

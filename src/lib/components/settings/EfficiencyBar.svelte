@@ -4,7 +4,7 @@
   // 0 = maximum accuracy (left) … 1 = maximum efficiency (right).
   let { position = 0.5 }: { position?: number } = $props();
 
-  const clamped = $derived(Math.min(1, Math.max(0, position)));
+  const clamped = $derived(Number.isFinite(position) ? Math.min(1, Math.max(0, position)) : 0.5);
   // Reduced motion: snap instead of gliding the marker between cards.
   const durationMs = $derived(reducedMotionEnabled() ? 0 : MOTION_MS.panel);
 </script>

@@ -4,13 +4,13 @@
 // scrolled-to-top page keeps its heading crisp. Reused by Settings and the main
 // content area.
 
-export type ScrollEdgeCallback = (top: boolean, bottom: boolean) => void;
+export type ScrollEdgeCallback = (top: boolean, bottom: boolean, node: HTMLElement) => void;
 
 export function scrollEdges(node: HTMLElement, onChange: ScrollEdgeCallback) {
   let callback = onChange;
   const update = () => {
     const { scrollTop, scrollHeight, clientHeight } = node;
-    callback(scrollTop > 4, scrollTop + clientHeight < scrollHeight - 4);
+    callback(scrollTop > 4, scrollTop + clientHeight < scrollHeight - 4, node);
   };
   update();
   node.addEventListener('scroll', update, { passive: true });

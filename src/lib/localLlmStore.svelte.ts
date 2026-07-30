@@ -96,6 +96,7 @@ export async function downloadLocalLlmModel(modelIdValue: string) {
   } catch (err) {
     console.error('download local cleanup model failed', err);
     emit('verenu:error', `Failed to start model download: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
   }
 }
 

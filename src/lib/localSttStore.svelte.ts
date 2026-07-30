@@ -51,6 +51,7 @@ export async function downloadLocalModel(modelIdValue: string) {
   } catch (err) {
     console.error('download local model failed', err);
     emit('verenu:error', `Failed to start model download: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
   }
 }
 

@@ -39,7 +39,7 @@
     if (!preset.target) return 0;
     let total = 0;
     for (const model of preset.target.requiredLocalModels) {
-      if (!installedLocal[model.task].includes(model.id)) total += model.sizeMb;
+      if (!installedLocal[model.task]?.includes(model.id)) total += model.sizeMb;
     }
     return total;
   }
@@ -54,7 +54,7 @@
   function installedCountFor(preset: Preset): number {
     if (!preset.target) return 0;
     return preset.target.requiredLocalModels.filter(
-      (model) => installedLocal[model.task].includes(model.id),
+      (model) => installedLocal[model.task]?.includes(model.id) ?? false,
     ).length;
   }
 </script>

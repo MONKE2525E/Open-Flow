@@ -11,6 +11,7 @@
 //! with the network transcription call rather than gating on it first.
 
 use crate::data::store;
+use sha2::{Digest, Sha256};
 
 /// Aggregate result of running VAD across an entire recording. Only
 /// `contains_speech` currently drives a decision (in
@@ -53,22 +54,47 @@ static MODEL_BYTES: &[u8] = include_bytes!("../../assets/silero_vad_v4.onnx");
 /// once per process and reused — writing 1.8MB to disk on every dictation
 /// would defeat the point of keeping this cheap.
 fn staged_model_path() -> anyhow::Result<std::path::PathBuf> {
-    static PATH: std::sync::OnceLock<anyhow::Result<std::path::PathBuf>> =
-        std::sync::OnceLock::new();
-    match PATH.get_or_init(|| {
-        let path = std::env::temp_dir().join("verenu_silero_vad_v4.onnx");
-        let already_staged = std::fs::metadata(&path)
-            .map(|meta| meta.len() as usize == MODEL_BYTES.len())
-            .unwrap_or(false);
-        if !already_staged {
-            std::fs::write(&path, MODEL_BYTES)
-                .map_err(|e| anyhow::anyhow!("failed to stage Silero VAD model: {e}"))?;
-        }
-        Ok(path)
-    }) {
-        Ok(path) => Ok(path.clone()),
-        Err(e) => Err(anyhow::anyhow!("{e}")),
+    static PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    static STAGE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+    if let Some(path) = PATH.get() {
+        return Ok(path.clone());
     }
+
+    let _stage_guard = STAGE_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Silero VAD model staging lock was poisoned"))?;
+
+    if let Some(path) = PATH.get() {
+        return Ok(path.clone());
+    }
+
+    let path = std::env::temp_dir().join("verenu_silero_vad_v4.onnx");
+    if !staged_model_matches(&path) {
+        std::fs::write(&path, MODEL_BYTES)
+            .map_err(|e| anyhow::anyhow!("failed to stage Silero VAD model: {e}"))?;
+        if !staged_model_matches(&path) {
+            return Err(anyhow::anyhow!(
+                "staged Silero VAD model failed integrity verification"
+            ));
+        }
+    }
+    let _ = PATH.set(path.clone());
+    Ok(path)
+}
+
+fn staged_model_matches(path: &std::path::Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if metadata.len() as usize != MODEL_BYTES.len() {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    Sha256::digest(bytes) == Sha256::digest(MODEL_BYTES)
 }
 
 /// Scales how lenient the speech thresholds are with the active mic gain,

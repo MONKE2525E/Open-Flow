@@ -260,6 +260,7 @@ enum TapState {
 struct ChordStateMachine {
     key1_down: bool,
     key2_down: bool,
+    key2_passed_through: bool,
     key1_was_chord: bool,
     key2_was_chord: bool,
     chord_down: bool,
@@ -328,6 +329,9 @@ impl ChordStateMachine {
         }
 
         if !(self.key1_down && self.key2_down) {
+            if key == ChordKey::Key2 {
+                self.key2_passed_through = true;
+            }
             // Only one key down so far — not our gesture yet, let it through
             // untouched (so a lone Ctrl or Win press still behaves normally).
             return ChordOutcome::passthrough();
@@ -392,6 +396,11 @@ impl ChordStateMachine {
 
     fn on_key_up(&mut self, key: ChordKey, now_ms: u64) -> ChordOutcome {
         let _was_down = std::mem::replace(self.key_down_mut(key), false);
+        let key2_passed_through = if key == ChordKey::Key2 {
+            std::mem::replace(&mut self.key2_passed_through, false)
+        } else {
+            false
+        };
 
         if !self.key_was_chord(key) {
             // Never claimed as part of a chord — always pass through, or an
@@ -431,7 +440,14 @@ impl ChordStateMachine {
             self.handless_from_chord = false;
         }
 
-        ChordOutcome::suppress(action)
+        if key == ChordKey::Key2 && key2_passed_through {
+            ChordOutcome {
+                action,
+                disposition: KeyDisposition::Passthrough,
+            }
+        } else {
+            ChordOutcome::suppress(action)
+        }
     }
 }
 
@@ -819,6 +835,16 @@ mod chord_tests {
         m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
         let up = m.on_key_event(ChordKey::Key2, KeyEdge::Up, 500);
         assert_eq!(up.disposition, KeyDisposition::Suppress);
+    }
+
+    #[test]
+    fn first_key2_keyup_matches_its_passthrough_down() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 5);
+        let up = m.on_key_event(ChordKey::Key2, KeyEdge::Up, 500);
+        assert_eq!(up.action, Some(ChordAction::FireRelease));
+        assert_eq!(up.disposition, KeyDisposition::Passthrough);
     }
 
     #[test]

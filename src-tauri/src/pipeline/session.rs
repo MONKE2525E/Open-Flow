@@ -127,7 +127,14 @@ pub fn start_recording_session_ex(
             {
                 let mut st = match lock_state(state) {
                     Ok(st) => st,
-                    Err(e) => return Err(e.to_string()),
+                    Err(e) => {
+                        let _ = session.stop();
+                        if let Some(session_id) = exclusive_mic_session_id {
+                            crate::system::volume::release_mic(session_id);
+                        }
+                        release_starting_reservation(state);
+                        return Err(e.to_string());
+                    }
                 };
                 let prepend_audio = match &st.lifecycle {
                     DictationLifecycle::Starting { prepend_audio } => prepend_audio.clone(),
@@ -196,10 +203,17 @@ pub fn start_recording_session_ex(
 /// open — the carried prepend audio (if any) is simply dropped, not
 /// retained anywhere a later, unrelated dictation could inherit it.
 fn release_starting_reservation(state: &SharedState) {
-    if let Ok(mut st) = lock_state(state) {
-        if matches!(st.lifecycle, DictationLifecycle::Starting { .. }) {
-            st.lifecycle = DictationLifecycle::Idle;
+    let mut st = match state.lock() {
+        Ok(st) => st,
+        Err(poisoned) => {
+            log::warn!(
+                "Recording state lock was poisoned while releasing start reservation; recovering"
+            );
+            poisoned.into_inner()
         }
+    };
+    if matches!(st.lifecycle, DictationLifecycle::Starting { .. }) {
+        st.lifecycle = DictationLifecycle::Idle;
     }
 }
 

@@ -43,6 +43,7 @@
     type Hardware,
     type Preset,
     type PresetTarget,
+    type RequiredLocalModel,
   } from './modelPresets';
   import { transcriptionModelStore } from '../../transcriptionModelStore.svelte';
   import {
@@ -83,6 +84,8 @@
   // (activated) only once every required model is on disk, so the active
   // selection never points at a model that isn't there yet.
   let pendingPreset = $state<Preset | null>(null);
+  let pendingPresetDownloads = $state<RequiredLocalModel[]>([]);
+  let pendingPresetDownloadStarted = $state(false);
 
   const activeConfig = $derived<ActiveConfig>({
     transcriptionDefaultModel,
@@ -104,7 +107,13 @@
   });
 
   function requiredModelsInstalled(target: PresetTarget): boolean {
-    return target.requiredLocalModels.every((model) => installedLocal[model.task].includes(model.id));
+    return target.requiredLocalModels.every((model) => installedLocal[model.task]?.includes(model.id) ?? false);
+  }
+
+  function clearPendingPreset() {
+    pendingPreset = null;
+    pendingPresetDownloads = [];
+    pendingPresetDownloadStarted = false;
   }
 
   async function setCleanupEnabled(value: boolean) {
@@ -140,11 +149,19 @@
       // Kick off the downloads and defer activation until they land (see the
       // $effect below). Reuses the same download plumbing as the Advanced panel.
       pendingPreset = preset;
+      pendingPresetDownloads = missing;
+      pendingPresetDownloadStarted = false;
       for (const model of missing) {
         if (model.task === 'transcription') {
-          downloadLocalModel(model.id).catch((err) => console.error('preset stt download failed', err));
+          downloadLocalModel(model.id).catch((err) => {
+            if (pendingPreset?.id === preset.id) clearPendingPreset();
+            console.error('preset stt download failed', err);
+          });
         } else {
-          downloadLocalLlmModel(model.id).catch((err) => console.error('preset llm download failed', err));
+          downloadLocalLlmModel(model.id).catch((err) => {
+            if (pendingPreset?.id === preset.id) clearPendingPreset();
+            console.error('preset llm download failed', err);
+          });
         }
       }
       return;
@@ -160,7 +177,7 @@
   function cancelPresetDownload(preset: Preset) {
     const target = preset.target;
     if (!target) return;
-    if (pendingPreset?.id === preset.id) pendingPreset = null;
+    if (pendingPreset?.id === preset.id) clearPendingPreset();
     for (const model of target.requiredLocalModels) {
       if (downloadingLocal[model.task] !== model.id) continue;
       if (model.task === 'transcription') {
@@ -190,7 +207,20 @@
     if (!preset?.target) return;
     if (requiredModelsInstalled(preset.target)) {
       activatePreset(preset.target);
-      pendingPreset = null;
+      clearPendingPreset();
+      return;
+    }
+
+    const isDownloadingExpectedModel = pendingPresetDownloads.some(
+      (model) => downloadingLocal[model.task] === model.id,
+    );
+    if (isDownloadingExpectedModel) {
+      pendingPresetDownloadStarted = true;
+    } else if (pendingPresetDownloadStarted) {
+      // A failure or cancellation can leave the preset incomplete without
+      // passing through the explicit cancel button. Do not keep a stale
+      // pending preset that could activate after an unrelated later download.
+      clearPendingPreset();
     }
   });
 

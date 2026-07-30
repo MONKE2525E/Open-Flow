@@ -19,6 +19,7 @@
   import { isMac } from '../platform';
 
   let settingsPageEl = $state<HTMLDivElement | null>(null);
+  let settingsPanelEl = $state<HTMLDivElement | null>(null);
   let previousFocusEl: HTMLElement | null = null;
 
   const section = $derived(appStore.settingsSection);
@@ -60,7 +61,8 @@
   // its heading crisp and the fade never obscures anything at rest.
   let fadeTop = $state(false);
   let fadeBottom = $state(false);
-  const setFades: ScrollEdgeCallback = (top, bottom) => {
+  const setFades: ScrollEdgeCallback = (top, bottom, node) => {
+    if (node !== settingsPanelEl) return;
     fadeTop = top;
     fadeBottom = bottom;
   };
@@ -152,6 +154,7 @@
         <div class="fade-edge fade-edge-bottom" class:visible={fadeBottom} aria-hidden="true"></div>
         {#key section}
           <div
+            bind:this={settingsPanelEl}
             class="panel scroll-styled"
             use:scrollEdges={setFades}
             in:pageSwap={{ axis: 'y', distance: animDir * motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel) }}
