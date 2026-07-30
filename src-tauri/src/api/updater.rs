@@ -317,6 +317,8 @@ fn push_version_part(parts: &mut Vec<VersionPart>, buffer: &mut String) {
     if buffer.chars().all(|character| character.is_ascii_digit()) {
         if let Ok(value) = buffer.parse() {
             parts.push(VersionPart::Numeric(value));
+        } else {
+            parts.push(VersionPart::Text(buffer.clone()));
         }
     } else {
         parts.push(VersionPart::Text(buffer.clone()));
@@ -454,8 +456,8 @@ fn find_asset_with_suffix_and_hints<'a>(
 mod tests {
     use super::{
         find_asset_with_suffix, is_authorized_release_asset_url, is_newer, normalize_version,
-        release_version, select_release, select_release_asset_for_target, GhAsset, GhRelease,
-        InstallMode, UpdateChannel, UpdateTarget,
+        parse_prerelease_parts, release_version, select_release, select_release_asset_for_target,
+        GhAsset, GhRelease, InstallMode, UpdateChannel, UpdateTarget, VersionPart,
     };
 
     fn asset(name: &str) -> GhAsset {
@@ -607,6 +609,17 @@ mod tests {
         assert!(!is_newer("0.15.1-beta.1", "0.15.1-beta.2"));
         assert!(!is_newer("0.15.1-beta.2", "0.15.1"));
         assert!(is_newer("0.15.2-beta.1", "0.15.1"));
+    }
+
+    #[test]
+    fn oversized_numeric_prerelease_identifiers_are_retained() {
+        assert_eq!(
+            parse_prerelease_parts("beta.18446744073709551616"),
+            vec![
+                VersionPart::Text("beta".into()),
+                VersionPart::Text("18446744073709551616".into()),
+            ]
+        );
     }
 
     #[test]

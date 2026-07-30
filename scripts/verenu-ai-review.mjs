@@ -29,6 +29,15 @@ import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import {
+  DEFAULT_FALLBACK_MODEL,
+  DEFAULT_MODEL,
+  failureCategory,
+  fallbackReason,
+  formatProgressSummary,
+  selectReviewModels,
+  shouldFallback,
+} from "./verenu-ai-review-logic.mjs";
 
 const GITHUB_API = process.env.GITHUB_API_URL || "https://api.github.com";
 const [OWNER, REPO] = requireEnv("GITHUB_REPOSITORY").split("/");
@@ -177,31 +186,41 @@ function parseState(comment) {
 async function upsertStateComment(prNumber, existing, summary, state) {
   const body = `${summary}\n\n${STATE_MARKER} ${JSON.stringify(state)} -->`;
   if (existing) {
-    await gh(`/repos/${OWNER}/${REPO}/issues/comments/${existing.id}`, {
+    return gh(`/repos/${OWNER}/${REPO}/issues/comments/${existing.id}`, {
       method: "PATCH",
       body: JSON.stringify({ body }),
     });
   } else {
-    await gh(`/repos/${OWNER}/${REPO}/issues/${prNumber}/comments`, {
+    return gh(`/repos/${OWNER}/${REPO}/issues/${prNumber}/comments`, {
       method: "POST",
       body: JSON.stringify({ body }),
     });
   }
 }
 
+async function updateProgress(prNumber, existing, summary, state) {
+  try {
+    return (await upsertStateComment(prNumber, existing, summary, state)) || existing;
+  } catch (err) {
+    console.error(`failed to update review progress comment: ${err.message}`);
+    return existing;
+  }
+}
+
 // --- provider selection ----------------------------------------------------
 
 // CLI Proxy API is a self-hosted OpenAI-protocol-compatible gateway (reached
-// over Tailscale, see the workflow's "Connect to Tailscale" step) fronting a
-// subscription-quota model rather than a metered API — one model tier, no
-// escalation-for-cost-reasons logic needed.
-const DEFAULT_MODEL = "gemini-3.6-flash-high";
-
+// over Tailscale, see the workflow's "Connect to Tailscale" step) fronting
+// subscription-quota models. Fallback is bounded to one alternate model.
 function selectProvider(pr, mode) {
-  const changedLines = (pr.additions || 0) + (pr.deletions || 0);
-  if (!process.env.CLIPROXY_API_KEY) return null;
-  const model = process.env.CLIPROXY_MODEL || DEFAULT_MODEL;
-  return { model, changedLines };
+  return selectReviewModels({
+    apiKey: process.env.CLIPROXY_API_KEY,
+    primaryModel: process.env.CLIPROXY_MODEL || DEFAULT_MODEL,
+    fallbackModel: process.env.CLIPROXY_FALLBACK_MODEL || DEFAULT_FALLBACK_MODEL,
+    additions: pr.additions,
+    deletions: pr.deletions,
+    mode,
+  });
 }
 
 // OCR_LLM_MODEL is set here (not just passed as --model) because the cheap
@@ -317,7 +336,12 @@ async function reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome)
     }
 
     if (!(await previewOk(quarantineDir, pr, providerEnvVars, ocrHome))) {
-      return { code: 1, stdout: "", stderr: "ocr preview check failed in the quarantined worktree; aborting before the billed review" };
+      return {
+        code: 1,
+        stdout: "",
+        stderr: "ocr preview check failed in the quarantined worktree; aborting before the billed review",
+        previewFailed: true,
+      };
     }
     return await runOcrAt(quarantineDir, args, providerEnvVars, ocrHome);
   } finally {
@@ -488,11 +512,22 @@ async function main() {
 
   const selection = selectProvider(pr, mode);
   if (!selection) {
-    await upsertStateComment(
+    await updateProgress(
       prNumber,
       existingComment,
       "No AI review provider is configured (missing `CLIPROXY_API_KEY`). Skipping automated review.",
-      { ...(existingState || {}), prNumber, headSha: pr.head.sha, mode, model: null, timestamp: new Date().toISOString(), completed: false },
+      {
+        ...(existingState || {}),
+        prNumber,
+        headSha: pr.head.sha,
+        mode,
+        model: null,
+        status: "failed",
+        stage: "failed",
+        reason: "provider_not_configured",
+        timestamp: new Date().toISOString(),
+        completed: false,
+      },
     );
     return;
   }
@@ -504,15 +539,32 @@ async function main() {
       ? "Automated Verenu PR review (mode: security). Prioritize security-relevant defects this run."
       : `Automated Verenu PR review (mode: ${mode}).`;
 
-  await fetchPrCommits(pr);
+  let ocrHome;
+  let stateComment = existingComment;
+  const attemptedModels = [];
+  const baseState = {
+    ...(existingState || {}),
+    prNumber,
+    headSha: pr.head.sha,
+    mode,
+    provider: "cliproxy",
+    model: selection.model,
+    models: selection.models,
+    attemptedModels,
+    completed: false,
+  };
 
-  const providerEnvVars = providerEnv(selection.model);
-  const args = ocrReviewArgs({ baseSha: pr.base.sha, headSha: pr.head.sha, model: selection.model, background });
-  const ocrHome = makeOcrHome();
+  stateComment = await updateProgress(
+    prNumber,
+    stateComment,
+    formatProgressSummary({ stage: "preparing", mode }),
+    { ...baseState, status: "preparing", stage: "preparing", timestamp: new Date().toISOString() },
+  );
 
-  console.log(`running ocr review: mode=${mode} model=${selection.model} changedLines=${selection.changedLines}`);
+  console.log(`starting ocr review: mode=${mode} models=${selection.models.join(",")} changedLines=${selection.changedLines}`);
 
   try {
+    ocrHome = makeOcrHome();
     // Always review from the quarantined worktree, never process.cwd(). cwd
     // stays checked out at the base ref, so OCR's file-read tool calls would
     // silently see base-commit content there — a git-object-only "preview
@@ -520,11 +572,71 @@ async function main() {
     // diff resolves, not which file content OCR's tools would actually read.
     // Running the worktree unconditionally costs nothing extra in security
     // (same hardening either way) and removes that silent-wrong-review risk.
-    const result = await reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome);
+    await fetchPrCommits(pr);
+
+    let activeModel = selection.model;
+    let result;
+
+    for (let attempt = 0; attempt < selection.models.length; attempt++) {
+      activeModel = selection.models[attempt];
+      attemptedModels.push(activeModel);
+      stateComment = await updateProgress(
+        prNumber,
+        stateComment,
+        formatProgressSummary({ stage: "reviewing", model: activeModel, mode, headSha: pr.head.sha }),
+        {
+          ...baseState,
+          model: activeModel,
+          attemptedModels: [...attemptedModels],
+          status: "reviewing",
+          stage: "reviewing",
+          timestamp: new Date().toISOString(),
+        },
+      );
+
+      const providerEnvVars = providerEnv(activeModel);
+      const args = ocrReviewArgs({ baseSha: pr.base.sha, headSha: pr.head.sha, model: activeModel, background });
+      result = await reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome);
+
+      if (!result || result.code === 0) break;
+
+      const nextModel = selection.models[attempt + 1];
+      if (!shouldFallback(result, activeModel, nextModel)) break;
+
+      const reason = fallbackReason(result);
+      stateComment = await updateProgress(
+        prNumber,
+        stateComment,
+        formatProgressSummary({ stage: "switching", fallbackModel: nextModel, reason, mode }),
+        {
+          ...baseState,
+          model: activeModel,
+          attemptedModels: [...attemptedModels],
+          status: "switching",
+          stage: "switching",
+          reason,
+          timestamp: new Date().toISOString(),
+        },
+      );
+    }
 
     if (!result || result.code !== 0) {
-      console.error("OCR review failed even in the quarantined worktree; stopping rather than weakening the checkout security model");
-      console.error((result?.stderr || "").slice(0, 800));
+      const reason = failureCategory(result);
+      stateComment = await updateProgress(
+        prNumber,
+        stateComment,
+        formatProgressSummary({ stage: "failed", reason }),
+        {
+          ...baseState,
+          model: activeModel,
+          attemptedModels: [...attemptedModels],
+          status: "failed",
+          stage: "failed",
+          reason,
+          timestamp: new Date().toISOString(),
+        },
+      );
+      console.error(`OCR review failed: category=${reason} exit=${result?.code ?? "unknown"}`);
       process.exitCode = 1;
       return;
     }
@@ -532,22 +644,40 @@ async function main() {
     const findings = parseOcrFindings(result.stdout);
     await postFindings(prNumber, pr, findings);
 
-    const summary = [
-      `**Verenu AI Review** — ${mode} mode, \`${selection.model}\`.`,
-      `Reviewed \`${pr.head.sha.slice(0, 7)}\` (${findings.length} finding${findings.length === 1 ? "" : "s"}).`,
-    ].join("\n");
-
-    await upsertStateComment(prNumber, existingComment, summary, {
+    stateComment = await updateProgress(
       prNumber,
-      headSha: pr.head.sha,
-      mode,
-      model: selection.model,
-      provider: "cliproxy",
-      timestamp: new Date().toISOString(),
-      completed: true,
-    });
+      stateComment,
+      formatProgressSummary({ stage: "complete", model: activeModel, mode, findings: findings.length, headSha: pr.head.sha }),
+      {
+        ...baseState,
+        model: activeModel,
+        attemptedModels: [...attemptedModels],
+        fallbackUsed: activeModel !== selection.model,
+        status: "completed",
+        stage: "complete",
+        findings: findings.length,
+        timestamp: new Date().toISOString(),
+        completed: true,
+      },
+    );
+  } catch (err) {
+    stateComment = await updateProgress(
+      prNumber,
+      stateComment,
+      formatProgressSummary({ stage: "failed", reason: "setup_failed" }),
+      {
+        ...baseState,
+        attemptedModels: [...attemptedModels],
+        status: "failed",
+        stage: "failed",
+        reason: "setup_failed",
+        timestamp: new Date().toISOString(),
+      },
+    );
+    console.error(`OCR review runner failed: ${err.message}`);
+    process.exitCode = 1;
   } finally {
-    rmSync(ocrHome, { recursive: true, force: true });
+    if (ocrHome) rmSync(ocrHome, { recursive: true, force: true });
   }
 }
 

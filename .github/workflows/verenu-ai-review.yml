@@ -57,4 +57,5 @@ jobs:
           CLIPROXY_API_KEY: ${{ secrets.CLIPROXY_API_KEY }}
           CLIPROXY_URL: ${{ secrets.CLIPROXY_URL }}
           CLIPROXY_MODEL: ${{ secrets.CLIPROXY_MODEL }}
+          CLIPROXY_FALLBACK_MODEL: ${{ secrets.CLIPROXY_FALLBACK_MODEL }}
         run: node scripts/verenu-ai-review.mjs
