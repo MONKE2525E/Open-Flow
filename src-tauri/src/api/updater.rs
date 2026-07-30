@@ -196,22 +196,20 @@ fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhR
         .map(|(_, release, _)| release)
 }
 
-/// Release tags must contain at least three numeric version components. Keep
-/// the more forgiving `normalize_version()` behavior for legacy comparisons,
-/// but never let a tag missing a major, minor, or patch component become a
-/// real update candidate. Numeric prerelease/build suffixes are ignored.
+/// Release tags must contain exactly three numeric components in the main
+/// version core. Prerelease and build suffixes may contain numbers, but they
+/// must not fill in a missing patch component.
 fn release_version(tag: &str) -> Option<String> {
-    let parts: Vec<u64> = tag
-        .split(|c: char| !c.is_ascii_digit())
-        .filter_map(|part| {
-            if part.is_empty() {
-                None
-            } else {
-                part.parse().ok()
-            }
-        })
-        .take(3)
-        .collect();
+    let start = tag.find(|c: char| c.is_ascii_digit())?;
+    let version_core = tag[start..]
+        .split(['-', '+'])
+        .next()
+        .unwrap_or_default();
+    let parts: Vec<u64> = version_core
+        .split('.')
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
 
     match parts.as_slice() {
         [major, minor, patch] => Some(format!("{major}.{minor}.{patch}")),
@@ -440,6 +438,16 @@ mod tests {
         );
         assert_eq!(release_version("Verenu-0.15.1-beta2"), Some("0.15.1".into()));
         assert_eq!(release_version("Verenu-0.15.1-rc1"), Some("0.15.1".into()));
+        assert_eq!(
+            release_version("Verenu-0.15.1+build.2"),
+            Some("0.15.1".into())
+        );
+    }
+
+    #[test]
+    fn numeric_suffixes_cannot_fill_missing_patch_versions() {
+        assert_eq!(release_version("Verenu-1.0-beta.2"), None);
+        assert_eq!(release_version("v2.0-rc1"), None);
     }
 
     #[test]
