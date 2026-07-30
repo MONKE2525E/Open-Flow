@@ -185,7 +185,16 @@ fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhR
             release_version(&release.tag_name)
                 .map(|version| (release, version_tuple(&version)))
         })
-        .max_by_key(|(_, version)| *version)
+        // Keep the first release when normalized versions tie. GitHub returns
+        // releases newest-first, so this preserves the newest prerelease build.
+        .max_by(|(_, left), (_, right)| {
+            let ordering = left.cmp(right);
+            if ordering == std::cmp::Ordering::Equal {
+                std::cmp::Ordering::Greater
+            } else {
+                ordering
+            }
+        })
         .map(|(release, _)| release)
 }
 
@@ -433,6 +442,21 @@ mod tests {
         );
         assert_eq!(release_version("Verenu-0.15.1-beta2"), Some("0.15.1".into()));
         assert_eq!(release_version("Verenu-0.15.1-rc1"), Some("0.15.1".into()));
+    }
+
+    #[test]
+    fn equal_normalized_versions_keep_the_newest_release_first() {
+        let releases = [
+            release("Verenu-0.15.1-beta.2", "dev"),
+            release("Verenu-0.15.1-beta.1", "dev"),
+        ];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Beta)
+                .expect("beta release")
+                .tag_name,
+            "Verenu-0.15.1-beta.2"
+        );
     }
 
     #[test]
