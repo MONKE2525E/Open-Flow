@@ -472,14 +472,14 @@ fn resample_to_16k(mono: &[f32], sample_rate: u32) -> (Vec<f32>, u32) {
     (resampled, TARGET)
 }
 
-fn rms_f32(data: &[f32]) -> f32 {
+pub(crate) fn rms_f32(data: &[f32]) -> f32 {
     if data.is_empty() {
         return 0.0;
     }
     (data.iter().map(|&s| s * s).sum::<f32>() / data.len() as f32).sqrt()
 }
 
-fn encode_wav(samples: &[f32], sample_rate: u32, channels: u16) -> Result<Vec<u8>> {
+pub(crate) fn encode_wav(samples: &[f32], sample_rate: u32, channels: u16) -> Result<Vec<u8>> {
     if samples.is_empty() {
         anyhow::bail!("No audio captured");
     }
@@ -530,15 +530,7 @@ mod tests {
         let raw_level = AtomicU32::new(0f32.to_bits());
         let data = [i16::MAX, i16::MAX, 0, 0];
 
-        enqueue_i16_buffer(
-            &data,
-            2,
-            &q,
-            &dropped,
-            &level,
-            &raw_level,
-            DISPLAY_GAIN,
-        );
+        enqueue_i16_buffer(&data, 2, &q, &dropped, &level, &raw_level, DISPLAY_GAIN);
 
         let first = q.pop().expect("first sample");
         let second = q.pop().expect("second sample");

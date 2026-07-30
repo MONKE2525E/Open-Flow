@@ -105,10 +105,7 @@ fn main() {
     wait_for_relaunch_parent_exit();
 
     let shared: SharedState = Arc::new(Mutex::new(AppState {
-        session: None,
-        exclusive_mic_session_id: None,
-        starting: false,
-        handless: false,
+        lifecycle: pipeline::DictationLifecycle::Idle,
         target: WindowTarget::default(),
         pill_placement: None,
         pill_placement_stale: false,
@@ -373,6 +370,7 @@ fn main() {
             commands::test_cleanup_prompt,
             commands::get_microphones,
             commands::get_memory_mb,
+            commands::get_hardware_capabilities,
             commands::local_models_supported_on_this_platform,
             commands::start_input_recording,
             commands::start_setup_try_recording,
@@ -445,9 +443,7 @@ fn wait_for_relaunch_parent_exit() {
         let handle = match OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) {
             Ok(handle) => handle,
             Err(err) => {
-                if err.code()
-                    != windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0)
-                {
+                if err.code() != windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0) {
                     early_startup_warn(&format!(
                         "Relaunch requested but could not open parent process {parent_pid}: {err}"
                     ));

@@ -47,20 +47,26 @@ fn transcription_prompts_exist_for_all_recommended_models() {
         ("google", "gemini-2.5-flash"),
     ] {
         let prompt = get_transcription_prompt(provider, model, "English");
-        assert!(
-            !prompt.trim().is_empty(),
-            "{provider}/{model} prompt was empty"
-        );
+        if matches!(provider, "google" | "assemblyai") {
+            assert!(
+                !prompt.trim().is_empty(),
+                "{provider}/{model} prompt was empty"
+            );
+        } else {
+            assert!(
+                prompt.is_empty(),
+                "{provider}/{model} should not receive a Whisper prompt seed"
+            );
+        }
     }
 }
 
 // Whisper-family models (OpenAI Whisper/GPT-4o transcribe, Groq Whisper)
 // treat the prompt as a continuation seed, not an instruction — imperative
-// phrasing leaks back as a trailing hallucination once real audio runs out
-// (confirmed in production). These models get vocabulary-only priming with
-// no instructional language for the model to echo.
+// phrasing and vocabulary leak back as hallucinations when real audio runs
+// out (confirmed in production). These models get no prompt seed at all.
 #[test]
-fn whisper_family_prompts_are_vocabulary_only() {
+fn whisper_family_prompts_are_empty_to_avoid_noise_priming() {
     for (provider, model) in [
         ("openai", "whisper-1"),
         ("openai", "gpt-4o-transcribe"),
@@ -83,8 +89,8 @@ fn whisper_family_prompts_are_vocabulary_only() {
             );
         }
         assert!(
-            prompt.contains("Verenu") && prompt.contains("Groq"),
-            "{provider}/{model} prompt should still carry the vocabulary glossary: {prompt:?}"
+            prompt.is_empty(),
+            "{provider}/{model} prompt should not prime noisy audio: {prompt:?}"
         );
     }
 }

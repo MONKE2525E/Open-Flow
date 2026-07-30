@@ -4,6 +4,38 @@ struct SavedClipboard {
     entries: Vec<(u32, Vec<u8>)>,
 }
 
+/// Guarantees the saved clipboard is restored exactly once, even on an early
+/// return/error/panic — not just on the normal success path. Armed with the
+/// saved snapshot; `restore_now()` disarms it (via `Option::take`) so the
+/// `Drop` fallback is a no-op when the normal path already ran, never a
+/// second (redundant) restore.
+struct ClipboardRestoreGuard {
+    saved: Option<SavedClipboard>,
+}
+impl ClipboardRestoreGuard {
+    fn new(saved: SavedClipboard) -> Self {
+        Self { saved: Some(saved) }
+    }
+    fn restore_now(&mut self) {
+        if let Some(saved) = self.saved.take() {
+            unsafe {
+                restore_clipboard_all(&saved);
+            }
+        }
+    }
+}
+impl Drop for ClipboardRestoreGuard {
+    fn drop(&mut self) {
+        // Fallback only - a no-op if restore_now() already ran. Safe to call
+        // from Drop: restore_clipboard_all is fully synchronous, no .await.
+        if let Some(saved) = self.saved.take() {
+            unsafe {
+                restore_clipboard_all(&saved);
+            }
+        }
+    }
+}
+
 unsafe fn save_clipboard_all() -> SavedClipboard {
     use ::windows::Win32::Foundation::HGLOBAL;
     use ::windows::Win32::System::DataExchange::{
@@ -64,7 +96,7 @@ unsafe fn restore_clipboard_all(saved: &SavedClipboard) {
     use ::windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
-    use ::windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+    use ::windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 
     if saved.entries.is_empty() {
         return;
@@ -126,7 +158,7 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
     use ::windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
-    use ::windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+    use ::windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 
     const CF_UNICODETEXT: u32 = 13;
 
@@ -172,9 +204,7 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
 // the executor thread with a synchronous sleep.
 async fn read_clipboard_text() -> Option<String> {
     use ::windows::Win32::Foundation::HGLOBAL;
-    use ::windows::Win32::System::DataExchange::{
-        CloseClipboard, GetClipboardData, OpenClipboard,
-    };
+    use ::windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
     use ::windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 
     const CF_UNICODETEXT: u32 = 13;
@@ -243,7 +273,7 @@ const SNIFF_READ_INTERVAL_MS: u64 = 25;
 // final `restore_clipboard_all(&saved)` put the user's clipboard back.
 async fn windows_clipboard_sniff_context(target_hwnd: usize) -> Option<InjectionContextProbe> {
     use ::windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
         VK_C, VK_CONTROL, VK_LEFT, VK_RIGHT, VK_SHIFT,
     };
 
@@ -344,13 +374,18 @@ pub(super) async fn inject_text(
 ) -> anyhow::Result<InjectionOutcome> {
     use ::windows::Win32::Foundation::HWND;
     use ::windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
         VK_CONTROL, VK_LMENU, VK_V,
     };
     use ::windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
 
+    // Declared before the restore guard so it releases *after* the clipboard
+    // has been restored (Rust drops in reverse declaration order).
+    let _injection_guard = super::injection_lock().lock().await;
+
     unsafe {
         let saved = save_clipboard_all();
+        let mut restore_guard = ClipboardRestoreGuard::new(saved);
 
         if target_hwnd != 0 {
             let _ = SetForegroundWindow(HWND(target_hwnd as *mut core::ffi::c_void));
@@ -419,15 +454,13 @@ pub(super) async fn inject_text(
                 break;
             }
             if attempt < 2 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    CLIPBOARD_WRITE_RETRY_MS,
-                ))
-                .await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_WRITE_RETRY_MS))
+                    .await;
             }
         }
         if !clipboard_written {
             // Put the user's clipboard back — a sniff may have left its sentinel.
-            restore_clipboard_all(&saved);
+            restore_guard.restore_now();
             return Err(anyhow::anyhow!(
                 "OpenClipboard failed after 3 attempts - clipboard held by another process"
             ));
@@ -456,7 +489,7 @@ pub(super) async fn inject_text(
         SendInput(&paste, std::mem::size_of::<INPUT>() as i32);
         tokio::time::sleep(tokio::time::Duration::from_millis(PASTE_SETTLE_MS)).await;
 
-        restore_clipboard_all(&saved);
+        restore_guard.restore_now();
 
         if target_hwnd != 0 && !adjusted.is_empty() {
             if let Ok(mut guard) = last_injection().lock() {

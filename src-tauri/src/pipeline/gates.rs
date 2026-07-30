@@ -10,19 +10,43 @@ use crate::data::store;
 pub(super) const MIN_RECORDING_MS: u64 = 700;
 
 /// Minimum RMS (at default gain) below which audio is treated as near-silence
-/// and rejected as a likely accidental activation.
-pub(super) const MIN_RECORDING_RMS: f32 = 0.008;
+/// and rejected as a likely accidental activation. Lowered from the original
+/// 0.008: local VAD (`media::vad`) is now the primary speech-presence check,
+/// run before transcription — this threshold only backstops it when VAD is
+/// unavailable, so it no longer needs to carry the whole burden of catching
+/// quiet speech on its own and can afford to be less trigger-happy.
+pub(super) const MIN_RECORDING_RMS: f32 = 0.005;
+
+/// A much lower floor than `MIN_RECORDING_RMS`, used only as a cheap
+/// pre-transcription check to skip the transcription API call outright for
+/// audio that's digitally silent or corrupt (e.g. a dead mic). Real
+/// "was there speech" judgment happens after VAD analysis runs alongside
+/// transcription — this just avoids paying for an API call when the answer
+/// is already obvious from the waveform alone.
+pub(super) const SILENCE_FLOOR_RMS: f32 = MIN_RECORDING_RMS * 0.3;
+
+/// Scale an RMS threshold by the active mic gain so a gate stays consistent
+/// whether the user is amplifying a quiet mic or attenuating a hot one.
+fn gain_scaled_rms(base: f32, active_gain: f32) -> f32 {
+    let gain = active_gain.clamp(store::MIN_MIC_GAIN, store::MAX_MIC_GAIN);
+    if gain <= store::DEFAULT_MIC_GAIN {
+        base * gain / store::DEFAULT_MIC_GAIN
+    } else {
+        base * store::DEFAULT_MIC_GAIN / gain
+    }
+}
 
 /// Scale the near-silence RMS threshold by the active mic gain so the gate
 /// stays consistent whether the user is amplifying a quiet mic or attenuating
-/// a hot one.
+/// a hot one. Used as the fallback gate when local VAD is unavailable.
 pub(super) fn recording_gate_rms(active_gain: f32) -> f32 {
-    let gain = active_gain.clamp(store::MIN_MIC_GAIN, store::MAX_MIC_GAIN);
-    if gain <= store::DEFAULT_MIC_GAIN {
-        MIN_RECORDING_RMS * gain / store::DEFAULT_MIC_GAIN
-    } else {
-        MIN_RECORDING_RMS * store::DEFAULT_MIC_GAIN / gain
-    }
+    gain_scaled_rms(MIN_RECORDING_RMS, active_gain)
+}
+
+/// Gain-scaled version of `SILENCE_FLOOR_RMS` — the cheap pre-transcription
+/// "is this obviously digital silence" check.
+pub(super) fn silence_floor_gate_rms(active_gain: f32) -> f32 {
+    gain_scaled_rms(SILENCE_FLOOR_RMS, active_gain)
 }
 
 /// Use the post-processed RMS for normal validation, but keep a quiet voice
@@ -85,7 +109,14 @@ pub(super) fn is_transcription_hallucination(text: &str) -> bool {
     if PATTERNS.iter().any(|p| t.starts_with(p)) {
         return true;
     }
-    is_pure_glossary_echo(&t)
+    is_pure_glossary_echo(&t) || is_fuzzy_glossary_echo(&t)
+}
+
+/// Returns false for punctuation-only or whitespace-only transcription output.
+/// A single spoken letter such as "I" remains valid; a lone period must not
+/// reach cleanup or injection.
+pub(super) fn has_spoken_content(text: &str) -> bool {
+    text.chars().any(|character| character.is_alphanumeric())
 }
 
 /// True when the entire (trimmed, lowercased) output is made up of nothing
@@ -115,6 +146,65 @@ fn is_pure_glossary_echo(lowercased_trimmed: &str) -> bool {
     }
     let enough_matches = matched_terms >= 2 || matched_verenu;
     enough_matches && !remainder.chars().any(|c| c.is_alphanumeric())
+}
+
+/// Whisper can return a slightly garbled version of one of the vocabulary
+/// terms when it is prompted by noise rather than speech. Keep this narrow:
+/// only a single token, only a non-exact match, and only within two edits of a
+/// glossary term (including one adjacent transposition). That catches
+/// artifacts such as "svlet" -> "svelte" without
+/// rejecting ordinary multi-word dictation or an exact single-word term.
+fn is_fuzzy_glossary_echo(lowercased_trimmed: &str) -> bool {
+    let mut tokens = lowercased_trimmed.split_whitespace();
+    let Some(token) = tokens.next() else {
+        return false;
+    };
+    if tokens.next().is_some() {
+        return false;
+    }
+
+    let token = token.trim_matches(|c: char| !c.is_alphanumeric());
+    if token.is_empty() || token.len() < 4 {
+        return false;
+    }
+
+    GLOSSARY_TERMS
+        .iter()
+        .any(|term| token != *term && damerau_levenshtein_distance(token, term) <= 2)
+}
+
+fn damerau_levenshtein_distance(left: &str, right: &str) -> usize {
+    let left_chars: Vec<char> = left.chars().collect();
+    let right_chars: Vec<char> = right.chars().collect();
+    let mut distance = vec![vec![0; right_chars.len() + 1]; left_chars.len() + 1];
+
+    for (index, cell) in distance[0].iter_mut().enumerate() {
+        *cell = index;
+    }
+    for (index, row) in distance.iter_mut().enumerate() {
+        row[0] = index;
+    }
+
+    for left_index in 1..=left_chars.len() {
+        for right_index in 1..=right_chars.len() {
+            let substitution_cost =
+                usize::from(left_chars[left_index - 1] != right_chars[right_index - 1]);
+            distance[left_index][right_index] = (distance[left_index - 1][right_index] + 1)
+                .min(distance[left_index][right_index - 1] + 1)
+                .min(distance[left_index - 1][right_index - 1] + substitution_cost);
+
+            if left_index > 1
+                && right_index > 1
+                && left_chars[left_index - 1] == right_chars[right_index - 2]
+                && left_chars[left_index - 2] == right_chars[right_index - 1]
+            {
+                distance[left_index][right_index] = distance[left_index][right_index]
+                    .min(distance[left_index - 2][right_index - 2] + 1);
+            }
+        }
+    }
+
+    distance[left_chars.len()][right_chars.len()]
 }
 
 /// Trims a trailing Whisper prompt-echo off the end of an otherwise-genuine
@@ -291,7 +381,10 @@ fn is_sentence_hallucination(sentence: &str) -> bool {
         "[blank audio]",
     ];
     let t = t.trim_end_matches(|c: char| {
-        matches!(c, '.' | '!' | '?' | ',' | ';' | ':' | '。' | '！' | '？' | '，' | '；' | '：') || c.is_whitespace()
+        matches!(
+            c,
+            '.' | '!' | '?' | ',' | ';' | ':' | '。' | '！' | '？' | '，' | '；' | '：'
+        ) || c.is_whitespace()
     });
     EXACT_PATTERNS.contains(&t)
 }
@@ -320,7 +413,25 @@ fn last_sentence(text: &str) -> &str {
             while j < chars.len() && matches!(chars[j].1, '.' | '!' | '?') {
                 j += 1;
             }
-            while j < chars.len() && matches!(chars[j].1, '"' | '\'' | ')' | ']' | '}' | '”' | '’' | '»' | '〉' | '》' | '」' | '』' | '）' | '】' | '〕') {
+            while j < chars.len()
+                && matches!(
+                    chars[j].1,
+                    '"' | '\''
+                        | ')'
+                        | ']'
+                        | '}'
+                        | '”'
+                        | '’'
+                        | '»'
+                        | '〉'
+                        | '》'
+                        | '」'
+                        | '』'
+                        | '）'
+                        | '】'
+                        | '〕'
+                )
+            {
                 j += 1;
             }
             let end_of_run = if j < chars.len() {
@@ -335,7 +446,25 @@ fn last_sentence(text: &str) -> &str {
             continue;
         } else if matches!(c, '。' | '！' | '？') {
             let mut j = i + 1;
-            while j < chars.len() && matches!(chars[j].1, '"' | '\'' | ')' | ']' | '}' | '”' | '’' | '»' | '〉' | '》' | '」' | '』' | '）' | '】' | '〕') {
+            while j < chars.len()
+                && matches!(
+                    chars[j].1,
+                    '"' | '\''
+                        | ')'
+                        | ']'
+                        | '}'
+                        | '”'
+                        | '’'
+                        | '»'
+                        | '〉'
+                        | '》'
+                        | '」'
+                        | '』'
+                        | '）'
+                        | '】'
+                        | '〕'
+                )
+            {
                 j += 1;
             }
             let end_of_run = if j < chars.len() {

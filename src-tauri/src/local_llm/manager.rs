@@ -1,7 +1,7 @@
-use super::binary::{
-    ensure_llama_server_binary, LocalLlmRuntimeEventPayload, LocalLlmRuntimeInfo,
+use super::binary::{ensure_llama_server_binary, LocalLlmRuntimeEventPayload, LocalLlmRuntimeInfo};
+use super::download::{
+    cleanup_failed_download_artifacts, download_model, LocalLlmModelEventPayload,
 };
-use super::download::{cleanup_failed_download_artifacts, download_model, LocalLlmModelEventPayload};
 use super::model::{built_in_model_manifests, manifest_by_id, LocalLlmModelInfo};
 use super::runtime::{request_cleanup, start_server, ManagedLocalLlmServer};
 use std::path::PathBuf;
@@ -112,10 +112,7 @@ impl LocalLlmManager {
         Ok(built_in_model_manifests()
             .into_iter()
             .map(|manifest| {
-                manifest.to_info(
-                    &root,
-                    downloading_model_id.as_deref() == Some(manifest.id),
-                )
+                manifest.to_info(&root, downloading_model_id.as_deref() == Some(manifest.id))
             })
             .collect())
     }
@@ -130,11 +127,13 @@ impl LocalLlmManager {
         let endpoint = server_guard
             .as_ref()
             .and_then(|guard| guard.as_ref().map(|server| server.endpoint.clone()));
-        let is_loaded = server_guard
-            .as_ref()
-            .is_some_and(|guard| guard.is_some());
+        let is_loaded = server_guard.as_ref().is_some_and(|guard| guard.is_some());
         let is_loading = self.is_loading.lock().map(|guard| *guard).unwrap_or(false);
-        let download_state = self.download_task.lock().ok().and_then(|guard| guard.clone());
+        let download_state = self
+            .download_task
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone());
         LocalLlmState {
             current_model_id,
             is_loaded,
@@ -204,6 +203,10 @@ impl LocalLlmManager {
                             model_id: manifest.id.to_string(),
                             error: None,
                         },
+                    );
+                    crate::system::notify::notify_model_download_complete(
+                        &app_handle,
+                        manifest.name,
                     );
                 }
                 Err(err) => {
@@ -521,7 +524,11 @@ impl LocalLlmManager {
             .current_model_id
             .lock()
             .map_err(|_| anyhow::anyhow!("local cleanup model id lock poisoned"))?;
-        let already_loaded = self.server.lock().map(|guard| guard.is_some()).unwrap_or(false);
+        let already_loaded = self
+            .server
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false);
         if current_model_id.as_deref() == Some(model_id) && already_loaded {
             return Ok(false);
         }
@@ -536,7 +543,11 @@ impl LocalLlmManager {
                 .current_model_id
                 .lock()
                 .map_err(|_| anyhow::anyhow!("local cleanup model id lock poisoned"))?;
-            let already_loaded = self.server.lock().map(|guard| guard.is_some()).unwrap_or(false);
+            let already_loaded = self
+                .server
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(false);
             if current_model_id.as_deref() == Some(model_id) && already_loaded {
                 return Ok(());
             }

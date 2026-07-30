@@ -39,7 +39,11 @@ futures-util = "0.3"
 sha2        = "0.10"
 tar         = "0.4"
 zip         = { version = "2", default-features = false, features = ["deflate"] }
-transcribe-rs = { version = "0.3.11", features = ["onnx"] }
+# "vad-silero" pulls in transcribe-rs's own bundled Silero VAD wrapper
+# (transcribe_rs::vad::SileroVad) on top of the ort/onnxruntime dependency
+# "onnx" already requires — no separate ort dependency or hand-rolled ONNX
+# plumbing needed for local speech detection.
+transcribe-rs = { version = "0.3.11", features = ["onnx", "vad-silero"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [

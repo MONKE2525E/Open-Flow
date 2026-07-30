@@ -1,30 +1,11 @@
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from '@tauri-apps/plugin-notification';
+import { sendNotification } from '@tauri-apps/plugin-notification';
 import type { UpdateInfo } from './stores';
 import { appStore } from './stores';
 import { saveSetting } from './settings';
-import { invoke, isTauriRuntime } from './tauri';
+import { invoke } from './tauri';
+import { ensureNotificationPermission } from './notifications';
 
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
-
-// Request notification permission contextually — only when we actually have a
-// new update to tell the user about — rather than firing the system prompt at
-// startup with no context, which users tend to decline. Returns whether
-// notifications are permitted after the (possibly skipped) request.
-async function ensureNotificationPermission(): Promise<boolean> {
-  if (!isTauriRuntime()) return false;
-
-  try {
-    if (await isPermissionGranted()) return true;
-    return (await requestPermission()) === 'granted';
-  } catch (error) {
-    console.warn('Notification permission request failed:', error);
-    return false;
-  }
-}
 
 async function sendUpdateNotification(update: UpdateInfo): Promise<void> {
   await sendNotification({

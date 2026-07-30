@@ -5,6 +5,7 @@ pub mod logger;
 pub mod mac_app;
 pub mod media_control;
 pub mod memory;
+pub mod notify;
 pub mod number_parser;
 pub mod platform;
 pub mod text;

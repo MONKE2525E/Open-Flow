@@ -143,8 +143,7 @@ pub(super) async fn guard_cleanup_refusal(
         expanded,
         alternate_transcript,
         &cleaned,
-    )
-        || cleanup_output_is_unusable(intensity, raw, raw)
+    ) || cleanup_output_is_unusable(intensity, raw, raw)
     {
         return Some(cleaned);
     }
@@ -191,8 +190,7 @@ pub(super) async fn guard_cleanup_refusal(
                     expanded,
                     alternate_transcript,
                     &retried,
-                )
-                    || cleanup_output_is_unusable(intensity, raw, raw)) =>
+                ) || cleanup_output_is_unusable(intensity, raw, raw)) =>
         {
             log::debug!(
                 "pipeline: cleanup refusal retry succeeded provider={provider_id} model={model}"
@@ -291,14 +289,15 @@ fn is_cjk(c: char) -> bool {
     )
 }
 // session.stop() blocks until the audio thread finishes (denoise + resample + WAV encode).
-// spawn_blocking keeps the tokio worker free during that wait.
-pub(super) async fn stop_and_validate_audio(
+// spawn_blocking keeps the tokio worker free during that wait. Split from the
+// quality gate (below) so a resumed/prepended recording can be merged first
+// and validated once as a whole, instead of gating the (possibly very short)
+// new fragment on its own before it's had a chance to be merged.
+pub(super) async fn stop_and_capture_audio(
     app: &AppHandle,
     session: audio::RecordingSession,
     exclusive_mic_session_id: Option<u64>,
-    min_rms: f32,
-    active_gain: f32,
-) -> Option<CapturedAudio> {
+) -> Option<(CapturedAudio, f32, f32)> {
     let stop_result = tokio::task::spawn_blocking(move || {
         let stop_result = session.stop();
         if let Some(session_id) = exclusive_mic_session_id {
@@ -348,25 +347,82 @@ pub(super) async fn stop_and_validate_audio(
         .await;
         return None;
     }
+    Some((
+        CapturedAudio {
+            wav: bytes::Bytes::from(wav),
+            samples_16k: Arc::new(samples_16k),
+            sample_rate,
+            duration_ms,
+        },
+        rms,
+        raw_rms,
+    ))
+}
+
+/// Quality gate (min duration / near-silence RMS) against already-captured
+/// (and possibly prepend-merged) audio. Shows the rejection pill itself.
+pub(super) fn validate_captured_audio(
+    app: &AppHandle,
+    audio: &CapturedAudio,
+    rms: f32,
+    raw_rms: f32,
+    min_rms: f32,
+    active_gain: f32,
+) -> bool {
     let gate_rms = effective_recording_rms(rms, raw_rms, active_gain);
-    if duration_ms < MIN_RECORDING_MS || gate_rms < min_rms {
-        let msg = if duration_ms < MIN_RECORDING_MS {
+    if audio.duration_ms < MIN_RECORDING_MS || gate_rms < min_rms {
+        let msg = if audio.duration_ms < MIN_RECORDING_MS {
             "Recording too short"
         } else {
             "Audio too quiet — check your mic"
         };
         log::debug!(
-            "pipeline: rejected — duration={duration_ms}ms rms={rms:.4} min_rms={min_rms:.4}"
+            "pipeline: rejected — duration={}ms rms={rms:.4} min_rms={min_rms:.4}",
+            audio.duration_ms
         );
         reject_with_pill(app, msg);
-        return None;
+        return false;
     }
-    Some(CapturedAudio {
-        wav: bytes::Bytes::from(wav),
-        samples_16k: Arc::new(samples_16k),
-        sample_rate,
-        duration_ms,
-    })
+    true
+}
+
+/// Speech-presence decision made before any transcription API call. VAD is
+/// authoritative when available. RMS is only a fallback when VAD itself
+/// failed to load or run (`vad_result: None`), so loud non-speech cannot bypass
+/// a successful VAD rejection.
+/// Shows the rejection pill itself, matching `validate_captured_audio`.
+pub(super) fn passes_speech_gate(
+    app: &AppHandle,
+    rms: f32,
+    raw_rms: f32,
+    min_rms: f32,
+    active_gain: f32,
+    vad_result: Option<&crate::media::vad::SpeechDetectionResult>,
+) -> bool {
+    let gate_rms = effective_recording_rms(rms, raw_rms, active_gain);
+    if speech_gate_accepts(vad_result, gate_rms, min_rms) {
+        log::debug!(
+            "pipeline: speech gate accepted gate_rms={gate_rms:.4} min_rms={min_rms:.4} vad={:?}",
+            vad_result
+        );
+        return true;
+    }
+    log::debug!(
+        "pipeline: speech gate rejected — no speech detected rms={rms:.4} min_rms={min_rms:.4} vad={:?}",
+        vad_result
+    );
+    reject_with_pill(app, "No speech detected");
+    false
+}
+
+/// Pure part of the speech gate, kept separate so the important VAD-versus-
+/// RMS precedence is testable without constructing a Tauri app handle.
+pub(super) fn speech_gate_accepts(
+    vad_result: Option<&crate::media::vad::SpeechDetectionResult>,
+    gate_rms: f32,
+    min_rms: f32,
+) -> bool {
+    vad_result.map_or(gate_rms >= min_rms, |result| result.contains_speech)
 }
 
 pub(super) async fn open_config_and_context(
@@ -487,7 +543,10 @@ pub(super) async fn run_transcription(
             if let Some(parsed) = crate::api::parse_auth_401_error(&error.to_string()) {
                 user_msg = crate::api::auth_401_display_message(&parsed);
             }
-            log::error!("pipeline: transcription failed error={}", trim_err(&error.to_string()));
+            log::error!(
+                "pipeline: transcription failed error={}",
+                trim_err(&error.to_string())
+            );
             if crate::api::is_retryable_provider_error(&error) {
                 emit_provider_recheck(app);
             }
@@ -501,18 +560,23 @@ pub(super) async fn run_transcription(
         let alternate = prepare_transcript_text(&raw, false, true);
         !primary.trim().is_empty() && primary.trim().eq_ignore_ascii_case(alternate.trim())
     });
-    let primary_text = prepare_transcript_text(
-        &raw,
-        alternate_result.is_some(),
-        corroborated_candidate,
-    );
+    let primary_text =
+        prepare_transcript_text(&raw, alternate_result.is_some(), corroborated_candidate);
     if primary_text.is_empty() {
-        show_error_pill(app, "Nothing transcribed - please try speaking more clearly").await;
+        show_error_pill(
+            app,
+            "Nothing transcribed - please try speaking more clearly",
+        )
+        .await;
         return None;
     }
     let alternate = alternate_result.and_then(|(text, provider, model)| {
         let text = prepare_transcript_text(&text, true, corroborated_candidate);
-        (!text.is_empty()).then_some(TranscriptCandidate { text, provider, model })
+        (!text.is_empty()).then_some(TranscriptCandidate {
+            text,
+            provider,
+            model,
+        })
     });
     let api_used = match &alternate {
         Some(candidate) => format!(
@@ -604,18 +668,14 @@ async fn run_dual_transcription_candidates(
     }
 
     successes.sort_by_key(|(index, _, _, _)| *index);
-    let Some((_, primary_text, primary_provider, primary_model)) = successes.first().cloned() else {
+    let Some((_, primary_text, primary_provider, primary_model)) = successes.first().cloned()
+    else {
         anyhow::bail!("Nothing transcribed - please try speaking more clearly");
     };
-    let alternate = successes.get(1).map(|(_, text, provider, model)| {
-        (text.clone(), provider.clone(), model.clone())
-    });
-    Ok((
-        primary_text,
-        primary_provider,
-        primary_model,
-        alternate,
-    ))
+    let alternate = successes
+        .get(1)
+        .map(|(_, text, provider, model)| (text.clone(), provider.clone(), model.clone()));
+    Ok((primary_text, primary_provider, primary_model, alternate))
 }
 
 fn spawn_transcription_candidate(
@@ -638,7 +698,11 @@ fn spawn_transcription_candidate(
             &app,
             &audio,
             &provider,
-            if key.is_empty() { None } else { Some(key.as_str()) },
+            if key.is_empty() {
+                None
+            } else {
+                Some(key.as_str())
+            },
             &language,
             &model,
         );
@@ -700,7 +764,11 @@ async fn run_primary_transcription_chain(
             app,
             audio,
             &provider_id,
-            if key.is_empty() { None } else { Some(key.as_str()) },
+            if key.is_empty() {
+                None
+            } else {
+                Some(key.as_str())
+            },
             &language,
             &model,
         )
@@ -740,7 +808,9 @@ async fn run_primary_transcription_chain(
         }
     }
 
-    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Nothing transcribed - please try speaking more clearly")))
+    Err(last_err.unwrap_or_else(|| {
+        anyhow::anyhow!("Nothing transcribed - please try speaking more clearly")
+    }))
 }
 
 pub(super) struct CleanupCachePlan {
@@ -778,7 +848,10 @@ pub(super) fn cleanup_cache_plan(
         }
         if !key.is_empty() {
             if let Some(alternate) = alternate_transcript {
-                key = format!("{key}|dual:{:x}", snippet_instructions_fingerprint(alternate));
+                key = format!(
+                    "{key}|dual:{:x}",
+                    snippet_instructions_fingerprint(alternate)
+                );
             }
         }
         if !key.is_empty() {
@@ -1082,8 +1155,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
         expanded.chars().count()
     );
 
-    let dict_instructions =
-        dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
+    let dict_instructions = dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
     let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str()]
         .iter()
         .filter(|s| !s.is_empty())
@@ -1225,7 +1297,8 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                 return Err(last_cleanup_err.expect("checked"))
             }
             None => {
-                let text = snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions);
+                let text =
+                    snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions);
                 if cfg.cleanup_intensity != "none" {
                     crate::system::text::strip_filler_hesitations(&text)
                 } else {

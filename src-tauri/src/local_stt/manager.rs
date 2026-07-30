@@ -1,4 +1,6 @@
-use super::download::{cleanup_failed_download_artifacts, download_model, LocalSttModelEventPayload};
+use super::download::{
+    cleanup_failed_download_artifacts, download_model, LocalSttModelEventPayload,
+};
 use super::engine::{load_engine, LoadedLocalSttEngine};
 use super::model::{built_in_model_manifests, manifest_by_id, LocalSttModelInfo};
 use std::path::PathBuf;
@@ -100,10 +102,7 @@ impl LocalTranscriptionManager {
         let models: Vec<LocalSttModelInfo> = built_in_model_manifests()
             .into_iter()
             .map(|manifest| {
-                manifest.to_info(
-                    &root,
-                    downloading_model_id.as_deref() == Some(manifest.id),
-                )
+                manifest.to_info(&root, downloading_model_id.as_deref() == Some(manifest.id))
             })
             .collect();
         log::debug!(
@@ -125,9 +124,17 @@ impl LocalTranscriptionManager {
             .lock()
             .ok()
             .and_then(|guard| guard.clone());
-        let is_loaded = self.engine.lock().map(|guard| guard.is_some()).unwrap_or(false);
+        let is_loaded = self
+            .engine
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false);
         let is_loading = self.is_loading.lock().map(|guard| *guard).unwrap_or(false);
-        let download_state = self.download_task.lock().ok().and_then(|guard| guard.clone());
+        let download_state = self
+            .download_task
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone());
         let state = LocalTranscriptionState {
             current_model_id,
             is_loaded,
@@ -160,9 +167,9 @@ impl LocalTranscriptionManager {
     pub fn download_model(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
         let manifest = manifest_by_id(model_id)
             .ok_or_else(|| anyhow::anyhow!("unknown local model: {model_id}"))?;
-        let url = manifest
-            .url
-            .ok_or_else(|| anyhow::anyhow!("{} cannot be downloaded automatically", manifest.name))?;
+        let url = manifest.url.ok_or_else(|| {
+            anyhow::anyhow!("{} cannot be downloaded automatically", manifest.name)
+        })?;
         let root = self.prepare_models_dir()?;
 
         // The model is already fully installed (e.g. the frontend's cached
@@ -226,7 +233,10 @@ impl LocalTranscriptionManager {
             if let Ok(mut guard) = manager.download_task.lock() {
                 *guard = None;
             }
-            log::info!("local-stt: download task cleared active-download guard id={}", manifest.id);
+            log::info!(
+                "local-stt: download task cleared active-download guard id={}",
+                manifest.id
+            );
 
             match &result {
                 Ok(()) => {
@@ -241,6 +251,10 @@ impl LocalTranscriptionManager {
                             model_id: manifest.id.to_string(),
                             error: None,
                         },
+                    );
+                    crate::system::notify::notify_model_download_complete(
+                        &app_handle,
+                        manifest.name,
                     );
                 }
                 Err(err) => {
@@ -288,7 +302,10 @@ impl LocalTranscriptionManager {
             return Ok(());
         };
         if model_id.is_none_or(|value| value == active.model_id) {
-            log::info!("local-stt: cancelling active download id={}", active.model_id);
+            log::info!(
+                "local-stt: cancelling active download id={}",
+                active.model_id
+            );
             active.cancel.store(true, Ordering::Relaxed);
         } else {
             log::info!(
@@ -442,7 +459,11 @@ impl LocalTranscriptionManager {
                 .current_model_id
                 .lock()
                 .map_err(|_| anyhow::anyhow!("local model id lock poisoned"))?;
-            let already_loaded = self.engine.lock().map(|guard| guard.is_some()).unwrap_or(false);
+            let already_loaded = self
+                .engine
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(false);
             if current_model_id.as_deref() == Some(model_id) && already_loaded {
                 return Ok(());
             }
@@ -469,7 +490,11 @@ impl LocalTranscriptionManager {
                 .current_model_id
                 .lock()
                 .map_err(|_| anyhow::anyhow!("local model id lock poisoned"))?;
-            let already_loaded = self.engine.lock().map(|guard| guard.is_some()).unwrap_or(false);
+            let already_loaded = self
+                .engine
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(false);
             if current_model_id.as_deref() == Some(model_id) && already_loaded {
                 return Ok(());
             }
@@ -492,7 +517,10 @@ impl LocalTranscriptionManager {
             log::warn!("local-stt: load requested but model not downloaded id={model_id}");
             anyhow::bail!("Download the selected local model.")
         }
-        log::info!("local-stt: loading model id={model_id} engine={:?}", manifest.engine_type);
+        log::info!(
+            "local-stt: loading model id={model_id} engine={:?}",
+            manifest.engine_type
+        );
         let started_at = Instant::now();
         let _ = app.emit(
             "local-stt-model-state",

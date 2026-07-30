@@ -11,6 +11,7 @@ import {
   type LocalLlmState,
   type LocalLlmVerificationProgressPayload,
 } from './tauri';
+import { ensureNotificationPermission } from './notifications';
 
 export const localLlmStore = $state({
   models: [] as LocalLlmModelInfo[],
@@ -89,6 +90,7 @@ export async function deleteLocalLlmRuntime() {
 
 export async function downloadLocalLlmModel(modelIdValue: string) {
   try {
+    ensureNotificationPermission().catch(() => {});
     await invoke('download_local_llm_model', { modelId: modelIdValue });
     await Promise.all([refreshLocalLlmModels(), refreshLocalLlmState()]);
   } catch (err) {

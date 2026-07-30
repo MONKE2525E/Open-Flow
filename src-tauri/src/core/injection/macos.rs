@@ -90,6 +90,36 @@ async fn macos_clipboard_sniff_context(target_hwnd: usize) -> Option<InjectionCo
     })
 }
 
+/// Guarantees the saved pasteboard string is restored exactly once, even on
+/// an early return/panic — not just on the normal success path. `restore_now`
+/// disarms it so the `Drop` fallback never double-restores.
+struct ClipboardRestoreGuard {
+    saved: Option<Option<String>>,
+}
+impl ClipboardRestoreGuard {
+    fn new(saved: Option<String>) -> Self {
+        Self { saved: Some(saved) }
+    }
+    fn restore_now(&mut self) {
+        if let Some(saved) = self.saved.take() {
+            match saved {
+                Some(prev) => crate::system::mac_app::pasteboard_set_string(&prev),
+                None => crate::system::mac_app::pasteboard_set_string(""),
+            }
+        }
+    }
+}
+impl Drop for ClipboardRestoreGuard {
+    fn drop(&mut self) {
+        if let Some(saved) = self.saved.take() {
+            match saved {
+                Some(prev) => crate::system::mac_app::pasteboard_set_string(&prev),
+                None => crate::system::mac_app::pasteboard_set_string(""),
+            }
+        }
+    }
+}
+
 pub(super) async fn inject_text(
     text: &str,
     target_hwnd: usize,
@@ -103,6 +133,10 @@ pub(super) async fn inject_text(
 
     const VK_ANSI_V: CGKeyCode = 9;
 
+    // Declared before the restore guard so it releases *after* the pasteboard
+    // has been restored (Rust drops in reverse declaration order).
+    let _injection_guard = super::injection_lock().lock().await;
+
     if target_hwnd != 0 {
         let pid = (target_hwnd & 0xFFFFFFFF) as i32;
         crate::system::mac_app::activate_pid(pid);
@@ -110,6 +144,7 @@ pub(super) async fn inject_text(
     }
 
     let saved = crate::system::mac_app::pasteboard_get_string();
+    let mut restore_guard = ClipboardRestoreGuard::new(saved);
 
     let mut injection_probe = if contextual_caps || auto_spacing {
         crate::core::context_probe::read_injection_context_probe().await
@@ -187,10 +222,7 @@ pub(super) async fn inject_text(
 
     tokio::time::sleep(Duration::from_millis(120)).await;
 
-    match saved {
-        Some(prev) => crate::system::mac_app::pasteboard_set_string(&prev),
-        None => crate::system::mac_app::pasteboard_set_string(""),
-    }
+    restore_guard.restore_now();
 
     if posted.is_none() {
         return Err(anyhow::anyhow!(

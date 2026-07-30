@@ -19,12 +19,6 @@ pub use cleanup_templates::{
 pub use gemini::gemini_generation_config;
 pub use transcription::get_transcription_prompt;
 
-// Period-separated, not comma-separated: Whisper-family models treat this
-// `prompt` field as a continuation seed rather than an instruction, and a
-// flowing comma list reads more like a sentence the model might try to
-// finish. Short, punctuated terms are less likely to invite continuation.
-const TRANSCRIPTION_GLOSSARY: &str = "Verenu. Tauri. Svelte. Groq. Gemini. OpenAI.";
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PromptTier {
     Short,

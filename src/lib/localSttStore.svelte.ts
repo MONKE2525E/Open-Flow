@@ -9,6 +9,7 @@ import {
   type LocalSttVerificationProgressPayload,
   type LocalTranscriptionState,
 } from './tauri';
+import { ensureNotificationPermission } from './notifications';
 
 export const localSttStore = $state({
   models: [] as LocalSttModelInfo[],
@@ -41,6 +42,9 @@ export async function refreshLocalState() {
 
 export async function downloadLocalModel(modelIdValue: string) {
   try {
+    // Ask for notification permission now (contextual) so the backend can raise
+    // a "model ready" notification when this finishes, even if the window is hidden.
+    ensureNotificationPermission().catch(() => {});
     await invoke('download_local_stt_model', { modelId: modelIdValue });
     await refreshLocalModels();
     await refreshLocalState();

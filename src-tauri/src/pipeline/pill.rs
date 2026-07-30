@@ -110,6 +110,24 @@ pub(crate) fn show_pill(app: &AppHandle, state: &str) {
     show_pill_msg(app, state, None);
 }
 
+/// Updates an already-visible pill without repeating the native reveal and
+/// placement work. Used for in-session state changes such as recording to
+/// hands-free, where re-running `show_pill` can produce a one-frame flicker.
+pub(crate) fn update_pill_state(app: &AppHandle, state: &str) {
+    let Some(pill) = app.get_webview_window("pill") else {
+        show_pill(app, state);
+        return;
+    };
+
+    // Reuse the native reveal sequence without recalculating placement. The
+    // Windows window can remain logically visible while its compositor surface
+    // is behind another window after click-through is changed, so a conditional
+    // `show()` is not enough here. `reveal_pill` uses SW_SHOWNOACTIVATE and
+    // HWND_TOPMOST, which re-presents the existing window without activating it
+    // or running the placement animation.
+    reveal_pill(app, &pill, state, None);
+}
+
 /// Shows the pill window in the given state, optionally carrying an error
 /// message. The window is always kept at the same width regardless of state
 /// (room enough for the error text to expand into), so within a single

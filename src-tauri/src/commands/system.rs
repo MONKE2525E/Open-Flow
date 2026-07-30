@@ -54,6 +54,54 @@ pub async fn get_memory_mb() -> u64 {
     }
 }
 
+/// One detected GPU's VRAM. NVIDIA-only (see `memory::gpu_vram_statuses`);
+/// absent entirely on other vendors, which the frontend treats as "no signal".
+#[derive(serde::Serialize)]
+pub struct GpuCapability {
+    pub vram_total_mb: u64,
+    pub vram_used_mb: u64,
+}
+
+/// System hardware snapshot used by the Models tab to recommend presets. RAM
+/// is the primary signal (correct for Apple Silicon unified memory too); VRAM
+/// is a bonus that's only present on NVIDIA machines. A `total_ram_mb` of 0
+/// means the read failed — the frontend must treat that as "unknown, assume
+/// capable" rather than "no memory".
+#[derive(serde::Serialize)]
+pub struct HardwareCapabilities {
+    pub total_ram_mb: u64,
+    pub free_ram_mb: u64,
+    pub gpus: Vec<GpuCapability>,
+}
+
+#[tauri::command]
+pub async fn get_hardware_capabilities() -> HardwareCapabilities {
+    run_blocking("get_hardware_capabilities", || {
+        let mem = crate::system::memory::system_memory_status();
+        let gpus = crate::system::memory::gpu_vram_statuses()
+            .into_iter()
+            .map(|gpu| GpuCapability {
+                vram_total_mb: gpu.total_mb,
+                vram_used_mb: gpu.used_mb,
+            })
+            .collect();
+        Ok(HardwareCapabilities {
+            total_ram_mb: mem.map(|m| m.total_mb).unwrap_or(0),
+            free_ram_mb: mem.map(|m| m.available_mb).unwrap_or(0),
+            gpus,
+        })
+    })
+    .await
+    .unwrap_or_else(|e| {
+        log::error!("{e}");
+        HardwareCapabilities {
+            total_ram_mb: 0,
+            free_ram_mb: 0,
+            gpus: Vec::new(),
+        }
+    })
+}
+
 // ---------- hotkey ----------
 
 #[tauri::command]

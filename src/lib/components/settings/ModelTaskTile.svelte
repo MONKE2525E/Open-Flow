@@ -219,37 +219,39 @@
     line-height: 1;
   }
 
+  /* Plain inline text, not pills — the current selection reads as a quiet
+     "Provider · model · N fallbacks" summary line. The classes and text stay
+     (a frozen smoke test reads the fallback count off .summary-item), only the
+     badge styling is gone. */
   .summary-row {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 6px;
     flex-wrap: wrap;
   }
 
   .summary-item {
-    font-size: 10px;
+    font-size: 11.5px;
     font-family: var(--sans);
-    font-weight: 500;
-    letter-spacing: 0.03em;
-    border-radius: 999px;
-    padding: 2px 7px;
-    border: 1px solid var(--line-strong);
-    color: var(--ink-soft);
-    background: color-mix(in srgb, var(--paper) 50%, var(--bg-elev));
+    font-weight: 450;
+    color: var(--ink-mute);
     white-space: nowrap;
   }
 
+  .summary-item:not(:first-child)::before {
+    content: '·';
+    margin-right: 6px;
+    color: var(--ink-faint);
+  }
+
   .provider-chip {
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--accent-ink);
-    border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong));
-    background: color-mix(in srgb, var(--accent-soft) 65%, var(--bg-elev));
+    color: var(--ink-soft);
+    font-weight: 500;
   }
 
   .model-chip {
     font-family: var(--mono);
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .chevron {
