@@ -42,6 +42,18 @@ enum UpdateTarget {
     Unsupported,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum VersionPart {
+    Numeric(u64),
+    Text(String),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedVersion {
+    core: (u64, u64, u64),
+    prerelease: Option<Vec<VersionPart>>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpdateChannel {
     Stable,
@@ -149,7 +161,7 @@ async fn check_repo(repo: &str, channel: UpdateChannel) -> anyhow::Result<Option
         return Ok(None);
     };
 
-    if !is_newer(&display_version, env!("CARGO_PKG_VERSION")) {
+    if !is_newer(&display_version, &current_package_version()) {
         return Ok(None);
     }
 
@@ -184,13 +196,12 @@ fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhR
         })
         .filter_map(|(index, release)| {
             release_version(&release.tag_name)
-                .map(|version| (index, release, version_tuple(&version)))
+                .map(|version| (index, release, version))
         })
         // Keep the first release when normalized versions tie. GitHub returns
         // releases newest-first, so this preserves the newest prerelease build.
         .max_by(|(left_index, _, left_version), (right_index, _, right_version)| {
-            left_version
-                .cmp(right_version)
+            compare_versions(left_version, right_version)
                 .then_with(|| right_index.cmp(left_index))
         })
         .map(|(_, release, _)| release)
@@ -201,10 +212,11 @@ fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhR
 /// must not fill in a missing patch component.
 fn release_version(tag: &str) -> Option<String> {
     let start = tag.find(|c: char| c.is_ascii_digit())?;
-    let version_core = tag[start..]
-        .split(['-', '+'])
-        .next()
-        .unwrap_or_default();
+    let version_and_suffix = &tag[start..];
+    let suffix_start = version_and_suffix
+        .find(['-', '+'])
+        .unwrap_or(version_and_suffix.len());
+    let version_core = &version_and_suffix[..suffix_start];
     let parts: Vec<u64> = version_core
         .split('.')
         .map(str::parse)
@@ -212,9 +224,119 @@ fn release_version(tag: &str) -> Option<String> {
         .ok()?;
 
     match parts.as_slice() {
-        [major, minor, patch] => Some(format!("{major}.{minor}.{patch}")),
+        [major, minor, patch] => Some(format!(
+            "{major}.{minor}.{patch}{}",
+            &version_and_suffix[suffix_start..]
+        )),
         _ => None,
     }
+}
+
+fn current_package_version() -> String {
+    match option_env!("CARGO_PKG_VERSION_PRE") {
+        Some(prerelease) if !prerelease.is_empty() => {
+            format!("{}-{prerelease}", env!("CARGO_PKG_VERSION"))
+        }
+        _ => env!("CARGO_PKG_VERSION").to_owned(),
+    }
+}
+
+fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    let left = release_version(left).unwrap_or_else(|| normalize_version(left));
+    let right = release_version(right).unwrap_or_else(|| normalize_version(right));
+    let Some(left) = parse_version(&left) else {
+        return std::cmp::Ordering::Equal;
+    };
+    let Some(right) = parse_version(&right) else {
+        return std::cmp::Ordering::Equal;
+    };
+
+    left.core.cmp(&right.core).then_with(|| match (&left.prerelease, &right.prerelease) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (Some(left), Some(right)) => compare_prerelease_parts(left, right),
+    })
+}
+
+fn parse_version(version: &str) -> Option<ParsedVersion> {
+    let suffix_start = version.find(['-', '+']).unwrap_or(version.len());
+    let core = version[..suffix_start]
+        .split('.')
+        .map(str::parse)
+        .collect::<Result<Vec<u64>, _>>()
+        .ok()?;
+    let core = match core.as_slice() {
+        [major, minor, patch] => (*major, *minor, *patch),
+        _ => return None,
+    };
+
+    let prerelease = if version.as_bytes().get(suffix_start) == Some(&b'-') {
+        let prerelease_start = suffix_start + 1;
+        let prerelease_end = version[prerelease_start..]
+            .find('+')
+            .map(|offset| prerelease_start + offset)
+            .unwrap_or(version.len());
+        Some(parse_prerelease_parts(
+            &version[prerelease_start..prerelease_end],
+        ))
+    } else {
+        None
+    };
+
+    Some(ParsedVersion { core, prerelease })
+}
+
+fn parse_prerelease_parts(value: &str) -> Vec<VersionPart> {
+    let mut parts = Vec::new();
+    let mut buffer = String::new();
+    let mut buffer_is_numeric: Option<bool> = None;
+
+    for character in value.chars() {
+        if !character.is_ascii_alphanumeric() {
+            push_version_part(&mut parts, &mut buffer);
+            buffer_is_numeric = None;
+            continue;
+        }
+
+        let is_numeric = character.is_ascii_digit();
+        if buffer_is_numeric.is_some_and(|previous| previous != is_numeric) {
+            push_version_part(&mut parts, &mut buffer);
+        }
+        buffer_is_numeric = Some(is_numeric);
+        buffer.push(character);
+    }
+    push_version_part(&mut parts, &mut buffer);
+    parts
+}
+
+fn push_version_part(parts: &mut Vec<VersionPart>, buffer: &mut String) {
+    if buffer.is_empty() {
+        return;
+    }
+    if buffer.chars().all(|character| character.is_ascii_digit()) {
+        if let Ok(value) = buffer.parse() {
+            parts.push(VersionPart::Numeric(value));
+        }
+    } else {
+        parts.push(VersionPart::Text(buffer.clone()));
+    }
+    buffer.clear();
+}
+
+fn compare_prerelease_parts(left: &[VersionPart], right: &[VersionPart]) -> std::cmp::Ordering {
+    for (left, right) in left.iter().zip(right) {
+        let ordering = match (left, right) {
+            (VersionPart::Numeric(left), VersionPart::Numeric(right)) => left.cmp(right),
+            (VersionPart::Numeric(_), VersionPart::Text(_)) => std::cmp::Ordering::Less,
+            (VersionPart::Text(_), VersionPart::Numeric(_)) => std::cmp::Ordering::Greater,
+            (VersionPart::Text(left), VersionPart::Text(right)) => left.cmp(right),
+        };
+        if ordering != std::cmp::Ordering::Equal {
+            return ordering;
+        }
+    }
+    left.len().cmp(&right.len())
 }
 
 /// Extract the first three numeric groups from any version string, return as "major.minor.patch".
@@ -235,16 +357,7 @@ fn normalize_version(tag: &str) -> String {
 }
 
 fn is_newer(latest: &str, current: &str) -> bool {
-    version_tuple(&normalize_version(latest)) > version_tuple(&normalize_version(current))
-}
-
-fn version_tuple(version: &str) -> (u64, u64, u64) {
-    let mut parts = version.split('.').filter_map(|p| p.parse::<u64>().ok());
-    (
-        parts.next().unwrap_or(0),
-        parts.next().unwrap_or(0),
-        parts.next().unwrap_or(0),
-    )
+    compare_versions(latest, current) == std::cmp::Ordering::Greater
 }
 
 fn current_update_target() -> UpdateTarget {
@@ -427,20 +540,29 @@ mod tests {
             "Verenu-0.12.1-beta"
         );
         assert_eq!(release_version("Verenu-013.0-beta"), None);
-        assert_eq!(release_version("Verenu-0.15.1-beta"), Some("0.15.1".into()));
+        assert_eq!(
+            release_version("Verenu-0.15.1-beta"),
+            Some("0.15.1-beta".into())
+        );
     }
 
     #[test]
     fn numeric_prerelease_suffixes_are_accepted() {
         assert_eq!(
             release_version("Verenu-0.15.1-beta.1"),
-            Some("0.15.1".into())
+            Some("0.15.1-beta.1".into())
         );
-        assert_eq!(release_version("Verenu-0.15.1-beta2"), Some("0.15.1".into()));
-        assert_eq!(release_version("Verenu-0.15.1-rc1"), Some("0.15.1".into()));
+        assert_eq!(
+            release_version("Verenu-0.15.1-beta2"),
+            Some("0.15.1-beta2".into())
+        );
+        assert_eq!(
+            release_version("Verenu-0.15.1-rc1"),
+            Some("0.15.1-rc1".into())
+        );
         assert_eq!(
             release_version("Verenu-0.15.1+build.2"),
-            Some("0.15.1".into())
+            Some("0.15.1+build.2".into())
         );
     }
 
@@ -477,6 +599,14 @@ mod tests {
         assert!(is_newer("v0.15.0", "0.14.1"));
         assert!(!is_newer("v0.14.1", "0.14.1"));
         assert!(!is_newer("0.14.0", "0.14.1"));
+    }
+
+    #[test]
+    fn prerelease_versions_compare_without_losing_build_order() {
+        assert!(is_newer("0.15.1-beta.2", "0.15.1-beta.1"));
+        assert!(!is_newer("0.15.1-beta.1", "0.15.1-beta.2"));
+        assert!(!is_newer("0.15.1-beta.2", "0.15.1"));
+        assert!(is_newer("0.15.2-beta.1", "0.15.1"));
     }
 
     #[test]
