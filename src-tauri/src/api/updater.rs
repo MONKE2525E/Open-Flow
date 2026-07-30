@@ -189,9 +189,10 @@ fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhR
         .map(|(release, _)| release)
 }
 
-/// Release tags must contain exactly three numeric version components. Keep
+/// Release tags must contain at least three numeric version components. Keep
 /// the more forgiving `normalize_version()` behavior for legacy comparisons,
-/// but never let a malformed release tag become a real update candidate.
+/// but never let a tag missing a major, minor, or patch component become a
+/// real update candidate. Numeric prerelease/build suffixes are ignored.
 fn release_version(tag: &str) -> Option<String> {
     let parts: Vec<u64> = tag
         .split(|c: char| !c.is_ascii_digit())
@@ -202,6 +203,7 @@ fn release_version(tag: &str) -> Option<String> {
                 part.parse().ok()
             }
         })
+        .take(3)
         .collect();
 
     match parts.as_slice() {
@@ -421,6 +423,16 @@ mod tests {
         );
         assert_eq!(release_version("Verenu-013.0-beta"), None);
         assert_eq!(release_version("Verenu-0.15.1-beta"), Some("0.15.1".into()));
+    }
+
+    #[test]
+    fn numeric_prerelease_suffixes_are_accepted() {
+        assert_eq!(
+            release_version("Verenu-0.15.1-beta.1"),
+            Some("0.15.1".into())
+        );
+        assert_eq!(release_version("Verenu-0.15.1-beta2"), Some("0.15.1".into()));
+        assert_eq!(release_version("Verenu-0.15.1-rc1"), Some("0.15.1".into()));
     }
 
     #[test]

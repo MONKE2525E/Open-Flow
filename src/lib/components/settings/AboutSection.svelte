@@ -76,23 +76,25 @@
     betaUpdatesEnabled = value;
     appStore.betaUpdatesEnabled = value;
     try {
-      await saveSetting('beta_updates_enabled', value);
-    } catch (error) {
-      betaUpdatesEnabled = previous;
-      appStore.betaUpdatesEnabled = previous;
-      console.error('Failed to save beta update setting:', error);
-      savingBetaUpdates = false;
-      return;
-    }
+      try {
+        await saveSetting('beta_updates_enabled', value);
+      } catch (error) {
+        betaUpdatesEnabled = previous;
+        appStore.betaUpdatesEnabled = previous;
+        console.error('Failed to save beta update setting:', error);
+        return;
+      }
 
-    // A result from the other channel is no longer trustworthy. Re-check now
-    // so switching channels has an immediate, visible effect.
-    try { await saveSetting('update_dismissed_version', null); } catch {}
-    try { await saveSetting('update_notified_version', null); } catch {}
-    appStore.updateInfo = null;
-    updateCheckState = 'idle';
-    await checkForUpdateManual();
-    savingBetaUpdates = false;
+      // A result from the other channel is no longer trustworthy. Re-check now
+      // so switching channels has an immediate, visible effect.
+      try { await saveSetting('update_dismissed_version', null); } catch {}
+      try { await saveSetting('update_notified_version', null); } catch {}
+      appStore.updateInfo = null;
+      updateCheckState = 'idle';
+      await checkForUpdateManual();
+    } finally {
+      savingBetaUpdates = false;
+    }
   }
 
   async function confirmEnableBetaUpdates() {
