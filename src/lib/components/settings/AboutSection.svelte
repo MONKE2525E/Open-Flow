@@ -103,7 +103,11 @@
   }
 
   function handleBetaModalKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && confirmBetaUpdates) confirmBetaUpdates = false;
+    if (event.key === 'Escape' && confirmBetaUpdates) {
+      event.preventDefault();
+      event.stopPropagation();
+      confirmBetaUpdates = false;
+    }
   }
 
   function downloadActionLabel(update: UpdateInfo): string {
