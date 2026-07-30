@@ -7,6 +7,8 @@ struct GhRelease {
     target_commitish: String,
     #[serde(default)]
     draft: bool,
+    #[serde(default)]
+    prerelease: bool,
     assets: Vec<GhAsset>,
 }
 
@@ -188,12 +190,7 @@ fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhR
     releases
         .iter()
         .enumerate()
-        .filter(|(_, release)| {
-            !release.draft
-                && release
-                    .target_commitish
-                    .eq_ignore_ascii_case(channel.target_branch())
-        })
+        .filter(|(_, release)| !release.draft && release_matches_channel(release, channel))
         .filter_map(|(index, release)| {
             release_version(&release.tag_name)
                 .map(|version| (index, release, version))
@@ -205,6 +202,22 @@ fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhR
                 .then_with(|| right_index.cmp(left_index))
         })
         .map(|(_, release, _)| release)
+}
+
+fn release_matches_channel(release: &GhRelease, channel: UpdateChannel) -> bool {
+    let wants_prerelease = matches!(channel, UpdateChannel::Beta);
+    if release.prerelease != wants_prerelease {
+        return false;
+    }
+
+    release
+        .target_commitish
+        .eq_ignore_ascii_case(channel.target_branch())
+        || is_commit_sha(&release.target_commitish)
+}
+
+fn is_commit_sha(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Release tags must contain exactly three numeric components in the main
@@ -452,7 +465,8 @@ mod tests {
     use super::{
         find_asset_with_suffix, is_authorized_release_asset_url, is_newer, normalize_version,
         parse_prerelease_parts, release_version, select_release, select_release_asset_for_target,
-        GhAsset, GhRelease, InstallMode, UpdateChannel, UpdateTarget, VersionPart,
+        current_package_version, GhAsset, GhRelease, InstallMode, UpdateChannel, UpdateTarget,
+        VersionPart,
     };
 
     fn asset(name: &str) -> GhAsset {
@@ -463,10 +477,15 @@ mod tests {
     }
 
     fn release(tag_name: &str, target_commitish: &str) -> GhRelease {
+        release_with_prerelease(tag_name, target_commitish, target_commitish.eq_ignore_ascii_case("dev"))
+    }
+
+    fn release_with_prerelease(tag_name: &str, target_commitish: &str, prerelease: bool) -> GhRelease {
         GhRelease {
             tag_name: tag_name.to_string(),
             target_commitish: target_commitish.to_string(),
             draft: false,
+            prerelease,
             assets: vec![asset("Verenu_0.15.0_x64-setup.exe")],
         }
     }
@@ -506,6 +525,28 @@ mod tests {
                 .expect("highest beta release")
                 .tag_name,
             "Verenu-0.16.0-beta"
+        );
+    }
+
+    #[test]
+    fn commit_sha_targets_use_github_prerelease_metadata_for_channels() {
+        let target = "0123456789abcdef0123456789abcdef01234567";
+        let releases = [
+            release_with_prerelease("Verenu-0.15.0", target, false),
+            release_with_prerelease("Verenu-0.15.1-beta", target, true),
+        ];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Stable)
+                .expect("stable SHA-targeted release")
+                .tag_name,
+            "Verenu-0.15.0"
+        );
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Beta)
+                .expect("beta SHA-targeted release")
+                .tag_name,
+            "Verenu-0.15.1-beta"
         );
     }
 
@@ -604,6 +645,11 @@ mod tests {
         assert!(!is_newer("0.15.1-beta.1", "0.15.1-beta.2"));
         assert!(!is_newer("0.15.1-beta.2", "0.15.1"));
         assert!(is_newer("0.15.2-beta.1", "0.15.1"));
+    }
+
+    #[test]
+    fn current_package_version_uses_cargo_package_version_as_is() {
+        assert_eq!(current_package_version(), env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

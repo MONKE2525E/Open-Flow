@@ -41,12 +41,18 @@ test("selectReviewModels preserves configured ordering and removes duplicates", 
   );
 });
 
+test("selectReviewModels coerces numeric change counts", () => {
+  assert.equal(selectReviewModels({ apiKey: "present", additions: "10", deletions: "5" }).changedLines, 15);
+  assert.equal(selectReviewModels({ apiKey: "present", additions: "not-a-number", deletions: 5 }).changedLines, 5);
+});
+
 test("quota, rate-limit, and model-unavailable failures are fallback eligible", () => {
   const cases = [
     [{ code: 1, stderr: "RESOURCE_EXHAUSTED: quota exceeded" }, "quota"],
     [{ code: 1, stderr: "HTTP 429 too many requests" }, "rate_limit"],
     [{ code: 1, stderr: "model gemini-3.6-flash-high not found" }, "model_unavailable"],
     [{ code: 1, stderr: "no available model for this request" }, "model_unavailable"],
+    [{ code: 1, stderr: "model gemini-3.6-flash-high\nnot found" }, "model_unavailable"],
   ];
 
   for (const [result, reason] of cases) {
@@ -68,6 +74,7 @@ test("unrelated failures, preview failures, and successful reviews do not fallba
 test("progress summaries expose the expected review stages without provider details", () => {
   assert.match(formatProgressSummary({ stage: "preparing", mode: "normal" }), /^👀 Preparing/);
   assert.match(formatProgressSummary({ stage: "reviewing", model: DEFAULT_MODEL, headSha: "1234567890abcdef" }), /🔍 Reviewing `1234567`/);
+  assert.match(formatProgressSummary({ stage: "reviewing", headSha: 1234567 }), /current commit/);
   const quotaSwitch = formatProgressSummary({ stage: "switching", model: DEFAULT_MODEL, fallbackModel: DEFAULT_FALLBACK_MODEL, reason: "quota" });
   assert.ok(quotaSwitch.includes(`\`${DEFAULT_MODEL}\` quota unavailable`));
   assert.ok(quotaSwitch.includes(`switching to \`${DEFAULT_FALLBACK_MODEL}\``));
