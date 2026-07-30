@@ -536,8 +536,8 @@ async function main() {
   // in .github/verenu-review-rules.md via the OCR rule file (--rule), not here.
   const background =
     mode === "security"
-      ? "Automated Verenu PR review (mode: security). Prioritize security-relevant defects this run."
-      : `Automated Verenu PR review (mode: ${mode}).`;
+      ? "Automated Verenu PR review (mode: security). Review the entire PR in one pass, continue after the first finding, and report every distinct high-confidence security issue."
+      : `Automated Verenu PR review (mode: ${mode}). Review the entire PR in one pass, continue after the first finding, and report every distinct high-confidence issue.`;
 
   let ocrHome;
   let stateComment = existingComment;
