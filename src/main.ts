@@ -1,6 +1,6 @@
 import { mount } from 'svelte';
-import { invoke } from '@tauri-apps/api/core';
 import App from './App.svelte';
+import { invoke } from './lib/tauri';
 import './theme.css';
 import './app.css';
 

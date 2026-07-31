@@ -1,5 +1,6 @@
 import { mount } from 'svelte';
 import PillApp from './PillApp.svelte';
+import { invoke } from './lib/tauri';
 import './theme.css';
 
 type AppearanceMode = 'system' | 'light' | 'dark';
@@ -20,7 +21,6 @@ applyTheme('system');
 
 (async () => {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
     const mode = await invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' });
     if (mode === 'system' || mode === 'light' || mode === 'dark') {
       applyTheme(mode);
@@ -34,8 +34,6 @@ window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change',
 
 mount(PillApp, { target: document.getElementById('pill-root')! });
 
-void import('@tauri-apps/api/core')
-  .then(({ invoke }) => invoke('frontend_ready'))
-  .catch((error) => {
-    console.error('Failed to complete pill startup handshake:', error);
-  });
+void invoke('frontend_ready').catch((error) => {
+  console.error('Failed to complete pill startup handshake:', error);
+});
