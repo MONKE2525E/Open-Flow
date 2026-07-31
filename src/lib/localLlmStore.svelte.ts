@@ -11,6 +11,7 @@ import {
   type LocalLlmState,
   type LocalLlmVerificationProgressPayload,
 } from './tauri';
+import { ensureNotificationPermission } from './notifications';
 
 export const localLlmStore = $state({
   models: [] as LocalLlmModelInfo[],
@@ -87,13 +88,16 @@ export async function deleteLocalLlmRuntime() {
   }
 }
 
-export async function downloadLocalLlmModel(modelIdValue: string) {
+export async function downloadLocalLlmModel(modelIdValue: string): Promise<boolean> {
   try {
+    ensureNotificationPermission().catch(() => {});
     await invoke('download_local_llm_model', { modelId: modelIdValue });
     await Promise.all([refreshLocalLlmModels(), refreshLocalLlmState()]);
+    return true;
   } catch (err) {
     console.error('download local cleanup model failed', err);
     emit('verenu:error', `Failed to start model download: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
   }
 }
 

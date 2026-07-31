@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 const VK_BACK: u32 = 0x08; // Backspace
 const VK_ESCAPE: u32 = 0x1B; // Escape
+const VK_SPACE: u32 = 0x20; // Spacebar
 const VK_SHIFT: u32 = 0x10; // VK_SHIFT
 const VK_CTRL: u32 = 0x11; // VK_CONTROL (generic, used with modifier_held)
 const VK_ALT: u32 = 0x12; // VK_MENU (generic, used with modifier_held)
@@ -188,6 +189,287 @@ pub fn is_hotkey_available(key1: &str, key2: &str) -> bool {
 static KEY1: AtomicU32 = AtomicU32::new(162); // VK_LCONTROL / Ctrl
 static KEY2: AtomicU32 = AtomicU32::new(91); // VK_LWIN / Windows
 
+const CHORD_TAP_MAX_HOLD_MS: u64 = 200;
+const CHORD_DOUBLE_TAP_WINDOW_MS: u64 = 300;
+
+fn is_menu_trigger_vk(vk: u32) -> bool {
+    matches!(vk, 164 | 165 | 18 | 91 | 92)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChordKey {
+    Key1,
+    Key2,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyEdge {
+    Down,
+    Up,
+}
+
+// The shared "Fire" prefix reads clearly as "fire this callback" at each call
+// site; not worth losing that for clippy's glob-import naming heuristic.
+#[allow(clippy::enum_variant_names)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ChordAction {
+    FirePress,
+    FireRelease,
+    FireCancel,
+    FireHandless,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum KeyDisposition {
+    Suppress,
+    Passthrough,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ChordOutcome {
+    action: Option<ChordAction>,
+    disposition: KeyDisposition,
+}
+
+impl ChordOutcome {
+    fn suppress(action: Option<ChordAction>) -> Self {
+        Self {
+            action,
+            disposition: KeyDisposition::Suppress,
+        }
+    }
+    fn passthrough() -> Self {
+        Self {
+            action: None,
+            disposition: KeyDisposition::Passthrough,
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+enum TapState {
+    #[default]
+    None,
+    WaitingForFullRelease,
+    AwaitingSecondTap {
+        deadline_start_ms: u64,
+    },
+}
+
+/// Chord/handsfree gesture tracking. Owned exclusively by the hook thread
+/// (accessed only via the `CHORD_MACHINE` thread-local below) so it never
+/// needs locking inside `hook_proc`, which must return quickly or Windows
+/// silently unhooks it.
+#[derive(Default)]
+struct ChordStateMachine {
+    key1_down: bool,
+    key2_down: bool,
+    key2_passed_through: bool,
+    key1_passed_through: bool,
+    key1_was_chord: bool,
+    key2_was_chord: bool,
+    chord_down: bool,
+    chord_first_down_ms: u64,
+    tap: TapState,
+    space_down: bool,
+    handless_from_chord: bool,
+}
+
+impl ChordStateMachine {
+    fn key_down_mut(&mut self, key: ChordKey) -> &mut bool {
+        match key {
+            ChordKey::Key1 => &mut self.key1_down,
+            ChordKey::Key2 => &mut self.key2_down,
+        }
+    }
+    fn key_passed_through_mut(&mut self, key: ChordKey) -> &mut bool {
+        match key {
+            ChordKey::Key1 => &mut self.key1_passed_through,
+            ChordKey::Key2 => &mut self.key2_passed_through,
+        }
+    }
+    fn mark_key_passed_through(&mut self, key: ChordKey) {
+        *self.key_passed_through_mut(key) = true;
+    }
+    fn key_was_chord(&self, key: ChordKey) -> bool {
+        match key {
+            ChordKey::Key1 => self.key1_was_chord,
+            ChordKey::Key2 => self.key2_was_chord,
+        }
+    }
+    fn set_key_was_chord(&mut self, key: ChordKey, v: bool) {
+        match key {
+            ChordKey::Key1 => self.key1_was_chord = v,
+            ChordKey::Key2 => self.key2_was_chord = v,
+        }
+    }
+
+    /// Clears gesture/timing state only — never physical-key or ownership
+    /// state. A full reset here would forget a currently-suppressed chord's
+    /// keys are still Verenu-owned, letting a bare Ctrl-up/Win-up leak to the
+    /// OS (Start menu) if a reset lands between a chord's two keyups.
+    fn reset_gesture_state(&mut self) {
+        self.chord_down = false;
+        self.chord_first_down_ms = 0;
+        self.tap = TapState::None;
+        self.space_down = false;
+        self.handless_from_chord = false;
+    }
+
+    fn on_key_event(&mut self, key: ChordKey, edge: KeyEdge, now_ms: u64) -> ChordOutcome {
+        match edge {
+            KeyEdge::Down => self.on_key_down(key, now_ms),
+            KeyEdge::Up => self.on_key_up(key, now_ms),
+        }
+    }
+
+    fn on_key_down(&mut self, key: ChordKey, now_ms: u64) -> ChordOutcome {
+        if !self.key1_down && !self.key2_down {
+            self.handless_from_chord = false;
+        }
+
+        let was_down = std::mem::replace(self.key_down_mut(key), true);
+        if was_down {
+            // Autorepeat. If this key is chord-owned, Verenu already claimed
+            // it and must keep suppressing it (this is the actual fix for the
+            // original bug: a handsfree trigger deliberately leaves
+            // `chord_down` false while the keys may still be held, so without
+            // this explicit already-down check a repeat could otherwise look
+            // like a fresh edge and re-enter chord-formed handling). If it's
+            // not chord-owned, it was never ours to begin with.
+            return if self.key_was_chord(key) {
+                ChordOutcome::suppress(None)
+            } else {
+                ChordOutcome::passthrough()
+            };
+        }
+
+        if !(self.key1_down && self.key2_down) {
+            self.mark_key_passed_through(key);
+            // Only one key down so far — not our gesture yet, let it through
+            // untouched (so a lone Ctrl or Win press still behaves normally).
+            return ChordOutcome::passthrough();
+        }
+
+        // Chord-formed edge: both keys just became down together, regardless
+        // of press order. This is the second key's down-edge; the first
+        // already passed through above.
+        self.chord_first_down_ms = now_ms;
+        self.key1_was_chord = true;
+        self.key2_was_chord = true;
+
+        if let TapState::AwaitingSecondTap { deadline_start_ms } = self.tap {
+            if now_ms.saturating_sub(deadline_start_ms) <= CHORD_DOUBLE_TAP_WINDOW_MS {
+                self.tap = TapState::None;
+                // Handsfree is a discrete toggle, not a held chord — leave
+                // chord_down false so the user's fingers coming off both keys
+                // afterward needs no further chord bookkeeping here.
+                return ChordOutcome::suppress(Some(ChordAction::FireHandless));
+            }
+        }
+
+        self.tap = TapState::None;
+        self.chord_down = true;
+        ChordOutcome::suppress(Some(ChordAction::FirePress))
+    }
+
+    fn on_space_event(&mut self, edge: KeyEdge) -> ChordOutcome {
+        match edge {
+            KeyEdge::Down => {
+                if self.space_down {
+                    return if self.handless_from_chord {
+                        ChordOutcome::suppress(None)
+                    } else {
+                        ChordOutcome::passthrough()
+                    };
+                }
+
+                if self.chord_down && !self.handless_from_chord {
+                    self.space_down = true;
+                    self.chord_down = false;
+                    self.tap = TapState::None;
+                    self.handless_from_chord = true;
+                    ChordOutcome::suppress(Some(ChordAction::FireHandless))
+                } else if self.handless_from_chord {
+                    self.space_down = true;
+                    ChordOutcome::suppress(None)
+                } else {
+                    ChordOutcome::passthrough()
+                }
+            }
+            KeyEdge::Up => {
+                let was_down = std::mem::replace(&mut self.space_down, false);
+                if was_down {
+                    ChordOutcome::suppress(None)
+                } else {
+                    ChordOutcome::passthrough()
+                }
+            }
+        }
+    }
+
+    fn on_key_up(&mut self, key: ChordKey, now_ms: u64) -> ChordOutcome {
+        let _was_down = std::mem::replace(self.key_down_mut(key), false);
+        let key_passed_through = std::mem::replace(self.key_passed_through_mut(key), false);
+
+        if !self.key_was_chord(key) {
+            // Never claimed as part of a chord — always pass through, or an
+            // ordinary Ctrl/Windows release could get silently swallowed.
+            return ChordOutcome::passthrough();
+        }
+        self.set_key_was_chord(key, false);
+
+        let mut action = None;
+        if self.chord_down {
+            self.chord_down = false;
+            let held_ms = now_ms.saturating_sub(self.chord_first_down_ms);
+            if held_ms >= CHORD_TAP_MAX_HOLD_MS {
+                action = Some(ChordAction::FireRelease);
+            } else {
+                action = Some(ChordAction::FireCancel);
+                self.tap = TapState::WaitingForFullRelease;
+            }
+        }
+
+        // The double-tap clock starts at the first release following a quick
+        // chord tap. This deliberately does NOT require the *other* key to
+        // also be up: holding one key down continuously and quick-tapping the
+        // other twice (e.g. hold Ctrl, double-click Win) must also arm the
+        // second tap, since a remapped mouse button can only ever send taps
+        // of a single key, never hold one key while tapping another. When
+        // both keys happen to release together (the classic "double-tap the
+        // whole chord" gesture) this still starts the window at the first of
+        // the two releases, which are normally only a few ms apart.
+        if matches!(self.tap, TapState::WaitingForFullRelease) {
+            self.tap = TapState::AwaitingSecondTap {
+                deadline_start_ms: now_ms,
+            };
+        }
+
+        if !self.key1_down && !self.key2_down {
+            self.handless_from_chord = false;
+        }
+
+        if key_passed_through {
+            ChordOutcome {
+                action,
+                disposition: KeyDisposition::Passthrough,
+            }
+        } else {
+            ChordOutcome::suppress(action)
+        }
+    }
+}
+
+thread_local! {
+    static CHORD_MACHINE: std::cell::RefCell<ChordStateMachine> =
+        std::cell::RefCell::new(ChordStateMachine::default());
+}
+
+// Cross-thread reset request: `reset_chord_state()` is called from the async
+// pipeline task, which cannot reach the hook thread's thread-local directly.
+static RESET_REQUESTED: AtomicBool = AtomicBool::new(false);
+
 pub fn update_keys(k1: u32, k2: u32) {
     if k1 != 0 {
         KEY1.store(k1, Ordering::SeqCst);
@@ -199,24 +481,37 @@ pub fn update_keys(k1: u32, k2: u32) {
         return;
     }
     reset_chord_state();
-    HANDLESS_WAITING_KEY1_2.store(false, Ordering::SeqCst);
-    HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);
 }
 
-// Clears all mid-chord state. Called from the Tokio handler after a handsfree
-// stop-via-cancel so the still-open double-tap window can't accidentally start
-// a fresh handsfree session on a stray second key press.
+// Requests that mid-chord gesture/timing state be cleared. Called from the
+// Tokio handler after a handsfree stop-via-cancel so the still-open
+// double-tap window can't accidentally start a fresh handsfree session on a
+// stray second key press. Applied by the hook thread at the top of its next
+// invocation (only gesture/timing state — see `reset_gesture_state`).
 pub fn reset_chord_state() {
-    CHORD_DOWN.store(false, Ordering::SeqCst);
-    KEY1_WAS_CHORD.store(false, Ordering::SeqCst);
-    KEY2_WAS_CHORD.store(false, Ordering::SeqCst);
-    CHORD_PENDING.store(false, Ordering::SeqCst);
-    CHORD_PENDING_END_MS.store(0, Ordering::SeqCst);
-    CHORD_FIRST_DOWN_MS.store(0, Ordering::SeqCst);
+    RESET_REQUESTED.store(true, Ordering::SeqCst);
 }
 
 pub fn set_handless_active(v: bool) {
     HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
+}
+
+// 0 = not processing. Set once, at Stopping -> Processing; cleared via
+// compare-exchange (a no-op if the generation doesn't match, so a stale,
+// superseded task's cleanup can never clobber a newer generation's flag).
+static PROCESSING_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub fn set_processing_generation(generation: u64) {
+    PROCESSING_GENERATION.store(generation, Ordering::SeqCst);
+}
+
+pub fn clear_processing_generation(expected_generation: u64) {
+    let _ = PROCESSING_GENERATION.compare_exchange(
+        expected_generation,
+        0,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    );
 }
 
 /// Current Caps Lock toggle state, tracked from the hook thread.
@@ -308,22 +603,10 @@ static CANCEL_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::
 // output-uppercasing setting.
 static CAPS_LOCK_ON: AtomicBool = AtomicBool::new(false);
 
-static CHORD_DOWN: AtomicBool = AtomicBool::new(false);
 static HANDLESS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ESCAPE_CANCELLED: AtomicBool = AtomicBool::new(false);
 static ESCAPE_KEY_DOWN: AtomicBool = AtomicBool::new(false);
 static ESCAPE_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
-static KEY1_WAS_CHORD: AtomicBool = AtomicBool::new(false);
-// Set whenever key2 is captured as part of our chord. Guarantees key2-up is
-// suppressed even if key1 goes up first and clears CHORD_DOWN before key2 does.
-// Without this, Win key released after Ctrl reaches the OS and triggers the
-// Start menu (or other Win+key shortcuts).
-static KEY2_WAS_CHORD: AtomicBool = AtomicBool::new(false);
-static HANDLESS_KEY1_TIME: AtomicU64 = AtomicU64::new(0);
-static HANDLESS_WAITING_KEY1_2: AtomicBool = AtomicBool::new(false);
-static CHORD_FIRST_DOWN_MS: AtomicU64 = AtomicU64::new(0);
-static CHORD_PENDING: AtomicBool = AtomicBool::new(false);
-static CHORD_PENDING_END_MS: AtomicU64 = AtomicU64::new(0);
 
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
@@ -343,119 +626,125 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
         let is_up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
 
-        if is_key2 && is_down {
-            let k1_held = modifier_held(k1);
-            if k1_held {
-                KEY2_WAS_CHORD.store(true, Ordering::SeqCst);
-                if CHORD_PENDING.load(Ordering::SeqCst) {
-                    let t1 = CHORD_PENDING_END_MS.load(Ordering::SeqCst);
-                    let now = GetTickCount64();
-                    CHORD_PENDING.store(false, Ordering::SeqCst);
-                    CHORD_PENDING_END_MS.store(0, Ordering::SeqCst);
-                    if now.saturating_sub(t1) <= 300 {
-                        if let Some(cb) = HANDLESS_CB.get() {
-                            cb();
-                        }
-                    } else {
-                        CHORD_DOWN.store(true, Ordering::SeqCst);
-                        KEY1_WAS_CHORD.store(true, Ordering::SeqCst);
-                        CHORD_FIRST_DOWN_MS.store(GetTickCount64(), Ordering::SeqCst);
-                        if let Some(cb) = PRESS_CB.get() {
-                            cb();
-                        }
-                    }
-                } else if !CHORD_DOWN.swap(true, Ordering::SeqCst) {
-                    KEY1_WAS_CHORD.store(true, Ordering::SeqCst);
-                    CHORD_FIRST_DOWN_MS.store(GetTickCount64(), Ordering::SeqCst);
+        if RESET_REQUESTED.swap(false, Ordering::SeqCst) {
+            CHORD_MACHINE.with(|m| m.borrow_mut().reset_gesture_state());
+            ESCAPE_CANCELLED.store(false, Ordering::SeqCst);
+            ESCAPE_KEY_DOWN.store(false, Ordering::SeqCst);
+        }
+
+        if (is_key1 || is_key2) && (is_down || is_up) {
+            let key = if is_key1 {
+                ChordKey::Key1
+            } else {
+                ChordKey::Key2
+            };
+            let edge = if is_down { KeyEdge::Down } else { KeyEdge::Up };
+            let now = GetTickCount64();
+
+            let (outcome, key1_was_passed_through, key2_was_passed_through) =
+                CHORD_MACHINE.with(|m| {
+                    let mut machine = m.borrow_mut();
+                    let key1_was_passed_through =
+                        key == ChordKey::Key2 && machine.key1_passed_through;
+                    let key2_was_passed_through =
+                        key == ChordKey::Key1 && machine.key2_passed_through;
+                    let outcome = machine.on_key_event(key, edge, now);
+                    (outcome, key1_was_passed_through, key2_was_passed_through)
+                });
+            let mut action = outcome.action;
+            let mut disposition = outcome.disposition;
+
+            if matches!(
+                action,
+                Some(ChordAction::FireRelease) | Some(ChordAction::FireCancel)
+            ) && ESCAPE_CANCELLED.swap(false, Ordering::SeqCst)
+            {
+                // Escape already handled cancellation while the chord was
+                // held - don't also fire release/cancel now that it's up.
+                action = None;
+            }
+
+            if key == ChordKey::Key1
+                && edge == KeyEdge::Down
+                && disposition == KeyDisposition::Suppress
+                && key2_was_passed_through
+                && is_menu_trigger_vk(k2)
+            {
+                // Key2's menu-trigger down edge was already passed through
+                // before this chord formed. Pass the second key down too so
+                // the OS sees a real modifier chord and does not interpret a
+                // bare Win/Alt release as a Start-menu/menu activation.
+                disposition = KeyDisposition::Passthrough;
+                CHORD_MACHINE.with(|m| m.borrow_mut().mark_key_passed_through(key));
+            }
+
+            if key == ChordKey::Key2
+                && edge == KeyEdge::Down
+                && disposition == KeyDisposition::Suppress
+                && key1_was_passed_through
+                && is_menu_trigger_vk(k1)
+            {
+                // Symmetric case: the first key was a menu trigger whose
+                // down-edge already reached the OS, so pass this chord edge
+                // too and keep the eventual key-up balanced.
+                disposition = KeyDisposition::Passthrough;
+                CHORD_MACHINE.with(|m| m.borrow_mut().mark_key_passed_through(key));
+            }
+
+            match action {
+                Some(ChordAction::FirePress) => {
                     if let Some(cb) = PRESS_CB.get() {
                         cb();
                     }
                 }
-                return LRESULT(1);
-            }
-        }
-
-        if is_key2 && is_up {
-            // KEY2_WAS_CHORD guarantees we suppress key2-up even if key1 went up
-            // first and cleared CHORD_DOWN - otherwise a bare Win-up reaches the OS
-            // and triggers the Start menu / Win shortcuts.
-            let key2_was_chord = KEY2_WAS_CHORD.swap(false, Ordering::SeqCst);
-            if CHORD_DOWN.swap(false, Ordering::SeqCst) {
-                if ESCAPE_CANCELLED.swap(false, Ordering::SeqCst) {
-                    return LRESULT(1);
+                Some(ChordAction::FireRelease) => {
+                    if let Some(cb) = RELEASE_CB.get() {
+                        cb();
+                    }
                 }
-                let now = GetTickCount64();
-                let t0 = CHORD_FIRST_DOWN_MS.load(Ordering::SeqCst);
-                let held_ms = now.saturating_sub(t0);
-                let k1_still_held = modifier_held(k1);
-
-                if held_ms < 200 && k1_still_held {
-                    CHORD_PENDING.store(true, Ordering::SeqCst);
-                    CHORD_PENDING_END_MS.store(now, Ordering::SeqCst);
+                Some(ChordAction::FireCancel) => {
                     if let Some(cb) = CANCEL_CB.get() {
                         cb();
                     }
-                } else if let Some(cb) = RELEASE_CB.get() {
-                    cb();
                 }
-                return LRESULT(1);
-            }
-            if key2_was_chord {
-                return LRESULT(1);
-            }
-        }
-
-        if is_key1 && is_down {
-            let k2_held = modifier_held(k2);
-            if k2_held && !CHORD_DOWN.load(Ordering::SeqCst) {
-                let now = GetTickCount64();
-                if HANDLESS_WAITING_KEY1_2.load(Ordering::SeqCst) {
-                    let t1 = HANDLESS_KEY1_TIME.load(Ordering::SeqCst);
-                    HANDLESS_WAITING_KEY1_2.store(false, Ordering::SeqCst);
-                    HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);
-                    if now.saturating_sub(t1) <= 300 {
-                        if let Some(cb) = HANDLESS_CB.get() {
-                            cb();
-                        }
+                Some(ChordAction::FireHandless) => {
+                    if let Some(cb) = HANDLESS_CB.get() {
+                        cb();
                     }
-                } else {
-                    HANDLESS_KEY1_TIME.store(now, Ordering::SeqCst);
-                    HANDLESS_WAITING_KEY1_2.store(true, Ordering::SeqCst);
                 }
+                None => {}
+            }
+
+            if disposition == KeyDisposition::Suppress {
                 return LRESULT(1);
             }
+            // Passthrough falls through to the rest of hook_proc below.
         }
 
-        if is_key1 && is_up {
-            CHORD_PENDING.store(false, Ordering::SeqCst);
-            CHORD_PENDING_END_MS.store(0, Ordering::SeqCst);
-
-            let k2_held = modifier_held(k2);
-            if !k2_held {
-                HANDLESS_WAITING_KEY1_2.store(false, Ordering::SeqCst);
-                HANDLESS_KEY1_TIME.store(0, Ordering::SeqCst);
-            }
-
-            if CHORD_DOWN.swap(false, Ordering::SeqCst)
-                && !ESCAPE_CANCELLED.swap(false, Ordering::SeqCst)
-            {
-                if let Some(cb) = RELEASE_CB.get() {
+        // While the hold-to-talk chord is active, Space converts it into the
+        // existing hands-free mode. Consume both Space edges so the trigger
+        // does not leak into the focused application.
+        if vk == VK_SPACE && (is_down || is_up) {
+            let edge = if is_down { KeyEdge::Down } else { KeyEdge::Up };
+            let outcome = CHORD_MACHINE.with(|m| m.borrow_mut().on_space_event(edge));
+            if outcome.action == Some(ChordAction::FireHandless) {
+                if let Some(cb) = HANDLESS_CB.get() {
                     cb();
                 }
             }
-            if KEY1_WAS_CHORD.swap(false, Ordering::SeqCst) {
-                let is_menu_trigger = k1 == 164 || k1 == 165 || k1 == 18 || k1 == 91 || k1 == 92;
-                if is_menu_trigger {
-                    return LRESULT(1);
-                }
+            if outcome.disposition == KeyDisposition::Suppress {
+                return LRESULT(1);
             }
         }
 
         if vk == VK_ESCAPE {
+            let chord_down = CHORD_MACHINE.with(|m| m.borrow().chord_down);
             if is_down
-                && (CHORD_DOWN.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst))
+                && (chord_down
+                    || HANDLESS_ACTIVE.load(Ordering::SeqCst)
+                    || PROCESSING_GENERATION.load(Ordering::SeqCst) != 0)
             {
-                if CHORD_DOWN.load(Ordering::SeqCst) {
+                if chord_down {
                     ESCAPE_CANCELLED.store(true, Ordering::SeqCst);
                 }
                 ESCAPE_KEY_DOWN.store(true, Ordering::SeqCst);
@@ -506,6 +795,245 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     }
 
     CallNextHookEx(None, code, wparam, lparam)
+}
+
+#[cfg(test)]
+mod chord_tests {
+    use super::*;
+
+    fn fresh() -> ChordStateMachine {
+        ChordStateMachine::default()
+    }
+
+    #[test]
+    fn press_order_independent() {
+        for order in [
+            [ChordKey::Key1, ChordKey::Key2],
+            [ChordKey::Key2, ChordKey::Key1],
+        ] {
+            let mut m = fresh();
+            let first = m.on_key_event(order[0], KeyEdge::Down, 0);
+            assert_eq!(first.action, None);
+            assert_eq!(first.disposition, KeyDisposition::Passthrough);
+            let second = m.on_key_event(order[1], KeyEdge::Down, 10);
+            assert_eq!(second.action, Some(ChordAction::FirePress));
+            assert_eq!(second.disposition, KeyDisposition::Suppress);
+            assert!(m.chord_down);
+        }
+    }
+
+    #[test]
+    fn autorepeat_while_chord_owned_is_suppressed_with_no_action() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 10);
+        let repeat = m.on_key_event(ChordKey::Key1, KeyEdge::Down, 40);
+        assert_eq!(repeat.action, None);
+        assert_eq!(repeat.disposition, KeyDisposition::Suppress);
+    }
+
+    #[test]
+    fn autorepeat_after_handless_trigger_does_not_refire() {
+        let mut m = fresh();
+        // First tap.
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
+        m.on_key_event(ChordKey::Key1, KeyEdge::Up, 50);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Up, 55);
+        // Second tap within window -> handsfree.
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 100);
+        let second = m.on_key_event(ChordKey::Key2, KeyEdge::Down, 105);
+        assert_eq!(second.action, Some(ChordAction::FireHandless));
+        assert!(!m.chord_down);
+        // Both physical keys still held -> autorepeat must not refire anything.
+        let repeat1 = m.on_key_event(ChordKey::Key1, KeyEdge::Down, 130);
+        let repeat2 = m.on_key_event(ChordKey::Key2, KeyEdge::Down, 160);
+        assert_eq!(repeat1.action, None);
+        assert_eq!(repeat1.disposition, KeyDisposition::Suppress);
+        assert_eq!(repeat2.action, None);
+        assert_eq!(repeat2.disposition, KeyDisposition::Suppress);
+    }
+
+    #[test]
+    fn duplicate_keyup_not_owned_passes_through() {
+        let mut m = fresh();
+        let outcome = m.on_key_event(ChordKey::Key1, KeyEdge::Up, 0);
+        assert_eq!(outcome.action, None);
+        assert_eq!(outcome.disposition, KeyDisposition::Passthrough);
+    }
+
+    #[test]
+    fn standalone_key2_keyup_passes_through() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 0);
+        let outcome = m.on_key_event(ChordKey::Key2, KeyEdge::Up, 10);
+        assert_eq!(outcome.action, None);
+        assert_eq!(outcome.disposition, KeyDisposition::Passthrough);
+    }
+
+    #[test]
+    fn owned_keyup_is_suppressed() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
+        let up = m.on_key_event(ChordKey::Key2, KeyEdge::Up, 500);
+        assert_eq!(up.disposition, KeyDisposition::Suppress);
+    }
+
+    #[test]
+    fn first_key2_keyup_matches_its_passthrough_down() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 5);
+        let up = m.on_key_event(ChordKey::Key2, KeyEdge::Up, 500);
+        assert_eq!(up.action, Some(ChordAction::FireRelease));
+        assert_eq!(up.disposition, KeyDisposition::Passthrough);
+    }
+
+    #[test]
+    fn held_key_double_tap_of_other_key_triggers_handless() {
+        // Hold key1 continuously (e.g. Ctrl), quick-tap key2 (e.g. Win) twice
+        // without ever releasing key1 — the gesture a mouse button remapped
+        // to double-click a single key needs, since it can never hold one
+        // key while tapping another.
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
+        let cancel = m.on_key_event(ChordKey::Key2, KeyEdge::Up, 50);
+        assert_eq!(cancel.action, Some(ChordAction::FireCancel));
+        // key1 never released; key2 taps down again within the window.
+        let outcome = m.on_key_event(ChordKey::Key2, KeyEdge::Down, 100);
+        assert_eq!(outcome.action, Some(ChordAction::FireHandless));
+        assert!(!m.chord_down);
+        assert!(m.key1_down); // key1 still physically held throughout
+    }
+
+    #[test]
+    fn full_release_then_second_tap_within_window_triggers_handless_once() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
+        m.on_key_event(ChordKey::Key1, KeyEdge::Up, 50);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Up, 55); // full release at 55
+        let second = m.on_key_event(ChordKey::Key1, KeyEdge::Down, 300);
+        let outcome = m.on_key_event(ChordKey::Key2, KeyEdge::Down, 340); // 340-50=290 <= 300
+        assert_eq!(second.action, None);
+        assert_eq!(outcome.action, Some(ChordAction::FireHandless));
+    }
+
+    #[test]
+    fn window_measured_from_first_release() {
+        // The double-tap clock starts at the FIRST release of the pair (not
+        // the last), so the solo-hold gesture above has a well-defined start
+        // point even though the held key may never release at all.
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
+        m.on_key_event(ChordKey::Key1, KeyEdge::Up, 50); // first release -> deadline starts here
+        m.on_key_event(ChordKey::Key2, KeyEdge::Up, 130); // second released 80ms later
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 340);
+        let outcome = m.on_key_event(ChordKey::Key2, KeyEdge::Down, 345); // 345-50=295 <= 300
+        assert_eq!(outcome.action, Some(ChordAction::FireHandless));
+    }
+
+    #[test]
+    fn second_tap_outside_window_starts_fresh_press() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
+        m.on_key_event(ChordKey::Key1, KeyEdge::Up, 50);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Up, 55);
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 1000);
+        let outcome = m.on_key_event(ChordKey::Key2, KeyEdge::Down, 1010);
+        assert_eq!(outcome.action, Some(ChordAction::FirePress));
+        assert!(m.chord_down);
+    }
+
+    #[test]
+    fn solo_key_tap_never_fires_anything() {
+        let mut m = fresh();
+        let down = m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        let up = m.on_key_event(ChordKey::Key1, KeyEdge::Up, 50);
+        assert_eq!(down.action, None);
+        assert_eq!(down.disposition, KeyDisposition::Passthrough);
+        assert_eq!(up.action, None);
+        assert_eq!(up.disposition, KeyDisposition::Passthrough);
+    }
+
+    #[test]
+    fn space_while_chord_is_held_converts_to_handless_and_stays_suppressed() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
+
+        let trigger = m.on_space_event(KeyEdge::Down);
+        assert_eq!(trigger.action, Some(ChordAction::FireHandless));
+        assert_eq!(trigger.disposition, KeyDisposition::Suppress);
+        assert!(!m.chord_down);
+
+        let repeat = m.on_space_event(KeyEdge::Down);
+        assert_eq!(repeat.action, None);
+        assert_eq!(repeat.disposition, KeyDisposition::Suppress);
+
+        let space_up = m.on_space_event(KeyEdge::Up);
+        assert_eq!(space_up.action, None);
+        assert_eq!(space_up.disposition, KeyDisposition::Suppress);
+
+        // Releasing the original hold keys must not fire the normal release
+        // action after Space has converted the session.
+        let key1_up = m.on_key_event(ChordKey::Key1, KeyEdge::Up, 100);
+        let key2_up = m.on_key_event(ChordKey::Key2, KeyEdge::Up, 105);
+        assert_eq!(key1_up.action, None);
+        assert_eq!(key2_up.action, None);
+    }
+
+    #[test]
+    fn space_outside_active_chord_passes_through() {
+        let mut m = fresh();
+        let down = m.on_space_event(KeyEdge::Down);
+        let up = m.on_space_event(KeyEdge::Up);
+        assert_eq!(down.disposition, KeyDisposition::Passthrough);
+        assert_eq!(up.disposition, KeyDisposition::Passthrough);
+    }
+
+    #[test]
+    fn reset_gesture_state_clears_space_conversion_state() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
+        let trigger = m.on_space_event(KeyEdge::Down);
+        assert_eq!(trigger.action, Some(ChordAction::FireHandless));
+
+        m.reset_gesture_state();
+
+        let down = m.on_space_event(KeyEdge::Down);
+        let up = m.on_space_event(KeyEdge::Up);
+        assert_eq!(down.disposition, KeyDisposition::Passthrough);
+        assert_eq!(up.disposition, KeyDisposition::Passthrough);
+    }
+
+    #[test]
+    fn reset_gesture_state_preserves_key_ownership() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
+        assert!(m.chord_down);
+        m.reset_gesture_state();
+        assert!(!m.chord_down);
+        assert_eq!(m.tap, TapState::None);
+        // Physical/ownership state must survive the reset.
+        assert!(m.key1_down);
+        assert!(m.key2_down);
+        assert!(m.key1_was_chord);
+        assert!(m.key2_was_chord);
+        // The first key's down-edge was passed through before the chord formed,
+        // so its matching keyup must pass through too. The second key remains
+        // fully owned by Verenu.
+        let up1 = m.on_key_event(ChordKey::Key1, KeyEdge::Up, 10);
+        let up2 = m.on_key_event(ChordKey::Key2, KeyEdge::Up, 15);
+        assert_eq!(up1.disposition, KeyDisposition::Passthrough);
+        assert_eq!(up2.disposition, KeyDisposition::Suppress);
+    }
 }
 
 pub fn start<P, R, H, C, E>(

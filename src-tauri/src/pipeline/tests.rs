@@ -1,13 +1,13 @@
-use super::{
-    apply_app_style_overrides, ensure_terminal_punctuation, is_transcription_hallucination,
-    effective_recording_rms, normalize_transcription_math_artifacts, preview_text,
-    recording_gate_rms, resolve_app_mapping,
-    run_pipeline_fixture, should_run_cleanup_llm, should_use_cleanup_cache,
-    strip_hallucinated_suffix, style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry,
-    PipelineTestRequest, PipelineTestSnippet,
-};
 use super::gates::strip_provider_artifacts;
-use super::stages::{cleanup_cache_plan, dual_cleanup_context_fingerprint};
+use super::stages::{cleanup_cache_plan, dual_cleanup_context_fingerprint, speech_gate_accepts};
+use super::{
+    apply_app_style_overrides, effective_recording_rms, ensure_terminal_punctuation,
+    has_spoken_content, is_transcription_hallucination, normalize_transcription_math_artifacts,
+    preview_text, recording_gate_rms, resolve_app_mapping, run_pipeline_fixture,
+    should_run_cleanup_llm, should_use_cleanup_cache, strip_hallucinated_suffix,
+    style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
+    PipelineTestSnippet,
+};
 use crate::system::apps::AppMapping;
 
 #[test]
@@ -109,6 +109,22 @@ fn hallucination_gate_catches_pure_glossary_echo_on_silence() {
 }
 
 #[test]
+fn hallucination_gate_catches_a_near_miss_of_a_prompt_glossary_term() {
+    assert!(is_transcription_hallucination("svlet"));
+    assert!(!is_transcription_hallucination("svelte"));
+    assert!(!is_transcription_hallucination("please select the file"));
+}
+
+#[test]
+fn spoken_content_gate_rejects_punctuation_only_transcripts_but_keeps_letters() {
+    assert!(!has_spoken_content("."));
+    assert!(!has_spoken_content("?!..."));
+    assert!(!has_spoken_content("   "));
+    assert!(has_spoken_content("I"));
+    assert!(has_spoken_content("42"));
+}
+
+#[test]
 fn hallucination_gate_passes_real_speech() {
     assert!(!is_transcription_hallucination(
         "Return the package to me by Thursday."
@@ -121,7 +137,8 @@ fn hallucination_gate_passes_real_speech() {
 
 #[test]
 fn strip_hallucinated_suffix_removes_trailing_amara_credit() {
-    let raw = "What do you mean by gated it? Like, it won't work? Subtitles by the Amara.org community.";
+    let raw =
+        "What do you mean by gated it? Like, it won't work? Subtitles by the Amara.org community.";
     assert_eq!(
         strip_hallucinated_suffix(raw),
         "What do you mean by gated it? Like, it won't work?"
@@ -183,7 +200,10 @@ fn strip_hallucinated_suffix_handles_closing_quotes_after_sentence_boundary() {
     assert_eq!(strip_hallucinated_suffix(raw), "He said, \"No!\"");
 
     let raw2 = "This is a test (with parentheses). Please subscribe!";
-    assert_eq!(strip_hallucinated_suffix(raw2), "This is a test (with parentheses).");
+    assert_eq!(
+        strip_hallucinated_suffix(raw2),
+        "This is a test (with parentheses)."
+    );
 }
 
 #[test]
@@ -257,9 +277,24 @@ fn recording_gate_gets_more_permissive_at_high_gain() {
     let default_gate = recording_gate_rms(store::DEFAULT_MIC_GAIN);
     let high_gain_gate = recording_gate_rms(store::MAX_MIC_GAIN);
 
-    assert!((default_gate - 0.008).abs() < f32::EPSILON);
+    assert!((default_gate - 0.005).abs() < f32::EPSILON);
     assert!(high_gain_gate < default_gate);
-    assert!((high_gain_gate - 0.0035).abs() < 0.0001);
+    assert!((high_gain_gate - 0.0021875).abs() < 0.0001);
+}
+
+#[test]
+fn speech_gate_does_not_let_loud_rms_bypass_a_vad_rejection() {
+    let vad_rejected = crate::media::vad::SpeechDetectionResult {
+        contains_speech: false,
+        speech_ms: 0,
+        speech_ratio: 0.0,
+        peak_probability: 0.9,
+        longest_segment_ms: 0,
+    };
+
+    assert!(!speech_gate_accepts(Some(&vad_rejected), 1.0, 0.001));
+    assert!(speech_gate_accepts(None, 1.0, 0.001));
+    assert!(!speech_gate_accepts(None, 0.0001, 0.001));
 }
 
 #[test]
@@ -267,6 +302,23 @@ fn effective_recording_rms_keeps_quiet_gain_boosted_speech_from_failing() {
     let effective = effective_recording_rms(0.002, 0.001, store::MAX_MIC_GAIN);
 
     assert!((effective - 0.008).abs() < 0.0001);
+}
+
+#[test]
+fn merged_audio_does_not_double_apply_microphone_gain() {
+    let audio = |sample| super::CapturedAudio {
+        wav: Bytes::from_static(b"fixture-wav"),
+        samples_16k: Arc::new(vec![sample; 16_000]),
+        sample_rate: 16_000,
+        duration_ms: 1_000,
+    };
+
+    let (_, processed_rms, raw_rms) =
+        super::merge_prepend_audio(audio(0.2), audio(0.2), 2.0).expect("merge should encode");
+
+    assert!((processed_rms - 0.2).abs() < 0.0001);
+    assert!((raw_rms - 0.1).abs() < 0.0001);
+    assert!((effective_recording_rms(processed_rms, raw_rms, 2.0) - 0.2).abs() < 0.0001);
 }
 
 #[test]
@@ -1038,10 +1090,7 @@ async fn pipeline_fixture_skips_cleanup_for_formal_when_intensity_is_off() {
     let result = run_pipeline_fixture(request)
         .await
         .expect("formal cleanup should stay off when intensity is none");
-    assert_eq!(
-        result.final_text_before_dictionary,
-        "im sending the note"
-    );
+    assert_eq!(result.final_text_before_dictionary, "im sending the note");
     assert_eq!(
         fixture_hit_count("cleanup", "groq", "llama-3.3-70b-versatile"),
         0
@@ -1084,7 +1133,8 @@ async fn pipeline_fixture_accepts_downloaded_local_model_without_api_keys() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn pipeline_fixture_strips_filler_words_mechanically_when_cleanup_disabled_but_intensity_is_not_none() {
+async fn pipeline_fixture_strips_filler_words_mechanically_when_cleanup_disabled_but_intensity_is_not_none(
+) {
     let _guard = harness_test_lock().lock().expect("harness lock");
     let _local_models = install_local_models(&["parakeet-v3"]);
     reset();
@@ -1111,8 +1161,14 @@ async fn pipeline_fixture_strips_filler_words_mechanically_when_cleanup_disabled
     let result = run_pipeline_fixture(base_request(config))
         .await
         .expect("should run");
-    assert_eq!(result.raw_text, "Just have um basically sync users, uh, to the database.");
-    assert_eq!(result.final_text_before_dictionary, "Just have basically sync users, to the database.");
+    assert_eq!(
+        result.raw_text,
+        "Just have um basically sync users, uh, to the database."
+    );
+    assert_eq!(
+        result.final_text_before_dictionary,
+        "Just have basically sync users, to the database."
+    );
     reset();
 }
 
@@ -1179,7 +1235,10 @@ async fn pipeline_fixture_falls_back_from_retryable_local_failure_to_cloud() {
         .expect("retryable local failure should fall back to cloud");
     assert_eq!(result.raw_text, "cloud fallback transcript");
     assert_eq!(result.api_used, "openai/gpt-4o-transcribe/transcription");
-    assert_eq!(fixture_hit_count("transcription", "local", "parakeet-v3"), 1);
+    assert_eq!(
+        fixture_hit_count("transcription", "local", "parakeet-v3"),
+        1
+    );
     assert_eq!(
         fixture_hit_count("transcription", "openai", "gpt-4o-transcribe"),
         1

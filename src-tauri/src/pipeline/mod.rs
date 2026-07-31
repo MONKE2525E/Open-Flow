@@ -2,14 +2,14 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::DbHandle;
-use crate::api::{ProviderId, auto_learn, cleanup, prompts, transcription};
+use crate::api::{auto_learn, cleanup, prompts, transcription, ProviderId};
 use crate::core::{injection, window_context};
 use crate::data::{db, dictionary, snippets, store};
 use crate::media::audio;
 use crate::system::apps::AppMapping;
 use crate::system::number_parser;
 use crate::system::text::is_number_word_token;
+use crate::DbHandle;
 use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 
 mod cache;
@@ -26,19 +26,19 @@ mod stages;
 mod state;
 use cache::*;
 use chains::*;
-use finalize::{PipelineCompletionContext, finalize_pipeline_completion};
+use finalize::{finalize_pipeline_completion, PipelineCompletionContext};
 #[cfg(any(test, debug_assertions))]
 #[allow(unused_imports)]
 pub use fixture::{
-    PipelineTestDictionaryEntry, PipelineTestRequest, PipelineTestResult, PipelineTestSnippet,
-    run_pipeline_fixture,
+    run_pipeline_fixture, PipelineTestDictionaryEntry, PipelineTestRequest, PipelineTestResult,
+    PipelineTestSnippet,
 };
 use gates::{
-    MIN_RECORDING_MS, MIN_RECORDING_RMS, effective_recording_rms, is_transcription_hallucination,
+    effective_recording_rms, has_spoken_content, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
-    strip_hallucinated_suffix,
+    silence_floor_gate_rms, strip_hallucinated_suffix, MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
-pub(crate) use pill::{hide_pill, show_pill};
+pub(crate) use pill::{hide_pill, show_pill, update_pill_state};
 use pill::{reject_with_pill, show_error_pill};
 pub use session::*;
 use stages::*;
@@ -62,17 +62,7 @@ pub(crate) struct TranscriptCandidate {
 // ---------- pipeline ----------
 
 pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow::Result<String> {
-    let session = {
-        let mut st = lock_state(&state)?;
-        let session = st.session.take();
-        let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
-        (session, exclusive_mic_session_id)
-    };
-    let (session, exclusive_mic_session_id) = session;
-    let Some(session) = session else {
-        if let Some(session_id) = exclusive_mic_session_id {
-            tokio::task::spawn_blocking(move || crate::system::volume::release_mic(session_id));
-        }
+    let Some((session, exclusive_mic_session_id)) = state::take_recording_plain(&state) else {
         anyhow::bail!("No active recording");
     };
 
@@ -83,6 +73,10 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     let settings_store = match store::settings_snapshot(&app) {
         Ok(s) => s,
         Err(e) => {
+            // The session was removed from shared state above. Stop it before
+            // returning, otherwise a settings read failure leaves the audio
+            // thread and exclusive-mic reservation alive with no owner.
+            let _ = stop_and_capture_audio(&app, session, exclusive_mic_session_id).await;
             hide_pill(&app);
             return Err(anyhow::anyhow!(e));
         }
@@ -151,7 +145,11 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
             &app,
             &captured_audio,
             &provider_id,
-            if key.is_empty() { None } else { Some(key.as_str()) },
+            if key.is_empty() {
+                None
+            } else {
+                Some(key.as_str())
+            },
             &language,
             &model,
         )
@@ -184,7 +182,16 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     hide_pill(&app);
 
     match transcribed {
-        Some(text) => Ok(crate::system::text::collapse_degenerate_word_runs(&text)),
+        Some(text) => {
+            let normalized = normalize_transcription_math_artifacts(&text);
+            let normalized = strip_hallucinated_suffix(&normalized);
+            let normalized = crate::system::text::collapse_degenerate_word_runs(&normalized);
+            if !has_spoken_content(&normalized) || is_transcription_hallucination(&normalized) {
+                hide_pill(&app);
+                anyhow::bail!("Recording was too quiet — nothing was transcribed");
+            }
+            Ok(normalized)
+        }
         None => Err(last_err.unwrap_or_else(|| {
             anyhow::anyhow!("Transcription failed: no model in chain produced output")
         })),
@@ -199,16 +206,56 @@ pub async fn run_pipeline_event_only(app: AppHandle, state: SharedState) {
     run_pipeline_with_delivery(app, state, true).await;
 }
 
+/// Waits for a cancellation signal without ever missing one that arrived
+/// before this future started polling — `watch` retains its last value, so
+/// checking `*rx.borrow()` first (not just relying on `changed()`) closes the
+/// lost-wakeup gap a `Notify`-based signal would have had.
+async fn wait_for_cancel(rx: &mut tokio::sync::watch::Receiver<bool>) {
+    loop {
+        if *rx.borrow() {
+            return;
+        }
+        if rx.changed().await.is_err() {
+            return; // sender dropped
+        }
+    }
+}
+
+/// Concatenates a previous (interrupted) dictation's audio onto a freshly
+/// captured one — both are already resampled to the fixed 16kHz mono target,
+/// so the sample buffers join directly. RMS is recomputed from the merged
+/// samples rather than reusing either fragment's own value, since the two
+/// aren't otherwise combinable.
+fn merge_prepend_audio(
+    prev: CapturedAudio,
+    next: CapturedAudio,
+    active_gain: f32,
+) -> anyhow::Result<(CapturedAudio, f32, f32)> {
+    let mut samples = (*prev.samples_16k).clone();
+    samples.extend_from_slice(&next.samples_16k);
+    let wav = audio::encode_wav(&samples, 16_000, 1)
+        .map_err(|e| anyhow::anyhow!("failed to re-encode merged (prepend) audio: {e}"))?;
+    let merged_rms = audio::rms_f32(&samples);
+    let duration_ms = prev.duration_ms + next.duration_ms;
+    let merged = CapturedAudio {
+        wav: bytes::Bytes::from(wav),
+        samples_16k: Arc::new(samples),
+        sample_rate: 16_000,
+        duration_ms,
+    };
+    let merged_raw_rms = if active_gain > 0.0 {
+        merged_rms / active_gain
+    } else {
+        merged_rms
+    };
+    Ok((merged, merged_rms, merged_raw_rms))
+}
+
 async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_only: bool) {
     let started_at = std::time::Instant::now();
-    let Some((session, target, exclusive_mic_session_id)) = take_pipeline_session(&state) else {
-        log::debug!("pipeline: no session - recording never started or was already consumed");
-        return;
-    };
-    let Some(session) = session else {
-        if let Some(session_id) = exclusive_mic_session_id {
-            tokio::task::spawn_blocking(move || crate::system::volume::release_mic(session_id));
-        }
+    let Some((session, target, exclusive_mic_session_id, generation, prepend_audio)) =
+        state::take_recording_for_stopping(&state)
+    else {
         log::debug!("pipeline: no session - recording never started or was already consumed");
         return;
     };
@@ -251,21 +298,48 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     log::debug!("pipeline: audio gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
 
     let stage_audio = std::time::Instant::now();
-    // Quiet/short recordings are rejected inside stop_and_validate_audio, which
-    // plays the error cue via reject_with_pill — so only play the stop cue once
-    // the audio is *accepted*, otherwise a rejection would sound stop + error.
-    let Some(captured_audio) =
-        stop_and_validate_audio(
-            &app,
-            session,
-            exclusive_mic_session_id,
-            min_rms,
-            active_gain,
-        )
-        .await
+    // Capture first, gate second: a resumed/prepended recording needs to be
+    // merged with the previous session's audio before the quality gate runs,
+    // so a short-but-valid continuation isn't rejected on its own merits.
+    let Some((mut captured_audio, mut rms, mut raw_rms)) =
+        stop_and_capture_audio(&app, session, exclusive_mic_session_id).await
     else {
+        state::leave_stopping_if_owned(&state, generation);
         return;
     };
+    if let Some(prev) = prepend_audio {
+        let (merged, merged_rms, merged_raw_rms) =
+            match merge_prepend_audio(prev, captured_audio, active_gain) {
+                Ok(merged) => merged,
+                Err(err) => {
+                    log::error!("pipeline: {err}");
+                    reject_with_pill(&app, "Failed to prepare recording audio");
+                    state::leave_stopping_if_owned(&state, generation);
+                    return;
+                }
+            };
+        captured_audio = merged;
+        rms = merged_rms;
+        raw_rms = merged_raw_rms;
+    }
+    // Only reject here on duration or on RMS so low it's obviously digital
+    // silence/a dead mic — cheap enough to check before paying for an API
+    // call. The real "is there speech" judgment happens in the local VAD gate
+    // below, before any transcription request — this early gate deliberately
+    // stays permissive so quiet/distant speech gets a fair chance at VAD
+    // instead of being rejected on RMS alone.
+    let silence_floor = silence_floor_gate_rms(active_gain);
+    if !validate_captured_audio(
+        &app,
+        &captured_audio,
+        rms,
+        raw_rms,
+        silence_floor,
+        active_gain,
+    ) {
+        state::leave_stopping_if_owned(&state, generation);
+        return;
+    }
     if audio_cfg.play_start_stop_sounds {
         crate::media::sound::play(crate::media::sound::SoundCue::Stop);
     }
@@ -276,9 +350,28 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         stage_audio.elapsed().as_millis()
     );
 
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    let active = ActivePipeline {
+        generation,
+        cancel_tx,
+        captured_audio: captured_audio.clone(),
+        target,
+    };
+    if !state::install_processing(&state, generation, active) {
+        // Superseded between Stopping and here (should not happen in
+        // practice — nothing else can transition out of Stopping — but an
+        // interrupt/Escape branch, if it somehow raced this, already owns
+        // whatever cleanup is needed).
+        return;
+    }
+
     let stage_config = std::time::Instant::now();
     let Some((cfg, profile, app_context)) = open_config_and_context(&app, &process_name).await
     else {
+        // open_config_and_context already shows its own error/pill on
+        // failure — no separate emit_pipeline_failed here (matches its
+        // pre-existing contract).
+        state::leave_processing_if_owned(&state, generation);
         return;
     };
     log::debug!(
@@ -298,6 +391,11 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         stage_config.elapsed().as_millis()
     );
 
+    if *cancel_rx.borrow() {
+        state::leave_processing_if_owned(&state, generation);
+        return;
+    }
+
     let retry_captured_at = std::time::Instant::now();
     if let Ok(mut st) = lock_state(&state) {
         st.retry_capture = Some(RetryCapture {
@@ -311,16 +409,67 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         });
     }
 
+    // Run local VAD before touching the transcription API. This is deliberate:
+    // a post-transcription gate still pays for the API and gives Whisper a
+    // chance to hallucinate text from noise. A VAD failure (model missing or
+    // inference error) never blocks a dictation; the speech gate falls back to
+    // the RMS threshold only in that case.
+    let vad_samples = captured_audio.samples_16k.clone();
+    let vad_handle = tokio::task::spawn_blocking(move || {
+        crate::media::vad::analyze_speech(&vad_samples, active_gain)
+    });
+
+    let vad_result = tokio::select! {
+        result = vad_handle => match result {
+            Ok(Ok(result)) => Some(result),
+            Ok(Err(e)) => {
+                log::warn!("pipeline: VAD analysis failed, falling back to RMS-only gate: {e}");
+                None
+            }
+            Err(e) => {
+                log::warn!("pipeline: VAD task panicked, falling back to RMS-only gate: {e}");
+                None
+            }
+        },
+        _ = wait_for_cancel(&mut cancel_rx) => {
+            state::leave_processing_if_owned(&state, generation);
+            return;
+        }
+    };
+    if !passes_speech_gate(
+        &app,
+        rms,
+        raw_rms,
+        min_rms,
+        active_gain,
+        vad_result.as_ref(),
+    ) {
+        state::leave_processing_if_owned(&state, generation);
+        return;
+    }
+
     let stage_transcribe = std::time::Instant::now();
-    let Some((raw_unorm, api_used, alternate)) = run_transcription(&app, &captured_audio, &cfg).await else {
-        emit_pipeline_failed(&app);
+    let transcribe_race = tokio::select! {
+        r = run_transcription(&app, &captured_audio, &cfg) => Some(r),
+        _ = wait_for_cancel(&mut cancel_rx) => None,
+    };
+    let Some(transcribe_outcome) = transcribe_race else {
+        state::leave_processing_if_owned(&state, generation);
         return;
     };
+    let Some((raw_unorm, api_used, alternate)) = transcribe_outcome else {
+        if state::leave_processing_if_owned(&state, generation) {
+            emit_pipeline_failed(&app);
+        }
+        return;
+    };
+
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
     let raw_chars_before_strip = raw.chars().count();
-    let raw = if alternate.as_ref().is_some_and(|candidate| {
-        candidate.text.trim().eq_ignore_ascii_case(raw.trim())
-    }) {
+    let raw = if alternate
+        .as_ref()
+        .is_some_and(|candidate| candidate.text.trim().eq_ignore_ascii_case(raw.trim()))
+    {
         raw
     } else {
         strip_hallucinated_suffix(&raw)
@@ -375,28 +524,36 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // known silent-audio artifacts before they reach cleanup or the cache.
     // (A trailing hallucinated sentence has already been trimmed above; this
     // catches the case where the whole transcription is still one.)
-    if raw.is_empty() || is_transcription_hallucination(&raw) {
+    if !has_spoken_content(&raw) || is_transcription_hallucination(&raw) {
         log::warn!(
-            "pipeline: transcription matched hallucination pattern, dropping silently raw=\"{}\"",
+            "pipeline: transcription had no spoken content or matched a hallucination pattern, dropping silently raw=\"{}\"",
             preview_text(&raw, 60)
         );
-        hide_pill(&app);
+        if state::leave_processing_if_owned(&state, generation) {
+            hide_pill(&app);
+        }
+        return;
+    }
+
+    if *cancel_rx.borrow() {
+        state::leave_processing_if_owned(&state, generation);
         return;
     }
 
     let stage_cleanup = std::time::Instant::now();
-    let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) =
-        run_cleanup_and_snippets(
-            &app,
-            &raw,
-            alternate.as_ref(),
-            &cfg,
-            &profile,
-            app_context.as_deref(),
-        )
-        .await
+    let cleanup_race = tokio::select! {
+        r = run_cleanup_and_snippets(&app, &raw, alternate.as_ref(), &cfg, &profile, app_context.as_deref()) => Some(r),
+        _ = wait_for_cancel(&mut cancel_rx) => None,
+    };
+    let Some(cleanup_outcome) = cleanup_race else {
+        state::leave_processing_if_owned(&state, generation);
+        return;
+    };
+    let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) = cleanup_outcome
     else {
-        emit_pipeline_failed(&app);
+        if state::leave_processing_if_owned(&state, generation) {
+            emit_pipeline_failed(&app);
+        }
         return;
     };
     let api_used = if alternate.is_none() || cleanup_api_used.is_empty() {
@@ -414,6 +571,16 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         "pipeline: cleanup stage_ms={}",
         stage_cleanup.elapsed().as_millis()
     );
+
+    // Point of no return: once this succeeds, finalize runs unconditionally,
+    // never raced against cancellation — finalize touches the clipboard, and
+    // a preempted clipboard operation is worse than an un-cancellable late
+    // finalize (see core/injection's serialized critical section). Failure
+    // here means an interrupt/Escape branch already took ownership of this
+    // generation; abandon without inserting anything.
+    if !state::enter_finalizing(&state, generation) {
+        return;
+    }
 
     let words = raw.split_whitespace().count() as i64;
     if let Err(e) = finalize_pipeline_completion(
@@ -438,8 +605,10 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     .await
     {
         log::error!("pipeline finalize failed: {e}");
+        state::leave_finalizing(&state, generation);
         return;
     }
+    state::leave_finalizing(&state, generation);
 
     log::info!(
         "pipeline: completed words={} duration_ms={} elapsed_ms={}",
@@ -456,6 +625,8 @@ pub async fn retry_transcription_impl(
     app: &AppHandle,
     state: &SharedState,
 ) -> anyhow::Result<db::RecentEntry> {
+    state::reserve_starting(state).map_err(anyhow::Error::msg)?;
+    let _retry_reservation = RetryReservation { state };
     let mut retry_expired = false;
     let capture = {
         let mut st = lock_state(state)?;
@@ -488,7 +659,13 @@ pub async fn retry_transcription_impl(
     }
     show_pill(app, "processing");
 
-    let settings_store = store::settings_snapshot(app).map_err(anyhow::Error::msg)?;
+    let settings_store = match store::settings_snapshot(app) {
+        Ok(settings) => settings,
+        Err(error) => {
+            hide_pill(app);
+            return Err(anyhow::Error::msg(error));
+        }
+    };
     let mut cfg = store::load_pipeline_config(&settings_store);
 
     if let Err(message) = validate_transcription_chain(&cfg, None) {
@@ -499,35 +676,41 @@ pub async fn retry_transcription_impl(
     let mapping = resolve_app_mapping(Some(&settings_store), &capture.process_name);
     capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
 
-    let Some((raw_unorm, api_used, alternate)) = run_transcription(app, &capture.audio, &cfg).await else {
+    let Some((raw_unorm, api_used, alternate)) = run_transcription(app, &capture.audio, &cfg).await
+    else {
+        hide_pill(app);
         anyhow::bail!("Retry transcription failed");
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
-    let raw = if alternate.as_ref().is_some_and(|candidate| {
-        candidate.text.trim().eq_ignore_ascii_case(raw.trim())
-    }) {
+    let raw = if alternate
+        .as_ref()
+        .is_some_and(|candidate| candidate.text.trim().eq_ignore_ascii_case(raw.trim()))
+    {
         raw
     } else {
         strip_hallucinated_suffix(&raw)
     };
     let raw = crate::system::text::collapse_degenerate_word_runs(&raw);
-    if raw.is_empty() || is_transcription_hallucination(&raw) {
+    if !has_spoken_content(&raw) || is_transcription_hallucination(&raw) {
         log::warn!(
-            "pipeline: retry transcription matched hallucination pattern, dropping raw=\"{}\"",
+            "pipeline: retry transcription had no spoken content or matched a hallucination pattern, dropping raw=\"{}\"",
             preview_text(&raw, 60)
         );
+        hide_pill(app);
         anyhow::bail!("Recording was too quiet — nothing was transcribed");
     }
-    let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) = run_cleanup_and_snippets(
-        app,
-        &raw,
-        alternate.as_ref(),
-        &cfg,
-        &capture.profile,
-        capture.app_context.as_deref(),
-    )
-    .await
+    let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) =
+        run_cleanup_and_snippets(
+            app,
+            &raw,
+            alternate.as_ref(),
+            &cfg,
+            &capture.profile,
+            capture.app_context.as_deref(),
+        )
+        .await
     else {
+        hide_pill(app);
         anyhow::bail!("Retry cleanup failed");
     };
     let api_used = if alternate.is_none() || cleanup_api_used.is_empty() {
@@ -556,4 +739,14 @@ pub async fn retry_transcription_impl(
         },
     )
     .await
+}
+
+struct RetryReservation<'a> {
+    state: &'a SharedState,
+}
+
+impl Drop for RetryReservation<'_> {
+    fn drop(&mut self) {
+        state::cancel_starting_reservation(self.state);
+    }
 }

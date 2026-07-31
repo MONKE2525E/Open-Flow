@@ -66,10 +66,32 @@ static CANCEL_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 static ESCAPE_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 
 static CHORD_ACTIVE: AtomicBool = AtomicBool::new(false);
+static HANDLESS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ESCAPE_CANCELLED: AtomicBool = AtomicBool::new(false);
 static CHORD_DOWN_MS: AtomicU64 = AtomicU64::new(0);
 static HANDLESS_PENDING: AtomicBool = AtomicBool::new(false);
 static HANDLESS_PENDING_MS: AtomicU64 = AtomicU64::new(0);
+
+// 0 = not processing. Mirrors the Windows backend: set once at Stopping ->
+// Processing, cleared via compare-exchange so a stale/superseded task's
+// cleanup can never clobber a newer generation's flag. Used so Escape keeps
+// working (cancels in-flight processing) even though no chord is held.
+static PROCESSING_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub fn set_processing_generation(generation: u64) {
+    PROCESSING_GENERATION.store(generation, Ordering::SeqCst);
+    refresh_escape_listening();
+}
+
+pub fn clear_processing_generation(expected_generation: u64) {
+    let _ = PROCESSING_GENERATION.compare_exchange(
+        expected_generation,
+        0,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    );
+    refresh_escape_listening();
+}
 
 // `GlobalHotKeyManager` is `unsafe impl Send + Sync` (it guards Carbon access
 // with an internal mutex), so it is safe to hold in a static and re-register
@@ -113,7 +135,7 @@ pub fn reset_chord_state() {
 }
 
 pub fn set_handless_active(v: bool) {
-    let _ = v;
+    HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
     refresh_escape_listening();
 }
 
@@ -423,10 +445,13 @@ fn set_escape_listening(on: bool) {
 }
 
 fn refresh_escape_listening() {
-    // Keep Escape transient to active hold-to-talk only. Leaving it registered
-    // for the entire handsfree session would hijack Escape system-wide while the
-    // app records in the background.
-    set_escape_listening(CHORD_ACTIVE.load(Ordering::SeqCst));
+    // Keep Escape transient to an active recording or in-flight processing
+    // only. Leaving it registered while the app is idle would hijack Escape
+    // system-wide.
+    let processing = PROCESSING_GENERATION.load(Ordering::SeqCst) != 0;
+    set_escape_listening(
+        CHORD_ACTIVE.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst) || processing,
+    );
 }
 
 // --- event handling --------------------------------------------------------

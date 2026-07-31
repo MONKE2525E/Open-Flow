@@ -15,8 +15,10 @@
   import { startAutomaticUpdateChecks } from './lib/updates';
   import { startLocalSttListeners } from './lib/localSttStore.svelte';
   import { startLocalLlmListeners } from './lib/localLlmStore.svelte';
+  import { startDownloadManagerListeners } from './lib/downloadManager.svelte';
   import { refreshTranscriptionModel } from './lib/transcriptionModelStore.svelte';
   import { startProviderStatusChecks, startApiHealthChecks } from './lib/serviceStatus';
+  import { scrollEdges } from './lib/scrollFade';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
@@ -47,6 +49,8 @@
   let pageDir = $state<1 | -1>(1);
   let prevPage = $state<string>('home');
   let contentEl = $state<HTMLDivElement | null>(null);
+  let fadeTop = $state(false);
+  let fadeBottom = $state(false);
 
   $effect(() => {
     const next = appStore.currentPage;
@@ -75,6 +79,7 @@
     let stopAutomaticUpdateChecks: (() => void) | undefined;
     let stopLocalSttListeners: (() => void) | undefined;
     let stopLocalLlmListeners: (() => void) | undefined;
+    let stopDownloadManagerListeners: (() => void) | undefined;
     let stopProviderStatusChecks: (() => void) | undefined;
     let stopApiHealthChecks: (() => void) | undefined;
 
@@ -117,6 +122,7 @@
     try {
       stopLocalSttListeners = startLocalSttListeners();
       stopLocalLlmListeners = startLocalLlmListeners();
+      stopDownloadManagerListeners = startDownloadManagerListeners();
       stopProviderStatusChecks = startProviderStatusChecks();
       stopApiHealthChecks = startApiHealthChecks();
     } catch (error) {
@@ -154,6 +160,7 @@
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
       if (stopLocalSttListeners) stopLocalSttListeners();
       if (stopLocalLlmListeners) stopLocalLlmListeners();
+      if (stopDownloadManagerListeners) stopDownloadManagerListeners();
       if (stopProviderStatusChecks) stopProviderStatusChecks();
       if (stopApiHealthChecks) stopApiHealthChecks();
       media?.removeEventListener?.('change', onSystemThemeChange);
@@ -169,10 +176,13 @@
   {/if}
   <div class="body">
     <Sidebar />
+    <div class="content-fade content-fade-top" class:visible={fadeTop && !appStore.settingsOpen} aria-hidden="true"></div>
+    <div class="content-fade content-fade-bottom" class:visible={fadeBottom && !appStore.settingsOpen} aria-hidden="true"></div>
     <div
       class="content scroll-styled"
       class:content-behind={appStore.settingsOpen}
       bind:this={contentEl}
+      use:scrollEdges={(top, bottom) => { fadeTop = top; fadeBottom = bottom; }}
     >
       {#key appStore.currentPage}
         <div
@@ -268,6 +278,41 @@
     min-height: 0;
     padding: 0 0 var(--app-gutter) var(--app-gutter);
     gap: var(--app-gutter);
+    position: relative;
+  }
+
+  /*
+   * Soft top/bottom scroll fades over the main content column (same treatment as
+   * the settings panel). Geometry mirrors the content region: it starts to the
+   * right of the sidebar and stops short of the scrollbar gutter and the bottom
+   * gutter. They fade to the page background and only appear when there's more
+   * to scroll in that direction — and never while settings covers the content.
+   */
+  .content-fade {
+    position: absolute;
+    left: calc(var(--sidebar-w) + var(--app-gutter) * 2);
+    right: var(--scrollbar-w, 0);
+    height: 30px;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 0;
+    transition: opacity 180ms ease;
+  }
+
+  .content-fade.visible { opacity: 1; }
+
+  .content-fade-top {
+    top: 0;
+    background: linear-gradient(to bottom, var(--paper), transparent);
+  }
+
+  .content-fade-bottom {
+    bottom: var(--app-gutter);
+    background: linear-gradient(to top, var(--paper), transparent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .content-fade { transition: none; }
   }
 
   .content {

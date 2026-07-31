@@ -1,6 +1,18 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+// Serializes the whole save-clipboard -> probe/sniff -> write -> paste ->
+// restore-clipboard critical section across every call site (main pipeline,
+// retry, settings "try it" preview) so two injections can never interleave
+// their clipboard operations — one's "restore" putting back the *other's*
+// dictated text instead of the user's real original clipboard, or clobbering
+// a paste that's still settling. `tokio::sync::Mutex`, not `std::sync::Mutex`,
+// since the guard is held across `.await` points.
+static INJECTION_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+pub(super) fn injection_lock() -> &'static tokio::sync::Mutex<()> {
+    INJECTION_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 use crate::core::context_probe::{ContextProbeSource, InjectionContextProbe, SelectionState};
 use crate::core::text_context;
 
@@ -67,9 +79,12 @@ const MODIFIER_GAP_MS: u64 = 30;
 // enough is silent data corruption in whatever the user was working on. That
 // asymmetry justifies a wide margin over a "usually enough" one - 80ms had
 // none, 150ms still weakly matched a real report of this exact failure, so
-// this doubles the margin again rather than inching it up.
+// this doubles the margin again rather than inching it up. Lowered from 300
+// to 250 per explicit user request to shorten perceived latency between
+// back-to-back dictations; still well above the 150ms that produced a real
+// corruption report, so the safety margin is kept, just narrower.
 #[cfg(target_os = "windows")]
-const PASTE_SETTLE_MS: u64 = 300;
+const PASTE_SETTLE_MS: u64 = 250;
 
 #[cfg(test)]
 const SENTENCE_ENDERS: &[char] = &['.', '!', '?', '\n', '\r'];
@@ -741,6 +756,10 @@ pub fn append_or_reset_injection_history(hwnd: usize, ch: char) {
 /// when Verenu itself holds foreground focus and a normal paste would
 /// land in our own WebView.
 pub async fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
+    // Doesn't restore anything itself, but writing while another call is mid
+    // save/restore could still corrupt that call's "original" snapshot or get
+    // immediately clobbered — share the same critical section.
+    let _guard = injection_lock().lock().await;
     #[cfg(windows)]
     {
         return windows::copy_to_clipboard(text).await;

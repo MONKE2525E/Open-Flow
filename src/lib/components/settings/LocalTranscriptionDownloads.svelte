@@ -185,7 +185,7 @@
 
             <div class="local-meta">
               <span>{model.size_mb} MB</span>
-              <span>{model.privacy_label}</span>
+              <span class="privacy-meta" title="Runs entirely on your device. Private and offline. Nothing leaves your machine.">Local AI · private · offline</span>
               {#if shouldCollapseLanguages(model)}
                 <button
                   class="local-meta-toggle"
@@ -321,7 +321,6 @@
     flex-wrap: wrap;
   }
 
-  .summary-item,
   .local-meta > span,
   .local-meta > button {
     font-size: 10px;
@@ -336,11 +335,28 @@
     white-space: nowrap;
   }
 
-  .provider-chip {
-    text-transform: uppercase;
+  .privacy-meta {
     color: var(--accent-ink);
-    border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong));
-    background: color-mix(in srgb, var(--accent-soft) 65%, var(--bg-elev));
+  }
+
+  /* Collapsed-header summary: plain text, not pills. */
+  .summary-item {
+    font-size: 11.5px;
+    font-family: var(--sans);
+    font-weight: 450;
+    color: var(--ink-mute);
+    white-space: nowrap;
+  }
+
+  .summary-item:not(:first-child)::before {
+    content: '·';
+    margin-right: 8px;
+    color: var(--ink-faint);
+  }
+
+  .provider-chip {
+    color: var(--ink-soft);
+    font-weight: 500;
   }
 
   .model-chip {

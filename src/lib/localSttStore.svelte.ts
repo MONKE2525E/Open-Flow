@@ -9,6 +9,7 @@ import {
   type LocalSttVerificationProgressPayload,
   type LocalTranscriptionState,
 } from './tauri';
+import { ensureNotificationPermission } from './notifications';
 
 export const localSttStore = $state({
   models: [] as LocalSttModelInfo[],
@@ -39,14 +40,19 @@ export async function refreshLocalState() {
   }
 }
 
-export async function downloadLocalModel(modelIdValue: string) {
+export async function downloadLocalModel(modelIdValue: string): Promise<boolean> {
   try {
+    // Ask for notification permission now (contextual) so the backend can raise
+    // a "model ready" notification when this finishes, even if the window is hidden.
+    ensureNotificationPermission().catch(() => {});
     await invoke('download_local_stt_model', { modelId: modelIdValue });
     await refreshLocalModels();
     await refreshLocalState();
+    return true;
   } catch (err) {
     console.error('download local model failed', err);
     emit('verenu:error', `Failed to start model download: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
   }
 }
 

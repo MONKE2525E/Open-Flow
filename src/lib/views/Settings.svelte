@@ -5,6 +5,7 @@
   import { fade } from 'svelte/transition';
   import { MOTION_MS, MOTION_PX, SETTINGS_SECTION_ORDER, directionFromOrder, modalBackdrop, motionMs, motionPx, pageSwap } from '../motion';
   import { isSettingsSectionId } from '../settingsSections';
+  import { scrollEdges, type ScrollEdgeCallback } from '../scrollFade';
 
   import GeneralSection from '../components/settings/GeneralSection.svelte';
   import AppMappingsSection from '../components/settings/AppMappingsSection.svelte';
@@ -18,6 +19,7 @@
   import { isMac } from '../platform';
 
   let settingsPageEl = $state<HTMLDivElement | null>(null);
+  let settingsPanelEl = $state<HTMLDivElement | null>(null);
   let previousFocusEl: HTMLElement | null = null;
 
   const section = $derived(appStore.settingsSection);
@@ -53,6 +55,24 @@
   });
 
   function close() { appStore.settingsOpen = false; }
+
+  // Soft fades at the top and bottom of the scroll area, shown only when there
+  // is actually more content in that direction — so a scrolled-to-top page keeps
+  // its heading crisp and the fade never obscures anything at rest.
+  let fadeTop = $state(false);
+  let fadeBottom = $state(false);
+  const setFades: ScrollEdgeCallback = (top, bottom, node) => {
+    const apply = () => {
+      if (node !== settingsPanelEl) return;
+      fadeTop = top;
+      fadeBottom = bottom;
+    };
+    // Svelte actions run before bind:this is assigned on initial mount. Defer
+    // only that first callback so the active panel can claim the state, while
+    // callbacks from an outgoing keyed panel remain ignored.
+    if (node !== settingsPanelEl) queueMicrotask(apply);
+    else apply();
+  };
 
   $effect(() => {
     if (!appStore.devModeEnabled && appStore.settingsSection === 'developer') {
@@ -132,16 +152,18 @@
       in:pageSwap={{ axis: 'y', distance: motionPx(SETTINGS_SWAP_PX), duration: motionMs(SETTINGS_SWAP_MS) }}
       out:pageSwap={{ axis: 'y', distance: motionPx(SETTINGS_SWAP_PX), duration: motionMs(SETTINGS_SWAP_MS) }}
     >
-      <button type="button" class="settings-close" aria-label="Close settings" onclick={close}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <path d="M6 6l12 12M18 6L6 18"/>
-        </svg>
-      </button>
-      <!-- The section rail lives in Sidebar.svelte, which morphs into it. -->
+      <!-- The section rail lives in Sidebar.svelte, which morphs into it.
+           Closing is handled by the sidebar's "Back to app" button and Esc —
+           the old corner ✕ sat right under the window controls and was
+           redundant once settings became a page rather than a modal. -->
       <div class="settings-body">
+        <div class="fade-edge fade-edge-top" class:visible={fadeTop} aria-hidden="true"></div>
+        <div class="fade-edge fade-edge-bottom" class:visible={fadeBottom} aria-hidden="true"></div>
         {#key section}
           <div
+            bind:this={settingsPanelEl}
             class="panel scroll-styled"
+            use:scrollEdges={setFades}
             in:pageSwap={{ axis: 'y', distance: animDir * motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel) }}
             out:pageSwap={{ axis: 'y', distance: -animDir * motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base) }}
           >
@@ -248,33 +270,45 @@
     color: var(--ink-faint);
   }
 
-  .settings-close {
-    position: absolute;
-    top: 14px;
-    right: 18px;
-    width: 30px;
-    height: 30px;
-    border: 1px solid var(--line-strong);
-    border-radius: 7px;
-    background: var(--paper);
-    color: var(--ink-mute);
-    display: grid;
-    place-items: center;
-    cursor: pointer;
-    z-index: 2;
-  }
-  .settings-close:hover { color: var(--ink-strong); background: var(--control-hover); }
-  .settings-close:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-
   /* Panel area */
   .settings-body {
     flex: 1;
     position: relative;
     overflow: hidden;
     display: grid;
+  }
+
+  /*
+   * Soft top/bottom scroll fades. Overlays (not a mask on the scroller) so the
+   * scrollbar and the per-row entrance animations are untouched. They fade from
+   * the page background to transparent and only appear when there's more to
+   * scroll in that direction. Right edge stops short of the scrollbar gutter.
+   */
+  .fade-edge {
+    position: absolute;
+    left: 0;
+    right: var(--scrollbar-w, 0);
+    height: 30px;
+    pointer-events: none;
+    z-index: 3;
+    opacity: 0;
+    transition: opacity 180ms ease;
+  }
+
+  .fade-edge.visible { opacity: 1; }
+
+  .fade-edge-top {
+    top: 0;
+    background: linear-gradient(to bottom, var(--paper), transparent);
+  }
+
+  .fade-edge-bottom {
+    bottom: 0;
+    background: linear-gradient(to top, var(--paper), transparent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fade-edge { transition: none; }
   }
 
   .panel {

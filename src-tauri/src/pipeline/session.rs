@@ -1,5 +1,4 @@
 use super::*;
-use crate::core::window_geometry::WindowTarget;
 
 // ---------- recording session helpers ----------
 
@@ -11,7 +10,9 @@ pub struct RecordingStartOptions {
 }
 
 /// Starts a new recording session, stores it in shared state, shows the pill,
-/// and spawns the audio-level emitter task.
+/// and spawns the audio-level emitter task. The caller must already have
+/// reserved `DictationLifecycle::Starting` (via `state::reserve_starting` or
+/// `state::take_active_pipeline_for_interrupt`) before calling this.
 pub fn start_recording_session(
     app: &AppHandle,
     state: &SharedState,
@@ -48,6 +49,7 @@ pub fn start_recording_session(
 }
 
 /// Generalized recording session function supporting calibration overrides.
+/// The caller must already have reserved `DictationLifecycle::Starting`.
 pub fn start_recording_session_ex(
     app: &AppHandle,
     state: &SharedState,
@@ -80,6 +82,7 @@ pub fn start_recording_session_ex(
         if !crate::system::mac_app::is_accessibility_verified()
             && !crate::commands::check_accessibility_permission(false)
         {
+            release_starting_reservation(state);
             return Err(
                 "Accessibility permission is required for Verenu on macOS. Open System Settings > Privacy & Security > Accessibility and enable Verenu."
                     .to_string(),
@@ -88,6 +91,7 @@ pub fn start_recording_session_ex(
 
         match crate::system::mac_app::microphone_permission_status() {
             "denied" | "restricted" => {
+                release_starting_reservation(state);
                 return Err(
                     "Microphone access is blocked on macOS. Open System Settings > Privacy & Security > Microphone and enable Verenu."
                         .to_string(),
@@ -104,16 +108,15 @@ pub fn start_recording_session_ex(
     let exclusive_mic = audio_config.exclusive_mic;
     let pause_media = audio_config.pause_media_during_dictation && gain_override.is_none();
     let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
-    let exclusive_mic_session_id =
-        if cfg!(target_os = "macos")
-            && exclusive_mic
-            && use_default_input_device
-            && gain_override.is_none()
-        {
-            Some(crate::system::volume::register_session())
-        } else {
-            None
-        };
+    let exclusive_mic_session_id = if cfg!(target_os = "macos")
+        && exclusive_mic
+        && use_default_input_device
+        && gain_override.is_none()
+    {
+        Some(crate::system::volume::register_session())
+    } else {
+        None
+    };
 
     match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
         Ok(session) => {
@@ -124,11 +127,39 @@ pub fn start_recording_session_ex(
             {
                 let mut st = match lock_state(state) {
                     Ok(st) => st,
-                    Err(e) => return Err(e.to_string()),
+                    Err(e) => {
+                        let _ = session.stop();
+                        if let Some(session_id) = exclusive_mic_session_id {
+                            crate::system::volume::release_mic(session_id);
+                        }
+                        release_starting_reservation(state);
+                        return Err(e.to_string());
+                    }
                 };
-                st.session = Some(session);
-                st.exclusive_mic_session_id = exclusive_mic_session_id;
-                st.handless = handless;
+                let prepend_audio = match &st.lifecycle {
+                    DictationLifecycle::Starting { prepend_audio } => prepend_audio.clone(),
+                    _ => {
+                        log::warn!(
+                            "start_recording_session_ex: lifecycle was not Starting when installing Recording"
+                        );
+                        drop(st);
+                        let _ = session.stop();
+                        if let Some(session_id) = exclusive_mic_session_id {
+                            crate::system::volume::release_mic(session_id);
+                        }
+                        return Err(
+                            "Recording start reservation was lost before the microphone opened"
+                                .to_string(),
+                        );
+                    }
+                };
+                st.lifecycle = DictationLifecycle::Recording {
+                    session,
+                    exclusive_mic_session_id,
+                    handless,
+                    handless_from_hold: false,
+                    prepend_audio,
+                };
             }
             if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
                 manager.set_recording_active(true);
@@ -170,8 +201,27 @@ pub fn start_recording_session_ex(
             if let Some(session_id) = exclusive_mic_session_id {
                 crate::system::volume::release_mic(session_id);
             }
+            release_starting_reservation(state);
             Err(e.to_string())
         }
+    }
+}
+
+/// Releases a `Starting` reservation back to `Idle` when the mic failed to
+/// open — the carried prepend audio (if any) is simply dropped, not
+/// retained anywhere a later, unrelated dictation could inherit it.
+pub(crate) fn release_starting_reservation(state: &SharedState) {
+    let mut st = match state.lock() {
+        Ok(st) => st,
+        Err(poisoned) => {
+            log::warn!(
+                "Recording state lock was poisoned while releasing start reservation; recovering"
+            );
+            poisoned.into_inner()
+        }
+    };
+    if matches!(st.lifecycle, DictationLifecycle::Starting { .. }) {
+        st.lifecycle = DictationLifecycle::Idle;
     }
 }
 
@@ -223,19 +273,4 @@ pub(crate) fn start_stop_sounds_enabled(app: &AppHandle) -> bool {
     store::settings_snapshot(app)
         .map(|s| store::load_audio_config(&s).play_start_stop_sounds)
         .unwrap_or(true)
-}
-
-pub(super) fn take_pipeline_session(
-    state: &SharedState,
-) -> Option<(Option<audio::RecordingSession>, WindowTarget, Option<u64>)> {
-    let mut st = match lock_state(state) {
-        Ok(st) => st,
-        Err(e) => {
-            log::error!("recording state: {e}");
-            return None;
-        }
-    };
-    let session = st.session.take();
-    let exclusive_mic_session_id = st.exclusive_mic_session_id.take();
-    Some((session, st.target, exclusive_mic_session_id))
 }

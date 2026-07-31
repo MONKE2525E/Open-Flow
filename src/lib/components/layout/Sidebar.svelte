@@ -7,9 +7,16 @@
   import { MOTION_MS, SETTINGS_SECTION_ORDER, directionFromOrder, motionMs, motionPx } from '../../motion';
   import { visibleSettingsSections, type SettingsSectionId } from '../../settingsSections';
   import LogoMark from './LogoMark.svelte';
+  import LocalDownloadProgress from '../settings/LocalDownloadProgress.svelte';
+  import {
+    getActiveDownloads,
+    downloadUi,
+    cancelDownload,
+    acknowledgeDownloads,
+  } from '../../downloadManager.svelte';
   import { tweened } from 'svelte/motion';
   import { cubicOut, expoOut } from 'svelte/easing';
-  import { fly } from 'svelte/transition';
+  import { fly, slide } from 'svelte/transition';
 
   let rawMemoryMb = $state(0);
   let memoryDir = $state(1);
@@ -103,6 +110,23 @@
   }
 
   function backToApp() { appStore.settingsOpen = false; }
+
+  // ── Download panel ──────────────────────────────────────────────────────
+  const activeDownloads = $derived(getActiveDownloads());
+  const doneDownloads = $derived.by(() => {
+    const activeKeys = new Set(activeDownloads.map((item) => item.key));
+    return downloadUi.completed.filter((entry) => !activeKeys.has(entry.key));
+  });
+  const showDownloadPanel = $derived(activeDownloads.length > 0 || doneDownloads.length > 0);
+
+  // The "ready" list lingers until the user opens and closes Settings, so clear
+  // it on the settings-close transition (true → false).
+  let prevSettingsOpen = appStore.settingsOpen;
+  $effect(() => {
+    const open = appStore.settingsOpen;
+    if (prevSettingsOpen && !open) acknowledgeDownloads();
+    prevSettingsOpen = open;
+  });
 
   // ── Sliding active highlight ────────────────────────────────────────────
   // A single pill positioned against the active rail item rather than a
@@ -220,6 +244,43 @@
   </div>
 
   <div class="sidebar-spacer"></div>
+
+  {#if showDownloadPanel}
+    <div
+      class="dl-panel"
+      in:fly={{ x: -motionPx(14), duration: motionMs(260), easing: cubicOut }}
+      out:slide={{ duration: motionMs(200), easing: cubicOut }}
+    >
+      {#each activeDownloads as item (item.key)}
+        <div class="dl-item" in:slide={{ duration: motionMs(200), easing: cubicOut }}>
+          <div class="dl-item-top">
+            <span class="dl-item-name" title={item.name}>{item.name}</span>
+            <button
+              type="button"
+              class="dl-cancel"
+              aria-label={`Cancel ${item.name} download`}
+              title="Cancel download"
+              onclick={() => cancelDownload(item)}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <LocalDownloadProgress
+            stage={item.stage}
+            label={item.label}
+            percent={item.percent}
+            indeterminate={item.indeterminate}
+          />
+        </div>
+      {/each}
+      {#each doneDownloads as entry (entry.key)}
+        <div class="dl-done" in:slide={{ duration: motionMs(200), easing: cubicOut }}>
+          <span class="dl-dot" aria-hidden="true"></span>
+          <span class="dl-done-name" title={entry.name}>{entry.name} ready</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   <!--
     One persistent button rather than a swapped pair: it is the pill's origin
@@ -461,6 +522,85 @@
   }
 
   .sidebar-spacer { flex: 1; }
+
+  /* Download panel: sits just above the foot button, slides in from the left. */
+  .dl-panel {
+    margin: 0 8px 6px;
+    padding: 10px 11px;
+    max-height: min(30vh, 240px);
+    overflow-y: auto;
+    border-radius: 9px;
+    background: var(--control-active);
+    border: 1px solid var(--line-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .dl-item-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .dl-item-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .dl-cancel {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ink-mute);
+    cursor: pointer;
+    transition: background 140ms ease, color 140ms ease;
+  }
+
+  .dl-cancel:hover {
+    background: var(--danger-bg, color-mix(in srgb, var(--danger) 12%, transparent));
+    color: var(--danger);
+  }
+
+  .dl-cancel:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .dl-done {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11.5px;
+    color: var(--ink-soft);
+  }
+
+  .dl-dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .dl-done-name {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
   .sidebar-foot {
     padding: 6px 8px 8px;

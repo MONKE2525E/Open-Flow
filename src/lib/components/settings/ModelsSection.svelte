@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { fade, fly } from 'svelte/transition';
-  import { expoOut } from 'svelte/easing';
+  import { fade, fly, slide } from 'svelte/transition';
+  import { cubicOut, expoOut } from 'svelte/easing';
   import { invoke } from '../../tauri';
   import {
     localSttStore,
@@ -26,7 +26,7 @@
   } from '../../localLlmStore.svelte';
   import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import Toggle from '../Toggle.svelte';
-  import { cleanupPromptOverridesStore } from '../../stores.svelte';
+  import { appStore, cleanupPromptOverridesStore } from '../../stores.svelte';
   import {
     saveSetting,
     type LocalModelMemoryPolicy,
@@ -36,6 +36,15 @@
   import LocalTranscriptionDownloads from './LocalTranscriptionDownloads.svelte';
   import LocalCleanupDownloads from './LocalCleanupDownloads.svelte';
   import ModelTaskTile from './ModelTaskTile.svelte';
+  import ModelPresetPicker from './ModelPresetPicker.svelte';
+  import {
+    getHardware,
+    type ActiveConfig,
+    type Hardware,
+    type Preset,
+    type PresetTarget,
+    type RequiredLocalModel,
+  } from './modelPresets';
   import { transcriptionModelStore } from '../../transcriptionModelStore.svelte';
   import {
     emptyProviderModelMap,
@@ -64,6 +73,193 @@
   let transcriptionFallbackModels = $state<string[]>([]);
   let dualTranscriptionEnabled = $state(false);
   let cleanupFallbackModels = $state<string[]>([]);
+  let cleanupEnabled = $state(true);
+
+  // Hardware drives which local presets are offered. Starts as the "assume
+  // capable" default so the picker never flashes a degraded set before the
+  // real read lands (or if it fails outright — see getHardware).
+  let hardware = $state<Hardware>({ totalRamMb: 16384, freeRamMb: 12288, gpus: [], unknown: true });
+
+  // A preset whose local models are still downloading. Its settings are applied
+  // (activated) only once every required model is on disk, so the active
+  // selection never points at a model that isn't there yet.
+  let pendingPreset = $state<Preset | null>(null);
+  let pendingPresetDownloads = $state<RequiredLocalModel[]>([]);
+  let pendingPresetDownloadStarted = $state(false);
+  let pendingPresetRequestsSettled = $state(0);
+
+  const activeConfig = $derived<ActiveConfig>({
+    transcriptionDefaultModel,
+    cleanupEnabled,
+    cleanupDefaultModel,
+    dualTranscription: dualTranscriptionEnabled,
+    transcriptionFallbacks: transcriptionFallbackModels,
+    cleanupFallbacks: cleanupFallbackModels,
+  });
+
+  const installedLocal = $derived({
+    transcription: localSttStore.models.filter((model) => model.is_downloaded).map((model) => model.id),
+    cleanup: localLlmStore.models.filter((model) => model.is_downloaded).map((model) => model.id),
+  });
+
+  const downloadingLocal = $derived({
+    transcription: localSttStore.state.downloading_model_id ?? null,
+    cleanup: localLlmStore.state.downloading_model_id ?? null,
+  });
+
+  function requiredModelsInstalled(target: PresetTarget): boolean {
+    return target.requiredLocalModels.every((model) => installedLocal[model.task]?.includes(model.id) ?? false);
+  }
+
+  function clearPendingPreset() {
+    pendingPreset = null;
+    pendingPresetDownloads = [];
+    pendingPresetDownloadStarted = false;
+    pendingPresetRequestsSettled = 0;
+  }
+
+  async function setCleanupEnabled(value: boolean) {
+    const previousValue = cleanupEnabled;
+    const previousStoreValue = appStore.cleanupEnabled;
+    cleanupEnabled = value;
+    appStore.cleanupEnabled = value;
+    try {
+      await saveSetting('cleanup_enabled', value);
+    } catch (err) {
+      cleanupEnabled = previousValue;
+      appStore.cleanupEnabled = previousStoreValue;
+      console.error('save cleanup_enabled from preset failed', err);
+      throw err;
+    }
+  }
+
+  function activatePreset(target: PresetTarget) {
+    transcriptionDefaultModel = target.transcriptionDefaultModel;
+    transcriptionFallbackModels = [...target.transcriptionFallbacks];
+    dualTranscriptionEnabled = target.dualTranscription;
+    if (target.cleanupEnabled && target.cleanupDefaultModel) {
+      cleanupDefaultModel = target.cleanupDefaultModel;
+    }
+    cleanupFallbackModels = [...target.cleanupFallbacks];
+    setCleanupEnabled(target.cleanupEnabled).catch((err) => console.error('preset cleanup flag failed', err));
+    persistAll().catch((err) => console.error('persist preset failed', err));
+  }
+
+  function applyPreset(preset: Preset) {
+    const target = preset.target;
+    if (!target) return;
+
+    const missing = target.requiredLocalModels.filter(
+      (model) => !installedLocal[model.task]?.includes(model.id),
+    );
+    if (missing.length > 0) {
+      // Kick off the downloads and defer activation until they land (see the
+      // $effect below). Reuses the same download plumbing as the Advanced panel.
+      pendingPreset = preset;
+      pendingPresetDownloads = missing;
+      pendingPresetDownloadStarted = false;
+      pendingPresetRequestsSettled = 0;
+      for (const model of missing) {
+        if (model.task === 'transcription') {
+          downloadLocalModel(model.id)
+            .then((started) => {
+              if (pendingPreset?.id !== preset.id) return;
+              if (!started) {
+                clearPendingPreset();
+              } else {
+                pendingPresetRequestsSettled += 1;
+              }
+            })
+            .catch((err) => {
+              if (pendingPreset?.id === preset.id) clearPendingPreset();
+              console.error('preset stt download failed', err);
+            });
+        } else {
+          downloadLocalLlmModel(model.id)
+            .then((started) => {
+              if (pendingPreset?.id !== preset.id) return;
+              if (!started) {
+                clearPendingPreset();
+              } else {
+                pendingPresetRequestsSettled += 1;
+              }
+            })
+            .catch((err) => {
+              if (pendingPreset?.id === preset.id) clearPendingPreset();
+              console.error('preset llm download failed', err);
+            });
+        }
+      }
+      return;
+    }
+
+    activatePreset(target);
+  }
+
+  function isExpectedModelDownloading(model: RequiredLocalModel): boolean {
+    if (downloadingLocal[model.task] === model.id) return true;
+    if (model.task === 'transcription') {
+      return localSttStore.models.some((entry) => entry.id === model.id && entry.is_downloading);
+    }
+    return localLlmStore.models.some((entry) => entry.id === model.id && entry.is_downloading);
+  }
+
+  function openApiKeysSection() {
+    appStore.settingsSection = 'keys';
+  }
+
+  function cancelPresetDownload(preset: Preset) {
+    const target = preset.target;
+    if (!target) return;
+    if (pendingPreset?.id === preset.id) clearPendingPreset();
+    for (const model of target.requiredLocalModels) {
+      if (!isExpectedModelDownloading(model)) continue;
+      if (model.task === 'transcription') {
+        cancelLocalModelDownload(model.id).catch((err) => console.error('cancel preset stt download failed', err));
+      } else {
+        cancelLocalLlmModelDownload(model.id).catch((err) => console.error('cancel preset llm download failed', err));
+      }
+    }
+  }
+
+  function deletePresetModels(preset: Preset) {
+    const target = preset.target;
+    if (!target) return;
+    for (const model of target.requiredLocalModels) {
+      if (!installedLocal[model.task]?.includes(model.id)) continue;
+      if (model.task === 'transcription') {
+        handleDeleteTranscriptionModel(model.id).catch((err) => console.error('delete preset stt model failed', err));
+      } else {
+        handleDeleteCleanupModel(model.id).catch((err) => console.error('delete preset llm model failed', err));
+      }
+    }
+  }
+
+  // Once a pending preset's downloads finish, activate it.
+  $effect(() => {
+    const preset = pendingPreset;
+    if (!preset?.target) return;
+    if (requiredModelsInstalled(preset.target)) {
+      activatePreset(preset.target);
+      clearPendingPreset();
+      return;
+    }
+
+    const isDownloadingExpectedModel = pendingPresetDownloads.some(
+      isExpectedModelDownloading,
+    );
+    if (isDownloadingExpectedModel) {
+      pendingPresetDownloadStarted = true;
+    } else if (
+      pendingPresetDownloadStarted
+      && pendingPresetRequestsSettled >= pendingPresetDownloads.length
+    ) {
+      // A failure or cancellation can leave the preset incomplete without
+      // passing through the explicit cancel button. Do not keep a stale
+      // pending preset that could activate after an unrelated later download.
+      clearPendingPreset();
+    }
+  });
 
   let customDrafts = $state<Record<TaskType, Record<UiProviderId, string>>>({
     transcription: { groq: '', openai: '', google: '', assemblyai: '' },
@@ -339,13 +535,18 @@
   }
 
   async function migrateAndLoad() {
-    const [all, keyStatus, advancedRaw] = await Promise.all([
+    const [all, keyStatus, advancedRaw, cleanupRaw] = await Promise.all([
       invoke<AllSettingsPayload>('get_all_settings'),
       invoke<Record<ProviderId, boolean>>('get_api_key_status'),
       invoke<boolean | null>('get_setting', { key: 'advanced_model_ui' }),
+      invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
     ]);
 
     apiKeyStatus = keyStatus;
+    if (typeof cleanupRaw === 'boolean') {
+      cleanupEnabled = cleanupRaw;
+      appStore.cleanupEnabled = cleanupRaw;
+    }
     transcriptionModelsByProvider = mergeProviderModelMap(all.transcription_models_by_provider);
     cleanupModelsByProvider = mergeProviderModelMap(all.cleanup_models_by_provider);
 
@@ -614,6 +815,9 @@
         if (supported === false) localModelsSupported = false;
       })
       .catch((err) => console.error('check local models platform support failed', err));
+    getHardware()
+      .then((hw) => (hardware = hw))
+      .catch((err) => console.error('read hardware capabilities failed', err));
   });
 
   migrateAndLoad().catch((err) => console.error('load models failed', err));
@@ -623,6 +827,29 @@
 
 <h2 class="settings-h">Models</h2>
 
+<ModelPresetPicker
+  {apiKeyStatus}
+  {hardware}
+  localSupported={localModelsSupported}
+  {activeConfig}
+  {installedLocal}
+  {downloadingLocal}
+  onApplyPreset={applyPreset}
+  onOpenApiKeys={openApiKeysSection}
+  onCancelPreset={cancelPresetDownload}
+  onDeletePreset={deletePresetModels}
+/>
+
+<div class="advanced-toggle-row">
+  <div class="adv-text">
+    <span class="adv-label">Advanced Models</span>
+    <span class="adv-desc">Choose specific models, edit cleanup prompts, and manage downloads</span>
+  </div>
+  <Toggle checked={advancedModelUi} onchange={handleAdvancedModelUi} label="Advanced Models" />
+</div>
+
+{#if advancedModelUi}
+<div class="advanced-block" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
 <h3 class="settings-subhead">Model selection</h3>
 <ModelTaskTile
   type="transcription"
@@ -771,6 +998,9 @@
     {/if}
   </div>
 </div>
+</div>
+{/if}
+
 <div class="setting-row">
   <div>
     <div class="label">Memory policy</div>
@@ -838,14 +1068,6 @@
   <button class="btn-ghost" type="button" onclick={openLocalModelsFolder}>Open models folder</button>
 </div>
 
-<div class="advanced-toggle-row">
-  <div class="adv-text">
-    <span class="adv-label">Advanced Models</span>
-    <span class="adv-desc">Edit cleanup prompts and add custom models per provider</span>
-  </div>
-  <Toggle checked={advancedModelUi} onchange={handleAdvancedModelUi} label="Advanced Models" />
-</div>
-
 <style>
   .local-models-unsupported {
     padding: 12px 14px;
@@ -869,6 +1091,9 @@
     color: var(--ink-soft);
   }
 
+  /* Only a top border — the row below it (the advanced block's first tile when
+     expanded, or the Memory policy row when collapsed) supplies its own top
+     border, so a bottom border here would double up into one thick line. */
   .advanced-toggle-row {
     display: flex;
     align-items: center;
@@ -876,7 +1101,6 @@
     gap: 16px;
     padding: 13px 0;
     border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
   }
 
   .transcription-mode-row {
