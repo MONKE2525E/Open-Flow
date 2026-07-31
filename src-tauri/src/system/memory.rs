@@ -144,6 +144,15 @@ fn run_with_timeout(
     mut command: std::process::Command,
     timeout: Duration,
 ) -> Option<std::process::Output> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        // Hardware probes are background work. CREATE_NO_WINDOW prevents
+        // nvidia-smi from flashing a console over the app on Windows.
+        command.creation_flags(0x08000000);
+    }
+
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

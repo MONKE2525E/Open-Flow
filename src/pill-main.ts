@@ -33,3 +33,9 @@ window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change',
 });
 
 mount(PillApp, { target: document.getElementById('pill-root')! });
+
+void import('@tauri-apps/api/core')
+  .then(({ invoke }) => invoke('frontend_ready'))
+  .catch((error) => {
+    console.error('Failed to complete pill startup handshake:', error);
+  });

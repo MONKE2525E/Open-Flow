@@ -6,7 +6,7 @@
   "version": "0.15.1",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeDevCommand": "npm run dev:tauri-host",
     "beforeBuildCommand": "npm run build"
   },
@@ -45,7 +45,7 @@
       },
       "devCsp": {
         "default-src": "'self'",
-        "connect-src": "'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420",
+        "connect-src": "'self' ipc: http://ipc.localhost ws://127.0.0.1:1420 http://127.0.0.1:1420",
         "img-src": "'self' asset: http://asset.localhost blob: data:",
         "font-src": "'self' data:",
         "style-src": "'self' 'unsafe-inline'",

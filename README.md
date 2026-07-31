@@ -86,7 +86,7 @@ Verenu's own server (`api.verenu.com`) serves only public app metadata — relea
 - Snippet instructions, cleanup settings, and selected model metadata go with cleanup requests
 - Active app context may be sent if you enable app-context hints
 - Update checks hit GitHub release metadata
-- Provider status checks hit `api.verenu.com` (public status only, no dictated content, keys, or history)
+- Provider status and health checks hit `api.verenu.com` (public status only, no dictated content, keys, or history). You can disable these background checks in Settings → Privacy.
 
 Read the full breakdown in [docs/DATA_AND_PRIVACY.md](docs/DATA_AND_PRIVACY.md).
 

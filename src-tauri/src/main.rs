@@ -1,4 +1,4 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod api;
 mod app_hotkey;
@@ -18,10 +18,39 @@ use crate::core::window_geometry::WindowTarget;
 use crate::data::db;
 use crate::pipeline::{AppState, SharedState};
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::AtomicBool,
+    Arc, Mutex,
+};
+#[cfg(target_os = "windows")]
+use std::sync::atomic::Ordering;
+#[cfg(target_os = "windows")]
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 pub type DbHandle = db::Db;
+
+/// Startup readiness reported by each Tauri WebView after its frontend has
+/// mounted successfully. A backend can be fully alive while WebView2 is
+/// showing a stale connection-refused page, so backend liveness alone is not
+/// enough to declare startup successful.
+#[derive(Clone, Default)]
+pub(crate) struct FrontendReadiness {
+    pub(crate) main: Arc<AtomicBool>,
+    pub(crate) pill: Arc<AtomicBool>,
+}
+
+#[cfg(target_os = "windows")]
+impl FrontendReadiness {
+    fn main_ready(&self) -> bool {
+        self.main.load(Ordering::Acquire)
+    }
+
+    fn reset(&self) {
+        self.main.store(false, Ordering::Release);
+        self.pill.store(false, Ordering::Release);
+    }
+}
 
 pub(crate) use app_tray::apply_runtime_icons;
 
@@ -58,6 +87,115 @@ fn hide_main_window(app: &AppHandle) {
 /// to equal this path, so backups would silently target a different file.
 fn app_data_dir_override() -> Option<std::path::PathBuf> {
     std::env::var_os("VERENU_APP_DATA_DIR_OVERRIDE").map(std::path::PathBuf::from)
+}
+
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+fn startup_recovery_was_attempted() -> bool {
+    std::env::args_os().any(|arg| arg == "--startup-recovery-attempted")
+}
+
+#[cfg(debug_assertions)]
+async fn wait_for_dev_frontend() -> bool {
+    let Ok(client) = reqwest::Client::builder()
+        .connect_timeout(Duration::from_millis(500))
+        .timeout(Duration::from_secs(1))
+        .build()
+    else {
+        return false;
+    };
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(response) = client.get("http://127.0.0.1:1420/").send().await {
+            if response.status().is_success() {
+                return true;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn start_frontend_watchdog(app: &AppHandle, readiness: FrontendReadiness) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let reveal_windows = || {
+            // The main window is the startup gate. Create the pill only after
+            // the main UI is healthy because a hidden WebView2 renderer can
+            // suspend before it reports its own readiness.
+            show_main_window(&app);
+            crate::pipeline::show_pill(&app, "idle");
+        };
+
+        // WebView2 normally mounts in well under a second. This grace period
+        // leaves room for a cold Vite/WebView2 start without delaying normal
+        // startup or flashing a recovery window.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+        while tokio::time::Instant::now() < deadline {
+            if readiness.main_ready() {
+                log::debug!("startup handshake completed");
+                reveal_windows();
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        if readiness.main_ready() {
+            reveal_windows();
+            return;
+        }
+
+        // In development, the WebView can fail its first navigation while
+        // Vite is restarting or optimizing dependencies. Reload the existing
+        // windows once the server is reachable before restarting the entire
+        // process. This also avoids creating an orphaned app if the parent
+        // `tauri dev` session has already stopped its Vite child.
+        #[cfg(debug_assertions)]
+        if wait_for_dev_frontend().await {
+            readiness.reset();
+            if let Some(window) = app.get_webview_window("main") {
+                window.reload().ok();
+            }
+
+            let retry_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+            while tokio::time::Instant::now() < retry_deadline {
+                if readiness.main_ready() {
+                    reveal_windows();
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        log::error!(
+            "startup handshake did not complete in development; keeping the dev process alive for diagnosis"
+        );
+
+        #[cfg(not(debug_assertions))]
+        {
+            if startup_recovery_was_attempted() {
+                log::error!(
+                    "startup handshake did not complete after the automatic recovery attempt; leaving the app running for diagnosis"
+                );
+                return;
+            }
+
+            log::warn!(
+                "startup handshake timed out: main_ready={} pill_ready={}; relaunching once",
+                readiness.main.load(Ordering::Acquire),
+                readiness.pill.load(Ordering::Acquire)
+            );
+            crate::app_tray::relaunch_for_startup_recovery(&app);
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn start_frontend_watchdog(app: &AppHandle, _readiness: FrontendReadiness) {
+    crate::pipeline::show_pill(app, "idle");
+    show_main_window(app);
 }
 
 #[cfg(windows)]
@@ -120,6 +258,7 @@ fn main() {
     }
     let local_cleanup_manager = crate::local_llm::LocalLlmManager::new();
     let local_transcription_manager = crate::local_stt::LocalTranscriptionManager::new();
+    let frontend_readiness = FrontendReadiness::default();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
@@ -131,6 +270,7 @@ fn main() {
         .manage(db_handle.clone())
         .manage(local_cleanup_manager.clone())
         .manage(local_transcription_manager.clone())
+        .manage(frontend_readiness.clone())
         .setup(move |app| {
             crate::system::logger::init(app.handle())?;
             let settings = crate::data::store::SettingsHandle::open(app.handle())
@@ -210,7 +350,7 @@ fn main() {
                     app.handle(),
                 );
             }
-            crate::pipeline::show_pill(app.handle(), "idle");
+            start_frontend_watchdog(app.handle(), frontend_readiness.clone());
             let local_stt_manager = local_transcription_manager.clone();
             let local_llm_manager = local_cleanup_manager.clone();
             let app_handle = app.handle().clone();
@@ -267,10 +407,6 @@ fn main() {
                     }
                 }
             });
-
-            // Keep the main UI visible on startup so normal launches don't
-            // feel like the app disappeared into the tray.
-            show_main_window(app.handle());
 
             Ok(())
         })
@@ -355,6 +491,7 @@ fn main() {
             commands::request_microphone_permission_snapshot,
             commands::open_microphone_settings,
             commands::restart_app,
+            commands::frontend_ready,
             commands::open_privacy_security_settings,
             commands::reset_macos_core_permissions,
             commands::check_keychain_access,

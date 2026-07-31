@@ -177,6 +177,12 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::BETA_UPDATES_ENABLED, SettingKind::Bool, true, true),
     setting_spec(
+        store::VERENU_SERVICE_CHECKS_ENABLED,
+        SettingKind::Bool,
+        true,
+        true,
+    ),
+    setting_spec(
         store::HISTORY_RETENTION,
         SettingKind::HistoryRetention,
         true,
@@ -422,6 +428,7 @@ pub struct AllSettings {
     pub update_dismissed_version: Option<String>,
     pub update_notified_version: Option<String>,
     pub beta_updates_enabled: Option<bool>,
+    pub verenu_service_checks_enabled: Option<bool>,
     pub hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
     pub cleanup_prompt_overrides: Option<serde_json::Value>,
@@ -483,6 +490,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         update_dismissed_version: str_val(store::UPDATE_DISMISSED_VERSION),
         update_notified_version: str_val(store::UPDATE_NOTIFIED_VERSION),
         beta_updates_enabled: bool_val(store::BETA_UPDATES_ENABLED),
+        verenu_service_checks_enabled: bool_val(store::VERENU_SERVICE_CHECKS_ENABLED),
         hotkey: s.get(store::HOTKEY).and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
