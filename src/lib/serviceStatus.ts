@@ -8,20 +8,31 @@ const SERVICE_CHECKS_SETTING = 'verenu_service_checks_enabled';
 
 let serviceChecksEnabled = true;
 let serviceChecksPreference: Promise<boolean> | null = null;
+let serviceChecksPreferenceVersion = 0;
 
 async function getServiceChecksEnabled(): Promise<boolean> {
   if (!serviceChecksPreference) {
+    const requestVersion = serviceChecksPreferenceVersion;
     serviceChecksPreference = invoke<boolean | null>('get_setting', { key: SERVICE_CHECKS_SETTING })
       .then((value) => {
-        serviceChecksEnabled = value ?? true;
+        if (requestVersion === serviceChecksPreferenceVersion) {
+          serviceChecksEnabled = value ?? true;
+        }
         return serviceChecksEnabled;
       })
-      .catch(() => true);
+      .catch(() => {
+        if (requestVersion === serviceChecksPreferenceVersion) {
+          serviceChecksEnabled = true;
+        }
+        return serviceChecksEnabled;
+      });
   }
   return serviceChecksPreference;
 }
 
 export function setServiceChecksEnabled(enabled: boolean): void {
+  serviceChecksPreferenceVersion += 1;
+
   if (serviceChecksEnabled === enabled) {
     serviceChecksPreference = Promise.resolve(enabled);
     return;
