@@ -265,6 +265,7 @@ struct ChordStateMachine {
     key1_down: bool,
     key2_down: bool,
     key2_passed_through: bool,
+    key1_passed_through: bool,
     key1_was_chord: bool,
     key2_was_chord: bool,
     chord_down: bool,
@@ -280,6 +281,15 @@ impl ChordStateMachine {
             ChordKey::Key1 => &mut self.key1_down,
             ChordKey::Key2 => &mut self.key2_down,
         }
+    }
+    fn key_passed_through_mut(&mut self, key: ChordKey) -> &mut bool {
+        match key {
+            ChordKey::Key1 => &mut self.key1_passed_through,
+            ChordKey::Key2 => &mut self.key2_passed_through,
+        }
+    }
+    fn mark_key_passed_through(&mut self, key: ChordKey) {
+        *self.key_passed_through_mut(key) = true;
     }
     fn key_was_chord(&self, key: ChordKey) -> bool {
         match key {
@@ -335,9 +345,7 @@ impl ChordStateMachine {
         }
 
         if !(self.key1_down && self.key2_down) {
-            if key == ChordKey::Key2 {
-                self.key2_passed_through = true;
-            }
+            self.mark_key_passed_through(key);
             // Only one key down so far — not our gesture yet, let it through
             // untouched (so a lone Ctrl or Win press still behaves normally).
             return ChordOutcome::passthrough();
@@ -402,11 +410,7 @@ impl ChordStateMachine {
 
     fn on_key_up(&mut self, key: ChordKey, now_ms: u64) -> ChordOutcome {
         let _was_down = std::mem::replace(self.key_down_mut(key), false);
-        let key2_passed_through = if key == ChordKey::Key2 {
-            std::mem::replace(&mut self.key2_passed_through, false)
-        } else {
-            false
-        };
+        let key_passed_through = std::mem::replace(self.key_passed_through_mut(key), false);
 
         if !self.key_was_chord(key) {
             // Never claimed as part of a chord — always pass through, or an
@@ -446,7 +450,7 @@ impl ChordStateMachine {
             self.handless_from_chord = false;
         }
 
-        if key == ChordKey::Key2 && key2_passed_through {
+        if key_passed_through {
             ChordOutcome {
                 action,
                 disposition: KeyDisposition::Passthrough,
@@ -637,12 +641,16 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             let edge = if is_down { KeyEdge::Down } else { KeyEdge::Up };
             let now = GetTickCount64();
 
-            let (outcome, key2_was_passed_through) = CHORD_MACHINE.with(|m| {
-                let mut machine = m.borrow_mut();
-                let key2_was_passed_through = key == ChordKey::Key1 && machine.key2_passed_through;
-                let outcome = machine.on_key_event(key, edge, now);
-                (outcome, key2_was_passed_through)
-            });
+            let (outcome, key1_was_passed_through, key2_was_passed_through) =
+                CHORD_MACHINE.with(|m| {
+                    let mut machine = m.borrow_mut();
+                    let key1_was_passed_through =
+                        key == ChordKey::Key2 && machine.key1_passed_through;
+                    let key2_was_passed_through =
+                        key == ChordKey::Key1 && machine.key2_passed_through;
+                    let outcome = machine.on_key_event(key, edge, now);
+                    (outcome, key1_was_passed_through, key2_was_passed_through)
+                });
             let mut action = outcome.action;
             let mut disposition = outcome.disposition;
 
@@ -667,14 +675,20 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 // the OS sees a real modifier chord and does not interpret a
                 // bare Win/Alt release as a Start-menu/menu activation.
                 disposition = KeyDisposition::Passthrough;
+                CHORD_MACHINE.with(|m| m.borrow_mut().mark_key_passed_through(key));
             }
 
-            if key == ChordKey::Key1
-                && edge == KeyEdge::Up
+            if key == ChordKey::Key2
+                && edge == KeyEdge::Down
                 && disposition == KeyDisposition::Suppress
-                && !is_menu_trigger_vk(k1)
+                && key1_was_passed_through
+                && is_menu_trigger_vk(k1)
             {
+                // Symmetric case: the first key was a menu trigger whose
+                // down-edge already reached the OS, so pass this chord edge
+                // too and keep the eventual key-up balanced.
                 disposition = KeyDisposition::Passthrough;
+                CHORD_MACHINE.with(|m| m.borrow_mut().mark_key_passed_through(key));
             }
 
             match action {
@@ -1012,10 +1026,12 @@ mod chord_tests {
         assert!(m.key2_down);
         assert!(m.key1_was_chord);
         assert!(m.key2_was_chord);
-        // Both keys' real keyups must still be suppressed, not leaked.
+        // The first key's down-edge was passed through before the chord formed,
+        // so its matching keyup must pass through too. The second key remains
+        // fully owned by Verenu.
         let up1 = m.on_key_event(ChordKey::Key1, KeyEdge::Up, 10);
         let up2 = m.on_key_event(ChordKey::Key2, KeyEdge::Up, 15);
-        assert_eq!(up1.disposition, KeyDisposition::Suppress);
+        assert_eq!(up1.disposition, KeyDisposition::Passthrough);
         assert_eq!(up2.disposition, KeyDisposition::Suppress);
     }
 }

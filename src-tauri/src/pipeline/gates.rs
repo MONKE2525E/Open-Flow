@@ -164,7 +164,7 @@ fn is_fuzzy_glossary_echo(lowercased_trimmed: &str) -> bool {
     }
 
     let token = token.trim_matches(|c: char| !c.is_alphanumeric());
-    if token.is_empty() || token.len() < 4 {
+    if token.is_empty() || token.chars().count() < 4 {
         return false;
     }
 

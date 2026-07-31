@@ -63,7 +63,8 @@ export function getActiveDownloads(): ActiveDownload[] {
       stage,
       label: STAGE_LABEL[stage],
       percent: (progress?.progress ?? 0) * 100,
-      indeterminate: progress == null || progress.total_bytes == null,
+      indeterminate: progress === null || progress === undefined
+        || progress.total_bytes === null || progress.total_bytes === undefined,
     });
   }
 
@@ -78,7 +79,8 @@ export function getActiveDownloads(): ActiveDownload[] {
       stage,
       label: STAGE_LABEL[stage],
       percent: (progress?.progress ?? 0) * 100,
-      indeterminate: progress == null || progress.total_bytes == null,
+      indeterminate: progress === null || progress === undefined
+        || progress.total_bytes === null || progress.total_bytes === undefined,
     });
   }
 
@@ -92,7 +94,7 @@ export function getActiveDownloads(): ActiveDownload[] {
       stage: 'downloading',
       label: 'Downloading runtime',
       percent: (runtime.progress ?? 0) * 100,
-      indeterminate: runtime.total_bytes == null,
+      indeterminate: runtime.total_bytes === null || runtime.total_bytes === undefined,
     });
   }
 
