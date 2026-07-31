@@ -165,7 +165,8 @@
   }
 
   function handleWindowClick(event: MouseEvent) {
-    if (providerDropdownOpen && !(event.target as HTMLElement).closest('.simulation-provider-dropdown')) {
+    const target = event.target;
+    if (providerDropdownOpen && (!(target instanceof Element) || !target.closest('.simulation-provider-dropdown'))) {
       providerDropdownOpen = false;
     }
   }
