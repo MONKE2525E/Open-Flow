@@ -24,7 +24,7 @@ use std::sync::{
 };
 #[cfg(target_os = "windows")]
 use std::sync::atomic::Ordering;
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, target_os = "windows"))]
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -46,6 +46,7 @@ impl FrontendReadiness {
         self.main.load(Ordering::Acquire)
     }
 
+    #[cfg(debug_assertions)]
     fn reset(&self) {
         self.main.store(false, Ordering::Release);
         self.pill.store(false, Ordering::Release);
@@ -94,7 +95,7 @@ fn startup_recovery_was_attempted() -> bool {
     std::env::args_os().any(|arg| arg == "--startup-recovery-attempted")
 }
 
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, target_os = "windows"))]
 async fn wait_for_dev_frontend() -> bool {
     let Ok(client) = reqwest::Client::builder()
         .connect_timeout(Duration::from_millis(500))
