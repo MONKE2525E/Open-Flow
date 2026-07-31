@@ -75,7 +75,7 @@ fn filter_global_message(response: GlobalMessageResponse, now_ms: i64) -> Option
 fn normalize_timestamp_millis(timestamp: i64) -> i64 {
     // The API historically used milliseconds, but accept Unix seconds too.
     // Current millisecond timestamps are already above this threshold.
-    if timestamp.abs() < 100_000_000_000 {
+    if timestamp.unsigned_abs() < 100_000_000_000 {
         timestamp.saturating_mul(1_000)
     } else {
         timestamp
@@ -186,8 +186,8 @@ pub async fn check_health() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        filter_alerts, filter_global_message, GlobalMessage, GlobalMessageResponse,
-        ProviderStatusEntry, ProviderStatusResponse,
+        filter_alerts, filter_global_message, normalize_timestamp_millis, GlobalMessage,
+        GlobalMessageResponse, ProviderStatusEntry, ProviderStatusResponse,
     };
 
     fn entry(id: &str, status: &str, show_to_users: bool) -> ProviderStatusEntry {
@@ -364,5 +364,10 @@ mod tests {
 
         assert!(filter_global_message(response(), 2_000_000_001_999).is_some());
         assert!(filter_global_message(response(), 2_000_000_002_000).is_none());
+    }
+
+    #[test]
+    fn timestamp_normalization_handles_i64_min_without_panicking() {
+        assert_eq!(normalize_timestamp_millis(i64::MIN), i64::MIN);
     }
 }
