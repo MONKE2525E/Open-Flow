@@ -82,8 +82,10 @@ fn staged_model_path() -> anyhow::Result<std::path::PathBuf> {
             "verenu_silero_vad_v4-{}-{unique_suffix}.onnx.tmp",
             std::process::id()
         ));
-        std::fs::write(&temp_path, MODEL_BYTES)
-            .map_err(|e| anyhow::anyhow!("failed to stage Silero VAD model: {e}"))?;
+        if let Err(error) = std::fs::write(&temp_path, MODEL_BYTES) {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(anyhow::anyhow!("failed to stage Silero VAD model: {error}"));
+        }
         if !staged_model_matches(&temp_path) {
             let _ = std::fs::remove_file(&temp_path);
             return Err(anyhow::anyhow!(
@@ -94,12 +96,19 @@ fn staged_model_path() -> anyhow::Result<std::path::PathBuf> {
             let _ = std::fs::remove_file(&temp_path);
         } else {
             if path.exists() {
-                std::fs::remove_file(&path).map_err(|e| {
-                    anyhow::anyhow!("failed to replace staged Silero VAD model: {e}")
-                })?;
+                if let Err(error) = std::fs::remove_file(&path) {
+                    let _ = std::fs::remove_file(&temp_path);
+                    return Err(anyhow::anyhow!(
+                        "failed to replace staged Silero VAD model: {error}"
+                    ));
+                }
             }
-            std::fs::rename(&temp_path, &path)
-                .map_err(|e| anyhow::anyhow!("failed to publish staged Silero VAD model: {e}"))?;
+            if let Err(error) = std::fs::rename(&temp_path, &path) {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(anyhow::anyhow!(
+                    "failed to publish staged Silero VAD model: {error}"
+                ));
+            }
         }
         if !staged_model_matches(&path) {
             return Err(anyhow::anyhow!(
