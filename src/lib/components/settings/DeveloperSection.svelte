@@ -143,8 +143,7 @@
 
   async function simulateGlobalMessage() {
     appStore.globalMessageSimulation = true;
-    simulationMessage = 'Global message previewed.';
-    await checkStatus();
+    await refreshStatusPreview('Global message previewed.');
   }
 
   async function clearSimulations() {
@@ -152,8 +151,17 @@
     appStore.globalMessage = null;
     appStore.globalMessageSimulation = false;
     appStore.isOnline = true;
-    simulationMessage = 'Simulations cleared.';
-    await checkStatus();
+    await refreshStatusPreview('Simulations cleared.');
+  }
+
+  async function refreshStatusPreview(successMessage: string) {
+    try {
+      await checkStatus();
+      simulationMessage = successMessage;
+    } catch (err) {
+      simulationMessage = 'Status preview failed.';
+      console.error('Status preview refresh failed:', err);
+    }
   }
 
   function handleWindowClick(event: MouseEvent) {
