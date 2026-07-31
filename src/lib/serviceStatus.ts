@@ -12,7 +12,9 @@ export async function checkStatus(): Promise<void> {
   ]);
 
   if (alertsResult.status === 'fulfilled') {
-    appStore.providerStatusAlerts = alertsResult.value ?? [];
+    if (!appStore.providerStatusSimulation) {
+      appStore.providerStatusAlerts = alertsResult.value ?? [];
+    }
   } else {
     console.warn('Provider status check failed:', alertsResult.reason);
   }

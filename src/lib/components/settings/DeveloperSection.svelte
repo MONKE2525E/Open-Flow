@@ -125,6 +125,7 @@
 
   function simulateProviderDown() {
     const provider = simulatedProviders.find(({ id }) => id === simulatedProvider) ?? simulatedProviders[0];
+    appStore.providerStatusSimulation = true;
     appStore.providerStatusAlerts = [{
       providerId: provider.id,
       providerName: provider.label,
@@ -154,6 +155,7 @@
 
   async function clearSimulations() {
     appStore.providerStatusAlerts = [];
+    appStore.providerStatusSimulation = false;
     appStore.globalMessage = null;
     appStore.globalMessageSimulation = false;
     appStore.isOnline = true;

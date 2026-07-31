@@ -77,6 +77,7 @@ export const appStore = $state({
   updateInfo: null as UpdateInfo | null,
   betaUpdatesEnabled: false,
   providerStatusAlerts: [] as ProviderStatusAlert[],
+  providerStatusSimulation: false,
   globalMessage: null as GlobalMessage | null,
   globalMessageSimulation: false,
   apiHealthy: null as boolean | null,
