@@ -12,14 +12,20 @@ permissions:
   issues: write
 
 concurrency:
-  group: verenu-ai-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  # Push-triggered reviews and explicit comment-triggered reviews must not
+  # cancel each other. A review request comment is manual input, not a stale
+  # replacement for the review started by the latest commit.
+  group: verenu-ai-review-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
   review:
     if: >
       github.event_name == 'pull_request_target' ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
+      (github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      (github.event.comment.body == '/verenu-review' ||
+      startsWith(github.event.comment.body, '/verenu-review ')))
     runs-on: ubuntu-latest
     steps:
       # Trusted checkout only: this always resolves to a commit on the base
