@@ -40,3 +40,11 @@ pub async fn check_provider_status_raw() -> Result<serde_json::Value, String> {
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn check_global_message(
+) -> Result<Option<crate::api::service_status::GlobalMessage>, String> {
+    crate::api::service_status::fetch_global_message()
+        .await
+        .map_err(|e| e.to_string())
+}

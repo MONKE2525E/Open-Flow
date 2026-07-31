@@ -1,8 +1,14 @@
 <script lang="ts">
   import { invoke, listen } from '../../tauri';
   import { onMount } from 'svelte';
+  import { fly, fade } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
   import { icons } from '../../icons';
+  import { appStore } from '../../stores';
+  import { checkStatus } from '../../serviceStatus';
+  import type { ProviderId } from '../../settings';
+  import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
 
   let logs = $state<string[]>([]);
   let autoScroll = $state(true);
@@ -15,6 +21,16 @@
   let copiedTimer: ReturnType<typeof setTimeout> | null = null;
   let providerStatusRaw = $state('');
   let providerStatusChecking = $state(false);
+  let simulationMessage = $state('');
+  let simulatedProvider = $state<ProviderId>('groq');
+  let providerDropdownOpen = $state(false);
+
+  const simulatedProviders: { id: ProviderId; label: string }[] = [
+    { id: 'groq', label: 'Groq' },
+    { id: 'openai', label: 'OpenAI' },
+    { id: 'google', label: 'Gemini' },
+    { id: 'assemblyai', label: 'AssemblyAI' },
+  ];
 
   async function loadRecentLogs() {
     try {
@@ -107,12 +123,52 @@
     }
   }
 
+  function simulateProviderDown() {
+    const provider = simulatedProviders.find(({ id }) => id === simulatedProvider) ?? simulatedProviders[0];
+    appStore.providerStatusAlerts = [{
+      providerId: provider.id,
+      providerName: provider.label,
+      status: 'degraded',
+      severity: 'high',
+      message: 'Some requests may be delayed or unavailable.',
+      detailsUrl: '',
+    }];
+    simulationMessage = `${provider.label} status previewed.`;
+  }
+
+  function simulateWifiOffline() {
+    appStore.isOnline = false;
+    simulationMessage = 'Offline state previewed.';
+  }
+
+  async function simulateGlobalMessage() {
+    appStore.globalMessageSimulation = true;
+    simulationMessage = 'Global message previewed.';
+    await checkStatus();
+  }
+
+  async function clearSimulations() {
+    appStore.providerStatusAlerts = [];
+    appStore.globalMessage = null;
+    appStore.globalMessageSimulation = false;
+    appStore.isOnline = true;
+    simulationMessage = 'Simulations cleared.';
+    await checkStatus();
+  }
+
+  function handleWindowClick(event: MouseEvent) {
+    if (providerDropdownOpen && !(event.target as HTMLElement).closest('.simulation-provider-dropdown')) {
+      providerDropdownOpen = false;
+    }
+  }
+
   onMount(() => {
     let active = true;
     let unlisten: (() => void) | null = null;
 
     loadRecentLogs();
     loadDevFlags();
+    window.addEventListener('click', handleWindowClick);
     (async () => {
       try {
         unlisten = await listen<string>('verenu:log', (ev) => {
@@ -129,6 +185,7 @@
       active = false;
       if (unlisten) unlisten();
       if (copiedTimer) clearTimeout(copiedTimer);
+      window.removeEventListener('click', handleWindowClick);
     };
   });
 </script>
@@ -214,6 +271,56 @@
 {#if providerStatusRaw}
   <pre class="raw-panel scroll-styled">{providerStatusRaw}</pre>
 {/if}
+<div class="setting-row dev-simulations">
+  <div>
+    <div class="label">UI Simulations</div>
+    <div class="desc">Preview outage, offline, and global-message notices without changing the live APIs.</div>
+    {#if simulationMessage}
+      <div class="desc export-status" role="status">{simulationMessage}</div>
+    {/if}
+  </div>
+  <div class="simulation-actions">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="simulation-provider-dropdown" onclick={(event) => event.stopPropagation()} onkeydown={(event) => { if (event.key === 'Escape') providerDropdownOpen = false; }}>
+      <button
+        class="btn-ghost simulation-provider-button"
+        onclick={() => (providerDropdownOpen = !providerDropdownOpen)}
+        aria-haspopup="true"
+        aria-expanded={providerDropdownOpen}
+        aria-controls="provider-status-preview-menu"
+        aria-label="Provider for status preview"
+      >
+        <span>{simulatedProviders.find(({ id }) => id === simulatedProvider)?.label}</span>
+        <svg class:open={providerDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m6 9 6 6 6-6"/>
+        </svg>
+      </button>
+      {#if providerDropdownOpen}
+        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+        <div
+          id="provider-status-preview-menu"
+          class="simulation-provider-menu"
+          aria-label="Provider status preview options"
+          onclick={(event) => event.stopPropagation()}
+          in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+          out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+        >
+          {#each simulatedProviders as provider}
+            <button
+              class="simulation-provider-item"
+              class:active={simulatedProvider === provider.id}
+              onclick={() => { simulatedProvider = provider.id; providerDropdownOpen = false; }}
+            >{provider.label}</button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+    <button class="btn-ghost" onclick={simulateProviderDown}>Provider Down</button>
+    <button class="btn-ghost" onclick={simulateWifiOffline}>Wi-Fi Offline</button>
+    <button class="btn-ghost" onclick={simulateGlobalMessage}>Global Message</button>
+    <button class="btn-ghost" onclick={clearSimulations}>Clear</button>
+  </div>
+</div>
 
 <style>
   .logs-panel-wrap {
@@ -307,6 +414,60 @@
     display: flex;
     gap: 8px;
   }
+  .simulation-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .simulation-provider-dropdown {
+    position: relative;
+    flex-shrink: 0;
+  }
+  .simulation-provider-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--r-md);
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .simulation-provider-button svg { transition: transform 150ms; }
+  .simulation-provider-button svg.open { transform: rotate(180deg); }
+  .simulation-provider-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 160px;
+    padding: 4px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-popover);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .simulation-provider-item {
+    width: 100%;
+    padding: 6px 10px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--ink-soft);
+    font: inherit;
+    font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .simulation-provider-item:hover { background: var(--paper-2); color: var(--ink); }
+  .simulation-provider-item.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
   .privacy-warn {
     margin: 10px 0 4px;
     padding: 10px 12px;

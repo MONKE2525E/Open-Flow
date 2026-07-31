@@ -398,6 +398,7 @@ fn main() {
             commands::install_update,
             commands::check_provider_status,
             commands::check_provider_status_raw,
+            commands::check_global_message,
             commands::check_verenu_api_health,
             commands::check_connectivity,
             commands::get_recent_logs,

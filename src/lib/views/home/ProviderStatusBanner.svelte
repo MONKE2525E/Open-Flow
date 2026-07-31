@@ -1,5 +1,9 @@
 <script lang="ts">
   import type { ProviderStatusAlert } from '../../stores';
+  import { getProviderLogo } from '../../setup/ProviderLogos';
+  import { fly, fade } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
+  import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
 
   let { alerts }: { alerts: ProviderStatusAlert[] } = $props();
 
@@ -18,10 +22,15 @@
 </script>
 
 <div class="notice-wrap">
-  <div class="status-banner">
+  <div
+    class="status-banner"
+    in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+    out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+  >
     {#each alerts as alert, i (alert.providerId + '-' + i)}
       <div class="status-row">
-        <span class="status-text">{alert.providerName}: {alert.message}</span>
+        <span class="provider-logo" aria-hidden="true">{@html getProviderLogo(alert.providerId)}</span>
+        <span class="status-text"><strong>{alert.providerName}</strong> {alert.message}</span>
         {#if alert.detailsUrl}
           <button class="status-link" onclick={() => openDetails(alert.detailsUrl)}>Check status</button>
         {/if}
@@ -60,6 +69,15 @@
     font-family: var(--serif);
     font-weight: 500;
   }
+
+  .provider-logo {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 20px;
+    color: currentColor;
+  }
+  .provider-logo :global(svg) { width: 100%; height: 100%; }
 
   .status-link {
     flex-shrink: 0;

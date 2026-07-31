@@ -1268,6 +1268,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return [] as T;
     case 'check_provider_status_raw':
       return { dev: true, note: 'Not running in Tauri — no real fetch performed.' } as T;
+    case 'check_global_message':
+      return null as T;
     case 'check_verenu_api_health':
       return true as T;
     case 'check_connectivity':

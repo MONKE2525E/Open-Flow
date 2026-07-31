@@ -8,6 +8,7 @@
   import HomeHero from './home/HomeHero.svelte';
   import UpdateBanner from './home/UpdateBanner.svelte';
   import ProviderStatusBanner from './home/ProviderStatusBanner.svelte';
+  import GlobalMessageBanner from './home/GlobalMessageBanner.svelte';
   import HistoryList from './home/HistoryList.svelte';
   import StatsCard from './home/StatsCard.svelte';
 
@@ -163,6 +164,10 @@
       <p class="page-sub">{greeting}</p>
 
       <HomeHero {hk1} {hk2} />
+
+      {#if appStore.globalMessage}
+        <GlobalMessageBanner message={appStore.globalMessage.message} />
+      {/if}
 
       {#if appStore.providerStatusAlerts.length > 0}
         <ProviderStatusBanner alerts={appStore.providerStatusAlerts} />

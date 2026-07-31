@@ -43,6 +43,12 @@ export interface ProviderStatusAlert {
   detailsUrl: string;
 }
 
+export interface GlobalMessage {
+  message: string;
+  showToUsers: boolean;
+  visibleUntil?: number | null;
+}
+
 export const appStore = $state({
   currentPage: 'home' as PageId,
   settingsOpen: false,
@@ -71,6 +77,8 @@ export const appStore = $state({
   updateInfo: null as UpdateInfo | null,
   betaUpdatesEnabled: false,
   providerStatusAlerts: [] as ProviderStatusAlert[],
+  globalMessage: null as GlobalMessage | null,
+  globalMessageSimulation: false,
   apiHealthy: null as boolean | null,
   isOnline: true,
 });
