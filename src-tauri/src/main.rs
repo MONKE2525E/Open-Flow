@@ -37,6 +37,8 @@ pub type DbHandle = db::Db;
 #[derive(Clone, Default)]
 pub(crate) struct FrontendReadiness {
     pub(crate) main: Arc<AtomicBool>,
+    /// Diagnostic state only. The pill is created after the main frontend has
+    /// passed the startup gate, so its readiness is not a separate gate.
     pub(crate) pill: Arc<AtomicBool>,
 }
 
