@@ -119,6 +119,9 @@ pub(crate) fn update_pill_state(app: &AppHandle, state: &str) {
         return;
     };
 
+    REVEAL_GEN.fetch_add(1, Ordering::SeqCst);
+    super::pill_animation::cancel_pending_pill_tween();
+
     // Reuse the native reveal sequence without recalculating placement. The
     // Windows window can remain logically visible while its compositor surface
     // is behind another window after click-through is changed, so a conditional

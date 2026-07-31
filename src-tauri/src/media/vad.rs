@@ -11,7 +11,6 @@
 //! with the network transcription call rather than gating on it first.
 
 use crate::data::store;
-use sha2::{Digest, Sha256};
 
 /// Aggregate result of running VAD across an entire recording. Only
 /// `contains_speech` currently drives a decision (in
@@ -70,13 +69,16 @@ fn staged_model_path() -> anyhow::Result<std::path::PathBuf> {
         return Ok(path.clone());
     }
 
-    let path = std::env::temp_dir().join("verenu_silero_vad_v4.onnx");
+    let stage_dir = crate::app_data_dir().join("runtime");
+    std::fs::create_dir_all(&stage_dir)
+        .map_err(|e| anyhow::anyhow!("failed to create Silero VAD runtime directory: {e}"))?;
+    let path = stage_dir.join("verenu_silero_vad_v4.onnx");
     if !staged_model_matches(&path) {
         let unique_suffix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_nanos())
             .unwrap_or_default();
-        let temp_path = std::env::temp_dir().join(format!(
+        let temp_path = stage_dir.join(format!(
             "verenu_silero_vad_v4-{}-{unique_suffix}.onnx.tmp",
             std::process::id()
         ));
@@ -119,7 +121,7 @@ fn staged_model_matches(path: &std::path::Path) -> bool {
     let Ok(bytes) = std::fs::read(path) else {
         return false;
     };
-    Sha256::digest(bytes) == Sha256::digest(MODEL_BYTES)
+    bytes.as_slice() == MODEL_BYTES
 }
 
 /// Scales how lenient the speech thresholds are with the active mic gain,

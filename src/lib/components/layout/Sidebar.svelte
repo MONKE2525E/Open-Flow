@@ -527,6 +527,8 @@
   .dl-panel {
     margin: 0 8px 6px;
     padding: 10px 11px;
+    max-height: min(30vh, 240px);
+    overflow-y: auto;
     border-radius: 9px;
     background: var(--control-active);
     border: 1px solid var(--line-soft);

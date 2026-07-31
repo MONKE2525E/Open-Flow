@@ -409,9 +409,7 @@ function addKeyPreset(): Preset {
 
 function sameFallbacks(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
-  const sortedA = [...a].sort();
-  const sortedB = [...b].sort();
-  return sortedA.every((value, index) => value === sortedB[index]);
+  return a.every((value, index) => value === b[index]);
 }
 
 export function matchActivePreset(presets: Preset[], current: ActiveConfig): string | null {
