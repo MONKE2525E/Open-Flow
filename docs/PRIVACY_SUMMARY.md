@@ -17,6 +17,7 @@ Verenu doesn't run its own servers, doesn't have an account system, and doesn't 
 - **Cleanup context** goes along with cleanup requests, including snippet instructions, cleanup settings, and model metadata
 - **Active app context** leaves your device only if you've enabled app-context hints
 - **Update checks** request GitHub release metadata without sending dictated text, history, or keys
+- **Verenu service checks** optionally request public provider status and health data from `api.verenu.com`; disable them in Settings → Privacy
 
 ## One important caveat
 

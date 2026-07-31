@@ -113,6 +113,7 @@ That request carries no dictated text, history, snippets, or API keys.
 
 Verenu periodically asks `api.verenu.com` for the operating status of the transcription and cleanup providers you have selected:
 
+- Settings → Privacy includes **Allow Verenu service checks**, enabled by default. Turn it off to stop these background requests. Verenu clears the in-memory status and health results when you disable the setting.
 - Every 5 minutes, it fetches provider status and shows an in-app banner only if the status API flags a real problem for a provider you have actually selected. A provider reporting `operational` or `unknown` does not trigger a banner, and providers you have not selected never surface regardless of their status.
 - Every 20 minutes, it does a plain up/down health check of `api.verenu.com` itself. This currently has no UI; the result is kept in memory for future features.
 - If a transcription or cleanup call fails in a way that looks provider-side (a quota error, or a retryable timeout/429/5xx), Verenu immediately re-checks provider status instead of waiting for the next scheduled poll.
@@ -152,8 +153,8 @@ That said, once data is sent to a third-party AI provider, that provider's reten
 | Auto-learn | local monitoring data and promoted entries | nothing by default |
 | Update check | current app state stays local | GitHub release metadata request |
 | Connectivity check | current app state stays local | periodic `HEAD` request to `api.github.com` |
-| Provider status check | current app state stays local | periodic GET to `api.verenu.com/v1/provider-status` (every 5 min, plus an immediate recheck after a provider-side pipeline failure) |
-| API health check | current app state stays local | periodic GET to `api.verenu.com/v1/health` (every 20 min) |
+| Provider status check | current app state stays local | optional periodic GET to `api.verenu.com/v1/provider-status` (every 5 min, plus an immediate recheck after a provider-side pipeline failure) |
+| API health check | current app state stays local | optional periodic GET to `api.verenu.com/v1/health` (every 20 min) |
 | Export data | backup file on local disk | nothing unless you share the file yourself |
 | Logs export | log file on local disk | nothing unless you share the file yourself |
 

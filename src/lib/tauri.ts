@@ -851,6 +851,8 @@ function assertDevText(value: unknown, field: string): string {
 
 async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
   switch (command) {
+    case 'frontend_ready':
+      return undefined as T;
     case 'get_setting':
       return getDevSetting(String(args?.key ?? '')) as T;
     case 'save_setting':

@@ -4,6 +4,23 @@ use super::*;
 
 // ---------- window management ----------
 
+/// Completes the startup handshake for the window that has just mounted its
+/// frontend. This is intentionally reported by the frontend rather than
+/// inferred from backend process liveness because WebView2 can display a
+/// connection-refused page while the Rust process continues working.
+#[tauri::command]
+pub fn frontend_ready(
+    window: tauri::WebviewWindow,
+    readiness: tauri::State<'_, crate::FrontendReadiness>,
+) -> Result<(), String> {
+    match window.label() {
+        "main" => readiness.main.store(true, std::sync::atomic::Ordering::Release),
+        "pill" => readiness.pill.store(true, std::sync::atomic::Ordering::Release),
+        label => return Err(format!("Unknown frontend window: {label}")),
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn show_main(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("main") {

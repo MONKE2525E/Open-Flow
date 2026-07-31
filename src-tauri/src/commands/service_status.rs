@@ -4,8 +4,20 @@
 use super::*;
 use crate::api::service_status::ProviderStatusAlert;
 
+fn service_checks_enabled(app: &AppHandle) -> bool {
+    store::settings_handle(app)
+        .ok()
+        .and_then(|handle| handle.get(store::VERENU_SERVICE_CHECKS_ENABLED))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
 #[tauri::command]
 pub async fn check_provider_status(app: AppHandle) -> Result<Vec<ProviderStatusAlert>, String> {
+    if !service_checks_enabled(&app) {
+        return Ok(Vec::new());
+    }
+
     let handle = store::settings_handle(&app)?;
     let provider_or_default = |key: &str| {
         handle
@@ -30,7 +42,11 @@ pub async fn check_provider_status(app: AppHandle) -> Result<Vec<ProviderStatusA
 }
 
 #[tauri::command]
-pub async fn check_verenu_api_health() -> bool {
+pub async fn check_verenu_api_health(app: AppHandle) -> bool {
+    if !service_checks_enabled(&app) {
+        return false;
+    }
+
     crate::api::service_status::check_health().await
 }
 
@@ -43,7 +59,12 @@ pub async fn check_provider_status_raw() -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 pub async fn check_global_message(
+    app: AppHandle,
 ) -> Result<Option<crate::api::service_status::GlobalMessage>, String> {
+    if !service_checks_enabled(&app) {
+        return Ok(None);
+    }
+
     crate::api::service_status::fetch_global_message()
         .await
         .map_err(|e| e.to_string())

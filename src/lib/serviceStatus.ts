@@ -4,12 +4,66 @@ import { invoke, listen } from './tauri';
 
 const PROVIDER_STATUS_INTERVAL_MS = 5 * 60 * 1000;
 const API_HEALTH_INTERVAL_MS = 20 * 60 * 1000;
+const SERVICE_CHECKS_SETTING = 'verenu_service_checks_enabled';
+
+let serviceChecksEnabled = true;
+let serviceChecksPreference: Promise<boolean> | null = null;
+let serviceChecksPreferenceVersion = 0;
+
+async function getServiceChecksEnabled(): Promise<boolean> {
+  if (!serviceChecksPreference) {
+    const requestVersion = serviceChecksPreferenceVersion;
+    serviceChecksPreference = invoke<boolean | null>('get_setting', { key: SERVICE_CHECKS_SETTING })
+      .then((value) => {
+        if (requestVersion === serviceChecksPreferenceVersion) {
+          serviceChecksEnabled = value ?? true;
+        }
+        return serviceChecksEnabled;
+      })
+      .catch(() => {
+        if (requestVersion === serviceChecksPreferenceVersion) {
+          serviceChecksEnabled = true;
+        }
+        return serviceChecksEnabled;
+      });
+  }
+  return serviceChecksPreference;
+}
+
+export function setServiceChecksEnabled(enabled: boolean): void {
+  serviceChecksPreferenceVersion += 1;
+
+  if (serviceChecksEnabled === enabled) {
+    serviceChecksPreference = Promise.resolve(enabled);
+    return;
+  }
+
+  serviceChecksEnabled = enabled;
+  serviceChecksPreference = Promise.resolve(enabled);
+
+  if (!enabled) {
+    appStore.providerStatusAlerts = [];
+    appStore.globalMessage = null;
+    appStore.apiHealthy = null;
+    return;
+  }
+
+  // An explicit opt-in should take effect immediately rather than waiting
+  // for the next scheduled interval.
+  void checkStatus();
+  void checkApiHealth();
+}
 
 export async function checkStatus(): Promise<void> {
+  if (!(await getServiceChecksEnabled())) return;
+
   const [alertsResult, messageResult] = await Promise.allSettled([
     invoke<ProviderStatusAlert[] | null>('check_provider_status'),
     invoke<GlobalMessage | null>('check_global_message'),
   ]);
+
+  // The setting may have been changed while the requests were in flight.
+  if (!serviceChecksEnabled) return;
 
   if (alertsResult.status === 'fulfilled') {
     if (!appStore.providerStatusSimulation) {
@@ -33,8 +87,14 @@ export async function checkStatus(): Promise<void> {
 // already warm for future features that need to know whether api.verenu.com
 // is reachable.
 async function checkApiHealth(): Promise<void> {
+  if (!(await getServiceChecksEnabled())) {
+    appStore.apiHealthy = null;
+    return;
+  }
+
   try {
-    appStore.apiHealthy = await invoke<boolean>('check_verenu_api_health');
+    const healthy = await invoke<boolean>('check_verenu_api_health');
+    appStore.apiHealthy = serviceChecksEnabled ? healthy : null;
   } catch (error) {
     // Don't leave a stale prior result in place — a failed check means we no
     // longer know the current state, not that it's confirmed unhealthy.

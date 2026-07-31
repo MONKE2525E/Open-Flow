@@ -4,6 +4,7 @@
   import { expoOut } from 'svelte/easing';
   import Toggle from '../Toggle.svelte';
   import { saveSetting, type HistoryRetention } from '../../settings';
+  import { setServiceChecksEnabled } from '../../serviceStatus';
   import { modalFocusTrap } from '../../modalFocus';
   import { animateWidth, modalBackdrop, modalCard, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
 
@@ -20,6 +21,7 @@
   let historyDropdownOpen = $state(false);
   let appContextHint = $state(false);
   let autoLearn = $state(false);
+  let serviceChecksEnabled = $state(true);
   let cleanupCacheEntries = $state(0);
   let cleanupCacheSpaceConstrained = $state(false);
   let cleanupCacheFreeBytes = $state<number | null>(null);
@@ -36,10 +38,11 @@
 
   async function loadSettings() {
     try {
-      const [retention, hint, learn, cacheStatus, summary, recent] = await Promise.all([
+      const [retention, hint, learn, serviceChecks, cacheStatus, summary, recent] = await Promise.all([
         invoke<string | null>('get_setting', { key: 'history_retention' }),
         invoke<boolean | null>('get_setting', { key: 'app_context_hint' }),
         invoke<boolean | null>('get_setting', { key: 'auto_learn_enabled' }),
+        invoke<boolean | null>('get_setting', { key: 'verenu_service_checks_enabled' }),
         invoke<CleanupCacheStatus>('get_cleanup_cache_status'),
         invoke<typeof autoLearnSummary>('get_auto_learn_status_summary'),
         invoke<typeof recentAutoLearn>('get_recent_auto_learn_activity', { limit: 5 }),
@@ -47,6 +50,8 @@
       if (retention) historyRetention = retention;
       appContextHint = hint ?? false;
       autoLearn = learn ?? false;
+      serviceChecksEnabled = serviceChecks ?? true;
+      setServiceChecksEnabled(serviceChecksEnabled);
       cleanupCacheEntries = cacheStatus?.entry_count ?? 0;
       cleanupCacheSpaceConstrained = cacheStatus?.is_space_constrained ?? false;
       cleanupCacheFreeBytes = cacheStatus?.free_bytes ?? null;
@@ -110,6 +115,20 @@
     } catch (err) {
       autoLearn = !value;
       console.error('save auto_learn_enabled failed:', err);
+    }
+  }
+
+  async function handleServiceChecks(value: boolean) {
+    const previous = serviceChecksEnabled;
+    serviceChecksEnabled = value;
+    if (!value) setServiceChecksEnabled(false);
+    try {
+      await saveSetting('verenu_service_checks_enabled', value);
+      setServiceChecksEnabled(value);
+    } catch (err) {
+      serviceChecksEnabled = previous;
+      setServiceChecksEnabled(previous);
+      console.error('save verenu_service_checks_enabled failed:', err);
     }
   }
 
@@ -240,6 +259,15 @@
 <div class="setting-row">
   <div><div class="label">App context hint</div><div class="desc">Passes the active app to the cleanup model to tailor formatting</div></div>
   <Toggle checked={appContextHint} onchange={handleAppContextHint} label="App context hint" />
+</div>
+
+<h3 class="settings-subhead">Verenu services</h3>
+<div class="setting-row">
+  <div>
+    <div class="label">Allow Verenu service checks</div>
+    <div class="desc">Checks provider status, service health, and global messages in the background. Turn this off to stop background requests to api.verenu.com. Dictation requests to your selected AI provider are unaffected.</div>
+  </div>
+  <Toggle checked={serviceChecksEnabled} onchange={handleServiceChecks} label="Allow Verenu service checks" />
 </div>
 
 <h3 class="settings-subhead">On-device learning</h3>

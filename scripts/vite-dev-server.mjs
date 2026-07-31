@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const DEV_PORT = 1420;
 const DEV_URLS = [
-  `http://localhost:${DEV_PORT}/`,
   `http://127.0.0.1:${DEV_PORT}/`,
+  `http://localhost:${DEV_PORT}/`,
   `http://[::1]:${DEV_PORT}/`,
 ];
 
@@ -16,9 +17,10 @@ if (runningUrl) {
   process.exit(0);
 }
 
-const child = spawn('vite', [], {
+const viteEntry = fileURLToPath(new URL('../node_modules/vite/bin/vite.js', import.meta.url));
+const child = spawn(process.execPath, [viteEntry], {
   stdio: 'inherit',
-  shell: true,
+  shell: false,
   env: process.env,
 });
 

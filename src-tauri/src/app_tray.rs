@@ -93,8 +93,24 @@ fn relaunch_app(app: &AppHandle) {
     app.restart();
 }
 
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+pub(crate) fn relaunch_for_startup_recovery(app: &AppHandle) {
+    if let Err(err) = spawn_relaunch_and_exit_with_args(app, &["--startup-recovery-attempted"]) {
+        log::error!("Failed to recover Verenu startup: {err}");
+        app.exit(0);
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn spawn_relaunch_and_exit(app: &AppHandle) -> Result<(), String> {
+    spawn_relaunch_and_exit_with_args(app, &[])
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_relaunch_and_exit_with_args(
+    app: &AppHandle,
+    extra_args: &[&str],
+) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
@@ -104,8 +120,10 @@ fn spawn_relaunch_and_exit(app: &AppHandle) -> Result<(), String> {
         .map_err(|err| format!("could not locate current executable: {err}"))?;
     let parent_pid = std::process::id().to_string();
     let forwarded_args = forwarded_relaunch_args();
-    std::process::Command::new(exe)
+    let mut command = std::process::Command::new(exe);
+    command
         .args(forwarded_args)
+        .args(extra_args)
         .arg("--relaunch-parent-pid")
         .arg(parent_pid)
         .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
