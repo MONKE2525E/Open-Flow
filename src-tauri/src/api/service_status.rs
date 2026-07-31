@@ -67,9 +67,19 @@ fn filter_global_message(response: GlobalMessageResponse, now_ms: i64) -> Option
         !message.message.trim().is_empty()
             && message
                 .visible_until
-                .map(|until| until > now_ms)
+                .map(|until| normalize_timestamp_millis(until) > now_ms)
                 .unwrap_or(true)
     })
+}
+
+fn normalize_timestamp_millis(timestamp: i64) -> i64 {
+    // The API historically used milliseconds, but accept Unix seconds too.
+    // Current millisecond timestamps are already above this threshold.
+    if timestamp.abs() < 100_000_000_000 {
+        timestamp.saturating_mul(1_000)
+    } else {
+        timestamp
+    }
 }
 
 /// Keeps only provider entries worth surfacing to the user: the backend must have
@@ -308,13 +318,15 @@ mod tests {
         let message = GlobalMessage {
             message: "hello".to_string(),
             show_to_users: true,
-            visible_until: Some(2_000),
+            visible_until: Some(2_000_000_000_000),
         };
         let response = GlobalMessageResponse {
             message: Some(message.clone()),
         };
         assert_eq!(
-            filter_global_message(response, 1_999).unwrap().message,
+            filter_global_message(response, 1_999_000_000_000)
+                .unwrap()
+                .message,
             "hello"
         );
 
@@ -324,7 +336,12 @@ mod tests {
                 ..message.clone()
             }),
         };
-        assert_eq!(filter_global_message(hidden, 1_999).unwrap().message, "hello");
+        assert_eq!(
+            filter_global_message(hidden, 1_999_000_000_000)
+                .unwrap()
+                .message,
+            "hello"
+        );
 
         let expired = GlobalMessageResponse {
             message: Some(GlobalMessage {
@@ -332,6 +349,20 @@ mod tests {
                 ..message
             }),
         };
-        assert!(filter_global_message(expired, 2_000).is_none());
+        assert!(filter_global_message(expired, 2_000_000_000_000).is_none());
+    }
+
+    #[test]
+    fn global_message_accepts_second_based_expiry_timestamps() {
+        let response = || GlobalMessageResponse {
+            message: Some(GlobalMessage {
+                message: "hello".to_string(),
+                show_to_users: true,
+                visible_until: Some(2_000_000_002),
+            }),
+        };
+
+        assert!(filter_global_message(response(), 2_000_000_001_999).is_some());
+        assert!(filter_global_message(response(), 2_000_000_002_000).is_none());
     }
 }

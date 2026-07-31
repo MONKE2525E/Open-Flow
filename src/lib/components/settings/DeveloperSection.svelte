@@ -144,6 +144,12 @@
   async function simulateGlobalMessage() {
     appStore.globalMessageSimulation = true;
     await refreshStatusPreview('Global message previewed.');
+    if (!appStore.globalMessage) {
+      appStore.globalMessage = {
+        message: 'Verenu has an important update.',
+        showToUsers: true,
+      };
+    }
   }
 
   async function clearSimulations() {
