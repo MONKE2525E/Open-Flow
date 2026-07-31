@@ -96,15 +96,6 @@ pub(super) fn lock_state(state: &SharedState) -> anyhow::Result<MutexGuard<'_, A
         .map_err(|_| anyhow::anyhow!("Recording state lock was poisoned"))
 }
 
-/// Whether nothing is currently recording/processing/finalizing. Used by
-/// entry points that must not race the primary hotkey-driven pipeline
-/// (e.g. `retry_transcription`, the in-app mic button's manual commands).
-pub fn is_idle(state: &SharedState) -> bool {
-    lock_state(state)
-        .map(|st| st.lifecycle.is_idle())
-        .unwrap_or(false)
-}
-
 static PIPELINE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn next_pipeline_generation() -> u64 {
@@ -179,10 +170,31 @@ pub fn take_recording_plain(state: &SharedState) -> Option<(audio::RecordingSess
             exclusive_mic_session_id,
             ..
         } => Some((session, exclusive_mic_session_id)),
+        DictationLifecycle::Starting { .. } => {
+            // Cancelling a start must consume the reservation atomically. If
+            // the microphone task has not installed Recording yet, it will
+            // observe Idle and stop the session instead of resurrecting it.
+            None
+        }
         other => {
             st.lifecycle = other;
             None
         }
+    }
+}
+
+/// Cancels an in-flight start without touching any other lifecycle. This is
+/// used by stop commands that can arrive before the microphone task finishes
+/// opening the device.
+pub fn cancel_starting_reservation(state: &SharedState) -> bool {
+    let Ok(mut st) = lock_state(state) else {
+        return false;
+    };
+    if matches!(st.lifecycle, DictationLifecycle::Starting { .. }) {
+        st.lifecycle = DictationLifecycle::Idle;
+        true
+    } else {
+        false
     }
 }
 
@@ -287,6 +299,12 @@ pub(super) fn take_recording_for_stopping(state: &SharedState) -> Option<Stoppin
                 generation,
                 prepend_audio,
             ))
+        }
+        DictationLifecycle::Starting { .. } => {
+            // A release can race the microphone opening. Consume the start
+            // reservation so the late opener cannot install a recording after
+            // the user has already released the hotkey.
+            None
         }
         other => {
             st.lifecycle = other;
@@ -485,6 +503,35 @@ mod tests {
     }
 
     #[test]
+    fn take_recording_plain_cancels_a_pending_start() {
+        let state = fresh_state();
+        reserve_starting(&state).unwrap();
+
+        assert!(take_recording_plain(&state).is_none());
+        assert!(lock_state(&state).unwrap().lifecycle.is_idle());
+    }
+
+    #[test]
+    fn take_recording_for_stopping_cancels_a_pending_start() {
+        let state = fresh_state();
+        reserve_starting(&state).unwrap();
+
+        assert!(take_recording_for_stopping(&state).is_none());
+        assert!(lock_state(&state).unwrap().lifecycle.is_idle());
+    }
+
+    #[test]
+    fn cancel_starting_reservation_does_not_touch_other_lifecycle() {
+        let state = fresh_state();
+        assert!(!cancel_starting_reservation(&state));
+        assert!(lock_state(&state).unwrap().lifecycle.is_idle());
+
+        reserve_starting(&state).unwrap();
+        assert!(cancel_starting_reservation(&state));
+        assert!(lock_state(&state).unwrap().lifecycle.is_idle());
+    }
+
+    #[test]
     fn interrupt_takes_processing_and_installs_starting_with_prepend_audio() {
         let state = fresh_state();
         {
@@ -604,10 +651,10 @@ mod tests {
     }
 
     #[test]
-    fn is_idle_reflects_lifecycle() {
+    fn lifecycle_idle_reflects_state() {
         let state = fresh_state();
-        assert!(is_idle(&state));
+        assert!(lock_state(&state).unwrap().lifecycle.is_idle());
         reserve_starting(&state).unwrap();
-        assert!(!is_idle(&state));
+        assert!(!lock_state(&state).unwrap().lifecycle.is_idle());
     }
 }

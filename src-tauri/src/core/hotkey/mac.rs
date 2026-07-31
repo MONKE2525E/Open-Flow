@@ -66,6 +66,7 @@ static CANCEL_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 static ESCAPE_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 
 static CHORD_ACTIVE: AtomicBool = AtomicBool::new(false);
+static HANDLESS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ESCAPE_CANCELLED: AtomicBool = AtomicBool::new(false);
 static CHORD_DOWN_MS: AtomicU64 = AtomicU64::new(0);
 static HANDLESS_PENDING: AtomicBool = AtomicBool::new(false);
@@ -134,7 +135,7 @@ pub fn reset_chord_state() {
 }
 
 pub fn set_handless_active(v: bool) {
-    let _ = v;
+    HANDLESS_ACTIVE.store(v, Ordering::SeqCst);
     refresh_escape_listening();
 }
 
@@ -444,11 +445,13 @@ fn set_escape_listening(on: bool) {
 }
 
 fn refresh_escape_listening() {
-    // Keep Escape transient to active hold-to-talk (or in-flight processing)
-    // only. Leaving it registered for the entire handsfree session would
-    // hijack Escape system-wide while the app records in the background.
+    // Keep Escape transient to an active recording or in-flight processing
+    // only. Leaving it registered while the app is idle would hijack Escape
+    // system-wide.
     let processing = PROCESSING_GENERATION.load(Ordering::SeqCst) != 0;
-    set_escape_listening(CHORD_ACTIVE.load(Ordering::SeqCst) || processing);
+    set_escape_listening(
+        CHORD_ACTIVE.load(Ordering::SeqCst) || HANDLESS_ACTIVE.load(Ordering::SeqCst) || processing,
+    );
 }
 
 // --- event handling --------------------------------------------------------

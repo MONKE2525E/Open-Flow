@@ -73,6 +73,10 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     let settings_store = match store::settings_snapshot(&app) {
         Ok(s) => s,
         Err(e) => {
+            // The session was removed from shared state above. Stop it before
+            // returning, otherwise a settings read failure leaves the audio
+            // thread and exclusive-mic reservation alive with no owner.
+            let _ = stop_and_capture_audio(&app, session, exclusive_mic_session_id).await;
             hide_pill(&app);
             return Err(anyhow::anyhow!(e));
         }
@@ -178,7 +182,16 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     hide_pill(&app);
 
     match transcribed {
-        Some(text) => Ok(crate::system::text::collapse_degenerate_word_runs(&text)),
+        Some(text) => {
+            let normalized = normalize_transcription_math_artifacts(&text);
+            let normalized = strip_hallucinated_suffix(&normalized);
+            let normalized = crate::system::text::collapse_degenerate_word_runs(&normalized);
+            if !has_spoken_content(&normalized) || is_transcription_hallucination(&normalized) {
+                hide_pill(&app);
+                anyhow::bail!("Recording was too quiet — nothing was transcribed");
+            }
+            Ok(normalized)
+        }
         None => Err(last_err.unwrap_or_else(|| {
             anyhow::anyhow!("Transcription failed: no model in chain produced output")
         })),
@@ -612,9 +625,8 @@ pub async fn retry_transcription_impl(
     app: &AppHandle,
     state: &SharedState,
 ) -> anyhow::Result<db::RecentEntry> {
-    if !state::is_idle(state) {
-        anyhow::bail!("Can't retry while a dictation is in progress");
-    }
+    state::reserve_starting(state).map_err(anyhow::Error::msg)?;
+    let _retry_reservation = RetryReservation { state };
     let mut retry_expired = false;
     let capture = {
         let mut st = lock_state(state)?;
@@ -647,7 +659,13 @@ pub async fn retry_transcription_impl(
     }
     show_pill(app, "processing");
 
-    let settings_store = store::settings_snapshot(app).map_err(anyhow::Error::msg)?;
+    let settings_store = match store::settings_snapshot(app) {
+        Ok(settings) => settings,
+        Err(error) => {
+            hide_pill(app);
+            return Err(anyhow::Error::msg(error));
+        }
+    };
     let mut cfg = store::load_pipeline_config(&settings_store);
 
     if let Err(message) = validate_transcription_chain(&cfg, None) {
@@ -660,6 +678,7 @@ pub async fn retry_transcription_impl(
 
     let Some((raw_unorm, api_used, alternate)) = run_transcription(app, &capture.audio, &cfg).await
     else {
+        hide_pill(app);
         anyhow::bail!("Retry transcription failed");
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
@@ -677,6 +696,7 @@ pub async fn retry_transcription_impl(
             "pipeline: retry transcription had no spoken content or matched a hallucination pattern, dropping raw=\"{}\"",
             preview_text(&raw, 60)
         );
+        hide_pill(app);
         anyhow::bail!("Recording was too quiet — nothing was transcribed");
     }
     let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) =
@@ -690,6 +710,7 @@ pub async fn retry_transcription_impl(
         )
         .await
     else {
+        hide_pill(app);
         anyhow::bail!("Retry cleanup failed");
     };
     let api_used = if alternate.is_none() || cleanup_api_used.is_empty() {
@@ -718,4 +739,14 @@ pub async fn retry_transcription_impl(
         },
     )
     .await
+}
+
+struct RetryReservation<'a> {
+    state: &'a SharedState,
+}
+
+impl Drop for RetryReservation<'_> {
+    fn drop(&mut self) {
+        state::cancel_starting_reservation(self.state);
+    }
 }

@@ -158,6 +158,10 @@ pub async fn stop_setup_try_recording(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
+    if pipeline::cancel_starting_reservation(state.inner()) {
+        pipeline::hide_pill(&app);
+        return Ok(());
+    }
     crate::core::hotkey::set_handless_active(false);
     tauri::async_runtime::spawn(pipeline::run_pipeline_event_only(
         app,
@@ -216,6 +220,7 @@ pub async fn start_calibration_monitoring(
 
 #[tauri::command]
 pub async fn stop_calibration_monitoring(
+    app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
     let taken = pipeline::take_recording_plain(state.inner());
@@ -226,6 +231,9 @@ pub async fn stop_calibration_monitoring(
                 crate::system::volume::release_mic(session_id);
             }
         });
+    }
+    if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
+        manager.set_recording_active(false);
     }
     Ok(())
 }
@@ -278,6 +286,7 @@ pub async fn stop_handless_mode(
     if has_session {
         tauri::async_runtime::spawn(pipeline::run_pipeline(app, state.inner().clone()));
     } else {
+        pipeline::cancel_starting_reservation(state.inner());
         crate::system::media_control::end_dictation_media_pause();
     }
     Ok(())
