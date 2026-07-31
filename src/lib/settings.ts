@@ -43,6 +43,7 @@ type SettingsValueMap = {
   exclusive_mic: boolean;
   pause_media_during_dictation: boolean;
   play_start_stop_sounds: boolean;
+  sound_effects_volume: number;
   mic_gain: number;
   setup_complete: boolean;
   force_setup_on_launch: boolean;

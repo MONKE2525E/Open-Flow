@@ -37,7 +37,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'keys',        label: 'API Keys',     icon: 'key',     group: 'Settings' },
   { id: 'models',      label: 'Models',       icon: 'command', group: 'Settings' },
   { id: 'privacy',     label: 'Privacy',      icon: 'lock',    group: 'Settings' },
-  { id: 'advanced',    label: 'Microphone',   icon: 'mic',     group: 'Settings' },
+  { id: 'advanced',    label: 'Audio',        icon: 'mic',     group: 'Settings' },
   { id: 'permissions', label: 'Permissions',  icon: 'shield',  group: 'Settings', macOnly: true },
   { id: 'developer',   label: 'Developer',    icon: 'command', group: 'Settings', devOnly: true },
   { id: 'about',       label: 'About',        icon: 'help',    group: 'Verenu' },

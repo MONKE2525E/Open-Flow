@@ -271,6 +271,10 @@ pub fn spawn_level_emitter(
 /// the settings store cannot be read).
 pub(crate) fn start_stop_sounds_enabled(app: &AppHandle) -> bool {
     store::settings_snapshot(app)
-        .map(|s| store::load_audio_config(&s).play_start_stop_sounds)
+        .map(|s| {
+            let config = store::load_audio_config(&s);
+            crate::media::sound::set_volume(config.sound_effects_volume);
+            config.sound_effects_volume > 0.0
+        })
         .unwrap_or(true)
 }

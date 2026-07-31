@@ -23,7 +23,7 @@ const { chromium } = require('playwright');
 const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
 
 const APP_NAV_LABELS = ['Home', 'Dictionary', 'Snippets', 'Style'];
-const SECTION_LABELS = ['General', 'App Mappings', 'API Keys', 'Models', 'Privacy', 'Microphone', 'About'];
+const SECTION_LABELS = ['General', 'App Mappings', 'API Keys', 'Models', 'Privacy', 'Audio', 'About'];
 
 const errors = [];
 const check = (ok, message) => { if (!ok) errors.push(message); };

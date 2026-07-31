@@ -51,6 +51,7 @@ pub const START_CUE_HANDSFREE_DELAY_MS: u64 = 220;
 static START_CUE_GEN: AtomicU64 = AtomicU64::new(0);
 static SOUND_TX: OnceLock<mpsc::Sender<SoundCommand>> = OnceLock::new();
 static VOLUME_SESSION: AtomicU64 = AtomicU64::new(0);
+static SOUND_EFFECTS_VOLUME: AtomicU64 = AtomicU64::new(1.0f32.to_bits() as u64);
 
 type AfterPlay = Box<dyn FnOnce() + Send + 'static>;
 
@@ -104,6 +105,11 @@ pub fn play(cue: SoundCue) {
     {
         log::debug!("sound cue failed: playback worker is unavailable");
     }
+}
+
+/// Set the master volume for future sound effects.
+pub fn set_volume(volume: f32) {
+    SOUND_EFFECTS_VOLUME.store(volume.clamp(0.0, 1.0).to_bits() as u64, Ordering::Relaxed);
 }
 
 /// Schedule the start cue after `delay_ms`. Claims a new generation, so any
@@ -273,7 +279,8 @@ fn play_with_cached_output(
         }
     };
 
-    sink.append(render(notes(cue)));
+    let volume = f32::from_bits(SOUND_EFFECTS_VOLUME.load(Ordering::Relaxed) as u32);
+    sink.append(render(notes(cue), volume));
     Ok(sink)
 }
 
@@ -407,11 +414,11 @@ fn notes(cue: SoundCue) -> &'static [Note] {
     }
 }
 
-fn render(notes: &[Note]) -> SamplesBuffer<f32> {
-    SamplesBuffer::new(1, SAMPLE_RATE, render_samples(notes))
+fn render(notes: &[Note], volume: f32) -> SamplesBuffer<f32> {
+    SamplesBuffer::new(1, SAMPLE_RATE, render_samples(notes, volume))
 }
 
-fn render_samples(notes: &[Note]) -> Vec<f32> {
+fn render_samples(notes: &[Note], volume: f32) -> Vec<f32> {
     let sr = SAMPLE_RATE as f32;
     let total_ms = notes
         .iter()
@@ -438,7 +445,7 @@ fn render_samples(notes: &[Note]) -> Vec<f32> {
             if freq > 18_000.0 {
                 continue; // skip inaudible/aliasing partials
             }
-            let amp = AMPLITUDE * note.gain * h.gain;
+            let amp = AMPLITUDE * note.gain * h.gain * volume;
             let h_decay = base_decay * h.decay_mult;
             let w = TAU * freq / sr;
             let decay_step = (-h_decay).exp();
@@ -501,12 +508,26 @@ mod tests {
         ] {
             let path = format!("{out_dir}/cue_{name}.wav");
             let mut writer = hound::WavWriter::create(&path, spec).expect("create wav");
-            for s in render_samples(notes(cue)) {
+            for s in render_samples(notes(cue), 1.0) {
                 let v = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                 writer.write_sample(v).expect("write sample");
             }
             writer.finalize().expect("finalize wav");
             eprintln!("wrote {path}");
         }
+    }
+
+    #[test]
+    fn render_volume_scales_generated_samples() {
+        let full = render_samples(notes(SoundCue::Start), 1.0);
+        let half = render_samples(notes(SoundCue::Start), 0.5);
+        let full_peak = full.iter().map(|sample| sample.abs()).fold(0.0, f32::max);
+        let half_peak = half.iter().map(|sample| sample.abs()).fold(0.0, f32::max);
+
+        assert!(full_peak > 0.0);
+        assert!((half_peak / full_peak - 0.5).abs() < 0.001);
+        assert!(render_samples(notes(SoundCue::Start), 0.0)
+            .iter()
+            .all(|sample| *sample == 0.0));
     }
 }
