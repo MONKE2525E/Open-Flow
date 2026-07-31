@@ -24,7 +24,7 @@ use std::sync::{
 };
 #[cfg(target_os = "windows")]
 use std::sync::atomic::Ordering;
-#[cfg(any(debug_assertions, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
