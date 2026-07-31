@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 const PROVIDER_STATUS_URL: &str = "https://api.verenu.com/v1/provider-status";
+const GLOBAL_MESSAGE_URL: &str = "https://api.verenu.com/v1/global-message";
 const HEALTH_URL: &str = "https://api.verenu.com/v1/health";
 
 // The shared client (api/client.rs) already caps every request at 120s, but
@@ -45,7 +46,43 @@ pub struct ProviderStatusAlert {
     pub details_url: String,
 }
 
-/// Keeps only the entries worth surfacing to the user: the backend must have
+#[derive(Debug, Deserialize)]
+struct GlobalMessageResponse {
+    #[serde(default)]
+    message: Option<GlobalMessage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalMessage {
+    pub message: String,
+    #[serde(default)]
+    pub show_to_users: bool,
+    #[serde(default)]
+    pub visible_until: Option<i64>,
+}
+
+fn filter_global_message(response: GlobalMessageResponse, now_ms: i64) -> Option<GlobalMessage> {
+    response.message.filter(|message| {
+        !message.message.trim().is_empty()
+            && message
+                .visible_until
+                .map(|until| normalize_timestamp_millis(until) > now_ms)
+                .unwrap_or(true)
+    })
+}
+
+fn normalize_timestamp_millis(timestamp: i64) -> i64 {
+    // The API historically used milliseconds, but accept Unix seconds too.
+    // Current millisecond timestamps are already above this threshold.
+    if timestamp.unsigned_abs() < 100_000_000_000 {
+        timestamp.saturating_mul(1_000)
+    } else {
+        timestamp
+    }
+}
+
+/// Keeps only provider entries worth surfacing to the user: the backend must have
 /// flagged them (`showToUsers`), the status must not be `operational` or
 /// `unknown` ("unknown" means the provider doesn't publish a
 /// machine-readable feed we can check — it is not a signal that something is
@@ -112,6 +149,26 @@ pub async fn fetch_raw() -> anyhow::Result<serde_json::Value> {
         .await?)
 }
 
+/// Fetches the global client notice. The API wraps the message in a top-level
+/// `message` object. Expiry is filtered here; the frontend applies the
+/// `showToUsers` visibility gate.
+pub async fn fetch_global_message() -> anyhow::Result<Option<GlobalMessage>> {
+    let response: GlobalMessageResponse = super::client::get()
+        .get(GLOBAL_MESSAGE_URL)
+        .header("User-Agent", "verenu")
+        .timeout(STATUS_REQUEST_TIMEOUT)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    Ok(filter_global_message(
+        response,
+        chrono::Utc::now().timestamp_millis(),
+    ))
+}
+
 /// Plain reachability check for `api.verenu.com` — no parsing beyond the
 /// HTTP status, since callers only need up/down.
 pub async fn check_health() -> bool {
@@ -128,7 +185,10 @@ pub async fn check_health() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{filter_alerts, ProviderStatusEntry, ProviderStatusResponse};
+    use super::{
+        filter_alerts, filter_global_message, normalize_timestamp_millis, GlobalMessage,
+        GlobalMessageResponse, ProviderStatusEntry, ProviderStatusResponse,
+    };
 
     fn entry(id: &str, status: &str, show_to_users: bool) -> ProviderStatusEntry {
         ProviderStatusEntry {
@@ -243,9 +303,71 @@ mod tests {
         ];
         let alerts = filter_alerts(
             providers,
-            &["groq".to_string(), "google".to_string(), "openai".to_string()],
+            &[
+                "groq".to_string(),
+                "google".to_string(),
+                "openai".to_string(),
+            ],
         );
         assert_eq!(alerts.len(), 1);
         assert_eq!(alerts[0].provider_id, "openai");
+    }
+
+    #[test]
+    fn global_message_requires_content_and_non_expired_timestamp() {
+        let message = GlobalMessage {
+            message: "hello".to_string(),
+            show_to_users: true,
+            visible_until: Some(2_000_000_000_000),
+        };
+        let response = GlobalMessageResponse {
+            message: Some(message.clone()),
+        };
+        assert_eq!(
+            filter_global_message(response, 1_999_000_000_000)
+                .unwrap()
+                .message,
+            "hello"
+        );
+
+        let hidden = GlobalMessageResponse {
+            message: Some(GlobalMessage {
+                show_to_users: false,
+                ..message.clone()
+            }),
+        };
+        assert_eq!(
+            filter_global_message(hidden, 1_999_000_000_000)
+                .unwrap()
+                .message,
+            "hello"
+        );
+
+        let expired = GlobalMessageResponse {
+            message: Some(GlobalMessage {
+                visible_until: Some(1_999),
+                ..message
+            }),
+        };
+        assert!(filter_global_message(expired, 2_000_000_000_000).is_none());
+    }
+
+    #[test]
+    fn global_message_accepts_second_based_expiry_timestamps() {
+        let response = || GlobalMessageResponse {
+            message: Some(GlobalMessage {
+                message: "hello".to_string(),
+                show_to_users: true,
+                visible_until: Some(2_000_000_002),
+            }),
+        };
+
+        assert!(filter_global_message(response(), 2_000_000_001_999).is_some());
+        assert!(filter_global_message(response(), 2_000_000_002_000).is_none());
+    }
+
+    #[test]
+    fn timestamp_normalization_handles_i64_min_without_panicking() {
+        assert_eq!(normalize_timestamp_millis(i64::MIN), i64::MIN);
     }
 }
