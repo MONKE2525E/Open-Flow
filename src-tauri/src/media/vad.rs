@@ -70,16 +70,16 @@ fn staged_model_path() -> anyhow::Result<std::path::PathBuf> {
         return Ok(path.clone());
     }
 
-    let unique_suffix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    let path = std::env::temp_dir().join(format!(
-        "verenu_silero_vad_v4-{}-{unique_suffix}.onnx",
-        std::process::id()
-    ));
+    let path = std::env::temp_dir().join("verenu_silero_vad_v4.onnx");
     if !staged_model_matches(&path) {
-        let temp_path = path.with_extension("onnx.tmp");
+        let unique_suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let temp_path = std::env::temp_dir().join(format!(
+            "verenu_silero_vad_v4-{}-{unique_suffix}.onnx.tmp",
+            std::process::id()
+        ));
         std::fs::write(&temp_path, MODEL_BYTES)
             .map_err(|e| anyhow::anyhow!("failed to stage Silero VAD model: {e}"))?;
         if !staged_model_matches(&temp_path) {
@@ -88,8 +88,22 @@ fn staged_model_path() -> anyhow::Result<std::path::PathBuf> {
                 "staged Silero VAD model failed integrity verification"
             ));
         }
-        std::fs::rename(&temp_path, &path)
-            .map_err(|e| anyhow::anyhow!("failed to publish staged Silero VAD model: {e}"))?;
+        if staged_model_matches(&path) {
+            let _ = std::fs::remove_file(&temp_path);
+        } else {
+            if path.exists() {
+                std::fs::remove_file(&path).map_err(|e| {
+                    anyhow::anyhow!("failed to replace staged Silero VAD model: {e}")
+                })?;
+            }
+            std::fs::rename(&temp_path, &path)
+                .map_err(|e| anyhow::anyhow!("failed to publish staged Silero VAD model: {e}"))?;
+        }
+        if !staged_model_matches(&path) {
+            return Err(anyhow::anyhow!(
+                "published Silero VAD model failed integrity verification"
+            ));
+        }
     }
     let _ = PATH.set(path.clone());
     Ok(path)

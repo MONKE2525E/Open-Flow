@@ -48,7 +48,11 @@
   function handleAction(event: MouseEvent) {
     event.stopPropagation();
     if (cancelable) onCancelDownload?.();
-    else if (manageable) onDeleteModels?.();
+    else if (manageable) {
+      if (globalThis.confirm(`Delete downloaded models for ${preset.name}?`)) {
+        onDeleteModels?.();
+      }
+    }
     else onSelect();
   }
 </script>
@@ -95,7 +99,7 @@
           class:is-download={needsDownload}
           class:hover-mode={hoverMode}
           type="button"
-          tabindex={hoverMode ? 0 : -1}
+          tabindex={hoverMode || needsDownload ? 0 : -1}
           aria-label={hoverMode ? `${defaultLabel} - ${hoverLabel}` : defaultLabel}
           onclick={handleAction}
         >

@@ -624,6 +624,8 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
 
         if RESET_REQUESTED.swap(false, Ordering::SeqCst) {
             CHORD_MACHINE.with(|m| m.borrow_mut().reset_gesture_state());
+            ESCAPE_CANCELLED.store(false, Ordering::SeqCst);
+            ESCAPE_KEY_DOWN.store(false, Ordering::SeqCst);
         }
 
         if (is_key1 || is_key2) && (is_down || is_up) {
@@ -635,11 +637,11 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             let edge = if is_down { KeyEdge::Down } else { KeyEdge::Up };
             let now = GetTickCount64();
 
-            let (outcome, key2_was_chord) = CHORD_MACHINE.with(|m| {
+            let (outcome, key2_was_passed_through) = CHORD_MACHINE.with(|m| {
                 let mut machine = m.borrow_mut();
-                let key2_was_chord = key == ChordKey::Key2 && machine.key2_was_chord;
+                let key2_was_passed_through = key == ChordKey::Key1 && machine.key2_passed_through;
                 let outcome = machine.on_key_event(key, edge, now);
-                (outcome, key2_was_chord)
+                (outcome, key2_was_passed_through)
             });
             let mut action = outcome.action;
             let mut disposition = outcome.disposition;
@@ -654,27 +656,25 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 action = None;
             }
 
-            // Key1's own up-event stays suppressed only when it's a
-            // menu-trigger VK (Alt/Win family) - preserves the existing
-            // asymmetry where a bare Ctrl-up (the default key1) is allowed
-            // through even after a chord, while Win/Alt-up never is.
+            if key == ChordKey::Key1
+                && edge == KeyEdge::Down
+                && disposition == KeyDisposition::Suppress
+                && key2_was_passed_through
+                && is_menu_trigger_vk(k2)
+            {
+                // Key2's menu-trigger down edge was already passed through
+                // before this chord formed. Pass the second key down too so
+                // the OS sees a real modifier chord and does not interpret a
+                // bare Win/Alt release as a Start-menu/menu activation.
+                disposition = KeyDisposition::Passthrough;
+            }
+
             if key == ChordKey::Key1
                 && edge == KeyEdge::Up
                 && disposition == KeyDisposition::Suppress
+                && !is_menu_trigger_vk(k1)
             {
-                let is_menu_trigger = is_menu_trigger_vk(k1);
-                if !is_menu_trigger {
-                    disposition = KeyDisposition::Passthrough;
-                }
-            }
-
-            if key == ChordKey::Key2
-                && edge == KeyEdge::Up
-                && disposition == KeyDisposition::Passthrough
-                && key2_was_chord
-                && is_menu_trigger_vk(k2)
-            {
-                disposition = KeyDisposition::Suppress;
+                disposition = KeyDisposition::Passthrough;
             }
 
             match action {

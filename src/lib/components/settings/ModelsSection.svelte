@@ -119,12 +119,17 @@
   }
 
   async function setCleanupEnabled(value: boolean) {
+    const previousValue = cleanupEnabled;
+    const previousStoreValue = appStore.cleanupEnabled;
     cleanupEnabled = value;
     appStore.cleanupEnabled = value;
     try {
       await saveSetting('cleanup_enabled', value);
     } catch (err) {
+      cleanupEnabled = previousValue;
+      appStore.cleanupEnabled = previousStoreValue;
       console.error('save cleanup_enabled from preset failed', err);
+      throw err;
     }
   }
 
