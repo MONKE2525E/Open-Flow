@@ -40,7 +40,7 @@ export async function refreshLocalState() {
   }
 }
 
-export async function downloadLocalModel(modelIdValue: string) {
+export async function downloadLocalModel(modelIdValue: string): Promise<boolean> {
   try {
     // Ask for notification permission now (contextual) so the backend can raise
     // a "model ready" notification when this finishes, even if the window is hidden.
@@ -48,10 +48,11 @@ export async function downloadLocalModel(modelIdValue: string) {
     await invoke('download_local_stt_model', { modelId: modelIdValue });
     await refreshLocalModels();
     await refreshLocalState();
+    return true;
   } catch (err) {
     console.error('download local model failed', err);
     emit('verenu:error', `Failed to start model download: ${err instanceof Error ? err.message : String(err)}`);
-    throw err;
+    return false;
   }
 }
 

@@ -192,6 +192,10 @@ static KEY2: AtomicU32 = AtomicU32::new(91); // VK_LWIN / Windows
 const CHORD_TAP_MAX_HOLD_MS: u64 = 200;
 const CHORD_DOUBLE_TAP_WINDOW_MS: u64 = 300;
 
+fn is_menu_trigger_vk(vk: u32) -> bool {
+    matches!(vk, 164 | 165 | 18 | 91 | 92)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChordKey {
     Key1,
@@ -298,6 +302,8 @@ impl ChordStateMachine {
         self.chord_down = false;
         self.chord_first_down_ms = 0;
         self.tap = TapState::None;
+        self.space_down = false;
+        self.handless_from_chord = false;
     }
 
     fn on_key_event(&mut self, key: ChordKey, edge: KeyEdge, now_ms: u64) -> ChordOutcome {
@@ -651,10 +657,18 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 && edge == KeyEdge::Up
                 && disposition == KeyDisposition::Suppress
             {
-                let is_menu_trigger = k1 == 164 || k1 == 165 || k1 == 18 || k1 == 91 || k1 == 92;
+                let is_menu_trigger = is_menu_trigger_vk(k1);
                 if !is_menu_trigger {
                     disposition = KeyDisposition::Passthrough;
                 }
+            }
+
+            if key == ChordKey::Key2
+                && edge == KeyEdge::Up
+                && disposition == KeyDisposition::Passthrough
+                && is_menu_trigger_vk(k2)
+            {
+                disposition = KeyDisposition::Suppress;
             }
 
             match action {
@@ -947,6 +961,22 @@ mod chord_tests {
     #[test]
     fn space_outside_active_chord_passes_through() {
         let mut m = fresh();
+        let down = m.on_space_event(KeyEdge::Down);
+        let up = m.on_space_event(KeyEdge::Up);
+        assert_eq!(down.disposition, KeyDisposition::Passthrough);
+        assert_eq!(up.disposition, KeyDisposition::Passthrough);
+    }
+
+    #[test]
+    fn reset_gesture_state_clears_space_conversion_state() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 5);
+        let trigger = m.on_space_event(KeyEdge::Down);
+        assert_eq!(trigger.action, Some(ChordAction::FireHandless));
+
+        m.reset_gesture_state();
+
         let down = m.on_space_event(KeyEdge::Down);
         let up = m.on_space_event(KeyEdge::Up);
         assert_eq!(down.disposition, KeyDisposition::Passthrough);

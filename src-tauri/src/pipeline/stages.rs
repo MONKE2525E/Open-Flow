@@ -377,7 +377,7 @@ pub(super) fn validate_captured_audio(
             "Audio too quiet — check your mic"
         };
         log::debug!(
-            "pipeline: rejected — duration={}ms rms={rms:.4} min_rms={min_rms:.4}",
+            "pipeline: rejected — duration={}ms rms={rms:.4} gate_rms={gate_rms:.4} min_rms={min_rms:.4}",
             audio.duration_ms
         );
         reject_with_pill(app, msg);

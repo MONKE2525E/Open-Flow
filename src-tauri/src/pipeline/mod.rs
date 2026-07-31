@@ -213,13 +213,14 @@ async fn wait_for_cancel(rx: &mut tokio::sync::watch::Receiver<bool>) {
 /// so the sample buffers join directly. RMS is recomputed from the merged
 /// samples rather than reusing either fragment's own value, since the two
 /// aren't otherwise combinable.
-fn merge_prepend_audio(prev: CapturedAudio, next: CapturedAudio) -> (CapturedAudio, f32, f32) {
+fn merge_prepend_audio(
+    prev: CapturedAudio,
+    next: CapturedAudio,
+) -> anyhow::Result<(CapturedAudio, f32, f32)> {
     let mut samples = (*prev.samples_16k).clone();
     samples.extend_from_slice(&next.samples_16k);
-    let wav = audio::encode_wav(&samples, 16_000, 1).unwrap_or_else(|e| {
-        log::error!("pipeline: failed to re-encode merged (prepend) audio: {e}");
-        Vec::new()
-    });
+    let wav = audio::encode_wav(&samples, 16_000, 1)
+        .map_err(|e| anyhow::anyhow!("failed to re-encode merged (prepend) audio: {e}"))?;
     let merged_rms = audio::rms_f32(&samples);
     let duration_ms = prev.duration_ms + next.duration_ms;
     let merged = CapturedAudio {
@@ -228,7 +229,7 @@ fn merge_prepend_audio(prev: CapturedAudio, next: CapturedAudio) -> (CapturedAud
         sample_rate: 16_000,
         duration_ms,
     };
-    (merged, merged_rms, merged_rms)
+    Ok((merged, merged_rms, merged_rms))
 }
 
 async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_only: bool) {
@@ -288,7 +289,15 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         return;
     };
     if let Some(prev) = prepend_audio {
-        let (merged, merged_rms, merged_raw_rms) = merge_prepend_audio(prev, captured_audio);
+        let (merged, merged_rms, merged_raw_rms) = match merge_prepend_audio(prev, captured_audio) {
+            Ok(merged) => merged,
+            Err(err) => {
+                log::error!("pipeline: {err}");
+                reject_with_pill(&app, "Failed to prepare recording audio");
+                state::leave_stopping_if_owned(&state, generation);
+                return;
+            }
+        };
         captured_audio = merged;
         rms = merged_rms;
         raw_rms = merged_raw_rms;

@@ -44,7 +44,13 @@ pub async fn start_input_recording(
 
     let target = capture_in_app_target(&app);
     {
-        let mut st = lock_state(&state)?;
+        let mut st = match lock_state(&state) {
+            Ok(st) => st,
+            Err(err) => {
+                pipeline::release_starting_reservation(state.inner());
+                return Err(err);
+            }
+        };
         st.target = target;
         st.pill_placement_stale = true;
     }
@@ -67,7 +73,13 @@ pub async fn start_input_recording(
     })
     .await;
 
-    let start_result = start_result.map_err(|e| format!("Recording task panicked: {e}"))?;
+    let start_result = match start_result {
+        Ok(result) => result,
+        Err(e) => {
+            pipeline::release_starting_reservation(state.inner());
+            return Err(format!("Recording task panicked: {e}"));
+        }
+    };
 
     match start_result {
         Ok(()) => Ok(()),
@@ -89,7 +101,13 @@ pub async fn start_setup_try_recording(
 
     let target = capture_in_app_target(&app);
     {
-        let mut st = lock_state(&state)?;
+        let mut st = match lock_state(&state) {
+            Ok(st) => st,
+            Err(err) => {
+                pipeline::release_starting_reservation(state.inner());
+                return Err(err);
+            }
+        };
         st.target = target;
         st.pill_placement_stale = true;
     }
@@ -116,7 +134,13 @@ pub async fn start_setup_try_recording(
     })
     .await;
 
-    let start_result = start_result.map_err(|e| format!("Recording task panicked: {e}"))?;
+    let start_result = match start_result {
+        Ok(result) => result,
+        Err(e) => {
+            pipeline::release_starting_reservation(state.inner());
+            return Err(format!("Recording task panicked: {e}"));
+        }
+    };
 
     match start_result {
         Ok(()) => Ok(()),
@@ -151,7 +175,13 @@ pub async fn start_calibration_monitoring(
 
     let target = capture_in_app_target(&app);
     {
-        let mut st = lock_state(&state)?;
+        let mut st = match lock_state(&state) {
+            Ok(st) => st,
+            Err(err) => {
+                pipeline::release_starting_reservation(state.inner());
+                return Err(err);
+            }
+        };
         st.target = target;
         st.pill_placement_stale = true;
     }
@@ -174,7 +204,13 @@ pub async fn start_calibration_monitoring(
     })
     .await;
 
-    let start_result = start_result.map_err(|e| format!("Calibration task panicked: {e}"))?;
+    let start_result = match start_result {
+        Ok(result) => result,
+        Err(e) => {
+            pipeline::release_starting_reservation(state.inner());
+            return Err(format!("Calibration task panicked: {e}"));
+        }
+    };
     start_result.map_err(|e| e.to_string())
 }
 

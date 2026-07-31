@@ -88,7 +88,7 @@ fn staged_model_matches(path: &std::path::Path) -> bool {
     let Ok(metadata) = std::fs::metadata(path) else {
         return false;
     };
-    if metadata.len() as usize != MODEL_BYTES.len() {
+    if metadata.len() != MODEL_BYTES.len() as u64 {
         return false;
     }
     let Ok(bytes) = std::fs::read(path) else {

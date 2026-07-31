@@ -62,9 +62,16 @@
   let fadeTop = $state(false);
   let fadeBottom = $state(false);
   const setFades: ScrollEdgeCallback = (top, bottom, node) => {
-    if (node !== settingsPanelEl) return;
-    fadeTop = top;
-    fadeBottom = bottom;
+    const apply = () => {
+      if (node !== settingsPanelEl) return;
+      fadeTop = top;
+      fadeBottom = bottom;
+    };
+    // Svelte actions run before bind:this is assigned on initial mount. Defer
+    // only that first callback so the active panel can claim the state, while
+    // callbacks from an outgoing keyed panel remain ignored.
+    if (node !== settingsPanelEl) queueMicrotask(apply);
+    else apply();
   };
 
   $effect(() => {

@@ -142,7 +142,15 @@ pub fn start_recording_session_ex(
                         log::warn!(
                             "start_recording_session_ex: lifecycle was not Starting when installing Recording"
                         );
-                        None
+                        drop(st);
+                        let _ = session.stop();
+                        if let Some(session_id) = exclusive_mic_session_id {
+                            crate::system::volume::release_mic(session_id);
+                        }
+                        return Err(
+                            "Recording start reservation was lost before the microphone opened"
+                                .to_string(),
+                        );
                     }
                 };
                 st.lifecycle = DictationLifecycle::Recording {
@@ -202,7 +210,7 @@ pub fn start_recording_session_ex(
 /// Releases a `Starting` reservation back to `Idle` when the mic failed to
 /// open — the carried prepend audio (if any) is simply dropped, not
 /// retained anywhere a later, unrelated dictation could inherit it.
-fn release_starting_reservation(state: &SharedState) {
+pub(crate) fn release_starting_reservation(state: &SharedState) {
     let mut st = match state.lock() {
         Ok(st) => st,
         Err(poisoned) => {

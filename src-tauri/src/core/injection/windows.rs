@@ -383,132 +383,129 @@ pub(super) async fn inject_text(
     // has been restored (Rust drops in reverse declaration order).
     let _injection_guard = super::injection_lock().lock().await;
 
-    unsafe {
-        let saved = save_clipboard_all();
-        let mut restore_guard = ClipboardRestoreGuard::new(saved);
+    let saved = unsafe { save_clipboard_all() };
+    let mut restore_guard = ClipboardRestoreGuard::new(saved);
 
-        if target_hwnd != 0 {
-            let _ = SetForegroundWindow(HWND(target_hwnd as *mut core::ffi::c_void));
-            tokio::time::sleep(tokio::time::Duration::from_millis(REFOCUS_SETTLE_MS)).await;
-        }
-
-        let ki = |vk, flags: u32| INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: vk,
-                    wScan: 0,
-                    dwFlags: KEYBD_EVENT_FLAGS(flags),
-                    time: 0,
-                    dwExtraInfo: 0,
-                },
-            },
-        };
-
-        let mut injection_probe = if contextual_caps || auto_spacing {
-            crate::core::context_probe::read_injection_context_probe().await
-        } else {
-            unavailable_injection_probe()
-        };
-        if (contextual_caps || auto_spacing) && injection_probe.source.allows_history_fallback() {
-            if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
-                injection_probe = history_probe;
-            }
-        }
-        // A caret-local read that says "mid-sentence" can be wrong in Chromium /
-        // Electron controls that report phantom text before the caret in an empty
-        // box. Verify against what's actually selectable before lowercasing.
-        if caret_local_needs_sniff_verification(
-            contextual_caps,
-            injection_probe.source,
-            injection_probe.context,
-            profile,
-        ) {
-            if let Some(mut sniff) = windows_clipboard_sniff_context(target_hwnd).await {
-                // Spacing must follow the reliable UIA tail ("is there a visible
-                // char before the caret?"), not the sniff: in Chromium/Electron
-                // editors synthetic Ctrl+C is a no-op, so the sniff always reads
-                // empty there. Let the sniff drive only the capitalization
-                // decision, keeping UIA's tail so appends still get a space.
-                sniff.context_tail = injection_probe.context_tail.clone();
-                injection_probe = sniff;
-            }
-        }
-        let (adjusted, context_kind, case_decision) = apply_probe_adjustments(
-            text,
-            contextual_caps,
-            auto_spacing,
-            profile,
-            &injection_probe,
-        );
-
-        let text_to_inject = adjusted.as_str();
-        let wide: Vec<u16> = text_to_inject
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        let mut clipboard_written = false;
-        for attempt in 0..3u32 {
-            if write_clipboard_unicode(&wide).is_ok() {
-                clipboard_written = true;
-                break;
-            }
-            if attempt < 2 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_WRITE_RETRY_MS))
-                    .await;
-            }
-        }
-        if !clipboard_written {
-            // Put the user's clipboard back — a sniff may have left its sentinel.
-            restore_guard.restore_now();
-            return Err(anyhow::anyhow!(
-                "OpenClipboard failed after 3 attempts - clipboard held by another process"
-            ));
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(
-            CLIPBOARD_WRITE_SETTLE_MS,
-        ))
-        .await;
-
-        let clear = [
-            ki(VK_CONTROL, 0),
-            ki(VK_LMENU, KEYEVENTF_KEYUP.0),
-            ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
-        ];
-        SendInput(&clear, std::mem::size_of::<INPUT>() as i32);
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(MODIFIER_GAP_MS)).await;
-
-        let paste = [
-            ki(VK_CONTROL, 0),
-            ki(VK_V, 0),
-            ki(VK_V, KEYEVENTF_KEYUP.0),
-            ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
-        ];
-        SendInput(&paste, std::mem::size_of::<INPUT>() as i32);
-        tokio::time::sleep(tokio::time::Duration::from_millis(PASTE_SETTLE_MS)).await;
-
-        restore_guard.restore_now();
-
-        if target_hwnd != 0 && !adjusted.is_empty() {
-            if let Ok(mut guard) = last_injection().lock() {
-                let mut tail = adjusted.clone();
-                trim_tail_to_limit(&mut tail);
-                *guard = CursorContextState::Known {
-                    hwnd: target_hwnd,
-                    tail,
-                    instant: Instant::now(),
-                };
-            }
-        }
-
-        Ok(InjectionOutcome {
-            text: adjusted,
-            context_state: context_kind.as_str(),
-            case_decision: case_decision.as_str(),
-            probe_source: injection_probe.source.as_str(),
-            selection_state: injection_probe.selection_state.as_str(),
-        })
+    if target_hwnd != 0 {
+        let _ = unsafe { SetForegroundWindow(HWND(target_hwnd as *mut core::ffi::c_void)) };
+        tokio::time::sleep(tokio::time::Duration::from_millis(REFOCUS_SETTLE_MS)).await;
     }
+
+    let ki = |vk, flags: u32| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(flags),
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+
+    let mut injection_probe = if contextual_caps || auto_spacing {
+        crate::core::context_probe::read_injection_context_probe().await
+    } else {
+        unavailable_injection_probe()
+    };
+    if (contextual_caps || auto_spacing) && injection_probe.source.allows_history_fallback() {
+        if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {
+            injection_probe = history_probe;
+        }
+    }
+    // A caret-local read that says "mid-sentence" can be wrong in Chromium /
+    // Electron controls that report phantom text before the caret in an empty
+    // box. Verify against what's actually selectable before lowercasing.
+    if caret_local_needs_sniff_verification(
+        contextual_caps,
+        injection_probe.source,
+        injection_probe.context,
+        profile,
+    ) {
+        if let Some(mut sniff) = windows_clipboard_sniff_context(target_hwnd).await {
+            // Spacing must follow the reliable UIA tail ("is there a visible
+            // char before the caret?"), not the sniff: in Chromium/Electron
+            // editors synthetic Ctrl+C is a no-op, so the sniff always reads
+            // empty there. Let the sniff drive only the capitalization
+            // decision, keeping UIA's tail so appends still get a space.
+            sniff.context_tail = injection_probe.context_tail.clone();
+            injection_probe = sniff;
+        }
+    }
+    let (adjusted, context_kind, case_decision) = apply_probe_adjustments(
+        text,
+        contextual_caps,
+        auto_spacing,
+        profile,
+        &injection_probe,
+    );
+
+    let text_to_inject = adjusted.as_str();
+    let wide: Vec<u16> = text_to_inject
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut clipboard_written = false;
+    for attempt in 0..3u32 {
+        if unsafe { write_clipboard_unicode(&wide) }.is_ok() {
+            clipboard_written = true;
+            break;
+        }
+        if attempt < 2 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(CLIPBOARD_WRITE_RETRY_MS)).await;
+        }
+    }
+    if !clipboard_written {
+        // Put the user's clipboard back — a sniff may have left its sentinel.
+        restore_guard.restore_now();
+        return Err(anyhow::anyhow!(
+            "OpenClipboard failed after 3 attempts - clipboard held by another process"
+        ));
+    }
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(
+        CLIPBOARD_WRITE_SETTLE_MS,
+    ))
+    .await;
+
+    let clear = [
+        ki(VK_CONTROL, 0),
+        ki(VK_LMENU, KEYEVENTF_KEYUP.0),
+        ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
+    ];
+    unsafe { SendInput(&clear, std::mem::size_of::<INPUT>() as i32) };
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(MODIFIER_GAP_MS)).await;
+
+    let paste = [
+        ki(VK_CONTROL, 0),
+        ki(VK_V, 0),
+        ki(VK_V, KEYEVENTF_KEYUP.0),
+        ki(VK_CONTROL, KEYEVENTF_KEYUP.0),
+    ];
+    unsafe { SendInput(&paste, std::mem::size_of::<INPUT>() as i32) };
+    tokio::time::sleep(tokio::time::Duration::from_millis(PASTE_SETTLE_MS)).await;
+
+    restore_guard.restore_now();
+
+    if target_hwnd != 0 && !adjusted.is_empty() {
+        if let Ok(mut guard) = last_injection().lock() {
+            let mut tail = adjusted.clone();
+            trim_tail_to_limit(&mut tail);
+            *guard = CursorContextState::Known {
+                hwnd: target_hwnd,
+                tail,
+                instant: Instant::now(),
+            };
+        }
+    }
+
+    Ok(InjectionOutcome {
+        text: adjusted,
+        context_state: context_kind.as_str(),
+        case_decision: case_decision.as_str(),
+        probe_source: injection_probe.source.as_str(),
+        selection_state: injection_probe.selection_state.as_str(),
+    })
 }

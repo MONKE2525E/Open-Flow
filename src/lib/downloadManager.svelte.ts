@@ -139,15 +139,17 @@ export function startDownloadManagerListeners(): () => void {
   }
 
   (async () => {
-    await register(listen<{ model_id?: string }>('local-stt-model-download-complete', (event) => {
+    await Promise.all([
+      register(listen<{ model_id?: string }>('local-stt-model-download-complete', (event) => {
         if (event.payload?.model_id) noteCompleted(`stt:${event.payload.model_id}`, sttName(event.payload.model_id));
-      }));
-    await register(listen<{ model_id?: string }>('local-llm-model-download-complete', (event) => {
+      })),
+      register(listen<{ model_id?: string }>('local-llm-model-download-complete', (event) => {
         if (event.payload?.model_id) noteCompleted(`llm:${event.payload.model_id}`, llmName(event.payload.model_id));
-      }));
-    await register(listen('local-llm-runtime-download-complete', () => {
+      })),
+      register(listen('local-llm-runtime-download-complete', () => {
         noteCompleted('runtime:llm', 'Local cleanup runtime');
-      }));
+      })),
+    ]);
   })().catch((err) => {
     if (cancelled || session !== listenerSession) return;
     console.error('download manager listeners failed', err);

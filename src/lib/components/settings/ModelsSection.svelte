@@ -86,6 +86,7 @@
   let pendingPreset = $state<Preset | null>(null);
   let pendingPresetDownloads = $state<RequiredLocalModel[]>([]);
   let pendingPresetDownloadStarted = $state(false);
+  let pendingPresetRequestsSettled = $state(0);
 
   const activeConfig = $derived<ActiveConfig>({
     transcriptionDefaultModel,
@@ -114,6 +115,7 @@
     pendingPreset = null;
     pendingPresetDownloads = [];
     pendingPresetDownloadStarted = false;
+    pendingPresetRequestsSettled = 0;
   }
 
   async function setCleanupEnabled(value: boolean) {
@@ -143,7 +145,7 @@
     if (!target) return;
 
     const missing = target.requiredLocalModels.filter(
-      (model) => !installedLocal[model.task].includes(model.id),
+      (model) => !installedLocal[model.task]?.includes(model.id),
     );
     if (missing.length > 0) {
       // Kick off the downloads and defer activation until they land (see the
@@ -151,23 +153,50 @@
       pendingPreset = preset;
       pendingPresetDownloads = missing;
       pendingPresetDownloadStarted = false;
+      pendingPresetRequestsSettled = 0;
       for (const model of missing) {
         if (model.task === 'transcription') {
-          downloadLocalModel(model.id).catch((err) => {
-            if (pendingPreset?.id === preset.id) clearPendingPreset();
-            console.error('preset stt download failed', err);
-          });
+          downloadLocalModel(model.id)
+            .then((started) => {
+              if (pendingPreset?.id !== preset.id) return;
+              if (!started) {
+                clearPendingPreset();
+              } else {
+                pendingPresetRequestsSettled += 1;
+              }
+            })
+            .catch((err) => {
+              if (pendingPreset?.id === preset.id) clearPendingPreset();
+              console.error('preset stt download failed', err);
+            });
         } else {
-          downloadLocalLlmModel(model.id).catch((err) => {
-            if (pendingPreset?.id === preset.id) clearPendingPreset();
-            console.error('preset llm download failed', err);
-          });
+          downloadLocalLlmModel(model.id)
+            .then((started) => {
+              if (pendingPreset?.id !== preset.id) return;
+              if (!started) {
+                clearPendingPreset();
+              } else {
+                pendingPresetRequestsSettled += 1;
+              }
+            })
+            .catch((err) => {
+              if (pendingPreset?.id === preset.id) clearPendingPreset();
+              console.error('preset llm download failed', err);
+            });
         }
       }
       return;
     }
 
     activatePreset(target);
+  }
+
+  function isExpectedModelDownloading(model: RequiredLocalModel): boolean {
+    if (downloadingLocal[model.task] === model.id) return true;
+    if (model.task === 'transcription') {
+      return localSttStore.models.some((entry) => entry.id === model.id && entry.is_downloading);
+    }
+    return localLlmStore.models.some((entry) => entry.id === model.id && entry.is_downloading);
   }
 
   function openApiKeysSection() {
@@ -192,7 +221,7 @@
     const target = preset.target;
     if (!target) return;
     for (const model of target.requiredLocalModels) {
-      if (!installedLocal[model.task].includes(model.id)) continue;
+      if (!installedLocal[model.task]?.includes(model.id)) continue;
       if (model.task === 'transcription') {
         handleDeleteTranscriptionModel(model.id).catch((err) => console.error('delete preset stt model failed', err));
       } else {
@@ -212,11 +241,14 @@
     }
 
     const isDownloadingExpectedModel = pendingPresetDownloads.some(
-      (model) => downloadingLocal[model.task] === model.id,
+      isExpectedModelDownloading,
     );
     if (isDownloadingExpectedModel) {
       pendingPresetDownloadStarted = true;
-    } else if (pendingPresetDownloadStarted) {
+    } else if (
+      pendingPresetDownloadStarted
+      && pendingPresetRequestsSettled >= pendingPresetDownloads.length
+    ) {
       // A failure or cancellation can leave the preset incomplete without
       // passing through the explicit cancel button. Do not keep a stale
       // pending preset that could activate after an unrelated later download.
