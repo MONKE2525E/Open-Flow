@@ -1,11 +1,18 @@
 <script lang="ts">
   import type { ProviderStatusAlert } from '../../stores';
+  import type { ProviderId } from '../../settings';
   import { getProviderLogo } from '../../setup/ProviderLogos';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
 
   let { alerts }: { alerts: ProviderStatusAlert[] } = $props();
+
+  function providerLogo(alert: ProviderStatusAlert): string | null {
+    const id = alert.providerId.toLowerCase();
+    if (!['groq', 'openai', 'google', 'assemblyai', 'local'].includes(id)) return null;
+    return getProviderLogo(id as ProviderId);
+  }
 
   async function openDetails(url: string) {
     if (!url.startsWith('https://') && !url.startsWith('http://')) {
@@ -29,7 +36,9 @@
   >
     {#each alerts as alert, i (alert.providerId + '-' + i)}
       <div class="status-row">
-        <span class="provider-logo" aria-hidden="true">{@html getProviderLogo(alert.providerId)}</span>
+        {#if providerLogo(alert)}
+          <span class="provider-logo" aria-hidden="true">{@html providerLogo(alert) ?? ''}</span>
+        {/if}
         <span class="status-text"><strong>{alert.providerName}</strong> {alert.message}</span>
         {#if alert.detailsUrl}
           <button class="status-link" onclick={() => openDetails(alert.detailsUrl)}>Check status</button>
