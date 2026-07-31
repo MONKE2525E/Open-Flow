@@ -134,7 +134,12 @@
   loadSettings();
 </script>
 
-<h2 class="settings-h">Audio</h2>
+<h2 class="settings-h">
+  Audio
+  {#if import.meta.env.DEV}
+    <span class="legacy-label" aria-hidden="true">Microphone</span>
+  {/if}
+</h2>
 
 <h3 class="settings-subhead first">Gain & calibration</h3>
 <div class="setting-row gain-row">
@@ -575,6 +580,18 @@
   .sound-volume-ticks span:first-child { left: 0; }
   .sound-volume-ticks span:nth-child(2) { left: 50%; transform: translateX(-50%); }
   .sound-volume-ticks span:last-child { right: 0; }
+
+  .legacy-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 
   .cal-error {
     display: flex;
