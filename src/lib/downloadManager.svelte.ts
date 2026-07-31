@@ -153,6 +153,8 @@ export function startDownloadManagerListeners(): () => void {
   })().catch((err) => {
     if (cancelled || session !== listenerSession) return;
     console.error('download manager listeners failed', err);
+    cancelled = true;
+    listenerSession += 1;
     for (const unlisten of unlisteners) unlisten();
     unlisteners.length = 0;
     started = false;

@@ -95,6 +95,7 @@
           class:is-download={needsDownload}
           class:hover-mode={hoverMode}
           type="button"
+          tabindex={hoverMode ? 0 : -1}
           aria-label={hoverMode ? `${defaultLabel} - ${hoverLabel}` : defaultLabel}
           onclick={handleAction}
         >

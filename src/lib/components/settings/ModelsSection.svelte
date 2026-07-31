@@ -208,7 +208,7 @@
     if (!target) return;
     if (pendingPreset?.id === preset.id) clearPendingPreset();
     for (const model of target.requiredLocalModels) {
-      if (downloadingLocal[model.task] !== model.id) continue;
+      if (!isExpectedModelDownloading(model)) continue;
       if (model.task === 'transcription') {
         cancelLocalModelDownload(model.id).catch((err) => console.error('cancel preset stt download failed', err));
       } else {

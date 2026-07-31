@@ -216,6 +216,7 @@ async fn wait_for_cancel(rx: &mut tokio::sync::watch::Receiver<bool>) {
 fn merge_prepend_audio(
     prev: CapturedAudio,
     next: CapturedAudio,
+    active_gain: f32,
 ) -> anyhow::Result<(CapturedAudio, f32, f32)> {
     let mut samples = (*prev.samples_16k).clone();
     samples.extend_from_slice(&next.samples_16k);
@@ -229,7 +230,12 @@ fn merge_prepend_audio(
         sample_rate: 16_000,
         duration_ms,
     };
-    Ok((merged, merged_rms, merged_rms))
+    let merged_raw_rms = if active_gain > 0.0 {
+        merged_rms / active_gain
+    } else {
+        merged_rms
+    };
+    Ok((merged, merged_rms, merged_raw_rms))
 }
 
 async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_only: bool) {
@@ -289,15 +295,16 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         return;
     };
     if let Some(prev) = prepend_audio {
-        let (merged, merged_rms, merged_raw_rms) = match merge_prepend_audio(prev, captured_audio) {
-            Ok(merged) => merged,
-            Err(err) => {
-                log::error!("pipeline: {err}");
-                reject_with_pill(&app, "Failed to prepare recording audio");
-                state::leave_stopping_if_owned(&state, generation);
-                return;
-            }
-        };
+        let (merged, merged_rms, merged_raw_rms) =
+            match merge_prepend_audio(prev, captured_audio, active_gain) {
+                Ok(merged) => merged,
+                Err(err) => {
+                    log::error!("pipeline: {err}");
+                    reject_with_pill(&app, "Failed to prepare recording audio");
+                    state::leave_stopping_if_owned(&state, generation);
+                    return;
+                }
+            };
         captured_audio = merged;
         rms = merged_rms;
         raw_rms = merged_raw_rms;

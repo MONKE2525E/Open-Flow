@@ -635,7 +635,12 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             let edge = if is_down { KeyEdge::Down } else { KeyEdge::Up };
             let now = GetTickCount64();
 
-            let outcome = CHORD_MACHINE.with(|m| m.borrow_mut().on_key_event(key, edge, now));
+            let (outcome, key2_was_chord) = CHORD_MACHINE.with(|m| {
+                let mut machine = m.borrow_mut();
+                let key2_was_chord = key == ChordKey::Key2 && machine.key2_was_chord;
+                let outcome = machine.on_key_event(key, edge, now);
+                (outcome, key2_was_chord)
+            });
             let mut action = outcome.action;
             let mut disposition = outcome.disposition;
 
@@ -666,6 +671,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             if key == ChordKey::Key2
                 && edge == KeyEdge::Up
                 && disposition == KeyDisposition::Passthrough
+                && key2_was_chord
                 && is_menu_trigger_vk(k2)
             {
                 disposition = KeyDisposition::Suppress;
@@ -838,6 +844,15 @@ mod chord_tests {
     fn duplicate_keyup_not_owned_passes_through() {
         let mut m = fresh();
         let outcome = m.on_key_event(ChordKey::Key1, KeyEdge::Up, 0);
+        assert_eq!(outcome.action, None);
+        assert_eq!(outcome.disposition, KeyDisposition::Passthrough);
+    }
+
+    #[test]
+    fn standalone_key2_keyup_passes_through() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key2, KeyEdge::Down, 0);
+        let outcome = m.on_key_event(ChordKey::Key2, KeyEdge::Up, 10);
         assert_eq!(outcome.action, None);
         assert_eq!(outcome.disposition, KeyDisposition::Passthrough);
     }

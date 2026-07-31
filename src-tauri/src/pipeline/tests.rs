@@ -305,6 +305,23 @@ fn effective_recording_rms_keeps_quiet_gain_boosted_speech_from_failing() {
 }
 
 #[test]
+fn merged_audio_does_not_double_apply_microphone_gain() {
+    let audio = |sample| super::CapturedAudio {
+        wav: Bytes::from_static(b"fixture-wav"),
+        samples_16k: Arc::new(vec![sample; 16_000]),
+        sample_rate: 16_000,
+        duration_ms: 1_000,
+    };
+
+    let (_, processed_rms, raw_rms) =
+        super::merge_prepend_audio(audio(0.2), audio(0.2), 2.0).expect("merge should encode");
+
+    assert!((processed_rms - 0.2).abs() < 0.0001);
+    assert!((raw_rms - 0.1).abs() < 0.0001);
+    assert!((effective_recording_rms(processed_rms, raw_rms, 2.0) - 0.2).abs() < 0.0001);
+}
+
+#[test]
 fn terminal_punctuation_added_for_casual_bare_word() {
     assert_eq!(
         ensure_terminal_punctuation("smart decision", "casual", "medium"),
