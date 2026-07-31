@@ -16,7 +16,7 @@ use rodio::buffer::SamplesBuffer;
 use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc;
 
 /// Which dictation transition the cue represents.
@@ -51,7 +51,7 @@ pub const START_CUE_HANDSFREE_DELAY_MS: u64 = 220;
 static START_CUE_GEN: AtomicU64 = AtomicU64::new(0);
 static SOUND_TX: OnceLock<mpsc::Sender<SoundCommand>> = OnceLock::new();
 static VOLUME_SESSION: AtomicU64 = AtomicU64::new(0);
-static SOUND_EFFECTS_VOLUME: AtomicU64 = AtomicU64::new(1.0f32.to_bits() as u64);
+static SOUND_EFFECTS_VOLUME: AtomicU32 = AtomicU32::new(1.0f32.to_bits());
 
 type AfterPlay = Box<dyn FnOnce() + Send + 'static>;
 
@@ -109,7 +109,7 @@ pub fn play(cue: SoundCue) {
 
 /// Set the master volume for future sound effects.
 pub fn set_volume(volume: f32) {
-    SOUND_EFFECTS_VOLUME.store(volume.clamp(0.0, 1.0).to_bits() as u64, Ordering::Relaxed);
+    SOUND_EFFECTS_VOLUME.store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
 }
 
 /// Schedule the start cue after `delay_ms`. Claims a new generation, so any
@@ -279,7 +279,7 @@ fn play_with_cached_output(
         }
     };
 
-    let volume = f32::from_bits(SOUND_EFFECTS_VOLUME.load(Ordering::Relaxed) as u32);
+    let volume = f32::from_bits(SOUND_EFFECTS_VOLUME.load(Ordering::Relaxed));
     sink.append(render(notes(cue), volume));
     Ok(sink)
 }

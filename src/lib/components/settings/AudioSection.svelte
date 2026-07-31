@@ -265,7 +265,7 @@
       class="sound-volume-slider"
       min="0" max="100" step="1"
       bind:value={soundEffectsVolume}
-      oninput={saveSoundEffectsVolume}
+      onchange={saveSoundEffectsVolume}
       style="--pct: {soundEffectsVolume.toFixed(1)}%"
       aria-label="Sound effects volume"
     />
