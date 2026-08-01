@@ -18,9 +18,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Publish changed dev snapshot
+  prepare:
+    name: Prepare changed dev snapshot
     runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.changes.outputs.should_release }}
+      release_tag: ${{ steps.changes.outputs.release_tag }}
+      release_version: ${{ steps.changes.outputs.release_version }}
+      app_version: ${{ steps.changes.outputs.app_version }}
+      release_sha: ${{ steps.tag.outputs.release_sha || steps.changes.outputs.release_sha }}
     steps:
       - name: Check out dev history
         uses: actions/checkout@v6
@@ -74,30 +80,49 @@ jobs:
 
           changed_lines="$(git diff --numstat "$baseline_sha..$dev_sha" -- . ':(exclude)package-lock.json' | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { total += $1 + $2 } END { print total + 0 }')"
           changed_lines="${changed_lines:-0}"
+          release_date="$(TZ=America/Vancouver date +%Y%m%d)"
+
+          # If a prior run created today's tag but failed while building or
+          # publishing, resume that exact release instead of incrementing the
+          # nightly number again.
+          resume_existing=false
+          if [[ -n "$last_nightly" && "$baseline_sha" == "$dev_sha" && "$last_nightly" =~ \.nightly\.${release_date}$ ]]; then
+            resume_existing=true
+          fi
 
           echo "Baseline: $baseline_tag ($baseline_sha)"
           echo "Dev:      $dev_sha"
           echo "Changed lines: $changed_lines"
           git diff --stat "$baseline_sha..$dev_sha" -- . ':(exclude)package-lock.json'
 
-          if (( changed_lines <= 10 )); then
+          if (( changed_lines <= 10 )) && [[ "$resume_existing" != true ]]; then
             echo 'should_release=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          release_date="$(TZ=America/Vancouver date +%Y%m%d)"
-          if [[ -n "$last_nightly" ]]; then
+          if [[ "$resume_existing" == true ]]; then
+            release_tag="$last_nightly"
+            release_version="${release_tag#Verenu-}"
+            app_version="${release_version%%-nightly.*}"
+            release_sha="$(git rev-parse "${release_tag}^{commit}")"
+            tag_exists=true
+          elif [[ -n "$last_nightly" ]]; then
             last_version="${last_nightly#Verenu-}"
             last_core="${last_version%%-nightly.*}"
             IFS=. read -r major minor patch <<< "$last_core"
             next_core="$major.$minor.$((patch + 1))"
+            app_version="$next_core"
+            release_version="${app_version}-nightly.${release_date}"
+            release_tag="Verenu-${release_version}"
+            tag_exists=false
           else
-            next_core="$NIGHTLY_START_VERSION"
+            app_version="$NIGHTLY_START_VERSION"
+            release_version="${app_version}-nightly.${release_date}"
+            release_tag="Verenu-${release_version}"
+            tag_exists=false
           fi
 
-          release_version="${next_core}-nightly.${release_date}"
-          release_tag="Verenu-${release_version}"
-          if git show-ref --tags --verify --quiet "refs/tags/$release_tag"; then
+          if [[ "$tag_exists" != true ]] && git show-ref --tags --verify --quiet "refs/tags/$release_tag"; then
             echo "Release tag $release_tag already exists; refusing to overwrite it." >&2
             exit 1
           fi
@@ -114,6 +139,12 @@ jobs:
             echo "Source commit: $dev_sha"
             echo "Baseline tag: $baseline_tag"
             echo "Changed lines: $changed_lines"
+            echo "Embedded app version: $app_version"
+            echo "Expected assets:"
+            echo "- Verenu_${release_version}_x64-setup.exe"
+            echo "- Verenu_${release_version}_x64_en-US.msi"
+            echo "- Verenu_${release_version}_Apple_Silicon.dmg"
+            echo "- Verenu_${release_version}_Intel.dmg"
             echo
             echo 'Commit summary:'
             cat commit-summary.md
@@ -131,12 +162,17 @@ jobs:
             echo "baseline_tag=$baseline_tag"
             echo "baseline_sha=$baseline_sha"
             echo "changed_lines=$changed_lines"
+            echo "app_version=$app_version"
             echo "release_version=$release_version"
             echo "release_tag=$release_tag"
+            echo "tag_exists=$tag_exists"
+            if [[ "$tag_exists" == true ]]; then
+              echo "release_sha=$release_sha"
+            fi
           } >> "$GITHUB_OUTPUT"
 
       - name: Write AI release notes
-        id: release-notes
+        id: release_notes
         if: steps.changes.outputs.should_release == 'true'
         uses: actions/ai-inference@v1
         with:
@@ -151,25 +187,34 @@ jobs:
             What's New, Features, Getting Started, Shortcuts, Lightweight &
             Local, and Virustotal Review. Keep evergreen sections concise.
             Describe only changes supported by the context. Do not invent
-            installers, VirusTotal URLs, tests, features, fixes, people,
-            secrets, or private information. For this source-only nightly,
-            state plainly in Virustotal Review that no installer artifacts are
-            attached.
+            VirusTotal URLs, tests, features, fixes, people, secrets, or
+            private information. The four expected installer filenames in the
+            context will be attached by the workflow, so mention them without
+            inventing checksums or scan URLs.
 
       - name: Save generated release notes
         if: steps.changes.outputs.should_release == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          cp "${{ steps.release-notes.outputs.response-file }}" release-notes.md
+          cp "${{ steps.release_notes.outputs.response-file }}" release-notes.md
           test -s release-notes.md
+
+      - name: Upload generated release notes
+        if: steps.changes.outputs.should_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-release-notes
+          path: release-notes.md
+          if-no-files-found: error
 
       - name: Create the versioned nightly tag
         id: tag
-        if: steps.changes.outputs.should_release == 'true'
+        if: steps.changes.outputs.should_release == 'true' && steps.changes.outputs.tag_exists != 'true'
         shell: bash
         env:
           DEV_SHA: ${{ steps.changes.outputs.dev_sha }}
+          APP_VERSION: ${{ steps.changes.outputs.app_version }}
           RELEASE_VERSION: ${{ steps.changes.outputs.release_version }}
           RELEASE_TAG: ${{ steps.changes.outputs.release_tag }}
         run: |
@@ -179,7 +224,7 @@ jobs:
           # contains the release-only version while its parent remains the
           # exact dev snapshot that was inspected above.
           git checkout --detach "$DEV_SHA"
-          node - "$RELEASE_VERSION" <<'NODE'
+          node - "$APP_VERSION" <<'NODE'
           const fs = require('node:fs');
           const version = process.argv[2];
           const replacements = [
@@ -207,14 +252,193 @@ jobs:
           git push origin "$RELEASE_TAG"
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
 
+  build:
+    name: Build ${{ matrix.os-name }} installers
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            os-name: windows
+          - platform: macos-latest
+            os-name: macos
+    runs-on: ${{ matrix.platform }}
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+    steps:
+      - name: Check out the versioned nightly snapshot
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up macOS targets
+        if: matrix.os-name == 'macos'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+      - name: Import macOS signing certificate
+        if: matrix.os-name == 'macos' && env.MACOS_CERTIFICATE != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          rm -f certificate.p12
+          security find-identity -v -p codesigning build.keychain
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify embedded app version
+        shell: bash
+        env:
+          EXPECTED_APP_VERSION: ${{ needs.prepare.outputs.app_version }}
+        run: |
+          set -euo pipefail
+          app_version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+          if [[ "$app_version" != "$EXPECTED_APP_VERSION" ]]; then
+            echo "Expected app version $EXPECTED_APP_VERSION but found $app_version" >&2
+            exit 1
+          fi
+          echo "APP_VERSION=$app_version" >> "$GITHUB_ENV"
+
+      - name: Build and name installers
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.os-name == 'macos' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p release-assets
+          MOUNT_DIR=""
+          cleanup_mount() {
+            if [ -n "${MOUNT_DIR:-}" ]; then
+              hdiutil detach "$MOUNT_DIR" -quiet || true
+              rm -rf "$MOUNT_DIR"
+            fi
+          }
+          trap cleanup_mount EXIT
+
+          verify_macos_dmg() {
+            local dmg_path="$1"
+            MOUNT_DIR="$(mktemp -d)"
+            hdiutil attach "$dmg_path" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
+            local app_path="$MOUNT_DIR/Verenu.app"
+            if [ ! -d "$app_path" ]; then
+              echo "Expected Verenu.app inside $dmg_path"
+              ls -la "$MOUNT_DIR"
+              exit 1
+            fi
+            codesign --verify --deep --strict --verbose=4 "$app_path"
+            codesign -dv --verbose=4 "$app_path"
+            if spctl --assess --type execute --verbose=4 "$app_path"; then
+              echo "spctl accepted $app_path"
+            else
+              echo "spctl rejected $app_path; expected for ad-hoc signed, non-notarized builds"
+            fi
+            hdiutil detach "$MOUNT_DIR" -quiet
+            rm -rf "$MOUNT_DIR"
+            MOUNT_DIR=""
+          }
+
+          if [ "${{ matrix.os-name }}" = "macos" ]; then
+            apple_dmg="src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_aarch64.dmg"
+            apple_release_dmg="release-assets/Verenu_${RELEASE_VERSION}_Apple_Silicon.dmg"
+            intel_dmg="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_x64.dmg"
+            intel_release_dmg="release-assets/Verenu_${RELEASE_VERSION}_Intel.dmg"
+
+            npm run tauri build -- --target aarch64-apple-darwin
+            test -f "$apple_dmg"
+            mv "$apple_dmg" "$apple_release_dmg"
+            verify_macos_dmg "$apple_release_dmg"
+
+            npm run tauri build -- --target x86_64-apple-darwin
+            test -f "$intel_dmg"
+            mv "$intel_dmg" "$intel_release_dmg"
+            verify_macos_dmg "$intel_release_dmg"
+          else
+            npm run tauri build
+            setup_exe="$(find src-tauri/target/release/bundle/nsis -maxdepth 1 -type f -name 'Verenu_*_x64-setup.exe' -print -quit)"
+            msi_file="$(find src-tauri/target/release/bundle/msi -maxdepth 1 -type f -name 'Verenu_*.msi' -print -quit)"
+            test -n "$setup_exe"
+            test -n "$msi_file"
+            mv "$setup_exe" "release-assets/Verenu_${RELEASE_VERSION}_x64-setup.exe"
+            mv "$msi_file" "release-assets/Verenu_${RELEASE_VERSION}_x64_en-US.msi"
+          fi
+
+          ls -l release-assets
+
+      - name: Upload nightly installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-assets-${{ matrix.os-name }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish nightly release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download generated release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-release-notes
+          path: .
+
+      - name: Download nightly installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-assets-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify and hash release assets
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          expected=(
+            "Verenu_${RELEASE_VERSION}_x64-setup.exe"
+            "Verenu_${RELEASE_VERSION}_x64_en-US.msi"
+            "Verenu_${RELEASE_VERSION}_Apple_Silicon.dmg"
+            "Verenu_${RELEASE_VERSION}_Intel.dmg"
+          )
+          for asset in "${expected[@]}"; do
+            test -f "release-assets/$asset"
+          done
+          (cd release-assets && sha256sum "${expected[@]}" > SHA256SUMS.txt)
+          cat release-assets/SHA256SUMS.txt
+
       - name: Publish GitHub prerelease
-        if: steps.changes.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ steps.changes.outputs.release_tag }}
-          target_commitish: ${{ steps.tag.outputs.release_sha }}
-          name: Verenu ${{ steps.changes.outputs.release_version }}
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          target_commitish: ${{ needs.prepare.outputs.release_sha }}
+          name: Verenu ${{ needs.prepare.outputs.release_version }}
           body_path: release-notes.md
+          files: release-assets/*
           prerelease: true
           make_latest: false
