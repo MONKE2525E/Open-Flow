@@ -340,7 +340,8 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         state::leave_stopping_if_owned(&state, generation);
         return;
     }
-    if audio_cfg.play_start_stop_sounds {
+    if audio_cfg.sound_effects_volume > 0.0 {
+        crate::media::sound::set_volume(audio_cfg.sound_effects_volume);
         crate::media::sound::play(crate::media::sound::SoundCue::Stop);
     }
     log::debug!(

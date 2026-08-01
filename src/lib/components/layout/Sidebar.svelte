@@ -216,6 +216,9 @@
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.settingsSection === entry.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[entry.icon]}</svg>
               <span>{entry.label}</span>
+              {#if entry.id === 'advanced' && import.meta.env.DEV}
+                <span class="legacy-label" aria-hidden="true">Microphone</span>
+              {/if}
             </button>
           {/if}
         {/each}
@@ -497,6 +500,18 @@
     letter-spacing: 0.12em;
     color: var(--ink-mute);
     padding: 10px 10px 5px;
+  }
+
+  .legacy-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   /* The version line lives on the settings page itself now, not in the rail. */

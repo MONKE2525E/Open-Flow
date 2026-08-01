@@ -27,6 +27,7 @@ enum SettingKind {
     AppearanceMode,
     Bool,
     MicGain,
+    SoundEffectsVolume,
     AppMappings,
     Hotkey,
 }
@@ -143,6 +144,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::MIC_GAIN, SettingKind::MicGain, true, false),
     setting_spec(store::PLAY_START_STOP_SOUNDS, SettingKind::Bool, true, true),
+    setting_spec(store::SOUND_EFFECTS_VOLUME, SettingKind::SoundEffectsVolume, true, true),
     setting_spec(store::SETUP_COMPLETE, SettingKind::Bool, true, false),
     setting_spec(store::APP_CONTEXT_HINT, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_ENABLED, SettingKind::Bool, true, true),
@@ -295,6 +297,7 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
             .is_some_and(|v| matches!(v, "system" | "light" | "dark")),
         SettingKind::Bool => value.is_boolean(),
         SettingKind::MicGain => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
+        SettingKind::SoundEffectsVolume => value.as_f64().is_some_and(|v| (0.0..=100.0).contains(&v)),
         SettingKind::AppMappings => is_valid_app_mappings(value),
         SettingKind::Hotkey => value
             .as_array()
@@ -345,6 +348,14 @@ mod setting_key_tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn sound_effects_volume_accepts_percent_range_only() {
+        assert!(validate_setting(store::SOUND_EFFECTS_VOLUME, &serde_json::json!(0)).is_ok());
+        assert!(validate_setting(store::SOUND_EFFECTS_VOLUME, &serde_json::json!(100)).is_ok());
+        assert!(validate_setting(store::SOUND_EFFECTS_VOLUME, &serde_json::json!(-1)).is_err());
+        assert!(validate_setting(store::SOUND_EFFECTS_VOLUME, &serde_json::json!(101)).is_err());
+    }
 }
 // ---------- generic settings ----------
 
@@ -360,6 +371,11 @@ pub async fn save_setting(
     } else {
         None
     };
+    let sound_effects_volume = if key == store::SOUND_EFFECTS_VOLUME {
+        value.as_f64().map(|volume| (volume as f32) / 100.0)
+    } else {
+        None
+    };
     let settings = store::settings_handle(&app)?;
     let key_clone = key.clone();
     run_blocking("save_setting", move || {
@@ -369,6 +385,9 @@ pub async fn save_setting(
 
     if key == store::APPEARANCE_MODE {
         crate::apply_runtime_icons(&app, None);
+    }
+    if let Some(volume) = sound_effects_volume {
+        crate::media::sound::set_volume(volume);
     }
 
     if let Some(days) = history_prune_days {
@@ -415,6 +434,7 @@ pub struct AllSettings {
     pub exclusive_mic: Option<bool>,
     pub pause_media_during_dictation: Option<bool>,
     pub play_start_stop_sounds: Option<bool>,
+    pub sound_effects_volume: Option<f64>,
     pub autostart_enabled: Option<bool>,
     pub app_context_hint: Option<bool>,
     pub auto_learn_enabled: Option<bool>,
@@ -477,6 +497,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         exclusive_mic: bool_val(store::EXCLUSIVE_MIC),
         pause_media_during_dictation: bool_val(store::PAUSE_MEDIA_DURING_DICTATION),
         play_start_stop_sounds: bool_val(store::PLAY_START_STOP_SOUNDS),
+        sound_effects_volume: f64_val(store::SOUND_EFFECTS_VOLUME),
         autostart_enabled: bool_val(store::AUTOSTART_ENABLED),
         app_context_hint: bool_val(store::APP_CONTEXT_HINT),
         auto_learn_enabled: bool_val(store::AUTO_LEARN_ENABLED),

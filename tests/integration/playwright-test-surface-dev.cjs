@@ -32,7 +32,13 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
     await page.locator('h1.page-h:has-text("Snippets")').waitFor({ state: 'visible', timeout: TIMEOUT });
     const newSnippetButton = page.locator('.toolbar .btn-primary:has-text("New snippet")');
     await newSnippetButton.click();
-    const snippetModal = page.locator('.modal-card');
+    const snippetModal = page.locator('.snippet-modal-card');
+    await page.waitForTimeout(260);
+    const modalRect = await snippetModal.boundingBox();
+    const viewport = page.viewportSize();
+    if (!modalRect || !viewport || Math.abs((modalRect.x + modalRect.width / 2) - viewport.width / 2) > 1 || Math.abs((modalRect.y + modalRect.height / 2) - viewport.height / 2) > 1) {
+      errors.push('Snippet modal was not centered in the viewport');
+    }
     const snippetFocusInside = await snippetModal.evaluate((el) => el.contains(document.activeElement));
     if (!snippetFocusInside) errors.push('Snippet modal did not move focus inside the dialog');
     await page.keyboard.press('Escape');
@@ -44,7 +50,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
     await page.locator('#trigger-input').fill('sig');
     await page.locator('#expansion-input').fill('Best regards,\nThe Team');
     await page.locator('#instructions-input').fill('all capitals');
-    await page.locator('.modal-card .btn-primary:has-text("Add snippet")').click();
+    await page.locator('.snippet-modal-card .btn-primary:has-text("Add snippet")').click();
     await page.locator('.snip-row:has-text("sig")').waitFor({ state: 'visible', timeout: TIMEOUT });
     if (!(await page.locator('.insp-instructions').isVisible().catch(() => false))) {
       await page.locator('.snip-row:has-text("sig")').click();

@@ -200,6 +200,7 @@ pub const EXCLUSIVE_MIC: &str = "exclusive_mic";
 pub const PAUSE_MEDIA_DURING_DICTATION: &str = "pause_media_during_dictation";
 pub const MIC_GAIN: &str = "mic_gain";
 pub const PLAY_START_STOP_SOUNDS: &str = "play_start_stop_sounds";
+pub const SOUND_EFFECTS_VOLUME: &str = "sound_effects_volume";
 pub const SETUP_COMPLETE: &str = "setup_complete";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
@@ -578,6 +579,7 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
 pub const DEFAULT_MIC_GAIN: f32 = 3.5;
 pub const MIN_MIC_GAIN: f32 = 1.0;
 pub const MAX_MIC_GAIN: f32 = 8.0;
+pub const DEFAULT_SOUND_EFFECTS_VOLUME: f32 = 1.0;
 
 pub struct AudioConfig {
     pub device: Option<String>,
@@ -586,7 +588,7 @@ pub struct AudioConfig {
     pub mute_audio: bool,
     pub exclusive_mic: bool,
     pub pause_media_during_dictation: bool,
-    pub play_start_stop_sounds: bool,
+    pub sound_effects_volume: f32,
 }
 
 impl Default for AudioConfig {
@@ -598,7 +600,7 @@ impl Default for AudioConfig {
             mute_audio: false,
             exclusive_mic: false,
             pause_media_during_dictation: false,
-            play_start_stop_sounds: true,
+            sound_effects_volume: DEFAULT_SOUND_EFFECTS_VOLUME,
         }
     }
 }
@@ -629,10 +631,17 @@ pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
         .get(PAUSE_MEDIA_DURING_DICTATION)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let play_start_stop_sounds = store
-        .get(PLAY_START_STOP_SOUNDS)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let sound_effects_volume = store
+        .get(SOUND_EFFECTS_VOLUME)
+        .and_then(|v| v.as_f64())
+        .map(|v| (v as f32 / 100.0).clamp(0.0, 1.0))
+        .or_else(|| {
+            store
+                .get(PLAY_START_STOP_SOUNDS)
+                .and_then(|v| v.as_bool())
+                .map(|enabled| if enabled { 1.0 } else { 0.0 })
+        })
+        .unwrap_or(DEFAULT_SOUND_EFFECTS_VOLUME);
 
     AudioConfig {
         device,
@@ -641,7 +650,7 @@ pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
         mute_audio,
         exclusive_mic,
         pause_media_during_dictation,
-        play_start_stop_sounds,
+        sound_effects_volume,
     }
 }
 
@@ -697,23 +706,26 @@ mod tests {
         let _ = std::fs::remove_file(&backup);
     }
 
-    // Start/stop sound cues default ON when the key is absent, and honor an
-    // explicit false.
+    // The new volume setting takes precedence, while the old boolean setting
+    // remains a one-time compatibility fallback for existing users.
     #[test]
-    fn load_audio_config_play_start_stop_sounds_default_and_override() {
+    fn load_audio_config_sound_effects_volume_default_and_legacy_override() {
         let empty = SettingsSnapshot::from_pairs([]);
-        assert!(
-            load_audio_config(&empty).play_start_stop_sounds,
-            "should default to enabled"
-        );
+        assert_eq!(load_audio_config(&empty).sound_effects_volume, 1.0);
 
         let disabled = SettingsSnapshot::from_pairs([(
             PLAY_START_STOP_SOUNDS.to_string(),
             json!(false),
         )]);
-        assert!(
-            !load_audio_config(&disabled).play_start_stop_sounds,
-            "explicit false must be honored"
+        assert_eq!(load_audio_config(&disabled).sound_effects_volume, 0.0);
+
+        let explicit_volume = SettingsSnapshot::from_pairs([
+            (PLAY_START_STOP_SOUNDS.to_string(), json!(false)),
+            (SOUND_EFFECTS_VOLUME.to_string(), json!(35)),
+        ]);
+        assert_eq!(
+            load_audio_config(&explicit_volume).sound_effects_volume,
+            0.35
         );
     }
 
