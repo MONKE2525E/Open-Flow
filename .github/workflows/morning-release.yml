@@ -173,13 +173,13 @@ jobs:
 
       - name: Write AI release notes
         id: release_notes
+        continue-on-error: true
         if: steps.changes.outputs.should_release == 'true'
         uses: actions/ai-inference@v1
         with:
           model: openai/gpt-4o
           prompt-file: release-context.md
-          max-completion-tokens: 1600
-          temperature: 0.2
+          max-tokens: 1600
           system-prompt: >-
             You write honest Verenu nightly release notes from the supplied
             git context. Return only markdown, never a code fence. Follow the
@@ -195,9 +195,55 @@ jobs:
       - name: Save generated release notes
         if: steps.changes.outputs.should_release == 'true'
         shell: bash
+        env:
+          AI_OUTCOME: ${{ steps.release_notes.outcome }}
+          AI_RESPONSE_FILE: ${{ steps.release_notes.outputs.response-file }}
         run: |
           set -euo pipefail
-          cp "${{ steps.release_notes.outputs.response-file }}" release-notes.md
+          if [[ "$AI_OUTCOME" == success && -n "$AI_RESPONSE_FILE" && -s "$AI_RESPONSE_FILE" ]]; then
+            cp "$AI_RESPONSE_FILE" release-notes.md
+          else
+            echo 'GitHub Models was unavailable; using the deterministic release-note fallback.'
+            {
+              echo "# Verenu ${{ steps.changes.outputs.release_version }} - Nightly"
+              echo
+              echo '**Verenu** is a free, open-source AI dictation app for Windows and macOS. No subscriptions. You bring your own API keys.'
+              echo
+              echo "## What's New in ${{ steps.changes.outputs.release_version }}"
+              if [[ -s commit-summary.md ]]; then
+                cat commit-summary.md
+              else
+                echo '- Updated dev snapshot available in this nightly build'
+              fi
+              echo
+              echo '## Features'
+              echo
+              echo 'This nightly contains the changed dev snapshot and the attached Windows and macOS installers.'
+              echo
+              echo '## Getting Started'
+              echo
+              echo '1. Download the installer for your platform from the assets below'
+              echo '2. Add your API key for Groq, OpenAI, or Google'
+              echo '3. Hold **Ctrl+Win** on Windows or **fn+Control** on macOS and start talking'
+              echo '4. Release the hotkey and your cleaned-up text appears in the active app'
+              echo
+              echo '## Shortcuts'
+              echo
+              echo '- **Windows hold-to-record** - Hold **Ctrl+Win** to record, release to transcribe and inject'
+              echo '- **macOS hold-to-record** - Hold **fn+Control** to record, release to transcribe and inject'
+              echo
+              echo '## Lightweight & Local'
+              echo
+              echo '- Native Tauri app for Windows and macOS'
+              echo '- Local SQLite history'
+              echo '- API keys stored locally'
+              echo '- No telemetry'
+              echo
+              echo '## Virustotal Review'
+              echo
+              echo 'SHA256SUMS.txt is attached. VirusTotal links are not generated automatically for nightly builds.'
+            } > release-notes.md
+          fi
           test -s release-notes.md
 
       - name: Upload generated release notes
