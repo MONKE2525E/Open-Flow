@@ -382,6 +382,7 @@ jobs:
           set -euo pipefail
 
           ort_build_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/source/build/MacOS"
+          ort_build_profile="$ort_build_root/RelWithDebInfo"
           ort_archive="$ort_build_root/RelWithDebInfo/libonnxruntime_common.a"
           ort_shared="$ort_build_root/RelWithDebInfo/libonnxruntime.dylib"
           ort_link_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/ort-link"
@@ -392,16 +393,16 @@ jobs:
           lipo -info "$ort_shared" | grep -q 'x86_64'
           file "$ort_shared"
 
-          # ort-sys expects all static ONNX Runtime and dependency archives
-          # under one profile directory, while ONNX Runtime's CMake build
-          # spreads them across several _deps directories. Stage symlinks so
-          # the linker sees the complete source build without copying it.
+          # ort-sys expects the runtime archives under the profile directory
+          # and the dependency archives under ONNX Runtime's _deps tree.
+          # Stage symlinks so the linker sees the complete source build without
+          # copying it.
           mkdir -p "$ort_link_profile"
           archive_count=0
           while IFS= read -r archive; do
             ln -sfn "$archive" "$ort_link_profile/$(basename "$archive")"
             archive_count=$((archive_count + 1))
-          done < <(find "$ort_build_root" -type f -name '*.a' -print)
+          done < <(find "$ort_build_profile" -maxdepth 1 -type f -name 'libonnxruntime_*.a' -print)
 
           test "$archive_count" -gt 0
           for required in \
@@ -412,11 +413,18 @@ jobs:
             libonnxruntime_optimizer.a \
             libonnxruntime_providers.a \
             libonnxruntime_session.a \
-            libonnxruntime_util.a \
-            libonnx.a \
-            libonnx_proto.a; do
+            libonnxruntime_util.a; do
             test -e "$ort_link_profile/$required"
           done
+
+          test -d "$ort_build_profile/_deps"
+          if [[ -e "$ort_link_root/_deps" || -L "$ort_link_root/_deps" ]]; then
+            rm -rf "$ort_link_root/_deps"
+          fi
+          ln -s "$ort_build_profile/_deps" "$ort_link_root/_deps"
+          test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx.a"
+          test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx_proto.a"
+          test -e "$ort_link_root/_deps/protobuf-build/RelWithDebInfo/libprotobuf.a"
 
           echo "VERENU_INTEL_ORT_LIB_PATH=$ort_link_root" >> "$GITHUB_ENV"
           echo 'VERENU_INTEL_ORT_LIB_PROFILE=RelWithDebInfo' >> "$GITHUB_ENV"
