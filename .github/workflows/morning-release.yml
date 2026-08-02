@@ -335,6 +335,62 @@ jobs:
         if: matrix.os-name == 'macos'
         run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
 
+      - name: Set up Python for Intel ONNX Runtime
+        if: matrix.os-name == 'macos'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Cache Intel ONNX Runtime
+        if: matrix.os-name == 'macos'
+        id: intel_ort_cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/verenu/onnxruntime/1.24.2-x86_64
+          key: verenu-onnxruntime-1.24.2-macos-x86_64
+
+      - name: Build Intel ONNX Runtime from source
+        if: matrix.os-name == 'macos' && steps.intel_ort_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ort_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64"
+          ort_source="$ort_root/source"
+          mkdir -p "$(dirname "$ort_root")"
+
+          git clone --depth 1 --branch v1.24.2 --recurse-submodules \
+            https://github.com/microsoft/onnxruntime.git "$ort_source"
+          cd "$ort_source"
+
+          ./build.sh \
+            --config RelWithDebInfo \
+            --build_shared_lib \
+            --parallel \
+            --compile_no_warning_as_error \
+            --skip_submodule_sync \
+            --skip_tests \
+            --skip_onnx_tests \
+            --cmake_extra_defines \
+              CMAKE_OSX_ARCHITECTURES=x86_64 \
+              CMAKE_OSX_DEPLOYMENT_TARGET=13.4
+
+      - name: Verify Intel ONNX Runtime build
+        if: matrix.os-name == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ort_lib_path="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/source/build/MacOS"
+          ort_archive="$ort_lib_path/RelWithDebInfo/libonnxruntime_common.a"
+          ort_shared="$ort_lib_path/RelWithDebInfo/libonnxruntime.dylib"
+          test -f "$ort_archive"
+          test -f "$ort_shared"
+          lipo -info "$ort_shared" | grep -q 'x86_64'
+          file "$ort_shared"
+          echo "VERENU_INTEL_ORT_LIB_PATH=$ort_lib_path" >> "$GITHUB_ENV"
+          echo 'VERENU_INTEL_ORT_LIB_PROFILE=RelWithDebInfo' >> "$GITHUB_ENV"
+
       - name: Import macOS signing certificate
         if: matrix.os-name == 'macos' && env.MACOS_CERTIFICATE != ''
         shell: bash
@@ -417,7 +473,9 @@ jobs:
             mv "$apple_dmg" "$apple_release_dmg"
             verify_macos_dmg "$apple_release_dmg"
 
-            npm run tauri build -- --target x86_64-apple-darwin
+            ORT_LIB_PATH="$VERENU_INTEL_ORT_LIB_PATH" \
+            ORT_LIB_PROFILE="$VERENU_INTEL_ORT_LIB_PROFILE" \
+              npm run tauri build -- --target x86_64-apple-darwin
             test -f "$intel_dmg"
             mv "$intel_dmg" "$intel_release_dmg"
             verify_macos_dmg "$intel_release_dmg"
