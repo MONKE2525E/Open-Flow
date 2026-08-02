@@ -381,14 +381,44 @@ jobs:
         run: |
           set -euo pipefail
 
-          ort_lib_path="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/source/build/MacOS"
-          ort_archive="$ort_lib_path/RelWithDebInfo/libonnxruntime_common.a"
-          ort_shared="$ort_lib_path/RelWithDebInfo/libonnxruntime.dylib"
+          ort_build_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/source/build/MacOS"
+          ort_archive="$ort_build_root/RelWithDebInfo/libonnxruntime_common.a"
+          ort_shared="$ort_build_root/RelWithDebInfo/libonnxruntime.dylib"
+          ort_link_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/ort-link"
+          ort_link_profile="$ort_link_root/RelWithDebInfo"
+
           test -f "$ort_archive"
           test -f "$ort_shared"
           lipo -info "$ort_shared" | grep -q 'x86_64'
           file "$ort_shared"
-          echo "VERENU_INTEL_ORT_LIB_PATH=$ort_lib_path" >> "$GITHUB_ENV"
+
+          # ort-sys expects all static ONNX Runtime and dependency archives
+          # under one profile directory, while ONNX Runtime's CMake build
+          # spreads them across several _deps directories. Stage symlinks so
+          # the linker sees the complete source build without copying it.
+          mkdir -p "$ort_link_profile"
+          archive_count=0
+          while IFS= read -r archive; do
+            ln -sfn "$archive" "$ort_link_profile/$(basename "$archive")"
+            archive_count=$((archive_count + 1))
+          done < <(find "$ort_build_root" -type f -name '*.a' -print)
+
+          test "$archive_count" -gt 0
+          for required in \
+            libonnxruntime_common.a \
+            libonnxruntime_framework.a \
+            libonnxruntime_graph.a \
+            libonnxruntime_mlas.a \
+            libonnxruntime_optimizer.a \
+            libonnxruntime_providers.a \
+            libonnxruntime_session.a \
+            libonnxruntime_util.a \
+            libonnx.a \
+            libonnx_proto.a; do
+            test -e "$ort_link_profile/$required"
+          done
+
+          echo "VERENU_INTEL_ORT_LIB_PATH=$ort_link_root" >> "$GITHUB_ENV"
           echo 'VERENU_INTEL_ORT_LIB_PROFILE=RelWithDebInfo' >> "$GITHUB_ENV"
 
       - name: Import macOS signing certificate
