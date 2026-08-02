@@ -276,7 +276,7 @@ jobs:
           const replacements = [
             ['package.json', /(\"version\"\s*:\s*\")[^\"]+(\")/, `$1${version}$2`],
             ['src-tauri/tauri.conf.json', /(\"version\"\s*:\s*\")[^\"]+(\")/, `$1${version}$2`],
-            ['src-tauri/Cargo.toml', [/^version\s*=\s*\"[^\"]+\"/m, `version = \"${version}\"`]],
+            ['src-tauri/Cargo.toml', /^version\s*=\s*\"[^\"]+\"/m, `version = \"${version}\"`],
           ];
 
           for (const [file, pattern, replacement] of replacements) {
