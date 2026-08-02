@@ -289,9 +289,9 @@ jobs:
 
           git diff --check
           git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
-          git -c user.name='github-actions[bot]' \
-            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -m "chore(release): $RELEASE_TAG [skip ci]"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "chore(release): $RELEASE_TAG [skip ci]"
 
           release_sha="$(git rev-parse HEAD)"
           git tag -a "$RELEASE_TAG" "$release_sha" -m "Verenu $RELEASE_VERSION"
