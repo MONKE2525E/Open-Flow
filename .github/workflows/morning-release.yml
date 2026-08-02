@@ -440,7 +440,8 @@ jobs:
           test "$dependency_count" -gt 0
           test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx.a"
           test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx_proto.a"
-          test -e "$ort_link_root/_deps/protobuf-build/RelWithDebInfo/libprotobuf.a"
+          test -e "$ort_link_root/_deps/protobuf-build/RelWithDebInfo/libprotobuf-lite.a" || \
+            test -e "$ort_link_root/_deps/protobuf-build/RelWithDebInfo/libprotobuf.a"
 
           echo "VERENU_INTEL_ORT_LIB_PATH=$ort_link_root" >> "$GITHUB_ENV"
           echo 'VERENU_INTEL_ORT_LIB_PROFILE=RelWithDebInfo' >> "$GITHUB_ENV"
