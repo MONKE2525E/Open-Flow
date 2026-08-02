@@ -421,7 +421,23 @@ jobs:
           if [[ -e "$ort_link_root/_deps" || -L "$ort_link_root/_deps" ]]; then
             rm -rf "$ort_link_root/_deps"
           fi
-          ln -s "$ort_build_profile/_deps" "$ort_link_root/_deps"
+          mkdir -p "$ort_link_root/_deps"
+          dependency_count=0
+          while IFS= read -r archive; do
+            relative_archive="${archive#"$ort_build_profile/_deps/"}"
+            dependency_dir="$(dirname "$relative_archive")"
+            dependency_name="$(basename "$relative_archive")"
+            if [[ "$(basename "$dependency_dir")" == 'RelWithDebInfo' ]]; then
+              staged_relative="$relative_archive"
+            else
+              staged_relative="$dependency_dir/RelWithDebInfo/$dependency_name"
+            fi
+            staged_archive="$ort_link_root/_deps/$staged_relative"
+            mkdir -p "$(dirname "$staged_archive")"
+            ln -sfn "$archive" "$staged_archive"
+            dependency_count=$((dependency_count + 1))
+          done < <(find "$ort_build_profile/_deps" -type f -name '*.a' -print)
+          test "$dependency_count" -gt 0
           test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx.a"
           test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx_proto.a"
           test -e "$ort_link_root/_deps/protobuf-build/RelWithDebInfo/libprotobuf.a"
