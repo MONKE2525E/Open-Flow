@@ -117,11 +117,15 @@ pub(super) fn animate_pill_placement<R: Runtime>(
         .wrapping_add(1);
     let pill = pill.clone();
     let step_count = (TWEEN_DURATION_MS / TWEEN_STEP_MS).max(1) as u32;
-    let frames = build_tween_frames(from, to, step_count);
+    let mut frames = build_tween_frames(from, to, step_count);
+    // Every animated frame except the final one can be posted asynchronously.
+    // The last resize must be confirmed before the WebView is revealed: on a
+    // mixed-DPI move Windows can otherwise still be using the old, shorter
+    // client area, which clips the bottom of the pill on its first frame.
+    let final_frame = frames.pop().expect("tween always has at least one frame");
 
     tauri::async_runtime::spawn(async move {
-        let mut remaining = frames.into_iter().peekable();
-        while let Some(frame) = remaining.next() {
+        for frame in frames {
             if PILL_TWEEN_GEN.load(Ordering::SeqCst) != generation {
                 return; // superseded — cede the window to the newer move.
             }
@@ -150,11 +154,27 @@ pub(super) fn animate_pill_placement<R: Runtime>(
                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
                 );
             }
-            // Skip the sleep after the last frame - nothing left to wait for
-            // before revealing, so don't add a pointless ~12ms of latency.
-            if remaining.peek().is_some() {
-                tokio::time::sleep(std::time::Duration::from_millis(TWEEN_STEP_MS)).await;
-            }
+            tokio::time::sleep(std::time::Duration::from_millis(TWEEN_STEP_MS)).await;
+        }
+
+        if PILL_TWEEN_GEN.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        let Ok(hwnd) = pill.hwnd() else {
+            return;
+        };
+        unsafe {
+            // Do not use SWP_ASYNCWINDOWPOS for this last frame. `on_complete`
+            // immediately shows the pill, so its client size must be current.
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                final_frame.x,
+                final_frame.y,
+                final_frame.width,
+                final_frame.height,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
         }
 
         if PILL_TWEEN_GEN.load(Ordering::SeqCst) == generation {

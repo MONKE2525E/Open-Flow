@@ -20,22 +20,31 @@ pub(crate) fn should_resume_after_dictation(state: MediaPlaybackState) -> bool {
 }
 
 pub struct DictationMediaPauseGuard {
-    active: bool,
+    generation: Option<u64>,
 }
 
 impl DictationMediaPauseGuard {
     pub fn new() -> Self {
-        Self { active: true }
+        // Input transcription runs after the recording has already started
+        // the pause. Keep that exact generation so an older async task cannot
+        // end a newer recording's media pause when it eventually completes.
+        Self {
+            generation: platform::active_generation(),
+        }
     }
 }
 
 impl Drop for DictationMediaPauseGuard {
     fn drop(&mut self) {
-        if self.active {
-            end_dictation_media_pause();
-            self.active = false;
+        if let Some(generation) = self.generation.take() {
+            end_dictation_media_pause_if_current(generation);
         }
     }
+}
+
+#[cfg(any(test, windows))]
+fn guard_owns_active_pause(is_active: bool, active_generation: u64, guard_generation: u64) -> bool {
+    is_active && active_generation == guard_generation
 }
 
 #[cfg(windows)]
@@ -129,6 +138,44 @@ mod platform {
                     poisoned.into_inner()
                 }
             };
+            state.generation = state.generation.wrapping_add(1);
+            state.is_active = false;
+            std::mem::take(&mut state.paused_sessions)
+        };
+
+        if sessions.is_empty() {
+            return;
+        }
+
+        tauri::async_runtime::spawn_blocking(move || {
+            let _com_guard = ComGuard::new();
+            restore_sessions(sessions)
+        });
+    }
+
+    pub fn active_generation() -> Option<u64> {
+        let state = match PAUSE_STATE.lock() {
+            Ok(state) => state,
+            Err(poisoned) => {
+                log::warn!("media pause state lock was poisoned; recovering");
+                poisoned.into_inner()
+            }
+        };
+        state.is_active.then_some(state.generation)
+    }
+
+    pub fn end_if_current(generation: u64) {
+        let sessions = {
+            let mut state = match PAUSE_STATE.lock() {
+                Ok(state) => state,
+                Err(poisoned) => {
+                    log::warn!("media pause state lock was poisoned; recovering");
+                    poisoned.into_inner()
+                }
+            };
+            if !super::guard_owns_active_pause(state.is_active, state.generation, generation) {
+                return;
+            }
             state.generation = state.generation.wrapping_add(1);
             state.is_active = false;
             std::mem::take(&mut state.paused_sessions)
@@ -357,6 +404,10 @@ mod platform {
 mod platform {
     pub fn begin() {}
     pub fn end() {}
+    pub fn active_generation() -> Option<u64> {
+        None
+    }
+    pub fn end_if_current(_generation: u64) {}
 }
 
 pub fn begin_dictation_media_pause() {
@@ -365,6 +416,10 @@ pub fn begin_dictation_media_pause() {
 
 pub fn end_dictation_media_pause() {
     platform::end();
+}
+
+fn end_dictation_media_pause_if_current(generation: u64) {
+    platform::end_if_current(generation);
 }
 
 #[cfg(test)]
@@ -377,6 +432,13 @@ mod tests {
         assert!(!should_pause_for_dictation(MediaPlaybackState::Paused));
         assert!(!should_pause_for_dictation(MediaPlaybackState::Stopped));
         assert!(!should_pause_for_dictation(MediaPlaybackState::Closed));
+    }
+
+    #[test]
+    fn older_guard_cannot_end_a_newer_media_pause() {
+        assert!(guard_owns_active_pause(true, 7, 7));
+        assert!(!guard_owns_active_pause(true, 8, 7));
+        assert!(!guard_owns_active_pause(false, 7, 7));
     }
 
     #[test]

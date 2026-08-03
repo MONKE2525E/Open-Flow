@@ -169,12 +169,13 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
                     retryable,
                     trim_err(&e.to_string())
                 );
-                if retryable {
-                    last_err = Some(e);
-                    continue;
-                }
+                // A failure only tells us this candidate is unusable. It does
+                // not say a configured fallback cannot work: a common setup
+                // is a cloud primary with a downloaded local fallback, while
+                // the cloud key is absent or stale. Match the main pipeline
+                // and keep walking the configured chain regardless of whether
+                // retrying this same provider would make sense.
                 last_err = Some(e);
-                break;
             }
         }
     }

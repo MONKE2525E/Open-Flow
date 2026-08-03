@@ -23,9 +23,13 @@ pub struct LocalLlmManager {
     // Counts in-flight cleanup_with_prompt calls (load + generate). There is
     // no safe way to cancel an in-flight llama-server request — killing the
     // process mid-generation just surfaces as a connection error to the
-    // caller — so resource-pressure unload must wait for this to hit zero
+    // caller - so resource-pressure unload must wait for this to hit zero
     // rather than interrupting a request the user is actively waiting on.
     active_requests: Arc<AtomicU32>,
+    // Serializes request admission with synchronous unload decisions. The
+    // counter alone cannot close the tiny gap where the idle reaper sees zero
+    // just before a cleanup call increments it.
+    request_start_gate: Arc<Mutex<()>>,
 }
 
 #[derive(Clone)]
@@ -83,6 +87,7 @@ impl LocalLlmManager {
             download_task: Arc::new(Mutex::new(None)),
             runtime_download: Arc::new(Mutex::new(None)),
             active_requests: Arc::new(AtomicU32::new(0)),
+            request_start_gate: Arc::new(Mutex::new(())),
         }
     }
 
@@ -398,7 +403,12 @@ impl LocalLlmManager {
         prompt: &str,
         max_tokens: u32,
     ) -> anyhow::Result<String> {
+        let start_gate = self
+            .request_start_gate
+            .lock()
+            .map_err(|_| anyhow::anyhow!("local cleanup request gate poisoned"))?;
         self.active_requests.fetch_add(1, Ordering::SeqCst);
+        drop(start_gate);
         let _busy = ActiveRequestGuard(&self.active_requests);
 
         self.ensure_loaded(app, model_id).await?;
@@ -428,6 +438,17 @@ impl LocalLlmManager {
     }
 
     pub fn unload_if_idle(&self, app: &AppHandle) -> anyhow::Result<()> {
+        let _request_gate = self
+            .request_start_gate
+            .lock()
+            .map_err(|_| anyhow::anyhow!("local cleanup request gate poisoned"))?;
+        let active_requests = self.active_requests.load(Ordering::SeqCst);
+        // `cleanup_with_prompt` holds this count across both model loading and
+        // generation. Killing llama-server here would turn an active cleanup
+        // into a connection error, particularly with `unload_immediately`.
+        if active_requests > 0 {
+            return Ok(());
+        }
         // Same reasoning as local_stt::manager::unload_if_idle: this is
         // polled every 30s for the app's whole lifetime, so skip the
         // settings-snapshot + idle computation entirely once nothing is
@@ -450,7 +471,7 @@ impl LocalLlmManager {
         };
         let last_ms = self.last_activity_ms.load(Ordering::Relaxed);
         let idle_for = Duration::from_millis(now_ms().saturating_sub(last_ms));
-        if idle_for >= idle_limit {
+        if should_unload_if_idle(active_requests, idle_for, idle_limit) {
             self.unload(app);
         }
         Ok(())
@@ -484,6 +505,10 @@ impl LocalLlmManager {
     /// it just surfaces as a connection error to whoever is waiting on the
     /// result. The next periodic check (30s later) will retry.
     pub fn unload_for_resource_pressure(&self, app: &AppHandle) {
+        let Ok(_request_gate) = self.request_start_gate.lock() else {
+            log::warn!("local-llm: request gate poisoned; skipping resource-pressure unload");
+            return;
+        };
         if self.active_requests.load(Ordering::SeqCst) > 0 {
             log::debug!(
                 "local-llm: skipping resource-pressure unload, a cleanup request is in flight"
@@ -520,37 +545,16 @@ impl LocalLlmManager {
                 .wait(loading)
                 .map_err(|_| anyhow::anyhow!("local cleanup loading wait poisoned"))?;
         }
-        let current_model_id = self
-            .current_model_id
-            .lock()
-            .map_err(|_| anyhow::anyhow!("local cleanup model id lock poisoned"))?;
-        let already_loaded = self
-            .server
-            .lock()
-            .map(|guard| guard.is_some())
-            .unwrap_or(false);
-        if current_model_id.as_deref() == Some(model_id) && already_loaded {
+        if self.is_model_loaded(model_id)? {
             return Ok(false);
         }
-        drop(current_model_id);
         *loading = true;
         Ok(true)
     }
 
     async fn ensure_loaded(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
-        {
-            let current_model_id = self
-                .current_model_id
-                .lock()
-                .map_err(|_| anyhow::anyhow!("local cleanup model id lock poisoned"))?;
-            let already_loaded = self
-                .server
-                .lock()
-                .map(|guard| guard.is_some())
-                .unwrap_or(false);
-            if current_model_id.as_deref() == Some(model_id) && already_loaded {
-                return Ok(());
-            }
+        if self.is_model_loaded(model_id)? {
+            return Ok(());
         }
         if !self.wait_for_load_slot(model_id)? {
             return Ok(());
@@ -561,6 +565,21 @@ impl LocalLlmManager {
             loading_condvar: self.loading_condvar.clone(),
         };
         self.load_model_inner(app, model_id).await
+    }
+
+    /// Lock the runtime first, matching `unload` and `load_model_inner`.
+    /// Holding model-id then runtime while another thread holds runtime then
+    /// model-id deadlocks the periodic idle reaper against a model load.
+    fn is_model_loaded(&self, model_id: &str) -> anyhow::Result<bool> {
+        let server = self
+            .server
+            .lock()
+            .map_err(|_| anyhow::anyhow!("local cleanup server lock poisoned"))?;
+        let current_model_id = self
+            .current_model_id
+            .lock()
+            .map_err(|_| anyhow::anyhow!("local cleanup model id lock poisoned"))?;
+        Ok(server.is_some() && current_model_id.as_deref() == Some(model_id))
     }
 
     async fn load_model_inner(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
@@ -622,14 +641,33 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+fn should_unload_if_idle(active_requests: u32, idle_for: Duration, idle_limit: Duration) -> bool {
+    active_requests == 0 && idle_for >= idle_limit
+}
+
 #[cfg(test)]
 mod tests {
-    use super::LocalLlmManager;
+    use super::{should_unload_if_idle, LocalLlmManager};
+    use std::time::Duration;
 
     #[test]
     fn local_cleanup_models_root_uses_cleanup_subdir() {
         let path = LocalLlmManager::models_root();
         assert!(path.to_string_lossy().contains("models"));
         assert!(path.to_string_lossy().contains("cleanup"));
+    }
+
+    #[test]
+    fn idle_unload_waits_for_active_cleanup_request() {
+        assert!(!should_unload_if_idle(
+            1,
+            Duration::from_secs(60),
+            Duration::ZERO
+        ));
+        assert!(should_unload_if_idle(
+            0,
+            Duration::from_secs(60),
+            Duration::ZERO
+        ));
     }
 }

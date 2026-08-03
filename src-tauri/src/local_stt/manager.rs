@@ -454,19 +454,8 @@ impl LocalTranscriptionManager {
     }
 
     fn ensure_loaded(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
-        {
-            let current_model_id = self
-                .current_model_id
-                .lock()
-                .map_err(|_| anyhow::anyhow!("local model id lock poisoned"))?;
-            let already_loaded = self
-                .engine
-                .lock()
-                .map(|guard| guard.is_some())
-                .unwrap_or(false);
-            if current_model_id.as_deref() == Some(model_id) && already_loaded {
-                return Ok(());
-            }
+        if self.is_model_loaded(model_id)? {
+            return Ok(());
         }
 
         let mut loading = self
@@ -485,19 +474,8 @@ impl LocalTranscriptionManager {
         // above never runs, so this is the only place that recheck happens.
         // Without it, that race unconditionally falls through to a redundant
         // reload of a model another caller just finished loading.
-        {
-            let current_model_id = self
-                .current_model_id
-                .lock()
-                .map_err(|_| anyhow::anyhow!("local model id lock poisoned"))?;
-            let already_loaded = self
-                .engine
-                .lock()
-                .map(|guard| guard.is_some())
-                .unwrap_or(false);
-            if current_model_id.as_deref() == Some(model_id) && already_loaded {
-                return Ok(());
-            }
+        if self.is_model_loaded(model_id)? {
+            return Ok(());
         }
         *loading = true;
         drop(loading);
@@ -507,6 +485,21 @@ impl LocalTranscriptionManager {
             loading_condvar: self.loading_condvar.clone(),
         };
         self.load_model_inner(app, model_id)
+    }
+
+    /// Lock the engine first, matching `unload` and `load_model_inner`.
+    /// This prevents a model load and the periodic idle reaper from waiting
+    /// forever on each other's state lock.
+    fn is_model_loaded(&self, model_id: &str) -> anyhow::Result<bool> {
+        let engine = self
+            .engine
+            .lock()
+            .map_err(|_| anyhow::anyhow!("local engine lock poisoned"))?;
+        let current_model_id = self
+            .current_model_id
+            .lock()
+            .map_err(|_| anyhow::anyhow!("local model id lock poisoned"))?;
+        Ok(engine.is_some() && current_model_id.as_deref() == Some(model_id))
     }
 
     fn load_model_inner(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
