@@ -1110,14 +1110,15 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       const modelId = String(args?.modelId ?? '');
       const loadState = readDevLocalTranscriptionState();
       const state = readDevLocalSttModelsState();
+      const targetModelId = modelId || loadState.downloading_model_id || '';
       if (!modelId || loadState.downloading_model_id === modelId) {
         writeDevLocalTranscriptionState({
           ...loadState,
           is_downloading: false,
           downloading_model_id: null,
         });
-        if (modelId && state[modelId]) {
-          state[modelId] = { downloaded: false, partial_size: 0 };
+        if (targetModelId && state[targetModelId]) {
+          state[targetModelId] = { downloaded: false, partial_size: 0 };
           writeDevLocalSttModelsState(state);
         }
         emitDevTauriEvent<LocalSttModelEventPayload>('local-stt-model-download-failed', {
@@ -1131,14 +1132,15 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       const modelId = String(args?.modelId ?? '');
       const loadState = readDevLocalLlmState();
       const state = readDevLocalLlmModelsState();
+      const targetModelId = modelId || loadState.downloading_model_id || '';
       if (!modelId || loadState.downloading_model_id === modelId) {
         writeDevLocalLlmState({
           ...loadState,
           is_downloading: false,
           downloading_model_id: null,
         });
-        if (modelId && state[modelId]) {
-          state[modelId] = { downloaded: false, partial_size: 0 };
+        if (targetModelId && state[targetModelId]) {
+          state[targetModelId] = { downloaded: false, partial_size: 0 };
           writeDevLocalLlmModelsState(state);
         }
         emitDevTauriEvent<LocalLlmModelEventPayload>('local-llm-model-download-failed', {

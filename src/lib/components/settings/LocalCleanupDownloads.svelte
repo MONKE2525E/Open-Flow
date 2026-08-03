@@ -54,10 +54,15 @@
   // installed), and that model's card shows "Downloading model
   // requirements..." until the runtime finishes, then its own progress.
   let pendingRuntimeForModelIds = $state<string[]>([]);
+  let runtimeDownloadObserved = $state(false);
 
   $effect(() => {
-    if (runtimeInfo && !runtimeInfo.is_downloading) {
+    if (!runtimeInfo) return;
+    if (runtimeInfo.is_downloading) {
+      runtimeDownloadObserved = true;
+    } else if (runtimeInfo.installed || runtimeDownloadObserved) {
       pendingRuntimeForModelIds = [];
+      runtimeDownloadObserved = false;
     }
   });
 

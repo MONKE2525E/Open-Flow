@@ -253,6 +253,7 @@ mod tests {
         seed_default_dictionary_entries(&db).expect("second seed is a no-op");
         let entries = query_dictionary(&db).expect("query dictionary after reopen");
         assert!(!entries.iter().any(|e| e.term == "Verenu"));
+        drop(db);
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("db-wal"));

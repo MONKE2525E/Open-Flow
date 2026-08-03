@@ -123,13 +123,25 @@ function noteCompleted(key: string, name: string) {
 
 let started = false;
 let listenerSession = 0;
+let activeCleanup: (() => void) | null = null;
 
 export function startDownloadManagerListeners(): () => void {
-  if (started) return () => {};
-  started = true;
+  if (started) return activeCleanup ?? (() => {});
   const session = ++listenerSession;
   let cancelled = false;
   const unlisteners: Array<() => void> = [];
+
+  const cleanup = () => {
+    if (session !== listenerSession) return;
+    cancelled = true;
+    listenerSession += 1;
+    for (const unlisten of unlisteners) unlisten();
+    unlisteners.length = 0;
+    started = false;
+    activeCleanup = null;
+  };
+  started = true;
+  activeCleanup = cleanup;
 
   async function register(promise: Promise<() => void>) {
     const unlisten = await promise;
@@ -155,18 +167,8 @@ export function startDownloadManagerListeners(): () => void {
   })().catch((err) => {
     if (cancelled || session !== listenerSession) return;
     console.error('download manager listeners failed', err);
-    cancelled = true;
-    listenerSession += 1;
-    for (const unlisten of unlisteners) unlisten();
-    unlisteners.length = 0;
-    started = false;
+    cleanup();
   });
 
-  return () => {
-    cancelled = true;
-    listenerSession += 1;
-    for (const unlisten of unlisteners) unlisten();
-    unlisteners.length = 0;
-    started = false;
-  };
+  return cleanup;
 }

@@ -2,8 +2,6 @@ export const DEFAULT_MODEL = "gemini-3.6-flash-high";
 export const DEFAULT_FALLBACK_MODEL = "claude-sonnet-4.6";
 
 const FALLBACK_ERROR_PATTERNS = [
-  /\b(?:quota|rate[\s_-]?limit|too many requests|resource exhausted)\b/i,
-  /\b429\b/i,
   /\b(?:model|engine)\b.{0,60}\b(?:not found|not available|unavailable|does not exist|unknown)\b/is,
   /\b(?:not found|not available|unavailable|does not exist|unknown)\b.{0,60}\b(?:model|engine)\b/is,
   /\bno available (?:model|engine)\b/i,
@@ -17,7 +15,7 @@ export function selectReviewModels({
   additions = 0,
   deletions = 0,
 } = {}) {
-  if (!apiKey) return null;
+  if (!String(apiKey ?? '').trim()) return null;
 
   const models = [...new Set([primaryModel, fallbackModel].map((model) => String(model || "").trim()).filter(Boolean))];
   if (models.length === 0) return null;
@@ -39,7 +37,7 @@ export function fallbackReason(result) {
   const output = `${result.stderr || ""}\n${result.stdout || ""}`;
   if (/\b(?:quota|resource exhausted)\b/i.test(output)) return "quota";
   if (/\b(?:rate[\s_-]?limit|too many requests|429)\b/i.test(output)) return "rate_limit";
-  if (FALLBACK_ERROR_PATTERNS.slice(2).some((pattern) => pattern.test(output))) return "model_unavailable";
+  if (FALLBACK_ERROR_PATTERNS.some((pattern) => pattern.test(output))) return "model_unavailable";
   return null;
 }
 
@@ -66,7 +64,10 @@ export function formatProgressSummary({ stage, model, fallbackModel, reason, mod
     case "switching":
       return `🔁 ${model ? `\`${model}\`` : "Primary model"} ${reason === "model_unavailable" ? "unavailable" : reason === "rate_limit" ? "rate-limited" : "quota unavailable"}, switching to ${fallbackModel ? `\`${fallbackModel}\`` : "the fallback model"}...`;
     case "complete":
-      return `✅ Verenu AI review complete${modelText}. Reviewed ${shaText} (${findings} finding${findings === 1 ? "" : "s"}).`;
+      {
+        const findingCount = Number.isFinite(Number(findings)) ? Number(findings) : 0;
+        return `✅ Verenu AI review complete${modelText}. Reviewed ${shaText} (${findingCount} finding${findingCount === 1 ? "" : "s"}).`;
+      }
     case "failed":
       return `❌ Verenu AI review failed (${SAFE_FAILURE_REASONS.has(reason) ? reason : "review_failed"}).`;
     default:

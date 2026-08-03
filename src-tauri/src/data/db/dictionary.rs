@@ -196,6 +196,10 @@ pub fn seed_default_dictionary_entries(db: &Db) -> Result<()> {
                     params![variants.join(", "), id],
                 )?;
             }
+            conn.execute(
+                "INSERT OR IGNORE INTO seeded_defaults (key) VALUES (?1)",
+                params![MARKER],
+            )?;
         }
         None => {
             let already_seeded: i64 = conn.query_row(

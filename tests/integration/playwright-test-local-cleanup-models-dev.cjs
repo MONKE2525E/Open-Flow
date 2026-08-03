@@ -137,7 +137,8 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
 
     await gemmaCard.locator('[data-testid="download-model"]').click();
     await gemmaCard.locator('[data-testid="cancel-model-download"]').waitFor({ state: 'visible', timeout: TIMEOUT });
-    await gemmaCard.locator('[data-testid="delete-model"]').waitFor({ state: 'visible', timeout: TIMEOUT });
+    await gemmaCard.locator('[data-testid="cancel-model-download"]').click();
+    await gemmaCard.locator('[data-testid="download-model"]').waitFor({ state: 'visible', timeout: TIMEOUT });
 
     if (errors.length) {
       console.error('FAIL');

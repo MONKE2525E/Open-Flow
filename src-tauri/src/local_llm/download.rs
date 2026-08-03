@@ -112,7 +112,9 @@ fn sha256_hex_with_progress(
     let mut file = std::fs::File::open(path)?;
     let total_bytes = file.metadata().map(|meta| meta.len()).unwrap_or(0);
     let mut hashed_bytes: u64 = 0;
-    let mut last_emit = Instant::now() - Duration::from_secs(1);
+    let mut last_emit = Instant::now()
+        .checked_sub(Duration::from_secs(1))
+        .unwrap_or_else(Instant::now);
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 1024 * 128];
     loop {
@@ -328,7 +330,9 @@ async fn download_one_artifact(
         *aggregate_downloaded = aggregate_downloaded.saturating_sub(partial_size);
     }
 
-    let mut last_emit = Instant::now() - Duration::from_secs(1);
+    let mut last_emit = Instant::now()
+        .checked_sub(Duration::from_secs(1))
+        .unwrap_or_else(Instant::now);
     let mut response = response
         .take()
         .expect("response exists when artifact is not already complete");
@@ -412,23 +416,51 @@ pub async fn download_model(
     // Only now, after every artifact has downloaded and passed checksum
     // verification, replace whatever was previously in final_dir — so a
     // failed or cancelled download never destroys a working installed model.
-    if final_dir.exists() {
-        if final_dir.is_dir() {
-            std::fs::remove_dir_all(&final_dir)?;
+    let partial_dir = manifest.partial_download_path(root);
+    let backup_path = root.join(format!(
+        ".{}-backup-{}",
+        manifest.id,
+        std::process::id()
+    ));
+    if backup_path.exists() {
+        if backup_path.is_dir() {
+            std::fs::remove_dir_all(&backup_path)?;
         } else {
-            std::fs::remove_file(&final_dir)?;
+            std::fs::remove_file(&backup_path)?;
         }
     }
+    let had_existing = final_dir.exists();
+    if had_existing {
+        std::fs::rename(&final_dir, &backup_path)?;
+    }
 
-    let partial_dir = manifest.partial_download_path(root);
-    std::fs::create_dir_all(&final_dir)?;
-    for artifact in manifest.artifacts {
-        let partial_path = partial_file_path(root, manifest, artifact);
-        let final_path = final_file_path(root, manifest, artifact);
-        if let Some(parent) = final_path.parent() {
-            std::fs::create_dir_all(parent)?;
+    let install_result = (|| -> anyhow::Result<()> {
+        std::fs::create_dir_all(&final_dir)?;
+        for artifact in manifest.artifacts {
+            let partial_path = partial_file_path(root, manifest, artifact);
+            let final_path = final_file_path(root, manifest, artifact);
+            if let Some(parent) = final_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::rename(&partial_path, &final_path)?;
         }
-        std::fs::rename(&partial_path, &final_path)?;
+        Ok(())
+    })();
+
+    if let Err(error) = install_result {
+        let _ = std::fs::remove_dir_all(&final_dir);
+        if had_existing {
+            let _ = std::fs::rename(&backup_path, &final_dir);
+        }
+        return Err(error);
+    }
+
+    if had_existing {
+        if backup_path.is_dir() {
+            std::fs::remove_dir_all(&backup_path)?;
+        } else {
+            std::fs::remove_file(&backup_path)?;
+        }
     }
     let _ = std::fs::remove_dir_all(partial_dir);
     emit_progress(app, manifest.id, downloaded_bytes, total_bytes);

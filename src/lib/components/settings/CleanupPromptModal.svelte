@@ -95,6 +95,7 @@
         if (testState.report) {
           const n =
             testState.report.static_warnings.length +
+            testState.report.live_warnings.length +
             testState.report.live_results.filter((r) => !r.passed).length;
           return `Failed ${n} check${n !== 1 ? 's' : ''}`;
         }

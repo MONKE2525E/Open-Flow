@@ -224,7 +224,16 @@ async fn download_to_file(
         .send()
         .await?
         .error_for_status()?;
-    let aggregate_total = aggregate_total.or(response.content_length());
+    // A runtime backend can contain multiple archives. Once bytes from a
+    // previous archive are included, the current response length is no
+    // longer a valid aggregate denominator. Report the later assets as
+    // indeterminate rather than letting progress exceed the current file's
+    // total and stick at 100% prematurely.
+    let aggregate_total = if *aggregate_downloaded == 0 {
+        aggregate_total.or(response.content_length())
+    } else {
+        aggregate_total
+    };
 
     // Async file I/O (rather than std::fs + sync write_all) so each chunk
     // write can't block the Tokio executor worker thread during a
@@ -232,7 +241,9 @@ async fn download_to_file(
     use tokio::io::AsyncWriteExt;
     let mut file = tokio::fs::File::create(dest).await?;
     let mut response = response;
-    let mut last_emit = Instant::now() - Duration::from_secs(1);
+    let mut last_emit = Instant::now()
+        .checked_sub(Duration::from_secs(1))
+        .unwrap_or_else(Instant::now);
     while let Some(chunk) = response.chunk().await? {
         ensure_not_cancelled(cancel)?;
         file.write_all(&chunk).await?;
@@ -330,6 +341,20 @@ fn extract_archive(_archive_path: &Path, _dest: &Path) -> anyhow::Result<()> {
 }
 
 pub async fn ensure_llama_server_binary(
+    app: &AppHandle,
+    cancel: &AtomicBool,
+) -> anyhow::Result<PathBuf> {
+    let result = ensure_llama_server_binary_inner(app, cancel).await;
+    if result.is_err() {
+        // The runtime is considered installed solely by the presence of its
+        // server binary. Remove an incomplete multi-asset extraction so a
+        // later attempt cannot mistake one archive for a complete runtime.
+        let _ = std::fs::remove_dir_all(runtime_root());
+    }
+    result
+}
+
+async fn ensure_llama_server_binary_inner(
     app: &AppHandle,
     cancel: &AtomicBool,
 ) -> anyhow::Result<PathBuf> {

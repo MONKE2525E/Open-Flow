@@ -169,7 +169,9 @@ fn verify_checksum_if_present(
         // front-to-back, so bytes-hashed tracks wall-clock progress closely.
         let total_bytes = file.metadata().map(|meta| meta.len()).unwrap_or(0);
         let mut hashed_bytes: u64 = 0;
-        let mut last_emit = Instant::now() - Duration::from_secs(1);
+        let mut last_emit = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
         let mut hasher = Sha256::new();
         let mut buffer = [0u8; 1024 * 128];
         loop {
@@ -249,7 +251,7 @@ fn remove_macos_extraction_junk(dir: &Path) -> anyhow::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         if is_macos_extraction_junk(&entry.file_name()) {
-            if entry.path().is_dir() {
+            if entry.file_type()?.is_dir() {
                 std::fs::remove_dir_all(entry.path())?;
             } else {
                 std::fs::remove_file(entry.path())?;
@@ -333,7 +335,9 @@ fn extract_archive(
             model_id: manifest.id,
             read_bytes: 0,
             total_bytes: archive_len,
-            last_emit: Instant::now() - Duration::from_secs(1),
+            last_emit: Instant::now()
+                .checked_sub(Duration::from_secs(1))
+                .unwrap_or_else(Instant::now),
             last_log: Instant::now() - Duration::from_secs(2),
             cancel,
         };
@@ -505,7 +509,9 @@ pub async fn download_model(
         }
     }
 
-    let mut last_emit = Instant::now() - Duration::from_secs(1);
+    let mut last_emit = Instant::now()
+        .checked_sub(Duration::from_secs(1))
+        .unwrap_or_else(Instant::now);
     let mut last_log = Instant::now() - Duration::from_secs(2);
     emit_progress(app, manifest.id, downloaded_bytes, total_bytes);
 

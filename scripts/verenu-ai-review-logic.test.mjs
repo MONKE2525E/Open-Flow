@@ -46,6 +46,10 @@ test("selectReviewModels coerces numeric change counts", () => {
   assert.equal(selectReviewModels({ apiKey: "present", additions: "not-a-number", deletions: 5 }).changedLines, 5);
 });
 
+test("selectReviewModels rejects blank API keys", () => {
+  assert.equal(selectReviewModels({ apiKey: "   " }), null);
+});
+
 test("quota, rate-limit, and model-unavailable failures are fallback eligible", () => {
   const cases = [
     [{ code: 1, stderr: "RESOURCE_EXHAUSTED: quota exceeded" }, "quota"],

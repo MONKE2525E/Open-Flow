@@ -124,11 +124,7 @@ impl LocalTranscriptionManager {
             .lock()
             .ok()
             .and_then(|guard| guard.clone());
-        let is_loaded = self
-            .engine
-            .lock()
-            .map(|guard| guard.is_some())
-            .unwrap_or(false);
+        let is_loaded = current_model_id.is_some();
         let is_loading = self.is_loading.lock().map(|guard| *guard).unwrap_or(false);
         let download_state = self
             .download_task

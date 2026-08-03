@@ -395,7 +395,10 @@ fn build_google_cleanup_request_with_alternate(
             escape_transcript_xml(text),
             escape_transcript_xml(alternate),
         ),
-        None => format!("<raw_dictation>\n{text}\n</raw_dictation>"),
+        None => format!(
+            "<raw_dictation>\n{}\n</raw_dictation>",
+            escape_transcript_xml(text)
+        ),
     };
     GeminiGenerateReq {
         contents: vec![GeminiReqContent {
@@ -450,6 +453,16 @@ mod tests {
         );
         assert_eq!(json["generationConfig"]["maxOutputTokens"], 256);
         assert_eq!(json["generationConfig"]["temperature"], 0.0);
+    }
+
+    #[test]
+    fn google_cleanup_request_escapes_raw_transcript_xml() {
+        let body = build_google_cleanup_request("<tag> & text", "prompt", "gemini-2.5-flash", 128);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(
+            json["contents"][0]["parts"][0]["text"],
+            "<raw_dictation>\n&lt;tag&gt; &amp; text\n</raw_dictation>"
+        );
     }
 
     #[test]

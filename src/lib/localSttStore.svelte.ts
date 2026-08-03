@@ -86,7 +86,7 @@ export async function deleteLocalModel(modelIdValue: string) {
 
 export async function openLocalModelsFolder() {
   try {
-    await invoke('open_local_models_folder');
+    await invoke('open_local_stt_models_folder');
   } catch (err) {
     console.error('open local models folder failed', err);
   }

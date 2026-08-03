@@ -601,13 +601,6 @@ pub fn hog_mic(session_id: u64) {
         return;
     }
 
-    if ACTIVE_SESSION_ID.load(Ordering::SeqCst) != session_id {
-        if let Ok(Some(device_id)) = result {
-            let _ = macos::release_hog(device_id);
-        }
-        return;
-    }
-
     if !matches!(*state, HogState::Idle) {
         if let Ok(Some(device_id)) = result {
             let _ = macos::release_hog(device_id);

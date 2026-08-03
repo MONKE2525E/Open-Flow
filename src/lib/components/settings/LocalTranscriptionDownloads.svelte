@@ -93,7 +93,7 @@
   // that omits Content-Length); verifying and extracting always report a real
   // fraction, so they never fall back to the indeterminate animation.
   function transcriptionIsIndeterminate(modelId: string): boolean {
-    if (transcriptionDownloadStage[modelId] !== 'downloading') return false;
+    if ((transcriptionDownloadStage[modelId] ?? 'downloading') !== 'downloading') return false;
     const progress = transcriptionDownloadProgress[modelId];
     return progress == null || progress.total_bytes == null;
   }
@@ -115,7 +115,7 @@
   function languageSummaryLabel(model: LocalSttModelInfo): string {
     const languages = model.supported_languages ?? [];
     const count = languages.length;
-    return count <= 1 ? languages[0] ?? '1 language' : `${count} languages`;
+    return count === 0 ? '0 languages' : count === 1 ? languages[0] : `${count} languages`;
   }
 </script>
 

@@ -85,7 +85,6 @@
   // selection never points at a model that isn't there yet.
   let pendingPreset = $state<Preset | null>(null);
   let pendingPresetDownloads = $state<RequiredLocalModel[]>([]);
-  let pendingPresetDownloadStarted = $state(false);
   let pendingPresetRequestsSettled = $state(0);
 
   const activeConfig = $derived<ActiveConfig>({
@@ -114,7 +113,6 @@
   function clearPendingPreset() {
     pendingPreset = null;
     pendingPresetDownloads = [];
-    pendingPresetDownloadStarted = false;
     pendingPresetRequestsSettled = 0;
   }
 
@@ -157,7 +155,6 @@
       // $effect below). Reuses the same download plumbing as the Advanced panel.
       pendingPreset = preset;
       pendingPresetDownloads = missing;
-      pendingPresetDownloadStarted = false;
       pendingPresetRequestsSettled = 0;
       for (const model of missing) {
         if (model.task === 'transcription') {
@@ -252,12 +249,7 @@
     const isDownloadingExpectedModel = pendingPresetDownloads.some(
       isExpectedModelDownloading,
     );
-    if (isDownloadingExpectedModel) {
-      pendingPresetDownloadStarted = true;
-    } else if (
-      pendingPresetDownloadStarted
-      && pendingPresetRequestsSettled >= pendingPresetDownloads.length
-    ) {
+    if (!isDownloadingExpectedModel && pendingPresetRequestsSettled >= pendingPresetDownloads.length) {
       // A failure or cancellation can leave the preset incomplete without
       // passing through the explicit cancel button. Do not keep a stale
       // pending preset that could activate after an unrelated later download.

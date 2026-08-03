@@ -494,7 +494,11 @@ fn runtime_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'stati
 }
 
 fn scale(size: u32, value: u32) -> u32 {
-    ((value * size) / 512).max(1)
+    if value == 0 {
+        0
+    } else {
+        ((value * size) / 512).max(1)
+    }
 }
 
 fn draw_rounded_rect(rgba: &mut [u8], canvas_size: u32, rect: IconRect, color: [u8; 4]) {
