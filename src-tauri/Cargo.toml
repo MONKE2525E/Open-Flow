@@ -26,6 +26,7 @@ tokio       = { version = "1", features = ["rt", "rt-multi-thread", "macros", "s
 reqwest     = { version = "0.12", default-features = false, features = ["json", "multipart", "native-tls", "charset"] }
 bytes       = "1"
 cpal        = "0.15"
+rodio       = { version = "0.20", default-features = false }
 hound       = "3.5"
 nnnoiseless = "0.4"
 base64      = "0.22"
@@ -33,6 +34,16 @@ anyhow      = "1"
 log         = "0.4"
 chrono      = { version = "0.4", features = ["serde"] }
 crossbeam-queue = "0.3"
+flate2      = "1"
+futures-util = "0.3"
+sha2        = "0.10"
+tar         = "0.4"
+zip         = { version = "2", default-features = false, features = ["deflate"] }
+# "vad-silero" pulls in transcribe-rs's own bundled Silero VAD wrapper
+# (transcribe_rs::vad::SileroVad) on top of the ort/onnxruntime dependency
+# "onnx" already requires — no separate ort dependency or hand-rolled ONNX
+# plumbing needed for local speech detection.
+transcribe-rs = { version = "0.3.11", features = ["onnx", "vad-silero"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
@@ -48,10 +59,13 @@ windows = { version = "0.61", features = [
   "Win32_System_Registry",
   "Win32_Media_Audio",
   "Win32_Media_Audio_Endpoints",
+  "Media_Control",
   "Win32_System_Com",
   "Win32_UI_Accessibility",
   "Win32_Storage_FileSystem",
   "Win32_Security_Credentials",
+  "Win32_Networking_NetworkListManager",
+  "Win32_Graphics_Dwm",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

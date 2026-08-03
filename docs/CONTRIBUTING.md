@@ -10,7 +10,7 @@ The default workflow is:
 
 1. Most changes go straight onto `dev`.
 2. `dev` gets reviewed and tested.
-3. Once `dev` is in good shape, it is merged into `main`.
+3. Once `dev` is in good shape, it is merged into `master`.
 4. Releases are cut from that stabilized path.
 
 If you have direct write access and the change is normal project work, commit to `dev`.
@@ -24,11 +24,13 @@ Use a PR when one of these is true:
 
 ## Before You Start
 
-- Read `CLAUDE.md` for repo architecture, platform gotchas, and testing notes.
-- Check `docs/ROADMAP.md` for current bugs and long-term context.
+- Read [`../CLAUDE.md`](../CLAUDE.md) for repo architecture, platform gotchas, and testing notes.
+- Read [ARCHITECTURE.md](ARCHITECTURE.md) for the public architecture map.
+- Read [TESTING.md](TESTING.md) for the full test matrix.
+- Check [ROADMAP.md](ROADMAP.md) for current bugs and long-term context.
 - Do not treat roadmap ideas as approved scope by default.
 - Do not commit personal information, API keys, clipboard contents, local secrets, or screenshots with private text.
-- If you change data flow or retention behavior, update `docs/DATA_AND_PRIVACY.md`.
+- If you change data flow or retention behavior, update [DATA_AND_PRIVACY.md](DATA_AND_PRIVACY.md).
 
 ## Setup
 
@@ -78,8 +80,8 @@ npm run dev
 
 - Keep Tauri. Do not replace the app shell with Electron.
 - Keep API keys out of SQLite, logs, screenshots, fixtures, and test output.
-- Use constants from `src-tauri/src/data/store.rs` for store keys. Do not add raw string keys.
-- Keep `tests/smoke/` as a contract. Fix app code when smoke tests fail.
+- Use constants from [`../src-tauri/src/data/store.rs`](../src-tauri/src/data/store.rs) for store keys. Do not add raw string keys.
+- Keep [`../tests/smoke/`](../tests/smoke/) as a contract. Fix app code when smoke tests fail.
 - Keep dependencies lean. The app has a low idle RAM target.
 - Follow existing Rust, Svelte, TypeScript, and Tailwind patterns before inventing new abstractions.
 - If you change how data moves on or off device, document it clearly.
@@ -117,31 +119,33 @@ npm audit --audit-level=moderate
 ### Dependency and security audit notes
 
 - CI runs `npm audit --audit-level=moderate`.
-- CI also installs and runs `cargo audit` against `src-tauri/Cargo.lock`.
+- CI also installs and runs `cargo audit` against [`../src-tauri/Cargo.lock`](../src-tauri/Cargo.lock).
 - Local work should run the same checks when practical, but `cargo audit` does not need to be preinstalled to make ordinary code changes.
 
 ### Targeted UI and state checks
 
 ```bash
 npm run dev
-python tests/OnePyFone.py --suite ui,state --no-server
+python3 tests/OnePyFone.py --suite ui,state --no-server
 ```
+
+On Windows, use `python` instead of `python3` if `python3` is not available in your shell.
 
 Rules:
 
 - Live API checks are opt-in.
 - Never print API keys, clipboard contents, or real dictated text in test output.
-- Keep `tests/smoke/` frozen.
-- Add coverage in Rust tests or `tests/integration/` when behavior changes.
+- Keep [`../tests/smoke/`](../tests/smoke/) frozen.
+- Add coverage in Rust tests or [`../tests/integration/`](../tests/integration/) when behavior changes.
 - For UI-facing changes, use Playwright when it makes sense and say what you tested.
 
 ## Version Changes
 
 When bumping the version, update all three files together:
 
-- `package.json`
-- `src-tauri/tauri.conf.json`
-- `src-tauri/Cargo.toml`
+- [`../package.json`](../package.json)
+- [`../src-tauri/tauri.conf.json`](../src-tauri/tauri.conf.json)
+- [`../src-tauri/Cargo.toml`](../src-tauri/Cargo.toml)
 
 Do not hardcode version strings in the frontend.
 
@@ -155,3 +159,12 @@ Whether work lands by direct commit or PR, the bar is the same:
 - Say plainly if something was not tested
 
 If you open a PR, target `dev` unless there is a specific reason not to.
+
+## Related Docs
+
+<p align="center">
+  <a href="ARCHITECTURE.md"><img alt="Architecture" src="https://img.shields.io/badge/Architecture-Overview-5b554a"></a>
+  <a href="TESTING.md"><img alt="Testing" src="https://img.shields.io/badge/Testing-Guide-c44632"></a>
+  <a href="RELEASE.md"><img alt="Release Process" src="https://img.shields.io/badge/Release-Process-7e7266"></a>
+  <a href="ROADMAP.md"><img alt="Roadmap" src="https://img.shields.io/badge/Roadmap-Status-2b2422"></a>
+</p>

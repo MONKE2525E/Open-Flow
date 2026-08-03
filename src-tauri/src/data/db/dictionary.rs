@@ -112,6 +112,120 @@ pub fn insert_dictionary_entry_returning(
     Ok(CreatedRecordMeta { id, created_at })
 }
 
+/// Ensures the dictionary's "Verenu" entry (if any) lists every known
+/// mistranscription observed in practice from local speech-to-text models —
+/// small local STT models get their own product name wrong almost every
+/// time, unlike cloud Whisper models, which get a spelling hint baked into
+/// their transcription prompt (see `TRANSCRIPTION_GLOSSARY`) that local
+/// engines have no equivalent for (`transcribe-rs`'s `TranscribeOptions` has
+/// no prompt/vocabulary field at all). `mistake` is comma-separated (see
+/// `parse_dictionary_mistakes` in `data::dictionary`), same as a snippet's
+/// multi-trigger field.
+///
+/// Two cases, handled differently:
+/// - **An entry for "Verenu" already exists** (a prior run of this
+///   function, or — the real bug this fixes — the user's own manual entry
+///   predating this feature entirely, e.g. a hand-added `Verenu -> Vernu`).
+///   Any of the known variants missing from its `mistake` list are merged
+///   in; anything already there (including variants this function doesn't
+///   know about) is left untouched. This branch is safe and idempotent to
+///   run on every launch, unconditionally — it only ever adds, so it also
+///   self-heals a database like this one where `INSERT OR IGNORE` had
+///   silently lost every known variant to a `UNIQUE` conflict against a
+///   pre-existing row, without clobbering what the user already had.
+/// - **No entry exists.** Create one with the full known list — but only
+///   the first time ever, gated on the `seeded_defaults` marker table, so a
+///   user who deletes the entry entirely doesn't see it recreated on the
+///   next launch. (Not `PRAGMA user_version`: that's schema.rs's own
+///   migration counter, and claiming a version number here for a one-off
+///   data seed would collide with any future structural migration needing
+///   the same number.)
+///
+/// Deliberately NOT part of the generic migration chain in `schema::open` —
+/// that function is called directly by `open(":memory:")` all over the test
+/// suite (fixtures, unit tests), and seeding real product data into every
+/// ephemeral test database would silently change dictionary counts/contents
+/// those tests don't expect. This is called once per launch, explicitly,
+/// only where the real user database opens (`main.rs`).
+pub fn seed_default_dictionary_entries(db: &Db) -> Result<()> {
+    const MARKER: &str = "verenu_dictionary_v1";
+    // Zarinu is evidenced live: Cohere (local STT) consistently rendered
+    // "Verenu" with a leading Z across multiple dictations in the same
+    // session (confirmed by the speaker directly: "Cohere is trying to say
+    // it with a Z sometimes"). Berenu/Ferenu/Werenu/Verinu extend the same
+    // voiced/voiceless and vowel-substitution confusions the existing list
+    // already covers (B/V, F/V, W/V, e/i) — invented non-words, so they
+    // carry no real-word collision risk the way a plausible English word
+    // would. Varineu is also evidenced live: Cohere transcribed "named
+    // Verenu" as "named Varineu" verbatim in both raw and cleaned text.
+    const KNOWN_VARIANTS: [&str; 15] = [
+        "Varinu", "Verena", "Virinu", "Varino", "Varinew", "Varina", "Verminu", "Varinian",
+        "Marino", "Zarinu", "Berenu", "Ferenu", "Werenu", "Verinu", "Varineu",
+    ];
+
+    let conn = lock_conn(db)?;
+    let existing: Option<(i64, Option<String>)> = {
+        let mut stmt =
+            conn.prepare("SELECT id, mistake FROM dictionary WHERE term = 'Verenu' LIMIT 1")?;
+        let mut rows = stmt.query([])?;
+        match rows.next()? {
+            Some(row) => Some((row.get(0)?, row.get(1)?)),
+            None => None,
+        }
+    };
+
+    match existing {
+        Some((id, mistake)) => {
+            let mut variants: Vec<String> = mistake
+                .as_deref()
+                .unwrap_or_default()
+                .split(',')
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .collect();
+            let mut changed = false;
+            for known in KNOWN_VARIANTS {
+                if !variants.iter().any(|v| v.eq_ignore_ascii_case(known)) {
+                    variants.push(known.to_string());
+                    changed = true;
+                }
+            }
+            if changed {
+                conn.execute(
+                    "UPDATE dictionary SET mistake = ?1 WHERE id = ?2",
+                    params![variants.join(", "), id],
+                )?;
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO seeded_defaults (key) VALUES (?1)",
+                params![MARKER],
+            )?;
+        }
+        None => {
+            let already_seeded: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM seeded_defaults WHERE key = ?1",
+                params![MARKER],
+                |r| r.get(0),
+            )?;
+            if already_seeded > 0 {
+                return Ok(());
+            }
+            let mut conn = conn;
+            let tx = conn.transaction()?;
+            tx.execute(
+                "INSERT INTO dictionary (term, mistake, confidence_tier) VALUES ('Verenu', ?1, 'manual')",
+                params![KNOWN_VARIANTS.join(", ")],
+            )?;
+            tx.execute(
+                "INSERT INTO seeded_defaults (key) VALUES (?1)",
+                params![MARKER],
+            )?;
+            tx.commit()?;
+        }
+    }
+    Ok(())
+}
+
 /// Inserts a dictionary entry restored from a backup file. Takes an
 /// already-locked connection so a caller doing many inserts (bulk import)
 /// can wrap them all in one transaction instead of locking per row.

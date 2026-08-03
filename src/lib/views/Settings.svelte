@@ -1,9 +1,11 @@
 <script lang="ts">
   import { appStore } from '../stores';
-  import { icons } from '../icons';
   import { onMount } from 'svelte';
-  import { getVersion, listen } from '../tauri';
-  import { MOTION_MS, MOTION_PX, SETTINGS_SECTION_ORDER, directionFromOrder, modalBackdrop, modalCard, motionMs, motionPx, pageSwap } from '../motion';
+  import { listen } from '../tauri';
+  import { fade } from 'svelte/transition';
+  import { MOTION_MS, MOTION_PX, SETTINGS_SECTION_ORDER, directionFromOrder, modalBackdrop, motionMs, motionPx, pageSwap } from '../motion';
+  import { isSettingsSectionId } from '../settingsSections';
+  import { scrollEdges, type ScrollEdgeCallback } from '../scrollFade';
 
   import GeneralSection from '../components/settings/GeneralSection.svelte';
   import AppMappingsSection from '../components/settings/AppMappingsSection.svelte';
@@ -16,41 +18,35 @@
   import DeveloperSection from '../components/settings/DeveloperSection.svelte';
   import { isMac } from '../platform';
 
-  let section = $state('general');
-  let animDir: 1 | -1 = $state(1);
-  let appVersion = $state('');
-  let settingsModalEl = $state<HTMLDivElement | null>(null);
+  let settingsPageEl = $state<HTMLDivElement | null>(null);
+  let settingsPanelEl = $state<HTMLDivElement | null>(null);
   let previousFocusEl: HTMLElement | null = null;
 
-  const sectionOrder = SETTINGS_SECTION_ORDER;
+  const section = $derived(appStore.settingsSection);
+  const animDir = $derived(appStore.settingsAnimDir);
+  const appVersion = $derived(appStore.appVersion);
 
-  const navSections = $derived([
-    { group: 'Settings', items: [
-      { id: 'general',  label: 'General',      icon: 'sliders'  as keyof typeof icons },
-      { id: 'apps',     label: 'App Mappings', icon: 'apps'     as keyof typeof icons },
-      { id: 'keys',     label: 'API Keys',     icon: 'key'      as keyof typeof icons },
-      { id: 'models',   label: 'Models',       icon: 'command'  as keyof typeof icons },
-      { id: 'privacy',  label: 'Privacy',      icon: 'lock'     as keyof typeof icons },
-      { id: 'advanced', label: 'Microphone',  icon: 'mic'      as keyof typeof icons },
-      ...(isMac ? [{ id: 'permissions', label: 'Permissions', icon: 'shield' as keyof typeof icons }] : []),
-      ...(appStore.devModeEnabled ? [{ id: 'developer', label: 'Developer', icon: 'command' as keyof typeof icons }] : []),
-    ]},
-    { group: 'Verenu', items: [
-      { id: 'about', label: 'About', icon: 'help' as keyof typeof icons },
-    ]},
-  ]);
+  /*
+   * The settings page enters and leaves on the vertical axis while the sidebar
+   * rail moves horizontally, so the two halves of the transition stay legible
+   * as separate motions. Mirrors --content-swap-y / --content-swap-ms on
+   * .content in App.svelte, which animates the outgoing page — keep in sync.
+   */
+  const SETTINGS_SWAP_PX = 26;
+  const SETTINGS_SWAP_MS = 320;
 
   onMount(() => {
-    void getVersion().then((version) => {
-      appVersion = version;
-    });
     const unlistenPromise = listen<string>('open-flow:open-settings-section', (event) => {
       const target = event.payload;
-      if (target && sectionOrder.includes(target as typeof sectionOrder[number])) {
-        section = target;
-      } else {
-        section = 'general';
+      const nextSection = target && isSettingsSectionId(target) ? target : 'general';
+      if (nextSection !== appStore.settingsSection) {
+        appStore.settingsAnimDir = directionFromOrder(
+          appStore.settingsSection,
+          nextSection,
+          SETTINGS_SECTION_ORDER
+        );
       }
+      appStore.settingsSection = nextSection;
       appStore.settingsOpen = true;
     });
     return () => {
@@ -60,15 +56,27 @@
 
   function close() { appStore.settingsOpen = false; }
 
-  function goTo(id: string) {
-    if (id === section) return;
-    animDir = directionFromOrder(section, id, sectionOrder);
-    section = id;
-  }
+  // Soft fades at the top and bottom of the scroll area, shown only when there
+  // is actually more content in that direction — so a scrolled-to-top page keeps
+  // its heading crisp and the fade never obscures anything at rest.
+  let fadeTop = $state(false);
+  let fadeBottom = $state(false);
+  const setFades: ScrollEdgeCallback = (top, bottom, node) => {
+    const apply = () => {
+      if (node !== settingsPanelEl) return;
+      fadeTop = top;
+      fadeBottom = bottom;
+    };
+    // Svelte actions run before bind:this is assigned on initial mount. Defer
+    // only that first callback so the active panel can claim the state, while
+    // callbacks from an outgoing keyed panel remain ignored.
+    if (node !== settingsPanelEl) queueMicrotask(apply);
+    else apply();
+  };
 
   $effect(() => {
-    if (!appStore.devModeEnabled && section === 'developer') {
-      section = 'about';
+    if (!appStore.devModeEnabled && appStore.settingsSection === 'developer') {
+      appStore.settingsSection = 'about';
     }
   });
 
@@ -89,13 +97,17 @@
     }
 
     requestAnimationFrame(() => {
-      const [first] = getFocusableElements();
-      (first ?? settingsModalEl)?.focus();
+      (firstFocusableInShell() ?? settingsPageEl)?.focus();
     });
   });
 
-  function getFocusableElements(): HTMLElement[] {
-    if (!settingsModalEl) return [];
+  /**
+   * Settings is a page, not a dialog, so there is no focus trap — Tab is free to
+   * reach the rail in the sidebar. Focus still moves into the shell on open so
+   * keyboard users land on the content they just asked for.
+   */
+  function firstFocusableInShell(): HTMLElement | null {
+    if (!settingsPageEl) return null;
     const selector = [
       'button:not([disabled])',
       'input:not([disabled])',
@@ -105,8 +117,8 @@
       '[tabindex]:not([tabindex="-1"])',
     ].join(',');
 
-    return Array.from(settingsModalEl.querySelectorAll<HTMLElement>(selector))
-      .filter((el) => !el.hasAttribute('inert') && el.offsetParent !== null);
+    return Array.from(settingsPageEl.querySelectorAll<HTMLElement>(selector))
+      .find((el) => !el.hasAttribute('inert') && el.offsetParent !== null) ?? null;
   }
 
   function onWindowKeydown(e: KeyboardEvent) {
@@ -121,29 +133,6 @@
       close();
     }
   }
-
-  function onModalKeydown(e: KeyboardEvent) {
-    if (e.key !== 'Tab') return;
-
-    const focusable = getFocusableElements();
-    if (focusable.length === 0) {
-      e.preventDefault();
-      settingsModalEl?.focus();
-      return;
-    }
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
-
-    if (e.shiftKey && (active === first || active === settingsModalEl)) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  }
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
@@ -151,72 +140,68 @@
 {#if appStore.settingsOpen}
   <div class="settings-overlay-wrap">
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="settings-overlay" aria-hidden="true" onclick={close} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></div>
+    <!-- Fades on roughly the same clock as .content's exit, so the outgoing
+         page's rise stays visible through the wash instead of being snapped away. -->
+    <div class="settings-overlay" aria-hidden="true" onclick={close} in:modalBackdrop={{ duration: motionMs(MOTION_MS.panel) }} out:modalBackdrop={{ duration: motionMs(MOTION_MS.base) }}></div>
     <div
-      bind:this={settingsModalEl}
-      class="settings-modal"
-      role="dialog"
-      aria-modal="true"
+      bind:this={settingsPageEl}
+      class="settings-page"
+      role="region"
       aria-label="Settings"
       tabindex="-1"
-      onkeydown={onModalKeydown}
-      in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel + 6), scaleFrom: 0.97 }}
-      out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}
+      in:pageSwap={{ axis: 'y', distance: motionPx(SETTINGS_SWAP_PX), duration: motionMs(SETTINGS_SWAP_MS) }}
+      out:pageSwap={{ axis: 'y', distance: motionPx(SETTINGS_SWAP_PX), duration: motionMs(SETTINGS_SWAP_MS) }}
     >
-      <button type="button" class="settings-close" aria-label="Close settings" onclick={close}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <path d="M6 6l12 12M18 6L6 18"/>
-        </svg>
-      </button>
-      <!-- Left nav -->
-      <div class="settings-nav">
-        {#each navSections as g}
-          <div class="settings-section-label">{g.group}</div>
-          {#each g.items as it}
-            <button
-              type="button"
-              class="settings-nav-item"
-              class:active={section === it.id}
-              onclick={() => goTo(it.id)}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons[it.icon]}</svg>
-              <span>{it.label}</span>
-            </button>
-          {/each}
-        {/each}
-        <div style="flex:1"></div>
-        <div class="settings-foot">Verenu v{appVersion} · MIT</div>
-      </div>
-
-      <!-- Right panel -->
+      <!-- The section rail lives in Sidebar.svelte, which morphs into it.
+           Closing is handled by the sidebar's "Back to app" button and Esc —
+           the old corner ✕ sat right under the window controls and was
+           redundant once settings became a page rather than a modal. -->
       <div class="settings-body">
+        <div class="fade-edge fade-edge-top" class:visible={fadeTop} aria-hidden="true"></div>
+        <div class="fade-edge fade-edge-bottom" class:visible={fadeBottom} aria-hidden="true"></div>
         {#key section}
           <div
-            class="panel scroll-styled scroll-thumb-elev"
-            in:pageSwap={{ axis: 'y', distance: animDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.panel) }}
-            out:pageSwap={{ axis: 'y', distance: -animDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.base + 40) }}
+            bind:this={settingsPanelEl}
+            class="panel scroll-styled"
+            use:scrollEdges={setFades}
+            in:pageSwap={{ axis: 'y', distance: animDir * motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel) }}
+            out:pageSwap={{ axis: 'y', distance: -animDir * motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.base) }}
           >
-            {#if section === 'general'}
-              <GeneralSection />
-            {:else if section === 'apps'}
-              <AppMappingsSection />
-            {:else if section === 'keys'}
-              <ApiKeysSection />
-            {:else if section === 'models'}
-              <ModelsSection />
-            {:else if section === 'privacy'}
-              <PrivacySection />
-            {:else if section === 'advanced'}
-              <AudioSection />
-            {:else if section === 'permissions' && isMac}
-              <PermissionsSection />
-            {:else if section === 'about'}
-              <AboutSection {appVersion} />
-            {:else if section === 'developer' && appStore.devModeEnabled}
-              <DeveloperSection />
-            {/if}
+            <div class="panel-inner">
+              {#if section === 'general'}
+                <GeneralSection />
+              {:else if section === 'apps'}
+                <AppMappingsSection />
+              {:else if section === 'keys'}
+                <ApiKeysSection />
+              {:else if section === 'models'}
+                <ModelsSection />
+              {:else if section === 'privacy'}
+                <PrivacySection />
+              {:else if section === 'advanced'}
+                <AudioSection />
+              {:else if section === 'permissions' && isMac}
+                <PermissionsSection />
+              {:else if section === 'about'}
+                <AboutSection {appVersion} />
+              {:else if section === 'developer' && appStore.devModeEnabled}
+                <DeveloperSection />
+              {/if}
+            </div>
           </div>
         {/key}
+      </div>
+
+      <!--
+        The page's sign-off, on About only. The bar keeps its height on every
+        section so moving on and off About doesn't resize the panel underneath.
+      -->
+      <div class="settings-footbar">
+        {#if section === 'about'}
+          <div class="settings-foot" transition:fade={{ duration: motionMs(MOTION_MS.base) }}>
+            Verenu v{appVersion} · MIT
+          </div>
+        {/if}
       </div>
     </div>
   </div>
@@ -227,102 +212,62 @@
     position: absolute;
     inset: 0;
     z-index: 60;
-    display: grid;
-    place-items: center;
   }
 
+  /*
+   * Full-bleed opaque wash rather than a dim scrim: settings reads as the page
+   * clearing, not as a card floating over it. It still fades (the smoke tests
+   * probe it mid-opacity on open and close) and it stays exposed in the
+   * --app-gutter strip that .body leaves on the left and bottom, which is what
+   * keeps click-outside-to-dismiss working now that the shell fills the window.
+   */
   .settings-overlay {
     position: absolute;
     inset: 0;
-    background: var(--overlay);
-    backdrop-filter: blur(2px);
+    background: var(--paper);
     border: 0;
     padding: 0;
   }
 
-  .settings-modal {
-    position: relative;
+  /*
+   * Geometry deliberately mirrors .content in App.svelte, and there is no card
+   * treatment — no elevated background, border or radius. Settings is a page in
+   * the same content region as Home/Dictionary/Style, not a panel floating on
+   * top of one, so it should be indistinguishable from them as a surface.
+   */
+  .settings-page {
+    position: absolute;
+    top: 0;
+    bottom: var(--app-gutter);
+    left: calc(var(--sidebar-w) + var(--app-gutter) * 2);
+    right: 0;
     z-index: 1;
-    width: 720px;
-    height: 540px;
-    background: var(--bg-elev);
-    border-radius: var(--r-lg);
-    border: 1px solid var(--line);
-    box-shadow: var(--shadow-elev);
+    background: transparent;
+    border: 0;
     display: flex;
+    flex-direction: column;
     overflow: hidden;
   }
 
-  .settings-close {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    width: 30px;
-    height: 30px;
-    border: 1px solid var(--line-strong);
-    border-radius: 7px;
-    background: var(--paper);
-    color: var(--ink-mute);
-    display: grid;
-    place-items: center;
-    cursor: pointer;
-    z-index: 2;
-  }
-  .settings-close:hover { color: var(--ink-strong); background: var(--control-hover); }
-  .settings-close:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-
-  /* Nav */
-  .settings-nav {
-    width: 200px;
-    background: var(--paper);
-    border-right: 1px solid var(--line);
-    padding: 14px 10px;
-    display: flex;
-    flex-direction: column;
+  /*
+   * Reserves the same gutter .panel does via `scrollbar-gutter: stable`, so the
+   * centred footer lines up with the centred content column instead of sitting
+   * half a scrollbar to its right.
+   */
+  .settings-footbar {
     flex-shrink: 0;
+    padding: 0 calc(var(--page-pad-x) + var(--scrollbar-w)) 16px var(--page-pad-x);
   }
 
-  .settings-section-label {
-    font-family: var(--sans);
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: var(--ink-mute);
-    padding: 8px 10px 6px;
-  }
-
-  .settings-nav-item {
-    border: 0;
-    background: transparent;
-    width: 100%;
-    text-align: left;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-size: 12.5px;
-    color: var(--ink-soft);
-    cursor: pointer;
-  }
-
-  .settings-nav-item :global(svg) { opacity: 0.7; }
-  .settings-nav-item:hover { color: var(--ink-strong); }
-  .settings-nav-item:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-  }
-  .settings-nav-item.active { color: var(--ink); font-weight: 500; background: var(--bg-elev); }
-  .settings-nav-item.active :global(svg) { opacity: 1; }
-
+  /* Centred across the settings page, not aligned to the content column's left
+     edge — as a page sign-off it should read as centred, and column-aligned it
+     just looked adrift somewhere right of middle. */
   .settings-foot {
-    padding: 8px 10px;
+    text-align: center;
     font-family: var(--sans);
-    font-size: 9.5px;
-    color: var(--ink-mute);
+    font-size: 11px;
+    letter-spacing: 0.01em;
+    color: var(--ink-faint);
   }
 
   /* Panel area */
@@ -333,22 +278,118 @@
     display: grid;
   }
 
+  /*
+   * Soft top/bottom scroll fades. Overlays (not a mask on the scroller) so the
+   * scrollbar and the per-row entrance animations are untouched. They fade from
+   * the page background to transparent and only appear when there's more to
+   * scroll in that direction. Right edge stops short of the scrollbar gutter.
+   */
+  .fade-edge {
+    position: absolute;
+    left: 0;
+    right: var(--scrollbar-w, 0);
+    height: 30px;
+    pointer-events: none;
+    z-index: 3;
+    opacity: 0;
+    transition: opacity 180ms ease;
+  }
+
+  .fade-edge.visible { opacity: 1; }
+
+  .fade-edge-top {
+    top: 0;
+    background: linear-gradient(to bottom, var(--paper), transparent);
+  }
+
+  .fade-edge-bottom {
+    bottom: 0;
+    background: linear-gradient(to top, var(--paper), transparent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fade-edge { transition: none; }
+  }
+
   .panel {
     grid-area: 1 / 1;
     width: 100%;
     height: 100%;
-    padding: 26px 30px;
+    padding: var(--page-pad-y) var(--page-pad-x) 36px;
     overflow-y: auto;
     scrollbar-gutter: stable;
   }
 
+  /*
+   * .setting-row is a space-between flex row with no intrinsic max width, so
+   * without a measure every label ends up marooned from its control once the
+   * shell fills the window. container-type lets the sections swap their old
+   * viewport media queries for container queries against this column.
+   */
+  .panel-inner {
+    width: min(100%, var(--settings-measure));
+    margin-inline: auto;
+    container-type: inline-size;
+    container-name: settings-panel;
+  }
+
+  /*
+   * Per-row entrance. .panel remounts on every section change ({#key section}),
+   * so a plain CSS animation on the children runs exactly once per swap — no
+   * per-section markup changes needed. The panel's own pageSwap distance is
+   * deliberately small (MOTION_PX.nudge) so the two layers don't fight.
+   *
+   * fill-mode is `backwards`, never `forwards`/`both`: an animated transform or
+   * opacity makes each row its own stacking context, which would trap the
+   * absolutely-positioned dropdown menus (language, mic, models) inside their
+   * row so the following row paints over them. `backwards` covers the delay
+   * window and then releases the row back to its natural styles.
+   */
+  .panel-inner > :global(*) {
+    animation: settings-row-in var(--settings-row-ms) cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  .panel-inner {
+    --settings-row-ms: 260ms;
+    --settings-row-step: 26ms;
+  }
+
+  .panel-inner > :global(:nth-child(1)) { animation-delay: 0ms; }
+  .panel-inner > :global(:nth-child(2)) { animation-delay: calc(var(--settings-row-step) * 1); }
+  .panel-inner > :global(:nth-child(3)) { animation-delay: calc(var(--settings-row-step) * 2); }
+  .panel-inner > :global(:nth-child(4)) { animation-delay: calc(var(--settings-row-step) * 3); }
+  .panel-inner > :global(:nth-child(5)) { animation-delay: calc(var(--settings-row-step) * 4); }
+  .panel-inner > :global(:nth-child(6)) { animation-delay: calc(var(--settings-row-step) * 5); }
+  .panel-inner > :global(:nth-child(7)) { animation-delay: calc(var(--settings-row-step) * 6); }
+  /* Everything past the 8th row shares the last step so long sections don't crawl. */
+  .panel-inner > :global(:nth-child(n + 8)) { animation-delay: calc(var(--settings-row-step) * 7); }
+
+  @keyframes settings-row-in {
+    from { opacity: 0; transform: translate3d(0, 6px, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .panel-inner {
+      --settings-row-ms: 140ms;
+      --settings-row-step: 10ms;
+    }
+    @keyframes settings-row-in {
+      from { opacity: 0; transform: translate3d(0, 2px, 0); }
+      to   { opacity: 1; transform: none; }
+    }
+  }
+
   /* Shared styles for all section components — scoped to .settings-body */
+  /* Matches .page-h on the app views so a section heading reads at the same
+     level as "Home" or "Style" rather than as a panel title. */
   .settings-body :global(.settings-h) {
     font-family: var(--serif);
-    font-size: 19px;
+    font-size: 26px;
     font-weight: 500;
-    margin: 0 0 var(--settings-h-mb, 14px);
-    letter-spacing: -0.015em;
+    margin: 0 0 var(--settings-h-mb, 18px);
+    letter-spacing: -0.02em;
+    line-height: 1.1;
     color: var(--ink);
   }
 

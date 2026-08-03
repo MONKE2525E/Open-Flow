@@ -1,12 +1,17 @@
 import { invoke } from './tauri';
 import type { TranscriptionLanguageCode } from './transcriptionLanguages';
 
-export type ProviderId = 'groq' | 'openai' | 'google';
+export type ProviderId = 'groq' | 'openai' | 'google' | 'assemblyai' | 'local';
 export type ProviderModelMap = Record<ProviderId, string[]>;
 export type ToneId = 'casual' | 'formal' | 'very_casual';
 export type CleanupIntensity = 'none' | 'light' | 'medium' | 'high';
 export type HistoryRetention = '7 days' | '30 days' | '90 days' | 'Forever';
 export type AppearanceMode = 'system' | 'light' | 'dark';
+export type LocalModelMemoryPolicy =
+  | 'keep_loaded'
+  | 'unload_after_5m'
+  | 'unload_after_15m'
+  | 'unload_immediately';
 export type { TranscriptionLanguageCode } from './transcriptionLanguages';
 
 export interface AppMapping {
@@ -27,6 +32,7 @@ type SettingsValueMap = {
   transcription_default_model: string;
   cleanup_default_model: string;
   transcription_fallback_models: string[];
+  dual_transcription_enabled: boolean;
   cleanup_fallback_models: string[];
   cleanup_enabled: boolean;
   default_tone: ToneId;
@@ -34,6 +40,10 @@ type SettingsValueMap = {
   app_mappings: AppMapping[];
   noise_reduction: boolean;
   mute_audio: boolean;
+  exclusive_mic: boolean;
+  pause_media_during_dictation: boolean;
+  play_start_stop_sounds: boolean;
+  sound_effects_volume: number;
   mic_gain: number;
   setup_complete: boolean;
   force_setup_on_launch: boolean;
@@ -43,9 +53,12 @@ type SettingsValueMap = {
   auto_spacing_enabled: boolean;
   caps_lock_uppercase_enabled: boolean;
   history_retention: HistoryRetention;
+  local_model_memory_policy: LocalModelMemoryPolicy;
   microphone_device: string | null;
   update_dismissed_version: string | null;
   update_notified_version: string | null;
+  beta_updates_enabled: boolean;
+  verenu_service_checks_enabled: boolean;
   appearance_mode: AppearanceMode;
   advanced_model_ui: boolean;
   cleanup_prompt_overrides: Record<string, string>;

@@ -20,7 +20,7 @@ const TIMEOUT = 8_000;
     await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: TIMEOUT });
 
     await page.locator('.nav-item:has-text("Settings")').click();
-    await page.locator('.settings-modal').waitFor({ state: 'visible', timeout: TIMEOUT });
+    await page.locator('.settings-page').waitFor({ state: 'visible', timeout: TIMEOUT });
 
     const devTabBefore = page.locator('.settings-nav-item:has-text("Developer")');
     if (await devTabBefore.count() > 0) {

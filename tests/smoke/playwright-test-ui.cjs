@@ -110,19 +110,12 @@ async function waitForSingleSettingsPanel(page) {
       errors.push(`Settings backdrop should pass through a mid-fade opacity on open: ${err.message}`);
     });
 
-    const modal = page.locator('.settings-modal');
-    await modal.waitFor({ state: 'visible', timeout: 3_000 });
-    console.log('  ✓ Settings modal opened');
-    const activeInModal = await modal.evaluate((el) => el.contains(document.activeElement));
-    if (!activeInModal) {
-      errors.push('Settings modal did not move focus inside the dialog on open');
-    }
-
-    const versionFoot = await page.locator('.settings-foot').textContent();
-    if (!versionFoot?.includes(APP_VERSION)) {
-      errors.push(`Settings footer version mismatch: "${versionFoot?.trim()}"`);
-    } else {
-      console.log(`  ✓ Settings footer shows ${versionFoot.trim()}`);
+    const settingsPage = page.locator('.settings-page');
+    await settingsPage.waitFor({ state: 'visible', timeout: 3_000 });
+    console.log('  ✓ Settings page opened');
+    const activeInSettings = await settingsPage.evaluate((el) => el.contains(document.activeElement));
+    if (!activeInSettings) {
+      errors.push('Settings did not move focus into the page on open');
     }
 
     const offlineToast = page.locator('.offline-toast');
@@ -149,6 +142,23 @@ async function waitForSingleSettingsPanel(page) {
       const h2 = page.locator(`h2.settings-h:has-text("${sec}")`);
       await h2.waitFor({ state: 'visible', timeout: 3_000 });
       console.log(`    ✓ "${sec}" panel rendered`);
+    }
+
+    // The version line is the About page's footer, so it is only present there.
+    // The loop above ends on About, so this reads it in place.
+    const versionFoot = await page.locator('.settings-foot').textContent();
+    if (!versionFoot?.includes(APP_VERSION)) {
+      errors.push(`Settings footer version mismatch: "${versionFoot?.trim()}"`);
+    } else {
+      console.log(`  ✓ Settings footer shows ${versionFoot.trim()}`);
+    }
+    await page.locator('.settings-nav-item:has-text("Privacy")').click();
+    await page.locator('h2.settings-h:has-text("Privacy")').waitFor({ state: 'visible', timeout: 3_000 });
+    await waitForSingleSettingsPanel(page);
+    if ((await page.locator('.settings-foot').count()) !== 0) {
+      errors.push('Version footer should only render on the About section');
+    } else {
+      console.log('  ✓ Settings footer is scoped to About');
     }
 
     // ── General language should not localize unrelated UI copy ───────────────
@@ -214,13 +224,21 @@ async function waitForSingleSettingsPanel(page) {
       console.log('  âœ“ Privacy retention confirmation restores focus to the trigger');
     }
 
+    // Settings fills the window beside the sidebar, so the only "outside" left
+    // is the app's own margin. Derive that point from the sidebar's box rather
+    // than hardcoding a coordinate, so a change to the app gutter can't turn
+    // into a mystery failure here.
     console.log('  Closing Settings via outside click...');
-    await page.mouse.click(10, 10);
+    const sidebarBox = await page.locator('.sidebar').boundingBox();
+    if (!sidebarBox || sidebarBox.x < 4) {
+      errors.push(`Expected an app gutter left of the sidebar to click in (sidebar x=${sidebarBox?.x})`);
+    }
+    await page.mouse.click(Math.max(2, Math.floor((sidebarBox?.x ?? 14) / 2)), 10);
     await waitForIntermediateOpacity(page, '.settings-overlay', 'Settings backdrop fades out').catch((err) => {
       errors.push(`Settings backdrop should pass through a mid-fade opacity on close: ${err.message}`);
     });
-    await modal.waitFor({ state: 'hidden', timeout: 3_000 });
-    console.log('  ✓ Settings modal closed');
+    await settingsPage.waitFor({ state: 'hidden', timeout: 3_000 });
+    console.log('  ✓ Settings page closed');
 
     // ── Final verdict ─────────────────────────────────────────────────────────
     if (errors.length > 0) {

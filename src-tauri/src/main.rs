@@ -1,9 +1,13 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod api;
+mod app_hotkey;
+mod app_tray;
 mod commands;
 mod core;
 mod data;
+mod local_llm;
+mod local_stt;
 mod media;
 mod pipeline;
 mod system;
@@ -12,43 +16,46 @@ mod testing;
 
 use crate::core::window_geometry::WindowTarget;
 use crate::data::db;
-use crate::pipeline::{hide_pill, start_recording_session, AppState, SharedState};
+use crate::pipeline::{AppState, SharedState};
 
-use std::sync::{Arc, Mutex, MutexGuard};
-use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager, Theme,
+use std::sync::{
+    atomic::AtomicBool,
+    Arc, Mutex,
 };
+#[cfg(target_os = "windows")]
+use std::sync::atomic::Ordering;
+#[cfg(target_os = "windows")]
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager};
 
 pub type DbHandle = db::Db;
 
-const TRAY_ID: &str = "verenu-tray";
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum IconTheme {
-    Light,
-    Dark,
+/// Startup readiness reported by each Tauri WebView after its frontend has
+/// mounted successfully. A backend can be fully alive while WebView2 is
+/// showing a stale connection-refused page, so backend liveness alone is not
+/// enough to declare startup successful.
+#[derive(Clone, Default)]
+pub(crate) struct FrontendReadiness {
+    pub(crate) main: Arc<AtomicBool>,
+    /// Diagnostic state only. The pill is created after the main frontend has
+    /// passed the startup gate, so its readiness is not a separate gate.
+    pub(crate) pill: Arc<AtomicBool>,
 }
 
-#[derive(Clone, Copy)]
-struct IconRect {
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-    radius: u32,
-}
+#[cfg(target_os = "windows")]
+impl FrontendReadiness {
+    fn main_ready(&self) -> bool {
+        self.main.load(Ordering::Acquire)
+    }
 
-fn lock_app_state(state: &SharedState) -> Option<MutexGuard<'_, AppState>> {
-    match state.lock() {
-        Ok(guard) => Some(guard),
-        Err(_) => {
-            log::error!("Recording state lock was poisoned");
-            None
-        }
+    #[cfg(debug_assertions)]
+    fn reset(&self) {
+        self.main.store(false, Ordering::Release);
+        self.pill.store(false, Ordering::Release);
     }
 }
+
+pub(crate) use app_tray::apply_runtime_icons;
 
 fn show_main_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -73,21 +80,6 @@ fn hide_main_window(app: &AppHandle) {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
-    if let Some(w) = app.get_webview_window("main") {
-        let bg = match resolve_icon_theme(app, theme_hint) {
-            IconTheme::Dark => tauri::utils::config::Color(20, 17, 14, 255),
-            IconTheme::Light => tauri::utils::config::Color(249, 247, 243, 255),
-        };
-        w.set_decorations(true).ok();
-        w.set_background_color(Some(bg)).ok();
-        w.set_title("").ok();
-        w.set_title_bar_style(tauri::TitleBarStyle::Transparent)
-            .ok();
-    }
-}
-
 /// Canonical per-user data directory for Verenu, following each OS's convention.
 ///
 /// This is the single source of truth for where Verenu stores its SQLite
@@ -96,8 +88,126 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
 /// [`app_db_path`]). Do NOT use Tauri's `app.path().app_data_dir()` for the
 /// database: that resolves against the bundle identifier and is not guaranteed
 /// to equal this path, so backups would silently target a different file.
+fn app_data_dir_override() -> Option<std::path::PathBuf> {
+    std::env::var_os("VERENU_APP_DATA_DIR_OVERRIDE").map(std::path::PathBuf::from)
+}
+
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+fn startup_recovery_was_attempted() -> bool {
+    std::env::args_os().any(|arg| arg == "--startup-recovery-attempted")
+}
+
+#[cfg(all(debug_assertions, target_os = "windows"))]
+async fn wait_for_dev_frontend() -> bool {
+    let Ok(client) = reqwest::Client::builder()
+        .connect_timeout(Duration::from_millis(500))
+        .timeout(Duration::from_secs(1))
+        .build()
+    else {
+        return false;
+    };
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(response) = client.get("http://127.0.0.1:1420/").send().await {
+            if response.status().is_success() {
+                return true;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn start_frontend_watchdog(app: &AppHandle, readiness: FrontendReadiness) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let reveal_windows = || {
+            // The main window is the startup gate. Create the pill only after
+            // the main UI is healthy because a hidden WebView2 renderer can
+            // suspend before it reports its own readiness.
+            show_main_window(&app);
+            crate::pipeline::show_pill(&app, "idle");
+        };
+
+        // WebView2 normally mounts in well under a second. This grace period
+        // leaves room for a cold Vite/WebView2 start without delaying normal
+        // startup or flashing a recovery window.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+        while tokio::time::Instant::now() < deadline {
+            if readiness.main_ready() {
+                log::debug!("startup handshake completed");
+                reveal_windows();
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        if readiness.main_ready() {
+            reveal_windows();
+            return;
+        }
+
+        // In development, the WebView can fail its first navigation while
+        // Vite is restarting or optimizing dependencies. Reload the existing
+        // windows once the server is reachable before restarting the entire
+        // process. This also avoids creating an orphaned app if the parent
+        // `tauri dev` session has already stopped its Vite child.
+        #[cfg(debug_assertions)]
+        if wait_for_dev_frontend().await {
+            readiness.reset();
+            if let Some(window) = app.get_webview_window("main") {
+                window.reload().ok();
+            }
+
+            let retry_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+            while tokio::time::Instant::now() < retry_deadline {
+                if readiness.main_ready() {
+                    reveal_windows();
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        log::error!(
+            "startup handshake did not complete in development; keeping the dev process alive for diagnosis"
+        );
+        reveal_windows();
+
+        #[cfg(not(debug_assertions))]
+        {
+            if startup_recovery_was_attempted() {
+                log::error!(
+                    "startup handshake did not complete after the automatic recovery attempt; leaving the app running for diagnosis"
+                );
+                reveal_windows();
+                return;
+            }
+
+            log::warn!(
+                "startup handshake timed out: main_ready={} pill_ready={}; relaunching once",
+                readiness.main.load(Ordering::Acquire),
+                readiness.pill.load(Ordering::Acquire)
+            );
+            crate::app_tray::relaunch_for_startup_recovery(&app);
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn start_frontend_watchdog(app: &AppHandle, _readiness: FrontendReadiness) {
+    crate::pipeline::show_pill(app, "idle");
+    show_main_window(app);
+}
+
 #[cfg(windows)]
 pub(crate) fn app_data_dir() -> std::path::PathBuf {
+    if let Some(path) = app_data_dir_override() {
+        return path;
+    }
     std::env::var("APPDATA")
         .map(|p| std::path::PathBuf::from(p).join("Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -105,6 +215,9 @@ pub(crate) fn app_data_dir() -> std::path::PathBuf {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn app_data_dir() -> std::path::PathBuf {
+    if let Some(path) = app_data_dir_override() {
+        return path;
+    }
     std::env::var("HOME")
         .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -112,6 +225,9 @@ pub(crate) fn app_data_dir() -> std::path::PathBuf {
 
 #[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn app_data_dir() -> std::path::PathBuf {
+    if let Some(path) = app_data_dir_override() {
+        return path;
+    }
     std::env::var("HOME")
         .map(|h| std::path::PathBuf::from(h).join(".config/Verenu"))
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -128,10 +244,11 @@ fn main() {
         let _ = crate::system::mac_app::set_process_name("Verenu");
     }
 
+    #[cfg(target_os = "windows")]
+    wait_for_relaunch_parent_exit();
+
     let shared: SharedState = Arc::new(Mutex::new(AppState {
-        session: None,
-        starting: false,
-        handless: false,
+        lifecycle: pipeline::DictationLifecycle::Idle,
         target: WindowTarget::default(),
         pill_placement: None,
         pill_placement_stale: false,
@@ -141,6 +258,12 @@ fn main() {
     std::fs::create_dir_all(app_data_dir()).ok();
     let db_handle: DbHandle = db::open(app_db_path()).expect("failed to open database");
     let _ = db::cleanup_cache_prune_expired(&db_handle);
+    if let Err(e) = db::seed_default_dictionary_entries(&db_handle) {
+        log::warn!("failed to seed default dictionary entries: {e}");
+    }
+    let local_cleanup_manager = crate::local_llm::LocalLlmManager::new();
+    let local_transcription_manager = crate::local_stt::LocalTranscriptionManager::new();
+    let frontend_readiness = FrontendReadiness::default();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
@@ -150,6 +273,9 @@ fn main() {
         }))
         .manage(shared.clone())
         .manage(db_handle.clone())
+        .manage(local_cleanup_manager.clone())
+        .manage(local_transcription_manager.clone())
+        .manage(frontend_readiness.clone())
         .setup(move |app| {
             crate::system::logger::init(app.handle())?;
             let settings = crate::data::store::SettingsHandle::open(app.handle())
@@ -219,21 +345,73 @@ fn main() {
                 first_launch
             };
 
-            setup_tray(app)?;
-            setup_hotkey(app, shared.clone());
-            #[cfg(target_os = "macos")]
-            apply_native_main_window_chrome(app.handle(), None);
+            app_tray::setup_tray(app)?;
+            app_hotkey::setup_hotkey(app, shared.clone());
+            // setup_tray() already applies native window chrome (both platforms) via
+            // apply_runtime_icons() — no need to call apply_native_main_window_chrome again here.
             #[cfg(target_os = "macos")]
             {
                 crate::system::mac_app::set_accessory_activation_policy_on_main_thread(
                     app.handle(),
                 );
             }
-            crate::pipeline::show_pill(app.handle(), "idle");
+            start_frontend_watchdog(app.handle(), frontend_readiness.clone());
+            let local_stt_manager = local_transcription_manager.clone();
+            let local_llm_manager = local_cleanup_manager.clone();
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    // && (not ||): either manager signalling shutdown on its
+                    // own must not stop monitoring the other still-active one.
+                    if local_stt_manager
+                        .shutdown_signal
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                        && local_llm_manager
+                            .shutdown_signal
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        break;
+                    }
+                    let _ = local_stt_manager.unload_if_idle(&app_handle);
+                    let _ = local_llm_manager.unload_if_idle(&app_handle);
 
-            // Keep the main UI visible on startup so normal launches don't
-            // feel like the app disappeared into the tray.
-            show_main_window(app.handle());
+                    // Proactive safety unload: don't wait out the configured
+                    // idle timeout if the system is genuinely low on RAM or
+                    // (NVIDIA) VRAM right now — e.g. launching a demanding
+                    // game shouldn't have to wait 15 minutes for Verenu to
+                    // give back memory its local models are holding.
+                    let stt_loaded = local_stt_manager
+                        .current_model_id
+                        .lock()
+                        .map(|guard| guard.is_some())
+                        .unwrap_or(false);
+                    let llm_loaded = local_llm_manager
+                        .current_model_id
+                        .lock()
+                        .map(|guard| guard.is_some())
+                        .unwrap_or(false);
+                    if stt_loaded || llm_loaded {
+                        // detect_resource_pressure() does blocking process
+                        // I/O (bounded by its own internal timeout) — run it
+                        // off the async worker thread so a slow/wedged
+                        // nvidia-smi can never stall this loop or other
+                        // tasks sharing the runtime.
+                        let pressure = tauri::async_runtime::spawn_blocking(
+                            crate::system::memory::detect_resource_pressure,
+                        )
+                        .await
+                        .unwrap_or(None);
+                        if let Some(reason) = pressure {
+                            log::warn!(
+                                "local models: system resource pressure detected ({reason}), unloading proactively"
+                            );
+                            local_stt_manager.unload_for_resource_pressure(&app_handle);
+                            local_llm_manager.unload_for_resource_pressure(&app_handle);
+                        }
+                    }
+                }
+            });
 
             Ok(())
         })
@@ -267,10 +445,14 @@ fn main() {
                     }
                     tauri::WindowEvent::ThemeChanged(theme) => {
                         let app = window.app_handle();
-                        if appearance_mode(app).as_deref().unwrap_or("system") == "system" {
+                        if app_tray::appearance_mode(app)
+                            .as_deref()
+                            .unwrap_or("system")
+                            == "system"
+                        {
+                            // apply_runtime_icons() already applies native window chrome
+                            // (both platforms) internally — no separate call needed here.
                             apply_runtime_icons(app, Some(*theme));
-                            #[cfg(target_os = "macos")]
-                            apply_native_main_window_chrome(app, Some(*theme));
                         }
                     }
                     _ => {}
@@ -287,6 +469,22 @@ fn main() {
             commands::save_setting,
             commands::get_setting,
             commands::get_all_settings,
+            commands::list_local_stt_models,
+            commands::list_local_llm_models,
+            commands::download_local_stt_model,
+            commands::download_local_llm_model,
+            commands::cancel_local_stt_model_download,
+            commands::cancel_local_llm_model_download,
+            commands::delete_local_stt_model,
+            commands::delete_local_llm_model,
+            commands::open_local_stt_models_folder,
+            commands::open_local_models_folder,
+            commands::get_local_transcription_state,
+            commands::get_local_llm_state,
+            commands::get_local_llm_runtime_info,
+            commands::download_local_llm_runtime,
+            commands::cancel_local_llm_runtime_download,
+            commands::delete_local_llm_runtime,
             commands::set_autostart,
             commands::check_accessibility_permission,
             commands::get_macos_permission_snapshot,
@@ -298,6 +496,7 @@ fn main() {
             commands::request_microphone_permission_snapshot,
             commands::open_microphone_settings,
             commands::restart_app,
+            commands::frontend_ready,
             commands::open_privacy_security_settings,
             commands::reset_macos_core_permissions,
             commands::check_keychain_access,
@@ -313,6 +512,8 @@ fn main() {
             commands::test_cleanup_prompt,
             commands::get_microphones,
             commands::get_memory_mb,
+            commands::get_hardware_capabilities,
+            commands::local_models_supported_on_this_platform,
             commands::start_input_recording,
             commands::start_setup_try_recording,
             commands::start_calibration_monitoring,
@@ -337,6 +538,10 @@ fn main() {
             commands::retry_transcription,
             commands::check_for_update,
             commands::install_update,
+            commands::check_provider_status,
+            commands::check_provider_status_raw,
+            commands::check_global_message,
+            commands::check_verenu_api_health,
             commands::check_connectivity,
             commands::get_recent_logs,
             commands::download_logs,
@@ -353,459 +558,107 @@ fn main() {
             if let tauri::RunEvent::Reopen { .. } = _event {
                 show_main_window(_app);
             }
+            // Local cleanup runs llama-server.exe as a real child OS process
+            // (unlike local_stt, which is in-process). Child processes are
+            // not automatically killed when their parent exits on Windows —
+            // without this, quitting Verenu while a local cleanup model is
+            // loaded would orphan llama-server.exe, leaving it running
+            // indefinitely and holding the loaded model's RAM/VRAM.
+            if let tauri::RunEvent::Exit = _event {
+                _app.state::<crate::local_llm::LocalLlmManager>()
+                    .unload(_app);
+            }
         });
 }
 
-fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    let open_i = MenuItem::with_id(app, "open", "Open Verenu", true, None::<&str>)?;
-    let permissions_i =
-        MenuItem::with_id(app, "permissions", "Permissions...", true, None::<&str>)?;
-    let settings_i = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
-    let sep = PredefinedMenuItem::separator(app)?;
-    let relaunch_i = MenuItem::with_id(app, "relaunch", "Relaunch", true, None::<&str>)?;
-    let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(
-        app,
-        &[
-            &open_i,
-            &permissions_i,
-            &settings_i,
-            &sep,
-            &relaunch_i,
-            &quit_i,
-        ],
-    )?;
-
-    let icon_theme = resolve_icon_theme(app.handle(), None);
-    let tray_icon = runtime_tray_icon_image(icon_theme, 32);
-
-    TrayIconBuilder::with_id(TRAY_ID)
-        .icon(tray_icon)
-        .icon_as_template(cfg!(target_os = "macos"))
-        .menu(&menu)
-        .show_menu_on_left_click(true)
-        .tooltip("Verenu")
-        .on_menu_event(|app, ev| match ev.id.as_ref() {
-            "open" => {
-                show_main_window(app);
-            }
-            "permissions" => {
-                show_main_window(app);
-                let _ = app.emit("open-flow:open-settings-section", "permissions");
-            }
-            "settings" => {
-                show_main_window(app);
-                let _ = app.emit("open-flow:open-settings-section", "general");
-            }
-            "relaunch" => app.restart(),
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .build(app)?;
-
-    apply_runtime_icons(app.handle(), None);
-
-    Ok(())
-}
-
-pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
-    let icon_theme = resolve_icon_theme(app, theme_hint);
-
-    if let Some(w) = app.get_webview_window("main") {
-        if let Err(err) = w.set_icon(runtime_icon_image(icon_theme, 128)) {
-            log::warn!("Failed to update window icon: {err}");
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    apply_native_main_window_chrome(app, theme_hint);
-
-    #[cfg(target_os = "macos")]
-    if !crate::system::mac_app::apply_dock_icon() {
-        log::warn!("Failed to update macOS Dock icon");
-    }
-
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let result = tray.set_icon_with_as_template(
-            Some(runtime_tray_icon_image(icon_theme, 32)),
-            cfg!(target_os = "macos"),
-        );
-        if let Err(err) = result {
-            log::warn!("Failed to update tray icon: {err}");
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn runtime_tray_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'static> {
-    let mut rgba = vec![0_u8; (size * size * 4) as usize];
-    let color = runtime_tray_icon_color(theme);
-
-    for (x, y, width, height, radius) in [
-        (64, 304, 64, 96, 30),
-        (144, 208, 64, 192, 30),
-        (224, 112, 64, 288, 30),
-        (304, 240, 64, 160, 30),
-        (384, 320, 64, 80, 30),
-    ] {
-        draw_rounded_rect(
-            &mut rgba,
-            size,
-            IconRect {
-                x: scale(size, x),
-                y: scale(size, y),
-                width: scale(size, width),
-                height: scale(size, height),
-                radius: scale(size, radius),
-            },
-            color,
-        );
-    }
-
-    tauri::image::Image::new_owned(rgba, size, size)
-}
-
-#[cfg(target_os = "macos")]
-fn runtime_tray_icon_color(theme: IconTheme) -> [u8; 4] {
-    match theme {
-        IconTheme::Light => [0, 0, 0, 255],
-        IconTheme::Dark => [255, 255, 255, 255],
-    }
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod tests {
-    use super::{runtime_tray_icon_color, IconTheme};
-
-    #[test]
-    fn tray_icon_uses_black_in_light_mode() {
-        assert_eq!(runtime_tray_icon_color(IconTheme::Light), [0, 0, 0, 255]);
-    }
-
-    #[test]
-    fn tray_icon_uses_white_in_dark_mode() {
-        assert_eq!(
-            runtime_tray_icon_color(IconTheme::Dark),
-            [255, 255, 255, 255]
-        );
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn runtime_tray_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'static> {
-    runtime_icon_image(theme, size)
-}
-
-fn resolve_icon_theme(app: &AppHandle, theme_hint: Option<Theme>) -> IconTheme {
-    match appearance_mode(app).as_deref() {
-        Some("dark") => IconTheme::Dark,
-        Some("light") => IconTheme::Light,
-        _ => match theme_hint.or_else(|| {
-            app.get_webview_window("main")
-                .and_then(|window| window.theme().ok())
-        }) {
-            Some(Theme::Dark) => IconTheme::Dark,
-            _ => IconTheme::Light,
-        },
-    }
-}
-
-fn appearance_mode(app: &AppHandle) -> Option<String> {
-    crate::data::store::settings_handle(app)
-        .ok()
-        .and_then(|settings| settings.get(crate::data::store::APPEARANCE_MODE))
-        .and_then(|value| value.as_str().map(String::from))
-}
-
-fn runtime_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'static> {
-    let mut rgba = vec![0_u8; (size * size * 4) as usize];
-    let background = match theme {
-        IconTheme::Light => [249, 247, 243, 255],
-        IconTheme::Dark => [20, 17, 14, 255],
-    };
-    let accent = [217, 119, 87, 255];
-
-    #[cfg(target_os = "macos")]
-    let background_rect = IconRect {
-        x: scale(size, 64),
-        y: scale(size, 64),
-        width: scale(size, 384),
-        height: scale(size, 384),
-        radius: scale(size, 76),
+#[cfg(target_os = "windows")]
+fn wait_for_relaunch_parent_exit() {
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
     };
 
-    #[cfg(not(target_os = "macos"))]
-    let background_rect = IconRect {
-        x: 0,
-        y: 0,
-        width: size,
-        height: size,
-        radius: scale(size, 96),
+    let Some(parent_pid) = relaunch_parent_pid() else {
+        return;
     };
 
-    draw_rounded_rect(&mut rgba, size, background_rect, background);
-
-    #[cfg(target_os = "macos")]
-    let bar_rects = [
-        (129, 290, 38, 70, 19),
-        (183, 220, 38, 140, 19),
-        (237, 152, 38, 208, 19),
-        (291, 240, 38, 120, 19),
-        (345, 298, 38, 62, 19),
-    ];
-
-    #[cfg(not(target_os = "macos"))]
-    let bar_rects = [
-        (76, 302, 56, 98, 28),
-        (152, 204, 56, 196, 28),
-        (228, 120, 56, 280, 28),
-        (304, 246, 56, 154, 28),
-        (380, 330, 56, 70, 28),
-    ];
-
-    for (x, y, width, height, radius) in bar_rects {
-        draw_rounded_rect(
-            &mut rgba,
-            size,
-            IconRect {
-                x: scale(size, x),
-                y: scale(size, y),
-                width: scale(size, width),
-                height: scale(size, height),
-                radius: scale(size, radius),
-            },
-            accent,
-        );
-    }
-
-    tauri::image::Image::new_owned(rgba, size, size)
-}
-
-fn scale(size: u32, value: u32) -> u32 {
-    ((value * size) / 512).max(1)
-}
-
-fn draw_rounded_rect(rgba: &mut [u8], canvas_size: u32, rect: IconRect, color: [u8; 4]) {
-    let right = rect.x.saturating_add(rect.width).min(canvas_size);
-    let bottom = rect.y.saturating_add(rect.height).min(canvas_size);
-    let radius = rect.radius.min(rect.width / 2).min(rect.height / 2) as i32;
-
-    for py in rect.y..bottom {
-        for px in rect.x..right {
-            if is_inside_rounded_rect(
-                px as i32,
-                py as i32,
-                rect.x as i32,
-                rect.y as i32,
-                right as i32,
-                bottom as i32,
-                radius,
-            ) {
-                let idx = ((py * canvas_size + px) * 4) as usize;
-                rgba[idx..idx + 4].copy_from_slice(&color);
-            }
-        }
-    }
-}
-
-fn is_inside_rounded_rect(
-    px: i32,
-    py: i32,
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-    radius: i32,
-) -> bool {
-    if radius <= 0 {
-        return true;
-    }
-
-    let cx = if px < left + radius {
-        left + radius
-    } else if px >= right - radius {
-        right - radius - 1
-    } else {
-        px
-    };
-    let cy = if py < top + radius {
-        top + radius
-    } else if py >= bottom - radius {
-        bottom - radius - 1
-    } else {
-        py
-    };
-
-    let dx = px - cx;
-    let dy = py - cy;
-    dx * dx + dy * dy <= radius * radius
-}
-
-fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
-    // The WH_KEYBOARD_LL hook callback must return within Windows' hook timeout
-    // (~300ms) or the hook is silently removed. All real work happens in a Tokio
-    // task below; callbacks only send a lightweight channel message.
-    enum HotkeyEvent {
-        Press,
-        Release,
-        HandlessToggle,
-        Cancel,
-        EscapeCancel,
-    }
-
-    let (hotkey_tx, mut hotkey_rx) = tokio::sync::mpsc::channel::<HotkeyEvent>(8);
-    let tx_press = hotkey_tx.clone();
-    let tx_handless = hotkey_tx.clone();
-    let tx_cancel = hotkey_tx.clone();
-    let tx_escape = hotkey_tx.clone();
-    let tx_release = hotkey_tx;
-
-    match core::hotkey::start(
-        move || {
-            let _ = tx_press.try_send(HotkeyEvent::Press);
-        },
-        move || {
-            let _ = tx_release.try_send(HotkeyEvent::Release);
-        },
-        move || {
-            let _ = tx_handless.try_send(HotkeyEvent::HandlessToggle);
-        },
-        move || {
-            let _ = tx_cancel.try_send(HotkeyEvent::Cancel);
-        },
-        move || {
-            let _ = tx_escape.try_send(HotkeyEvent::EscapeCancel);
-        },
-    ) {
-        Ok(_handle) => { /* hook thread running */ }
-        Err(e) => {
-            log::error!("Hotkey hook failed to start: {e}");
-            let app_h = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                // Give the webview a moment to initialise before emitting.
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                app_h
-                    .emit(
-                        "verenu:error",
-                        format!("Keyboard hook failed to install — hotkey unavailable. {e}"),
-                    )
-                    .ok();
-            });
-            return;
-        }
-    }
-
-    let app_hk = app.handle().clone();
-    let state_hk = shared;
-
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = hotkey_rx.recv().await {
-            match event {
-                HotkeyEvent::Press => {
-                    let (already, is_handless) = {
-                        let Some(st) = lock_app_state(&state_hk) else {
-                            continue;
-                        };
-                        (st.session.is_some(), st.handless)
-                    };
-                    if !already && !is_handless {
-                        // Capture the target window before recording starts so
-                        // inject_text can restore focus to it after the pipeline,
-                        // even if the user switched windows during transcription.
-                        let target = WindowTarget::capture_foreground();
-                        if let Some(mut st) = lock_app_state(&state_hk) {
-                            st.target = target;
-                            st.pill_placement_stale = true;
-                        }
-                        start_recording_session(&app_hk, &state_hk, "recording", false);
-                    }
-                }
-
-                HotkeyEvent::Release => {
-                    if let Some(mut st) = lock_app_state(&state_hk) {
-                        st.handless = false;
-                    }
-                    tauri::async_runtime::spawn(pipeline::run_pipeline(
-                        app_hk.clone(),
-                        state_hk.clone(),
+    unsafe {
+        let handle = match OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) {
+            Ok(handle) => handle,
+            Err(err) => {
+                if err.code() != windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0) {
+                    early_startup_warn(&format!(
+                        "Relaunch requested but could not open parent process {parent_pid}: {err}"
                     ));
                 }
+                return;
+            }
+        };
 
-                HotkeyEvent::HandlessToggle => {
-                    let (is_handless, has_session) = {
-                        let Some(st) = lock_app_state(&state_hk) else {
-                            continue;
-                        };
-                        (st.handless, st.session.is_some())
-                    };
-                    if is_handless {
-                        core::hotkey::set_handless_active(false);
-                        if let Some(mut st) = lock_app_state(&state_hk) {
-                            st.handless = false;
-                        }
-                        tauri::async_runtime::spawn(pipeline::run_pipeline(
-                            app_hk.clone(),
-                            state_hk.clone(),
-                        ));
-                    } else if !has_session {
-                        let target = WindowTarget::capture_foreground();
-                        if let Some(mut st) = lock_app_state(&state_hk) {
-                            st.target = target;
-                            st.pill_placement_stale = true;
-                        }
-                        start_recording_session(&app_hk, &state_hk, "handsfree", true);
-                        core::hotkey::set_handless_active(true);
-                    }
-                }
+        let wait_result = WaitForSingleObject(handle, 5_000);
+        if wait_result != WAIT_OBJECT_0 {
+            early_startup_warn(&format!(
+                "Relaunch waited for parent process {parent_pid} but got result {}",
+                wait_result.0
+            ));
+        }
 
-                HotkeyEvent::Cancel => {
-                    let Some(is_handless) = lock_app_state(&state_hk).map(|st| st.handless) else {
-                        continue;
-                    };
-                    if is_handless {
-                        // Quick tap while in handsfree = stop. Clear chord state
-                        // immediately so the still-open double-tap window can't
-                        // re-trigger a fresh handsfree session.
-                        core::hotkey::set_handless_active(false);
-                        core::hotkey::reset_chord_state();
-                        if let Some(mut st) = lock_app_state(&state_hk) {
-                            st.handless = false;
-                        }
-                        tauri::async_runtime::spawn(pipeline::run_pipeline(
-                            app_hk.clone(),
-                            state_hk.clone(),
-                        ));
-                    } else {
-                        // First click of a double-tap gesture outside handsfree —
-                        // discard the short recording that just started.
-                        let had_session = lock_app_state(&state_hk)
-                            .and_then(|mut st| st.session.take())
-                            .is_some();
-                        if had_session {
-                            std::thread::spawn(crate::system::volume::unmute);
-                        }
-                        hide_pill(&app_hk);
-                    }
-                }
+        let _ = CloseHandle(handle);
+    }
+}
 
-                HotkeyEvent::EscapeCancel => {
-                    core::hotkey::set_handless_active(false);
-                    let session = {
-                        let Some(mut st) = lock_app_state(&state_hk) else {
-                            continue;
-                        };
-                        st.handless = false;
-                        st.session.take()
-                    };
-                    if let Some(s) = session {
-                        std::thread::spawn(move || {
-                            let _ = s.stop();
-                        });
-                        std::thread::spawn(crate::system::volume::unmute);
-                    }
-                    hide_pill(&app_hk);
+#[cfg(target_os = "windows")]
+fn relaunch_parent_pid() -> Option<u32> {
+    let mut args = std::env::args_os().skip(1);
+
+    while let Some(arg) = args.next() {
+        let Some(text) = arg.to_str() else {
+            continue;
+        };
+
+        if let Some(value) = text.strip_prefix("--relaunch-parent-pid=") {
+            if let Ok(pid) = value.parse::<u32>() {
+                return Some(pid);
+            }
+            early_startup_warn(&format!(
+                "Ignoring invalid relaunch parent pid argument: {value}"
+            ));
+            return None;
+        }
+
+        if text == "--relaunch-parent-pid" {
+            let Some(value) = args.next() else {
+                early_startup_warn("Ignoring missing relaunch parent pid value");
+                return None;
+            };
+
+            match value.to_string_lossy().parse::<u32>() {
+                Ok(pid) => return Some(pid),
+                Err(_) => {
+                    early_startup_warn(&format!(
+                        "Ignoring invalid relaunch parent pid argument: {}",
+                        value.to_string_lossy()
+                    ));
+                    return None;
                 }
             }
         }
-    });
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn early_startup_warn(message: &str) {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;
+
+    eprintln!("WARN: {message}");
+
+    let mut wide: Vec<u16> = format!("WARN: {message}").encode_utf16().collect();
+    wide.push(0);
+
+    unsafe {
+        OutputDebugStringW(PCWSTR(wide.as_ptr()));
+    }
 }

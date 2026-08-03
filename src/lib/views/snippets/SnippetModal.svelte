@@ -113,7 +113,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <button class="modal-backdrop" aria-label="Close dialog" onclick={onClose} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
 <div
-  class="modal-card"
+  class="snippet-modal-card"
   use:modalFocusTrap={{ active: true, initialFocus: () => triggerInput }}
   role="dialog"
   aria-modal="true"
@@ -227,7 +227,7 @@
     outline: none;
   }
 
-  .modal-card {
+  .snippet-modal-card {
     position: relative;
     z-index: 1;
     margin: auto;

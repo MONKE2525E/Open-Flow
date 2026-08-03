@@ -35,6 +35,10 @@ Get-FileHash .\Verenu_0.15.0_x64-setup.exe -Algorithm SHA256
 
 ## Note on macOS signing
 
-The macOS `.dmg` builds are ad-hoc signed (not Developer ID signed or
-notarized), so Gatekeeper may require right-click → **Open** or
-**System Settings → Privacy & Security → Open Anyway** on first launch.
+The macOS `.dmg` builds are signed with a self-signed certificate (not an
+Apple Developer ID, and not notarized), so Gatekeeper may require right-click
+→ **Open** or **System Settings → Privacy & Security → Open Anyway** on first
+launch. The same certificate is reused for every release via CI secrets, so
+the app keeps a stable code identity across updates - microphone and
+accessibility permission grants persist between versions instead of resetting
+on every install.

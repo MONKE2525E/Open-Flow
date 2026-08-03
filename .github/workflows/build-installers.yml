@@ -36,6 +36,28 @@ jobs:
         if: matrix.os-name == 'macos'
         run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
 
+      - name: Import macOS signing certificate
+        if: matrix.os-name == 'macos'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MACOS_CERTIFICATE:-}" ]; then
+            echo 'MACOS_CERTIFICATE is not configured; continuing with an unsigned build.'
+            exit 0
+          fi
+          trap 'rm -f certificate.p12' EXIT
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security find-identity -v -p codesigning build.keychain
+
       - name: Install dependencies
         run: npm ci
 
@@ -46,6 +68,8 @@ jobs:
         shell: bash
 
       - name: Build Tauri release app
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ matrix.os-name == 'macos' && secrets.MACOS_SIGNING_IDENTITY || '' }}
         run: |
           set -euo pipefail
 
@@ -72,12 +96,21 @@ jobs:
             fi
 
             codesign --verify --deep --strict --verbose=4 "$app_path"
-            codesign -dv --verbose=4 "$app_path"
+            codesign_info="$(codesign -dv --verbose=4 "$app_path" 2>&1)"
+            echo "$codesign_info"
+
+            if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+              if ! echo "$codesign_info" | grep -q "Authority=${APPLE_SIGNING_IDENTITY}"; then
+                echo "Expected signing identity '${APPLE_SIGNING_IDENTITY}' not found in codesign output - build fell back to ad-hoc signing"
+                exit 1
+              fi
+              echo "Confirmed signed with '${APPLE_SIGNING_IDENTITY}'"
+            fi
 
             if spctl --assess --type execute --verbose=4 "$app_path"; then
               echo "spctl accepted $app_path"
             else
-              echo "spctl rejected $app_path; expected for ad-hoc signed, non-notarized builds"
+              echo "spctl rejected $app_path; expected for a self-signed, non-Apple-notarized identity"
             fi
 
             hdiutil detach "$MOUNT_DIR" -quiet

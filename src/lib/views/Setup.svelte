@@ -31,9 +31,6 @@
   const tryItStep = isMac ? 8 : 7;
   const doneStep = TOTAL_STEPS + 1;
 
-  type AppWindow = { minimize: () => Promise<void> };
-  let win = $state<AppWindow | null>(null);
-
   let step = $state(0);
   let direction = $state<'forward' | 'back'>('forward');
   let animating = $state(false);
@@ -42,6 +39,14 @@
   let provider = $state<ProviderId>('groq');
   let apiKeyDraft = $state('');
   let keySaved = $state(false);
+  let providerKeyStatus = $state<Record<ProviderId, boolean>>({
+    groq: false,
+    openai: false,
+    google: false,
+    assemblyai: false,
+    local: true,
+  });
+  let previousProvider = $state<ProviderId | null>(null);
   let keySaving = $state(false);
   let keyError = $state('');
   let showKey = $state(false);
@@ -63,6 +68,7 @@
     autoLearn: false,
     autostart: false,
     muteAudio: false,
+    exclusiveMic: false,
   });
 
   let providerDisplayName = $derived(providers.find((p) => p.id === provider)?.name ?? '');
@@ -74,13 +80,9 @@
 
   onMount(async () => {
     try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      win = getCurrentWindow();
-    } catch {}
-    try {
       const [
         savedAppearance, savedLanguage, savedProvider, savedIntensity, savedTone, keyStatus,
-        savedCleanup, savedNoise, savedCaps, savedAutoSpacing, savedCapsLock, savedAppContextHint, savedAutoLearn, savedMute, savedAutostart,
+        savedCleanup, savedNoise, savedCaps, savedAutoSpacing, savedCapsLock, savedAppContextHint, savedAutoLearn, savedMute, savedAutostart, savedExclusiveMic,
       ] = await Promise.all([
         invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
         invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
@@ -97,13 +99,16 @@
         invoke<boolean | null>('get_setting', { key: 'auto_learn_enabled' }),
         invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
         invoke<boolean | null>('get_setting', { key: 'autostart_enabled' }),
+        invoke<boolean | null>('get_setting', { key: 'exclusive_mic' }),
       ]);
       if (savedAppearance === 'system' || savedAppearance === 'light' || savedAppearance === 'dark') appearance = savedAppearance;
       if (savedLanguage && transcriptionLanguages.some((o) => o.code === savedLanguage)) language = savedLanguage;
       if (savedProvider && providers.some((p) => p.id === savedProvider)) provider = savedProvider;
       if (savedIntensity && cleanupCards.some((c) => c.id === savedIntensity)) cleanupIntensity = savedIntensity;
       if (savedTone && toneCards.some((t) => t.id === savedTone)) tone = savedTone;
-      if (keyStatus) keySaved = !!keyStatus[provider];
+      if (keyStatus) {
+        providerKeyStatus = { ...providerKeyStatus, ...keyStatus, local: true };
+      }
       quickPrefs = {
         cleanup: savedCleanup ?? quickPrefs.cleanup,
         noise: savedNoise ?? quickPrefs.noise,
@@ -114,14 +119,24 @@
         autoLearn: savedAutoLearn ?? quickPrefs.autoLearn,
         autostart: savedAutostart ?? quickPrefs.autostart,
         muteAudio: savedMute ?? quickPrefs.muteAudio,
+        exclusiveMic: savedExclusiveMic ?? quickPrefs.exclusiveMic,
       };
     } catch {}
   });
 
-  function minimize() { win?.minimize(); }
-  async function closeWindow() {
-    try { await invoke('hide_main'); } catch {}
-  }
+  $effect(() => {
+    if (previousProvider !== null && previousProvider !== provider) {
+      apiKeyDraft = '';
+      keyError = '';
+      keyValidation = { status: 'idle', message: '' };
+    }
+    previousProvider = provider;
+    keySaved = provider === 'local' ? true : !!providerKeyStatus[provider];
+    if (provider === 'local') {
+      keyError = '';
+      keyValidation = { status: 'idle', message: '' };
+    }
+  });
 
   function delay(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -144,6 +159,7 @@
   }
 
   async function saveKey() {
+    if (provider === 'local') return;
     const trimmed = apiKeyDraft.trim();
     if (!trimmed) return;
     keySaving = true;
@@ -151,6 +167,7 @@
     keyValidation = { status: 'idle', message: '' };
     try {
       await invoke('save_api_key', { provider, key: trimmed });
+      providerKeyStatus = { ...providerKeyStatus, [provider]: true };
       keySaved = true;
       apiKeyDraft = '';
     } catch {
@@ -163,6 +180,10 @@
   }
 
   async function validateKey(key: string) {
+    if (provider === 'local') {
+      keyValidation = { status: 'idle', message: '' };
+      return;
+    }
     keyValidation = { status: 'checking', message: '' };
     try {
       const result = await invoke<{ ok: boolean; status: 'valid' | 'invalid' | 'unknown'; message: string }>('validate_api_key', { provider, key });
@@ -173,12 +194,39 @@
   }
 
   async function finish() {
+    const transcriptionDefaultModel = provider === 'local'
+      ? 'local/parakeet-v3'
+      : provider === 'openai'
+        ? 'openai/gpt-4o-transcribe'
+        : provider === 'google'
+          ? 'google/gemini-3.5-flash'
+          : 'groq/whisper-large-v3-turbo';
+    const cleanupProvider = provider;
+    const cleanupDefaultModel = cleanupProvider === 'local'
+      ? 'local/qwen2.5-3b-instruct'
+      : cleanupProvider === 'openai'
+        ? 'openai/gpt-4o-mini'
+        : cleanupProvider === 'google'
+          ? 'google/gemini-3.5-flash'
+          : 'groq/llama-3.3-70b-versatile';
+
     try {
       await saveSetting('cleanup_intensity', cleanupIntensity);
       await saveSetting('default_tone', tone);
       await saveSetting('transcription_provider', provider);
+      await saveSetting('transcription_model', transcriptionDefaultModel);
+      await saveSetting('transcription_default_model', transcriptionDefaultModel);
+      await saveSetting('transcription_models_by_provider', {
+        groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
+        openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
+        google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+        assemblyai: [],
+        local: ['parakeet-v3'],
+      });
       await saveSetting('transcription_language', language);
-      await saveSetting('cleanup_provider', provider);
+      await saveSetting('cleanup_provider', cleanupProvider);
+      await saveSetting('cleanup_model', cleanupDefaultModel);
+      await saveSetting('cleanup_default_model', cleanupDefaultModel);
       await saveSetting('appearance_mode', appearance);
       await saveSetting('cleanup_enabled', quickPrefs.cleanup);
       await saveSetting('noise_reduction', quickPrefs.noise);
@@ -188,6 +236,7 @@
       await saveSetting('app_context_hint', quickPrefs.appContextHint);
       await saveSetting('auto_learn_enabled', quickPrefs.autoLearn);
       await saveSetting('mute_audio', quickPrefs.muteAudio);
+      await saveSetting('exclusive_mic', quickPrefs.exclusiveMic);
       await invoke('set_autostart', { enabled: quickPrefs.autostart });
       await saveSetting('setup_complete', true);
     } catch {}
@@ -198,7 +247,9 @@
   type HeaderInfo = { title: string; subtitle: string; name: string } | null;
   function headerFor(s: number): HeaderInfo {
     if (s === providerStep) return { name: 'Provider', title: 'Choose your AI provider', subtitle: 'This powers both transcription and text cleanup. You can switch anytime in Settings.' };
-    if (s === apiKeyStep) return { name: 'API Key', title: `Enter your ${providerDisplayName} API key`, subtitle: 'Keys are stored locally and never leave your machine.' };
+    if (s === apiKeyStep) return provider === 'local'
+      ? { name: 'Local', title: 'No API key needed for local transcription', subtitle: 'Download Parakeet V3 later in Settings → Models. Cleanup Off keeps the transcript local too.' }
+      : { name: 'API Key', title: `Enter your ${providerDisplayName} API key`, subtitle: 'Keys are stored locally and never leave your machine.' };
     if (isMac && s === permissionStep) return { name: 'Permissions', title: 'Check your macOS permissions', subtitle: 'Verenu needs these to hear your voice and type for you.' };
     if (s === writingStyleStep) return { name: 'Writing Style', title: 'How should your dictation sound?', subtitle: 'Cleanup intensity and tone shape every transcription. You can override both per-app later.' };
     if (s === appearanceStep) return { name: 'Appearance', title: 'Choose your appearance', subtitle: 'Choose your default theme mode. You can change this later in Settings.' };
@@ -236,6 +287,9 @@
     if (step === doneStep) return bar({ rightLabel: 'Start dictating', rightLg: true, onRight: finish });
     if (step === providerStep) return bar({ rightLabel: 'Next', onRight: goNext });
     if (step === apiKeyStep) {
+      if (provider === 'local') {
+        return bar({ leftLabel: 'Skip for now', rightLabel: 'Continue', onRight: goNext });
+      }
       if (keySaving) return bar({ leftLabel: 'Skip for now', rightLabel: 'Saving…', rightDisabled: true, onRight: () => {} });
       if (apiKeyDraft.trim()) return bar({ leftLabel: 'Skip for now', rightLabel: 'Save Key', onRight: saveKey });
       return bar({ leftLabel: 'Skip for now', rightLabel: 'Continue', onRight: goNext });
@@ -268,8 +322,6 @@
   totalSteps={TOTAL_STEPS}
   header={headerFor(step)}
   onDotClick={jumpToStep}
-  onMinimize={minimize}
-  onClose={closeWindow}
 >
   {#snippet left()}
     {#if actionBar.leftLabel}

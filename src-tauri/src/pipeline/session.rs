@@ -1,18 +1,46 @@
 use super::*;
-use crate::core::window_geometry::WindowTarget;
 
 // ---------- recording session helpers ----------
 
+#[derive(Clone, Copy, Default)]
+pub struct RecordingStartOptions {
+    pub show_recording_pill: bool,
+    pub emit_globally: bool,
+    pub start_cue_delay_ms: Option<u64>,
+}
+
 /// Starts a new recording session, stores it in shared state, shows the pill,
-/// and spawns the audio-level emitter task.
+/// and spawns the audio-level emitter task. The caller must already have
+/// reserved `DictationLifecycle::Starting` (via `state::reserve_starting` or
+/// `state::take_active_pipeline_for_interrupt`) before calling this.
 pub fn start_recording_session(
     app: &AppHandle,
     state: &SharedState,
     pill_state: &str,
     handless: bool,
 ) {
-    if let Err(e) = start_recording_session_ex(app, state, pill_state, handless, None, true, false)
-    {
+    let start_cue_delay_ms = if start_stop_sounds_enabled(app) {
+        Some(if handless {
+            crate::media::sound::START_CUE_HANDSFREE_DELAY_MS
+        } else {
+            crate::media::sound::START_CUE_NORMAL_DELAY_MS
+        })
+    } else {
+        None
+    };
+
+    if let Err(e) = start_recording_session_ex(
+        app,
+        state,
+        pill_state,
+        handless,
+        None,
+        RecordingStartOptions {
+            show_recording_pill: true,
+            emit_globally: false,
+            start_cue_delay_ms,
+        },
+    ) {
         log::error!("start recording: {e}");
         hide_pill(app);
         app.emit("verenu:error", format!("Failed to start recording: {e}"))
@@ -21,14 +49,14 @@ pub fn start_recording_session(
 }
 
 /// Generalized recording session function supporting calibration overrides.
+/// The caller must already have reserved `DictationLifecycle::Starting`.
 pub fn start_recording_session_ex(
     app: &AppHandle,
     state: &SharedState,
     pill_state: &str,
     handless: bool,
     gain_override: Option<f32>,
-    show_recording_pill: bool,
-    emit_globally: bool,
+    options: RecordingStartOptions,
 ) -> Result<(), String> {
     let settings = store::settings_snapshot(app);
     let audio_config = match settings {
@@ -54,6 +82,7 @@ pub fn start_recording_session_ex(
         if !crate::system::mac_app::is_accessibility_verified()
             && !crate::commands::check_accessibility_permission(false)
         {
+            release_starting_reservation(state);
             return Err(
                 "Accessibility permission is required for Verenu on macOS. Open System Settings > Privacy & Security > Accessibility and enable Verenu."
                     .to_string(),
@@ -62,6 +91,7 @@ pub fn start_recording_session_ex(
 
         match crate::system::mac_app::microphone_permission_status() {
             "denied" | "restricted" => {
+                release_starting_reservation(state);
                 return Err(
                     "Microphone access is blocked on macOS. Open System Settings > Privacy & Security > Microphone and enable Verenu."
                         .to_string(),
@@ -72,27 +102,69 @@ pub fn start_recording_session_ex(
     }
 
     let device = audio_config.device;
+    let use_default_input_device = device.is_none();
     let noise_reduction = audio_config.noise_reduction;
     let mute_audio = audio_config.mute_audio;
+    let exclusive_mic = audio_config.exclusive_mic;
+    let pause_media = audio_config.pause_media_during_dictation && gain_override.is_none();
     let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
+    let exclusive_mic_session_id = if cfg!(target_os = "macos")
+        && exclusive_mic
+        && use_default_input_device
+        && gain_override.is_none()
+    {
+        Some(crate::system::volume::register_session())
+    } else {
+        None
+    };
 
     match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
         Ok(session) => {
-            if mute_audio && gain_override.is_none() {
-                std::thread::spawn(crate::system::volume::mute);
-            }
             let level_arc = session.level.clone();
             let raw_level_arc = session.raw_level.clone();
             let active_arc = session.active.clone();
+            let start_cue_active = session.active.clone();
             {
                 let mut st = match lock_state(state) {
                     Ok(st) => st,
-                    Err(e) => return Err(e.to_string()),
+                    Err(e) => {
+                        let _ = session.stop();
+                        if let Some(session_id) = exclusive_mic_session_id {
+                            crate::system::volume::release_mic(session_id);
+                        }
+                        release_starting_reservation(state);
+                        return Err(e.to_string());
+                    }
                 };
-                st.session = Some(session);
-                st.handless = handless;
+                let prepend_audio = match &st.lifecycle {
+                    DictationLifecycle::Starting { prepend_audio } => prepend_audio.clone(),
+                    _ => {
+                        log::warn!(
+                            "start_recording_session_ex: lifecycle was not Starting when installing Recording"
+                        );
+                        drop(st);
+                        let _ = session.stop();
+                        if let Some(session_id) = exclusive_mic_session_id {
+                            crate::system::volume::release_mic(session_id);
+                        }
+                        return Err(
+                            "Recording start reservation was lost before the microphone opened"
+                                .to_string(),
+                        );
+                    }
+                };
+                st.lifecycle = DictationLifecycle::Recording {
+                    session,
+                    exclusive_mic_session_id,
+                    handless,
+                    handless_from_hold: false,
+                    prepend_audio,
+                };
             }
-            if show_recording_pill {
+            if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
+                manager.set_recording_active(true);
+            }
+            if options.show_recording_pill {
                 show_pill(app, pill_state);
             }
             spawn_level_emitter(
@@ -100,11 +172,56 @@ pub fn start_recording_session_ex(
                 level_arc,
                 raw_level_arc,
                 active_arc,
-                emit_globally,
+                options.emit_globally,
             );
+            if let Some(session_id) = exclusive_mic_session_id {
+                tauri::async_runtime::spawn_blocking(move || {
+                    crate::system::volume::hog_mic(session_id)
+                });
+            }
+            if pause_media {
+                crate::system::media_control::begin_dictation_media_pause();
+            }
+            if let Some(delay_ms) = options.start_cue_delay_ms {
+                if mute_audio && gain_override.is_none() {
+                    crate::media::sound::play_start_delayed_then(delay_ms, move || {
+                        if start_cue_active.load(Ordering::Relaxed) {
+                            crate::media::sound::coordinated_mute(start_cue_active);
+                        }
+                    });
+                } else {
+                    crate::media::sound::play_start_delayed(delay_ms);
+                }
+            } else if mute_audio && gain_override.is_none() {
+                tauri::async_runtime::spawn_blocking(crate::system::volume::mute);
+            }
             Ok(())
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => {
+            if let Some(session_id) = exclusive_mic_session_id {
+                crate::system::volume::release_mic(session_id);
+            }
+            release_starting_reservation(state);
+            Err(e.to_string())
+        }
+    }
+}
+
+/// Releases a `Starting` reservation back to `Idle` when the mic failed to
+/// open — the carried prepend audio (if any) is simply dropped, not
+/// retained anywhere a later, unrelated dictation could inherit it.
+pub(crate) fn release_starting_reservation(state: &SharedState) {
+    let mut st = match state.lock() {
+        Ok(st) => st,
+        Err(poisoned) => {
+            log::warn!(
+                "Recording state lock was poisoned while releasing start reservation; recovering"
+            );
+            poisoned.into_inner()
+        }
+    };
+    if matches!(st.lifecycle, DictationLifecycle::Starting { .. }) {
+        st.lifecycle = DictationLifecycle::Idle;
     }
 }
 
@@ -150,16 +267,14 @@ pub fn spawn_level_emitter(
         }
     });
 }
-pub(super) fn take_pipeline_session(
-    state: &SharedState,
-) -> Option<(audio::RecordingSession, WindowTarget)> {
-    let mut st = match lock_state(state) {
-        Ok(st) => st,
-        Err(e) => {
-            log::error!("recording state: {e}");
-            return None;
-        }
-    };
-    let session = st.session.take()?;
-    Some((session, st.target))
+/// Whether dictation start/stop sound cues are enabled (defaults to true when
+/// the settings store cannot be read).
+pub(crate) fn start_stop_sounds_enabled(app: &AppHandle) -> bool {
+    store::settings_snapshot(app)
+        .map(|s| {
+            let config = store::load_audio_config(&s);
+            crate::media::sound::set_volume(config.sound_effects_volume);
+            config.sound_effects_volume > 0.0
+        })
+        .unwrap_or(true)
 }

@@ -3,6 +3,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize)]
 struct GhRelease {
     tag_name: String,
+    #[serde(default)]
+    target_commitish: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
     assets: Vec<GhAsset>,
 }
 
@@ -36,6 +42,33 @@ enum UpdateTarget {
     MacOsAppleSilicon,
     MacOsIntel,
     Unsupported,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum VersionPart {
+    Numeric(u64),
+    Text(String),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedVersion {
+    core: (u64, u64, u64),
+    prerelease: Option<Vec<VersionPart>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateChannel {
+    Stable,
+    Beta,
+}
+
+impl UpdateChannel {
+    fn target_branch(self) -> &'static str {
+        match self {
+            Self::Stable => "master",
+            Self::Beta => "dev",
+        }
+    }
 }
 
 /// Repo to check for releases.
@@ -102,15 +135,14 @@ pub fn is_authorized_release_asset_url(url: &str) -> bool {
     !is_suspicious(tag) && !is_suspicious(asset)
 }
 
-/// Check the configured repo for a release newer than the current version. A
-/// 404 (repo has no releases yet) or other request error is treated as "no
-/// release" rather than failing the whole check.
-pub async fn check() -> anyhow::Result<Option<UpdateInfo>> {
-    check_repo(RELEASE_REPO).await
+/// Check the configured repo for a release newer than the current version on
+/// the selected release channel.
+pub async fn check(channel: UpdateChannel) -> anyhow::Result<Option<UpdateInfo>> {
+    check_repo(RELEASE_REPO, channel).await
 }
 
-async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
-    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+async fn check_repo(repo: &str, channel: UpdateChannel) -> anyhow::Result<Option<UpdateInfo>> {
+    let url = format!("https://api.github.com/repos/{repo}/releases?per_page=100");
     let resp = super::client::get()
         .get(&url)
         .header("User-Agent", "verenu")
@@ -122,10 +154,16 @@ async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
     }
     let resp = resp.error_for_status()?;
 
-    let release: GhRelease = resp.json().await?;
-    let display_version = normalize_version(&release.tag_name);
+    let releases: Vec<GhRelease> = resp.json().await?;
+    let Some(release) = select_release(&releases, channel) else {
+        return Ok(None);
+    };
+    let Some(display_version) = release_version(&release.tag_name) else {
+        log::warn!("Ignoring release with malformed version tag: {}", release.tag_name);
+        return Ok(None);
+    };
 
-    if !is_newer(&display_version, env!("CARGO_PKG_VERSION")) {
+    if !is_newer(&display_version, &current_package_version()) {
         return Ok(None);
     }
 
@@ -148,6 +186,169 @@ async fn check_repo(repo: &str) -> anyhow::Result<Option<UpdateInfo>> {
     }))
 }
 
+fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhRelease> {
+    releases
+        .iter()
+        .enumerate()
+        .filter(|(_, release)| !release.draft && release_matches_channel(release, channel))
+        .filter_map(|(index, release)| {
+            release_version(&release.tag_name)
+                .map(|version| (index, release, version))
+        })
+        // Keep the first release when normalized versions tie. GitHub returns
+        // releases newest-first, so this preserves the newest prerelease build.
+        .max_by(|(left_index, _, left_version), (right_index, _, right_version)| {
+            compare_versions(left_version, right_version)
+                .then_with(|| right_index.cmp(left_index))
+        })
+        .map(|(_, release, _)| release)
+}
+
+fn release_matches_channel(release: &GhRelease, channel: UpdateChannel) -> bool {
+    let wants_prerelease = matches!(channel, UpdateChannel::Beta);
+    if release.prerelease != wants_prerelease {
+        return false;
+    }
+
+    release
+        .target_commitish
+        .eq_ignore_ascii_case(channel.target_branch())
+        || is_commit_sha(&release.target_commitish)
+}
+
+fn is_commit_sha(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Release tags must contain exactly three numeric components in the main
+/// version core. Prerelease and build suffixes may contain numbers, but they
+/// must not fill in a missing patch component.
+fn release_version(tag: &str) -> Option<String> {
+    let start = tag.find(|c: char| c.is_ascii_digit())?;
+    let version_and_suffix = &tag[start..];
+    let suffix_start = version_and_suffix
+        .find(['-', '+'])
+        .unwrap_or(version_and_suffix.len());
+    let version_core = &version_and_suffix[..suffix_start];
+    let parts: Vec<u64> = version_core
+        .split('.')
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
+
+    match parts.as_slice() {
+        [major, minor, patch] => Some(format!(
+            "{major}.{minor}.{patch}{}",
+            &version_and_suffix[suffix_start..]
+        )),
+        _ => None,
+    }
+}
+
+fn current_package_version() -> String {
+    env!("CARGO_PKG_VERSION").to_owned()
+}
+
+fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    let left = release_version(left).unwrap_or_else(|| normalize_version(left));
+    let right = release_version(right).unwrap_or_else(|| normalize_version(right));
+    let Some(left) = parse_version(&left) else {
+        return std::cmp::Ordering::Equal;
+    };
+    let Some(right) = parse_version(&right) else {
+        return std::cmp::Ordering::Equal;
+    };
+
+    left.core.cmp(&right.core).then_with(|| match (&left.prerelease, &right.prerelease) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (Some(left), Some(right)) => compare_prerelease_parts(left, right),
+    })
+}
+
+fn parse_version(version: &str) -> Option<ParsedVersion> {
+    let suffix_start = version.find(['-', '+']).unwrap_or(version.len());
+    let core = version[..suffix_start]
+        .split('.')
+        .map(str::parse)
+        .collect::<Result<Vec<u64>, _>>()
+        .ok()?;
+    let core = match core.as_slice() {
+        [major, minor, patch] => (*major, *minor, *patch),
+        _ => return None,
+    };
+
+    let prerelease = if version.as_bytes().get(suffix_start) == Some(&b'-') {
+        let prerelease_start = suffix_start + 1;
+        let prerelease_end = version[prerelease_start..]
+            .find('+')
+            .map(|offset| prerelease_start + offset)
+            .unwrap_or(version.len());
+        Some(parse_prerelease_parts(
+            &version[prerelease_start..prerelease_end],
+        ))
+    } else {
+        None
+    };
+
+    Some(ParsedVersion { core, prerelease })
+}
+
+fn parse_prerelease_parts(value: &str) -> Vec<VersionPart> {
+    let mut parts = Vec::new();
+    let mut buffer = String::new();
+    let mut buffer_is_numeric: Option<bool> = None;
+
+    for character in value.chars() {
+        if !character.is_ascii_alphanumeric() {
+            push_version_part(&mut parts, &mut buffer);
+            buffer_is_numeric = None;
+            continue;
+        }
+
+        let is_numeric = character.is_ascii_digit();
+        if buffer_is_numeric.is_some_and(|previous| previous != is_numeric) {
+            push_version_part(&mut parts, &mut buffer);
+        }
+        buffer_is_numeric = Some(is_numeric);
+        buffer.push(character);
+    }
+    push_version_part(&mut parts, &mut buffer);
+    parts
+}
+
+fn push_version_part(parts: &mut Vec<VersionPart>, buffer: &mut String) {
+    if buffer.is_empty() {
+        return;
+    }
+    if buffer.chars().all(|character| character.is_ascii_digit()) {
+        if let Ok(value) = buffer.parse() {
+            parts.push(VersionPart::Numeric(value));
+        } else {
+            parts.push(VersionPart::Text(buffer.clone()));
+        }
+    } else {
+        parts.push(VersionPart::Text(buffer.clone()));
+    }
+    buffer.clear();
+}
+
+fn compare_prerelease_parts(left: &[VersionPart], right: &[VersionPart]) -> std::cmp::Ordering {
+    for (left, right) in left.iter().zip(right) {
+        let ordering = match (left, right) {
+            (VersionPart::Numeric(left), VersionPart::Numeric(right)) => left.cmp(right),
+            (VersionPart::Numeric(_), VersionPart::Text(_)) => std::cmp::Ordering::Less,
+            (VersionPart::Text(_), VersionPart::Numeric(_)) => std::cmp::Ordering::Greater,
+            (VersionPart::Text(left), VersionPart::Text(right)) => left.cmp(right),
+        };
+        if ordering != std::cmp::Ordering::Equal {
+            return ordering;
+        }
+    }
+    left.len().cmp(&right.len())
+}
+
 /// Extract the first three numeric groups from any version string, return as "major.minor.patch".
 /// Handles tags like "vVerenu-0.5.0-beta", "v1.2.3", "0.5.0", etc.
 fn normalize_version(tag: &str) -> String {
@@ -166,16 +367,7 @@ fn normalize_version(tag: &str) -> String {
 }
 
 fn is_newer(latest: &str, current: &str) -> bool {
-    version_tuple(&normalize_version(latest)) > version_tuple(&normalize_version(current))
-}
-
-fn version_tuple(version: &str) -> (u64, u64, u64) {
-    let mut parts = version.split('.').filter_map(|p| p.parse::<u64>().ok());
-    (
-        parts.next().unwrap_or(0),
-        parts.next().unwrap_or(0),
-        parts.next().unwrap_or(0),
-    )
+    compare_versions(latest, current) == std::cmp::Ordering::Greater
 }
 
 fn current_update_target() -> UpdateTarget {
@@ -272,7 +464,9 @@ fn find_asset_with_suffix_and_hints<'a>(
 mod tests {
     use super::{
         find_asset_with_suffix, is_authorized_release_asset_url, is_newer, normalize_version,
-        select_release_asset_for_target, GhAsset, InstallMode, UpdateTarget,
+        parse_prerelease_parts, release_version, select_release, select_release_asset_for_target,
+        current_package_version, GhAsset, GhRelease, InstallMode, UpdateChannel, UpdateTarget,
+        VersionPart,
     };
 
     fn asset(name: &str) -> GhAsset {
@@ -280,6 +474,155 @@ mod tests {
             name: name.to_string(),
             browser_download_url: format!("https://example.invalid/{name}"),
         }
+    }
+
+    fn release(tag_name: &str, target_commitish: &str) -> GhRelease {
+        release_with_prerelease(tag_name, target_commitish, target_commitish.eq_ignore_ascii_case("dev"))
+    }
+
+    fn release_with_prerelease(tag_name: &str, target_commitish: &str, prerelease: bool) -> GhRelease {
+        GhRelease {
+            tag_name: tag_name.to_string(),
+            target_commitish: target_commitish.to_string(),
+            draft: false,
+            prerelease,
+            assets: vec![asset("Verenu_0.15.0_x64-setup.exe")],
+        }
+    }
+
+    #[test]
+    fn release_channels_map_to_the_expected_branches() {
+        let releases = [
+            release("Verenu-0.15.0", "master"),
+            release("Verenu-0.15.1-beta", "dev"),
+            release("Verenu-0.99.0", "feature/testing"),
+        ];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Stable)
+                .expect("stable release")
+                .tag_name,
+            "Verenu-0.15.0"
+        );
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Beta)
+                .expect("beta release")
+                .tag_name,
+            "Verenu-0.15.1-beta"
+        );
+    }
+
+    #[test]
+    fn release_channel_picks_the_highest_version_on_that_branch() {
+        let releases = [
+            release("Verenu-0.15.1-beta", "dev"),
+            release("Verenu-0.16.0-beta", "dev"),
+            release("Verenu-9.0.0", "master"),
+        ];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Beta)
+                .expect("highest beta release")
+                .tag_name,
+            "Verenu-0.16.0-beta"
+        );
+    }
+
+    #[test]
+    fn commit_sha_targets_use_github_prerelease_metadata_for_channels() {
+        let target = "0123456789abcdef0123456789abcdef01234567";
+        let releases = [
+            release_with_prerelease("Verenu-0.15.0", target, false),
+            release_with_prerelease("Verenu-0.15.1-beta", target, true),
+        ];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Stable)
+                .expect("stable SHA-targeted release")
+                .tag_name,
+            "Verenu-0.15.0"
+        );
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Beta)
+                .expect("beta SHA-targeted release")
+                .tag_name,
+            "Verenu-0.15.1-beta"
+        );
+    }
+
+    #[test]
+    fn draft_releases_are_not_selected() {
+        let mut draft = release("Verenu-9.0.0-beta", "dev");
+        draft.draft = true;
+        let releases = [draft, release("Verenu-0.15.1-beta", "dev")];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Beta)
+                .expect("published beta release")
+                .tag_name,
+            "Verenu-0.15.1-beta"
+        );
+    }
+
+    #[test]
+    fn malformed_release_tags_are_not_selected() {
+        let releases = [
+            release("Verenu-013.0-beta", "master"),
+            release("Verenu-0.12.1-beta", "master"),
+        ];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Stable)
+                .expect("valid stable release")
+                .tag_name,
+            "Verenu-0.12.1-beta"
+        );
+        assert_eq!(release_version("Verenu-013.0-beta"), None);
+        assert_eq!(
+            release_version("Verenu-0.15.1-beta"),
+            Some("0.15.1-beta".into())
+        );
+    }
+
+    #[test]
+    fn numeric_prerelease_suffixes_are_accepted() {
+        assert_eq!(
+            release_version("Verenu-0.15.1-beta.1"),
+            Some("0.15.1-beta.1".into())
+        );
+        assert_eq!(
+            release_version("Verenu-0.15.1-beta2"),
+            Some("0.15.1-beta2".into())
+        );
+        assert_eq!(
+            release_version("Verenu-0.15.1-rc1"),
+            Some("0.15.1-rc1".into())
+        );
+        assert_eq!(
+            release_version("Verenu-0.15.1+build.2"),
+            Some("0.15.1+build.2".into())
+        );
+    }
+
+    #[test]
+    fn numeric_suffixes_cannot_fill_missing_patch_versions() {
+        assert_eq!(release_version("Verenu-1.0-beta.2"), None);
+        assert_eq!(release_version("v2.0-rc1"), None);
+    }
+
+    #[test]
+    fn equal_normalized_versions_keep_the_newest_release_first() {
+        let releases = [
+            release("Verenu-0.15.1-beta.2", "dev"),
+            release("Verenu-0.15.1-beta.1", "dev"),
+        ];
+
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Beta)
+                .expect("beta release")
+                .tag_name,
+            "Verenu-0.15.1-beta.2"
+        );
     }
 
     #[test]
@@ -294,6 +637,30 @@ mod tests {
         assert!(is_newer("v0.15.0", "0.14.1"));
         assert!(!is_newer("v0.14.1", "0.14.1"));
         assert!(!is_newer("0.14.0", "0.14.1"));
+    }
+
+    #[test]
+    fn prerelease_versions_compare_without_losing_build_order() {
+        assert!(is_newer("0.15.1-beta.2", "0.15.1-beta.1"));
+        assert!(!is_newer("0.15.1-beta.1", "0.15.1-beta.2"));
+        assert!(!is_newer("0.15.1-beta.2", "0.15.1"));
+        assert!(is_newer("0.15.2-beta.1", "0.15.1"));
+    }
+
+    #[test]
+    fn current_package_version_uses_cargo_package_version_as_is() {
+        assert_eq!(current_package_version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn oversized_numeric_prerelease_identifiers_are_retained() {
+        assert_eq!(
+            parse_prerelease_parts("beta.18446744073709551616"),
+            vec![
+                VersionPart::Text("beta".into()),
+                VersionPart::Text("18446744073709551616".into()),
+            ]
+        );
     }
 
     #[test]

@@ -404,7 +404,7 @@
   .add-mapping-section {
     border-top: 1px solid var(--line);
     padding-top: 16px;
-    max-width: 640px;
+    max-width: var(--mappings-measure, 640px);
   }
 
   .add-mapping-label {
@@ -661,6 +661,14 @@
     border-radius: 50%;
     background: var(--ink-faint);
     flex-shrink: 0;
+  }
+
+  /* Paired queries — see the note in MacPermissions.svelte. This form also
+     renders on the Style page, which has no settings container. */
+  @container settings-panel (max-width: 720px) {
+    .app-picker-wrap {
+      flex-basis: 100%;
+    }
   }
 
   @media (max-width: 720px) {

@@ -29,4 +29,13 @@ Verenu identifies the app you're dictating into by its executable name (Windows)
 
 ## Next step
 
-Revisit [Cleanup Levels](CLEANUP_LEVELS.md) to choose the right intensity for each app, or check [Privacy & Data](PRIVACY_AND_DATA.md) to understand what Verenu does with your data.
+Revisit [Cleanup Levels](CLEANUP_LEVELS.md) to choose the right intensity for each app, or check [Privacy & Data](PRIVACY_SUMMARY.md) to understand what Verenu does with your data.
+
+## Related Docs
+
+<p align="center">
+  <a href="CLEANUP_LEVELS.md"><img alt="Cleanup Levels" src="https://img.shields.io/badge/Cleanup-Levels-c44632"></a>
+  <a href="DICTIONARY.md"><img alt="Dictionary" src="https://img.shields.io/badge/Dictionary-Guide-5b554a"></a>
+  <a href="SNIPPETS.md"><img alt="Snippets" src="https://img.shields.io/badge/Snippets-Guide-7e7266"></a>
+  <a href="PRIVACY_SUMMARY.md"><img alt="Privacy Summary" src="https://img.shields.io/badge/Privacy-Summary-2b2422"></a>
+</p>

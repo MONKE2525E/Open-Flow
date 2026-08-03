@@ -143,7 +143,7 @@
         id="dict-mistake"
         class="field-input"
         type="text"
-        placeholder="e.g. koobernetes, byork"
+        placeholder="e.g. koobernetes, koobernettis"
         bind:value={draftMistake}
         bind:this={mistakeInput}
         autocomplete="off"
@@ -151,7 +151,7 @@
       />
       <MicInputButton onResult={(t) => draftMistake = t} />
     </div>
-    <p class="field-hint">What the transcription model typically writes instead. Skip if the term just needs to be in the AI's awareness.</p>
+    <p class="field-hint">What the transcription model typically writes instead. Separate multiple mistranscriptions with commas. Skip if the term just needs to be in the AI's awareness.</p>
   </div>
 
   <div class="modal-footer">

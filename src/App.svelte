@@ -2,8 +2,6 @@
   import { onMount } from 'svelte';
   import { appStore } from './lib/stores';
   import { cleanupPromptEditor } from './lib/stores.svelte';
-  import { isMac } from './lib/platform';
-  import TitleBar from './lib/components/layout/TitleBar.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
   import Dictionary from './lib/views/Dictionary.svelte';
@@ -13,8 +11,14 @@
   import CleanupPromptModal from './lib/components/settings/CleanupPromptModal.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
-  import { invoke, listen } from './lib/tauri';
+  import { getVersion, invoke, listen } from './lib/tauri';
   import { startAutomaticUpdateChecks } from './lib/updates';
+  import { startLocalSttListeners } from './lib/localSttStore.svelte';
+  import { startLocalLlmListeners } from './lib/localLlmStore.svelte';
+  import { startDownloadManagerListeners } from './lib/downloadManager.svelte';
+  import { refreshTranscriptionModel } from './lib/transcriptionModelStore.svelte';
+  import { startProviderStatusChecks, startApiHealthChecks } from './lib/serviceStatus';
+  import { scrollEdges } from './lib/scrollFade';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
@@ -45,6 +49,8 @@
   let pageDir = $state<1 | -1>(1);
   let prevPage = $state<string>('home');
   let contentEl = $state<HTMLDivElement | null>(null);
+  let fadeTop = $state(false);
+  let fadeBottom = $state(false);
 
   $effect(() => {
     const next = appStore.currentPage;
@@ -71,18 +77,27 @@
   onMount(() => {
     let cleanupFn: (() => void) | undefined;
     let stopAutomaticUpdateChecks: (() => void) | undefined;
+    let stopLocalSttListeners: (() => void) | undefined;
+    let stopLocalLlmListeners: (() => void) | undefined;
+    let stopDownloadManagerListeners: (() => void) | undefined;
+    let stopProviderStatusChecks: (() => void) | undefined;
+    let stopApiHealthChecks: (() => void) | undefined;
 
     (async () => {
       try {
-        const [done, appearance, forceSetupOnLaunch] = await Promise.all([
+        const [done, appearance, forceSetupOnLaunch, cleanupEnabled, betaUpdatesEnabled] = await Promise.all([
           invoke<boolean | null>('get_setting', { key: 'setup_complete' }),
           invoke<'system' | 'light' | 'dark' | null>('get_setting', { key: 'appearance_mode' }),
           invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' }),
+          invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
+          invoke<boolean | null>('get_setting', { key: 'beta_updates_enabled' }),
         ]);
         appStore.setupComplete = forceSetupOnLaunch ? false : done === true;
         if (appearance === 'light' || appearance === 'dark' || appearance === 'system') {
           appStore.appearanceMode = appearance;
         }
+        appStore.cleanupEnabled = cleanupEnabled ?? true;
+        appStore.betaUpdatesEnabled = betaUpdatesEnabled ?? false;
       } catch {
         appStore.setupComplete = false;
       }
@@ -104,6 +119,25 @@
       console.error('Failed to start automatic update checks:', error);
     }
 
+    try {
+      stopLocalSttListeners = startLocalSttListeners();
+      stopLocalLlmListeners = startLocalLlmListeners();
+      stopDownloadManagerListeners = startDownloadManagerListeners();
+      stopProviderStatusChecks = startProviderStatusChecks();
+      stopApiHealthChecks = startApiHealthChecks();
+    } catch (error) {
+      console.error('Failed to start listeners and status checks:', error);
+    }
+
+    refreshTranscriptionModel().catch((error) => {
+      console.error('Failed to load transcription model:', error);
+    });
+
+    // Shown in the sidebar footer and About; fetched once here since both read it.
+    getVersion()
+      .then((version) => { appStore.appVersion = version; })
+      .catch((error) => { console.error('Failed to read app version:', error); });
+
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
     const onSystemThemeChange = () => {
       if (appStore.appearanceMode === 'system') applyTheme();
@@ -124,6 +158,11 @@
     return () => {
       if (cleanupFn) cleanupFn();
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
+      if (stopLocalSttListeners) stopLocalSttListeners();
+      if (stopLocalLlmListeners) stopLocalLlmListeners();
+      if (stopDownloadManagerListeners) stopDownloadManagerListeners();
+      if (stopProviderStatusChecks) stopProviderStatusChecks();
+      if (stopApiHealthChecks) stopApiHealthChecks();
       media?.removeEventListener?.('change', onSystemThemeChange);
       clearInterval(connectivityTimer);
       document.removeEventListener('visibilitychange', handleVisibility);
@@ -135,12 +174,16 @@
   {#if appStore.setupComplete === false}
     <Setup />
   {/if}
-  {#if !isMac}
-    <TitleBar />
-  {/if}
   <div class="body">
     <Sidebar />
-    <div class="content scroll-styled" bind:this={contentEl}>
+    <div class="content-fade content-fade-top" class:visible={fadeTop && !appStore.settingsOpen} aria-hidden="true"></div>
+    <div class="content-fade content-fade-bottom" class:visible={fadeBottom && !appStore.settingsOpen} aria-hidden="true"></div>
+    <div
+      class="content scroll-styled"
+      class:content-behind={appStore.settingsOpen}
+      bind:this={contentEl}
+      use:scrollEdges={(top, bottom) => { fadeTop = top; fadeBottom = bottom; }}
+    >
       {#key appStore.currentPage}
         <div
           class="page-wrapper"
@@ -233,8 +276,43 @@
     flex: 1;
     display: flex;
     min-height: 0;
-    padding: 0 0 14px 14px;
-    gap: 14px;
+    padding: 0 0 var(--app-gutter) var(--app-gutter);
+    gap: var(--app-gutter);
+    position: relative;
+  }
+
+  /*
+   * Soft top/bottom scroll fades over the main content column (same treatment as
+   * the settings panel). Geometry mirrors the content region: it starts to the
+   * right of the sidebar and stops short of the scrollbar gutter and the bottom
+   * gutter. They fade to the page background and only appear when there's more
+   * to scroll in that direction — and never while settings covers the content.
+   */
+  .content-fade {
+    position: absolute;
+    left: calc(var(--sidebar-w) + var(--app-gutter) * 2);
+    right: var(--scrollbar-w, 0);
+    height: 30px;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 0;
+    transition: opacity 180ms ease;
+  }
+
+  .content-fade.visible { opacity: 1; }
+
+  .content-fade-top {
+    top: 0;
+    background: linear-gradient(to bottom, var(--paper), transparent);
+  }
+
+  .content-fade-bottom {
+    bottom: var(--app-gutter);
+    background: linear-gradient(to top, var(--paper), transparent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .content-fade { transition: none; }
   }
 
   .content {
@@ -250,6 +328,38 @@
   }
 
   .content::-webkit-scrollbar-thumb { border: 3px solid var(--paper); }
+
+  /*
+   * Opening settings is a page change, not a panel appearing over a frozen
+   * page: the current view rises and fades out with the same vocabulary the
+   * Home/Dictionary/Style swaps use, while the settings page enters beneath the
+   * fading wash. Without this the underlying page just sat there and the
+   * transition read as nothing happening.
+   */
+  .content {
+    /* Both properties on one curve — cubic-bezier(0.33, 1, 0.68, 1) is the CSS
+       form of cubicOut, matching pageSwap. Opacity was on `ease` before, which
+       is what made the exit read as slightly out of step with the movement.
+       Keep --content-swap-y in sync with SETTINGS_SWAP_PX in Settings.svelte. */
+    transition:
+      opacity var(--content-swap-ms) cubic-bezier(0.33, 1, 0.68, 1),
+      transform var(--content-swap-ms) cubic-bezier(0.33, 1, 0.68, 1);
+    --content-swap-ms: 320ms;
+    --content-swap-y: 26px;
+  }
+
+  .content.content-behind {
+    opacity: 0;
+    transform: translate3d(0, calc(var(--content-swap-y) * -1), 0);
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .content {
+      --content-swap-ms: 190ms;
+      --content-swap-y: 10px;
+    }
+  }
 
   .page-wrapper {
     grid-area: 1 / 1;

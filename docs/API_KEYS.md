@@ -12,6 +12,8 @@ Verenu doesn't have its own servers or subscription — it sends your audio and 
 
 You can add keys for more than one provider and configure fallback models later in Settings, but a single Groq key is enough to start dictating immediately.
 
+The optional Dual model transcription strategy uses the existing transcription fallback chain and therefore may require API keys for more than one configured provider. It is disabled by default.
+
 ## Getting a key
 
 ### Groq
@@ -49,3 +51,12 @@ On macOS, if you're prompted for your login password the first time Verenu saves
 ## Next step
 
 With a key saved, you're ready for [Your First Dictation](FIRST_DICTATION.md).
+
+## Related Docs
+
+<p align="center">
+  <a href="INSTALL.md"><img alt="Install" src="https://img.shields.io/badge/Back-Install-7e7266"></a>
+  <a href="FIRST_DICTATION.md"><img alt="First Dictation" src="https://img.shields.io/badge/Next-First%20Dictation-c44632"></a>
+  <a href="DATA_AND_PRIVACY.md"><img alt="Data And Privacy" src="https://img.shields.io/badge/Data-Privacy-5b554a"></a>
+  <a href="README.md"><img alt="Docs Index" src="https://img.shields.io/badge/Docs-Index-2b2422"></a>
+</p>

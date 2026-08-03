@@ -8,6 +8,12 @@
   <em>Local-first AI dictation for Windows and macOS. Bring your own API keys. No subscriptions. No telemetry.</em>
 </p>
 
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-2b2422"></a>
+  <a href="docs/DATA_AND_PRIVACY.md"><img alt="Privacy: local-first" src="https://img.shields.io/badge/privacy-local--first-c44632"></a>
+  <a href=".github/workflows/pr-checks.yml"><img alt="PR checks" src="https://img.shields.io/badge/checks-PR%20workflow-5b554a"></a>
+</p>
+
 ## What Verenu Is
 
 Verenu is an open source desktop dictation app built with Tauri, Svelte, Rust, and SQLite.
@@ -17,10 +23,12 @@ It records locally, sends audio and text only to the AI providers you choose, ke
 ## What It Does
 
 - Hold-to-record dictation with global hotkeys
-- Provider choice for transcription and cleanup
+- Provider choice for transcription and cleanup, including local Parakeet V3 transcription
 - Snippets, personal dictionary, and app-specific formatting profiles
 - Local history, local settings, and local data export/import
 - Optional auto-learn from repeated manual corrections
+
+For more details: [Cleanup Levels](docs/CLEANUP_LEVELS.md), [Local Transcription](docs/LOCAL_TRANSCRIPTION.md), [Dictionary](docs/DICTIONARY.md), [Snippets](docs/SNIPPETS.md), and [App Mappings & Profiles](docs/APP_MAPPINGS.md).
 
 ## Platform Support
 
@@ -45,17 +53,21 @@ Verenu supports both Windows and macOS.
 
 macOS support is not an afterthought anymore. It is part of the normal app flow, and the repo includes macOS-specific hotkey, permissions, injection, updater, and key-storage logic.
 
+For more details: [Install Verenu](docs/INSTALL.md), [Troubleshooting](docs/TROUBLESHOOTING.md), and [macOS code signing](docs/macos-code-signing.md).
+
 ## How It Works
 
 1. Verenu records audio locally while you hold the hotkey.
-2. When you release, it sends the audio to your chosen transcription provider.
-3. It sends the resulting raw text to your chosen cleanup model so filler words, punctuation, tone, snippets, and formatting rules can be applied.
+2. When you release, it either transcribes locally or sends the audio to your chosen cloud transcription provider.
+3. If cleanup is enabled, it sends the resulting raw text to your chosen cleanup model so filler words, punctuation, tone, snippets, and formatting rules can be applied.
 4. It pastes the final text back into the app that had focus when you started.
 5. It stores local history and optional learning data on your machine.
 
+For more details: [Your First Dictation](docs/FIRST_DICTATION.md) and [Architecture](docs/ARCHITECTURE.md).
+
 ## Data And Privacy
 
-Verenu does not run its own servers. Your data either stays on your device or goes directly to the third-party providers you choose.
+Verenu's own server (`api.verenu.com`) serves only public app metadata — release info, download links, and provider status. Your dictated audio and text either stay on your device or go directly to the third-party providers you choose; they never touch a Verenu server.
 
 ### Stays on your device
 
@@ -68,11 +80,13 @@ Verenu does not run its own servers. Your data either stays on your device or go
 
 ### Leaves your device
 
-- Recorded audio goes to your chosen transcription provider
-- Raw transcription text goes to your chosen cleanup provider
+- Local transcription plus Cleanup Off keeps both audio and transcript on device after the model download
+- Local transcription plus cloud cleanup keeps audio on device but sends transcript text to the cleanup provider
+- Cloud transcription sends recorded audio to your chosen transcription provider
 - Snippet instructions, cleanup settings, and selected model metadata go with cleanup requests
 - Active app context may be sent if you enable app-context hints
 - Update checks hit GitHub release metadata
+- Provider status and health checks hit `api.verenu.com` (public status only, no dictated content, keys, or history). You can disable these background checks in Settings → Privacy.
 
 Read the full breakdown in [docs/DATA_AND_PRIVACY.md](docs/DATA_AND_PRIVACY.md).
 
@@ -82,11 +96,18 @@ You choose the providers. Verenu does not lock you into one stack.
 
 | Provider | Transcription | Cleanup |
 | --- | --- | --- |
+| Local | `parakeet-v3` | none |
 | Groq | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` |
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
 | Google | `gemini-3.5-flash` | `gemini-3.5-flash` |
 
-If you care about privacy, speed, retention, or cost, judge the provider on its own policy. Once data leaves Verenu and hits a provider API, that provider's rules apply.
+If you care about privacy, speed, retention, or cost, judge the provider on its own policy. Once data leaves Verenu and hits a provider API, that provider's rules apply. Local transcription with cloud cleanup is still not fully local because the transcript text leaves the device.
+
+### Enhanced transcription
+
+Advanced Models includes an optional Dual model transcription strategy. It runs the primary model and the first configured transcription fallback together, then sends two successful candidates to the cleanup model for reconciliation. If a candidate fails, later fallbacks are tried until two models work or the chain is exhausted. This can improve word choices when providers disagree, but it uses another transcription request and may add latency.
+
+For more details: [Add Your API Key](docs/API_KEYS.md) and [Privacy & Data](docs/PRIVACY_SUMMARY.md).
 
 ## Setup
 
@@ -94,7 +115,7 @@ If you care about privacy, speed, retention, or cost, judge the provider on its 
 
 - Node.js 18+
 - Rust and Cargo
-- Python 3.8+ (required by `npm test` — the OnePyFone test runner is a Python script)
+- Python 3.8+ (required by `npm test`; the OnePyFone test runner is a Python script)
 - Windows: WebView2
 - macOS: Xcode Command Line Tools are recommended for local builds
 
@@ -118,6 +139,8 @@ npm run test:live
 npm run test:native
 ```
 
+For more details: [Install Verenu](docs/INSTALL.md), [Contributing](docs/CONTRIBUTING.md), and [Testing](docs/TESTING.md).
+
 ## Release Flow
 
 Most day-to-day work lands on `dev` first.
@@ -126,10 +149,12 @@ The normal flow is:
 
 1. Commit to `dev` for most changes.
 2. Review and test on `dev`.
-3. Merge `dev` into `main` when it is ready.
+3. Merge `dev` into `master` when it is ready.
 4. Cut and ship the release from there.
 
 If you are contributing, read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) before you start.
+
+For more details: [Release Process](docs/RELEASE.md), [Changelog](docs/CHANGELOG.md), and [Contributing](docs/CONTRIBUTING.md).
 
 ## Why Tauri
 
@@ -137,6 +162,15 @@ If you are contributing, read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) befor
 - Lower idle RAM
 - Native OS integrations where they actually matter
 - Better fit for a background dictation tool than a browser-shaped desktop app
+
+For more details: [Architecture](docs/ARCHITECTURE.md) and [Transcription RAM and reliability plan](docs/transcription-ram-reliability-plan.md).
+
+## Contact
+
+- Website: [verenu.com](https://verenu.com)
+- General inquiries: [hello@verenu.com](mailto:hello@verenu.com)
+- Support: [docs/SUPPORT.md](docs/SUPPORT.md) or [support@verenu.com](mailto:support@verenu.com)
+- Security: [docs/SECURITY.md](docs/SECURITY.md) or [security@verenu.com](mailto:security@verenu.com)
 
 ## License
 

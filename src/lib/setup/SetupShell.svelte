@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { isMac } from '../platform';
-
   type HeaderInfo = { title: string; subtitle: string; name: string } | null;
 
   let {
@@ -8,8 +6,6 @@
     totalSteps,
     header = null,
     onDotClick,
-    onMinimize,
-    onClose,
     left,
     right,
     children,
@@ -18,8 +14,6 @@
     totalSteps: number;
     header?: HeaderInfo;
     onDotClick: (index: number) => void;
-    onMinimize: () => void;
-    onClose: () => void;
     left?: import('svelte').Snippet;
     right?: import('svelte').Snippet;
     children?: import('svelte').Snippet;
@@ -27,24 +21,6 @@
 </script>
 
 <div class="setup-overlay">
-  {#if !isMac}
-    <div class="setup-titlebar" data-tauri-drag-region>
-      <div></div>
-      <div class="tb-right">
-        <button class="tb-btn" title="Minimize" onclick={onMinimize}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M5 12h14"/>
-          </svg>
-        </button>
-        <button class="tb-btn close" title="Close" onclick={onClose}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M6 6l12 12M6 18 18 6"/>
-          </svg>
-        </button>
-      </div>
-    </div>
-  {/if}
-
   <div class="setup-content">
     {#if header}
       <div class="setup-header">
@@ -89,33 +65,6 @@
     align-items: center;
     overflow: hidden;
   }
-
-  .setup-titlebar {
-    width: 100%;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 10px;
-    flex-shrink: 0;
-  }
-
-  .tb-right { display: flex; align-items: center; gap: 2px; }
-
-  .tb-btn {
-    width: 24px;
-    height: 24px;
-    display: grid;
-    place-items: center;
-    background: transparent;
-    border: 0;
-    border-radius: 6px;
-    color: var(--ink-mute);
-    cursor: pointer;
-  }
-
-  .tb-btn:hover { background: var(--paper-2); color: var(--ink-strong); }
-  .tb-btn.close:hover { background: var(--danger); color: var(--on-accent); }
 
   /* ── Header: stepper + title, fixed spot — never moves between steps ── */
   .setup-header {

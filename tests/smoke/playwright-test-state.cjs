@@ -8,12 +8,16 @@ async function openSettings(page) {
   const btn = page.locator('.nav-item:has-text("Settings")');
   await btn.waitFor({ state: 'visible', timeout: TIMEOUT });
   await btn.click();
-  await page.locator('.settings-modal').waitFor({ state: 'visible', timeout: 3000 });
+  await page.locator('.settings-page').waitFor({ state: 'visible', timeout: 3000 });
 }
 
+// Leaves via the rail's own control rather than a click in the app gutter:
+// settings is a full-screen page now, so this is the affordance a user reaches
+// for, and it doesn't depend on the window's margin geometry. The gutter
+// dismiss still has dedicated coverage in playwright-test-ui.cjs.
 async function closeSettings(page) {
-  await page.mouse.click(10, 10);
-  await page.locator('.settings-modal').waitFor({ state: 'hidden', timeout: 3000 });
+  await page.locator('.settings-back').click({ timeout: TIMEOUT });
+  await page.locator('.settings-page').waitFor({ state: 'hidden', timeout: 3000 });
 }
 
 (async () => {
@@ -29,9 +33,12 @@ async function closeSettings(page) {
     await page.locator('.settings-nav-item:has-text("Models")').click();
     await page.locator('h2.settings-h:has-text("Models")').waitFor({ state: 'visible', timeout: 3000 });
 
+    // Transcription, Cleanup, and Local Models (the Models tab redesign
+    // unified cloud+local selection into the Transcription tile and gave
+    // local model download/management its own always-visible tile).
     const tiles = page.locator('.task-tile');
     const tileCount = await tiles.count();
-    if (tileCount !== 2) errors.push(`Expected 2 model task tiles, found ${tileCount}`);
+    if (tileCount !== 3) errors.push(`Expected 3 model task tiles, found ${tileCount}`);
 
     const transcriptionTileBtn = page.locator('.tile-head').first();
     await transcriptionTileBtn.click();

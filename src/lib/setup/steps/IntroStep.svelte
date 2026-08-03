@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { isMac } from '../../platform';
+  import LogoMark from '../../components/layout/LogoMark.svelte';
 
   const hkKey1 = isMac ? 'fn' : 'Ctrl';
   const hkKey2 = isMac ? 'Control' : 'Windows';
@@ -17,11 +18,7 @@
   <div class="intro-brand" class:ready={introReady}>
     <div class="intro-lockup">
       <div class="intro-mark">
-        <span style="height:35%"></span>
-        <span style="height:70%"></span>
-        <span style="height:100%"></span>
-        <span style="height:55%"></span>
-        <span style="height:25%"></span>
+        <LogoMark />
       </div>
       <div class="intro-wordmark">
         <h1 class="brand-name">Verenu</h1>
@@ -82,20 +79,13 @@
   .intro-lockup { display: flex; align-items: center; gap: 16px; }
 
   .intro-mark {
-    width: 42px;
-    height: 36px;
-    display: flex;
-    align-items: flex-end;
-    gap: 3px;
+    width: 48px;
+    height: 40px;
     flex-shrink: 0;
+    color: var(--accent);
   }
 
-  .intro-mark span {
-    flex: 1;
-    background: var(--accent);
-    border-radius: 999px;
-    display: block;
-  }
+  .intro-mark :global(svg) { display: block; }
 
   .intro-wordmark { display: flex; flex-direction: column; gap: 2px; text-align: left; }
 

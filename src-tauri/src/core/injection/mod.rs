@@ -1,6 +1,18 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+// Serializes the whole save-clipboard -> probe/sniff -> write -> paste ->
+// restore-clipboard critical section across every call site (main pipeline,
+// retry, settings "try it" preview) so two injections can never interleave
+// their clipboard operations — one's "restore" putting back the *other's*
+// dictated text instead of the user's real original clipboard, or clobbering
+// a paste that's still settling. `tokio::sync::Mutex`, not `std::sync::Mutex`,
+// since the guard is held across `.await` points.
+static INJECTION_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+pub(super) fn injection_lock() -> &'static tokio::sync::Mutex<()> {
+    INJECTION_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 use crate::core::context_probe::{ContextProbeSource, InjectionContextProbe, SelectionState};
 use crate::core::text_context;
 
@@ -49,9 +61,30 @@ const MODIFIER_GAP_MS: u64 = 30;
 
 // Settle time after the paste (Ctrl+V) before restoring saved clipboard
 // formats - gives the target app time to read the clipboard before we
-// overwrite it with the original contents.
+// overwrite it with the original contents. `SendInput` only queues the
+// keystroke into the system input queue; it does not block until the target
+// window's message loop has actually processed it. Under CPU/GPU contention
+// (e.g. a local STT/LLM model still winding down on the same machine) that
+// processing can lag, and heavier editors (rich-text frameworks doing
+// paste-parsing/transaction work, not a plain textbox) take longer to read
+// the clipboard than a simple control does.
+//
+// Losing this race is not a cosmetic glitch: the target reads the clipboard
+// AFTER we've already restored it, so it pastes whatever the user's
+// clipboard held *before* dictation - silently, with no error - which can be
+// arbitrarily large/irrelevant content overwriting their actual selection
+// (observed in practice: a "ginormous" prior clipboard item pasted in place
+// of the transcription). The cost of waiting longer than necessary is a
+// fraction of a second of perceived latency; the cost of not waiting long
+// enough is silent data corruption in whatever the user was working on. That
+// asymmetry justifies a wide margin over a "usually enough" one - 80ms had
+// none, 150ms still weakly matched a real report of this exact failure, so
+// this doubles the margin again rather than inching it up. Lowered from 300
+// to 250 per explicit user request to shorten perceived latency between
+// back-to-back dictations; still well above the 150ms that produced a real
+// corruption report, so the safety margin is kept, just narrower.
 #[cfg(target_os = "windows")]
-const PASTE_SETTLE_MS: u64 = 80;
+const PASTE_SETTLE_MS: u64 = 250;
 
 #[cfg(test)]
 const SENTENCE_ENDERS: &[char] = &['.', '!', '?', '\n', '\r'];
@@ -147,6 +180,29 @@ mod tests {
             ContextProbeSource::CaretLocal,
             SentenceContext::MidSentence,
             "very_casual",
+        ));
+    }
+
+    #[test]
+    fn contextual_caps_disabled_preserves_caps_lock_uppercased_text() {
+        // Regression: caps-lock uppercasing must be the final casing decision.
+        // With contextual_caps off (as finalize.rs forces when caps lock is on),
+        // a mid-sentence continuation must not lowercase the first letter of an
+        // already-all-caps word ("THE" -> "tHE").
+        let probe = InjectionContextProbe {
+            context: crate::core::text_context::SentenceContext::MidSentence,
+            source: ContextProbeSource::CaretLocal,
+            context_tail: "hello ".to_string(),
+            selection_state: SelectionState::CollapsedCaret,
+            control_identity_hash: "test".to_string(),
+            control_type: "test".to_string(),
+        };
+        let (adjusted, _, case_decision) =
+            apply_probe_adjustments("THE REPORT IS READY", false, false, "casual", &probe);
+        assert_eq!(adjusted, "THE REPORT IS READY");
+        assert!(matches!(
+            case_decision,
+            CaseDecision::ContextualCapsDisabled
         ));
     }
 
@@ -700,6 +756,10 @@ pub fn append_or_reset_injection_history(hwnd: usize, ch: char) {
 /// when Verenu itself holds foreground focus and a normal paste would
 /// land in our own WebView.
 pub async fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
+    // Doesn't restore anything itself, but writing while another call is mid
+    // save/restore could still corrupt that call's "original" snapshot or get
+    // immediately clobbered — share the same critical section.
+    let _guard = injection_lock().lock().await;
     #[cfg(windows)]
     {
         return windows::copy_to_clipboard(text).await;

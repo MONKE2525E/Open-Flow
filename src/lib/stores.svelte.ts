@@ -1,5 +1,6 @@
 import { invoke } from './tauri';
 import type { ProviderId } from './settings';
+import type { SettingsSectionId } from './settingsSections';
 
 export type PageId = 'home' | 'dictionary' | 'snippets' | 'style';
 export type AppearanceMode = 'system' | 'light' | 'dark';
@@ -33,11 +34,38 @@ export interface UpdateInfo {
   installMode: 'install' | 'download';
 }
 
+export interface ProviderStatusAlert {
+  providerId: ProviderId;
+  providerName: string;
+  status: string;
+  severity: string;
+  message: string;
+  detailsUrl: string;
+}
+
+export interface GlobalMessage {
+  message: string;
+  showToUsers: boolean;
+  visibleUntil?: number | null;
+}
+
 export const appStore = $state({
   currentPage: 'home' as PageId,
   settingsOpen: false,
+  // The settings rail lives in the Sidebar but the panel lives in Settings, so
+  // the active section and its swap direction have to be shared state.
+  settingsSection: 'general' as SettingsSectionId,
+  settingsAnimDir: 1 as 1 | -1,
+  appVersion: '',
   devModeEnabled: false,
   appearanceMode: 'system' as AppearanceMode,
+  // Mirrors the `cleanup_enabled` setting. Shared here (rather than owned
+  // privately by GeneralSection) so Style.svelte and the App Mappings
+  // settings page can react live to the toggle without their own
+  // fetch/listener plumbing — both are inert once cleanup is off, since
+  // profile/tone/per-app cleanup-intensity overrides only ever feed the
+  // cleanup LLM call that this setting skips entirely.
+  cleanupEnabled: true,
   pillState: 'idle' as PillState,
   setupComplete: null as boolean | null,
   snippets: [] as Snippet[],
@@ -47,6 +75,12 @@ export const appStore = $state({
   dictionaryFetchStatus: 'idle' as FetchStatus,
   dictionaryFetchError: '',
   updateInfo: null as UpdateInfo | null,
+  betaUpdatesEnabled: false,
+  providerStatusAlerts: [] as ProviderStatusAlert[],
+  providerStatusSimulation: false,
+  globalMessage: null as GlobalMessage | null,
+  globalMessageSimulation: false,
+  apiHealthy: null as boolean | null,
   isOnline: true,
 });
 

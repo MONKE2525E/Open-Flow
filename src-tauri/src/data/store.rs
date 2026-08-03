@@ -174,6 +174,7 @@ fn write_settings_file(path: &Path, values: &Map<String, Value>) -> Result<(), S
 pub const KEY_GROQ: &str = "api_key_groq";
 pub const KEY_OPENAI: &str = "api_key_openai";
 pub const KEY_GOOGLE: &str = "api_key_google";
+pub const KEY_ASSEMBLYAI: &str = "api_key_assemblyai";
 
 pub const TRANSCRIPTION_PROVIDER: &str = "transcription_provider";
 pub const TRANSCRIPTION_LANGUAGE: &str = "transcription_language";
@@ -185,6 +186,7 @@ pub const CLEANUP_MODELS_BY_PROVIDER: &str = "cleanup_models_by_provider";
 pub const TRANSCRIPTION_DEFAULT_MODEL: &str = "transcription_default_model";
 pub const CLEANUP_DEFAULT_MODEL: &str = "cleanup_default_model";
 pub const TRANSCRIPTION_FALLBACK_MODELS: &str = "transcription_fallback_models";
+pub const DUAL_TRANSCRIPTION_ENABLED: &str = "dual_transcription_enabled";
 pub const CLEANUP_FALLBACK_MODELS: &str = "cleanup_fallback_models";
 pub const CLEANUP_ENABLED: &str = "cleanup_enabled";
 pub const HOTKEY: &str = "hotkey";
@@ -194,7 +196,11 @@ pub const CLEANUP_INTENSITY: &str = "cleanup_intensity";
 pub const APP_MAPPINGS: &str = "app_mappings";
 pub const NOISE_REDUCTION: &str = "noise_reduction";
 pub const MUTE_AUDIO: &str = "mute_audio";
+pub const EXCLUSIVE_MIC: &str = "exclusive_mic";
+pub const PAUSE_MEDIA_DURING_DICTATION: &str = "pause_media_during_dictation";
 pub const MIC_GAIN: &str = "mic_gain";
+pub const PLAY_START_STOP_SOUNDS: &str = "play_start_stop_sounds";
+pub const SOUND_EFFECTS_VOLUME: &str = "sound_effects_volume";
 pub const SETUP_COMPLETE: &str = "setup_complete";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
@@ -209,13 +215,22 @@ pub const CREDENTIALS_MIGRATED: &str = "credentials_migrated_v1";
 pub const MACOS_CLIPBOARD_SNIFF: &str = "macos_clipboard_sniff_enabled";
 pub const UPDATE_DISMISSED_VERSION: &str = "update_dismissed_version";
 pub const UPDATE_NOTIFIED_VERSION: &str = "update_notified_version";
+pub const BETA_UPDATES_ENABLED: &str = "beta_updates_enabled";
+pub const VERENU_SERVICE_CHECKS_ENABLED: &str = "verenu_service_checks_enabled";
 pub const HISTORY_RETENTION: &str = "history_retention";
 pub const AUTOSTART_ENABLED: &str = "autostart_enabled";
 pub const CAPS_LOCK_UPPERCASE: &str = "caps_lock_uppercase_enabled";
+pub const LOCAL_MODEL_MEMORY_POLICY: &str = "local_model_memory_policy";
 
 pub const DEFAULT_TONES: &[&str] = &["casual", "formal", "very_casual"];
 pub const CLEANUP_INTENSITIES: &[&str] = &["none", "light", "medium", "high"];
 pub const HISTORY_RETENTION_OPTIONS: &[&str] = &["7 days", "30 days", "90 days", "Forever"];
+pub const LOCAL_MODEL_MEMORY_POLICY_OPTIONS: &[&str] = &[
+    "keep_loaded",
+    "unload_after_5m",
+    "unload_after_15m",
+    "unload_immediately",
+];
 
 pub fn is_supported_default_tone(value: &str) -> bool {
     DEFAULT_TONES.contains(&value)
@@ -227,6 +242,10 @@ pub fn is_supported_cleanup_intensity(value: &str) -> bool {
 
 pub fn is_supported_history_retention(value: &str) -> bool {
     HISTORY_RETENTION_OPTIONS.contains(&value)
+}
+
+pub fn is_supported_local_model_memory_policy(value: &str) -> bool {
+    LOCAL_MODEL_MEMORY_POLICY_OPTIONS.contains(&value)
 }
 
 /// Maps a `history_retention` setting value to a day count. `None` means
@@ -251,11 +270,13 @@ pub struct PipelineConfig {
     pub transcription_default_model: String,
     pub cleanup_default_model: String,
     pub transcription_fallback_models: Vec<String>,
+    pub dual_transcription_enabled: bool,
     pub cleanup_fallback_models: Vec<String>,
     pub cleanup_enabled: bool,
     pub key_groq: String,
     pub key_openai: String,
     pub key_google: String,
+    pub key_assemblyai: String,
     pub default_tone: String,
     pub cleanup_intensity: String,
     pub app_context_hint: bool,
@@ -265,24 +286,30 @@ pub struct PipelineConfig {
     pub caps_lock_uppercase_enabled: bool,
     pub macos_clipboard_sniff_enabled: bool,
     pub advanced_model_ui: bool,
+    pub local_model_memory_policy: String,
     pub cleanup_prompt_overrides: std::collections::HashMap<String, String>,
 }
 
 pub const GROQ: &str = "groq";
 pub const OPENAI: &str = "openai";
 pub const GOOGLE: &str = "google";
-pub const PROVIDERS: [&str; 3] = [GROQ, OPENAI, GOOGLE];
+pub const ASSEMBLYAI: &str = "assemblyai";
+pub(crate) const LOCAL: &str = "local";
+pub const PROVIDERS: [&str; 5] = [GROQ, OPENAI, GOOGLE, ASSEMBLYAI, LOCAL];
 
 pub fn default_transcription_model_for(provider: &str) -> &'static str {
     match provider {
+        LOCAL => "parakeet-v3",
         OPENAI => "gpt-4o-transcribe",
         GOOGLE => "gemini-3.5-flash",
+        ASSEMBLYAI => "universal-3-5-pro",
         _ => "whisper-large-v3-turbo",
     }
 }
 
 pub fn default_cleanup_model_for(provider: &str) -> &'static str {
     match provider {
+        LOCAL => "gemma-4-e2b",
         OPENAI => "gpt-4o-mini",
         GOOGLE => "gemini-3.5-flash",
         _ => "llama-3.3-70b-versatile",
@@ -367,6 +394,8 @@ impl PipelineConfig {
         match provider {
             "openai" => &self.key_openai,
             "google" => &self.key_google,
+            "assemblyai" => &self.key_assemblyai,
+            "local" => "",
             _ => &self.key_groq,
         }
     }
@@ -474,6 +503,10 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
     );
 
     let transcription_fallback_models = parse_string_array(TRANSCRIPTION_FALLBACK_MODELS);
+    let dual_transcription_enabled = store
+        .get(DUAL_TRANSCRIPTION_ENABLED)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let cleanup_fallback_models = parse_string_array(CLEANUP_FALLBACK_MODELS);
     let cleanup_prompt_overrides = store
         .get(CLEANUP_PROMPT_OVERRIDES)
@@ -490,6 +523,7 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         transcription_default_model,
         cleanup_default_model,
         transcription_fallback_models,
+        dual_transcription_enabled,
         cleanup_fallback_models,
         cleanup_enabled: store
             .get(CLEANUP_ENABLED)
@@ -498,6 +532,7 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         key_groq: crate::data::credentials::get(GROQ),
         key_openai: crate::data::credentials::get(OPENAI),
         key_google: crate::data::credentials::get(GOOGLE),
+        key_assemblyai: crate::data::credentials::get(ASSEMBLYAI),
         default_tone: supported_or_default(DEFAULT_TONE, "casual", is_supported_default_tone),
         cleanup_intensity: supported_or_default(
             CLEANUP_INTENSITY,
@@ -533,18 +568,27 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         cleanup_prompt_overrides,
+        local_model_memory_policy: supported_or_default(
+            LOCAL_MODEL_MEMORY_POLICY,
+            "unload_after_5m",
+            is_supported_local_model_memory_policy,
+        ),
     }
 }
 
 pub const DEFAULT_MIC_GAIN: f32 = 3.5;
 pub const MIN_MIC_GAIN: f32 = 1.0;
 pub const MAX_MIC_GAIN: f32 = 8.0;
+pub const DEFAULT_SOUND_EFFECTS_VOLUME: f32 = 1.0;
 
 pub struct AudioConfig {
     pub device: Option<String>,
     pub noise_reduction: bool,
     pub mic_gain: f32,
     pub mute_audio: bool,
+    pub exclusive_mic: bool,
+    pub pause_media_during_dictation: bool,
+    pub sound_effects_volume: f32,
 }
 
 impl Default for AudioConfig {
@@ -554,6 +598,9 @@ impl Default for AudioConfig {
             noise_reduction: true,
             mic_gain: DEFAULT_MIC_GAIN,
             mute_audio: false,
+            exclusive_mic: false,
+            pause_media_during_dictation: false,
+            sound_effects_volume: DEFAULT_SOUND_EFFECTS_VOLUME,
         }
     }
 }
@@ -576,12 +623,34 @@ pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
         .get(MUTE_AUDIO)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let exclusive_mic = store
+        .get(EXCLUSIVE_MIC)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let pause_media_during_dictation = store
+        .get(PAUSE_MEDIA_DURING_DICTATION)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let sound_effects_volume = store
+        .get(SOUND_EFFECTS_VOLUME)
+        .and_then(|v| v.as_f64())
+        .map(|v| (v as f32 / 100.0).clamp(0.0, 1.0))
+        .or_else(|| {
+            store
+                .get(PLAY_START_STOP_SOUNDS)
+                .and_then(|v| v.as_bool())
+                .map(|enabled| if enabled { 1.0 } else { 0.0 })
+        })
+        .unwrap_or(DEFAULT_SOUND_EFFECTS_VOLUME);
 
     AudioConfig {
         device,
         noise_reduction,
         mic_gain,
         mute_audio,
+        exclusive_mic,
+        pause_media_during_dictation,
+        sound_effects_volume,
     }
 }
 
@@ -635,5 +704,44 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&backup);
+    }
+
+    // The new volume setting takes precedence, while the old boolean setting
+    // remains a one-time compatibility fallback for existing users.
+    #[test]
+    fn load_audio_config_sound_effects_volume_default_and_legacy_override() {
+        let empty = SettingsSnapshot::from_pairs([]);
+        assert_eq!(load_audio_config(&empty).sound_effects_volume, 1.0);
+
+        let disabled = SettingsSnapshot::from_pairs([(
+            PLAY_START_STOP_SOUNDS.to_string(),
+            json!(false),
+        )]);
+        assert_eq!(load_audio_config(&disabled).sound_effects_volume, 0.0);
+
+        let explicit_volume = SettingsSnapshot::from_pairs([
+            (PLAY_START_STOP_SOUNDS.to_string(), json!(false)),
+            (SOUND_EFFECTS_VOLUME.to_string(), json!(35)),
+        ]);
+        assert_eq!(
+            load_audio_config(&explicit_volume).sound_effects_volume,
+            0.35
+        );
+    }
+
+    #[test]
+    fn load_audio_config_pause_media_default_and_override() {
+        let empty = SettingsSnapshot::from_pairs([]);
+        assert!(
+            !load_audio_config(&empty).pause_media_during_dictation,
+            "media pause should default to disabled"
+        );
+
+        let enabled =
+            SettingsSnapshot::from_pairs([(PAUSE_MEDIA_DURING_DICTATION.to_string(), json!(true))]);
+        assert!(
+            load_audio_config(&enabled).pause_media_during_dictation,
+            "explicit true must be honored"
+        );
     }
 }

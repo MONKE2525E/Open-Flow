@@ -10,8 +10,8 @@ body {
 
 .scrollbar-standard::-webkit-scrollbar,
 .scroll-styled::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: var(--scrollbar-w, 10px);
+  height: var(--scrollbar-w, 10px);
 }
 
 .scrollbar-standard::-webkit-scrollbar-track,

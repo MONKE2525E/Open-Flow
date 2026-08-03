@@ -30,7 +30,9 @@
         const msg = String(e);
         error = msg.includes('too short') ? 'Too short — try again'
               : msg.includes('too quiet') ? 'Too quiet — try again'
-              : msg.includes('No API key') ? 'No API key configured'
+              : msg.includes('nothing was transcribed') ? 'Nothing detected — try again'
+              : msg.includes('Download the selected local model') ? 'Download the local model first'
+              : msg.includes('No configured transcription backend') ? 'Choose a transcription backend first'
               : msg.includes('Microphone access is blocked') ? 'Enable microphone permission in System Settings'
               : msg.includes('Accessibility permission is required') ? 'Enable Accessibility permission in System Settings'
               : 'Transcription failed';

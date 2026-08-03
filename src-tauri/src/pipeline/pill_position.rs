@@ -78,11 +78,90 @@ pub(super) fn resolve_pill_placement<R: Runtime>(
         .flatten()
         .map(|monitor| MonitorSnapshot::from(&monitor));
     let monitor = choose_monitor(target_monitor, primary_monitor)?;
+    let placement = placement_for_monitor(monitor);
 
-    Some(placement_for_monitor(monitor))
+    // Temporary diagnostic for issue #161 (pill clipped on first cross-monitor
+    // reveal) - coordinates/scale factors only, nothing sensitive, so this is
+    // safe at the normal verbose-logging privacy bar.
+    if crate::system::logger::is_verbose() {
+        log::debug!(
+            "pill resolve_pill_placement: target_point={target_point:?} used_target_monitor={} monitor={monitor:?} -> placement={placement:?}",
+            target_monitor.is_some()
+        );
+    }
+
+    Some(placement)
 }
 
-pub(super) fn apply_pill_placement<R: Runtime>(pill: &WebviewWindow<R>, placement: PillPlacement) {
+/// Reads the pill's actual on-screen geometry right now. Used by the
+/// animated cross-monitor path (`pill_animation.rs`) as the tween's starting
+/// point — it needs the literal current placement to interpolate from, not
+/// just a changed/unchanged boolean. Only called from the Windows-only
+/// animated branch in `pill.rs`'s `show_pill_msg`. Returns `None` if the
+/// geometry can't be read or comes back zero-sized (e.g. very early in
+/// window initialization) rather than guessing `(0, 0)` — a tween that
+/// actually started from `(0, 0, 0, 0)` would visibly grow in from the
+/// screen's top-left corner, which is worse than just skipping the
+/// animation for that one call.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(super) fn current_placement<R: Runtime>(pill: &WebviewWindow<R>) -> Option<PillPlacement> {
+    let size = pill.inner_size().ok()?;
+    let pos = pill.outer_position().ok()?;
+    if size.width == 0 || size.height == 0 {
+        return None;
+    }
+    Some(PillPlacement {
+        x: pos.x,
+        y: pos.y,
+        width: size.width as i32,
+        height: size.height as i32,
+    })
+}
+
+pub(super) fn dimension_changed(current: f64, desired: f64) -> bool {
+    (current - desired).abs() > 1.0
+}
+
+pub(super) fn position_changed(current: i32, desired: i32) -> bool {
+    current.abs_diff(desired) > 1
+}
+
+/// Whether a cross-monitor pill move should glide via `pill_animation.rs`
+/// rather than jump instantly. Gated on `already_placed` (the pill has had a
+/// real, monitor-resolved placement applied at least once before — not just
+/// its just-created default geometry) so the very first reveal of a process
+/// never pays the tween's latency for an animation nobody can see yet, while
+/// every later reveal still gets the swap-chain-safe glide whenever the
+/// resolved placement actually differs from where the window currently sits
+/// — including a reveal that follows a `hide_pill` idle cycle, whose stale
+/// geometry still belongs to whatever monitor it was last shown on. Only
+/// called from the Windows-only animated branch in `pill.rs`'s
+/// `show_pill_msg`, same as `current_placement` above.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(super) fn should_animate_cross_monitor_move(
+    already_placed: bool,
+    current: PillPlacement,
+    target: PillPlacement,
+) -> bool {
+    already_placed
+        && (position_changed(current.width, target.width)
+            || position_changed(current.height, target.height)
+            || position_changed(current.x, target.x)
+            || position_changed(current.y, target.y))
+}
+
+/// Moves/resizes the pill to `placement` if it isn't already there. Returns
+/// `true` if a native resize or reposition was actually issued. Used as-is
+/// for the synchronous same-monitor path; the animated cross-monitor path in
+/// `pill_animation.rs` has its own per-frame `SetWindowPos` calls instead,
+/// since every tween frame must apply unconditionally to progress the
+/// animation rather than skip via this function's no-op check.
+pub(super) fn apply_pill_placement<R: Runtime>(
+    pill: &WebviewWindow<R>,
+    placement: PillPlacement,
+) -> bool {
+    super::pill_animation::cancel_pending_pill_tween();
+
     let desired_size = (
         placement.width.max(1) as f64,
         placement.height.max(1) as f64,
@@ -91,14 +170,14 @@ pub(super) fn apply_pill_placement<R: Runtime>(pill: &WebviewWindow<R>, placemen
     let needs_resize = pill
         .inner_size()
         .map(|cur| {
-            (cur.width as f64 - desired_size.0).abs() > 1.0
-                || (cur.height as f64 - desired_size.1).abs() > 1.0
+            dimension_changed(cur.width as f64, desired_size.0)
+                || dimension_changed(cur.height as f64, desired_size.1)
         })
         .unwrap_or(true);
 
     let needs_reposition = pill
         .outer_position()
-        .map(|cur| (cur.x - placement.x).abs() > 1 || (cur.y - placement.y).abs() > 1)
+        .map(|cur| position_changed(cur.x, placement.x) || position_changed(cur.y, placement.y))
         .unwrap_or(true);
 
     #[cfg(target_os = "windows")]
@@ -128,6 +207,17 @@ pub(super) fn apply_pill_placement<R: Runtime>(pill: &WebviewWindow<R>, placemen
                         flags,
                     );
                 }
+
+                // Temporary diagnostic for issue #161: compare the placement
+                // we asked for against what Tauri reads back from the HWND
+                // immediately after SetWindowPos returns, to catch any
+                // post-call DPI-driven override of our explicit size/position.
+                if crate::system::logger::is_verbose() {
+                    let actual = current_placement(pill);
+                    log::debug!(
+                        "pill apply_pill_placement (sync): needs_resize={needs_resize} needs_reposition={needs_reposition} intended={placement:?} actual_after_setwindowpos={actual:?}"
+                    );
+                }
             }
         }
     }
@@ -146,11 +236,25 @@ pub(super) fn apply_pill_placement<R: Runtime>(pill: &WebviewWindow<R>, placemen
                 .ok();
         }
     }
+
+    needs_resize || needs_reposition
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dimension_changed_respects_one_pixel_tolerance() {
+        assert!(!dimension_changed(380.0, 380.9));
+        assert!(dimension_changed(380.0, 475.0));
+    }
+
+    #[test]
+    fn position_changed_respects_one_pixel_tolerance() {
+        assert!(!position_changed(100, 101));
+        assert!(position_changed(100, 250));
+    }
 
     fn monitor(
         work_x: i32,
@@ -214,5 +318,38 @@ mod tests {
         let placement = placement_for_monitor(monitor(0, 40, 1920, 1040, 1.0));
 
         assert_eq!(placement.y, 1020);
+    }
+
+    fn placement(x: i32, y: i32, width: i32, height: i32) -> PillPlacement {
+        PillPlacement {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn does_not_animate_before_first_placement_even_if_geometry_differs() {
+        let current = placement(0, 1000, 380, 44);
+        let target = placement(1920, 1340, 570, 66);
+
+        assert!(!should_animate_cross_monitor_move(false, current, target));
+    }
+
+    #[test]
+    fn animates_once_placed_when_geometry_differs() {
+        let current = placement(0, 1000, 380, 44);
+        let target = placement(1920, 1340, 570, 66);
+
+        assert!(should_animate_cross_monitor_move(true, current, target));
+    }
+
+    #[test]
+    fn does_not_animate_once_placed_when_geometry_already_matches() {
+        let current = placement(0, 1000, 380, 44);
+        let target = placement(0, 1000, 380, 44);
+
+        assert!(!should_animate_cross_monitor_move(true, current, target));
     }
 }

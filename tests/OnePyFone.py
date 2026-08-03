@@ -144,6 +144,7 @@ JS_TESTS = [
     ("integration/playwright-test-onboarding-dev.cjs", "ui",      "Onboarding flow persistence",          {"retry": 1, "timeout_s": 120}),
     ("integration/playwright-test-surface-dev.cjs",    "ui",      "Snippets, dictionary, style surfaces", {"retry": 1, "timeout_s": 120}),
     ("integration/playwright-test-offline-dev.cjs",    "ui",      "Offline toast in browser dev mode",    {"retry": 1, "timeout_s": 60}),
+    ("integration/playwright-test-fullscreen-settings-dev.cjs", "ui", "Full-screen settings & rail morph", {"retry": 2, "timeout_s": 120}),
 
     # ── SUITE: state ──────────────────────────────────────────────────────────
     ("smoke/playwright-test-state.cjs",                "state",     "Settings state persistence",       {"retry": 2, "timeout_s": 90}),
@@ -321,7 +322,7 @@ class SettingsContractSyncCheck(PythonTest):
             for match in re.finditer(r'pub const ([A-Z0-9_]+): &str = "([^"]+)";', rust_text)
             if not match.group(2).startswith("api_key_")
             and match.group(2) not in {"credentials_migrated_v1", "auto_learn_event_mode"}
-            and match.group(2) not in {"groq", "openai", "google"}
+            and match.group(2) not in {"groq", "openai", "google", "assemblyai"}
         }
 
         ts_match = re.search(r"type SettingsValueMap = \{(.*?)\n\};", ts_text, re.S)
@@ -523,12 +524,36 @@ class ServerManager:
 
         self._port = port
         if self._wait_for_http(port, timeout=180):
-            print(green("ready"))
+            print(green("ready"), end="", flush=True)
+            self.warm_up(port)
+            print()
             return True
 
         print(red("timed out"))
         self.stop()
         return False
+
+    def warm_up(self, port: int) -> None:
+        """Force Vite to compile the app's module graph before tests run.
+
+        Vite serves index.html as soon as it boots, so is_http_ready() returns
+        True long before the ~170 Svelte/TS modules have been transformed. The
+        first real page load pays that cost; without this the first UI test
+        absorbs it, times out, and spends its only retry on startup rather than
+        on an actual flake. Best-effort — never fails the run.
+        """
+        script = TESTS_DIR / "_warmup.cjs"
+        if not script.exists():
+            return
+        print(dim(" · warming"), end=" ", flush=True)
+        try:
+            subprocess.run(
+                ["node", str(script), f"http://localhost:{port}"],
+                cwd=ROOT, timeout=120,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass  # optimisation only
 
     def stop(self) -> None:
         """Kill the dev server process tree."""
@@ -1077,7 +1102,10 @@ def main() -> int:
                     time.sleep(0.5)
                 if server.is_port_open(port):
                     if server.is_http_ready(port):
-                        print(f"    {PASS_}  {server_mode} already running on :{port}")
+                        print(f"    {PASS_}  {server_mode} already running on :{port}", end="")
+                        # A server we didn't start can still be cold.
+                        server.warm_up(port)
+                        print()
                     else:
                         print(f"    {yellow('!')}  port :{port} is open but HTTP is not ready, restarting...")
                         _kill_port_owner(port)

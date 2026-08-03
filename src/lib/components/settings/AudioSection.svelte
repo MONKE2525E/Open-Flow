@@ -4,7 +4,7 @@
   import { expoOut } from 'svelte/easing';
   import { onDestroy } from 'svelte';
   import Toggle from '../Toggle.svelte';
-  import { isMac } from '../../platform';
+  import { isMac, isWindows } from '../../platform';
   import { saveSetting } from '../../settings';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import { getAudioCalibrationCopy } from '../../calibrationCopy';
@@ -24,6 +24,9 @@
 
   let noiseReduction = $state(true);
   let muteAudio = $state(false);
+  let exclusiveMic = $state(false);
+  let pauseMediaDuringDictation = $state(false);
+  let soundEffectsVolume = $state(100);
   let micGain = $state(3.5);
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
@@ -41,14 +44,23 @@
 
   async function loadSettings() {
     try {
-      const [nr, mute, savedGain, language] = await Promise.all([
+      const [nr, mute, exclusive, pauseMedia, legacySounds, savedVolume, savedGain, language] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
         invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
+        invoke<boolean | null>('get_setting', { key: 'exclusive_mic' }),
+        invoke<boolean | null>('get_setting', { key: 'pause_media_during_dictation' }),
+        invoke<boolean | null>('get_setting', { key: 'play_start_stop_sounds' }),
+        invoke<number | null>('get_setting', { key: 'sound_effects_volume' }),
         invoke<number | null>('get_setting', { key: 'mic_gain' }),
         invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       ]);
       noiseReduction = nr ?? true;
       muteAudio = mute ?? false;
+      exclusiveMic = exclusive ?? false;
+      pauseMediaDuringDictation = pauseMedia ?? false;
+      soundEffectsVolume = savedVolume !== null && savedVolume !== undefined
+        ? Math.max(0, Math.min(100, savedVolume))
+        : legacySounds === false ? 0 : 100;
       if (savedGain !== null && savedGain !== undefined) {
         micGain = Math.max(1, Math.min(8, savedGain));
       }
@@ -78,6 +90,34 @@
     }
   }
 
+  async function handleExclusiveMic(value: boolean) {
+    exclusiveMic = value;
+    try {
+      await saveSetting('exclusive_mic', value);
+    } catch (err) {
+      exclusiveMic = !value;
+      console.error('save exclusive_mic failed:', err);
+    }
+  }
+
+  async function handlePauseMedia(value: boolean) {
+    pauseMediaDuringDictation = value;
+    try {
+      await saveSetting('pause_media_during_dictation', value);
+    } catch (err) {
+      pauseMediaDuringDictation = !value;
+      console.error('save pause_media_during_dictation failed:', err);
+    }
+  }
+
+  async function saveSoundEffectsVolume() {
+    try {
+      await saveSetting('sound_effects_volume', soundEffectsVolume);
+    } catch (err) {
+      console.error('save sound_effects_volume failed:', err);
+    }
+  }
+
   async function saveMicGain() {
     try {
       await saveSetting('mic_gain', micGain);
@@ -94,7 +134,12 @@
   loadSettings();
 </script>
 
-<h2 class="settings-h">Microphone</h2>
+<h2 class="settings-h">
+  Audio
+  {#if import.meta.env.DEV}
+    <span class="legacy-label" aria-hidden="true">Microphone</span>
+  {/if}
+</h2>
 
 <h3 class="settings-subhead first">Gain & calibration</h3>
 <div class="setting-row gain-row">
@@ -193,9 +238,48 @@
   <div><div class="label">{isMac ? 'Mute System Audio' : 'Mute PC Audio'}</div><div class="desc">{isMac ? 'Mutes system volume while dictating to prevent audio interference' : 'Mutes Windows volume while dictating to prevent audio interference'}</div></div>
   <Toggle checked={muteAudio} onchange={handleMuteAudio} label={isMac ? 'Mute system audio' : 'Mute PC audio'} />
 </div>
+{#if isMac}
+  <div class="setting-row">
+    <div><div class="label">Exclusive microphone access</div><div class="desc">Reserves the mic for Verenu while dictating, muting it for all other apps</div></div>
+    <Toggle checked={exclusiveMic} onchange={handleExclusiveMic} label="Exclusive microphone access" />
+  </div>
+{/if}
+{#if isWindows}
+  <div class="setting-row">
+    <div><div class="label">Pause media while dictating</div><div class="desc">Pauses active Windows media sessions and resumes them after transcription finishes. Works with apps that expose Windows media controls.</div></div>
+    <Toggle checked={pauseMediaDuringDictation} onchange={handlePauseMedia} label="Pause media while dictating" />
+  </div>
+{/if}
 <div class="setting-row">
   <div><div class="label">Noise reduction</div><div class="desc">Suppress background noise before transcription (RNNoise)</div></div>
   <Toggle checked={noiseReduction} onchange={handleNoiseReduction} label="Noise reduction" />
+</div>
+
+<h3 class="settings-subhead">Sound effects</h3>
+<div class="setting-row sound-volume-row">
+  <div class="sound-volume-header">
+    <div>
+      <div class="label">Sound effects volume</div>
+      <div class="desc">Set to 0% to silence dictation chimes</div>
+    </div>
+    <span class="sound-volume-value">{Math.round(soundEffectsVolume)}%</span>
+  </div>
+  <div class="sound-volume-slider-wrap">
+    <input
+      type="range"
+      class="sound-volume-slider"
+      min="0" max="100" step="1"
+      bind:value={soundEffectsVolume}
+      onchange={saveSoundEffectsVolume}
+      style="--pct: {soundEffectsVolume.toFixed(1)}%"
+      aria-label="Sound effects volume"
+    />
+    <div class="sound-volume-ticks">
+      <span>0%</span>
+      <span>50%</span>
+      <span>100%</span>
+    </div>
+  </div>
 </div>
 
 {#if $calibrationError}
@@ -234,6 +318,21 @@
     max-height: 0;
     opacity: 0;
     pointer-events: none;
+  }
+
+  /*
+   * Collapsing the copy only exists to free room for the ~440px calibration
+   * panel in a narrow row. Once the settings column is wide enough for both,
+   * keep the label in place — otherwise the panel is left stranded on the right
+   * beside an empty half-row.
+   */
+  @container settings-panel (min-width: 620px) {
+    .cal-row.calibrating .cal-copy {
+      flex-basis: auto;
+      max-height: 80px;
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
   .cal-control {
     flex-shrink: 0;
@@ -415,6 +514,84 @@
   }
   .gain-tip svg { flex-shrink: 0; color: var(--warning); }
   .gain-tip strong { font-weight: 600; }
+
+  .sound-volume-row { flex-direction: column; align-items: stretch; gap: 0; }
+  .sound-volume-header { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+  .sound-volume-value {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent);
+    min-width: 44px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .sound-volume-slider-wrap { margin-top: 10px; width: 100%; }
+  .sound-volume-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(
+      to right,
+      var(--accent) 0%, var(--accent) var(--pct),
+      var(--line-strong) var(--pct), var(--line-strong) 100%
+    );
+    outline: none;
+    cursor: pointer;
+    border: none;
+    display: block;
+    margin: 0;
+  }
+  .sound-volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--bg-elev);
+    border: 2px solid var(--accent);
+    box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 35%, transparent);
+    cursor: pointer;
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+  }
+  .sound-volume-slider::-webkit-slider-thumb:hover { box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 45%, transparent); transform: scale(1.1); }
+  .sound-volume-slider::-webkit-slider-thumb:active { box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 55%, transparent); transform: scale(1.15); }
+  .sound-volume-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--bg-elev);
+    border: 2px solid var(--accent);
+    box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 35%, transparent);
+    cursor: pointer;
+  }
+  .sound-volume-ticks {
+    position: relative;
+    height: 16px;
+    margin-top: 5px;
+    font-size: 10px;
+    color: var(--ink-mute);
+    font-family: var(--mono);
+    user-select: none;
+  }
+  .sound-volume-ticks span { position: absolute; top: 0; white-space: nowrap; }
+  .sound-volume-ticks span:first-child { left: 0; }
+  .sound-volume-ticks span:nth-child(2) { left: 50%; transform: translateX(-50%); }
+  .sound-volume-ticks span:last-child { right: 0; }
+
+  .legacy-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 
   .cal-error {
     display: flex;

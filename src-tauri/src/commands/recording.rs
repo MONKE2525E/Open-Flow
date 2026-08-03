@@ -40,17 +40,17 @@ pub async fn start_input_recording(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    {
-        let mut st = lock_state(&state)?;
-        if st.session.is_some() || st.starting {
-            return Err("Already recording".to_string());
-        }
-        st.starting = true;
-    }
+    pipeline::reserve_starting(state.inner())?;
 
     let target = capture_in_app_target(&app);
     {
-        let mut st = lock_state(&state)?;
+        let mut st = match lock_state(&state) {
+            Ok(st) => st,
+            Err(err) => {
+                pipeline::release_starting_reservation(state.inner());
+                return Err(err);
+            }
+        };
         st.target = target;
         st.pill_placement_stale = true;
     }
@@ -64,18 +64,22 @@ pub async fn start_input_recording(
             "recording",
             false,
             None,
-            true,
-            false,
+            pipeline::RecordingStartOptions {
+                show_recording_pill: true,
+                emit_globally: false,
+                start_cue_delay_ms: None,
+            },
         )
     })
     .await;
 
-    {
-        let mut st = lock_state(&state)?;
-        st.starting = false;
-    }
-
-    let start_result = start_result.map_err(|e| format!("Recording task panicked: {e}"))?;
+    let start_result = match start_result {
+        Ok(result) => result,
+        Err(e) => {
+            pipeline::release_starting_reservation(state.inner());
+            return Err(format!("Recording task panicked: {e}"));
+        }
+    };
 
     match start_result {
         Ok(()) => Ok(()),
@@ -93,17 +97,17 @@ pub async fn start_setup_try_recording(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    {
-        let mut st = lock_state(&state)?;
-        if st.session.is_some() || st.starting {
-            return Err("Already recording".to_string());
-        }
-        st.starting = true;
-    }
+    pipeline::reserve_starting(state.inner())?;
 
     let target = capture_in_app_target(&app);
     {
-        let mut st = lock_state(&state)?;
+        let mut st = match lock_state(&state) {
+            Ok(st) => st,
+            Err(err) => {
+                pipeline::release_starting_reservation(state.inner());
+                return Err(err);
+            }
+        };
         st.target = target;
         st.pill_placement_stale = true;
     }
@@ -117,18 +121,26 @@ pub async fn start_setup_try_recording(
             "recording",
             false,
             None,
-            true,
-            false,
+            pipeline::RecordingStartOptions {
+                show_recording_pill: true,
+                emit_globally: false,
+                start_cue_delay_ms: if pipeline::start_stop_sounds_enabled(&app_clone) {
+                    Some(0)
+                } else {
+                    None
+                },
+            },
         )
     })
     .await;
 
-    {
-        let mut st = lock_state(&state)?;
-        st.starting = false;
-    }
-
-    let start_result = start_result.map_err(|e| format!("Recording task panicked: {e}"))?;
+    let start_result = match start_result {
+        Ok(result) => result,
+        Err(e) => {
+            pipeline::release_starting_reservation(state.inner());
+            return Err(format!("Recording task panicked: {e}"));
+        }
+    };
 
     match start_result {
         Ok(()) => Ok(()),
@@ -146,11 +158,11 @@ pub async fn stop_setup_try_recording(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    crate::core::hotkey::set_handless_active(false);
-    {
-        let mut st = lock_state(&state)?;
-        st.handless = false;
+    if pipeline::cancel_starting_reservation(state.inner()) {
+        pipeline::hide_pill(&app);
+        return Ok(());
     }
+    crate::core::hotkey::set_handless_active(false);
     tauri::async_runtime::spawn(pipeline::run_pipeline_event_only(
         app,
         state.inner().clone(),
@@ -163,17 +175,17 @@ pub async fn start_calibration_monitoring(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    {
-        let mut st = lock_state(&state)?;
-        if st.session.is_some() || st.starting {
-            return Err("Already recording".to_string());
-        }
-        st.starting = true;
-    }
+    pipeline::reserve_starting(state.inner())?;
 
     let target = capture_in_app_target(&app);
     {
-        let mut st = lock_state(&state)?;
+        let mut st = match lock_state(&state) {
+            Ok(st) => st,
+            Err(err) => {
+                pipeline::release_starting_reservation(state.inner());
+                return Err(err);
+            }
+        };
         st.target = target;
         st.pill_placement_stale = true;
     }
@@ -187,33 +199,41 @@ pub async fn start_calibration_monitoring(
             "calibration",
             false,
             Some(1.0),
-            false,
-            true,
+            pipeline::RecordingStartOptions {
+                show_recording_pill: false,
+                emit_globally: true,
+                start_cue_delay_ms: None,
+            },
         )
     })
     .await;
 
-    {
-        let mut st = lock_state(&state)?;
-        st.starting = false;
-    }
-
-    let start_result = start_result.map_err(|e| format!("Calibration task panicked: {e}"))?;
+    let start_result = match start_result {
+        Ok(result) => result,
+        Err(e) => {
+            pipeline::release_starting_reservation(state.inner());
+            return Err(format!("Calibration task panicked: {e}"));
+        }
+    };
     start_result.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn stop_calibration_monitoring(
+    app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    let session = {
-        let mut st = lock_state(&state)?;
-        st.session.take()
-    };
-    if let Some(s) = session {
+    let taken = pipeline::take_recording_plain(state.inner());
+    if let Some((session, exclusive_mic_session_id)) = taken {
         tauri::async_runtime::spawn_blocking(move || {
-            let _ = s.stop();
+            let _ = session.stop();
+            if let Some(session_id) = exclusive_mic_session_id {
+                crate::system::volume::release_mic(session_id);
+            }
         });
+    }
+    if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
+        manager.set_recording_active(false);
     }
     Ok(())
 }
@@ -234,14 +254,22 @@ pub async fn stop_recording(
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
     crate::core::hotkey::set_handless_active(false);
-    let session = {
-        let mut st = lock_state(&state)?;
-        st.handless = false;
-        st.session.take()
-    };
-    if let Some(s) = session {
-        let _ = s.stop();
-        std::thread::spawn(crate::system::volume::unmute);
+    let taken = pipeline::take_recording_plain(state.inner());
+    if let Some((session, exclusive_mic_session_id)) = taken {
+        tauri::async_runtime::spawn_blocking(move || {
+            let _ = session.stop();
+            if let Some(session_id) = exclusive_mic_session_id {
+                crate::system::volume::release_mic(session_id);
+            }
+            crate::media::sound::coordinated_unmute();
+            crate::system::media_control::end_dictation_media_pause();
+        });
+    } else {
+        crate::media::sound::coordinated_unmute();
+        crate::system::media_control::end_dictation_media_pause();
+    }
+    if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
+        manager.set_recording_active(false);
     }
     pipeline::hide_pill(&app);
     Ok(())
@@ -254,7 +282,12 @@ pub async fn stop_handless_mode(
 ) -> Result<(), String> {
     crate::core::hotkey::set_handless_active(false);
     crate::core::hotkey::reset_chord_state();
-    lock_state(&state)?.handless = false;
-    tauri::async_runtime::spawn(pipeline::run_pipeline(app, state.inner().clone()));
+    let has_session = lock_state(&state)?.lifecycle.is_recording();
+    if has_session {
+        tauri::async_runtime::spawn(pipeline::run_pipeline(app, state.inner().clone()));
+    } else {
+        pipeline::cancel_starting_reservation(state.inner());
+        crate::system::media_control::end_dictation_media_pause();
+    }
     Ok(())
 }

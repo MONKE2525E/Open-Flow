@@ -2,7 +2,8 @@ use super::{PromptTier, count_words};
 
 pub(super) const FORMATTING_RULES: &str = "FORMATTING COMMANDS: If speech includes literal commands like \
 'new paragraph', 'new line', 'bullet point', 'numbered list', 'open quote', or 'close quote', \
-apply the formatting.";
+apply the formatting. \
+PUNCTUATION: Only use an em dash (\u{2014}) if the speaker already used one.";
 
 fn role_line(intensity: &str) -> &'static str {
     match intensity {
@@ -23,7 +24,8 @@ fn intensity_rules(
         ("none", _) => {
             if profile == "formal" {
                 "CLEANUP: Keep wording and structure unchanged by default. \
-                You may only change wording where needed to apply FORMAL profanity policy replacements."
+                You may only change wording where needed to apply FORMAL profanity policy replacements. \
+                MUST NOT add words, sentences, or explanations that were not spoken."
                     .to_string()
             } else {
                 "CLEANUP: Return input unchanged, character-for-character.".to_string()
@@ -31,8 +33,11 @@ fn intensity_rules(
         }
         ("light", _) => {
             "CLEANUP (LIGHT): MUST remove filler words (um, uh, like, you know), immediate duplicated words, and immediate false starts. \
+            MUST NOT remove any other word, including emphasis or qualifier words like 'just', 'really', 'actually', 'honestly', or 'again' — keep them even when they sound redundant, since they carry the speaker's meaning. \
             MUST NOT summarize, compress, reorder, or rewrite personality away. \
-            MUST preserve sentence structure and almost all content."
+            MUST NOT add words, phrases, sentences, explanations, or clarifications that were not spoken — never pad, elaborate, or expand on what was said. \
+            MUST preserve sentence structure and almost all content. \
+            The cleaned result must be about the same length as the input, or shorter — never noticeably longer."
                 .to_string()
         }
         ("high", PromptTier::Short) => {

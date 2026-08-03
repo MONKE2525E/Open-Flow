@@ -208,7 +208,7 @@
               aria-haspopup="listbox"
               aria-expanded={openRowDropdown === `${mapping.exe}:cleanup`}
               aria-controls={menuIdFor(`${mapping.exe}:cleanup`)}
-              title="Auto-cleanup style for {getAppDisplayName(mapping, installedApps)}"
+              title="Cleanup style for {getAppDisplayName(mapping, installedApps)}"
             >
               {getCleanupIntensityLabel(mapping.cleanup_intensity)}
               <svg class:open={openRowDropdown === `${mapping.exe}:cleanup`} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -285,7 +285,7 @@
 
 <style>
   .mapping-region {
-    max-width: 640px;
+    max-width: var(--mappings-measure, 640px);
     margin-bottom: 20px;
   }
 
@@ -293,7 +293,7 @@
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
     overflow: hidden;
-    max-width: 640px;
+    max-width: var(--mappings-measure, 640px);
   }
 
   .mapping-row {

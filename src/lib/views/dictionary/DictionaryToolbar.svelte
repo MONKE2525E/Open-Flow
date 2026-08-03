@@ -28,11 +28,9 @@
     const wrap = sortWrapEl;
     const btn = sortButtonEls[sort];
     if (!wrap || !btn) return;
-    const wrapRect = wrap.getBoundingClientRect();
-    const btnRect = btn.getBoundingClientRect();
-    const left = Math.round(btnRect.left - wrapRect.left);
-    const width = Math.round(btnRect.width);
-    sortIndicatorStyle = `opacity:1; transform:translateX(${left}px); width:${width}px; transition: transform ${motionMs(MOTION_MS.base)}ms cubic-bezier(0.22, 1, 0.36, 1), width ${motionMs(MOTION_MS.base)}ms cubic-bezier(0.22, 1, 0.36, 1), opacity ${motionMs(MOTION_MS.fast)}ms ease;`;
+    const left = btn.offsetLeft;
+    const width = btn.offsetWidth;
+    sortIndicatorStyle = `opacity:1; left:${left}px; width:${width}px; transition: left ${motionMs(MOTION_MS.base)}ms cubic-bezier(0.22, 1, 0.36, 1), width ${motionMs(MOTION_MS.base)}ms cubic-bezier(0.22, 1, 0.36, 1), opacity ${motionMs(MOTION_MS.fast)}ms ease;`;
   }
 
   $effect(() => {
@@ -144,6 +142,7 @@
     padding: 3px;
     position: relative;
     overflow: hidden;
+    align-items: center;
   }
 
   .sort-indicator {
@@ -162,8 +161,11 @@
     background: transparent;
     border: 0;
     border-radius: 5px;
-    padding: 3px 9px;
+    box-sizing: border-box;
+    height: 24px;
+    padding: 0 9px;
     font-size: 11.5px;
+    font-weight: 500;
     font-family: var(--sans);
     color: var(--ink-mute);
     cursor: pointer;
@@ -171,9 +173,15 @@
     transition: background 0.12s, color 0.12s;
     position: relative;
     z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
   }
-  .sort-pill:hover { color: var(--ink-strong); background: var(--control-hover); }
-  .sort-pill.active { color: var(--accent-ink); font-weight: 500; }
+  .sort-pill:hover { color: var(--ink-strong); }
+  .sort-pill:hover:not(.active) { background: var(--control-hover); }
+  .sort-pill.active { color: var(--accent-ink); }
+  .sort-pill.active:hover { background: transparent; }
 
   .btn-primary {
     background: var(--ink);

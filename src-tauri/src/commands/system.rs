@@ -4,6 +4,23 @@ use super::*;
 
 // ---------- window management ----------
 
+/// Completes the startup handshake for the window that has just mounted its
+/// frontend. This is intentionally reported by the frontend rather than
+/// inferred from backend process liveness because WebView2 can display a
+/// connection-refused page while the Rust process continues working.
+#[tauri::command]
+pub fn frontend_ready(
+    window: tauri::WebviewWindow,
+    readiness: tauri::State<'_, crate::FrontendReadiness>,
+) -> Result<(), String> {
+    match window.label() {
+        "main" => readiness.main.store(true, std::sync::atomic::Ordering::Release),
+        "pill" => readiness.pill.store(true, std::sync::atomic::Ordering::Release),
+        label => return Err(format!("Unknown frontend window: {label}")),
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn show_main(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("main") {
@@ -30,6 +47,17 @@ pub async fn hide_main(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ---------- local model platform support ----------
+
+/// Lets the frontend show an explanatory notice in place of the local
+/// STT/LLM download UI up front, instead of only discovering it's blocked
+/// after the user clicks Download and gets an error toast. See
+/// `system::platform::is_macos_intel` for the reasoning.
+#[tauri::command]
+pub async fn local_models_supported_on_this_platform() -> bool {
+    !crate::system::platform::is_macos_intel()
+}
+
 // ---------- memory ----------
 
 #[tauri::command]
@@ -41,6 +69,54 @@ pub async fn get_memory_mb() -> u64 {
             0
         }
     }
+}
+
+/// One detected GPU's VRAM. NVIDIA-only (see `memory::gpu_vram_statuses`);
+/// absent entirely on other vendors, which the frontend treats as "no signal".
+#[derive(serde::Serialize)]
+pub struct GpuCapability {
+    pub vram_total_mb: u64,
+    pub vram_used_mb: u64,
+}
+
+/// System hardware snapshot used by the Models tab to recommend presets. RAM
+/// is the primary signal (correct for Apple Silicon unified memory too); VRAM
+/// is a bonus that's only present on NVIDIA machines. A `total_ram_mb` of 0
+/// means the read failed — the frontend must treat that as "unknown, assume
+/// capable" rather than "no memory".
+#[derive(serde::Serialize)]
+pub struct HardwareCapabilities {
+    pub total_ram_mb: u64,
+    pub free_ram_mb: u64,
+    pub gpus: Vec<GpuCapability>,
+}
+
+#[tauri::command]
+pub async fn get_hardware_capabilities() -> HardwareCapabilities {
+    run_blocking("get_hardware_capabilities", || {
+        let mem = crate::system::memory::system_memory_status();
+        let gpus = crate::system::memory::gpu_vram_statuses()
+            .into_iter()
+            .map(|gpu| GpuCapability {
+                vram_total_mb: gpu.total_mb,
+                vram_used_mb: gpu.used_mb,
+            })
+            .collect();
+        Ok(HardwareCapabilities {
+            total_ram_mb: mem.map(|m| m.total_mb).unwrap_or(0),
+            free_ram_mb: mem.map(|m| m.available_mb).unwrap_or(0),
+            gpus,
+        })
+    })
+    .await
+    .unwrap_or_else(|e| {
+        log::error!("{e}");
+        HardwareCapabilities {
+            total_ram_mb: 0,
+            free_ram_mb: 0,
+            gpus: Vec::new(),
+        }
+    })
 }
 
 // ---------- hotkey ----------
@@ -273,6 +349,17 @@ fn run_launchctl(args: &[&str]) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn check_connectivity() -> bool {
+    // Prefer the OS's own network state (see system/connectivity.rs) — on
+    // Windows this is a local COM call with zero network traffic; on macOS
+    // it's a local routing-table check. Only short-circuit on a confirmed
+    // "online" (Some(true)): both NCSI and SCNetworkReachability can report
+    // false negatives behind certain VPNs/enterprise proxies, so a "false" or
+    // unavailable native result still falls through to the HTTP probe rather
+    // than risking a wrong "no internet" banner.
+    if let Some(true) = native_connectivity_check().await {
+        return true;
+    }
+
     // Probe github.com (a host Verenu already contacts for release downloads)
     // rather than a third-party beacon like google.com, so the connectivity check
     // doesn't quietly phone a separate domain. Deliberately NOT api.github.com:
@@ -286,6 +373,21 @@ pub async fn check_connectivity() -> bool {
         .send()
         .await
         .is_ok()
+}
+
+#[cfg(windows)]
+async fn native_connectivity_check() -> Option<bool> {
+    // COM requires apartment init on the calling thread, so run on a
+    // dedicated blocking thread rather than whatever tokio worker polls this.
+    tokio::task::spawn_blocking(crate::system::connectivity::check_native)
+        .await
+        .ok()
+        .flatten()
+}
+
+#[cfg(not(windows))]
+async fn native_connectivity_check() -> Option<bool> {
+    crate::system::connectivity::check_native()
 }
 
 // ---------- developer logs ----------
