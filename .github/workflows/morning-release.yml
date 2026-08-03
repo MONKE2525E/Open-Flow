@@ -270,6 +270,16 @@ jobs:
           # contains the release-only version while its parent remains the
           # exact dev snapshot that was inspected above.
           git checkout --detach "$DEV_SHA"
+          version_files=(
+            package.json
+            src-tauri/tauri.conf.json
+            src-tauri/Cargo.toml
+          )
+          restore_dev_versions() {
+            git restore --source "$DEV_SHA" -- "${version_files[@]}"
+          }
+          trap restore_dev_versions EXIT
+
           node - "$APP_VERSION" <<'NODE'
           const fs = require('node:fs');
           const version = process.argv[2];
@@ -296,6 +306,15 @@ jobs:
           release_sha="$(git rev-parse HEAD)"
           git tag -a "$RELEASE_TAG" "$release_sha" -m "Verenu $RELEASE_VERSION"
           git push origin "$RELEASE_TAG"
+
+          # The version bump belongs only to the tag snapshot. Restore the
+          # exact dev values before this job exits, including on failure.
+          restore_dev_versions
+          if ! git diff --quiet "$DEV_SHA" -- "${version_files[@]}"; then
+            echo 'Release-only version files did not roll back to dev.' >&2
+            exit 1
+          fi
+          trap - EXIT
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
 
   build:
