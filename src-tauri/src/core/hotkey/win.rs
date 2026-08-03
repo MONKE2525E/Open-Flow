@@ -272,6 +272,7 @@ struct ChordStateMachine {
     chord_first_down_ms: u64,
     tap: TapState,
     space_down: bool,
+    space_passed_through: bool,
     handless_from_chord: bool,
 }
 
@@ -313,6 +314,7 @@ impl ChordStateMachine {
         self.chord_first_down_ms = 0;
         self.tap = TapState::None;
         self.space_down = false;
+        self.space_passed_through = false;
         self.handless_from_chord = false;
     }
 
@@ -377,7 +379,9 @@ impl ChordStateMachine {
         match edge {
             KeyEdge::Down => {
                 if self.space_down {
-                    return if self.handless_from_chord {
+                    return if self.space_passed_through {
+                        ChordOutcome::passthrough()
+                    } else if self.handless_from_chord {
                         ChordOutcome::suppress(None)
                     } else {
                         ChordOutcome::passthrough()
@@ -386,20 +390,25 @@ impl ChordStateMachine {
 
                 if self.chord_down && !self.handless_from_chord {
                     self.space_down = true;
+                    self.space_passed_through = false;
                     self.chord_down = false;
                     self.tap = TapState::None;
                     self.handless_from_chord = true;
                     ChordOutcome::suppress(Some(ChordAction::FireHandless))
                 } else if self.handless_from_chord {
                     self.space_down = true;
+                    self.space_passed_through = false;
                     ChordOutcome::suppress(None)
                 } else {
+                    self.space_down = true;
+                    self.space_passed_through = true;
                     ChordOutcome::passthrough()
                 }
             }
             KeyEdge::Up => {
                 let was_down = std::mem::replace(&mut self.space_down, false);
-                if was_down {
+                let passed_through = std::mem::replace(&mut self.space_passed_through, false);
+                if was_down && !passed_through {
                     ChordOutcome::suppress(None)
                 } else {
                     ChordOutcome::passthrough()

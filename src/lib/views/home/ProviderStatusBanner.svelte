@@ -28,25 +28,27 @@
   }
 </script>
 
-<div class="notice-wrap">
-  <div
-    class="status-banner"
-    in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
-    out:fade={{ duration: motionMs(MOTION_MS.fast) }}
-  >
-    {#each alerts as alert, i (alert.providerId + '-' + i)}
-      <div class="status-row">
-        {#if providerLogo(alert)}
-          <span class="provider-logo" aria-hidden="true">{@html providerLogo(alert) ?? ''}</span>
-        {/if}
-        <span class="status-text"><strong>{alert.providerName}</strong> {alert.message}</span>
-        {#if alert.detailsUrl}
-          <button class="status-link" onclick={() => openDetails(alert.detailsUrl)}>Check status</button>
-        {/if}
-      </div>
-    {/each}
+{#if alerts.length > 0}
+  <div class="notice-wrap">
+    <div
+      class="status-banner"
+      in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+      out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+    >
+      {#each alerts as alert, i (alert.providerId + '-' + i)}
+        <div class="status-row">
+          {#if providerLogo(alert)}
+            <span class="provider-logo" aria-hidden="true">{@html providerLogo(alert) ?? ''}</span>
+          {/if}
+          <span class="status-text"><strong>{alert.providerName}</strong> {alert.message}</span>
+          {#if alert.detailsUrl}
+            <button class="status-link" onclick={() => openDetails(alert.detailsUrl)}>Check status</button>
+          {/if}
+        </div>
+      {/each}
+    </div>
   </div>
-</div>
+{/if}
 
 <style>
   .notice-wrap {

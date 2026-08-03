@@ -315,13 +315,13 @@ pub(super) fn strip_hallucinated_suffix(text: &str) -> String {
 /// legitimately dictate provider names or words such as "subscribe".
 pub(super) fn strip_provider_artifacts(text: &str) -> String {
     let mut kept = Vec::new();
-    for sentence in text.split_inclusive(['.', '!', '?', '\n']) {
+    for sentence in text.split_inclusive(['.', '!', '?', '。', '！', '？', '\n']) {
         let trimmed = sentence.trim();
         let lower = trimmed.to_ascii_lowercase();
         let artifact = lower.starts_with("transcribed by ")
             || lower.starts_with("subtitles by ")
             || matches!(
-                lower.trim_end_matches(['.', '!', '?']),
+                lower.trim_end_matches(['.', '!', '?', '。', '！', '？']),
                 "thank you for watching"
                     | "thanks for watching"
                     | "please subscribe"

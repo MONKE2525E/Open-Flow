@@ -592,8 +592,6 @@ pub fn hog_mic(session_id: u64) {
         }
     }
 
-    drop(state);
-
     let result = macos::snapshot_and_hog();
 
     if ACTIVE_SESSION_ID.load(Ordering::SeqCst) != session_id {
@@ -602,14 +600,6 @@ pub fn hog_mic(session_id: u64) {
         }
         return;
     }
-
-    let mut state = match HOG_STATE.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            log::warn!("Exclusive mic state lock was poisoned; recovering");
-            poisoned.into_inner()
-        }
-    };
 
     if ACTIVE_SESSION_ID.load(Ordering::SeqCst) != session_id {
         if let Ok(Some(device_id)) = result {

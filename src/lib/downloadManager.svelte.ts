@@ -61,7 +61,7 @@ export function getActiveDownloads(): ActiveDownload[] {
       id,
       name: sttName(id),
       stage,
-      label: STAGE_LABEL[stage],
+      label: STAGE_LABEL[stage] ?? stage,
       percent: (progress?.progress ?? 0) * 100,
       indeterminate: progress === null || progress === undefined
         || progress.total_bytes === null || progress.total_bytes === undefined,
@@ -77,7 +77,7 @@ export function getActiveDownloads(): ActiveDownload[] {
       id,
       name: llmName(id),
       stage,
-      label: STAGE_LABEL[stage],
+      label: STAGE_LABEL[stage] ?? stage,
       percent: (progress?.progress ?? 0) * 100,
       indeterminate: progress === null || progress === undefined
         || progress.total_bytes === null || progress.total_bytes === undefined,

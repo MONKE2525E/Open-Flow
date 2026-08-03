@@ -209,15 +209,14 @@ pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> 
     // known mistranscriptions for a single correct spelling.
     let mut replaceable: Vec<(i64, &str, &str)> = entries
         .iter()
-        .flat_map(|e| {
-            let Some(mistake) = e.mistake.as_deref() else {
-                return Vec::new();
-            };
-            parse_dictionary_mistakes(mistake)
-                .filter(|variant| !e.auto_learned || has_distinctive_features(variant))
-                .map(|variant| (e.id, variant, e.term.as_str()))
-                .collect::<Vec<_>>()
+        .filter_map(|e| {
+            e.mistake.as_deref().map(|mistake| {
+                parse_dictionary_mistakes(mistake)
+                    .filter(|variant| !e.auto_learned || has_distinctive_features(variant))
+                    .map(|variant| (e.id, variant, e.term.as_str()))
+            })
         })
+        .flatten()
         .collect();
     replaceable.sort_by_key(|(_, mistake, _)| std::cmp::Reverse(mistake.len()));
 

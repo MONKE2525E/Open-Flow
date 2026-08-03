@@ -128,6 +128,7 @@ export function startLocalSttListeners(): () => void {
   (async () => {
     registerUnlisten(
       await listen<LocalSttDownloadProgressPayload>('local-stt-model-download-progress', (event) => {
+        if (!event.payload?.model_id) return;
         localSttStore.downloadProgress = {
           ...localSttStore.downloadProgress,
           [event.payload.model_id]: event.payload,
@@ -154,6 +155,7 @@ export function startLocalSttListeners(): () => void {
     }
     registerUnlisten(
       await listen<LocalSttVerificationProgressPayload>('local-stt-model-verification-progress', (event) => {
+        if (!event.payload?.model_id) return;
         localSttStore.downloadProgress = {
           ...localSttStore.downloadProgress,
           [event.payload.model_id]: {
@@ -173,6 +175,7 @@ export function startLocalSttListeners(): () => void {
     );
     registerUnlisten(
       await listen<LocalSttExtractionProgressPayload>('local-stt-model-extraction-progress', (event) => {
+        if (!event.payload?.model_id) return;
         localSttStore.downloadProgress = {
           ...localSttStore.downloadProgress,
           [event.payload.model_id]: {

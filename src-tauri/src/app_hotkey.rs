@@ -26,7 +26,7 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
         EscapeCancel,
     }
 
-    let (hotkey_tx, mut hotkey_rx) = tokio::sync::mpsc::channel::<HotkeyEvent>(8);
+    let (hotkey_tx, mut hotkey_rx) = tokio::sync::mpsc::unbounded_channel::<HotkeyEvent>();
     let tx_press = hotkey_tx.clone();
     let tx_handless = hotkey_tx.clone();
     let tx_cancel = hotkey_tx.clone();
@@ -35,19 +35,19 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
 
     match crate::core::hotkey::start(
         move || {
-            let _ = tx_press.try_send(HotkeyEvent::Press);
+            let _ = tx_press.send(HotkeyEvent::Press);
         },
         move || {
-            let _ = tx_release.try_send(HotkeyEvent::Release);
+            let _ = tx_release.send(HotkeyEvent::Release);
         },
         move || {
-            let _ = tx_handless.try_send(HotkeyEvent::HandlessToggle);
+            let _ = tx_handless.send(HotkeyEvent::HandlessToggle);
         },
         move || {
-            let _ = tx_cancel.try_send(HotkeyEvent::Cancel);
+            let _ = tx_cancel.send(HotkeyEvent::Cancel);
         },
         move || {
-            let _ = tx_escape.try_send(HotkeyEvent::EscapeCancel);
+            let _ = tx_escape.send(HotkeyEvent::EscapeCancel);
         },
     ) {
         Ok(_handle) => { /* hook thread running */ }

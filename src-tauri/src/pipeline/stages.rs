@@ -293,17 +293,24 @@ fn is_cjk(c: char) -> bool {
 // quality gate (below) so a resumed/prepended recording can be merged first
 // and validated once as a whole, instead of gating the (possibly very short)
 // new fragment on its own before it's had a chance to be merged.
+struct ExclusiveMicReleaseGuard(Option<u64>);
+
+impl Drop for ExclusiveMicReleaseGuard {
+    fn drop(&mut self) {
+        if let Some(session_id) = self.0.take() {
+            crate::system::volume::release_mic(session_id);
+        }
+    }
+}
+
 pub(super) async fn stop_and_capture_audio(
     app: &AppHandle,
     session: audio::RecordingSession,
     exclusive_mic_session_id: Option<u64>,
 ) -> Option<(CapturedAudio, f32, f32)> {
     let stop_result = tokio::task::spawn_blocking(move || {
-        let stop_result = session.stop();
-        if let Some(session_id) = exclusive_mic_session_id {
-            crate::system::volume::release_mic(session_id);
-        }
-        stop_result
+        let _mic_release = ExclusiveMicReleaseGuard(exclusive_mic_session_id);
+        session.stop()
     })
     .await;
     if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {

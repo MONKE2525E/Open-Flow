@@ -51,7 +51,10 @@ pub async fn check_verenu_api_health(app: AppHandle) -> bool {
 }
 
 #[tauri::command]
-pub async fn check_provider_status_raw() -> Result<serde_json::Value, String> {
+pub async fn check_provider_status_raw(app: AppHandle) -> Result<serde_json::Value, String> {
+    if !service_checks_enabled(&app) {
+        return Ok(serde_json::json!({}));
+    }
     crate::api::service_status::fetch_raw()
         .await
         .map_err(|e| e.to_string())

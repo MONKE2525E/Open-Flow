@@ -28,6 +28,13 @@ pub fn tokenize_lower_alnum(input: &str) -> Vec<String> {
     let mut buf = String::new();
     for ch in input.chars() {
         if ch.is_alphanumeric() {
+            if is_cjk_token_char(ch) {
+                if !buf.is_empty() {
+                    tokens.push(std::mem::take(&mut buf));
+                }
+                tokens.push(ch.to_string());
+                continue;
+            }
             buf.extend(ch.to_lowercase());
         } else if !buf.is_empty() {
             tokens.push(std::mem::take(&mut buf));
@@ -37,6 +44,17 @@ pub fn tokenize_lower_alnum(input: &str) -> Vec<String> {
         tokens.push(buf);
     }
     tokens
+}
+
+fn is_cjk_token_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3400}'..='\u{4dbf}'
+            | '\u{4e00}'..='\u{9fff}'
+            | '\u{f900}'..='\u{faff}'
+            | '\u{3040}'..='\u{30ff}'
+            | '\u{ac00}'..='\u{d7af}'
+    )
 }
 
 /// Strips em dashes (—, U+2014) the cleanup model introduced but the
@@ -210,7 +228,7 @@ pub fn strip_filler_hesitations(text: &str) -> String {
             FillerTok::Other(s) => out.push_str(s),
         }
     }
-    out.trim_start_matches([' ', ',']).to_string()
+    out.trim_matches([' ', ',']).to_string()
 }
 
 /// Collapses a run of 6+ identical consecutive words down to a single

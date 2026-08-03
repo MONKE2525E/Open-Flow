@@ -216,13 +216,14 @@ pub async fn start_server(
     }
     let port = pick_local_port()?;
     let endpoint = format!("http://127.0.0.1:{port}");
-    let (mut child, recent_log) = start_server_process(&binary, &model_path, port)?;
-    wait_until_ready(&endpoint, &mut child, &recent_log).await?;
-    Ok(ManagedLocalLlmServer {
+    let (child, recent_log) = start_server_process(&binary, &model_path, port)?;
+    let mut server = ManagedLocalLlmServer {
         child,
         endpoint,
         recent_log,
-    })
+    };
+    wait_until_ready(&server.endpoint, &mut server.child, &server.recent_log).await?;
+    Ok(server)
 }
 
 #[derive(Serialize)]
@@ -365,9 +366,9 @@ fn looks_truncated(attempt: &ChatAttempt, input_chars: usize) -> bool {
     attempt.finish_reason.as_deref() == Some("length")
         && attempt
             .content
-            .as_ref()
-            .map(|content| input_chars > 20 && !content.is_empty())
-            .unwrap_or(false)
+            .as_deref()
+            .or(attempt.reasoning.as_deref())
+            .is_some_and(|output| input_chars > 20 && !output.is_empty())
 }
 
 /// Combines the truncation, fabrication, and perspective-flip checks into a
@@ -377,7 +378,7 @@ fn retry_reason(attempt: &ChatAttempt, input_text: &str) -> Option<&'static str>
     if looks_truncated(attempt, input_text.chars().count()) {
         return Some("looks truncated (finish_reason=length — generation was cut off at the token budget)");
     }
-    if let Some(content) = &attempt.content {
+    if let Some(content) = attempt.content.as_deref().or(attempt.reasoning.as_deref()) {
         if crate::api::prompts::looks_like_fabricated_content(input_text, content) {
             return Some("looks fabricated (output shares almost no words with the input)");
         }

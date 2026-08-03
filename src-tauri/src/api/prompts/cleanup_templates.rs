@@ -107,7 +107,11 @@ pub fn looks_like_excessive_content_loss(intensity: &str, raw: &str, cleaned: &s
     if raw_words < 8 {
         return false; // too short to judge reliably; one dropped word swings the ratio a lot
     }
-    cleaned_words * 100 < raw_words * 80
+    // Short dictations often contain a high filler-word ratio. Allow a
+    // slightly larger reduction below twelve tokens, while retaining the
+    // stricter 80% floor for longer content where the heuristic is steadier.
+    let retention_floor = if raw_words < 12 { 70 } else { 80 };
+    cleaned_words * 100 < raw_words * retention_floor
 }
 
 /// The mirror image of `looks_like_excessive_content_loss`: "none"/"light"

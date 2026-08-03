@@ -477,6 +477,10 @@ pub fn measure() -> u64 {
 }
 
 pub fn free_bytes_for_path(path: &std::path::Path) -> Result<u64, String> {
+    let path = path
+        .ancestors()
+        .find(|candidate| candidate.exists())
+        .ok_or_else(|| "No existing ancestor for disk space query".to_string())?;
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::ffi::OsStrExt;

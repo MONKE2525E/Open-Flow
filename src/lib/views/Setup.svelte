@@ -46,6 +46,7 @@
     assemblyai: false,
     local: true,
   });
+  let previousProvider = $state<ProviderId | null>(null);
   let keySaving = $state(false);
   let keyError = $state('');
   let showKey = $state(false);
@@ -124,6 +125,12 @@
   });
 
   $effect(() => {
+    if (previousProvider !== null && previousProvider !== provider) {
+      apiKeyDraft = '';
+      keyError = '';
+      keyValidation = { status: 'idle', message: '' };
+    }
+    previousProvider = provider;
     keySaved = provider === 'local' ? true : !!providerKeyStatus[provider];
     if (provider === 'local') {
       keyError = '';

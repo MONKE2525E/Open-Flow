@@ -51,7 +51,7 @@ fn ease_out_cubic(t: f64) -> f64 {
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn lerp_i32(a: i32, b: i32, t: f64) -> i32 {
-    (a as f64 + (b - a) as f64 * t).round() as i32
+    (a as f64 + (b as f64 - a as f64) * t).round() as i32
 }
 
 /// Builds the tween's frame sequence from `from` to `to`. Frame 0 (`from`) is

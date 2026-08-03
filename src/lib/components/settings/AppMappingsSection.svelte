@@ -17,7 +17,7 @@
   </div>
 {/if}
 
-<div class="mappings-host" class:mappings-disabled={!appStore.cleanupEnabled} aria-disabled={!appStore.cleanupEnabled}>
+<div class="mappings-host" class:mappings-disabled={!appStore.cleanupEnabled} aria-disabled={!appStore.cleanupEnabled} inert={!appStore.cleanupEnabled}>
   <AppMappingsEditor />
 </div>
 

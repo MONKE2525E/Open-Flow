@@ -105,7 +105,7 @@
     {/each}
   </div>
 
-  <div class="tab-content-area" class:tab-content-disabled={!appStore.cleanupEnabled} aria-disabled={!appStore.cleanupEnabled}>
+  <div class="tab-content-area" class:tab-content-disabled={!appStore.cleanupEnabled} aria-disabled={!appStore.cleanupEnabled} inert={!appStore.cleanupEnabled}>
     {#key tab}
       <div
         class="tab-wrapper"

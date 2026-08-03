@@ -808,6 +808,21 @@ fn excessive_content_loss_ignores_trivially_short_dictations() {
 }
 
 #[test]
+fn excessive_content_loss_allows_a_filler_heavy_short_dictation() {
+    let raw = "one two three four five six seven eight";
+    let cleaned = "one two three four five six";
+    assert!(!looks_like_excessive_content_loss("light", raw, cleaned));
+}
+
+#[test]
+fn fabricated_content_validates_non_space_separated_scripts() {
+    assert!(looks_like_fabricated_content(
+        "这是一个用于安全校验的中文句子",
+        "完全不同的内容应该被拒绝"
+    ));
+}
+
+#[test]
 fn unwanted_expansion_catches_a_light_cleanup_that_padded_the_dictation() {
     // The actual observed bug: under "light" intensity, a 177-char dictation
     // came back 214 chars (~121% of input) using mostly words that genuinely

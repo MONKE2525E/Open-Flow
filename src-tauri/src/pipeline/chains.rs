@@ -48,10 +48,8 @@ pub(super) fn validate_transcription_chain(
                 .unwrap_or(false);
             if !is_downloaded
                 && cfg.transcription_provider == store::LOCAL
-                && cfg
-                    .transcription_default_model
-                    .strip_prefix("local/")
-                    .is_some_and(|selected| selected == model)
+                && store::parse_model_id(&cfg.transcription_default_model)
+                    .is_some_and(|(provider, selected)| provider == store::LOCAL && selected == *model)
             {
                 selected_local_missing = true;
             }

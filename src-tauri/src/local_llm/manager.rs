@@ -364,7 +364,7 @@ impl LocalLlmManager {
         Ok(())
     }
 
-    pub fn delete_model(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
+    pub async fn delete_model(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
         let manifest = manifest_by_id(model_id)
             .ok_or_else(|| anyhow::anyhow!("unknown local cleanup model: {model_id}"))?;
         let root = self.prepare_models_dir()?;
@@ -382,9 +382,9 @@ impl LocalLlmManager {
 
         let final_path = manifest.final_path(&root);
         if final_path.exists() {
-            remove_dir_all_with_retry(&final_path)?;
+            remove_dir_all_with_retry(&final_path).await?;
         }
-        let _ = remove_dir_all_with_retry(&manifest.partial_download_path(&root));
+        let _ = remove_dir_all_with_retry(&manifest.partial_download_path(&root)).await;
         let _ = app.emit(
             "local-llm-model-deleted",
             LocalLlmModelEventPayload {
@@ -556,7 +556,14 @@ impl LocalLlmManager {
         if self.is_model_loaded(model_id)? {
             return Ok(());
         }
-        if !self.wait_for_load_slot(model_id)? {
+        let manager = self.clone();
+        let model_id_for_slot = model_id.to_owned();
+        let should_load = tokio::task::spawn_blocking(move || {
+            manager.wait_for_load_slot(&model_id_for_slot)
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("local cleanup loading task failed: {err}"))??;
+        if !should_load {
             return Ok(());
         }
 
@@ -619,7 +626,14 @@ impl LocalLlmManager {
 /// on Windows especially, that turns straight into an access-denied error.
 /// A short retry window covers the gap between the cancel flag being seen
 /// and the task actually unwinding and dropping its handles.
-fn remove_dir_all_with_retry(path: &std::path::Path) -> std::io::Result<()> {
+async fn remove_dir_all_with_retry(path: &std::path::Path) -> std::io::Result<()> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || remove_dir_all_with_retry_blocking(&path))
+        .await
+        .map_err(std::io::Error::other)?
+}
+
+fn remove_dir_all_with_retry_blocking(path: &std::path::Path) -> std::io::Result<()> {
     let mut last_err = None;
     for attempt in 0..10 {
         if attempt > 0 {

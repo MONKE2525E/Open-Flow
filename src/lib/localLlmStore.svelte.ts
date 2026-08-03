@@ -155,6 +155,7 @@ export function startLocalLlmListeners(): () => void {
   (async () => {
     registerUnlisten(
       await listen<LocalLlmDownloadProgressPayload>('local-llm-model-download-progress', (event) => {
+        if (!event.payload?.model_id) return;
         localLlmStore.downloadProgress = {
           ...localLlmStore.downloadProgress,
           [event.payload.model_id]: event.payload,

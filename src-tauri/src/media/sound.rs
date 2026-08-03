@@ -207,6 +207,14 @@ fn sound_worker(rx: mpsc::Receiver<SoundCommand>) {
 
         let this_playback_id = playback_id.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
 
+        // Do not keep an idle device handle across cues. Releasing it here
+        // lets the next cue reopen the current default output after a device
+        // switch, while an actively playing sink still keeps its stream alive.
+        if current_sink.as_ref().is_some_and(|sink| sink.empty()) {
+            current_sink = None;
+            output = None;
+        }
+
         if let Some(sink) = current_sink.take() {
             sink.stop();
         }

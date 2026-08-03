@@ -350,7 +350,10 @@ fn build_openai_compat_request_with_alternate(
             escape_transcript_xml(text),
             escape_transcript_xml(alternate),
         ),
-        None => format!("<raw_dictation>\n{text}\n</raw_dictation>"),
+        None => format!(
+            "<raw_dictation>\n{}\n</raw_dictation>",
+            escape_transcript_xml(text)
+        ),
     };
     ChatReq {
         model: model.to_owned(),
@@ -425,6 +428,16 @@ mod tests {
         assert_eq!(json["max_tokens"], 128);
         assert_eq!(json["temperature"], 0.0);
         assert_eq!(json["messages"][0]["content"], "prompt");
+    }
+
+    #[test]
+    fn openai_compat_request_escapes_raw_transcript_xml() {
+        let body = build_openai_compat_request("<tag> & text", "gpt-4o-mini", "prompt", 128);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(
+            json["messages"][1]["content"],
+            "<raw_dictation>\n&lt;tag&gt; &amp; text\n</raw_dictation>"
+        );
     }
 
     #[test]

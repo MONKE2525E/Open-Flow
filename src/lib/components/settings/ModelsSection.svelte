@@ -165,13 +165,15 @@
             .then((started) => {
               if (pendingPreset?.id !== preset.id) return;
               if (!started) {
-                clearPendingPreset();
+                pendingPresetRequestsSettled += 1;
               } else {
                 pendingPresetRequestsSettled += 1;
               }
             })
             .catch((err) => {
-              if (pendingPreset?.id === preset.id) clearPendingPreset();
+              if (pendingPreset?.id === preset.id) {
+                pendingPresetRequestsSettled += 1;
+              }
               console.error('preset stt download failed', err);
             });
         } else {
@@ -179,13 +181,15 @@
             .then((started) => {
               if (pendingPreset?.id !== preset.id) return;
               if (!started) {
-                clearPendingPreset();
+                pendingPresetRequestsSettled += 1;
               } else {
                 pendingPresetRequestsSettled += 1;
               }
             })
             .catch((err) => {
-              if (pendingPreset?.id === preset.id) clearPendingPreset();
+              if (pendingPreset?.id === preset.id) {
+                pendingPresetRequestsSettled += 1;
+              }
               console.error('preset llm download failed', err);
             });
         }
@@ -542,7 +546,7 @@
       invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
     ]);
 
-    apiKeyStatus = keyStatus;
+    apiKeyStatus = { ...apiKeyStatus, ...keyStatus, local: true };
     if (typeof cleanupRaw === 'boolean') {
       cleanupEnabled = cleanupRaw;
       appStore.cleanupEnabled = cleanupRaw;

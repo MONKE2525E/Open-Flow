@@ -224,6 +224,7 @@ async fn download_to_file(
         .send()
         .await?
         .error_for_status()?;
+    let aggregate_total = aggregate_total.or(response.content_length());
 
     // Async file I/O (rather than std::fs + sync write_all) so each chunk
     // write can't block the Tokio executor worker thread during a
@@ -286,7 +287,7 @@ fn extract_archive(archive_path: &Path, dest: &Path) -> anyhow::Result<()> {
                 let Some(target_file_name) = target.file_name() else {
                     continue;
                 };
-                if out_path.exists() {
+                if out_path.symlink_metadata().is_ok() {
                     let _ = std::fs::remove_file(&out_path);
                 }
                 #[cfg(unix)]

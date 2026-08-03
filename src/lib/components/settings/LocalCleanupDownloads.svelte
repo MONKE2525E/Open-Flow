@@ -53,11 +53,11 @@
   // cleanup model also kicks off the runtime download (if not already
   // installed), and that model's card shows "Downloading model
   // requirements..." until the runtime finishes, then its own progress.
-  let pendingRuntimeForModelId = $state<string | null>(null);
+  let pendingRuntimeForModelIds = $state<string[]>([]);
 
   $effect(() => {
     if (runtimeInfo && !runtimeInfo.is_downloading) {
-      pendingRuntimeForModelId = null;
+      pendingRuntimeForModelIds = [];
     }
   });
 
@@ -71,17 +71,23 @@
   }
 
   function handleCleanupDownloadClick(modelId: string) {
-    if (runtimeInfo && !runtimeInfo.installed && !runtimeInfo.is_downloading) {
-      pendingRuntimeForModelId = modelId;
-      onDownloadRuntime();
+    if (runtimeInfo && !runtimeInfo.installed) {
+      if (!pendingRuntimeForModelIds.includes(modelId)) {
+        pendingRuntimeForModelIds = [...pendingRuntimeForModelIds, modelId];
+      }
+      if (!runtimeInfo.is_downloading) {
+        onDownloadRuntime();
+      }
     }
     onDownloadCleanupModel(modelId);
   }
 
   function handleCleanupCancelClick(modelId: string) {
-    if (pendingRuntimeForModelId === modelId) {
-      pendingRuntimeForModelId = null;
-      onCancelRuntimeDownload();
+    if (pendingRuntimeForModelIds.includes(modelId)) {
+      pendingRuntimeForModelIds = pendingRuntimeForModelIds.filter((id) => id !== modelId);
+      if (pendingRuntimeForModelIds.length === 0) {
+        onCancelRuntimeDownload();
+      }
     }
     onCancelCleanupDownload(modelId);
   }
@@ -215,7 +221,7 @@
                 <p>{model.description}</p>
               </div>
               <div class="local-card-actions">
-                {#if model.is_downloading || (pendingRuntimeForModelId === model.id && runtimeInfo?.is_downloading)}
+                {#if model.is_downloading || (pendingRuntimeForModelIds.includes(model.id) && runtimeInfo?.is_downloading)}
                   <button
                     class="card-btn ghost"
                     data-testid="cancel-model-download"
@@ -266,7 +272,7 @@
               </div>
             {/if}
 
-            {#if pendingRuntimeForModelId === model.id && runtimeInfo?.is_downloading}
+            {#if pendingRuntimeForModelIds.includes(model.id) && runtimeInfo?.is_downloading}
               <div transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
                 <LocalDownloadProgress
                   stage={runtimeDownloadProgress?.stage === 'extracting' ? 'extracting' : 'downloading'}

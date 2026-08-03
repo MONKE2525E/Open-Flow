@@ -34,6 +34,10 @@ fn provider_artifact_filter_is_conservative() {
         strip_provider_artifacts("AssemblyAI documentation is useful."),
         "AssemblyAI documentation is useful."
     );
+    assert_eq!(
+        strip_provider_artifacts("这是测试。Transcribed by AssemblyAI。"),
+        "这是测试。"
+    );
 }
 
 #[test]
@@ -531,6 +535,10 @@ fn install_local_models(downloaded_model_ids: &[&str]) -> LocalModelsTestGuard {
         .as_nanos();
     let root = std::env::temp_dir().join(format!("verenu-local-stt-tests-{unique}"));
     let previous_override = std::env::var_os("VERENU_APP_DATA_DIR_OVERRIDE");
+    let guard = LocalModelsTestGuard {
+        root: root.clone(),
+        previous_override: previous_override.clone(),
+    };
     std::fs::create_dir_all(root.join("models").join("stt")).expect("create local model root");
     // Tests hold the harness lock while this override is active.
     unsafe {
@@ -554,10 +562,7 @@ fn install_local_models(downloaded_model_ids: &[&str]) -> LocalModelsTestGuard {
         }
     }
 
-    LocalModelsTestGuard {
-        root,
-        previous_override,
-    }
+    guard
 }
 
 fn install_local_cleanup_models(downloaded_model_ids: &[&str]) -> LocalModelsTestGuard {
@@ -567,6 +572,10 @@ fn install_local_cleanup_models(downloaded_model_ids: &[&str]) -> LocalModelsTes
         .as_nanos();
     let root = std::env::temp_dir().join(format!("verenu-local-cleanup-tests-{unique}"));
     let previous_override = std::env::var_os("VERENU_APP_DATA_DIR_OVERRIDE");
+    let guard = LocalModelsTestGuard {
+        root: root.clone(),
+        previous_override: previous_override.clone(),
+    };
     std::fs::create_dir_all(root.join("models").join("cleanup"))
         .expect("create local cleanup model root");
     unsafe {
@@ -586,10 +595,7 @@ fn install_local_cleanup_models(downloaded_model_ids: &[&str]) -> LocalModelsTes
         }
     }
 
-    LocalModelsTestGuard {
-        root,
-        previous_override,
-    }
+    guard
 }
 
 fn fixture(

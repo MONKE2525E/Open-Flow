@@ -5,23 +5,23 @@
 
   let {
     type,
-    models,
+    models = [],
     defaultModel,
-    fallbackModels,
+    fallbackModels = [],
     emptyLabel,
     onToggleModel,
     onManageLocalModels,
   }: {
     type: TaskType;
-    models: Array<{ id: string; is_downloaded?: boolean }>;
+    models?: Array<{ id: string; is_downloaded?: boolean }>;
     defaultModel: string;
-    fallbackModels: string[];
+    fallbackModels?: string[];
     emptyLabel: string;
     onToggleModel: (type: TaskType, provider: ProviderId, modelName: string) => void;
     onManageLocalModels: () => void;
   } = $props();
 
-  const downloadedModels = $derived(models.filter((model) => model.is_downloaded !== false));
+  const downloadedModels = $derived(models.filter((model) => model.is_downloaded === true));
 
   function selectionState(modelIdValue: string): 'active' | 'fallback' | 'none' {
     const id = modelId('local', modelIdValue);
