@@ -194,7 +194,18 @@ fn sound_worker(rx: mpsc::Receiver<SoundCommand>) {
     let playback_id = Arc::new(AtomicU64::new(0));
     let mut current_sink: Option<Arc<rodio::Sink>> = None;
 
-    while let Ok(command) = rx.recv() {
+    loop {
+        let command = match rx.recv_timeout(std::time::Duration::from_millis(250)) {
+            Ok(command) => command,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if current_sink.as_ref().is_some_and(|sink| sink.empty()) {
+                    current_sink = None;
+                    output = None;
+                }
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         let SoundCommand::Play {
             cue,
             generation,

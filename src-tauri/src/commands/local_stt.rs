@@ -38,7 +38,10 @@ pub async fn delete_local_stt_model(
     manager: tauri::State<'_, crate::local_stt::LocalTranscriptionManager>,
     model_id: String,
 ) -> Result<(), String> {
-    manager.delete_model(&app, &model_id).map_err(|e| e.to_string())
+    manager
+        .delete_model(&app, &model_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -697,9 +697,9 @@
         setTaskFallbacks(type, remaining);
       } else {
         const safeProvider: UiProviderId = provider !== 'local' ? (provider as UiProviderId) : 'groq';
-        // Safe: this fallback only runs for a provider/task pair that was already
-        // selectable in the UI, which guarantees a recommendedModels entry exists.
-        setTaskDefault(type, modelId(safeProvider, recommendedModels[type][safeProvider]!.standard));
+        const recommended = recommendedModels[type][safeProvider] ?? recommendedModels[type].groq;
+        const fallbackProvider = recommendedModels[type][safeProvider] ? safeProvider : 'groq';
+        if (recommended) setTaskDefault(type, modelId(fallbackProvider, recommended.standard));
       }
     }
 
@@ -720,9 +720,9 @@
         setTaskFallbacks(type, remaining);
       } else {
         const safeProvider: UiProviderId = provider !== 'local' ? (provider as UiProviderId) : 'groq';
-        // Safe: this fallback only runs for a provider/task pair that was already
-        // selectable in the UI, which guarantees a recommendedModels entry exists.
-        setTaskDefault(type, modelId(safeProvider, recommendedModels[type][safeProvider]!.standard));
+        const recommended = recommendedModels[type][safeProvider] ?? recommendedModels[type].groq;
+        const fallbackProvider = recommendedModels[type][safeProvider] ? safeProvider : 'groq';
+        if (recommended) setTaskDefault(type, modelId(fallbackProvider, recommended.standard));
       }
     } else if (taskFallbacks(type).includes(id)) {
       setTaskFallbacks(type, taskFallbacks(type).filter((entry) => entry !== id));

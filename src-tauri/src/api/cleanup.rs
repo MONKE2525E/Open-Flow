@@ -176,7 +176,7 @@ async fn openai_compat(
         request_started.elapsed().as_millis()
     );
 
-    let resp = match super::ensure_provider_success(resp, model, Some((provider_label, model)))
+    let resp = match super::ensure_provider_success(resp, provider_label, Some((provider_label, model)))
         .await
     {
         Ok(resp) => resp,

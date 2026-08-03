@@ -75,9 +75,11 @@ export async function checkStatus(): Promise<void> {
 
   if (messageResult.status === 'fulfilled') {
     const message = messageResult.value;
-    appStore.globalMessage = message && (message.showToUsers || appStore.globalMessageSimulation)
-      ? { ...message, showToUsers: true }
-      : null;
+    if (!appStore.globalMessageSimulation) {
+      appStore.globalMessage = message && message.showToUsers
+        ? { ...message, showToUsers: true }
+        : null;
+    }
   } else {
     console.warn('Global message check failed:', messageResult.reason);
   }

@@ -173,7 +173,7 @@ pub(super) fn animate_pill_placement<R: Runtime>(
                 final_frame.y,
                 final_frame.width,
                 final_frame.height,
-                SWP_NOZORDER | SWP_NOACTIVATE,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
             );
         }
 

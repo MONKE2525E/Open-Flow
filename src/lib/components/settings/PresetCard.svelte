@@ -36,8 +36,8 @@
   // The action pill can roll to a destructive action on hover: cancel an
   // in-flight download, or delete a selected offline preset's downloaded models.
   // You can't deselect a preset, so the "selected" pill has no idle purpose.
-  const cancelable = $derived(downloading);
-  const manageable = $derived(preset.offline && active && installedCount > 0);
+  const cancelable = $derived(downloading && onCancelDownload != null);
+  const manageable = $derived(preset.offline && active && installedCount > 0 && onDeleteModels != null);
   const hoverMode = $derived(cancelable || manageable);
 
   const defaultLabel = $derived(

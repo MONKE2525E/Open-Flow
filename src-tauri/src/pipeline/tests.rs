@@ -114,7 +114,7 @@ fn hallucination_gate_catches_pure_glossary_echo_on_silence() {
 
 #[test]
 fn hallucination_gate_catches_a_near_miss_of_a_prompt_glossary_term() {
-    assert!(is_transcription_hallucination("svlet"));
+    assert!(is_transcription_hallucination("svelt"));
     assert!(!is_transcription_hallucination("svelte"));
     assert!(!is_transcription_hallucination("open"));
     assert!(!is_transcription_hallucination("please select the file"));

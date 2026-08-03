@@ -642,7 +642,11 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         }
 
         if (is_key1 || is_key2) && (is_down || is_up) {
-            let key = if is_key1 {
+            let key = if vk == k1 {
+                ChordKey::Key1
+            } else if vk == k2 {
+                ChordKey::Key2
+            } else if is_key1 {
                 ChordKey::Key1
             } else {
                 ChordKey::Key2

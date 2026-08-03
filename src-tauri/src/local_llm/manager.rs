@@ -534,7 +534,7 @@ impl LocalLlmManager {
     /// conflating the two used to make `ensure_loaded` call
     /// `load_model_inner` unconditionally, which unloads-then-reloads a
     /// model a concurrent caller just finished loading.
-    fn wait_for_load_slot(&self, model_id: &str) -> anyhow::Result<bool> {
+    fn wait_for_load_slot(&self, model_id: &str) -> anyhow::Result<Option<LoadSlotGuard>> {
         let mut loading = self
             .is_loading
             .lock()
@@ -546,10 +546,13 @@ impl LocalLlmManager {
                 .map_err(|_| anyhow::anyhow!("local cleanup loading wait poisoned"))?;
         }
         if self.is_model_loaded(model_id)? {
-            return Ok(false);
+            return Ok(None);
         }
         *loading = true;
-        Ok(true)
+        Ok(Some(LoadSlotGuard {
+            is_loading: self.is_loading.clone(),
+            loading_condvar: self.loading_condvar.clone(),
+        }))
     }
 
     async fn ensure_loaded(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
@@ -563,13 +566,8 @@ impl LocalLlmManager {
         })
         .await
         .map_err(|err| anyhow::anyhow!("local cleanup loading task failed: {err}"))??;
-        if !should_load {
+        let Some(_slot_guard) = should_load else {
             return Ok(());
-        }
-
-        let _slot_guard = LoadSlotGuard {
-            is_loading: self.is_loading.clone(),
-            loading_condvar: self.loading_condvar.clone(),
         };
         self.load_model_inner(app, model_id).await
     }

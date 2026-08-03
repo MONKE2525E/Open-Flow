@@ -150,9 +150,8 @@ fn is_pure_glossary_echo(lowercased_trimmed: &str) -> bool {
 
 /// Whisper can return a slightly garbled version of one of the vocabulary
 /// terms when it is prompted by noise rather than speech. Keep this narrow:
-/// only a single token, only a non-exact match, and only within one edit for
-/// short tokens, or two edits when the token is at least five characters long.
-/// That catches
+/// only a single token, only a non-exact match, and only within one edit of a
+/// glossary term. That catches
 /// artifacts such as "svlet" -> "svelte" without
 /// rejecting ordinary multi-word dictation or an exact single-word term.
 fn is_fuzzy_glossary_echo(lowercased_trimmed: &str) -> bool {
@@ -169,13 +168,9 @@ fn is_fuzzy_glossary_echo(lowercased_trimmed: &str) -> bool {
         return false;
     }
 
-    GLOSSARY_TERMS.iter().any(|term| {
-        if token == *term {
-            return false;
-        }
-        let distance = damerau_levenshtein_distance(token, term);
-        distance <= 1 || (token.chars().count() >= 5 && distance <= 2)
-    })
+    GLOSSARY_TERMS
+        .iter()
+        .any(|term| token != *term && damerau_levenshtein_distance(token, term) <= 1)
 }
 
 fn damerau_levenshtein_distance(left: &str, right: &str) -> usize {

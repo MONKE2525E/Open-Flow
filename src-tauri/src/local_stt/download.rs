@@ -294,7 +294,11 @@ fn flatten_single_nested_dir(dir: &Path) -> anyhow::Result<()> {
     remove_macos_extraction_junk(&nested)?;
     for child in std::fs::read_dir(&nested)? {
         let child = child?;
-        std::fs::rename(child.path(), dir.join(child.file_name()))?;
+        let destination = dir.join(child.file_name());
+        if destination == nested {
+            anyhow::bail!("archive flattening would move a directory onto itself");
+        }
+        std::fs::rename(child.path(), destination)?;
     }
     std::fs::remove_dir(&nested)?;
     Ok(())
@@ -456,10 +460,11 @@ pub async fn download_model(
                 );
                 already_complete = true;
             }
-            reqwest::StatusCode::OK => {
+            status if status.is_success() => {
                 log::warn!(
-                    "local-stt: server did not honor range resume id={}, restarting from 0",
-                    manifest.id
+                    "local-stt: server did not honor range resume id={}, restarting from 0 status={}",
+                    manifest.id,
+                    status
                 );
                 let _ = std::fs::remove_file(&partial_path);
                 partial_size = 0;

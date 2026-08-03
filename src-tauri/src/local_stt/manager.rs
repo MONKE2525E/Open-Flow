@@ -25,6 +25,7 @@ pub struct LocalTranscriptionManager {
 struct DownloadTaskState {
     model_id: String,
     cancel: Arc<AtomicBool>,
+    completion: Arc<tokio::sync::Notify>,
 }
 
 /// Guarantees `is_loading` is cleared and waiters are woken even if
@@ -187,6 +188,7 @@ impl LocalTranscriptionManager {
         }
 
         let cancel = Arc::new(AtomicBool::new(false));
+        let completion = Arc::new(tokio::sync::Notify::new());
 
         {
             let mut guard = self
@@ -209,6 +211,7 @@ impl LocalTranscriptionManager {
             *guard = Some(DownloadTaskState {
                 model_id: model_id.to_string(),
                 cancel: Arc::clone(&cancel),
+                completion: Arc::clone(&completion),
             });
         }
 
@@ -229,6 +232,7 @@ impl LocalTranscriptionManager {
             if let Ok(mut guard) = manager.download_task.lock() {
                 *guard = None;
             }
+            completion.notify_waiters();
             log::info!(
                 "local-stt: download task cleared active-download guard id={}",
                 manifest.id
@@ -312,12 +316,37 @@ impl LocalTranscriptionManager {
         Ok(())
     }
 
-    pub fn delete_model(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
+    pub async fn delete_model(&self, app: &AppHandle, model_id: &str) -> anyhow::Result<()> {
         log::info!("local-stt: delete requested id={model_id}");
         let manifest = manifest_by_id(model_id)
             .ok_or_else(|| anyhow::anyhow!("unknown local model: {model_id}"))?;
         let root = self.prepare_models_dir()?;
         self.cancel_download(Some(model_id))?;
+        let completion = self
+            .download_task
+            .lock()
+            .ok()
+            .and_then(|guard| {
+                guard
+                    .as_ref()
+                    .filter(|task| task.model_id == model_id)
+                    .map(|task| Arc::clone(&task.completion))
+            });
+        if let Some(completion) = completion {
+            loop {
+                let notified = completion.notified();
+                let still_active = self
+                    .download_task
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.as_ref().map(|task| task.model_id == model_id))
+                    .unwrap_or(false);
+                if !still_active {
+                    break;
+                }
+                notified.await;
+            }
+        }
         if self
             .current_model_id
             .lock()

@@ -143,7 +143,7 @@ pub(super) async fn guard_cleanup_refusal(
         expanded,
         alternate_transcript,
         &cleaned,
-    ) || cleanup_output_is_unusable(intensity, raw, raw)
+    ) || prompts::looks_like_refusal(raw)
     {
         return Some(cleaned);
     }
@@ -1304,6 +1304,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                 return Err(last_cleanup_err.expect("checked"))
             }
             None => {
+                cleanup_api_used.clear();
                 let text =
                     snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions);
                 if cfg.cleanup_intensity != "none" {

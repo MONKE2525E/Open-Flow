@@ -175,6 +175,7 @@ fn start_frontend_watchdog(app: &AppHandle, readiness: FrontendReadiness) {
         log::error!(
             "startup handshake did not complete in development; keeping the dev process alive for diagnosis"
         );
+        reveal_windows();
 
         #[cfg(not(debug_assertions))]
         {
@@ -182,6 +183,7 @@ fn start_frontend_watchdog(app: &AppHandle, readiness: FrontendReadiness) {
                 log::error!(
                     "startup handshake did not complete after the automatic recovery attempt; leaving the app running for diagnosis"
                 );
+                reveal_windows();
                 return;
             }
 

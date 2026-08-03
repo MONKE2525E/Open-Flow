@@ -85,49 +85,19 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     let min_rms = recording_gate_rms(active_gain);
     log::debug!("pipeline: input gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
 
-    let stop_result = tokio::task::spawn_blocking(move || {
-        let stop_result = session.stop();
-        if let Some(session_id) = exclusive_mic_session_id {
-            crate::system::volume::release_mic(session_id);
-        }
-        stop_result
-    })
-    .await?;
-    if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
-        manager.set_recording_active(false);
-    }
-    let audio::RecordingResult {
-        wav,
-        samples_16k,
-        sample_rate,
-        duration_ms,
-        rms,
-        raw_rms,
-        truncated,
-    } = stop_result?;
-
-    if truncated {
-        hide_pill(&app);
-        anyhow::bail!(
-            "Recording exceeded the {} minute limit. Please split it into shorter dictations.",
-            audio::MAX_RECORDING_SECONDS / 60
-        );
-    }
-
+    let Some((captured_audio, rms, raw_rms)) =
+        stop_and_capture_audio(&app, session, exclusive_mic_session_id).await
+    else {
+        return Err(anyhow::anyhow!("Failed to stop recording"));
+    };
     let gate_rms = effective_recording_rms(rms, raw_rms, active_gain);
-    if duration_ms < MIN_RECORDING_MS || gate_rms < min_rms {
+    if captured_audio.duration_ms < MIN_RECORDING_MS || gate_rms < min_rms {
         hide_pill(&app);
-        if duration_ms < MIN_RECORDING_MS {
+        if captured_audio.duration_ms < MIN_RECORDING_MS {
             anyhow::bail!("Recording too short");
         }
-        anyhow::bail!("Audio too quiet — check your mic");
+        anyhow::bail!("Audio too quiet - check your mic");
     }
-    let captured_audio = CapturedAudio {
-        wav: bytes::Bytes::from(wav),
-        samples_16k: Arc::new(samples_16k),
-        sample_rate,
-        duration_ms,
-    };
 
     let cfg = store::load_pipeline_config(&settings_store);
 

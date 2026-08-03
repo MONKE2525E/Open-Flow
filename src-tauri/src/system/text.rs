@@ -121,6 +121,19 @@ fn tokenize_words_and_other(text: &str) -> Vec<FillerTok> {
     let mut buf = String::new();
     let mut in_word = false;
     for ch in text.chars() {
+        if is_cjk_token_char(ch) {
+            if !buf.is_empty() {
+                let taken = std::mem::take(&mut buf);
+                tokens.push(if in_word {
+                    FillerTok::Word(taken)
+                } else {
+                    FillerTok::Other(taken)
+                });
+            }
+            tokens.push(FillerTok::Word(ch.to_string()));
+            in_word = false;
+            continue;
+        }
         let is_word_char = ch.is_alphabetic() || ch == '\'';
         if is_word_char != in_word && !buf.is_empty() {
             let taken = std::mem::take(&mut buf);
@@ -506,6 +519,11 @@ mod tests {
             ),
             "Make sure if you see any d dictation with this you tell me"
         );
+    }
+
+    #[test]
+    fn collapses_repeated_cjk_characters() {
+        assert_eq!(collapse_degenerate_word_runs("啊啊啊啊啊啊"), "啊");
     }
 
     #[test]
