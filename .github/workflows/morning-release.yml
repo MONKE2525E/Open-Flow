@@ -1,0 +1,622 @@
+name: Morning Dev Release
+
+on:
+  schedule:
+    # GitHub schedules run on the default branch. Keep this workflow on master,
+    # then explicitly inspect dev below. The timezone keeps 08:00 local time
+    # across daylight-saving changes.
+    - cron: '0 8 * * *'
+      timezone: America/Vancouver
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  models: read
+
+concurrency:
+  group: morning-dev-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare changed dev snapshot
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.changes.outputs.should_release }}
+      release_tag: ${{ steps.changes.outputs.release_tag }}
+      release_version: ${{ steps.changes.outputs.release_version }}
+      app_version: ${{ steps.changes.outputs.app_version }}
+      release_sha: ${{ steps.tag.outputs.release_sha || steps.changes.outputs.release_sha }}
+    steps:
+      - name: Check out dev history
+        uses: actions/checkout@v6
+        with:
+          ref: dev
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Find changes since the previous dev release
+        id: changes
+        shell: bash
+        env:
+          NIGHTLY_START_VERSION: '0.16.0'
+        run: |
+          set -euo pipefail
+
+          git fetch origin dev --tags --force
+          dev_sha="$(git rev-parse origin/dev)"
+          baseline_sha=""
+          baseline_tag=""
+          last_nightly=""
+
+          # A nightly tag points at a temporary version-bump commit whose
+          # parent is the dev snapshot it released. Find the newest such tag
+          # whose parent is still reachable from the current dev branch.
+          while IFS= read -r candidate; do
+            if [[ ! "$candidate" =~ ^Verenu-[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}$ ]]; then
+              continue
+            fi
+            nightly_commit="$(git rev-parse "${candidate}^{commit}")"
+            candidate_sha="$(git rev-parse "${nightly_commit}^")"
+            if git merge-base --is-ancestor "$candidate_sha" "$dev_sha"; then
+              last_nightly="$candidate"
+              baseline_sha="$candidate_sha"
+              baseline_tag="$candidate"
+              break
+            fi
+          done < <(git tag --list 'Verenu-*-nightly.*' | sort -Vr)
+
+          # Before the first nightly, use the newest release tag reachable
+          # from dev. Tags are branch-agnostic, so reachability is the branch
+          # association we can verify safely.
+          if [[ -z "$baseline_sha" ]]; then
+            baseline_tag="$(git tag --merged "$dev_sha" --list 'Verenu-*' | sort -V | tail -n 1 || true)"
+            if [[ -z "$baseline_tag" ]]; then
+              echo 'No release tag reachable from dev; refusing to guess a baseline.' >&2
+              exit 1
+            fi
+            baseline_sha="$(git rev-parse "${baseline_tag}^{commit}")"
+          fi
+
+          changed_lines="$(git diff --numstat "$baseline_sha..$dev_sha" -- . ':(exclude)package-lock.json' | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { total += $1 + $2 } END { print total + 0 }')"
+          changed_lines="${changed_lines:-0}"
+          release_date="$(TZ=America/Vancouver date +%Y%m%d)"
+
+          # If a prior run created today's tag but failed while building or
+          # publishing, resume that exact release instead of incrementing the
+          # nightly number again.
+          resume_existing=false
+          if [[ -n "$last_nightly" && "$baseline_sha" == "$dev_sha" && "$last_nightly" =~ \.nightly\.${release_date}$ ]]; then
+            resume_existing=true
+          fi
+
+          echo "Baseline: $baseline_tag ($baseline_sha)"
+          echo "Dev:      $dev_sha"
+          echo "Changed lines: $changed_lines"
+          git diff --stat "$baseline_sha..$dev_sha" -- . ':(exclude)package-lock.json'
+
+          if (( changed_lines <= 10 )) && [[ "$resume_existing" != true ]]; then
+            echo 'should_release=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$resume_existing" == true ]]; then
+            release_tag="$last_nightly"
+            release_version="${release_tag#Verenu-}"
+            app_version="${release_version%%-nightly.*}"
+            release_sha="$(git rev-parse "${release_tag}^{commit}")"
+            tag_exists=true
+          elif [[ -n "$last_nightly" ]]; then
+            last_version="${last_nightly#Verenu-}"
+            last_core="${last_version%%-nightly.*}"
+            IFS=. read -r major minor patch <<< "$last_core"
+            next_core="$major.$minor.$((patch + 1))"
+            app_version="$next_core"
+            release_version="${app_version}-nightly.${release_date}"
+            release_tag="Verenu-${release_version}"
+            tag_exists=false
+          else
+            app_version="$NIGHTLY_START_VERSION"
+            release_version="${app_version}-nightly.${release_date}"
+            release_tag="Verenu-${release_version}"
+            tag_exists=false
+          fi
+
+          if [[ "$tag_exists" != true ]] && git show-ref --tags --verify --quiet "refs/tags/$release_tag"; then
+            echo "Release tag $release_tag already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+
+          git log --no-merges -n 100 --format='- %h %s' "$baseline_sha..$dev_sha" > commit-summary.md
+          git diff --stat "$baseline_sha..$dev_sha" -- . ':(exclude)package-lock.json' > diff-stat.md
+          git diff --unified=0 "$baseline_sha..$dev_sha" -- . ':(exclude)package-lock.json' > full-diff.patch
+          head -c 60000 full-diff.patch > diff-preview.patch
+          rm full-diff.patch
+
+          {
+            echo "Release version: $release_version"
+            echo "Source branch: dev"
+            echo "Source commit: $dev_sha"
+            echo "Baseline tag: $baseline_tag"
+            echo "Changed lines: $changed_lines"
+            echo "Embedded app version: $app_version"
+            echo "Expected assets:"
+            echo "- Verenu_${release_version}_x64-setup.exe"
+            echo "- Verenu_${release_version}_x64_en-US.msi"
+            echo "- Verenu_${release_version}_Apple_Silicon.dmg"
+            echo "- Verenu_${release_version}_Intel.dmg"
+            echo
+            echo 'Commit summary:'
+            cat commit-summary.md
+            echo
+            echo 'Diff stat:'
+            cat diff-stat.md
+            echo
+            echo 'Bounded diff preview:'
+            cat diff-preview.patch
+          } > release-context.md
+
+          {
+            echo "should_release=true"
+            echo "dev_sha=$dev_sha"
+            echo "baseline_tag=$baseline_tag"
+            echo "baseline_sha=$baseline_sha"
+            echo "changed_lines=$changed_lines"
+            echo "app_version=$app_version"
+            echo "release_version=$release_version"
+            echo "release_tag=$release_tag"
+            echo "tag_exists=$tag_exists"
+            if [[ "$tag_exists" == true ]]; then
+              echo "release_sha=$release_sha"
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write AI release notes
+        id: release_notes
+        continue-on-error: true
+        if: steps.changes.outputs.should_release == 'true'
+        uses: actions/ai-inference@v1
+        with:
+          model: openai/gpt-4o
+          prompt-file: release-context.md
+          max-tokens: 1600
+          system-prompt: >-
+            You write honest Verenu nightly release notes from the supplied
+            git context. Return only markdown, never a code fence. Follow the
+            repository's release-note style: title, one-sentence app blurb,
+            What's New, Features, Getting Started, Shortcuts, Lightweight &
+            Local, and Virustotal Review. Keep evergreen sections concise.
+            Describe only changes supported by the context. Do not invent
+            VirusTotal URLs, tests, features, fixes, people, secrets, or
+            private information. The four expected installer filenames in the
+            context will be attached by the workflow, so mention them without
+            inventing checksums or scan URLs.
+
+      - name: Save generated release notes
+        if: steps.changes.outputs.should_release == 'true'
+        shell: bash
+        env:
+          AI_OUTCOME: ${{ steps.release_notes.outcome }}
+          AI_RESPONSE_FILE: ${{ steps.release_notes.outputs.response-file }}
+        run: |
+          set -euo pipefail
+          if [[ "$AI_OUTCOME" == success && -n "$AI_RESPONSE_FILE" && -s "$AI_RESPONSE_FILE" ]]; then
+            cp "$AI_RESPONSE_FILE" release-notes.md
+          else
+            echo 'GitHub Models was unavailable; using the deterministic release-note fallback.'
+            {
+              echo "# Verenu ${{ steps.changes.outputs.release_version }} - Nightly"
+              echo
+              echo '**Verenu** is a free, open-source AI dictation app for Windows and macOS. No subscriptions. You bring your own API keys.'
+              echo
+              echo "## What's New in ${{ steps.changes.outputs.release_version }}"
+              if [[ -s commit-summary.md ]]; then
+                cat commit-summary.md
+              else
+                echo '- Updated dev snapshot available in this nightly build'
+              fi
+              echo
+              echo '## Features'
+              echo
+              echo 'This nightly contains the changed dev snapshot and the attached Windows and macOS installers.'
+              echo
+              echo '## Getting Started'
+              echo
+              echo '1. Download the installer for your platform from the assets below'
+              echo '2. Add your API key for Groq, OpenAI, or Google'
+              echo '3. Hold **Ctrl+Win** on Windows or **fn+Control** on macOS and start talking'
+              echo '4. Release the hotkey and your cleaned-up text appears in the active app'
+              echo
+              echo '## Shortcuts'
+              echo
+              echo '- **Windows hold-to-record** - Hold **Ctrl+Win** to record, release to transcribe and inject'
+              echo '- **macOS hold-to-record** - Hold **fn+Control** to record, release to transcribe and inject'
+              echo
+              echo '## Lightweight & Local'
+              echo
+              echo '- Native Tauri app for Windows and macOS'
+              echo '- Local SQLite history'
+              echo '- API keys stored locally'
+              echo '- No telemetry'
+              echo
+              echo '## Virustotal Review'
+              echo
+              echo 'SHA256SUMS.txt is attached. VirusTotal links are not generated automatically for nightly builds.'
+            } > release-notes.md
+          fi
+          test -s release-notes.md
+
+      - name: Upload generated release notes
+        if: steps.changes.outputs.should_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+      - name: Create the versioned nightly tag
+        id: tag
+        if: steps.changes.outputs.should_release == 'true' && steps.changes.outputs.tag_exists != 'true'
+        shell: bash
+        env:
+          DEV_SHA: ${{ steps.changes.outputs.dev_sha }}
+          APP_VERSION: ${{ steps.changes.outputs.app_version }}
+          RELEASE_VERSION: ${{ steps.changes.outputs.release_version }}
+          RELEASE_TAG: ${{ steps.changes.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          # The commit is intentionally not pushed to dev or master. The tag
+          # contains the release-only version while its parent remains the
+          # exact dev snapshot that was inspected above.
+          git checkout --detach "$DEV_SHA"
+          version_files=(
+            package.json
+            src-tauri/tauri.conf.json
+            src-tauri/Cargo.toml
+          )
+          restore_dev_versions() {
+            git restore --source "$DEV_SHA" -- "${version_files[@]}"
+          }
+          trap restore_dev_versions EXIT
+
+          node - "$APP_VERSION" <<'NODE'
+          const fs = require('node:fs');
+          const version = process.argv[2];
+          const replacements = [
+            ['package.json', /(\"version\"\s*:\s*\")[^\"]+(\")/, `$1${version}$2`],
+            ['src-tauri/tauri.conf.json', /(\"version\"\s*:\s*\")[^\"]+(\")/, `$1${version}$2`],
+            ['src-tauri/Cargo.toml', /^version\s*=\s*\"[^\"]+\"/m, `version = \"${version}\"`],
+          ];
+
+          for (const [file, pattern, replacement] of replacements) {
+            const before = fs.readFileSync(file, 'utf8');
+            const after = before.replace(pattern, replacement);
+            if (after === before) throw new Error(`Could not update version in ${file}`);
+            fs.writeFileSync(file, after);
+          }
+          NODE
+
+          git diff --check
+          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "chore(release): $RELEASE_TAG [skip ci]"
+
+          release_sha="$(git rev-parse HEAD)"
+          git tag -a "$RELEASE_TAG" "$release_sha" -m "Verenu $RELEASE_VERSION"
+          git push origin "$RELEASE_TAG"
+
+          # The version bump belongs only to the tag snapshot. Restore the
+          # exact dev values before this job exits, including on failure.
+          restore_dev_versions
+          if ! git diff --quiet "$DEV_SHA" -- "${version_files[@]}"; then
+            echo 'Release-only version files did not roll back to dev.' >&2
+            exit 1
+          fi
+          trap - EXIT
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.os-name }} installers
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            os-name: windows
+          - platform: macos-latest
+            os-name: macos
+    runs-on: ${{ matrix.platform }}
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+    steps:
+      - name: Check out the versioned nightly snapshot
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up macOS targets
+        if: matrix.os-name == 'macos'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+      - name: Set up Python for Intel ONNX Runtime
+        if: matrix.os-name == 'macos'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Cache Intel ONNX Runtime
+        if: matrix.os-name == 'macos'
+        id: intel_ort_cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/verenu/onnxruntime/1.24.2-x86_64
+          key: verenu-onnxruntime-1.24.2-macos-x86_64
+
+      - name: Build Intel ONNX Runtime from source
+        if: matrix.os-name == 'macos' && steps.intel_ort_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ort_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64"
+          ort_source="$ort_root/source"
+          mkdir -p "$(dirname "$ort_root")"
+
+          git clone --depth 1 --branch v1.24.2 --recurse-submodules \
+            https://github.com/microsoft/onnxruntime.git "$ort_source"
+          cd "$ort_source"
+
+          ./build.sh \
+            --config RelWithDebInfo \
+            --build_shared_lib \
+            --parallel \
+            --compile_no_warning_as_error \
+            --skip_submodule_sync \
+            --skip_tests \
+            --skip_onnx_tests \
+            --cmake_extra_defines \
+              CMAKE_OSX_ARCHITECTURES=x86_64 \
+              CMAKE_OSX_DEPLOYMENT_TARGET=13.4
+
+      - name: Verify Intel ONNX Runtime build
+        if: matrix.os-name == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ort_build_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/source/build/MacOS"
+          ort_build_profile="$ort_build_root/RelWithDebInfo"
+          ort_archive="$ort_build_root/RelWithDebInfo/libonnxruntime_common.a"
+          ort_shared="$ort_build_root/RelWithDebInfo/libonnxruntime.dylib"
+          ort_link_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/ort-link"
+          ort_link_profile="$ort_link_root/RelWithDebInfo"
+
+          test -f "$ort_archive"
+          test -f "$ort_shared"
+          lipo -info "$ort_shared" | grep -q 'x86_64'
+          file "$ort_shared"
+
+          # ort-sys expects the runtime archives under the profile directory
+          # and the dependency archives under ONNX Runtime's _deps tree.
+          # Stage symlinks so the linker sees the complete source build without
+          # copying it.
+          mkdir -p "$ort_link_profile"
+          archive_count=0
+          while IFS= read -r archive; do
+            ln -sfn "$archive" "$ort_link_profile/$(basename "$archive")"
+            archive_count=$((archive_count + 1))
+          done < <(find "$ort_build_profile" -maxdepth 1 -type f -name 'libonnxruntime_*.a' -print)
+
+          test "$archive_count" -gt 0
+          for required in \
+            libonnxruntime_common.a \
+            libonnxruntime_framework.a \
+            libonnxruntime_graph.a \
+            libonnxruntime_mlas.a \
+            libonnxruntime_optimizer.a \
+            libonnxruntime_providers.a \
+            libonnxruntime_session.a \
+            libonnxruntime_util.a; do
+            test -e "$ort_link_profile/$required"
+          done
+
+          test -d "$ort_build_profile/_deps"
+          if [[ -e "$ort_link_root/_deps" || -L "$ort_link_root/_deps" ]]; then
+            rm -rf "$ort_link_root/_deps"
+          fi
+          mkdir -p "$ort_link_root/_deps"
+          dependency_count=0
+          while IFS= read -r archive; do
+            relative_archive="${archive#"$ort_build_profile/_deps/"}"
+            dependency_dir="$(dirname "$relative_archive")"
+            dependency_name="$(basename "$relative_archive")"
+            if [[ "$(basename "$dependency_dir")" == 'RelWithDebInfo' ]]; then
+              staged_relative="$relative_archive"
+            else
+              staged_relative="$dependency_dir/RelWithDebInfo/$dependency_name"
+            fi
+            staged_archive="$ort_link_root/_deps/$staged_relative"
+            mkdir -p "$(dirname "$staged_archive")"
+            ln -sfn "$archive" "$staged_archive"
+            dependency_count=$((dependency_count + 1))
+          done < <(find "$ort_build_profile/_deps" -type f -name '*.a' -print)
+          test "$dependency_count" -gt 0
+          test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx.a"
+          test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx_proto.a"
+          test -e "$ort_link_root/_deps/protobuf-build/RelWithDebInfo/libprotobuf-lite.a" || \
+            test -e "$ort_link_root/_deps/protobuf-build/RelWithDebInfo/libprotobuf.a"
+
+          echo "VERENU_INTEL_ORT_LIB_PATH=$ort_link_root" >> "$GITHUB_ENV"
+          echo 'VERENU_INTEL_ORT_LIB_PROFILE=RelWithDebInfo' >> "$GITHUB_ENV"
+
+      - name: Import macOS signing certificate
+        if: matrix.os-name == 'macos' && env.MACOS_CERTIFICATE != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          rm -f certificate.p12
+          security find-identity -v -p codesigning build.keychain
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify embedded app version
+        shell: bash
+        env:
+          EXPECTED_APP_VERSION: ${{ needs.prepare.outputs.app_version }}
+        run: |
+          set -euo pipefail
+          app_version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+          if [[ "$app_version" != "$EXPECTED_APP_VERSION" ]]; then
+            echo "Expected app version $EXPECTED_APP_VERSION but found $app_version" >&2
+            exit 1
+          fi
+          echo "APP_VERSION=$app_version" >> "$GITHUB_ENV"
+
+      - name: Build and name installers
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.os-name == 'macos' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p release-assets
+          MOUNT_DIR=""
+          cleanup_mount() {
+            if [ -n "${MOUNT_DIR:-}" ]; then
+              hdiutil detach "$MOUNT_DIR" -quiet || true
+              rm -rf "$MOUNT_DIR"
+            fi
+          }
+          trap cleanup_mount EXIT
+
+          verify_macos_dmg() {
+            local dmg_path="$1"
+            MOUNT_DIR="$(mktemp -d)"
+            hdiutil attach "$dmg_path" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
+            local app_path="$MOUNT_DIR/Verenu.app"
+            if [ ! -d "$app_path" ]; then
+              echo "Expected Verenu.app inside $dmg_path"
+              ls -la "$MOUNT_DIR"
+              exit 1
+            fi
+            codesign --verify --deep --strict --verbose=4 "$app_path"
+            codesign -dv --verbose=4 "$app_path"
+            if spctl --assess --type execute --verbose=4 "$app_path"; then
+              echo "spctl accepted $app_path"
+            else
+              echo "spctl rejected $app_path; expected for ad-hoc signed, non-notarized builds"
+            fi
+            hdiutil detach "$MOUNT_DIR" -quiet
+            rm -rf "$MOUNT_DIR"
+            MOUNT_DIR=""
+          }
+
+          if [ "${{ matrix.os-name }}" = "macos" ]; then
+            apple_dmg="src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_aarch64.dmg"
+            apple_release_dmg="release-assets/Verenu_${RELEASE_VERSION}_Apple_Silicon.dmg"
+            intel_dmg="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_x64.dmg"
+            intel_release_dmg="release-assets/Verenu_${RELEASE_VERSION}_Intel.dmg"
+
+            npm run tauri build -- --target aarch64-apple-darwin
+            test -f "$apple_dmg"
+            mv "$apple_dmg" "$apple_release_dmg"
+            verify_macos_dmg "$apple_release_dmg"
+
+            ORT_LIB_PATH="$VERENU_INTEL_ORT_LIB_PATH" \
+            ORT_LIB_PROFILE="$VERENU_INTEL_ORT_LIB_PROFILE" \
+              npm run tauri build -- --target x86_64-apple-darwin
+            test -f "$intel_dmg"
+            mv "$intel_dmg" "$intel_release_dmg"
+            verify_macos_dmg "$intel_release_dmg"
+          else
+            npm run tauri build
+            setup_exe="$(find src-tauri/target/release/bundle/nsis -maxdepth 1 -type f -name 'Verenu_*_x64-setup.exe' -print -quit)"
+            msi_file="$(find src-tauri/target/release/bundle/msi -maxdepth 1 -type f -name 'Verenu_*.msi' -print -quit)"
+            test -n "$setup_exe"
+            test -n "$msi_file"
+            mv "$setup_exe" "release-assets/Verenu_${RELEASE_VERSION}_x64-setup.exe"
+            mv "$msi_file" "release-assets/Verenu_${RELEASE_VERSION}_x64_en-US.msi"
+          fi
+
+          ls -l release-assets
+
+      - name: Upload nightly installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-assets-${{ matrix.os-name }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish nightly release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download generated release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-release-notes
+          path: .
+
+      - name: Download nightly installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-assets-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify and hash release assets
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          expected=(
+            "Verenu_${RELEASE_VERSION}_x64-setup.exe"
+            "Verenu_${RELEASE_VERSION}_x64_en-US.msi"
+            "Verenu_${RELEASE_VERSION}_Apple_Silicon.dmg"
+            "Verenu_${RELEASE_VERSION}_Intel.dmg"
+          )
+          for asset in "${expected[@]}"; do
+            test -f "release-assets/$asset"
+          done
+          (cd release-assets && sha256sum "${expected[@]}" > SHA256SUMS.txt)
+          cat release-assets/SHA256SUMS.txt
+
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          target_commitish: ${{ needs.prepare.outputs.release_sha }}
+          name: Verenu ${{ needs.prepare.outputs.release_version }}
+          body_path: release-notes.md
+          files: release-assets/*
+          prerelease: true
+          make_latest: false
