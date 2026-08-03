@@ -1,6 +1,6 @@
 [package]
 name = "verenu"
-version = "0.16.0"
+version = "0.16.1"
 description = "Verenu — local-first AI dictation"
 authors = ["Verenu Team"]
 edition = "2021"
