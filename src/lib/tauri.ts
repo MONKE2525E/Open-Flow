@@ -1,4 +1,3 @@
-import { getVersion as getTauriVersion } from '@tauri-apps/api/app';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit, listen as tauriListen } from '@tauri-apps/api/event';
 import { defaultHotkey } from './platform';
@@ -1501,8 +1500,9 @@ export function flog(level: 'info' | 'warn' | 'error', message: string): void {
 }
 
 export function getVersion(): Promise<string> {
-  if (hasTauriInternals()) {
-    return getTauriVersion();
-  }
+  // Vite embeds the package version into the frontend bundle after the
+  // release workflow applies its temporary nightly version bump. Using that
+  // same value here keeps the About screen aligned with the updater and the
+  // packaged application instead of relying on a second runtime metadata path.
   return Promise.resolve(__APP_VERSION__);
 }
