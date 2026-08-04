@@ -239,34 +239,35 @@
 
     saveError = '';
     try {
-      await Promise.all([
-        saveSetting('cleanup_intensity', cleanupIntensity),
-        saveSetting('default_tone', tone),
-        saveSetting('cleanup_enabled', cleanupEnabled),
-        saveSetting('transcription_provider', transcriptionProvider),
-        saveSetting('transcription_model', transcriptionDefaultModel),
-        saveSetting('transcription_default_model', transcriptionDefaultModel),
-        saveSetting('transcription_models_by_provider', modelsByProvider(transcriptionDefaultModel, ...(target?.transcriptionFallbacks ?? []))),
-        saveSetting('transcription_fallback_models', target?.transcriptionFallbacks ?? []),
-        saveSetting('dual_transcription_enabled', target?.dualTranscription ?? false),
-        saveSetting('transcription_language', language),
-        saveSetting('cleanup_provider', cleanupProvider),
-        saveSetting('cleanup_model', cleanupDefaultModel),
-        saveSetting('cleanup_default_model', cleanupDefaultModel),
-        saveSetting('cleanup_fallback_models', cleanupEnabled ? (target?.cleanupFallbacks ?? []) : []),
-        saveSetting('appearance_mode', SETUP_APPEARANCE_MODE),
-        saveSetting('mute_audio', silenceOtherAudio),
-        saveSetting('pause_media_during_dictation', silenceOtherAudio),
+      const settingsToSave: Array<() => Promise<unknown>> = [
+        () => saveSetting('cleanup_intensity', cleanupIntensity),
+        () => saveSetting('default_tone', tone),
+        () => saveSetting('cleanup_enabled', cleanupEnabled),
+        () => saveSetting('transcription_provider', transcriptionProvider),
+        () => saveSetting('transcription_model', transcriptionDefaultModel),
+        () => saveSetting('transcription_default_model', transcriptionDefaultModel),
+        () => saveSetting('transcription_models_by_provider', modelsByProvider(transcriptionDefaultModel, ...(target?.transcriptionFallbacks ?? []))),
+        () => saveSetting('transcription_fallback_models', target?.transcriptionFallbacks ?? []),
+        () => saveSetting('dual_transcription_enabled', target?.dualTranscription ?? false),
+        () => saveSetting('transcription_language', language),
+        () => saveSetting('cleanup_provider', cleanupProvider),
+        () => saveSetting('cleanup_model', cleanupDefaultModel),
+        () => saveSetting('cleanup_default_model', cleanupDefaultModel),
+        () => saveSetting('cleanup_fallback_models', cleanupEnabled ? (target?.cleanupFallbacks ?? []) : []),
+        () => saveSetting('appearance_mode', SETUP_APPEARANCE_MODE),
+        () => saveSetting('mute_audio', silenceOtherAudio),
+        () => saveSetting('pause_media_during_dictation', silenceOtherAudio),
         // The wizard no longer asks about these one by one; they are the
         // recommended defaults and are disclosed on the Done screen.
-        saveSetting('noise_reduction', true),
-        saveSetting('contextual_caps_enabled', true),
-        saveSetting('auto_spacing_enabled', true),
-        saveSetting('caps_lock_uppercase_enabled', true),
-        saveSetting('app_context_hint', true),
-        saveSetting('auto_learn_enabled', true),
-        invoke('set_autostart', { enabled: true }),
-      ]);
+        () => saveSetting('noise_reduction', true),
+        () => saveSetting('contextual_caps_enabled', true),
+        () => saveSetting('auto_spacing_enabled', true),
+        () => saveSetting('caps_lock_uppercase_enabled', true),
+        () => saveSetting('app_context_hint', true),
+        () => saveSetting('auto_learn_enabled', true),
+      ];
+      for (const save of settingsToSave) await save();
+      await invoke('set_autostart', { enabled: true });
     } catch (err) {
       // Previously this was swallowed, leaving a half-written config behind an
       // apparently successful setup. Stop before marking setup complete.
