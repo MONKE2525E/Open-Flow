@@ -81,7 +81,7 @@
     if (userPicked) return;
     const list = presets.filter((p) => p.kind === 'preset' && !needsDownload(p));
     if (list.length === 0) return;
-    if (preset && list.some((p) => p.id === preset!.id)) return;
+    if (preset) return;
     preset = list.find((p) => p.id.endsWith('-balanced')) ?? list[0];
   });
 

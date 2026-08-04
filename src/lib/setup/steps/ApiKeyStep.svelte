@@ -12,7 +12,7 @@
     providerName,
     apiKeyDraft = $bindable(),
     showKey = $bindable(),
-    mode = $bindable(),
+    mode = $bindable('fork'),
     keySaved,
     keySaving,
     keyError,
@@ -52,7 +52,8 @@
 
   let slide = $state(0);
   const slideCount = $derived(guide.steps.length);
-  const currentShot = $derived(shotsByKey.get(`${provider}-${slide + 1}`));
+  const safeSlide = $derived(Math.min(slide, Math.max(0, slideCount - 1)));
+  const currentShot = $derived(shotsByKey.get(`${provider}-${safeSlide + 1}`));
 
   // Reset the carousel when the provider changes underneath us.
   $effect(() => {
@@ -61,7 +62,7 @@
   });
 
   function step(delta: number) {
-    slide = (slide + delta + slideCount) % slideCount;
+    slide = (safeSlide + delta + slideCount) % slideCount;
   }
 
   async function openExternal(url: string) {
@@ -120,7 +121,7 @@
         {#key slide}
           <div class="shot-inner" in:fade={{ duration: motionMs(150) }}>
             {#if currentShot}
-              <img class="shot-img" src={currentShot} alt="Step {slide + 1}: {guide.steps[slide]}" />
+              <img class="shot-img" src={currentShot} alt="Step {safeSlide + 1}: {guide.steps[safeSlide]}" />
             {:else}
               <!-- No screenshot for this step yet (see src/assets/setup/README.md).
                    The step number and caption are both already in the row below,
@@ -142,8 +143,8 @@
           aria-label="Previous step"
         ><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
         <div class="shot-caption-text">
-          <span class="shot-step">Step {slide + 1} of {slideCount}</span>
-          <span class="shot-text">{guide.steps[slide]}</span>
+          <span class="shot-step">Step {safeSlide + 1} of {slideCount}</span>
+          <span class="shot-text">{guide.steps[safeSlide]}</span>
         </div>
         <button
           class="shot-nav"

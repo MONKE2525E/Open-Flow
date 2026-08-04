@@ -98,7 +98,7 @@
       <span class="summary-label">Audio</span>
       <span class="summary-val">{languageLabel}</span>
       <span class="summary-meta">
-        {usesHeadphones ? 'Headphones' : 'Speakers'}{micGain !== null ? ` · mic ${micGain.toFixed(1)}×` : ''}
+        {usesHeadphones ? 'Headphones' : 'Speakers'}{micGain != null ? ` · mic ${micGain.toFixed(1)}×` : ''}
       </span>
     </div>
   </div>

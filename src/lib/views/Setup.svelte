@@ -200,7 +200,9 @@
     for (const id of selected) {
       const parsed = splitModelId(id);
       if (!parsed) continue;
-      if (!map[parsed.provider].includes(parsed.model)) map[parsed.provider].push(parsed.model);
+      const providerModels = map[parsed.provider];
+      if (!providerModels) continue;
+      if (!providerModels.includes(parsed.model)) providerModels.push(parsed.model);
     }
     return map;
   }
