@@ -1,14 +1,4 @@
-import type { TranscriptionLanguageCode } from './transcriptionLanguages';
-
 type BaseLanguage = 'en' | 'es' | 'fr' | 'de' | 'pt' | 'zh';
-
-function baseLanguage(code: TranscriptionLanguageCode | string): BaseLanguage {
-  const base = String(code || 'en').toLowerCase().split('-')[0];
-  if (base === 'es' || base === 'fr' || base === 'de' || base === 'pt' || base === 'zh') {
-    return base;
-  }
-  return 'en';
-}
 
 type AudioCopy = {
   inputDeviceLabel: string;

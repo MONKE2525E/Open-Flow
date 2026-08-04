@@ -96,7 +96,7 @@
     // Start any missing downloads now so they run while the user finishes the
     // wizard. Unlike the Models tab we don't defer activation — finish() writes
     // the settings minutes later, and the card shows download progress meanwhile.
-    for (const model of next.target.requiredLocalModels) {
+    for (const model of next.target.requiredLocalModels ?? []) {
       if (installedLocal[model.task]?.includes(model.id)) continue;
       const start = model.task === 'transcription' ? downloadLocalModel : downloadLocalLlmModel;
       start(model.id).catch((err) => console.error('setup preset download failed', err));
