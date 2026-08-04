@@ -29,7 +29,7 @@
   let soundEffectsVolume = $state(100);
   let micGain = $state(3.5);
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
-  const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
+  const audioCopy = getAudioCalibrationCopy();
 
   // Reset any stale calibrated gain on mount so it cannot override the saved
   // manual gain before the next calibration run starts.
@@ -208,7 +208,9 @@
           <span class="cal-phase-badge"
             in:fade={{ duration: motionMs(180), delay: motionMs(50) }}
             out:fade={{ duration: 1 }}>
-            {$calibrationPhase === 'loud' ? audioCopy.phase1Label : audioCopy.phase2Label}
+            {$calibrationPhase === 'ambient' ? audioCopy.phase1Label
+              : $calibrationPhase === 'loud' ? audioCopy.phase2Label
+              : audioCopy.phase3Label}
           </span>
         {/key}
         <span class="cal-timer">{$calibrationCountdown}s</span>
@@ -216,7 +218,9 @@
           <span class="cal-phrase-hint"
             in:fade={{ duration: motionMs(180), delay: motionMs(50) }}
             out:fade={{ duration: 1 }}>
-            {$calibrationPhase === 'loud' ? audioCopy.speakingHint : audioCopy.whisperHint}
+            {$calibrationPhase === 'ambient' ? audioCopy.quietHint
+              : $calibrationPhase === 'loud' ? audioCopy.speakingHint
+              : audioCopy.whisperHint}
           </span>
         {/key}
         <div class="cal-level-bar">

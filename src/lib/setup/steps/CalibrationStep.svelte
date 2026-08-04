@@ -4,38 +4,70 @@
   import { expoOut } from 'svelte/easing';
   import { motionMs } from '../../motion';
   import { getSetupCalibrationCopy } from '../../calibrationCopy';
-  import type { TranscriptionLanguageCode } from '../../transcriptionLanguages';
   import {
     isCalibrating,
     calibrationCountdown,
     calibratedGain,
+    calibrationError,
     micLevel,
     startCalibration,
     cancelCalibration,
     speechDetected,
     calibrationPhase,
+    roomNoisy,
   } from '../../calibration';
 
-  let { language }: { language: TranscriptionLanguageCode } = $props();
+  const copy = getSetupCalibrationCopy();
 
-  let copy = $derived(getSetupCalibrationCopy(language));
+  const phaseLabel = $derived(
+    $calibrationPhase === 'ambient' ? copy.phase1Label
+      : $calibrationPhase === 'loud' ? copy.phase2Label
+      : copy.phase3Label
+  );
+
+  const phasePrompt = $derived(
+    $calibrationPhase === 'ambient' ? copy.ambientPrompt
+      : $calibrationPhase === 'loud' ? copy.readPrompt
+      : copy.whisperPrompt
+  );
+
+  const phasePhrase = $derived(
+    $calibrationPhase === 'ambient' ? copy.ambientPhrase
+      : $calibrationPhase === 'loud' ? copy.readPhrase
+      : copy.whisperPhrase
+  );
 
   onDestroy(() => {
     cancelCalibration();
   });
 </script>
 
-<div class="step">
+<div class="step calibration-step">
+  <!-- The room is as much of a variable as the mic, and it is the one thing the
+       gain math cannot compensate for after the fact. -->
+  <p class="cal-quiet-hint">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+    {copy.quietHint}
+  </p>
+
+  {#if $calibrationError}
+    <div class="cal-error" role="alert">{$calibrationError}</div>
+  {/if}
+
   <div class="calibration-box">
     {#if !$isCalibrating && $calibratedGain === null}
       <div class="cal-start-state" out:fade={{ duration: motionMs(160) }}>
         <div class="cal-steps-preview">
           <div class="cal-step-row">
             <span class="cal-step-num">1</span>
-            <span class="cal-step-text">{copy.step1Text}</span>
+            <span class="cal-step-text">{copy.step0Text}</span>
           </div>
           <div class="cal-step-row">
             <span class="cal-step-num">2</span>
+            <span class="cal-step-text">{copy.step1Text}</span>
+          </div>
+          <div class="cal-step-row">
+            <span class="cal-step-num">3</span>
             <span class="cal-step-text">{copy.step2Text}</span>
           </div>
         </div>
@@ -47,26 +79,32 @@
           <div class="cal-label-stack">
             {#key $calibrationPhase}
               <span class="cal-phase-label" in:fade={{ duration: motionMs(200), delay: motionMs(80) }} out:fade={{ duration: motionMs(80) }}>
-                {$calibrationPhase === 'loud' ? copy.phase1Label : copy.phase2Label}
+                {phaseLabel}
               </span>
             {/key}
           </div>
-          <div class="cal-timer-ring">
+          <div class="cal-timer-ring" class:quiet={$calibrationPhase === 'ambient'}>
             <span class="cal-countdown">{$calibrationCountdown}s</span>
           </div>
         </div>
         <div class="cal-content-stack">
           {#key $calibrationPhase}
             <div class="cal-phase-content" in:fade={{ duration: motionMs(200), delay: motionMs(80) }} out:fade={{ duration: motionMs(80) }}>
-              <p class="cal-prompt">{$calibrationPhase === 'loud' ? copy.readPrompt : copy.whisperPrompt}</p>
-              <blockquote class="cal-phrase">"{$calibrationPhase === 'loud' ? copy.readPhrase : copy.whisperPhrase}"</blockquote>
+              <p class="cal-prompt">{phasePrompt}</p>
+              <blockquote class="cal-phrase" class:muted={$calibrationPhase === 'ambient'}>
+                {$calibrationPhase === 'ambient' ? phasePhrase : `"${phasePhrase}"`}
+              </blockquote>
             </div>
           {/key}
         </div>
 
         <div class="cal-meter-container">
           <div class="cal-meter-track">
-            <div class="cal-meter-fill" style="width: {($micLevel * 100).toFixed(0)}%"></div>
+            <div
+              class="cal-meter-fill"
+              class:quiet={$calibrationPhase === 'ambient'}
+              style="width: {($micLevel * 100).toFixed(0)}%"
+            ></div>
           </div>
         </div>
         <button class="cal-cancel-btn" onclick={cancelCalibration} in:fly={{ y: 6, duration: motionMs(200), delay: motionMs(240), easing: expoOut }}>
@@ -95,6 +133,11 @@
           <h3 class="cal-result-title">{copy.successTitle}</h3>
           <p class="cal-result-desc">{copy.successDescription} <strong>{$calibratedGain.toFixed(1)}×</strong>. {copy.successTail}</p>
         {/if}
+
+        {#if $roomNoisy}
+          <p class="cal-noisy-note">{copy.noisyRoomNote}</p>
+        {/if}
+
         <button class="cal-recalibrate-btn" onclick={startCalibration}>{copy.recalibrateButton}</button>
       </div>
     {/if}
@@ -102,6 +145,30 @@
 </div>
 
 <style>
+  .calibration-step { gap: 12px; }
+
+  .cal-quiet-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    font-size: 12px;
+    color: var(--ink-mute);
+    line-height: 1.5;
+  }
+
+  .cal-quiet-hint svg { flex-shrink: 0; margin-top: 2px; color: var(--ink-faint); }
+
+  .cal-error {
+    padding: 10px 12px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--danger);
+    background: var(--danger-bg);
+    color: var(--ink-soft);
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+
   .calibration-box {
     background: var(--paper-2);
     border: 1px solid var(--line);
@@ -113,6 +180,7 @@
     justify-items: center;
     text-align: center;
     width: 100%;
+    box-sizing: border-box;
     overflow: hidden;
   }
 
@@ -133,29 +201,21 @@
 
   .cal-step-row { display: flex; align-items: center; gap: 10px; animation: calStepIn 0.28s ease both; }
   .cal-step-row:nth-child(2) { animation-delay: 0.07s; }
+  .cal-step-row:nth-child(3) { animation-delay: 0.14s; }
 
   @keyframes calStepIn {
     from { opacity: 0; transform: translateY(6px); }
     to   { opacity: 1; transform: translateY(0); }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .cal-step-row, .cal-success-icon, .cal-warning-icon { animation: none; }
-  }
-
   .cal-phase-content { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; }
 
   .cal-step-num {
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: var(--accent-soft);
-    color: var(--accent-ink);
+    width: 12px;
+    color: var(--accent);
     font-size: 11px;
     font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    font-variant-numeric: tabular-nums;
     flex-shrink: 0;
   }
 
@@ -183,6 +243,10 @@
     justify-content: center;
     animation: pulseCal 1.5s infinite;
   }
+
+  /* The silent step should not look like it wants input. */
+  .cal-timer-ring.quiet { border-color: var(--line-strong); animation: none; }
+  .cal-timer-ring.quiet .cal-countdown { color: var(--ink-mute); }
 
   @keyframes pulseCal {
     0%, 100% { border-color: var(--accent); transform: scale(1); }
@@ -217,6 +281,8 @@
     line-height: 1.4;
   }
 
+  .cal-phrase.muted { color: var(--ink-faint); font-style: normal; font-size: 15px; }
+
   .cal-meter-container { width: 100%; max-width: 280px; margin-top: 8px; }
 
   .cal-meter-track {
@@ -234,6 +300,8 @@
     border-radius: 999px;
     transition: width 0.05s ease-out;
   }
+
+  .cal-meter-fill.quiet { background: var(--line-strong); }
 
   .cal-success-icon {
     width: 56px;
@@ -276,8 +344,20 @@
 
   .cal-result-title { font-family: var(--serif); font-size: 18px; font-weight: 500; color: var(--ink-strong); margin: 0; }
 
-  .cal-result-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin: 0; max-width: 360px; }
+  .cal-result-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin: 0; max-width: 380px; }
   .cal-result-desc strong { color: var(--accent); font-family: var(--mono); font-size: 13.5px; }
+
+  .cal-noisy-note {
+    margin: 0;
+    padding: 8px 12px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--warning-line);
+    background: var(--warning-bg);
+    color: var(--ink-soft);
+    font-size: 12px;
+    line-height: 1.45;
+    max-width: 400px;
+  }
 
   .cal-cancel-btn {
     margin-top: 4px;
@@ -309,4 +389,9 @@
   }
 
   .cal-recalibrate-btn:hover { background: var(--paper-2); color: var(--ink-strong); border-color: var(--accent); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cal-step-row, .cal-success-icon, .cal-warning-icon { animation: none; }
+    .cal-timer-ring { animation: none; }
+  }
 </style>

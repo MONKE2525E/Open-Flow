@@ -1,42 +1,65 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { isMac } from '../../platform';
-
-  const hkKey1 = isMac ? 'fn' : 'Ctrl';
-  const hkKey2 = isMac ? 'Control' : 'Windows';
+  import { hotkeyLabels } from '../../hotkey.svelte';
+  import { reducedMotionEnabled } from '../../motion';
 
   let {
     providerName,
     cleanupName,
     toneName,
     languageLabel,
-    appearanceName,
+    micGain,
+    usesHeadphones,
     hasKey,
+    presetName,
   }: {
     providerName: string;
+    presetName: string;
     cleanupName: string;
     toneName: string;
     languageLabel: string;
-    appearanceName: string;
+    micGain: number | null;
+    usesHeadphones: boolean;
     hasKey: boolean;
   } = $props();
 
+  const keyLabels = $derived(hotkeyLabels());
+  const cleanupOff = $derived(cleanupName === 'Off');
+
+  // The wizard no longer asks about these individually — it turns them all on.
+  // Naming them here is the disclosure: auto-learn watches the focused field for
+  // corrections and app context hint reads text around the caret.
+  const smartProcessing = 'Cleanup, noise reduction, contextual caps, auto-spacing, caps-lock detection, app context hint, and auto-learn are all on.';
+
   let checkAnimating = $state(false);
   onMount(() => {
+    if (reducedMotionEnabled()) {
+      checkAnimating = true;
+      return;
+    }
     const t = setTimeout(() => { checkAnimating = true; }, 200);
     return () => clearTimeout(t);
   });
+
+  const ringStyle = $derived(
+    reducedMotionEnabled()
+      ? 'transform: rotate(-90deg); transform-origin: 32px 32px;'
+      : 'transition: stroke-dashoffset 0.6s cubic-bezier(0.4,0,0.2,1); transform: rotate(-90deg); transform-origin: 32px 32px;'
+  );
+  const checkStyle = $derived(
+    reducedMotionEnabled() ? '' : 'transition: stroke-dashoffset 0.4s 0.5s cubic-bezier(0.4,0,0.2,1);'
+  );
 </script>
 
 <div class="step done-step">
   <div class="done-check-wrap">
-    <svg class="done-check" class:animate={checkAnimating} width="64" height="64" viewBox="0 0 64 64" fill="none">
+    <svg class="done-check" width="64" height="64" viewBox="0 0 64 64" fill="none">
       <circle cx="32" cy="32" r="28" stroke="var(--accent-soft)" stroke-width="6"/>
       <circle cx="32" cy="32" r="28" stroke="var(--accent)" stroke-width="6"
         stroke-dasharray="176"
         stroke-dashoffset={checkAnimating ? '0' : '176'}
         stroke-linecap="round"
-        style="transition: stroke-dashoffset 0.6s cubic-bezier(0.4,0,0.2,1); transform: rotate(-90deg); transform-origin: 32px 32px;"
+        style={ringStyle}
       />
       <polyline
         points="20,33 28,41 44,24"
@@ -46,14 +69,14 @@
         stroke-linejoin="round"
         stroke-dasharray="36"
         stroke-dashoffset={checkAnimating ? '0' : '36'}
-        style="transition: stroke-dashoffset 0.4s 0.5s cubic-bezier(0.4,0,0.2,1);"
+        style={checkStyle}
       />
     </svg>
   </div>
   <h2 class="done-title">You're all set.</h2>
   <p class="done-sub">
-    Hold <kbd>{hkKey1}</kbd> + <kbd>{hkKey2}</kbd> anywhere to start dictating.
-    Verenu lives in your system tray and is always ready.
+    Hold {#each keyLabels as k, i}{#if i > 0}<span class="done-plus">+</span>{/if}<kbd>{k}</kbd>{/each}
+    anywhere to start dictating. Verenu lives in your system tray and is always ready.
   </p>
 
   {#if !hasKey}
@@ -61,38 +84,48 @@
   {/if}
 
   <div class="done-summary">
-    <div class="summary-item">
+    <div class="summary-group">
       <span class="summary-label">Provider</span>
-      <span class="summary-val">{providerName}</span>
+      <span class="summary-val">{presetName || providerName}</span>
+      <span class="summary-meta">{presetName ? providerName : hasKey ? 'Key saved' : 'No key yet'}</span>
     </div>
-    <div class="summary-item">
-      <span class="summary-label">Cleanup</span>
-      <span class="summary-val">{cleanupName}</span>
+    <div class="summary-group">
+      <span class="summary-label">Writing</span>
+      <span class="summary-val">{cleanupOff ? 'Cleanup off' : `${cleanupName} cleanup`}</span>
+      <span class="summary-meta">{cleanupOff ? 'Text injected as transcribed' : `${toneName} tone`}</span>
     </div>
-    <div class="summary-item">
-      <span class="summary-label">Tone</span>
-      <span class="summary-val">{toneName}</span>
-    </div>
-    <div class="summary-item">
-      <span class="summary-label">Language</span>
+    <div class="summary-group">
+      <span class="summary-label">Audio</span>
       <span class="summary-val">{languageLabel}</span>
-    </div>
-    <div class="summary-item">
-      <span class="summary-label">Theme</span>
-      <span class="summary-val">{appearanceName}</span>
+      <span class="summary-meta">
+        {usesHeadphones ? 'Headphones' : 'Speakers'}{micGain !== null ? ` · mic ${micGain.toFixed(1)}×` : ''}
+      </span>
     </div>
   </div>
-  <p class="done-note">Everything can be changed in Settings or the Style page.</p>
+
+  <p class="done-defaults">{smartProcessing} Everything here can be changed in Settings or the Style page.</p>
 </div>
 
 <style>
-  .done-step { align-items: center; text-align: center; max-width: 440px; }
+  .done-step { align-items: center; text-align: center; max-width: 480px; }
 
   .done-check-wrap { margin-bottom: 4px; }
 
   .done-title { font-family: var(--serif); font-size: 26px; font-weight: 500; color: var(--ink-strong); margin: 0; }
 
-  .done-sub { font-size: 13.5px; color: var(--ink-mute); margin: 0; line-height: 1.5; }
+  .done-sub { font-size: 13.5px; color: var(--ink-mute); margin: 0; line-height: 1.7; }
+
+  .done-sub kbd {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line-strong);
+    border-radius: 5px;
+    padding: 2px 7px;
+    color: var(--ink-soft);
+  }
+
+  .done-plus { color: var(--ink-faint); padding: 0 3px; }
 
   .done-warning {
     padding: 9px 12px;
@@ -105,17 +138,26 @@
   }
 
   .done-summary {
-    display: flex;
-    gap: 16px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    width: 100%;
     background: var(--paper-2);
     border: 1px solid var(--line);
     border-radius: var(--r-md);
-    padding: 14px 20px;
-    flex-wrap: wrap;
-    justify-content: center;
+    padding: 14px 8px;
   }
 
-  .summary-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .summary-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 0 10px;
+    min-width: 0;
+  }
+
+  .summary-group + .summary-group { border-left: 1px solid var(--line); }
 
   .summary-label {
     font-size: 10.5px;
@@ -125,7 +167,20 @@
     color: var(--ink-faint);
   }
 
-  .summary-val { font-size: 13px; font-weight: 500; color: var(--ink-soft); }
+  .summary-val { font-size: 13px; font-weight: 500; color: var(--ink-strong); }
 
-  .done-note { font-size: 12px; color: var(--ink-faint); margin: 0; }
+  .summary-meta { font-size: 11px; color: var(--ink-mute); line-height: 1.35; }
+
+  .done-defaults {
+    font-size: 11.5px;
+    color: var(--ink-mute);
+    margin: 0;
+    line-height: 1.5;
+    max-width: 400px;
+  }
+
+  @media (max-width: 700px) {
+    .done-summary { grid-template-columns: 1fr; }
+    .summary-group + .summary-group { border-left: none; border-top: 1px solid var(--line); padding-top: 10px; }
+  }
 </style>

@@ -3,39 +3,36 @@ import type { AppearanceMode, CleanupIntensity, ProviderId, ToneId } from '../se
 export type SetupProvider = {
   id: ProviderId;
   name: string;
-  tagline: string;
   badge: string;
   desc: string;
 };
 
+// Recommended default first. Local sits last because it is the only option that
+// can't dictate until a separate model download finishes.
 export const providers: SetupProvider[] = [
-  {
-    id: 'local',
-    name: 'Local/offline',
-    tagline: 'Parakeet V3 · Private',
-    badge: 'Beta',
-    desc: 'Runs transcription on this device after you download the local model.',
-  },
   {
     id: 'groq',
     name: 'Groq',
-    tagline: 'Free tier · Fastest',
     badge: 'Recommended',
-    desc: 'Free API with very generous limits. LPU inference — the fastest option.',
-  },
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    tagline: 'GPT-4o · High quality',
-    badge: '',
-    desc: 'Uses gpt-4o-transcribe and gpt-4o-mini. Best cleanup quality.',
+    desc: 'A free key with generous limits, running on LPUs — the fastest option here.',
   },
   {
     id: 'google',
     name: 'Google Gemini',
-    tagline: 'Gemini · Fast & free tier',
     badge: '',
-    desc: 'Uses Gemini 3.5 Flash for both transcription and cleanup. Generous free tier.',
+    desc: 'Gemini 3.5 Flash for both transcription and cleanup, on a generous free tier.',
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    badge: '',
+    desc: 'gpt-4o-transcribe and gpt-4o-mini. The most polished cleanup, but it bills per use.',
+  },
+  {
+    id: 'local',
+    name: 'On this device',
+    badge: 'Beta',
+    desc: 'Parakeet V3 runs on your machine and nothing leaves it. Needs a model download first.',
   },
 ];
 
@@ -43,23 +40,40 @@ export const providerGuides: Record<ProviderId, { url: string; steps: string[] }
   local: {
     url: 'No API key needed',
     steps: [
-      'Choose Local/offline for transcription',
+      'Choose "On this device" for transcription',
       'Download Parakeet V3 from Settings → Models',
       'Set Cleanup to Off if you want the transcript to stay local too',
       'You can still add a cloud cleanup provider later',
     ],
   },
+  // Captions are the carousel's step text and pair 1:1 with the screenshots in
+  // src/assets/setup/<provider>-<n>-*.png — keep the two in step.
   groq: {
     url: 'console.groq.com/keys',
-    steps: ['Go to console.groq.com/keys', 'Sign in or create a free account', 'Click "Create API Key"', 'Copy and paste it below'],
+    steps: [
+      'Sign in at console.groq.com — free, no card needed',
+      'Open API Keys, then click "Create API Key"',
+      'Give it any name and click Submit',
+      'Copy the key now — Groq only shows it once',
+    ],
   },
   openai: {
     url: 'platform.openai.com/api-keys',
-    steps: ['Go to platform.openai.com/api-keys', 'Sign in to your OpenAI account', 'Click "Create new secret key"', 'Copy and paste it below'],
+    steps: [
+      'Sign in or sign up at platform.openai.com',
+      'On the home page, click "Create an API key"',
+      'Give it any name and click Create secret key',
+      'Copy the key now — OpenAI only shows it once',
+    ],
   },
   google: {
     url: 'aistudio.google.com/app/apikey',
-    steps: ['Go to aistudio.google.com', 'Sign in with your Google account', 'Click "Get API key" → "Create API key"', 'Copy and paste it below'],
+    steps: [
+      'Sign in at aistudio.google.com and accept the terms',
+      'Open API Keys, then click "Create API key"',
+      'Give it any name and click Create key',
+      'Open the key and click "Copy key"',
+    ],
   },
   assemblyai: {
     url: 'app.assemblyai.com',
@@ -70,10 +84,10 @@ export const providerGuides: Record<ProviderId, { url: string; steps: string[] }
 export type CleanupCard = { id: CleanupIntensity; name: string; desc: string };
 
 export const cleanupCards: CleanupCard[] = [
-  { id: 'none', name: 'Off', desc: 'No cleanup provider call' },
-  { id: 'light', name: 'Light', desc: 'Light touch-ups only' },
+  { id: 'none', name: 'Off', desc: 'Raw transcript, no second AI call' },
+  { id: 'light', name: 'Light', desc: 'Punctuation and obvious slips only' },
   { id: 'medium', name: 'Medium', desc: 'Fillers and repetition removed' },
-  { id: 'high', name: 'Strong', desc: 'Shorter and more aggressive cleanup' },
+  { id: 'high', name: 'Strong', desc: 'Rewritten shorter and tighter' },
 ];
 
 export type ToneCard = { id: ToneId; name: string; desc: string };
@@ -104,10 +118,8 @@ export function writingStylePreview(intensity: CleanupCard['id'], tone: ToneCard
   return { before: SAMPLE_RAW, after: tonePreview[tone](cleanupPreview[intensity]) };
 }
 
-export type AppearanceCard = { id: AppearanceMode; name: string; desc: string };
-
-export const appearanceModes: AppearanceCard[] = [
-  { id: 'system', name: 'System', desc: 'Match your system theme automatically.' },
-  { id: 'dark', name: 'Dark', desc: 'Lower glare for night work and dark desktops.' },
-  { id: 'light', name: 'Light', desc: 'Brighter surfaces with higher daylight contrast.' },
-];
+/**
+ * The wizard no longer asks about appearance — it is not a first-run decision,
+ * and Settings → General has a live 3-way picker. Setup writes 'system'.
+ */
+export const SETUP_APPEARANCE_MODE: AppearanceMode = 'system';
