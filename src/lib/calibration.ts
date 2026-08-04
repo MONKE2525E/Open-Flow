@@ -146,11 +146,16 @@ export async function startCalibration() {
   } else {
     unlistenDisplay?.();
     unlistenRaw?.();
+    return;
   }
 
   try {
     await invoke('start_calibration_monitoring');
   } catch (e) {
+    if (sessionId !== currentCalibrationSession || !get(isCalibrating)) {
+      await invoke('stop_calibration_monitoring').catch(() => {});
+      return;
+    }
     console.error('Failed to start calibration monitoring:', e);
     const msg = e && typeof e === 'object' && 'message' in e ? String((e as any).message) : (e ? String(e) : "");
     if (msg && msg.includes("Microphone access denied")) {
@@ -164,6 +169,13 @@ export async function startCalibration() {
       );
     }
     void cancelCalibration();
+    return;
+  }
+
+  if (sessionId !== currentCalibrationSession || !get(isCalibrating)) {
+    // Cancellation can win while the backend is still opening the capture.
+    // Stop the orphaned backend session without touching a newer frontend one.
+    await invoke('stop_calibration_monitoring').catch(() => {});
     return;
   }
 

@@ -31,7 +31,7 @@
   // Enter on the search box takes the only remaining match — faster than
   // reaching for the mouse once you have typed enough to narrow it down.
   function onSearchKey(event: KeyboardEvent) {
-    if (event.key === 'Enter' && filtered.length > 0) {
+    if (event.key === 'Enter' && filtered.length === 1) {
       event.preventDefault();
       pick(filtered[0].code);
       listEl?.scrollTo({ top: 0 });

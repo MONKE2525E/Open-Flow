@@ -371,6 +371,7 @@
       // out rather than a second, disabled "Continue" that strands anyone who
       // does not pick a card.
       if (apiKeyMode === 'fork' && !keySaved) return bar({ rightLabel: "I'll add it later", onRight: goNext });
+      if (apiKeyMode === 'paste') return bar({ leftLabel: 'Skip for now', rightLabel: 'Continue', onRight: goNext });
       return bar({ leftLabel: 'Skip for now', rightLabel: 'Continue', onRight: goNext });
     }
     if (isMac && step === permissionStep) {
