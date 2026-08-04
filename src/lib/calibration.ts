@@ -153,7 +153,7 @@ export async function startCalibration() {
     await invoke('start_calibration_monitoring');
   } catch (e) {
     if (sessionId !== currentCalibrationSession || !get(isCalibrating)) {
-      await invoke('stop_calibration_monitoring').catch(() => {});
+      if (!currentCalibrationSession) await invoke('stop_calibration_monitoring').catch(() => {});
       return;
     }
     console.error('Failed to start calibration monitoring:', e);
@@ -175,7 +175,7 @@ export async function startCalibration() {
   if (sessionId !== currentCalibrationSession || !get(isCalibrating)) {
     // Cancellation can win while the backend is still opening the capture.
     // Stop the orphaned backend session without touching a newer frontend one.
-    await invoke('stop_calibration_monitoring').catch(() => {});
+    if (!currentCalibrationSession) await invoke('stop_calibration_monitoring').catch(() => {});
     return;
   }
 

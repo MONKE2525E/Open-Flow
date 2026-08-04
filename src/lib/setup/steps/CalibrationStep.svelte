@@ -122,7 +122,7 @@
             </svg>
           </div>
           <h3 class="cal-result-title">{copy.silenceTitle}</h3>
-          <p class="cal-result-desc">{copy.silenceDescription} <strong>{$calibratedGain.toFixed(1)}×</strong>.</p>
+          <p class="cal-result-desc">{copy.silenceDescription} <strong>{$calibratedGain?.toFixed(1) ?? '3.5'}×</strong>.</p>
         {:else}
           <div class="cal-success-icon">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -131,7 +131,7 @@
             </svg>
           </div>
           <h3 class="cal-result-title">{copy.successTitle}</h3>
-          <p class="cal-result-desc">{copy.successDescription} <strong>{$calibratedGain.toFixed(1)}×</strong>. {copy.successTail}</p>
+          <p class="cal-result-desc">{copy.successDescription} <strong>{$calibratedGain?.toFixed(1) ?? '3.5'}×</strong>. {copy.successTail}</p>
         {/if}
 
         {#if $roomNoisy}

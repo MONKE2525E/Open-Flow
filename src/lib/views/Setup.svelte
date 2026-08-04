@@ -66,6 +66,7 @@
   let language = $state<TranscriptionLanguageCode>('en');
   let usesHeadphones = $state(true);
   let saveError = $state('');
+  let finishing = $state(false);
 
   let providerDisplayName = $derived(providers.find((p) => p.id === provider)?.name ?? '');
   const setupCalibrationCopy = getSetupCalibrationCopy();
@@ -227,6 +228,8 @@
   }
 
   async function finish() {
+    if (finishing) return;
+    finishing = true;
     const target = modelPreset?.target ?? null;
     const providerDefaultTranscription = provider === 'local'
       ? 'local/parakeet-v3'
@@ -295,6 +298,7 @@
       // apparently successful setup. Stop before marking setup complete.
       console.error('Failed to save setup settings:', err);
       saveError = 'Some settings could not be saved. Check that Verenu can write to its data folder, then try again.';
+      finishing = false;
       return;
     }
 
@@ -303,12 +307,14 @@
     } catch (err) {
       console.error('Failed to mark setup complete:', err);
       saveError = 'Your choices were saved, but setup could not be marked complete. Try again.';
+      finishing = false;
       return;
     }
 
     appStore.appearanceMode = SETUP_APPEARANCE_MODE;
     appStore.cleanupEnabled = cleanupEnabled;
     appStore.setupComplete = true;
+    finishing = false;
   }
 
   type HeaderInfo = { title: string; subtitle: string; name: string } | null;
@@ -361,7 +367,7 @@
 
   let actionBar = $derived.by((): ActionBarConfig => {
     if (step === 0) return bar({ rightLabel: 'Get Started', rightLg: true, onRight: goNext });
-    if (step === doneStep) return bar({ rightLabel: 'Start dictating', rightLg: true, onRight: finish });
+    if (step === doneStep) return bar({ rightLabel: finishing ? 'Saving…' : 'Start dictating', rightLg: true, rightDisabled: finishing, onRight: finish });
     if (step === providerStep) return bar({ rightLabel: 'Next', onRight: goNext });
     if (step === apiKeyStep) {
       if (provider === 'local') return bar({ rightLabel: 'Continue', onRight: goNext });
