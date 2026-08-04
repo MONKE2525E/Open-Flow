@@ -23,7 +23,7 @@
     apiKeyDraft: string;
     showKey: boolean;
     /** 'fork' asks whether they have a key; 'tutorial' walks them through making one. */
-    mode: 'fork' | 'tutorial' | 'paste';
+    mode?: 'fork' | 'tutorial' | 'paste';
     keySaved: boolean;
     keySaving: boolean;
     keyError: string;

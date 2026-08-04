@@ -150,7 +150,8 @@
   }
 
   function jumpToStep(target: number) {
-    if (target < step) void animateTo(target, 'back');
+    if (target === step) return;
+    void animateTo(target, target < step ? 'back' : 'forward');
   }
 
   async function saveKey() {
@@ -196,6 +197,24 @@
       google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
       assemblyai: [],
       local: ['parakeet-v3'],
+    };
+    for (const id of selected) {
+      const parsed = splitModelId(id);
+      if (!parsed) continue;
+      const providerModels = map[parsed.provider];
+      if (!providerModels) continue;
+      if (!providerModels.includes(parsed.model)) providerModels.push(parsed.model);
+    }
+    return map;
+  }
+
+  function cleanupModelsByProvider(...selected: string[]): ProviderModelMap {
+    const map: ProviderModelMap = {
+      groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+      openai: ['gpt-4o-mini', 'gpt-4o'],
+      google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+      assemblyai: [],
+      local: ['qwen2.5-3b-instruct'],
     };
     for (const id of selected) {
       const parsed = splitModelId(id);
@@ -255,6 +274,7 @@
         () => saveSetting('cleanup_provider', cleanupProvider),
         () => saveSetting('cleanup_model', cleanupDefaultModel),
         () => saveSetting('cleanup_default_model', cleanupDefaultModel),
+        () => saveSetting('cleanup_models_by_provider', cleanupModelsByProvider(cleanupDefaultModel, ...(target?.cleanupFallbacks ?? []))),
         () => saveSetting('cleanup_fallback_models', cleanupEnabled ? (target?.cleanupFallbacks ?? []) : []),
         () => saveSetting('appearance_mode', SETUP_APPEARANCE_MODE),
         () => saveSetting('mute_audio', silenceOtherAudio),
