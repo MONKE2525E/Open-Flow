@@ -1,14 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke, listen } from '../../tauri';
-  import { isMac, formatKeyLabel, defaultHotkey } from '../../platform';
+  import { isMac } from '../../platform';
+  import { hotkeyCodes, hotkeyLabels, hotkeyWatchCodes, matchesHotkey } from '../../hotkey.svelte';
 
-  let hotkey = $state<string[]>(defaultHotkey);
-  invoke<string[] | null>('get_setting', { key: 'hotkey' })
-    .then((hk) => { if (hk && hk.length === 2) hotkey = hk; })
-    .catch(() => {});
-  const keyLabels = $derived(hotkey.filter(Boolean).map(formatKeyLabel));
-  const setupTryHotkeyCodes = new Set(['ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight']);
+  const keyLabels = $derived(hotkeyLabels());
+  const watchCodes = $derived(hotkeyWatchCodes());
 
   let sampleText = $state('');
   let errorMessage = $state('');
@@ -25,9 +22,7 @@
   }
 
   function isSetupTryChord() {
-    const ctrlHeld = pressedHotkeyCodes.has('ControlLeft') || pressedHotkeyCodes.has('ControlRight');
-    const metaHeld = pressedHotkeyCodes.has('MetaLeft') || pressedHotkeyCodes.has('MetaRight');
-    return ctrlHeld && metaHeld;
+    return matchesHotkey(pressedHotkeyCodes);
   }
 
   async function startLocalRecording() {
@@ -61,7 +56,7 @@
   }
 
   function handleSetupTryKeydown(event: KeyboardEvent) {
-    if (isMac || !tryItFieldFocused() || !setupTryHotkeyCodes.has(event.code)) return;
+    if (isMac || !tryItFieldFocused() || !watchCodes.has(event.code)) return;
     pressedHotkeyCodes.add(event.code);
     if (!isSetupTryChord()) return;
     event.preventDefault();
@@ -70,7 +65,7 @@
   }
 
   function handleSetupTryKeyup(event: KeyboardEvent) {
-    if (isMac || !setupTryHotkeyCodes.has(event.code)) return;
+    if (isMac || !watchCodes.has(event.code)) return;
     const wasChord = isSetupTryChord();
     pressedHotkeyCodes.delete(event.code);
     if (!wasChord) return;
@@ -144,7 +139,7 @@
       {#if i > 0}<span>+</span>{/if}<kbd>{k}</kbd>
     {/each}
     <p>Hold {keyLabels.length > 1 ? 'the keys' : 'the key'}, say a sentence, then release.</p>
-    {#if isMac && hotkey[0] === 'F5'}
+    {#if isMac && hotkeyCodes()[0] === 'F5'}
       <p class="tryit-note">Nothing happening? F5 may be opening macOS Dictation — turn it off in System Settings → Keyboard → Dictation, or hold Fn with F5.</p>
     {/if}
   </div>

@@ -132,6 +132,13 @@
       load(true);
     }));
 
+    trackListener(listen<Entry>('verenu:history-updated', (ev) => {
+      failedEntry = null;
+      if (failedTimer) { clearTimeout(failedTimer); failedTimer = null; }
+      recents = [ev.payload, ...recents.filter((entry) => entry.id !== ev.payload.id)];
+      invoke<Stats>('get_stats').then((nextStats) => { stats = nextStats; }).catch(() => {});
+    }));
+
     trackListener(listen('verenu:history-pruned', () => load(true)));
 
     trackListener(listen<string>('verenu:pipeline-failed', (ev) => {

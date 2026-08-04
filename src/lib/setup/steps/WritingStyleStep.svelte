@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { CleanupIntensity, ToneId } from '../../settings';
+  import { fade } from 'svelte/transition';
+  import { motionMs } from '../../motion';
   import { cleanupCards, toneCards, writingStylePreview } from '../setupData';
 
   let {
@@ -7,54 +9,76 @@
     tone = $bindable(),
   }: { intensity: CleanupIntensity; tone: ToneId } = $props();
 
-  let preview = $derived(writingStylePreview(intensity, tone));
+  // Tone is a cleanup-LLM instruction, so with cleanup off it has nothing to act on.
+  // Mirrors how Style.svelte inerts the whole page when cleanup_enabled is false.
+  const cleanupOff = $derived(intensity === 'none');
+  const preview = $derived(writingStylePreview(intensity, tone));
 </script>
 
 <div class="step writing-style-step">
   <div class="style-group">
-    <p class="style-group-label">Cleanup intensity</p>
-    <div class="option-cards">
+    <p class="group-label">Cleanup intensity</p>
+    <div class="style-grid">
       {#each cleanupCards as c}
         <button
-          class="option-card"
+          class="pick-card style-card"
           class:selected={intensity === c.id}
+          aria-pressed={intensity === c.id}
           onclick={() => { intensity = c.id; }}
         >
-          <div class="option-card-top">
-            <span class="option-name">{c.name}</span>
-            <div class="option-radio" class:checked={intensity === c.id}></div>
+          <div class="card-top">
+            <span class="card-name">{c.name}</span>
+            <div class="pick-radio" class:checked={intensity === c.id}></div>
           </div>
-          <p class="option-desc">{c.desc}</p>
+          <p class="card-desc">{c.desc}</p>
         </button>
       {/each}
     </div>
   </div>
 
-  <div class="style-group">
-    <p class="style-group-label">Tone</p>
-    <div class="tone-grid">
+  <div class="style-group" class:disabled={cleanupOff}>
+    <div class="group-head">
+      <p class="group-label">Tone</p>
+      {#if cleanupOff}
+        <span class="group-note">Only applies when cleanup runs</span>
+      {/if}
+    </div>
+    <div class="style-grid tone-grid" inert={cleanupOff}>
       {#each toneCards as t}
         <button
-          class="tone-card"
-          class:selected={tone === t.id}
+          class="pick-card style-card"
+          class:selected={tone === t.id && !cleanupOff}
+          aria-pressed={tone === t.id && !cleanupOff}
           onclick={() => { tone = t.id; }}
         >
-          <div class="tone-name">{t.name}</div>
-          <p class="tone-desc">{t.desc}</p>
-          <div class="tone-check" class:visible={tone === t.id}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          <div class="card-top">
+            <span class="card-name">{t.name}</span>
+            <div class="pick-radio" class:checked={tone === t.id && !cleanupOff}></div>
           </div>
+          <p class="card-desc">{t.desc}</p>
         </button>
       {/each}
     </div>
   </div>
 
   <div class="preview-box">
-    <span class="preview-label">Preview</span>
-    <div class="preview-row">
-      <span class="preview-before">"{preview.before}"</span>
-      <span class="preview-arrow" aria-hidden="true">→</span>
-      <span class="preview-after">"{preview.after}"</span>
+    <span class="group-label">Preview</span>
+    <!-- Stacked in one grid cell so the outgoing and incoming previews
+         cross-fade in place instead of the box snapping to a new height. -->
+    <div class="preview-stack">
+      {#key cleanupOff ? 'off' : `${intensity}-${tone}`}
+        <div class="preview-slot" in:fade={{ duration: motionMs(180), delay: motionMs(70) }} out:fade={{ duration: motionMs(70) }}>
+          {#if cleanupOff}
+            <p class="preview-off">Cleanup is off — whatever you say is injected exactly as transcribed.</p>
+          {:else}
+            <div class="preview-row">
+              <span class="preview-before">"{preview.before}"</span>
+              <span class="preview-arrow" aria-hidden="true">→</span>
+              <span class="preview-after">"{preview.after}"</span>
+            </div>
+          {/if}
+        </div>
+      {/key}
     </div>
   </div>
 </div>
@@ -64,132 +88,61 @@
 
   .style-group { display: flex; flex-direction: column; gap: 8px; }
 
-  .style-group-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--ink-faint);
-    margin: 0;
+  /* Fading rather than snapping when cleanup is switched off. */
+  .style-group { transition: opacity 0.22s ease; }
+  .style-group.disabled { opacity: 0.4; }
+
+  .group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+
+  .group-note { font-size: 11px; color: var(--ink-faint); font-style: italic; }
+
+  /* Both groups share one 12-column track so a 4-up row and a 3-up row line up
+     on the same left and right edges — previously they were separate grids at
+     different widths, which is what made the buttons look mismatched. */
+  .style-grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 8px;
   }
 
-  .option-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .style-grid > :global(*) { grid-column: span 3; }
+  .tone-grid > :global(*) { grid-column: span 4; }
 
-  .option-card {
-    background: var(--bg-elev);
-    border: 1.5px solid var(--line);
-    border-radius: var(--r-sm);
-    padding: 10px 11px;
-    text-align: left;
-    cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
+  .style-card { min-height: 68px; justify-content: flex-start; }
 
-  .option-card:hover { border-color: var(--line-strong); }
-  .option-card.selected { border-color: var(--accent); background: var(--accent-soft); }
-
-  .option-card-top { display: flex; justify-content: space-between; align-items: center; gap: 4px; }
-  .option-name { font-size: 12.5px; font-weight: 500; color: var(--ink-strong); }
-  .option-desc { font-size: 11px; color: var(--ink-mute); margin: 0; line-height: 1.3; }
-
-  .option-radio {
-    width: 13px;
-    height: 13px;
-    border-radius: 50%;
-    border: 2px solid var(--line-strong);
-    flex-shrink: 0;
-    position: relative;
-    transition: border-color 0.15s;
-  }
-
-  .option-radio.checked { border-color: var(--accent); }
-  .option-radio.checked::after {
-    content: '';
-    position: absolute;
-    inset: 2px;
-    border-radius: 50%;
-    background: var(--accent);
-  }
-
-  .tone-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-
-  .tone-card {
-    background: var(--bg-elev);
-    border: 1.5px solid var(--line);
-    border-radius: var(--r-sm);
-    padding: 10px 11px 9px;
-    text-align: left;
-    cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .tone-card:hover { border-color: var(--line-strong); }
-  .tone-card.selected { border-color: var(--accent); background: var(--accent-soft); }
-
-  .tone-name { font-size: 12.5px; font-weight: 500; color: var(--ink-strong); }
-  .tone-desc { font-size: 11px; color: var(--ink-mute); margin: 0; line-height: 1.3; }
-
-  .tone-check {
-    position: absolute;
-    top: 7px;
-    right: 7px;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--accent);
-    color: var(--on-accent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    transform: scale(0.6);
-    transition: opacity 0.15s, transform 0.15s;
-  }
-
-  .tone-check.visible { opacity: 1; transform: scale(1); }
+  .card-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .card-name { font-size: 12.5px; font-weight: 500; color: var(--ink-strong); }
+  .card-desc { font-size: 11px; color: var(--ink-mute); margin: 0; line-height: 1.35; }
 
   .preview-box {
     background: var(--paper-2);
     border: 1px solid var(--line);
     border-radius: var(--r-md);
-    padding: 10px 14px;
+    padding: 11px 14px;
     display: flex;
     align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
+    gap: 12px;
+    /* Tallest state (two wrapped lines) reserved up front, so switching
+       intensity cross-fades the text without resizing the box. */
+    min-height: 62px;
+    box-sizing: border-box;
   }
 
-  .preview-label {
-    font-size: 10.5px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--ink-faint);
-    flex-shrink: 0;
-  }
+  .preview-stack { flex: 1; min-width: 0; display: grid; }
+  .preview-stack > :global(*) { grid-column: 1; grid-row: 1; align-self: center; }
 
   .preview-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
 
-  .preview-before {
-    font-size: 12px;
-    font-style: italic;
-    color: var(--ink-mute);
-    line-height: 1.4;
-  }
+  .preview-before { font-size: 12px; font-style: italic; color: var(--ink-mute); line-height: 1.4; }
 
   .preview-arrow { font-size: 12px; color: var(--ink-faint); flex-shrink: 0; }
 
-  .preview-after {
-    font-size: 12.5px;
-    font-weight: 500;
-    color: var(--accent-ink);
-    line-height: 1.4;
+  .preview-after { font-size: 12.5px; font-weight: 500; color: var(--accent-ink); line-height: 1.4; }
+
+  .preview-off { margin: 0; font-size: 12.5px; color: var(--ink-mute); line-height: 1.4; }
+
+  @media (max-width: 720px) {
+    .style-grid > :global(*) { grid-column: span 6; }
+    .tone-grid > :global(*) { grid-column: span 6; }
   }
 </style>

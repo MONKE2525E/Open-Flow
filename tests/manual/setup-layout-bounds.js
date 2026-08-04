@@ -35,10 +35,16 @@ async function readLayoutState(page) {
 
     // .setup-content is intentionally overflow-y:auto as a safety net for unusually
     // tall steps — only flag it if it's actually overflowing, not just CSS-capable.
+    //
+    // The point of this check is that a step's *content* must never be hidden
+    // behind a scroll. A control that is a scrolling list by design (the
+    // language picker's 57-row list) opts out with [data-scroll-region]; that
+    // is the widget working, not the layout failing.
     const scrollableVisibleContainers = Array.from(
       overlay?.querySelectorAll('*') ?? []
     )
       .filter((el) => {
+        if (el.hasAttribute('data-scroll-region')) return false;
         const style = getComputedStyle(el);
         const hasScrollableOverflow = style.overflowY === 'auto' || style.overflowY === 'scroll';
         const visible = el.getClientRects().length > 0;

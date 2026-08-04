@@ -218,24 +218,88 @@ pub async fn start_calibration_monitoring(
     start_result.map_err(|e| e.to_string())
 }
 
+/// What calibration learned about the capture it just took.
+///
+/// `contains_speech` comes from the same Silero VAD the dictation pipeline
+/// uses, not from a peak-RMS threshold — a door slam or a desk bump clears an
+/// RMS bar exactly like a voice does, and it also drags the computed gain down
+/// with it. `null` means VAD could not run (model staging failed); the caller
+/// should fall back rather than treat it as silence.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalibrationResult {
+    pub contains_speech: Option<bool>,
+    pub speech_ms: u64,
+    pub speech_ratio: f32,
+    pub peak_probability: f32,
+    pub longest_segment_ms: u64,
+    pub duration_ms: u64,
+}
+
 #[tauri::command]
 pub async fn stop_calibration_monitoring(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
-) -> Result<(), String> {
+) -> Result<CalibrationResult, String> {
+    let mut result = CalibrationResult {
+        contains_speech: None,
+        speech_ms: 0,
+        speech_ratio: 0.0,
+        peak_probability: 0.0,
+        longest_segment_ms: 0,
+        duration_ms: 0,
+    };
+
     let taken = pipeline::take_recording_plain(state.inner());
     if let Some((session, exclusive_mic_session_id)) = taken {
-        tauri::async_runtime::spawn_blocking(move || {
-            let _ = session.stop();
+        // The capture used to be discarded here. Keeping it costs nothing —
+        // the samples are already in memory — and gives the frontend a real
+        // answer to "did they actually speak?".
+        let analysis = tauri::async_runtime::spawn_blocking(move || {
+            let recording = session.stop();
             if let Some(session_id) = exclusive_mic_session_id {
                 crate::system::volume::release_mic(session_id);
             }
-        });
+            recording.ok().map(|recording| {
+                // Calibration forces gain 1.0 (see start_calibration_monitoring),
+                // so VAD sees the unamplified signal and needs no leniency scaling.
+                let speech = crate::media::vad::analyze_speech(&recording.samples_16k, 1.0);
+                (recording.duration_ms, speech)
+            })
+        })
+        .await;
+
+        match analysis {
+            Ok(Some((duration_ms, speech))) => {
+                result.duration_ms = duration_ms;
+                match speech {
+                    Ok(speech) => {
+                        result.contains_speech = Some(speech.contains_speech);
+                        result.speech_ms = speech.speech_ms;
+                        result.speech_ratio = speech.speech_ratio;
+                        result.peak_probability = speech.peak_probability;
+                        result.longest_segment_ms = speech.longest_segment_ms;
+                        log::debug!(
+                            "calibration: vad speech={} speech_ms={} ratio={:.3} peak={:.3} longest_ms={}",
+                            speech.contains_speech,
+                            speech.speech_ms,
+                            speech.speech_ratio,
+                            speech.peak_probability,
+                            speech.longest_segment_ms
+                        );
+                    }
+                    Err(e) => log::warn!("calibration: VAD unavailable, falling back to level check: {e}"),
+                }
+            }
+            Ok(None) => log::warn!("calibration: capture returned no audio"),
+            Err(e) => log::error!("calibration: stop task panicked: {e}"),
+        }
     }
+
     if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
         manager.set_recording_active(false);
     }
-    Ok(())
+    Ok(result)
 }
 
 #[tauri::command]

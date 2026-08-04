@@ -8,7 +8,6 @@
   import { saveSetting } from '../../settings';
   import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import { getAudioCalibrationCopy } from '../../calibrationCopy';
-  import type { TranscriptionLanguageCode } from '../../transcriptionLanguages';
 
   import {
     isCalibrating,
@@ -28,8 +27,7 @@
   let pauseMediaDuringDictation = $state(false);
   let soundEffectsVolume = $state(100);
   let micGain = $state(3.5);
-  let selectedLanguage = $state<TranscriptionLanguageCode>('en');
-  const audioCopy = $derived(getAudioCalibrationCopy(selectedLanguage));
+  const audioCopy = $derived(getAudioCalibrationCopy());
 
   // Reset any stale calibrated gain on mount so it cannot override the saved
   // manual gain before the next calibration run starts.
@@ -44,7 +42,7 @@
 
   async function loadSettings() {
     try {
-      const [nr, mute, exclusive, pauseMedia, legacySounds, savedVolume, savedGain, language] = await Promise.all([
+      const [nr, mute, exclusive, pauseMedia, legacySounds, savedVolume, savedGain] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'noise_reduction' }),
         invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
         invoke<boolean | null>('get_setting', { key: 'exclusive_mic' }),
@@ -52,7 +50,6 @@
         invoke<boolean | null>('get_setting', { key: 'play_start_stop_sounds' }),
         invoke<number | null>('get_setting', { key: 'sound_effects_volume' }),
         invoke<number | null>('get_setting', { key: 'mic_gain' }),
-        invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       ]);
       noiseReduction = nr ?? true;
       muteAudio = mute ?? false;
@@ -64,7 +61,6 @@
       if (savedGain !== null && savedGain !== undefined) {
         micGain = Math.max(1, Math.min(8, savedGain));
       }
-      if (language) selectedLanguage = language;
     } catch (err) {
       console.error('AudioSection load failed:', err);
     }
@@ -208,7 +204,9 @@
           <span class="cal-phase-badge"
             in:fade={{ duration: motionMs(180), delay: motionMs(50) }}
             out:fade={{ duration: 1 }}>
-            {$calibrationPhase === 'loud' ? audioCopy.phase1Label : audioCopy.phase2Label}
+            {$calibrationPhase === 'ambient' ? audioCopy.phase1Label
+              : $calibrationPhase === 'loud' ? audioCopy.phase2Label
+              : audioCopy.phase3Label}
           </span>
         {/key}
         <span class="cal-timer">{$calibrationCountdown}s</span>
@@ -216,7 +214,9 @@
           <span class="cal-phrase-hint"
             in:fade={{ duration: motionMs(180), delay: motionMs(50) }}
             out:fade={{ duration: 1 }}>
-            {$calibrationPhase === 'loud' ? audioCopy.speakingHint : audioCopy.whisperHint}
+            {$calibrationPhase === 'ambient' ? audioCopy.quietHint
+              : $calibrationPhase === 'loud' ? audioCopy.speakingHint
+              : audioCopy.whisperHint}
           </span>
         {/key}
         <div class="cal-level-bar">
