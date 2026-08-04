@@ -28,6 +28,7 @@
   <div class="env-grid">
     {#each options as opt}
       <button
+        type="button"
         class="pick-card env-card"
         class:selected={usesHeadphones === opt.id}
         aria-pressed={usesHeadphones === opt.id}

@@ -46,7 +46,7 @@
   const shotsByKey = new Map<string, string>();
   for (const [path, url] of Object.entries(shotModules)) {
     const file = path.split('/').pop() ?? '';
-    const match = /^([a-z]+)-(\d+)-/.exec(file);
+    const match = /^(.+)-(\d+)-/.exec(file);
     if (match) shotsByKey.set(`${match[1]}-${match[2]}`, url);
   }
 

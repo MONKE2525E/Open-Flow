@@ -39,6 +39,8 @@ export async function loadHotkey(): Promise<void> {
 
 /** Left/Right modifier variants are the same physical intent to a user pressing the chord. */
 function codeVariants(code: string): string[] {
+	const isModifier = ['Alt', 'Control', 'Meta', 'Shift'].some((prefix) => code.startsWith(prefix));
+	if (!isModifier) return [code];
 	if (code.endsWith('Left')) return [code, `${code.slice(0, -4)}Right`];
 	if (code.endsWith('Right')) return [code, `${code.slice(0, -5)}Left`];
 	return [code];

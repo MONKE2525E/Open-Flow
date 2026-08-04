@@ -12,7 +12,7 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     settings: {
       force_setup_on_launch: true,
       setup_complete: false,
-      appearance_mode: 'dark',
+      appearance_mode: 'system',
       transcription_language: 'en',
     },
   });
