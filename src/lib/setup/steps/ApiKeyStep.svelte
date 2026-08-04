@@ -62,6 +62,7 @@
   });
 
   function step(delta: number) {
+    if (slideCount <= 0) return;
     slide = (safeSlide + delta + slideCount) % slideCount;
   }
 

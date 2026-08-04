@@ -27,7 +27,7 @@
   let pauseMediaDuringDictation = $state(false);
   let soundEffectsVolume = $state(100);
   let micGain = $state(3.5);
-  const audioCopy = getAudioCalibrationCopy();
+  const audioCopy = $derived(getAudioCalibrationCopy());
 
   // Reset any stale calibrated gain on mount so it cannot override the saved
   // manual gain before the next calibration run starts.

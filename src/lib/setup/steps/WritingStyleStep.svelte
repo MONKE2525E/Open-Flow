@@ -143,6 +143,6 @@
 
   @media (max-width: 720px) {
     .style-grid > :global(*) { grid-column: span 6; }
-    .tone-grid > :global(*) { grid-column: span 4; }
+    .tone-grid > :global(*) { grid-column: span 6; }
   }
 </style>
