@@ -236,10 +236,11 @@ export async function stopCalibration() {
 
   let finalGain: number;
 
-  if (heardSpeech && loudMaxLevel > MIN_CALIBRATION_LEVEL) {
+  if (heardSpeech) {
+    const measuredLoudLevel = Math.max(loudMaxLevel, MIN_CALIBRATION_LEVEL);
     const gainFromLoud = Math.max(
       MIN_CALIBRATION_GAIN,
-      Math.min(MAX_CALIBRATION_GAIN, TARGET_CALIBRATION_FACTOR / loudMaxLevel)
+      Math.min(MAX_CALIBRATION_GAIN, TARGET_CALIBRATION_FACTOR / measuredLoudLevel)
     );
 
     const whisperPresent = whisperMaxLevel >= WHISPER_DETECTION_THRESHOLD;
