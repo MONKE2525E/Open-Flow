@@ -251,7 +251,10 @@ fn apply_downloaded_update(
         return Err("Downloaded update installer is missing.".into());
     }
 
-    wait_for_process_exit(args.parent_pid)?;
+    if let Err(error) = wait_for_process_exit(args.parent_pid) {
+        let _ = std::fs::remove_file(&args.installer);
+        return Err(error);
+    }
 
     let status = std::process::Command::new(&args.installer)
         .arg("/S")

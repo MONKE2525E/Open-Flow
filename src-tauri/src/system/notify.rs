@@ -175,6 +175,7 @@ fn install_windows_dev_shortcut() -> Result<(), String> {
     use std::mem::ManuallyDrop;
     use std::path::PathBuf;
     use windows::core::{GUID, Interface, PCWSTR, PWSTR};
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
     use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoTaskMemAlloc, CoUninitialize, IPersistFile,
@@ -240,9 +241,15 @@ fn install_windows_dev_shortcut() -> Result<(), String> {
     }
 
     let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-    if initialized.is_err() {
+    let should_uninitialize = if initialized.is_ok() {
+        true
+    } else if initialized == RPC_E_CHANGED_MODE {
+        // COM was already initialized on this thread with MTA. COM calls are
+        // still valid, but this call did not add a reference to release.
+        false
+    } else {
         return Err(format!("CoInitializeEx failed: {initialized:?}"));
-    }
+    };
 
     let result = (|| {
         let shell_link: IShellLinkW = unsafe {
@@ -284,6 +291,8 @@ fn install_windows_dev_shortcut() -> Result<(), String> {
         Ok(())
     })();
 
-    unsafe { CoUninitialize() };
+    if should_uninitialize {
+        unsafe { CoUninitialize() };
+    }
     result
 }
