@@ -1269,6 +1269,10 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       } as T;
     case 'check_for_update':
       return null as T;
+    case 'notify_update_available':
+    case 'notify_provider_and_global_message':
+    case 'test_notifications':
+      return undefined as T;
     case 'check_provider_status':
       return [] as T;
     case 'check_provider_status_raw':

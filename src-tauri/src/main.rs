@@ -239,6 +239,14 @@ pub(crate) fn app_db_path() -> std::path::PathBuf {
 }
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    {
+        cleanup_update_helper_if_requested();
+        if crate::commands::run_update_helper_if_requested() {
+            return;
+        }
+    }
+
     #[cfg(target_os = "macos")]
     {
         let _ = crate::system::mac_app::set_process_name("Verenu");
@@ -278,6 +286,7 @@ fn main() {
         .manage(frontend_readiness.clone())
         .setup(move |app| {
             crate::system::logger::init(app.handle())?;
+            crate::system::notify::prepare_windows_notification_identity();
             let settings = crate::data::store::SettingsHandle::open(app.handle())
                 .map_err(std::io::Error::other)?;
             crate::data::credentials::migrate_from_store(app.handle(), &settings);
@@ -537,6 +546,7 @@ fn main() {
             commands::get_recent_auto_learn_activity,
             commands::retry_transcription,
             commands::check_for_update,
+            commands::reinstall_latest_update,
             commands::install_update,
             commands::check_provider_status,
             commands::check_provider_status_raw,
@@ -547,6 +557,9 @@ fn main() {
             commands::download_logs,
             commands::set_dev_logging_enabled,
             commands::get_dev_logging_enabled,
+            commands::notify_update_available,
+            commands::notify_provider_and_global_message,
+            commands::test_notifications,
             commands::export_data,
             commands::import_data,
             commands::log_frontend,
@@ -569,6 +582,27 @@ fn main() {
                     .unload(_app);
             }
         });
+}
+
+#[cfg(target_os = "windows")]
+fn cleanup_update_helper_if_requested() {
+    let Some(helper) = std::env::args_os().find_map(|arg| {
+        let text = arg.to_string_lossy();
+        text.strip_prefix("--cleanup-update-helper=")
+            .map(std::path::PathBuf::from)
+    }) else {
+        return;
+    };
+
+    // The helper has just spawned this process and is exiting. Retry briefly so
+    // Windows has released the helper image before removing its temp copy.
+    for _ in 0..20 {
+        match std::fs::remove_file(&helper) {
+            Ok(()) => return,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]

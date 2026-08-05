@@ -7,8 +7,10 @@
   import { icons } from '../../icons';
   import { appStore } from '../../stores';
   import { checkStatus } from '../../serviceStatus';
+  import { ensureNotificationPermission } from '../../notifications';
+  import Dropdown from '../Dropdown.svelte';
   import type { ProviderId } from '../../settings';
-  import { MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
+  import { MOTION_MS, MOTION_PX, animateWidth, motionMs, motionPx } from '../../motion';
 
   let logs = $state<string[]>([]);
   let autoScroll = $state(true);
@@ -21,6 +23,13 @@
   let copiedTimer: ReturnType<typeof setTimeout> | null = null;
   let providerStatusRaw = $state('');
   let providerStatusChecking = $state(false);
+  let notificationsTesting = $state(false);
+  type NotificationTestType = 'update' | 'model' | 'service';
+  let notificationTestType = $state<NotificationTestType>('update');
+  let notificationDropdownOpen = $state(false);
+  let notificationTestMessage = $state('');
+  let installerTesting = $state(false);
+  let installerTestMessage = $state('');
   let simulationMessage = $state('');
   let simulatedProvider = $state<ProviderId>('groq');
   let providerDropdownOpen = $state(false);
@@ -31,6 +40,16 @@
     { id: 'google', label: 'Gemini' },
     { id: 'assemblyai', label: 'AssemblyAI' },
   ];
+
+  const notificationTestTypes: { value: NotificationTestType; label: string }[] = [
+    { value: 'update', label: 'Update available' },
+    { value: 'model', label: 'Model ready' },
+    { value: 'service', label: 'Service notice' },
+  ];
+
+  function notificationTypeLabel() {
+    return notificationTestTypes.find((option) => option.value === notificationTestType)?.label ?? 'Update available';
+  }
 
   async function loadRecentLogs() {
     try {
@@ -84,12 +103,14 @@
 
   async function loadDevFlags() {
     try {
-      const [force, verbose] = await Promise.all([
+      const [force, verbose, betaUpdates] = await Promise.all([
         invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' }),
         invoke<boolean>('get_dev_logging_enabled'),
+        invoke<boolean | null>('get_setting', { key: 'beta_updates_enabled' }),
       ]);
       forceSetupOnLaunch = force ?? false;
       verboseEnabled = verbose ?? false;
+      appStore.betaUpdatesEnabled = betaUpdates ?? false;
     } catch (err) {
       console.error('Failed to load dev flags:', err);
     }
@@ -107,6 +128,41 @@
       console.error('check_provider_status_raw failed:', err);
     } finally {
       providerStatusChecking = false;
+    }
+  }
+
+  async function testNotifications() {
+    if (notificationsTesting) return;
+    notificationsTesting = true;
+    notificationTestMessage = '';
+    simulationMessage = '';
+    try {
+      if (!(await ensureNotificationPermission())) {
+        notificationTestMessage = 'Notification permission was not granted.';
+        return;
+      }
+      await invoke('test_notifications', { notificationType: notificationTestType });
+      notificationTestMessage = 'Notification sent.';
+    } catch (err) {
+      notificationTestMessage = 'Notification test failed.';
+      console.error('test_notifications failed:', err);
+    } finally {
+      notificationsTesting = false;
+    }
+  }
+
+  async function testLatestInstaller() {
+    if (installerTesting) return;
+    installerTesting = true;
+    installerTestMessage = '';
+    try {
+      const version = await invoke<string>('reinstall_latest_update');
+      installerTestMessage = `Starting reinstall of v${version}. Verenu will reopen when it finishes.`;
+    } catch (err) {
+      installerTestMessage = `Installer test failed: ${err}`;
+      console.error('reinstall_latest_update failed:', err);
+    } finally {
+      installerTesting = false;
     }
   }
 
@@ -338,6 +394,94 @@
     <button class="btn-ghost" onclick={clearSimulations}>Clear</button>
   </div>
 </div>
+<div class="setting-row">
+  <div>
+    <div class="label">System Notification Test</div>
+    <div class="desc">Choose a notification type, then send the native toast and test its click destination.</div>
+    {#if notificationTestMessage}
+      <div class="desc export-status" role="status">{notificationTestMessage}</div>
+    {/if}
+  </div>
+  <div class="notification-test-controls">
+    <Dropdown bind:open={notificationDropdownOpen} closeSelector=".notification-test-dropdown">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="notification-test-dropdown"
+        onclick={(event) => event.stopPropagation()}
+        onkeydown={(event) => {
+          if (event.key === 'Escape' && notificationDropdownOpen) {
+            notificationDropdownOpen = false;
+            event.stopPropagation();
+          }
+        }}
+      >
+        <button
+          class="btn-ghost notification-test-dropdown-button"
+          type="button"
+          use:animateWidth={{ text: notificationTypeLabel(), max: 180 }}
+          onclick={() => (notificationDropdownOpen = !notificationDropdownOpen)}
+          aria-haspopup="listbox"
+          aria-expanded={notificationDropdownOpen}
+          aria-controls="notification-test-menu"
+          aria-label="Notification type"
+        >
+          <span>{notificationTypeLabel()}</span>
+          <svg class:open={notificationDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </button>
+        {#if notificationDropdownOpen}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div
+            id="notification-test-menu"
+            class="notification-test-menu"
+            role="listbox"
+            tabindex="0"
+            aria-label="Notification type options"
+            onclick={(event) => event.stopPropagation()}
+            in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+            out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+          >
+            {#each notificationTestTypes as option}
+              <button
+                class="notification-test-item"
+                class:active={notificationTestType === option.value}
+                type="button"
+                role="option"
+                aria-selected={notificationTestType === option.value}
+                onclick={() => {
+                  notificationTestType = option.value;
+                  notificationDropdownOpen = false;
+                }}
+              >{option.label}</button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </Dropdown>
+    <button class="btn-ghost notification-test-send-button" onclick={testNotifications} disabled={notificationsTesting}>
+      {notificationsTesting ? 'Sending...' : 'Send Notification'}
+    </button>
+  </div>
+</div>
+<div class="setting-row">
+  <div>
+    <div class="label">Installer Test</div>
+    <div class="desc">
+      Reinstalls the latest {appStore.betaUpdatesEnabled ? 'beta' : 'stable'} release and restarts Verenu.
+    </div>
+    {#if installerTestMessage}
+      <div class="desc export-status" role="status">{installerTestMessage}</div>
+    {/if}
+  </div>
+  <button class="btn-ghost" onclick={testLatestInstaller} disabled={installerTesting}>
+    {installerTesting
+      ? 'Starting...'
+      : appStore.betaUpdatesEnabled
+        ? 'Reinstall Latest Beta'
+        : 'Reinstall Latest Stable'}
+  </button>
+</div>
 
 <style>
   .logs-panel-wrap {
@@ -427,6 +571,67 @@
     margin-top: 6px;
     color: var(--ink-faint);
   }
+  .notification-test-controls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .notification-test-dropdown {
+    position: relative;
+    flex-shrink: 0;
+  }
+  .notification-test-dropdown-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--r-md);
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .notification-test-dropdown-button svg { transition: transform 150ms; }
+  .notification-test-dropdown-button svg.open { transform: rotate(180deg); }
+  .notification-test-send-button {
+    display: inline-flex;
+    align-items: center;
+    height: 32px;
+  }
+  .notification-test-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 170px;
+    padding: 4px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-popover);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .notification-test-item {
+    width: 100%;
+    padding: 6px 10px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--ink-soft);
+    font: inherit;
+    font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .notification-test-item:hover { background: var(--paper-2); color: var(--ink); }
+  .notification-test-item.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
   .actions {
     display: flex;
     gap: 8px;
