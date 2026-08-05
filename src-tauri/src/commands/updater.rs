@@ -325,14 +325,15 @@ fn wait_for_process_exit(pid: u32) -> Result<(), String> {
 
 #[cfg(windows)]
 fn process_is_running(pid: u32) -> bool {
-    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER};
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_TIMEOUT};
+    use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
 
     unsafe {
         match OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
             Ok(handle) => {
+                let wait_result = WaitForSingleObject(handle, 0);
                 let _ = CloseHandle(handle);
-                true
+                wait_result == WAIT_TIMEOUT
             }
             Err(error)
                 if error.code() == windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0) =>

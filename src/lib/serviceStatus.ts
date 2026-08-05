@@ -122,7 +122,10 @@ export async function checkStatus(): Promise<void> {
     .map((alert) => `${alert.providerName}: ${alert.message || alert.status}`)
     .join('\n');
   try {
-    if (!(await ensureNotificationPermission())) return;
+    if (!(await ensureNotificationPermission())) {
+      lastStatusNotificationKey = notificationKey;
+      return;
+    }
     if (!serviceChecksEnabled || serviceChecksPreferenceVersion !== notificationPreferenceVersion) {
       return;
     }
