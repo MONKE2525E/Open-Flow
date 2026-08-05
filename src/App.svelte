@@ -91,6 +91,7 @@
   }
 
   onMount(() => {
+    let mounted = true;
     let cleanupFn: (() => void) | undefined;
     let stopNotificationClickListener: (() => void) | undefined;
     let stopAutomaticUpdateChecks: (() => void) | undefined;
@@ -130,7 +131,13 @@
     listen<string>('verenu:notification-clicked', (event) => {
       openNotificationDestination(event.payload);
     })
-      .then((unlisten) => { stopNotificationClickListener = unlisten; })
+      .then((unlisten) => {
+        if (!mounted) {
+          unlisten();
+          return;
+        }
+        stopNotificationClickListener = unlisten;
+      })
       .catch((error) => { console.warn('Failed to listen for notification clicks:', error); });
 
     // Synchronous: startAutomaticUpdateChecks fires its first check in the
@@ -179,6 +186,7 @@
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
+      mounted = false;
       if (cleanupFn) cleanupFn();
       if (stopNotificationClickListener) stopNotificationClickListener();
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();

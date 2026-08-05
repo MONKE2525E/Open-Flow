@@ -2,7 +2,9 @@
 //! notifications. Keeping these calls in Rust gives Windows notifications
 //! Verenu's native app identity instead of the WebView host process.
 
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
+#[cfg(windows)]
+use tauri::Emitter;
 use tauri_plugin_notification::NotificationExt;
 
 #[cfg(windows)]
@@ -21,6 +23,7 @@ enum NotificationDestination {
 }
 
 impl NotificationDestination {
+    #[cfg(windows)]
     const fn event_payload(self) -> &'static str {
         match self {
             Self::Home => "home",
@@ -36,6 +39,9 @@ fn show(
     destination: NotificationDestination,
 ) -> Result<(), String> {
     let body = body.into();
+
+    #[cfg(not(windows))]
+    let _ = destination;
 
     #[cfg(windows)]
     {

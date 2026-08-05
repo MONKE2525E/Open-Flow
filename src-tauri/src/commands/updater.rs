@@ -259,9 +259,9 @@ fn apply_downloaded_update(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
-        .status()
-        .map_err(|e| format!("Could not start the downloaded update: {e}"))?;
+        .status();
     let _ = std::fs::remove_file(&args.installer);
+    let status = status.map_err(|e| format!("Could not start the downloaded update: {e}"))?;
     if !status.success() {
         return Err(format!("Update installer exited with status {status}."));
     }
@@ -352,6 +352,7 @@ fn early_update_helper_warn(message: &str) {
     unsafe { OutputDebugStringW(PCWSTR(wide.as_mut_ptr())) };
 }
 
+#[cfg(any(test, windows))]
 fn is_silent_nsis_setup_url(url: &str) -> bool {
     reqwest::Url::parse(url)
         .ok()

@@ -27,6 +27,7 @@
   type NotificationTestType = 'update' | 'model' | 'service';
   let notificationTestType = $state<NotificationTestType>('update');
   let notificationDropdownOpen = $state(false);
+  let notificationTestMessage = $state('');
   let installerTesting = $state(false);
   let installerTestMessage = $state('');
   let simulationMessage = $state('');
@@ -133,16 +134,17 @@
   async function testNotifications() {
     if (notificationsTesting) return;
     notificationsTesting = true;
+    notificationTestMessage = '';
     simulationMessage = '';
     try {
       if (!(await ensureNotificationPermission())) {
-        simulationMessage = 'Notification permission was not granted.';
+        notificationTestMessage = 'Notification permission was not granted.';
         return;
       }
       await invoke('test_notifications', { notificationType: notificationTestType });
-      simulationMessage = 'Notification sent.';
+      notificationTestMessage = 'Notification sent.';
     } catch (err) {
-      simulationMessage = 'Notification test failed.';
+      notificationTestMessage = 'Notification test failed.';
       console.error('test_notifications failed:', err);
     } finally {
       notificationsTesting = false;
@@ -396,6 +398,9 @@
   <div>
     <div class="label">System Notification Test</div>
     <div class="desc">Choose a notification type, then send the native toast and test its click destination.</div>
+    {#if notificationTestMessage}
+      <div class="desc export-status" role="status">{notificationTestMessage}</div>
+    {/if}
   </div>
   <div class="notification-test-controls">
     <Dropdown bind:open={notificationDropdownOpen} closeSelector=".notification-test-dropdown">
