@@ -239,7 +239,7 @@ pub(crate) fn app_db_path() -> std::path::PathBuf {
 }
 
 fn main() {
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     {
         cleanup_update_helper_if_requested();
         if crate::commands::run_update_helper_if_requested() {
@@ -584,7 +584,7 @@ fn main() {
         });
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 fn cleanup_update_helper_if_requested() {
     let Some(helper) = std::env::args_os().find_map(|arg| {
         let text = arg.to_string_lossy();
