@@ -138,10 +138,21 @@ pub fn is_authorized_release_asset_url(url: &str) -> bool {
 /// Check the configured repo for a release newer than the current version on
 /// the selected release channel.
 pub async fn check(channel: UpdateChannel) -> anyhow::Result<Option<UpdateInfo>> {
-    check_repo(RELEASE_REPO, channel).await
+    check_repo(RELEASE_REPO, channel, true).await
 }
 
-async fn check_repo(repo: &str, channel: UpdateChannel) -> anyhow::Result<Option<UpdateInfo>> {
+/// Resolve the newest installable release for a channel, including the version
+/// already running. This is used only by the developer reinstall control;
+/// normal update checks must continue to require a newer version.
+pub async fn latest_installable(channel: UpdateChannel) -> anyhow::Result<Option<UpdateInfo>> {
+    check_repo(RELEASE_REPO, channel, false).await
+}
+
+async fn check_repo(
+    repo: &str,
+    channel: UpdateChannel,
+    require_newer: bool,
+) -> anyhow::Result<Option<UpdateInfo>> {
     let url = format!("https://api.github.com/repos/{repo}/releases?per_page=100");
     let resp = super::client::get()
         .get(&url)
@@ -159,11 +170,19 @@ async fn check_repo(repo: &str, channel: UpdateChannel) -> anyhow::Result<Option
         return Ok(None);
     };
     let Some(display_version) = release_version(&release.tag_name) else {
-        log::warn!("Ignoring release with malformed version tag: {}", release.tag_name);
+        log::warn!(
+            "Ignoring release with malformed version tag: {}",
+            release.tag_name
+        );
         return Ok(None);
     };
 
-    if !is_newer(&display_version, &current_package_version()) {
+    if !should_offer_release_for_channel(
+        &display_version,
+        &current_package_version(),
+        channel,
+        require_newer,
+    ) {
         return Ok(None);
     }
 
@@ -192,28 +211,42 @@ fn select_release(releases: &[GhRelease], channel: UpdateChannel) -> Option<&GhR
         .enumerate()
         .filter(|(_, release)| !release.draft && release_matches_channel(release, channel))
         .filter_map(|(index, release)| {
-            release_version(&release.tag_name)
-                .map(|version| (index, release, version))
+            release_version(&release.tag_name).map(|version| (index, release, version))
         })
         // Keep the first release when normalized versions tie. GitHub returns
         // releases newest-first, so this preserves the newest prerelease build.
-        .max_by(|(left_index, _, left_version), (right_index, _, right_version)| {
-            compare_versions(left_version, right_version)
-                .then_with(|| right_index.cmp(left_index))
-        })
+        .max_by(
+            |(left_index, _, left_version), (right_index, _, right_version)| {
+                compare_versions(left_version, right_version)
+                    .then_with(|| right_index.cmp(left_index))
+            },
+        )
         .map(|(_, release, _)| release)
 }
 
 fn release_matches_channel(release: &GhRelease, channel: UpdateChannel) -> bool {
-    let wants_prerelease = matches!(channel, UpdateChannel::Beta);
-    if release.prerelease != wants_prerelease {
-        return false;
-    }
-
-    release
+    let target_is_branch = release
         .target_commitish
-        .eq_ignore_ascii_case(channel.target_branch())
-        || is_commit_sha(&release.target_commitish)
+        .eq_ignore_ascii_case(channel.target_branch());
+    let target_is_sha = is_commit_sha(&release.target_commitish);
+    let beta_tag = is_beta_release_tag(&release.tag_name);
+
+    match channel {
+        // Older beta releases were published with GitHub's prerelease flag
+        // off, but used either the dev branch or a `-beta` tag. Accept both
+        // publication styles so the beta toggle does not silently miss them.
+        UpdateChannel::Beta => {
+            (release.prerelease || beta_tag) && (target_is_branch || target_is_sha)
+        }
+        UpdateChannel::Stable => {
+            !release.prerelease && !beta_tag && (target_is_branch || target_is_sha)
+        }
+    }
+}
+
+fn is_beta_release_tag(tag: &str) -> bool {
+    let tag = tag.to_ascii_lowercase();
+    tag.contains("-beta") || tag.contains("-nightly") || tag.contains("-dev")
 }
 
 fn is_commit_sha(value: &str) -> bool {
@@ -259,12 +292,14 @@ fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
         return std::cmp::Ordering::Equal;
     };
 
-    left.core.cmp(&right.core).then_with(|| match (&left.prerelease, &right.prerelease) {
-        (None, None) => std::cmp::Ordering::Equal,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (Some(left), Some(right)) => compare_prerelease_parts(left, right),
-    })
+    left.core
+        .cmp(&right.core)
+        .then_with(|| match (&left.prerelease, &right.prerelease) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (Some(left), Some(right)) => compare_prerelease_parts(left, right),
+        })
 }
 
 fn parse_version(version: &str) -> Option<ParsedVersion> {
@@ -370,6 +405,46 @@ fn is_newer(latest: &str, current: &str) -> bool {
     compare_versions(latest, current) == std::cmp::Ordering::Greater
 }
 
+fn should_offer_release(latest: &str, current: &str, require_newer: bool) -> bool {
+    !require_newer || is_newer(latest, current)
+}
+
+/// SemVer deliberately considers `0.16.2-nightly` older than the final
+/// `0.16.2` release. That rule is normally correct, but an opted-in beta user
+/// needs to be able to move from the stable build to that matching nightly.
+/// The channel gate has already verified that `latest` is a beta release.
+fn should_offer_release_for_channel(
+    latest: &str,
+    current: &str,
+    channel: UpdateChannel,
+    require_newer: bool,
+) -> bool {
+    if should_offer_release(latest, current, require_newer) {
+        return true;
+    }
+
+    if !require_newer || channel != UpdateChannel::Beta {
+        return false;
+    }
+
+    let latest = release_version(latest).and_then(|version| parse_version(&version));
+    let current = release_version(current).and_then(|version| parse_version(&version));
+
+    matches!(
+        (latest, current),
+        (
+            Some(ParsedVersion {
+                core: latest_core,
+                prerelease: Some(_),
+            }),
+            Some(ParsedVersion {
+                core: current_core,
+                prerelease: None,
+            }),
+        ) if latest_core == current_core
+    )
+}
+
 fn current_update_target() -> UpdateTarget {
     #[cfg(windows)]
     {
@@ -413,9 +488,20 @@ fn select_release_asset_for_target(
 }
 
 fn select_windows_asset(assets: &[GhAsset]) -> Option<(&GhAsset, InstallMode)> {
-    find_asset_with_suffix(assets, ".exe")
+    // Only the NSIS setup executable supports Verenu's unattended install
+    // handoff. A random `.exe` release asset is not necessarily an installer,
+    // and MSI packages need a different silent-install contract, so those are
+    // download-only instead of being passed the NSIS `/S` argument.
+    find_asset_with_suffix(assets, "-setup.exe")
         .or_else(|| find_asset_with_suffix(assets, ".msi"))
-        .map(|asset| (asset, InstallMode::Download))
+        .map(|asset| {
+            let mode = if asset.name.to_ascii_lowercase().ends_with("-setup.exe") {
+                InstallMode::Install
+            } else {
+                InstallMode::Download
+            };
+            (asset, mode)
+        })
 }
 
 fn select_macos_asset<'a>(
@@ -463,10 +549,10 @@ fn find_asset_with_suffix_and_hints<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        find_asset_with_suffix, is_authorized_release_asset_url, is_newer, normalize_version,
-        parse_prerelease_parts, release_version, select_release, select_release_asset_for_target,
-        current_package_version, GhAsset, GhRelease, InstallMode, UpdateChannel, UpdateTarget,
-        VersionPart,
+        current_package_version, find_asset_with_suffix, is_authorized_release_asset_url, is_newer,
+        normalize_version, parse_prerelease_parts, release_version, select_release,
+        select_release_asset_for_target, should_offer_release, should_offer_release_for_channel,
+        GhAsset, GhRelease, InstallMode, UpdateChannel, UpdateTarget, VersionPart,
     };
 
     fn asset(name: &str) -> GhAsset {
@@ -477,10 +563,18 @@ mod tests {
     }
 
     fn release(tag_name: &str, target_commitish: &str) -> GhRelease {
-        release_with_prerelease(tag_name, target_commitish, target_commitish.eq_ignore_ascii_case("dev"))
+        release_with_prerelease(
+            tag_name,
+            target_commitish,
+            target_commitish.eq_ignore_ascii_case("dev"),
+        )
     }
 
-    fn release_with_prerelease(tag_name: &str, target_commitish: &str, prerelease: bool) -> GhRelease {
+    fn release_with_prerelease(
+        tag_name: &str,
+        target_commitish: &str,
+        prerelease: bool,
+    ) -> GhRelease {
         GhRelease {
             tag_name: tag_name.to_string(),
             target_commitish: target_commitish.to_string(),
@@ -529,6 +623,31 @@ mod tests {
     }
 
     #[test]
+    fn non_prerelease_beta_tags_are_selected_for_beta_channel() {
+        let release = release_with_prerelease("Verenu-0.16.2-beta", "dev", false);
+        assert_eq!(
+            select_release(&[release], UpdateChannel::Beta)
+                .expect("beta tag release")
+                .tag_name,
+            "Verenu-0.16.2-beta"
+        );
+    }
+
+    #[test]
+    fn beta_suffixes_are_not_selected_for_stable_channel() {
+        let releases = [
+            release_with_prerelease("Verenu-0.99.0-beta", "master", false),
+            release_with_prerelease("Verenu-0.16.0", "master", false),
+        ];
+        assert_eq!(
+            select_release(&releases, UpdateChannel::Stable)
+                .expect("stable release")
+                .tag_name,
+            "Verenu-0.16.0"
+        );
+    }
+
+    #[test]
     fn commit_sha_targets_use_github_prerelease_metadata_for_channels() {
         let target = "0123456789abcdef0123456789abcdef01234567";
         let releases = [
@@ -567,15 +686,15 @@ mod tests {
     #[test]
     fn malformed_release_tags_are_not_selected() {
         let releases = [
-            release("Verenu-013.0-beta", "master"),
-            release("Verenu-0.12.1-beta", "master"),
+            release("Verenu-013.0", "master"),
+            release("Verenu-0.12.1", "master"),
         ];
 
         assert_eq!(
             select_release(&releases, UpdateChannel::Stable)
                 .expect("valid stable release")
                 .tag_name,
-            "Verenu-0.12.1-beta"
+            "Verenu-0.12.1"
         );
         assert_eq!(release_version("Verenu-013.0-beta"), None);
         assert_eq!(
@@ -640,6 +759,35 @@ mod tests {
     }
 
     #[test]
+    fn reinstall_mode_offers_the_selected_channel_even_when_versions_match() {
+        assert!(!should_offer_release("0.16.0", "0.16.0", true));
+        assert!(should_offer_release("0.16.0", "0.16.0", false));
+        assert!(should_offer_release("0.16.1", "0.16.0", true));
+    }
+
+    #[test]
+    fn beta_channel_can_replace_a_same_core_stable_release() {
+        assert!(should_offer_release_for_channel(
+            "0.16.2-nightly.20260804",
+            "0.16.2",
+            UpdateChannel::Beta,
+            true,
+        ));
+        assert!(!should_offer_release_for_channel(
+            "0.16.2-nightly.20260804",
+            "0.16.2",
+            UpdateChannel::Stable,
+            true,
+        ));
+        assert!(!should_offer_release_for_channel(
+            "0.16.2-nightly.20260803",
+            "0.16.2-nightly.20260804",
+            UpdateChannel::Beta,
+            true,
+        ));
+    }
+
+    #[test]
     fn prerelease_versions_compare_without_losing_build_order() {
         assert!(is_newer("0.15.1-beta.2", "0.15.1-beta.1"));
         assert!(!is_newer("0.15.1-beta.1", "0.15.1-beta.2"));
@@ -664,12 +812,15 @@ mod tests {
     }
 
     #[test]
-    fn windows_prefers_exe_then_msi() {
-        let assets = [asset("Verenu_0.15.0_x64_en-US.msi"), asset("Verenu_0.15.0_x64-setup.exe")];
-        let selected = select_release_asset_for_target(&assets, UpdateTarget::Windows)
-            .expect("windows asset");
+    fn windows_prefers_nsis_setup_then_offers_msi_as_download() {
+        let assets = [
+            asset("Verenu_0.15.0_x64_en-US.msi"),
+            asset("Verenu_0.15.0_x64-setup.exe"),
+        ];
+        let selected =
+            select_release_asset_for_target(&assets, UpdateTarget::Windows).expect("windows asset");
         assert_eq!(selected.0.name, "Verenu_0.15.0_x64-setup.exe");
-        assert_eq!(selected.1, InstallMode::Download);
+        assert_eq!(selected.1, InstallMode::Install);
 
         let fallback_assets = [asset("Verenu_0.15.0_x64_en-US.msi")];
         let fallback = select_release_asset_for_target(&fallback_assets, UpdateTarget::Windows)
@@ -679,14 +830,25 @@ mod tests {
     }
 
     #[test]
+    fn windows_does_not_try_to_silently_install_an_arbitrary_exe() {
+        let assets = [
+            asset("Verenu-portable.exe"),
+            asset("Verenu_0.15.0_x64_en-US.msi"),
+        ];
+        let selected = select_release_asset_for_target(&assets, UpdateTarget::Windows)
+            .expect("MSI download fallback");
+        assert_eq!(selected.0.name, "Verenu_0.15.0_x64_en-US.msi");
+        assert_eq!(selected.1, InstallMode::Download);
+    }
+
+    #[test]
     fn macos_apple_silicon_prefers_matching_dmg() {
         let assets = [
             asset("Verenu_0.15.0_Intel.dmg"),
             asset("Verenu_0.15.0_Apple_Silicon.dmg"),
         ];
-        let selected =
-            select_release_asset_for_target(&assets, UpdateTarget::MacOsAppleSilicon)
-                .expect("arm dmg");
+        let selected = select_release_asset_for_target(&assets, UpdateTarget::MacOsAppleSilicon)
+            .expect("arm dmg");
         assert_eq!(selected.0.name, "Verenu_0.15.0_Apple_Silicon.dmg");
         assert_eq!(selected.1, InstallMode::Download);
     }
@@ -697,8 +859,8 @@ mod tests {
             asset("Verenu_0.15.0_Apple_Silicon.dmg"),
             asset("Verenu_0.15.0_Intel.dmg"),
         ];
-        let selected = select_release_asset_for_target(&assets, UpdateTarget::MacOsIntel)
-            .expect("intel dmg");
+        let selected =
+            select_release_asset_for_target(&assets, UpdateTarget::MacOsIntel).expect("intel dmg");
         assert_eq!(selected.0.name, "Verenu_0.15.0_Intel.dmg");
     }
 
@@ -723,9 +885,8 @@ mod tests {
     fn macos_apple_silicon_falls_back_to_intel_dmg() {
         // Apple Silicon can run Intel builds via Rosetta 2.
         let assets = [asset("Verenu_0.15.0_Intel.dmg")];
-        let selected =
-            select_release_asset_for_target(&assets, UpdateTarget::MacOsAppleSilicon)
-                .expect("rosetta fallback");
+        let selected = select_release_asset_for_target(&assets, UpdateTarget::MacOsAppleSilicon)
+            .expect("rosetta fallback");
         assert_eq!(selected.0.name, "Verenu_0.15.0_Intel.dmg");
     }
 
@@ -775,10 +936,9 @@ mod tests {
     // fails loudly, flagging that the encoded checks can be revisited.
     #[test]
     fn path_segments_preserve_percent_encoding() {
-        let parsed = reqwest::Url::parse(
-            "https://github.com/o/r/releases/download/v1/..%2f..%5cx%2e%2e",
-        )
-        .unwrap();
+        let parsed =
+            reqwest::Url::parse("https://github.com/o/r/releases/download/v1/..%2f..%5cx%2e%2e")
+                .unwrap();
         let segments: Vec<&str> = parsed.path_segments().unwrap().collect();
         assert_eq!(segments.last().copied(), Some("..%2f..%5cx%2e%2e"));
     }

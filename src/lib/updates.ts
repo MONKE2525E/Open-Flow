@@ -1,4 +1,3 @@
-import { sendNotification } from '@tauri-apps/plugin-notification';
 import type { UpdateInfo } from './stores';
 import { appStore } from './stores';
 import { saveSetting } from './settings';
@@ -6,13 +5,6 @@ import { invoke } from './tauri';
 import { ensureNotificationPermission } from './notifications';
 
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
-
-async function sendUpdateNotification(update: UpdateInfo): Promise<void> {
-  await sendNotification({
-    title: 'Verenu update available',
-    body: `Version v${update.version} is ready. Open Verenu to update.`,
-  });
-}
 
 async function checkForAutomaticUpdates(): Promise<void> {
   let update: UpdateInfo | null = null;
@@ -54,7 +46,9 @@ async function checkForAutomaticUpdates(): Promise<void> {
   if (!(await ensureNotificationPermission())) return;
 
   try {
-    await sendUpdateNotification(update);
+    // Deliver through Rust so Windows attributes the toast to Verenu rather
+    // than the WebView host process, which can be PowerShell in development.
+    await invoke('notify_update_available', { version: update.version });
   } catch (error) {
     // Don't persist the notified version if delivery failed — otherwise the
     // user never sees a notification yet we'd mark it as notified and never

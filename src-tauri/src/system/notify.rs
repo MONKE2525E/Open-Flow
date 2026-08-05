@@ -1,26 +1,283 @@
-//! Thin wrapper over tauri-plugin-notification for the few app-level system
-//! notifications Verenu raises (currently: a local model finished downloading).
-//! Notifications are best-effort — a denied/unavailable permission must never
-//! turn into a pipeline or download error, so every failure is swallowed and
-//! logged at debug.
+//! Thin wrapper over tauri-plugin-notification for app-level system
+//! notifications. Keeping these calls in Rust gives Windows notifications
+//! Verenu's native app identity instead of the WebView host process.
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
-/// Raises a "download complete" system notification. Fires regardless of window
-/// focus/visibility (that's the point — the user may have tabbed away during a
-/// multi-GB download), so it's issued from the backend rather than the WebView,
-/// whose renderer can be suspended while the main window is hidden.
-pub fn notify_model_download_complete(app: &AppHandle, model_name: &str) {
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[cfg(windows)]
+const WINDOWS_DEV_APP_ID: &str = "com.verenu.app.dev";
+
+#[cfg(windows)]
+static WINDOWS_DEV_IDENTITY_READY: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy)]
+enum NotificationDestination {
+    Home,
+    Models,
+}
+
+impl NotificationDestination {
+    const fn event_payload(self) -> &'static str {
+        match self {
+            Self::Home => "home",
+            Self::Models => "models",
+        }
+    }
+}
+
+fn show(
+    app: &AppHandle,
+    title: &str,
+    body: impl Into<String>,
+    destination: NotificationDestination,
+) -> Result<(), String> {
+    let body = body.into();
+
+    #[cfg(windows)]
+    {
+        if let Err(err) = show_windows(app, title, &body, destination) {
+            log::debug!("notify: {title} native notification failed: {err}");
+        } else {
+            return Ok(());
+        }
+    }
+
     let result = app
         .notification()
         .builder()
-        .title("Model ready")
-        .body(format!(
-            "{model_name} finished downloading and is ready to use."
-        ))
+        .title(title)
+        .body(body)
         .show();
     if let Err(err) = result {
-        log::debug!("notify: model download-complete notification failed: {err}");
+        log::debug!("notify: {title} notification failed: {err}");
+        return Err(err.to_string());
     }
+    Ok(())
+}
+
+/// Raises a download-complete system notification from the backend so it can
+/// arrive while the main window is hidden.
+pub fn notify_model_download_complete(app: &AppHandle, model_name: &str) {
+    let _ = show(
+        app,
+        "Model ready",
+        format!("{model_name} finished downloading and is ready to use."),
+        NotificationDestination::Models,
+    );
+}
+
+pub fn notify_update_available(app: &AppHandle, version: &str) -> Result<(), String> {
+    show(
+        app,
+        "Verenu update available",
+        format!("Version v{version} is ready. Open Verenu to update."),
+        NotificationDestination::Home,
+    )
+}
+
+pub fn notify_provider_and_global_message(
+    app: &AppHandle,
+    provider_summary: &str,
+    global_message: &str,
+) -> Result<(), String> {
+    show(
+        app,
+        "Verenu service notice",
+        format!("{provider_summary}\n\n{global_message}"),
+        NotificationDestination::Home,
+    )
+}
+
+/// Sends a selected notification example through the same native path used by
+/// background notifications.
+pub fn notify_test_notification(
+    app: &AppHandle,
+    notification_type: &str,
+) -> Result<(), String> {
+    match notification_type {
+        "update" => notify_update_available(app, "0.16.1"),
+        "model" => show(
+            app,
+            "Model ready",
+            "Parakeet finished downloading and is ready to use.",
+            NotificationDestination::Models,
+        ),
+        "service" => notify_provider_and_global_message(
+            app,
+            "Groq: Some requests may be delayed or unavailable.",
+            "Verenu has an important service update.",
+        ),
+        other => Err(format!("Unknown notification test type: {other}")),
+    }
+}
+
+#[cfg(windows)]
+fn show_windows(
+    app: &AppHandle,
+    title: &str,
+    body: &str,
+    destination: NotificationDestination,
+) -> Result<(), String> {
+    let app_id = if WINDOWS_DEV_IDENTITY_READY.load(Ordering::Acquire) {
+        WINDOWS_DEV_APP_ID
+    } else {
+        "com.verenu.app"
+    };
+    let mut notification = notify_rust::Notification::new();
+    notification
+        .summary(title)
+        .body(body)
+        .app_id(app_id);
+
+    let handle = notification.show().map_err(|err| err.to_string())?;
+    let app = app.clone();
+    let destination = destination.event_payload();
+    std::thread::spawn(move || {
+        if let Err(err) = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
+            if response.is_default_action() {
+                crate::show_main_window(&app);
+                if let Err(err) = app.emit("verenu:notification-clicked", destination) {
+                    log::debug!("notify: could not emit notification click event: {err}");
+                }
+            }
+        }) {
+            log::debug!("notify: notification click listener failed: {err}");
+        }
+    });
+    Ok(())
+}
+
+/// Prepare a real Windows app identity for development notifications.
+///
+/// Windows toast notifications from unpackaged development executables need a
+/// Start Menu shortcut with an AppUserModelId. Without that shortcut, the
+/// Windows notification stack labels the toast as Windows PowerShell.
+pub fn prepare_windows_notification_identity() {
+    #[cfg(all(windows, debug_assertions))]
+    match install_windows_dev_shortcut() {
+        Ok(()) => WINDOWS_DEV_IDENTITY_READY.store(true, Ordering::Release),
+        Err(err) => log::warn!("Could not register the Windows notification identity: {err}"),
+    }
+}
+
+#[cfg(all(windows, debug_assertions))]
+fn install_windows_dev_shortcut() -> Result<(), String> {
+    use std::mem::ManuallyDrop;
+    use std::path::PathBuf;
+    use windows::core::{GUID, Interface, PCWSTR, PWSTR};
+    use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoTaskMemAlloc, CoUninitialize, IPersistFile,
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::System::Com::StructuredStorage::{
+        PropVariantClear, PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
+    };
+    use windows::Win32::System::Variant::VT_LPWSTR;
+    use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
+    use windows::Win32::UI::Shell::IShellLinkW;
+
+    const CLSID_SHELL_LINK: GUID =
+        GUID::from_u128(0x00021401_0000_0000_c000_000000000046);
+
+    fn wide(value: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
+        use std::os::windows::ffi::OsStrExt;
+        value.as_ref().encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    fn shortcut_path() -> Result<PathBuf, String> {
+        let app_data = std::env::var_os("APPDATA")
+            .ok_or_else(|| "APPDATA is not available".to_owned())?;
+        Ok(PathBuf::from(app_data)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("Verenu Development.lnk"))
+    }
+
+    fn app_id_propvariant() -> Result<PROPVARIANT, String> {
+        let value: Vec<u16> = WINDOWS_DEV_APP_ID
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let bytes = value.len() * std::mem::size_of::<u16>();
+        let ptr = unsafe { CoTaskMemAlloc(bytes) as *mut u16 };
+        if ptr.is_null() {
+            return Err("CoTaskMemAlloc failed".to_owned());
+        }
+        unsafe { std::ptr::copy_nonoverlapping(value.as_ptr(), ptr, value.len()) };
+
+        Ok(PROPVARIANT {
+            Anonymous: PROPVARIANT_0 {
+                Anonymous: ManuallyDrop::new(PROPVARIANT_0_0 {
+                    vt: VT_LPWSTR,
+                    wReserved1: 0,
+                    wReserved2: 0,
+                    wReserved3: 0,
+                    Anonymous: PROPVARIANT_0_0_0 {
+                        pwszVal: PWSTR(ptr),
+                    },
+                }),
+            },
+        })
+    }
+
+    let shortcut = shortcut_path()?;
+    let exe = std::env::current_exe().map_err(|err| err.to_string())?;
+    if let Some(parent) = shortcut.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+
+    let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    if initialized.is_err() {
+        return Err(format!("CoInitializeEx failed: {initialized:?}"));
+    }
+
+    let result = (|| {
+        let shell_link: IShellLinkW = unsafe {
+            CoCreateInstance(&CLSID_SHELL_LINK, None, CLSCTX_INPROC_SERVER)
+                .map_err(|err| err.to_string())?
+        };
+        let exe_wide = wide(&exe);
+        let description = wide("Verenu development notifications");
+        unsafe {
+            shell_link
+                .SetPath(PCWSTR(exe_wide.as_ptr()))
+                .map_err(|err| err.to_string())?;
+            shell_link
+                .SetDescription(PCWSTR(description.as_ptr()))
+                .map_err(|err| err.to_string())?;
+        }
+
+        let property_store: IPropertyStore =
+            shell_link.cast().map_err(|err| err.to_string())?;
+        let mut app_id = app_id_propvariant()?;
+        let result = unsafe {
+            property_store
+                .SetValue(&PKEY_AppUserModel_ID, &app_id)
+                .and_then(|_| property_store.Commit())
+                .map_err(|err| err.to_string())
+        };
+        unsafe {
+            let _ = PropVariantClear(&mut app_id);
+        }
+        result?;
+
+        let shortcut_wide = wide(&shortcut);
+        let persist_file: IPersistFile = shell_link.cast().map_err(|err| err.to_string())?;
+        unsafe {
+            persist_file
+                .Save(PCWSTR(shortcut_wide.as_ptr()), true)
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    })();
+
+    unsafe { CoUninitialize() };
+    result
 }

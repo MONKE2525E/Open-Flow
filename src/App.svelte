@@ -21,7 +21,7 @@
   import { scrollEdges } from './lib/scrollFade';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
+  import { MOTION_MS, MOTION_PX, NAV_ORDER, SETTINGS_SECTION_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
 
   type EffectiveTheme = 'light' | 'dark';
 
@@ -74,8 +74,25 @@
     }
   }
 
+  function openNotificationDestination(destination: string) {
+    if (destination === 'models') {
+      appStore.settingsAnimDir = directionFromOrder(
+        appStore.settingsSection,
+        'models',
+        SETTINGS_SECTION_ORDER,
+      );
+      appStore.settingsSection = 'models';
+      appStore.settingsOpen = true;
+      return;
+    }
+
+    appStore.settingsOpen = false;
+    appStore.currentPage = 'home';
+  }
+
   onMount(() => {
     let cleanupFn: (() => void) | undefined;
+    let stopNotificationClickListener: (() => void) | undefined;
     let stopAutomaticUpdateChecks: (() => void) | undefined;
     let stopLocalSttListeners: (() => void) | undefined;
     let stopLocalLlmListeners: (() => void) | undefined;
@@ -109,6 +126,12 @@
       });
       cleanupFn = unlisten;
     })();
+
+    listen<string>('verenu:notification-clicked', (event) => {
+      openNotificationDestination(event.payload);
+    })
+      .then((unlisten) => { stopNotificationClickListener = unlisten; })
+      .catch((error) => { console.warn('Failed to listen for notification clicks:', error); });
 
     // Synchronous: startAutomaticUpdateChecks fires its first check in the
     // background and returns the cleanup immediately, so there's no unmount
@@ -157,6 +180,7 @@
 
     return () => {
       if (cleanupFn) cleanupFn();
+      if (stopNotificationClickListener) stopNotificationClickListener();
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
       if (stopLocalSttListeners) stopLocalSttListeners();
       if (stopLocalLlmListeners) stopLocalLlmListeners();

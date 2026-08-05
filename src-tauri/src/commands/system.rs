@@ -424,3 +424,34 @@ pub fn set_dev_logging_enabled(enabled: bool) {
 pub fn get_dev_logging_enabled() -> bool {
     crate::system::logger::is_verbose()
 }
+
+// ---------- system notifications ----------
+
+#[tauri::command]
+pub fn notify_update_available(app: AppHandle, version: String) -> Result<(), String> {
+    crate::system::notify::notify_update_available(&app, &version)
+}
+
+#[tauri::command]
+pub fn notify_provider_and_global_message(
+    app: AppHandle,
+    provider_summary: String,
+    global_message: String,
+) -> Result<(), String> {
+    crate::system::notify::notify_provider_and_global_message(
+        &app,
+        &provider_summary,
+        &global_message,
+    )
+}
+
+#[tauri::command]
+pub fn test_notifications(
+    app: AppHandle,
+    notification_type: Option<String>,
+) -> Result<(), String> {
+    crate::system::notify::notify_test_notification(
+        &app,
+        notification_type.as_deref().unwrap_or("update"),
+    )
+}
