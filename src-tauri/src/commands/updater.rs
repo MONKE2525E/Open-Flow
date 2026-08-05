@@ -128,8 +128,14 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
             }
 
             let installer = unique_update_installer_path()?;
-            let mut f = std::fs::File::create(&installer).map_err(|e| e.to_string())?;
-            f.write_all(&bytes).map_err(|e| e.to_string())?;
+            let mut f = match std::fs::File::create(&installer) {
+                Ok(file) => file,
+                Err(error) => return Err(error.to_string()),
+            };
+            if let Err(error) = f.write_all(&bytes) {
+                let _ = std::fs::remove_file(&installer);
+                return Err(error.to_string());
+            }
             drop(f);
 
             // Start a second copy of Verenu in a private helper mode. Unlike the
@@ -138,13 +144,29 @@ pub async fn install_update(app: AppHandle, download_url: String) -> Result<(), 
             // relaunches the installed binary. The old handoff only slept for
             // two seconds, so it could reopen Verenu while files were still
             // being replaced.
-            let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let current_exe = match std::env::current_exe() {
+                Ok(exe) => exe,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&installer);
+                    return Err(error.to_string());
+                }
+            };
             // The helper cannot run from the installed binary itself: Windows
             // keeps the helper's image locked, so NSIS would wait forever while
             // trying to replace Verenu.exe. Run a temporary copy instead and
             // pass the real executable path back for the final relaunch.
-            let helper_exe = unique_update_helper_path()?;
-            std::fs::copy(&current_exe, &helper_exe).map_err(|e| e.to_string())?;
+            let helper_exe = match unique_update_helper_path() {
+                Ok(path) => path,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&installer);
+                    return Err(error);
+                }
+            };
+            if let Err(error) = std::fs::copy(&current_exe, &helper_exe) {
+                let _ = std::fs::remove_file(&installer);
+                let _ = std::fs::remove_file(&helper_exe);
+                return Err(error.to_string());
+            }
             let parent_pid = std::process::id().to_string();
             if let Err(err) = std::process::Command::new(&helper_exe)
                 .arg("--apply-update")
@@ -192,9 +214,12 @@ pub(crate) fn run_update_helper_if_requested() -> bool {
 
     if let Err(err) = apply_downloaded_update(&args, helper_exe.as_deref()) {
         early_update_helper_warn(&err);
-        // A failed install should still leave Verenu usable. Restart the
-        // existing binary rather than stranding the user with no app open.
-        let _ = relaunch_installed_app(&args.target, helper_exe.as_deref());
+        // A failed install should still leave Verenu usable when the original
+        // process has already exited. Do not launch a second copy while the
+        // parent is still alive after a wait timeout.
+        if !process_is_running(args.parent_pid) {
+            let _ = relaunch_installed_app(&args.target, helper_exe.as_deref());
+        }
     }
     true
 }
@@ -296,6 +321,27 @@ fn wait_for_process_exit(pid: u32) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn process_is_running(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER};
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+
+    unsafe {
+        match OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+            Ok(handle) => {
+                let _ = CloseHandle(handle);
+                true
+            }
+            Err(error)
+                if error.code() == windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0) =>
+            {
+                false
+            }
+            Err(_) => true,
+        }
+    }
 }
 
 #[cfg(windows)]

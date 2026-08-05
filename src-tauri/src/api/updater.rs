@@ -427,8 +427,8 @@ fn should_offer_release_for_channel(
         return false;
     }
 
-    let latest = release_version(latest).and_then(|version| parse_version(&version));
-    let current = release_version(current).and_then(|version| parse_version(&version));
+    let latest = parse_version(latest);
+    let current = parse_version(current);
 
     matches!(
         (latest, current),
