@@ -90,10 +90,16 @@ pub fn notify_provider_and_global_message(
     provider_summary: &str,
     global_message: &str,
 ) -> Result<(), String> {
+    let body = match (provider_summary.is_empty(), global_message.is_empty()) {
+        (false, false) => format!("{provider_summary}\n\n{global_message}"),
+        (false, true) => provider_summary.to_owned(),
+        (true, false) => global_message.to_owned(),
+        (true, true) => return Err("Notification message is empty.".to_owned()),
+    };
     show(
         app,
         "Verenu service notice",
-        format!("{provider_summary}\n\n{global_message}"),
+        body,
         NotificationDestination::Home,
     )
 }

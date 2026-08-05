@@ -95,7 +95,7 @@ export async function checkStatus(): Promise<void> {
 
   const globalMessage = appStore.globalMessage;
   const providerAlerts = appStore.providerStatusAlerts;
-  if (providerAlerts.length === 0 || !globalMessage) {
+  if (providerAlerts.length === 0 && !globalMessage) {
     lastStatusNotificationKey = null;
     inFlightStatusNotificationKey = null;
     return;
@@ -109,8 +109,8 @@ export async function checkStatus(): Promise<void> {
         message: alert.message,
       }))
       .sort((left, right) => left.id.localeCompare(right.id)),
-    message: globalMessage.message,
-    visibleUntil: globalMessage.visibleUntil ?? null,
+    message: globalMessage?.message ?? null,
+    visibleUntil: globalMessage?.visibleUntil ?? null,
   });
   if (notificationKey === lastStatusNotificationKey || notificationKey === inFlightStatusNotificationKey) {
     return;
@@ -128,7 +128,7 @@ export async function checkStatus(): Promise<void> {
     }
     await invoke('notify_provider_and_global_message', {
       providerSummary,
-      globalMessage: globalMessage.message,
+      globalMessage: globalMessage?.message ?? '',
     });
     lastStatusNotificationKey = notificationKey;
   } catch (error) {
