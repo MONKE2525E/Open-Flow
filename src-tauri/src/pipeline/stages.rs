@@ -1,5 +1,22 @@
 use super::*;
 
+// Cleanup is an enhancement, not a reason to leave a completed dictation
+// blocked behind a provider that has accepted a request but stopped replying.
+// Normal cleanup completes in about a second, so retry once quickly and then
+// deliver the transcription without cleanup if both attempts stall.
+const CLEANUP_FAST_ATTEMPT_TIMEOUT_SECS: u64 = 3;
+const CLEANUP_FAST_ATTEMPTS: u8 = 2;
+
+fn cleanup_soft_timeout_error(provider: &str, model: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "CLEANUP_SOFT_TIMEOUT provider={provider} model={model} timeout_secs={CLEANUP_FAST_ATTEMPT_TIMEOUT_SECS}"
+    )
+}
+
+fn is_cleanup_soft_timeout(error: &anyhow::Error) -> bool {
+    error.to_string().starts_with("CLEANUP_SOFT_TIMEOUT ")
+}
+
 /// Runtime safety net for a cleanup result that looks like the model
 /// answering/refusing instead of returning cleaned dictation. Differential:
 /// only acts if `cleaned` looks like a refusal AND `raw` does not (a real
@@ -988,74 +1005,91 @@ async fn run_cleanup_provider_chain(
         if key.is_empty() && !is_local {
             continue;
         }
-        let custom_template = cfg.cleanup_override_for(&provider_id, &model);
-        let outcome = if is_local {
-            run_local_cleanup_request(
-                app,
-                &model,
-                expanded,
-                profile,
-                &cfg.cleanup_intensity,
-                extra_rules,
-                app_context,
-                custom_template,
-                alternate_transcript,
-            )
-            .await
-        } else {
-            let cp = ProviderId::from_str(&provider_id);
-            cleanup::cleanup_with_alternate(
-                expanded,
-                cp,
-                &key,
-                &model,
-                profile,
-                &cfg.cleanup_intensity,
-                extra_rules,
-                app_context,
-                custom_template,
-                alternate_transcript,
-            )
-            .await
-        };
-        match outcome {
-            Ok(cleaned) if !cleaned.is_empty() => {
-                log::debug!(
-                    "pipeline: cleanup provider success={} model={} cleaned_chars={}",
-                    provider_id,
-                    model,
-                    cleaned.chars().count()
-                );
-                return (
-                    Some(CleanupSuccess {
-                        cleaned,
+        let attempts = if is_local { 1 } else { CLEANUP_FAST_ATTEMPTS };
+        for attempt in 1..=attempts {
+            let custom_template = cfg.cleanup_override_for(&provider_id, &model);
+            let outcome = if is_local {
+                run_local_cleanup_request(
+                    app,
+                    &model,
+                    expanded,
+                    profile,
+                    &cfg.cleanup_intensity,
+                    extra_rules,
+                    app_context,
+                    custom_template,
+                    alternate_transcript,
+                )
+                .await
+            } else {
+                let cp = ProviderId::from_str(&provider_id);
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(CLEANUP_FAST_ATTEMPT_TIMEOUT_SECS),
+                    cleanup::cleanup_with_alternate(
+                        expanded,
+                        cp,
+                        &key,
+                        &model,
+                        profile,
+                        &cfg.cleanup_intensity,
+                        extra_rules,
+                        app_context,
+                        custom_template,
+                        alternate_transcript,
+                    ),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(cleanup_soft_timeout_error(&provider_id, &model)),
+                }
+            };
+            match outcome {
+                Ok(cleaned) if !cleaned.is_empty() => {
+                    log::debug!(
+                        "pipeline: cleanup provider success={} model={} attempt={} cleaned_chars={}",
                         provider_id,
                         model,
-                        key,
-                    }),
-                    None,
-                );
-            }
-            Ok(_) => {
-                last_cleanup_err = None;
-            }
-            Err(e) => {
-                // Same reasoning as the transcription chain in
-                // run_transcription: "retryable" only tells us whether
-                // retrying this same provider is worth it, not whether a
-                // different fallback provider/model would succeed. This
-                // used to `return` on non-retryable errors, aborting the
-                // whole fallback chain over something as unrelated as a
-                // missing/invalid key on the primary provider.
-                let retryable = crate::api::is_retryable_provider_error(&e);
-                log::warn!(
-                    "pipeline: cleanup provider failed provider={} model={} retryable={} error={}",
-                    provider_id,
-                    model,
-                    retryable,
-                    trim_err(&e.to_string())
-                );
-                last_cleanup_err = Some(e);
+                        attempt,
+                        cleaned.chars().count()
+                    );
+                    return (
+                        Some(CleanupSuccess {
+                            cleaned,
+                            provider_id,
+                            model,
+                            key,
+                        }),
+                        None,
+                    );
+                }
+                Ok(_) => {
+                    last_cleanup_err = None;
+                    break;
+                }
+                Err(e) => {
+                    let retryable = crate::api::is_retryable_provider_error(&e)
+                        || is_cleanup_soft_timeout(&e);
+                    log::warn!(
+                        "pipeline: cleanup provider failed provider={} model={} attempt={}/{} retryable={} error={}",
+                        provider_id,
+                        model,
+                        attempt,
+                        attempts,
+                        retryable,
+                        trim_err(&e.to_string())
+                    );
+                    // A real provider error should move to the configured
+                    // fallback immediately. Only a silent stall gets the
+                    // same-provider retry, because the second connection is
+                    // often healthy even though the first one wedged.
+                    let should_retry = is_cleanup_soft_timeout(&e) && attempt < attempts;
+                    last_cleanup_err = Some(e);
+                    if should_retry {
+                        continue;
+                    }
+                    break;
+                }
             }
         }
     }
@@ -1299,6 +1333,23 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                     }
                 }
                 overridden
+            }
+            None if !provider_succeeded
+                && last_cleanup_err
+                    .as_ref()
+                    .is_some_and(is_cleanup_soft_timeout) =>
+            {
+                log::warn!(
+                    "pipeline: cleanup stalled twice, delivering pre-cleanup transcription"
+                );
+                cleanup_api_used.clear();
+                let text =
+                    snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions);
+                if cfg.cleanup_intensity != "none" {
+                    crate::system::text::strip_filler_hesitations(&text)
+                } else {
+                    text
+                }
             }
             None if !provider_succeeded && last_cleanup_err.is_some() => {
                 return Err(last_cleanup_err.expect("checked"))

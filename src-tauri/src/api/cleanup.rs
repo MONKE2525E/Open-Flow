@@ -5,6 +5,12 @@ use super::gemini_types::{GeminiGenerateReq, GeminiReqContent, GeminiReqPart};
 use super::prompts::{cleanup_max_output_tokens, gemini_generation_config};
 use super::ProviderId;
 
+// Cleanup should be fast enough to run inline with dictation delivery. Keep
+// this shorter than the shared client timeout so a stalled provider can fall
+// through to the configured cleanup fallback instead of leaving the pill in
+// processing for two minutes.
+const CLEANUP_REQUEST_TIMEOUT_SECS: u64 = 45;
+
 #[allow(clippy::too_many_arguments)]
 pub async fn cleanup(
     text: &str,
@@ -86,20 +92,46 @@ pub async fn cleanup_with_alternate(
             snippet_instructions.chars().count()
         );
     }
-    if let Some(url) = provider.cleanup_url() {
-        openai_compat(
-            text,
-            api_key,
-            url,
-            provider.label(),
-            model,
-            &prompt,
-            max_output_tokens,
-            alternate_transcript,
-        )
-        .await
-    } else {
-        google_cleanup(text, api_key, &prompt, model, max_output_tokens, alternate_transcript).await
+    let request = async {
+        if let Some(url) = provider.cleanup_url() {
+            openai_compat(
+                text,
+                api_key,
+                url,
+                provider.label(),
+                model,
+                &prompt,
+                max_output_tokens,
+                alternate_transcript,
+            )
+            .await
+        } else {
+            google_cleanup(text, api_key, &prompt, model, max_output_tokens, alternate_transcript)
+                .await
+        }
+    };
+
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(CLEANUP_REQUEST_TIMEOUT_SECS),
+        request,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            log::warn!(
+                "cleanup: request timeout provider={} model={} timeout_secs={}",
+                provider.label(),
+                model,
+                CLEANUP_REQUEST_TIMEOUT_SECS
+            );
+            Err(anyhow::anyhow!(
+                "Cleanup API timeout provider={} model={} timeout_secs={}",
+                provider.label(),
+                model,
+                CLEANUP_REQUEST_TIMEOUT_SECS
+            ))
+        }
     }
 }
 
@@ -318,6 +350,18 @@ async fn google_cleanup(
     };
 
     let data: GeminiResp = resp.json().await?;
+    if let Some(candidate) = data.candidates.as_ref().and_then(|c| c.first()) {
+        if let Some(reason) = candidate.finish_reason.as_deref() {
+            if reason != "STOP" && reason != "MAX_TOKENS" {
+                anyhow::bail!("Gemini cleanup finish_reason: {reason}");
+            }
+            if reason == "MAX_TOKENS" {
+                anyhow::bail!(
+                    "Gemini cleanup output reached max_output_tokens={max_output_tokens}"
+                );
+            }
+        }
+    }
     let output = data
         .candidates
         .unwrap_or_default()
