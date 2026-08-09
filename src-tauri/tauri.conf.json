@@ -3,7 +3,7 @@
   "productName": "Verenu",
   "mainBinaryName": "Verenu",
   "identifier": "com.verenu.app",
-  "version": "0.16.0",
+  "version": "0.16.4",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:1420",
