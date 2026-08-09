@@ -997,8 +997,9 @@ async fn run_cleanup_provider_chain(
     extra_rules: &str,
     app_context: Option<&str>,
     app: Option<&AppHandle>,
-) -> (Option<CleanupSuccess>, Option<anyhow::Error>) {
+) -> (Option<CleanupSuccess>, Option<anyhow::Error>, bool) {
     let mut last_cleanup_err: Option<anyhow::Error> = None;
+    let mut saw_soft_timeout = false;
     for (provider_id, model) in cleanup_model_chain(cfg) {
         let is_local = provider_id == store::LOCAL;
         let key = cfg.key_for(&provider_id).to_owned();
@@ -1061,6 +1062,7 @@ async fn run_cleanup_provider_chain(
                             key,
                         }),
                         None,
+                        false,
                     );
                 }
                 Ok(_) => {
@@ -1084,6 +1086,7 @@ async fn run_cleanup_provider_chain(
                     // same-provider retry, because the second connection is
                     // often healthy even though the first one wedged.
                     let should_retry = is_cleanup_soft_timeout(&e) && attempt < attempts;
+                    saw_soft_timeout |= is_cleanup_soft_timeout(&e);
                     last_cleanup_err = Some(e);
                     if should_retry {
                         continue;
@@ -1094,7 +1097,7 @@ async fn run_cleanup_provider_chain(
         }
     }
 
-    (None, last_cleanup_err)
+    (None, last_cleanup_err, saw_soft_timeout)
 }
 
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
@@ -1255,7 +1258,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             },
             cache_key.len()
         );
-        let (cleanup_res, last_cleanup_err) = run_cleanup_provider_chain(
+        let (cleanup_res, last_cleanup_err, saw_soft_timeout) = run_cleanup_provider_chain(
             &expanded,
             alternate.map(|candidate| candidate.text.as_str()),
             cfg,
@@ -1334,10 +1337,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                 }
                 overridden
             }
-            None if !provider_succeeded
-                && last_cleanup_err
-                    .as_ref()
-                    .is_some_and(is_cleanup_soft_timeout) =>
+            None if !provider_succeeded && saw_soft_timeout =>
             {
                 log::warn!(
                     "pipeline: cleanup stalled twice, delivering pre-cleanup transcription"
