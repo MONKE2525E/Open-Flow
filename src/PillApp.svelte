@@ -421,6 +421,7 @@
       if (copyBtnTimer) clearTimeout(copyBtnTimer);
       if (pasteFailedDismissTimer) clearTimeout(pasteFailedDismissTimer);
       if (copiedTimer) clearTimeout(copiedTimer);
+      if (copiedPillTimer) clearTimeout(copiedPillTimer);
       unlisteners.forEach(u => u());
     };
   });

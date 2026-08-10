@@ -104,7 +104,8 @@ pub struct RetryCapture {
 /// Audio from a recording the user cancelled, kept around briefly so the
 /// pill's "Cancelled" state can offer a Continue button that resumes
 /// recording (hands-free) with this audio prepended — see
-/// `reserve_starting_with_prepend` and `commands::recording::resume_cancelled_capture`.
+/// `reserve_starting_with_cancelled_capture` and
+/// `commands::recording::resume_cancelled_capture`.
 #[derive(Clone)]
 pub struct CancelledCapture {
     pub audio: CapturedAudio,
@@ -150,21 +151,30 @@ pub fn reserve_starting(state: &SharedState) -> Result<(), String> {
     Ok(())
 }
 
-/// Same as `reserve_starting`, but seeds the reservation with audio to
-/// prepend once the new recording is stopped — used to resume a cancelled
-/// recording without re-recording what was already said.
-pub fn reserve_starting_with_prepend(
-    state: &SharedState,
-    audio: CapturedAudio,
-) -> Result<(), String> {
+/// Atomically reserves `Starting` seeded with the stashed cancelled capture,
+/// but only if the state is idle. The capture is left in place when the
+/// reservation fails, so a busy state can never destroy resumable audio —
+/// the naive take-then-reserve order in
+/// `commands::recording::resume_cancelled_capture` lost it permanently when
+/// the reservation errored after the take.
+pub fn reserve_starting_with_cancelled_capture(state: &SharedState) -> Result<CapturedAudio, String> {
     let mut st = lock_state(state).map_err(|e| e.to_string())?;
     if !st.lifecycle.is_idle() {
         return Err("Already recording".to_string());
     }
-    st.lifecycle = DictationLifecycle::Starting {
-        prepend_audio: Some(audio),
+    let Some(audio) = st.cancelled_capture.take().and_then(|c| {
+        if c.captured_at.elapsed() < CANCEL_RESUME_WINDOW {
+            Some(c.audio)
+        } else {
+            None
+        }
+    }) else {
+        return Err("Nothing to resume".to_string());
     };
-    Ok(())
+    st.lifecycle = DictationLifecycle::Starting {
+        prepend_audio: Some(audio.clone()),
+    };
+    Ok(audio)
 }
 
 /// `Processing(active) -> Starting { prepend_audio: Some(active.captured_audio) }`
@@ -598,15 +608,50 @@ mod tests {
     }
 
     #[test]
-    fn reserve_starting_with_prepend_fails_unless_idle() {
+    fn reserve_starting_with_cancelled_capture_preserves_capture_on_busy() {
         let state = fresh_state();
-        assert!(reserve_starting_with_prepend(&state, fake_audio(1000)).is_ok());
-        match &lock_state(&state).unwrap().lifecycle {
-            DictationLifecycle::Starting { prepend_audio } => assert!(prepend_audio.is_some()),
+        {
+            let mut st = lock_state(&state).unwrap();
+            st.cancelled_capture = Some(CancelledCapture {
+                audio: fake_audio(500),
+                captured_at: std::time::Instant::now(),
+            });
+        }
+        // Occupy the state so the reservation must fail.
+        reserve_starting(&state).unwrap();
+        assert!(reserve_starting_with_cancelled_capture(&state).is_err());
+        // The capture must survive the failed reservation.
+        assert!(lock_state(&state).unwrap().cancelled_capture.is_some());
+    }
+
+    #[test]
+    fn reserve_starting_with_cancelled_capture_reserves_with_audio() {
+        let state = fresh_state();
+        {
+            let mut st = lock_state(&state).unwrap();
+            st.cancelled_capture = Some(CancelledCapture {
+                audio: fake_audio(500),
+                captured_at: std::time::Instant::now(),
+            });
+        }
+        let taken = reserve_starting_with_cancelled_capture(&state).unwrap();
+        assert_eq!(taken.duration_ms, 500);
+        let lifecycle = lock_state(&state).unwrap();
+        match &lifecycle.lifecycle {
+            DictationLifecycle::Starting { prepend_audio } => {
+                assert_eq!(prepend_audio.as_ref().unwrap().duration_ms, 500)
+            }
             _ => panic!("expected Starting with prepend_audio"),
         }
-        // Already Starting now — a second reservation must fail.
-        assert!(reserve_starting_with_prepend(&state, fake_audio(1000)).is_err());
+    }
+
+    #[test]
+    fn reserve_starting_with_cancelled_capture_rejects_when_nothing_stashed() {
+        let state = fresh_state();
+        assert!(matches!(
+            reserve_starting_with_cancelled_capture(&state),
+            Err(ref e) if e == "Nothing to resume"
+        ));
     }
 
     #[test]

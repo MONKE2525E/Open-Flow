@@ -54,7 +54,7 @@
         ></span>
       </div>
     {/each}
-    {#if hover !== null}
+    {#if hover !== null && hourly[hover] !== undefined}
       <ChartTooltip
         x={hoverX}
         y={stripHeight - (Math.max(2, max > 0 ? (hourly[hover] / max) * 100 : 2) / 100) * stripHeight}

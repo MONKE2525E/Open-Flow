@@ -16,7 +16,9 @@ export function fmtCompact(n: number): { value: string; suffix: string } {
 export function fmtUsd(n: number | null): string {
   if (n === null) return '—';
   if (n === 0) return '$0.00';
-  if (n < 0.01) return '<$0.01';
+  // Only small *positive* amounts render as "<$0.01" — a negative amount
+  // must format normally instead of being swallowed by the tiny-value branch.
+  if (n > 0 && n < 0.01) return '<$0.01';
   return `$${n.toFixed(2)}`;
 }
 
@@ -45,8 +47,10 @@ export function bookEquivalent(words: number): number {
 export function niceCeiling(max: number): number {
   if (max <= 0) return 1;
   const magnitude = 10 ** Math.floor(Math.log10(max));
+  // IEEE-754 rounding can nudge an exact boundary (0.2/0.1) just past it, so
+  // compare with a small tolerance instead of raw <=.
   const normalized = max / magnitude;
-  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  const step = normalized <= 1 + 1e-9 ? 1 : normalized <= 2 + 1e-9 ? 2 : normalized <= 5 + 1e-9 ? 5 : 10;
   return step * magnitude;
 }
 

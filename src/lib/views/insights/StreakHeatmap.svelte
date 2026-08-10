@@ -61,14 +61,23 @@
   const columnCount = $derived(Math.ceil(cells.length / 7));
   const gridWidth = $derived(columnCount * STEP - GAP);
 
-  /* One label per month the grid spans, positioned above that month's first column. */
+  /* One label per month the grid spans, positioned above that month's first
+     column. A month change landing mid-week would otherwise put two labels on
+     the same column (or in immediately adjacent 14px columns, whose text
+     overlaps), so a label is only placed when its column is clear of the
+     previous one. */
   const monthLabels = $derived.by(() => {
     const labels: Array<{ col: number; label: string }> = [];
     let lastMonth = -1;
+    let lastCol = -Infinity;
     cells.forEach((cell, i) => {
       const month = parseLocalDay(cell.day).getMonth();
       if (month !== lastMonth) {
-        labels.push({ col: Math.floor(i / 7), label: parseLocalDay(cell.day).toLocaleDateString([], { month: 'short' }) });
+        const col = Math.floor(i / 7);
+        if (col >= lastCol + 2) {
+          labels.push({ col, label: parseLocalDay(cell.day).toLocaleDateString([], { month: 'short' }) });
+          lastCol = col;
+        }
         lastMonth = month;
       }
     });
@@ -140,7 +149,7 @@
       {/each}
     </div>
 
-    <div class="grid-scroll scroll-styled">
+    <div class="grid-scroll scroll-styled" onscroll={clearHover}>
       <div class="month-row" style:width="{gridWidth}px" aria-hidden="true">
         {#each monthLabels as m}
           <span style:left="{m.col * STEP}px">{m.label}</span>
