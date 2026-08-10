@@ -356,19 +356,39 @@
 
   onMount(() => {
     if (!canvasEl) return;
+    syncCanvasSize();
+    ctx = canvasEl.getContext('2d');
+    ctx?.scale(Math.max(1, window.devicePixelRatio || 1), Math.max(1, window.devicePixelRatio || 1));
+    startValueTween();
+  });
+
+  // The size prop can change at runtime (responsive layout) — re-sync the
+  // canvas backing store, CSS size, and the DPR context scale so paint()
+  // never draws onto a stale/clipped buffer.
+  $effect(() => {
+    size;
+    if (!ctx || !canvasEl) return;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    syncCanvasSize();
+    scheduleFrame();
+  });
+
+  function syncCanvasSize() {
+    if (!canvasEl) return;
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     canvasEl.width = size * dpr;
     canvasEl.height = size * dpr;
     canvasEl.style.width = `${size}px`;
     canvasEl.style.height = `${size}px`;
-    ctx = canvasEl.getContext('2d');
-    ctx?.scale(dpr, dpr);
-    startValueTween();
-  });
+  }
 
   onDestroy(() => {
     if (rafId) cancelAnimationFrame(rafId);
     colorProbe?.remove();
+    // Null it out too — a destroyed probe is a detached node, and any later
+    // resolveColor() must create a fresh element rather than reuse it.
+    colorProbe = null;
   });
 </script>
 

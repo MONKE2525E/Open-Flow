@@ -57,16 +57,27 @@
   onMount(() => {
     load();
     let unlisten: (() => void) | undefined;
+    let mounted = true;
     // Refresh live as new dictations land, so the page never shows stale
     // numbers while it's open.
     listen('verenu:transcribed', () => load())
-      .then((cleanup) => { unlisten = cleanup; })
+      .then((cleanup) => {
+        // If the component already unmounted while `listen` was still
+        // resolving, tear the listener down immediately rather than leaking
+        // it onto a dead component.
+        if (!mounted) {
+          cleanup();
+        } else {
+          unlisten = cleanup;
+        }
+      })
       .catch(() => {});
     // Belt and suspenders: poll on a fixed cadence too, so the page catches
     // up even when a transcription event was missed (e.g. it landed before
     // the page opened). Silent ticks never flash the loading state.
     const timer = setInterval(() => load({ silent: true }), 10_000);
     return () => {
+      mounted = false;
       unlisten?.();
       clearInterval(timer);
     };

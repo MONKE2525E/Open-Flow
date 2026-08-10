@@ -50,7 +50,7 @@
         stroke="var(--accent)"
         stroke-width="11"
         stroke-linecap="round"
-        stroke-dasharray="{ARC_LENGTH * gaugeFill} {ARC_LENGTH}"
+        stroke-dasharray={`${ARC_LENGTH * gaugeFill} ${ARC_LENGTH}`}
         class="gauge-fill"
       />
       <!-- Scale labels — 0 / 100 / 200 wpm — so the arc reads as a fixed
