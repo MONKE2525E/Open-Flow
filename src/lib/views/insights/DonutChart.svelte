@@ -373,7 +373,11 @@
     syncCanvasSize();
     ctx = canvasEl.getContext('2d');
     applyDprScale();
-    startValueTween();
+    // Don't call startValueTween() here — the $effect tracking `segments`
+    // already does on mount, and a second call would reset animFrom to the
+    // target values (animTo already set by the first), skipping the initial
+    // 0-to-value entrance. Just ensure a frame paints once the context is up.
+    scheduleFrame();
   });
 
   // The size prop can change at runtime (responsive layout) — re-sync the
