@@ -432,8 +432,10 @@ pub(super) async fn inject_text(
         unsafe { GetWindowThreadProcessId(HWND(target_hwnd as *mut core::ffi::c_void), None) };
     // Scoped so `GUITHREADINFO` (holds raw HWND pointers, not Send) is
     // dropped before any `.await` below — otherwise it'd make this whole
-    // async fn's future non-Send.
-    let has_focus = {
+    // async fn's future non-Send. A zero thread id means the target window
+    // was invalid/closed — `GetGUIThreadInfo(0)` would otherwise treat 0 as
+    // a request to inspect the OS foreground thread and wrongly report focus.
+    let has_focus = target_thread_id != 0 && {
         let mut gti = GUITHREADINFO {
             cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
             ..Default::default()

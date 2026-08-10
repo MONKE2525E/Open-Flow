@@ -569,11 +569,14 @@ fn query_words(
             // count a human word length should measure (non-ASCII words like
             // accented or non-Latin text would otherwise be over-counted).
             let char_len = normalized.chars().count();
-            if char_len > longest.as_ref().map_or(0, |w| w.chars().count()) {
-                longest = Some(normalized.clone());
-            }
+            // Stopwords are excluded from the vocabulary insights — check
+            // before tracking `longest` so a long filler word like
+            // "because"/"themselves" never shows up as the longest word.
             if char_len < MIN_WORD_CHARS || STOPWORDS.contains(&normalized.as_str()) {
                 continue;
+            }
+            if char_len > longest.as_ref().map_or(0, |w| w.chars().count()) {
+                longest = Some(normalized.clone());
             }
             *counts.entry(normalized.clone()).or_insert(0) += 1;
             length_sum += char_len as u64;

@@ -74,11 +74,14 @@
       const month = parseLocalDay(cell.day).getMonth();
       if (month !== lastMonth) {
         const col = Math.floor(i / 7);
+        // Only advance lastMonth when a label is actually placed — otherwise
+        // a month whose first column is too close to the previous label
+        // would be permanently omitted even if a later column fits.
         if (col >= lastCol + 2) {
           labels.push({ col, label: parseLocalDay(cell.day).toLocaleDateString([], { month: 'short' }) });
           lastCol = col;
+          lastMonth = month;
         }
-        lastMonth = month;
       }
     });
     return labels;

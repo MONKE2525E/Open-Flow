@@ -50,7 +50,16 @@ export function niceCeiling(max: number): number {
   // IEEE-754 rounding can nudge an exact boundary (0.2/0.1) just past it, so
   // compare with a small tolerance instead of raw <=.
   const normalized = max / magnitude;
-  const step = normalized <= 1 + 1e-9 ? 1 : normalized <= 2 + 1e-9 ? 2 : normalized <= 5 + 1e-9 ? 5 : 10;
+  let step: number;
+  if (normalized <= 1 + 1e-9) {
+    step = 1;
+  } else if (normalized <= 2 + 1e-9) {
+    step = 2;
+  } else if (normalized <= 5 + 1e-9) {
+    step = 5;
+  } else {
+    step = 10;
+  }
   return step * magnitude;
 }
 

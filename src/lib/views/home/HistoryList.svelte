@@ -168,7 +168,11 @@
     container;
     listContainer;
     appStore.updateInfo;
-    hasBanner;
+    // Depend on the entries directly, not the derived `hasBanner` boolean —
+    // swapping one banner for the other keeps the boolean true, so the block
+    // would otherwise not re-run and `listOffset` would go stale.
+    failedEntry;
+    cancelledEntry;
     updateLayout();
     updateVirtualList();
     // Recalculate list offset after the DOM has updated to handle banner toggles

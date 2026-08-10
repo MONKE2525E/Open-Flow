@@ -258,17 +258,29 @@ pub async fn cancel_recording_with_resume(
 /// the pipeline's own gate by the time it gets here).
 pub fn stash_cancelled_capture(app: &AppHandle, state: &SharedState, audio: CapturedAudio) {
     let stashed = lock_state(state)
-        .map(|mut st| {
+        .and_then(|mut st| {
+            // Only stash while the system is genuinely idle. Between
+            // `stop_and_capture_audio` (which released the Recording
+            // lifecycle) and this call the user may have already started a
+            // new dictation — overwriting the capture or forcing the pill
+            // into "Cancelled" would clobber that fresh session.
+            if !st.lifecycle.is_idle() {
+                return Err(anyhow::anyhow!(
+                    "state advanced past idle while stashing cancelled capture"
+                ));
+            }
             st.cancelled_capture = Some(CancelledCapture {
                 audio,
                 captured_at: std::time::Instant::now(),
             });
+            Ok(())
         })
         .is_ok();
     if !stashed {
-        // Lock poisoned — the pill's Continue button would offer a resume
-        // that can't work since nothing was stashed. Hide the pill instead.
-        log::warn!("failed to stash cancelled capture (state lock poisoned)");
+        // Lock poisoned, or a new session started while we were stopping —
+        // either way the pill's Continue button would offer a resume that
+        // can't work (or would fight the live session). Hide the pill.
+        log::warn!("skipping cancelled-capture pill: state not idle when stashing");
         hide_pill(app);
         return;
     }
