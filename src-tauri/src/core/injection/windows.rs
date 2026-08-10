@@ -542,13 +542,14 @@ pub(super) async fn inject_text(
                 // retrying either way.
                 verified = true;
             } else {
-                let tail_frozen = !pre_injection_tail.is_empty()
-                    && post_probe.context_tail == pre_injection_tail;
-                // An empty pre-injection baseline (an empty field, or a control
-                // UIA couldn't read) leaves no known caret state to compare
-                // against, so a non-matching read is ambiguous — not proof the
-                // paste went wrong.
-                let read_is_ambiguous = tail_frozen || pre_injection_tail.is_empty();
+                // A read byte-identical to the pre-injection tail carries no
+                // new information — either the accessibility tree hasn't
+                // caught up with the paste yet, or the field truly didn't
+                // change. That is ambiguous, not proof the paste failed. A
+                // read that CHANGED and still doesn't contain our text is a
+                // real signal the paste went wrong, even in a field that was
+                // empty before.
+                let read_is_ambiguous = post_probe.context_tail == pre_injection_tail;
                 saw_frozen |= read_is_ambiguous;
                 if paste_tail_matches(&adjusted, &post_probe.context_tail) {
                     verified = true;
