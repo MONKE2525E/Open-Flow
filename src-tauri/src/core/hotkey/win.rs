@@ -7,6 +7,7 @@ const VK_SHIFT: u32 = 0x10; // VK_SHIFT
 const VK_CTRL: u32 = 0x11; // VK_CONTROL (generic, used with modifier_held)
 const VK_ALT: u32 = 0x12; // VK_MENU (generic, used with modifier_held)
 const VK_RETURN: u32 = 0x0D; // Enter
+const VK_C: u32 = 0x43; // 'C' — used by the Ctrl+Alt+C copy-last-dictation shortcut
 
 // Side-specific modifier VK codes that should never trigger a history update.
 // Generic codes (0x10/0x11/0x12) are omitted: the !is_injected guard already
@@ -479,6 +480,15 @@ thread_local! {
 // pipeline task, which cannot reach the hook thread's thread-local directly.
 static RESET_REQUESTED: AtomicBool = AtomicBool::new(false);
 
+// Cross-thread request to force both chord keys' down/ownership bookkeeping
+// to false, regardless of gesture state. Unlike RESET_REQUESTED (gesture
+// state only — see reset_gesture_state's own doc comment on why it never
+// touches physical-key state), this is a deliberately blunter reset: it's
+// only ever set by force_release_win_key(), after GetAsyncKeyState has
+// already confirmed the Win key reads stuck down at the OS level, so there's
+// no risk of prematurely forgetting a legitimately-still-suppressed key.
+static FORCE_KEY_RELEASE_REQUESTED: AtomicBool = AtomicBool::new(false);
+
 pub fn update_keys(k1: u32, k2: u32) {
     if k1 != 0 {
         KEY1.store(k1, Ordering::SeqCst);
@@ -530,6 +540,47 @@ pub fn caps_lock_is_on() -> bool {
 
 #[allow(dead_code)]
 pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
+
+/// Live OS-level check (not our own bookkeeping) — true if Windows currently
+/// thinks either Win key is held. Reuses the same `GetAsyncKeyState` primitive
+/// `modifier_held` already uses for Win (VK 91/92, no generic VK_WIN).
+pub fn is_win_key_down() -> bool {
+    unsafe { modifier_held(91) }
+}
+
+/// Recovery action for a stuck Win key (confirmed via `is_win_key_down()`
+/// first) — called right before a paste so a leftover "Win held" OS state
+/// can't turn the paste's Ctrl+V into a Win-shortcut. Synthesizes a real
+/// keyup for both Win keys (Windows should honor this as authoritative
+/// regardless of why its internal state was wrong) and asks the hook thread
+/// to forget its own chord-key ownership bookkeeping too, in case the hook
+/// itself still thinks it's holding/suppressing the key.
+pub fn force_release_win_key() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VK_LWIN, VK_RWIN,
+    };
+
+    // Win is an "extended key" per SendInput's own contract — omitting
+    // KEYEVENTF_EXTENDEDKEY can leave the OS's shell-hotkey state machine
+    // out of sync even when GetAsyncKeyState reports the key up.
+    let ki = |vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP.0 | KEYEVENTF_EXTENDEDKEY.0),
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let release = [ki(VK_LWIN), ki(VK_RWIN)];
+    unsafe { SendInput(&release, std::mem::size_of::<INPUT>() as i32) };
+
+    FORCE_KEY_RELEASE_REQUESTED.store(true, Ordering::SeqCst);
+}
 
 pub fn map_code_to_vk(code: &str) -> u32 {
     match code {
@@ -617,6 +668,13 @@ static ESCAPE_CANCELLED: AtomicBool = AtomicBool::new(false);
 static ESCAPE_KEY_DOWN: AtomicBool = AtomicBool::new(false);
 static ESCAPE_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
 
+// Ctrl+Alt+C: always-available fallback to re-copy the last dictation to the
+// clipboard, in case paste failed in a way the pipeline's own detection
+// missed. Not chord-based (no hold/release) — a plain keydown fires it,
+// mirroring how Escape is handled below.
+static COPY_LAST_KEY_DOWN: AtomicBool = AtomicBool::new(false);
+static COPY_LAST_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
@@ -639,6 +697,19 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             CHORD_MACHINE.with(|m| m.borrow_mut().reset_gesture_state());
             ESCAPE_CANCELLED.store(false, Ordering::SeqCst);
             ESCAPE_KEY_DOWN.store(false, Ordering::SeqCst);
+        }
+
+        if FORCE_KEY_RELEASE_REQUESTED.swap(false, Ordering::SeqCst) {
+            CHORD_MACHINE.with(|m| {
+                let mut machine = m.borrow_mut();
+                machine.key1_down = false;
+                machine.key2_down = false;
+                machine.key1_passed_through = false;
+                machine.key2_passed_through = false;
+                machine.key1_was_chord = false;
+                machine.key2_was_chord = false;
+                machine.chord_down = false;
+            });
         }
 
         if (is_key1 || is_key2) && (is_down || is_up) {
@@ -767,6 +838,19 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 return LRESULT(1);
             }
             if is_up && ESCAPE_KEY_DOWN.swap(false, Ordering::SeqCst) {
+                return LRESULT(1);
+            }
+        }
+
+        if vk == VK_C {
+            if is_down && unsafe { modifier_held(VK_CTRL) && modifier_held(VK_ALT) } {
+                COPY_LAST_KEY_DOWN.store(true, Ordering::SeqCst);
+                if let Some(cb) = COPY_LAST_CB.get() {
+                    cb();
+                }
+                return LRESULT(1);
+            }
+            if is_up && COPY_LAST_KEY_DOWN.swap(false, Ordering::SeqCst) {
                 return LRESULT(1);
             }
         }
@@ -1049,12 +1133,13 @@ mod chord_tests {
     }
 }
 
-pub fn start<P, R, H, C, E>(
+pub fn start<P, R, H, C, E, L>(
     on_press: P,
     on_release: R,
     on_handless: H,
     on_cancel: C,
     on_escape: E,
+    on_copy_last: L,
 ) -> Result<std::thread::JoinHandle<()>, String>
 where
     P: Fn() + Send + Sync + 'static,
@@ -1062,12 +1147,14 @@ where
     H: Fn() + Send + Sync + 'static,
     C: Fn() + Send + Sync + 'static,
     E: Fn() + Send + Sync + 'static,
+    L: Fn() + Send + Sync + 'static,
 {
     let _ = PRESS_CB.set(Box::new(on_press));
     let _ = RELEASE_CB.set(Box::new(on_release));
     let _ = HANDLESS_CB.set(Box::new(on_handless));
     let _ = CANCEL_CB.set(Box::new(on_cancel));
     let _ = ESCAPE_CB.set(Box::new(on_escape));
+    let _ = COPY_LAST_CB.set(Box::new(on_copy_last));
 
     // Verify the hook can be installed before spawning the thread so the caller
     // gets a synchronous error instead of a silent panic on a background thread.

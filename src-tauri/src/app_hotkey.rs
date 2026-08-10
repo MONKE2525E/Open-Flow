@@ -2,7 +2,8 @@ use std::sync::MutexGuard;
 
 use crate::core::window_geometry::WindowTarget;
 use crate::pipeline::{self, hide_pill, start_recording_session, AppState, SharedState};
-use tauri::Emitter;
+use crate::DbHandle;
+use tauri::{Emitter, Manager};
 
 fn lock_app_state(state: &SharedState) -> Option<MutexGuard<'_, AppState>> {
     match state.lock() {
@@ -24,6 +25,7 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
         HandlessToggle,
         Cancel,
         EscapeCancel,
+        CopyLast,
     }
 
     let (hotkey_tx, mut hotkey_rx) = tokio::sync::mpsc::unbounded_channel::<HotkeyEvent>();
@@ -31,6 +33,7 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
     let tx_handless = hotkey_tx.clone();
     let tx_cancel = hotkey_tx.clone();
     let tx_escape = hotkey_tx.clone();
+    let tx_copy_last = hotkey_tx.clone();
     let tx_release = hotkey_tx;
 
     match crate::core::hotkey::start(
@@ -48,6 +51,9 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
         },
         move || {
             let _ = tx_escape.send(HotkeyEvent::EscapeCancel);
+        },
+        move || {
+            let _ = tx_copy_last.send(HotkeyEvent::CopyLast);
         },
     ) {
         Ok(_handle) => { /* hook thread running */ }
@@ -206,19 +212,25 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         ));
                     } else {
                         // First click of a double-tap gesture outside handsfree:
-                        // discard the short recording that just started.
+                        // cancel the short recording that just started, but
+                        // stash its audio (if long/loud enough) so the pill's
+                        // Continue button can resume it instead of losing it.
                         let taken = pipeline::take_recording_plain(&state_hk);
                         if let Some((session, exclusive_mic_session_id)) = taken {
-                            tauri::async_runtime::spawn_blocking(move || {
-                                let _ = session.stop();
-                                if let Some(session_id) = exclusive_mic_session_id {
-                                    crate::system::volume::release_mic(session_id);
-                                }
-                                crate::media::sound::coordinated_unmute();
-                                crate::system::media_control::end_dictation_media_pause();
+                            let app_for_cancel = app_hk.clone();
+                            let state_for_cancel = state_hk.clone();
+                            tauri::async_runtime::spawn(async move {
+                                pipeline::cancel_recording_with_resume(
+                                    &app_for_cancel,
+                                    &state_for_cancel,
+                                    session,
+                                    exclusive_mic_session_id,
+                                )
+                                .await;
                             });
+                        } else {
+                            hide_pill(&app_hk);
                         }
-                        hide_pill(&app_hk);
                     }
                 }
 
@@ -230,28 +242,81 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     // Cancel in-flight processing outright — no append, no
                     // insertion. Distinct from the pre-Release recording-cancel
                     // path below (a dictation can be in at most one of the two).
+                    // Its audio already cleared the pipeline's own quality gate
+                    // to get this far, so stash it unconditionally for Continue.
                     if let Some(active) = pipeline::take_active_pipeline_for_escape(&state_hk) {
                         let _ = active.cancel_tx.send(true);
-                        hide_pill(&app_hk);
+                        pipeline::stash_cancelled_capture(
+                            &app_hk,
+                            &state_hk,
+                            active.captured_audio,
+                        );
                         continue;
                     }
 
+                    // Cancel sound cue (if any) is now played inside
+                    // cancel_recording_with_resume/stash_cancelled_capture,
+                    // consistently across every cancel path.
                     let taken = pipeline::take_recording_plain(&state_hk);
-                    let had_recording = taken.is_some();
                     if let Some((session, exclusive_mic_session_id)) = taken {
-                        tauri::async_runtime::spawn_blocking(move || {
-                            let _ = session.stop();
-                            if let Some(session_id) = exclusive_mic_session_id {
-                                crate::system::volume::release_mic(session_id);
-                            }
-                            crate::media::sound::coordinated_unmute();
-                            crate::system::media_control::end_dictation_media_pause();
+                        let app_for_cancel = app_hk.clone();
+                        let state_for_cancel = state_hk.clone();
+                        tauri::async_runtime::spawn(async move {
+                            pipeline::cancel_recording_with_resume(
+                                &app_for_cancel,
+                                &state_for_cancel,
+                                session,
+                                exclusive_mic_session_id,
+                            )
+                            .await;
                         });
+                    } else {
+                        // Nothing was recording/processing — if the pill is
+                        // currently showing a pending "Cancelled -> Undo"
+                        // offer, Escape dismisses it (same as clicking the
+                        // pill's own dismiss button).
+                        if pipeline::take_cancelled_capture_if_fresh(&state_hk).is_some() {
+                            pipeline::emit_cancelled_capture_cleared(&app_hk);
+                        }
+                        hide_pill(&app_hk);
                     }
-                    if had_recording && pipeline::start_stop_sounds_enabled(&app_hk) {
-                        crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
-                    }
-                    hide_pill(&app_hk);
+                }
+
+                HotkeyEvent::CopyLast => {
+                    // Global fallback for a paste that failed silently (not
+                    // caught by the pipeline's own detection): re-copy the
+                    // most recent dictation to the clipboard on demand.
+                    let db_handle = app_hk.state::<DbHandle>().inner().clone();
+                    let app_for_copy = app_hk.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let recent = tokio::task::spawn_blocking(move || {
+                            crate::data::db::query_recent_page(&db_handle, 1, 0)
+                        })
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .unwrap_or_default();
+                        match recent.into_iter().next() {
+                            Some(entry) if !entry.clean_text.trim().is_empty() => {
+                                if let Err(e) =
+                                    crate::core::injection::copy_to_clipboard(&entry.clean_text)
+                                        .await
+                                {
+                                    log::warn!(
+                                        "hotkey: copy-last-dictation clipboard write failed: {e}"
+                                    );
+                                    return;
+                                }
+                                pipeline::show_copied_pill(
+                                    &app_for_copy,
+                                    "Copied last dictation to clipboard",
+                                );
+                            }
+                            _ => {
+                                pipeline::show_copied_pill(&app_for_copy, "Nothing to copy yet");
+                            }
+                        }
+                    });
                 }
             }
         }

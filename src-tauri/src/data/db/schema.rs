@@ -20,8 +20,9 @@ CREATE TABLE IF NOT EXISTS transcriptions (
 CREATE INDEX IF NOT EXISTS idx_transcriptions_created_at
   ON transcriptions(created_at);
 CREATE TABLE IF NOT EXISTS lifetime_stats (
-  id          INTEGER PRIMARY KEY CHECK (id = 1),
-  total_words INTEGER NOT NULL DEFAULT 0
+  id               INTEGER PRIMARY KEY CHECK (id = 1),
+  total_words      INTEGER NOT NULL DEFAULT 0,
+  dictionary_fixes INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS dictionary (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,6 +95,19 @@ CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
 CREATE TABLE IF NOT EXISTS seeded_defaults (
   key TEXT PRIMARY KEY
 );
+CREATE TABLE IF NOT EXISTS api_calls (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  transcription_id  INTEGER NOT NULL,
+  model             TEXT    NOT NULL,
+  provider          TEXT    NOT NULL,
+  task              TEXT    NOT NULL,
+  audio_ms          INTEGER NOT NULL DEFAULT 0,
+  input_chars       INTEGER NOT NULL DEFAULT 0,
+  output_chars      INTEGER NOT NULL DEFAULT 0,
+  created_at        DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_api_calls_created_at
+  ON api_calls(created_at);
 ";
 
 pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
@@ -290,6 +304,53 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
             let _ = conn.execute_batch("ROLLBACK;");
             return Err(err.into());
         }
+    }
+    if user_version < 10 {
+        // Per-call API usage records for the Insights cost card. Written
+        // from the pipeline at finalize time; historical transcriptions
+        // predating this table simply have no cost data. Also declared in
+        // SCHEMA above so an interrupted migration can't leave a database
+        // without the table (the CREATE TABLE IF NOT EXISTS self-heals).
+        let res = conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS api_calls (
+               id                INTEGER PRIMARY KEY AUTOINCREMENT,
+               transcription_id  INTEGER NOT NULL,
+               model             TEXT    NOT NULL,
+               provider          TEXT    NOT NULL,
+               task              TEXT    NOT NULL,
+               audio_ms          INTEGER NOT NULL DEFAULT 0,
+               input_chars       INTEGER NOT NULL DEFAULT 0,
+               output_chars      INTEGER NOT NULL DEFAULT 0,
+               created_at        DATETIME NOT NULL DEFAULT (datetime('now'))
+             );
+             CREATE INDEX IF NOT EXISTS idx_api_calls_created_at
+               ON api_calls(created_at);
+             PRAGMA user_version = 10;
+             COMMIT;",
+        );
+        if let Err(err) = res {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err.into());
+        }
+    }
+    if user_version < 11 {
+        // Real lifetime counter for dictionary substitutions actually
+        // applied to dictations (incremented from the pipeline with the
+        // `applied_dict_ids` count). Mirrors `total_words`: never recomputed
+        // from history, so retention pruning can't shrink it. The column is
+        // declared in SCHEMA for fresh databases; ensure_table_column is
+        // idempotent for databases that already have it.
+        run_migration(&mut conn, |conn| {
+            ensure_table_column(
+                conn,
+                "lifetime_stats",
+                "dictionary_fixes",
+                "ALTER TABLE lifetime_stats ADD COLUMN dictionary_fixes INTEGER NOT NULL DEFAULT 0;",
+            )?;
+            conn.execute_batch("PRAGMA user_version = 11;")?;
+            Ok(())
+        })?;
     }
     ensure_cleanup_cache_schema(&conn)?;
 

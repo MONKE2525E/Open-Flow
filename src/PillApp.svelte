@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
 
-  type PillState = 'idle' | 'recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error';
+  type PillState = 'idle' | 'recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'paste_failed' | 'copied';
   let state: PillState = 'idle';
   let errorMsg = '';
   let errOpen = false;
@@ -10,6 +10,16 @@
   let errorTimer: ReturnType<typeof setTimeout> | null = null;
   let showHfButtons = false;
   let hfTimer: ReturnType<typeof setTimeout> | null = null;
+  let cancelOpen = false;
+  let showCancelBtn = false;
+  let cancelBtnTimer: ReturnType<typeof setTimeout> | null = null;
+  let cancelDismissTimer: ReturnType<typeof setTimeout> | null = null;
+  let showCopyBtn = false;
+  let copyBtnTimer: ReturnType<typeof setTimeout> | null = null;
+  let pasteFailedDismissTimer: ReturnType<typeof setTimeout> | null = null;
+  let copiedPillTimer: ReturnType<typeof setTimeout> | null = null;
+  let copied = false;
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
   let prevState: PillState = 'idle';
   let dying = false;
   let dyingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -172,6 +182,34 @@
         clearTimeout(errorTimer);
         errorTimer = null;
       }
+      cancelOpen = false;
+      showCancelBtn = false;
+      if (cancelBtnTimer) {
+        clearTimeout(cancelBtnTimer);
+        cancelBtnTimer = null;
+      }
+      if (cancelDismissTimer) {
+        clearTimeout(cancelDismissTimer);
+        cancelDismissTimer = null;
+      }
+      showCopyBtn = false;
+      copied = false;
+      if (copyBtnTimer) {
+        clearTimeout(copyBtnTimer);
+        copyBtnTimer = null;
+      }
+      if (pasteFailedDismissTimer) {
+        clearTimeout(pasteFailedDismissTimer);
+        pasteFailedDismissTimer = null;
+      }
+      if (copiedTimer) {
+        clearTimeout(copiedTimer);
+        copiedTimer = null;
+      }
+      if (copiedPillTimer) {
+        clearTimeout(copiedPillTimer);
+        copiedPillTimer = null;
+      }
     }, 200);
   }
 
@@ -179,6 +217,9 @@
   const ERROR_COLLAPSED_WIDTH = 42;
   const ERROR_GAP = 8;
   const ERROR_MAX_WIDTH = 356;
+  // Retry button (18px) + the flex gap in front of it — reserved
+  // unconditionally since the button always shows once the pill is open.
+  const ERROR_RETRY_BTN_WIDTH = 26;
 
   // Opens the error pill: render collapsed (icon-only), measure the message
   // text, then grow to its natural width so the CSS width transition has a
@@ -202,7 +243,7 @@
     const applyWidth = () => {
       const textW = errTextEl?.scrollWidth ?? 0;
       const errWidthNatural = textW > 0
-        ? Math.min(ERROR_COLLAPSED_WIDTH + ERROR_GAP + textW, ERROR_MAX_WIDTH)
+        ? Math.min(ERROR_COLLAPSED_WIDTH + ERROR_GAP + textW + ERROR_RETRY_BTN_WIDTH, ERROR_MAX_WIDTH)
         : ERROR_COLLAPSED_WIDTH;
       errWidth = errWidthNatural;
       errOpen = true;
@@ -260,7 +301,7 @@
           errorTimer = setTimeout(() => {
             errorTimer = null;
             if (state === 'error') goIdle();
-          }, 2000);
+          }, 10000);
         } else {
           if (errorTimer) {
             clearTimeout(errorTimer);
@@ -269,6 +310,74 @@
           errorMsg = '';
           errOpen = false;
           errWidth = 0;
+        }
+
+        if (state === 'cancelled') {
+          cancelOpen = false;
+          showCancelBtn = false;
+          requestAnimationFrame(() => {
+            if (state === 'cancelled') cancelOpen = true;
+          });
+          if (cancelBtnTimer) clearTimeout(cancelBtnTimer);
+          cancelBtnTimer = setTimeout(() => {
+            cancelBtnTimer = null;
+            if (state === 'cancelled') showCancelBtn = true;
+          }, 200);
+          if (cancelDismissTimer) clearTimeout(cancelDismissTimer);
+          cancelDismissTimer = setTimeout(() => {
+            cancelDismissTimer = null;
+            // Just hide the toast — the capture itself stays resumable from
+            // Home for the full backend window. Only the explicit dismiss
+            // button actually discards it (see dismissCancelled()).
+            if (state === 'cancelled') goIdle();
+          }, 10000);
+        } else {
+          if (cancelBtnTimer) {
+            clearTimeout(cancelBtnTimer);
+            cancelBtnTimer = null;
+          }
+          if (cancelDismissTimer) {
+            clearTimeout(cancelDismissTimer);
+            cancelDismissTimer = null;
+          }
+          cancelOpen = false;
+          showCancelBtn = false;
+        }
+
+        if (state === 'paste_failed') {
+          showCopyBtn = false;
+          copied = false;
+          if (copyBtnTimer) clearTimeout(copyBtnTimer);
+          copyBtnTimer = setTimeout(() => {
+            copyBtnTimer = null;
+            if (state === 'paste_failed') showCopyBtn = true;
+          }, 1200);
+          if (pasteFailedDismissTimer) clearTimeout(pasteFailedDismissTimer);
+          pasteFailedDismissTimer = setTimeout(() => {
+            pasteFailedDismissTimer = null;
+            if (state === 'paste_failed') goIdle();
+          }, 10000);
+        } else {
+          if (copyBtnTimer) {
+            clearTimeout(copyBtnTimer);
+            copyBtnTimer = null;
+          }
+          if (pasteFailedDismissTimer) {
+            clearTimeout(pasteFailedDismissTimer);
+            pasteFailedDismissTimer = null;
+          }
+          showCopyBtn = false;
+        }
+
+        if (state === 'copied') {
+          if (copiedPillTimer) clearTimeout(copiedPillTimer);
+          copiedPillTimer = setTimeout(() => {
+            copiedPillTimer = null;
+            if (state === 'copied') goIdle();
+          }, 5000);
+        } else if (copiedPillTimer) {
+          clearTimeout(copiedPillTimer);
+          copiedPillTimer = null;
         }
       });
       if (!mounted) { l1(); return; }
@@ -289,6 +398,15 @@
       });
       if (!mounted) { l3(); return; }
       unlisteners.push(l3);
+
+      // Fired when the cancelled capture is resumed or dismissed from
+      // *another* window (Home's banner) — if this toast is still showing,
+      // it's now stale, so drop it without re-invoking dismiss.
+      const l4 = await listen('verenu:cancelled-capture-cleared', () => {
+        if (state === 'cancelled') goIdle();
+      });
+      if (!mounted) { l4(); return; }
+      unlisteners.push(l4);
     })();
 
     return () => {
@@ -298,6 +416,11 @@
       if (errorTimer) clearTimeout(errorTimer);
       if (dyingTimer) clearTimeout(dyingTimer);
       if (hfTimer) clearTimeout(hfTimer);
+      if (cancelBtnTimer) clearTimeout(cancelBtnTimer);
+      if (cancelDismissTimer) clearTimeout(cancelDismissTimer);
+      if (copyBtnTimer) clearTimeout(copyBtnTimer);
+      if (pasteFailedDismissTimer) clearTimeout(pasteFailedDismissTimer);
+      if (copiedTimer) clearTimeout(copiedTimer);
       unlisteners.forEach(u => u());
     };
   });
@@ -313,6 +436,45 @@
     const { invoke } = await import('@tauri-apps/api/core');
     goIdle();
     await invoke('stop_recording').catch(() => {});
+  }
+
+  async function retryFailed() {
+    if (errorTimer) { clearTimeout(errorTimer); errorTimer = null; }
+    goIdle();
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('retry_transcription').catch(() => {});
+  }
+
+  async function continueCancelled() {
+    if (cancelDismissTimer) { clearTimeout(cancelDismissTimer); cancelDismissTimer = null; }
+    const { invoke } = await import('@tauri-apps/api/core');
+    // Don't force idle on success — Rust emits 'handsfree' next so the pill
+    // morphs directly from cancelled to handsfree, mirroring confirmHandless.
+    await invoke('resume_cancelled_capture').catch(() => { goIdle(); });
+  }
+
+  async function dismissCancelled() {
+    if (cancelDismissTimer) { clearTimeout(cancelDismissTimer); cancelDismissTimer = null; }
+    goIdle();
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('dismiss_cancelled_capture').catch(() => {});
+  }
+
+  async function copyPasteFailure() {
+    const { invoke } = await import('@tauri-apps/api/core');
+    try {
+      await invoke('copy_paste_failure_to_clipboard');
+      copied = true;
+      if (pasteFailedDismissTimer) { clearTimeout(pasteFailedDismissTimer); pasteFailedDismissTimer = null; }
+      if (copiedTimer) clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => {
+        copiedTimer = null;
+        if (state === 'paste_failed') goIdle();
+      }, 1500);
+    } catch {
+      // Nothing left to copy (expired/already copied) — just let the toast
+      // run out its normal auto-dismiss timer.
+    }
   }
 </script>
 
@@ -348,6 +510,57 @@
         <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
       </svg>
       <span class="err-text" bind:this={errTextEl}>{errorMsg || 'Something went wrong'}</span>
+      {#if errOpen}
+        <button class="hf-btn err-retry" onclick={retryFailed} aria-label="Retry">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 4v5h-5"/>
+          </svg>
+        </button>
+      {/if}
+    </div>
+
+  {:else if state === 'cancelled'}
+    <div class="pill cancelled" class:cancel-open={cancelOpen} class:dying={dying}>
+      <button class="hf-btn cancel" onclick={dismissCancelled} aria-label="Dismiss">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <path d="M6 6l12 12M6 18 18 6"/>
+        </svg>
+      </button>
+      <span class="cancel-text">Cancelled</span>
+      {#if showCancelBtn}
+        <button class="hf-btn confirm" onclick={continueCancelled} aria-label="Undo — keep recording">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/>
+          </svg>
+        </button>
+      {/if}
+    </div>
+
+  {:else if state === 'paste_failed'}
+    <div class="pill paste-failed" class:copy-open={showCopyBtn} class:dying={dying}>
+      <svg class="err-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+      </svg>
+      <span class="paste-failed-text">Not pasted</span>
+      {#if showCopyBtn}
+        <button class="hf-btn copy-btn" onclick={copyPasteFailure} aria-label="Copy to clipboard">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            {#if copied}
+              <polyline points="20 6 9 17 4 12"/>
+            {:else}
+              <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            {/if}
+          </svg>
+        </button>
+      {/if}
+    </div>
+
+  {:else if state === 'copied'}
+    <div class="pill copied" class:dying={dying}>
+      <svg class="copied-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+      <span class="copied-text">{errorMsg || 'Copied last dictation to clipboard'}</span>
     </div>
 
   {:else if state === 'handsfree'}
@@ -417,6 +630,9 @@
   .pill.recording.dying,
   .pill.handsfree.dying,
   .pill.error.dying,
+  .pill.cancelled.dying,
+  .pill.paste-failed.dying,
+  .pill.copied.dying,
   .pill.processing.dying,
   .pill.loading-local.dying {
     animation: pillOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
@@ -577,14 +793,14 @@
     to   { opacity: 1; }
   }
 
-  /* Error: rounded rectangle, dark red-tinted, expands horizontally to reveal the message */
+  /* Error: dark red-tinted stadium pill, expands horizontally to reveal the message */
   .pill.error {
     width: 42px;
     gap: 8px;
     padding: 0 14px;
     background: var(--pill-error-bg);
     color: var(--pill-error-fg);
-    border-radius: 14px;
+    border-radius: 999px;
     box-shadow: 0 0 0 1px var(--pill-error-border),
                 0 6px 18px rgba(0,0,0,0.28);
     max-width: 356px;
@@ -603,6 +819,87 @@
     transition: opacity 0.18s ease 0.08s;
   }
   .pill.error.err-open .err-text { opacity: 1; }
+
+  .hf-btn.err-retry {
+    color: var(--pill-error-fg);
+    animation: hfBtnIn 0.12s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s both;
+  }
+  .hf-btn.err-retry:hover { background: rgba(255,255,255,0.14); }
+
+  /* Cancelled: neutral stadium pill (not the red error palette) — starts as
+     a dismiss (X) button only, expands to reveal the "Cancelled" label and
+     an Undo button that resumes recording hands-free with the cancelled
+     audio prepended. Both buttons are real, clickable controls (not status
+     icons) — dismiss discards the capture for good, Undo keeps it going. */
+  .pill.cancelled {
+    width: 42px;
+    gap: 8px;
+    padding: 0 12px;
+    border-radius: 999px;
+    overflow: hidden;
+    transition: width 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+                padding 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .pill.cancelled.cancel-open {
+    width: 158px;
+    padding: 0 8px;
+  }
+  .cancel-text {
+    font-size: 11.5px; font-weight: 500;
+    white-space: nowrap; overflow: hidden;
+    opacity: 0;
+    flex: 1;
+    text-align: center;
+    transition: opacity 0.18s ease 0.08s;
+  }
+  .pill.cancelled.cancel-open .cancel-text { opacity: 1; }
+
+  /* Paste failed: same red-tinted stadium pill as .pill.error, message-first
+     (no collapsed-icon entry — the message is a fixed short string, not a
+     dynamic one to measure), then widens to reveal a Copy button after a
+     beat so "paste failed" registers before the fallback action appears. */
+  .pill.paste-failed {
+    gap: 8px;
+    padding: 0 14px;
+    background: var(--pill-error-bg);
+    color: var(--pill-error-fg);
+    border-radius: 999px;
+    box-shadow: 0 0 0 1px var(--pill-error-border),
+                0 6px 18px rgba(0,0,0,0.28);
+    width: 128px;
+    overflow: hidden;
+    transition: width 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+                padding 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .pill.paste-failed.copy-open {
+    width: 158px;
+    padding: 0 8px 0 14px;
+  }
+  .paste-failed-text {
+    font-size: 11.5px; font-weight: 500;
+    color: var(--pill-error-fg);
+    white-space: nowrap; overflow: hidden;
+    flex: 1;
+    text-align: center;
+  }
+  .hf-btn.copy-btn {
+    color: var(--pill-error-fg);
+    animation: hfBtnIn 0.12s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  .hf-btn.copy-btn:hover { background: rgba(255,255,255,0.14); }
+
+  /* Copied confirmation: neutral (not error-red) stadium pill for the global
+     Ctrl+Alt+C / ⌥⌘C shortcut — fixed short message, auto-sized, no buttons. */
+  .pill.copied {
+    gap: 8px;
+    padding: 0 14px;
+    white-space: nowrap;
+  }
+  .copied-icon { color: var(--accent); flex-shrink: 0; }
+  .copied-text {
+    font-size: 11.5px; font-weight: 500;
+    white-space: nowrap;
+  }
 
   /* Handsfree: starts compact (mirrors recording — same DPI-snapped width so the
      recording→handsfree continuation doesn't jump), expands to 112px after 450ms */

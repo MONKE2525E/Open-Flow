@@ -2,7 +2,7 @@ import { invoke } from './tauri';
 import type { ProviderId } from './settings';
 import type { SettingsSectionId } from './settingsSections';
 
-export type PageId = 'home' | 'dictionary' | 'snippets' | 'style';
+export type PageId = 'home' | 'insights' | 'dictionary' | 'snippets' | 'style';
 export type AppearanceMode = 'system' | 'light' | 'dark';
 export type PillState = 'idle' | 'recording' | 'processing' | 'handsfree';
 export type FetchStatus = 'idle' | 'loading' | 'loaded' | 'error';

@@ -64,6 +64,7 @@ static RELEASE_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 static HANDLESS_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 static CANCEL_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 static ESCAPE_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+static COPY_LAST_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 
 static CHORD_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HANDLESS_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -100,6 +101,10 @@ static MANAGER: OnceLock<GlobalHotKeyManager> = OnceLock::new();
 static CURRENT_HOTKEY: Mutex<Option<HotKey>> = Mutex::new(None);
 static MAIN_HOTKEY_ID: AtomicU32 = AtomicU32::new(0);
 static ESCAPE_HOTKEY: OnceLock<HotKey> = OnceLock::new();
+// ⌥⌘C: always-registered fallback to re-copy the last dictation, in case
+// paste failed in a way the pipeline's own detection missed. Unlike Escape
+// this is registered permanently at startup, not just while recording.
+static COPY_LAST_HOTKEY: OnceLock<HotKey> = OnceLock::new();
 // `Mutex<bool>` (not an atomic) so the check and the register/unregister call are
 // one critical section — `set_escape_listening` is invoked from both the hotkey
 // event thread and Tauri command threads, and a lock-free swap could interleave
@@ -117,6 +122,14 @@ fn now_ms() -> u64 {
 /// from recording our own Cmd+V into the injection history. Without the tap this
 /// is a no-op (kept to satisfy the shared cross-platform contract).
 pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
+
+/// There's no Windows key on macOS — kept to satisfy the shared contract.
+pub fn is_win_key_down() -> bool {
+    false
+}
+
+/// No-op on macOS — see `is_win_key_down`.
+pub fn force_release_win_key() {}
 
 pub fn update_keys(k1: u32, k2: u32) {
     KEY1.store(k1, Ordering::SeqCst);
@@ -422,6 +435,17 @@ fn register_main_hotkey() {
     }
 }
 
+fn register_copy_last_hotkey() {
+    let Some(mgr) = MANAGER.get() else {
+        return;
+    };
+    let hk = *COPY_LAST_HOTKEY
+        .get_or_init(|| HotKey::new(Some(Modifiers::ALT | Modifiers::META), Code::KeyC));
+    if let Err(e) = mgr.register(hk) {
+        log::warn!("hotkey: failed to register copy-last-dictation hotkey: {e}");
+    }
+}
+
 /// Register/unregister a plain-Escape hotkey for the duration of an active
 /// recording so the user can cancel mid-dictation. We keep it transient because
 /// a registered hotkey is consumed system-wide — we don't want to swallow Escape
@@ -460,6 +484,14 @@ fn handle_hotkey_event(ev: GlobalHotKeyEvent) {
     if ESCAPE_HOTKEY.get().is_some_and(|h| h.id() == ev.id) {
         if matches!(ev.state, HotKeyState::Pressed) {
             on_escape_pressed();
+        }
+        return;
+    }
+    if COPY_LAST_HOTKEY.get().is_some_and(|h| h.id() == ev.id) {
+        if matches!(ev.state, HotKeyState::Pressed) {
+            if let Some(cb) = COPY_LAST_CB.get() {
+                cb();
+            }
         }
         return;
     }
@@ -532,12 +564,13 @@ fn on_escape_pressed() {
 
 // --- start -----------------------------------------------------------------
 
-pub fn start<P, R, H, C, E>(
+pub fn start<P, R, H, C, E, L>(
     on_press: P,
     on_release: R,
     on_handless: H,
     on_cancel: C,
     on_escape: E,
+    on_copy_last: L,
 ) -> Result<std::thread::JoinHandle<()>, String>
 where
     P: Fn() + Send + Sync + 'static,
@@ -545,6 +578,7 @@ where
     H: Fn() + Send + Sync + 'static,
     C: Fn() + Send + Sync + 'static,
     E: Fn() + Send + Sync + 'static,
+    L: Fn() + Send + Sync + 'static,
 {
     if MANAGER.get().is_some() {
         log::warn!("hotkey: global hotkey manager already initialized");
@@ -556,6 +590,7 @@ where
     let _ = HANDLESS_CB.set(Box::new(on_handless));
     let _ = CANCEL_CB.set(Box::new(on_cancel));
     let _ = ESCAPE_CB.set(Box::new(on_escape));
+    let _ = COPY_LAST_CB.set(Box::new(on_copy_last));
 
     // Created here (on the main thread, from Tauri `setup`) because the crate
     // installs its Carbon event handler on the application event target, which
@@ -567,6 +602,7 @@ where
         return Ok(std::thread::spawn(|| {}));
     }
     register_main_hotkey();
+    register_copy_last_hotkey();
 
     // Drain hotkey events on a background thread; the receiver is a process-wide
     // channel fed by the Carbon handler, so it is safe to poll off-thread.

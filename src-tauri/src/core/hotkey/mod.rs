@@ -2,10 +2,11 @@
 //!
 //! Both platforms expose the same public contract consumed by `main.rs` and
 //! `commands`:
-//!   `start(on_press, on_release, on_handless, on_cancel, on_escape)`,
+//!   `start(on_press, on_release, on_handless, on_cancel, on_escape, on_copy_last)`,
 //!   `update_keys`, `map_code_to_vk`, `is_hotkey_available`,
 //!   `reset_chord_state`, `set_handless_active`,
-//!   `begin_synthetic_paste_suppression`.
+//!   `begin_synthetic_paste_suppression`, `is_win_key_down`,
+//!   `force_release_win_key`.
 //!
 //! Windows uses a `WH_KEYBOARD_LL` hook; macOS uses a `CGEventTap`. The numeric
 //! key ids produced by `map_code_to_vk` are platform-private — only the matching
@@ -35,18 +36,23 @@ mod noop {
     pub fn set_processing_generation(_generation: u64) {}
     pub fn clear_processing_generation(_expected_generation: u64) {}
     pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
+    pub fn is_win_key_down() -> bool {
+        false
+    }
+    pub fn force_release_win_key() {}
     pub fn caps_lock_is_on() -> bool {
         false
     }
     pub fn map_code_to_vk(_code: &str) -> u32 {
         0
     }
-    pub fn start<P, R, H, C, E>(
+    pub fn start<P, R, H, C, E, L>(
         _on_press: P,
         _on_release: R,
         _on_handless: H,
         _on_cancel: C,
         _on_escape: E,
+        _on_copy_last: L,
     ) -> Result<std::thread::JoinHandle<()>, String>
     where
         P: Fn() + Send + Sync + 'static,
@@ -54,6 +60,7 @@ mod noop {
         H: Fn() + Send + Sync + 'static,
         C: Fn() + Send + Sync + 'static,
         E: Fn() + Send + Sync + 'static,
+        L: Fn() + Send + Sync + 'static,
     {
         Ok(std::thread::spawn(|| {}))
     }
