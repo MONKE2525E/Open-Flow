@@ -68,7 +68,7 @@
       <!-- Sits low in the arc's hollow, where the semicircle is widest, so
            a 3-digit reading never reaches the curve above it. No "wpm"
            suffix — the label right below already says it. -->
-      <text x="64" y="63" class="gauge-value" text-anchor="middle">{wpm || '—'}</text>
+      <text x="64" y="63" class="gauge-value" text-anchor="middle">{wpm > 0 ? wpm : '—'}</text>
     </svg>
     <p class="tile-label">words per minute</p>
     <p class="tile-note">

@@ -444,9 +444,11 @@
 
   async function retryFailed() {
     if (errorTimer) { clearTimeout(errorTimer); errorTimer = null; }
-    goIdle();
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('retry_transcription').catch(() => {});
+    // Don't go idle before the call — Rust emits 'processing' on success so
+    // the pill morphs from error to processing. Only fall back to idle if the
+    // retry itself fails, so a rejected retry still shows the error state.
+    await invoke('retry_transcription').catch(() => { goIdle(); });
   }
 
   async function continueCancelled() {

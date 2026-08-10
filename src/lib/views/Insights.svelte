@@ -39,13 +39,20 @@
     } catch (err) {
       if (!mounted || token !== fetchToken) return;
       console.error('IPC get_insights failed:', err);
-      // A background refresh failure must not replace good data with an
-      // error banner — the last known numbers stay up, next tick retries.
-      // But if there's no data yet (initial load still in flight or failed),
-      // swallowing the error would leave the skeleton loading forever.
-      if (!opts?.silent || !data) {
+      if (!opts?.silent) {
         error = formatIpcError(err);
         status = 'error';
+      } else if (!data) {
+        // No data to fall back on — surface the error so the skeleton can't
+        // spin forever (e.g. initial load failed, or a silent refresh landed
+        // while the first load was still in flight).
+        error = formatIpcError(err);
+        status = 'error';
+      } else {
+        // Silent refresh failed but we have good data: keep it up. Also clear
+        // any 'loading' a superseded non-silent load may have left behind, or
+        // the skeleton would stick even though data is present.
+        status = 'loaded';
       }
     }
   }

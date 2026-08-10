@@ -288,7 +288,9 @@ pub async fn stop_calibration_monitoring(
                             speech.longest_segment_ms
                         );
                     }
-                    Err(e) => log::warn!("calibration: VAD unavailable, falling back to level check: {e}"),
+                    Err(e) => {
+                        log::warn!("calibration: VAD unavailable, falling back to level check: {e}")
+                    }
                 }
             }
             Ok(None) => log::warn!("calibration: capture returned no audio"),
@@ -396,7 +398,10 @@ pub async fn resume_cancelled_capture(
 /// for the full `CANCEL_RESUME_WINDOW` regardless of whether the toast is
 /// still on screen.
 #[tauri::command]
-pub async fn dismiss_cancelled_capture(app: AppHandle, state: tauri::State<'_, SharedState>) -> Result<(), String> {
+pub async fn dismiss_cancelled_capture(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
     if pipeline::take_cancelled_capture_if_fresh(state.inner()).is_some() {
         pipeline::emit_cancelled_capture_cleared(&app);
     }
@@ -411,10 +416,15 @@ pub async fn dismiss_cancelled_capture(app: AppHandle, state: tauri::State<'_, S
 pub async fn copy_paste_failure_to_clipboard(
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    let Some(text) = pipeline::take_paste_failure_if_fresh(state.inner()) else {
+    // Peek rather than take: if the clipboard write fails (transient system
+    // clipboard lock/error), the text stays available so the user can retry.
+    // The slot is only cleared once the copy actually succeeds.
+    let Some(text) = pipeline::peek_paste_failure_if_fresh(state.inner()) else {
         return Err("Nothing to copy".to_string());
     };
     crate::core::injection::copy_to_clipboard(&text)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    pipeline::clear_paste_failure(state.inner());
+    Ok(())
 }

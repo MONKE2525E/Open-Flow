@@ -44,7 +44,7 @@ export function fmtDuration(ms: number): string {
 
 /** null when there is no previous window to compare against. */
 export function pctDelta(current: number, previous: number): number | null {
-  if (previous <= 0) return null;
+  if (!Number.isFinite(previous) || previous <= 0) return null;
   return ((current - previous) / previous) * 100;
 }
 
@@ -75,7 +75,18 @@ export function niceCeiling(max: number): number {
 /** Parse a local "YYYY-MM-DD" without the UTC shift `new Date(str)` would apply. */
 export function parseLocalDay(day: string): Date {
   const [y, m, d] = day.split('-').map(Number);
-  return new Date(y, (m ?? 1) - 1, d ?? 1);
+  // Guard malformed/empty strings: `new Date(0, 0, 1)` silently becomes the
+  // year 1900 rather than throwing, so the callers' try/catch fallback would
+  // never fire. Reject with an Invalid Date so `toLocaleDateString` throws
+  // and `fmtDay`/`fmtDayLong` fall back to the raw string.
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d) || y < 1) {
+    return new Date(NaN);
+  }
+  const date = new Date(y, m - 1, d);
+  // Reject invalid calendar dates (e.g. month 13, day 32) that JS normalizes.
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d
+    ? date
+    : new Date(NaN);
 }
 
 export function fmtDay(day: string): string {
