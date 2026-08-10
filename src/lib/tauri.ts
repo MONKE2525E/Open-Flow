@@ -878,9 +878,22 @@ function devInsights(days: number): unknown {
   for (let i = daily.length - 1; i >= 0 && daily[i].words > 0; i--) current++;
   let longest = 0;
   let run = 0;
+  let runStart: string | null = null;
+  let longestStartedOn: string | null = null;
+  let longestEndedOn: string | null = null;
   for (const d of daily) {
-    run = d.words > 0 ? run + 1 : 0;
-    longest = Math.max(longest, run);
+    if (d.words > 0) {
+      if (run === 0) runStart = d.day;
+      run += 1;
+      if (run > longest) {
+        longest = run;
+        longestStartedOn = runStart;
+        longestEndedOn = d.day;
+      }
+    } else {
+      run = 0;
+      runStart = null;
+    }
   }
 
   const hourly = Array.from({ length: 24 }, (_, h) => {
@@ -904,8 +917,8 @@ function devInsights(days: number): unknown {
     streak: {
       current_days: current,
       longest_days: longest,
-      longest_started_on: daily[Math.max(0, daily.length - longest - 4)]?.day ?? null,
-      longest_ended_on: daily[Math.max(0, daily.length - 5)]?.day ?? null,
+      longest_started_on: longestStartedOn,
+      longest_ended_on: longestEndedOn,
       longest_words: Math.round(wordsInRange * 0.62),
       active_days: daily.filter((d) => d.words > 0).length + 96,
     },

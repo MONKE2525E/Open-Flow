@@ -202,6 +202,14 @@
   $effect(() => {
     // Re-run whenever the segment set or its values change.
     segments;
+    // A hovered segment may no longer exist after a data change (e.g. range
+    // filter removed it) — a stale id would dim the whole chart and legend
+    // until the next hover. Drop it and any dim state.
+    if (hoveredId !== null && !segments.some((s) => s.id === hoveredId)) {
+      hoveredId = null;
+      dimming = false;
+      dimFromAlpha = 1;
+    }
     startValueTween();
   });
 

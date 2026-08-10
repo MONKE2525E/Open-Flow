@@ -31,6 +31,11 @@
   // Derived from the tweened count so the book equivalent stays in sync with
   // the animating word number instead of snapping to the target immediately.
   const books = $derived(bookEquivalent($totalWordsT));
+  // The exact string shown in the note; pluralization keys off its parsed
+  // value (so 80,080 words → "1.0" → singular) rather than a fragile strict
+  // equality against the raw float.
+  const booksLabel = $derived(books < 10 ? books.toFixed(1) : String(Math.round(books)));
+  const isOneBook = $derived(Number(booksLabel) === 1);
   const delta = $derived(pctDelta(data.totals.words_in_range, data.totals.words_prev_range));
 </script>
 
@@ -90,12 +95,12 @@
     <p class="tile-label">total words dictated</p>
     <p class="tile-note">
       {#if books >= 1}
-        <!-- Pluralize off the displayed amount: "1 book" is singular, but
-             "1.5 books" isn't. -->
-        {#if books === 1}
+        <!-- Pluralize off the displayed amount: "1" is singular, but "1.5"
+             isn't. -->
+        {#if isOneBook}
           That's 1 full-length book of writing.
         {:else}
-          That's {books.toFixed(books < 10 ? 1 : 0)} full-length books of writing.
+          That's {booksLabel} full-length books of writing.
         {/if}
       {:else if data.totals.total_words > 0}
         {Math.round(books * 100)}% of a full-length book so far.
