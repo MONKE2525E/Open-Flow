@@ -157,7 +157,9 @@ pub fn reserve_starting(state: &SharedState) -> Result<(), String> {
 /// the naive take-then-reserve order in
 /// `commands::recording::resume_cancelled_capture` lost it permanently when
 /// the reservation errored after the take.
-pub fn reserve_starting_with_cancelled_capture(state: &SharedState) -> Result<CapturedAudio, String> {
+pub fn reserve_starting_with_cancelled_capture(
+    state: &SharedState,
+) -> Result<CapturedAudio, String> {
     let mut st = lock_state(state).map_err(|e| e.to_string())?;
     if !st.lifecycle.is_idle() {
         return Err("Already recording".to_string());
@@ -215,6 +217,7 @@ pub fn take_cancelled_capture_if_fresh(state: &SharedState) -> Option<CapturedAu
 
 /// Takes `paste_failure`'s text if present and still within
 /// `PASTE_FAILURE_WINDOW`. Always clears the slot.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn take_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
     let mut st = lock_state(state).ok()?;
     st.paste_failure.take().and_then(|f| {
@@ -224,6 +227,27 @@ pub fn take_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
             None
         }
     })
+}
+
+/// Reads `paste_failure`'s text if present and still within
+/// `PASTE_FAILURE_WINDOW`, without clearing the slot — so a transient
+/// clipboard failure can be retried instead of permanently losing the text.
+pub fn peek_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
+    let st = lock_state(state).ok()?;
+    st.paste_failure.as_ref().and_then(|f| {
+        if f.captured_at.elapsed() < PASTE_FAILURE_WINDOW {
+            Some(f.text.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Clears the `paste_failure` slot after it has been successfully handled.
+pub fn clear_paste_failure(state: &SharedState) {
+    if let Ok(mut st) = lock_state(state) {
+        st.paste_failure = None;
+    }
 }
 
 /// `Processing(active) -> Idle`, discarding the audio entirely (Escape
@@ -679,7 +703,8 @@ mod tests {
             let mut st = lock_state(&state).unwrap();
             st.paste_failure = Some(PasteFailure {
                 text: "stale".to_string(),
-                captured_at: std::time::Instant::now() - PASTE_FAILURE_WINDOW
+                captured_at: std::time::Instant::now()
+                    - PASTE_FAILURE_WINDOW
                     - std::time::Duration::from_secs(1),
             });
         }

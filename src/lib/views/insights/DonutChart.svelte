@@ -148,6 +148,10 @@
       colorProbe.style.pointerEvents = 'none';
       document.body.appendChild(colorProbe);
     }
+    // Clear any previous inline color first — CSSOM silently ignores an
+    // invalid assignment, so without a reset a failed resolve would leave the
+    // previous call's color behind and report that instead.
+    colorProbe.style.color = '';
     colorProbe.style.color = css;
     return getComputedStyle(colorProbe).color || css;
   }
