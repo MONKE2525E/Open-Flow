@@ -286,7 +286,14 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     // Global fallback for a paste that failed silently (not
                     // caught by the pipeline's own detection): re-copy the
                     // most recent dictation to the clipboard on demand.
-                    let db_handle = app_hk.state::<DbHandle>().inner().clone();
+                    // try_state — a hotkey can fire during teardown when
+                    // managed state is already gone, and panicking in the
+                    // hook thread would take the app down.
+                    let Some(db_handle) = app_hk.try_state::<DbHandle>() else {
+                        log::warn!("CopyLast hotkey: DbHandle not managed, skipping");
+                        continue;
+                    };
+                    let db_handle = db_handle.inner().clone();
                     let app_for_copy = app_hk.clone();
                     tauri::async_runtime::spawn(async move {
                         let recent = tokio::task::spawn_blocking(move || {

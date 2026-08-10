@@ -630,16 +630,18 @@ fn compute_streak(daily: &[InsightsDay]) -> InsightsStreak {
     let mut current_days = 0i64;
     // The series is zero-filled and ends on today. A quiet today (the day
     // isn't over yet) must not zero a streak that's still alive through
-    // yesterday — GitHub-style, the streak holds until the day ends.
+    // yesterday — GitHub-style, the streak holds until the day ends. The
+    // grace applies only to the trailing day (today) itself: if today is
+    // empty it's skipped, and counting continues strictly from yesterday.
     let mut iter = daily.iter().rev();
-    let mut pending_today = true;
-    for day in &mut iter {
+    if let Some(today) = iter.next() {
+        if today.words > 0 {
+            current_days += 1;
+        }
+    }
+    for day in iter {
         if day.words > 0 {
             current_days += 1;
-        } else if pending_today {
-            // Skip the empty trailing day (today) once; a second empty day
-            // is a real break.
-            pending_today = false;
         } else {
             break;
         }
@@ -851,6 +853,18 @@ mod tests {
 
         let insights = query_insights(&db, 7).expect("insights");
         assert_eq!(insights.streak.current_days, 0);
+    }
+
+    #[test]
+    fn streak_stops_at_a_real_gap_even_when_today_is_active() {
+        let db = test_db();
+        // Today is active, but yesterday was a gap — the grace for a quiet
+        // today must not swallow real historical gaps. Streak is just today.
+        insert_on_day(&db, 0, "today", 2, 1000);
+        insert_on_day(&db, 2, "two days ago", 2, 1000);
+
+        let insights = query_insights(&db, 7).expect("insights");
+        assert_eq!(insights.streak.current_days, 1);
     }
 
     #[test]

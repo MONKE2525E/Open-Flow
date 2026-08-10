@@ -93,7 +93,17 @@
       <p class="page-sub">How much you dictate, how fast, and what it costs. Everything here is computed locally from your own history — nothing leaves your machine.</p>
     </div>
 
-    <div class="ui-dropdown range-picker">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="ui-dropdown range-picker"
+      onclick={(event) => event.stopPropagation()}
+      onkeydown={(event) => {
+        if (event.key === 'Escape' && rangeOpen) {
+          rangeOpen = false;
+          event.stopPropagation();
+        }
+      }}
+    >
       <button
         type="button"
         class="ui-dropdown-trigger"
