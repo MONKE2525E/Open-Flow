@@ -3,11 +3,16 @@
   import AnimatedNumber from './AnimatedNumber.svelte';
   import ChartTooltip from './ChartTooltip.svelte';
 
-  let { hourly }: { hourly: number[] } = $props();
+  let { hourly = Array.from({ length: 24 }, () => 0) }: { hourly?: number[] } = $props();
 
-  const max = $derived(Math.max(...hourly, 0));
-  const total = $derived(hourly.reduce((sum, n) => sum + n, 0));
-  const peak = $derived(max > 0 ? hourly.indexOf(max) : -1);
+  // Default destructure above normalizes a missing/null prop; guard the
+  // derivations against a non-array payload too.
+  const series = $derived(
+    Array.isArray(hourly) ? hourly : Array.from({ length: 24 }, () => 0),
+  );
+  const max = $derived(Math.max(...series, 0));
+  const total = $derived(series.reduce((sum, n) => sum + n, 0));
+  const peak = $derived(max > 0 ? series.indexOf(max) : -1);
   const peakSharePct = $derived(Math.round((max / Math.max(1, total)) * 100));
 
   let hover = $state<number | null>(null);
@@ -39,7 +44,7 @@
       ? `Words by hour of day. Peak activity at ${fmtHour(peak)} with ${fmtNumber(max)} words.`
       : 'No hourly activity recorded yet.'}
   >
-    {#each hourly as words, hour}
+    {#each series as words, hour}
       <div
         class="col"
         role="presentation"
@@ -54,13 +59,13 @@
         ></span>
       </div>
     {/each}
-    {#if hover !== null && hourly[hover] !== undefined}
+    {#if hover !== null && series[hover] !== undefined}
       <ChartTooltip
         x={hoverX}
-        y={stripHeight - (Math.max(2, max > 0 ? (hourly[hover] / max) * 100 : 2) / 100) * stripHeight}
+        y={stripHeight - (Math.max(2, max > 0 ? (series[hover] / max) * 100 : 2) / 100) * stripHeight}
         visible={true}
       >
-        <strong>{fmtNumber(hourly[hover])}</strong> words
+        <strong>{fmtNumber(series[hover])}</strong> words
         <div class="tooltip-dim">{fmtHour(hover)}</div>
       </ChartTooltip>
     {/if}

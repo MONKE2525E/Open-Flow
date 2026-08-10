@@ -859,7 +859,15 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     return LRESULT(1);
                 }
             }
-            if is_up && COPY_LAST_KEY_DOWN.swap(false, Ordering::SeqCst) {
+            // Swallow the C keyup only while the chord modifiers are still
+            // held (the normal release order: C first, then Ctrl/Alt). If the
+            // user released Ctrl/Alt first, letting the C keyup pass keeps
+            // the target app's modifier/keyup bookkeeping consistent — the
+            // down was already suppressed, so it's just an orphaned keyup.
+            if is_up
+                && COPY_LAST_KEY_DOWN.swap(false, Ordering::SeqCst)
+                && unsafe { modifier_held(VK_CTRL) && modifier_held(VK_ALT) }
+            {
                 return LRESULT(1);
             }
         }
