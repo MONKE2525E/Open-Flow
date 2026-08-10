@@ -211,8 +211,8 @@ pub fn start_recording_session_ex(
 /// long/loud enough to clear the normal recording quality gates — stashes it
 /// as a `CancelledCapture` and shows the pill's "Cancelled" state (Continue
 /// button resumes hands-free with this audio prepended, see
-/// `state::reserve_starting_with_prepend`). Otherwise behaves like a plain
-/// discard: unmute, end any media pause, hide the pill.
+/// `state::reserve_starting_with_cancelled_capture`). Otherwise behaves like
+/// a plain discard: unmute, end any media pause, hide the pill.
 ///
 /// Mirrors `stages::stop_and_capture_audio`'s gating (same constants
 /// `run_pipeline`/`transcribe_input_only` use), applied here instead of to a
@@ -257,11 +257,20 @@ pub async fn cancel_recording_with_resume(
 /// gates before calling this; a cancel mid-processing has already cleared
 /// the pipeline's own gate by the time it gets here).
 pub fn stash_cancelled_capture(app: &AppHandle, state: &SharedState, audio: CapturedAudio) {
-    if let Ok(mut st) = lock_state(state) {
-        st.cancelled_capture = Some(CancelledCapture {
-            audio,
-            captured_at: std::time::Instant::now(),
-        });
+    let stashed = lock_state(state)
+        .map(|mut st| {
+            st.cancelled_capture = Some(CancelledCapture {
+                audio,
+                captured_at: std::time::Instant::now(),
+            });
+        })
+        .is_ok();
+    if !stashed {
+        // Lock poisoned — the pill's Continue button would offer a resume
+        // that can't work since nothing was stashed. Hide the pill instead.
+        log::warn!("failed to stash cancelled capture (state lock poisoned)");
+        hide_pill(app);
+        return;
     }
     if start_stop_sounds_enabled(app) {
         crate::media::sound::play(crate::media::sound::SoundCue::Cancel);

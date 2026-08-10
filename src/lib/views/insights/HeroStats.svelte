@@ -28,13 +28,15 @@
   const gaugeFill = $derived(Math.min(1, Math.max(0, wpm / GAUGE_MAX)));
 
   const words = $derived(fmtCompact($totalWordsT));
-  const books = $derived(bookEquivalent(data.totals.total_words));
+  // Derived from the tweened count so the book equivalent stays in sync with
+  // the animating word number instead of snapping to the target immediately.
+  const books = $derived(bookEquivalent($totalWordsT));
   const delta = $derived(pctDelta(data.totals.words_in_range, data.totals.words_prev_range));
 </script>
 
 <div class="hero">
   <section class="tile tile-gauge" aria-label="Average words per minute">
-    <svg class="gauge" viewBox="-10 -12 148 98" role="img" aria-hidden="true">
+    <svg class="gauge" viewBox="-10 -12 148 98" aria-hidden="true">
       <path
         d="M 12 70 A 52 52 0 0 1 116 70"
         fill="none"

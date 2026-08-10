@@ -18,7 +18,9 @@
   const segments = $derived.by((): DonutSegment[] => {
     const priced = summary.rows.filter((row) => (row.cost ?? 0) > 0);
     return priced.map((row, i) => ({
-      id: `${row.model}:${row.task}`,
+      // Provider must be part of the id — the same model+task can exist under
+      // different providers, and DonutChart keys its internal Maps by id.
+      id: `${row.provider}:${row.model}:${row.task}`,
       name: row.model,
       color: segmentColor(i, priced.length),
       value: row.cost ?? 0,

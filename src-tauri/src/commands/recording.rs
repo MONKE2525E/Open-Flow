@@ -368,11 +368,8 @@ pub async fn resume_cancelled_capture(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    let Some(audio) = pipeline::take_cancelled_capture_if_fresh(state.inner()) else {
-        return Err("Nothing to resume".to_string());
-    };
+    let _audio = pipeline::reserve_starting_with_cancelled_capture(state.inner())?;
     pipeline::emit_cancelled_capture_cleared(&app);
-    pipeline::reserve_starting_with_prepend(state.inner(), audio)?;
     let target = WindowTarget::capture_foreground();
     {
         let mut st = lock_state(&state)?;

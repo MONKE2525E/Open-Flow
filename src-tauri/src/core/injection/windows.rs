@@ -692,8 +692,12 @@ pub(super) async fn inject_text(
                 // retrying either way.
                 verified = true;
             } else {
-                let tail_frozen = !pre_injection_tail.is_empty()
-                    && post_probe.context_tail == pre_injection_tail;
+                // Frozen reads (identical to before the paste) are no signal
+                // either way — including when both tails are empty (pasting
+                // into an empty field, or contextual_caps/auto_spacing off),
+                // which a laggy UIA read returning "" would otherwise
+                // misclassify as a real mismatch.
+                let tail_frozen = post_probe.context_tail == pre_injection_tail;
                 saw_frozen |= tail_frozen;
                 if paste_tail_matches(&adjusted, &post_probe.context_tail) {
                     verified = true;

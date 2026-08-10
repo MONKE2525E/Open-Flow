@@ -70,7 +70,12 @@
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     if (rect.width === 0 || daily.length === 0) return;
     const ratio = (event.clientX - rect.left) / rect.width;
-    const idx = Math.min(daily.length - 1, Math.max(0, Math.round(ratio * (daily.length - 1))));
+    // Bars fill equal-width slots spanning [i/n, (i+1)/n), so floor maps the
+    // pointer into its slot; line charts align points at i/(n-1), so round
+    // to the nearest point.
+    const idx = asBars
+      ? Math.min(daily.length - 1, Math.max(0, Math.floor(ratio * daily.length)))
+      : Math.min(daily.length - 1, Math.max(0, Math.round(ratio * (daily.length - 1))));
     hover = idx;
     // The svg's CSS height matches the viewBox height 1:1, only width is
     // fluid, so x scales by the rendered width and y needs no conversion.

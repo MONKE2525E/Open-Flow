@@ -410,8 +410,13 @@ fn query_daily(
 
     let start = NaiveDate::parse_from_str(range_start, "%Y-%m-%d")?;
     let end = NaiveDate::parse_from_str(range_end, "%Y-%m-%d")?;
+    if start > end {
+        // A future-dated transcription (clock drift) can make the range
+        // bounds inverted; never spin the zero-fill loop to NaiveDate::MAX.
+        return Ok(Vec::new());
+    }
     let span_days = (end - start).num_days();
-    let mut daily = Vec::with_capacity(span_days.max(1) as usize);
+    let mut daily = Vec::with_capacity(span_days as usize + 1);
     let mut current = start;
     loop {
         let day = current.format("%Y-%m-%d").to_string();
@@ -560,14 +565,18 @@ fn query_words(
             if normalized.is_empty() {
                 continue;
             }
-            if normalized.len() > longest.as_ref().map_or(0, String::len) {
+            // `.len()` is byte length; `chars().count()` is the character
+            // count a human word length should measure (non-ASCII words like
+            // accented or non-Latin text would otherwise be over-counted).
+            let char_len = normalized.chars().count();
+            if char_len > longest.as_ref().map_or(0, |w| w.chars().count()) {
                 longest = Some(normalized.clone());
             }
-            if normalized.len() < MIN_WORD_CHARS || STOPWORDS.contains(&normalized.as_str()) {
+            if char_len < MIN_WORD_CHARS || STOPWORDS.contains(&normalized.as_str()) {
                 continue;
             }
             *counts.entry(normalized.clone()).or_insert(0) += 1;
-            length_sum += normalized.len() as u64;
+            length_sum += char_len as u64;
             length_count += 1;
         }
     }

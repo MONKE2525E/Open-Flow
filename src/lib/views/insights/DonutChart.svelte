@@ -162,6 +162,10 @@
   let animTo = new Map<string, number>();
   let animStart = 0;
   let resolvedColors = new Map<string, string>();
+  // Resolved once per data change (with the segment colors) rather than on
+  // every paint frame — getComputedStyle() on each rAF tick forces style
+  // recalc/reflow at 60–120fps.
+  let trackColor = '';
 
   let dimming = false; // is *something* currently hovered, for the dim tween
   let dimStart = 0;
@@ -191,6 +195,7 @@
     animTo = new Map(segments.map((s) => [s.id, s.value]));
     animStart = performance.now();
     resolvedColors = new Map(segments.map((s) => [s.id, resolveColor(s.color)]));
+    trackColor = resolveColor('var(--control-hover)');
     scheduleFrame();
   }
 
@@ -268,7 +273,7 @@
     // Track ring underneath — keeps the shape legible with zero/tiny data.
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, TAU);
-    ctx.strokeStyle = resolveColor('var(--control-hover)');
+    ctx.strokeStyle = trackColor || resolveColor('var(--control-hover)');
     ctx.lineWidth = stroke;
     ctx.stroke();
 

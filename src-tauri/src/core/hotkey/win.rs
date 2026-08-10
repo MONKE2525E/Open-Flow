@@ -844,9 +844,13 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
 
         if vk == VK_C {
             if is_down && unsafe { modifier_held(VK_CTRL) && modifier_held(VK_ALT) } {
-                COPY_LAST_KEY_DOWN.store(true, Ordering::SeqCst);
-                if let Some(cb) = COPY_LAST_CB.get() {
-                    cb();
+                // Windows auto-repeat sends repeated WM_KEYDOWN/WM_SYSKEYDOWN
+                // while Ctrl+Alt+C is held; fire the copy callback only on the
+                // first physical keydown while still intercepting the repeats.
+                if !COPY_LAST_KEY_DOWN.swap(true, Ordering::SeqCst) {
+                    if let Some(cb) = COPY_LAST_CB.get() {
+                        cb();
+                    }
                 }
                 return LRESULT(1);
             }
