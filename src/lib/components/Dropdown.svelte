@@ -24,8 +24,13 @@
   });
 
   function handleOutsideClick(e: MouseEvent) {
-    // e.target can be document/text nodes — closest() only exists on Element.
-    if (closeSelector && e.target instanceof Element && (e.target as HTMLElement).closest(closeSelector)) return;
+    // closest() only exists on Element; a click target can be a Text node or
+    // document, so resolve to the nearest element first before testing the
+    // close selector (e.g. clicking the label text inside the trigger).
+    const target = e.target instanceof Element
+      ? e.target
+      : (e.target as Node)?.parentElement;
+    if (closeSelector && target?.closest(closeSelector)) return;
     open = false;
   }
 

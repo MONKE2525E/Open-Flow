@@ -243,11 +243,20 @@ pub async fn cancel_recording_with_resume(
         if start_stop_sounds_enabled(app) {
             crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
         }
-        hide_pill(app);
+        // A new dictation may have started while we were awaiting
+        // stop_and_capture_audio — don't hide that session's pill.
+        if state_is_idle(state) {
+            hide_pill(app);
+        }
         return;
     }
 
     stash_cancelled_capture(app, state, captured_audio);
+}
+
+/// True when the recording lifecycle is currently `Idle`.
+fn state_is_idle(state: &SharedState) -> bool {
+    lock_state(state).is_ok_and(|st| st.lifecycle.is_idle())
 }
 
 /// Stores `audio` as the resumable `cancelled_capture`, plays the cancel

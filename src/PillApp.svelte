@@ -302,7 +302,10 @@
             errorTimer = null;
             if (state === 'error') goIdle();
           }, 10000);
-        } else {
+        } else if (state !== 'copied') {
+          // Don't clear errorMsg on 'copied' — show_copied_pill carries its
+          // confirmation text through the pill-error event, which fires just
+          // before this pill-state one.
           if (errorTimer) {
             clearTimeout(errorTimer);
             errorTimer = null;
