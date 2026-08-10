@@ -124,11 +124,13 @@ fn now_ms() -> u64 {
 pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
 
 /// There's no Windows key on macOS — kept to satisfy the shared contract.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn is_win_key_down() -> bool {
     false
 }
 
 /// No-op on macOS — see `is_win_key_down`.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn force_release_win_key() {}
 
 pub fn update_keys(k1: u32, k2: u32) {
