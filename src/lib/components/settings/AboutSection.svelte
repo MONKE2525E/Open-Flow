@@ -330,27 +330,6 @@
   }
   .modal-footer { padding: 0 20px 20px; }
   .footer-actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .btn-ghost, .btn-primary {
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 12.5px;
-    font-family: var(--sans);
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid var(--line);
-    color: var(--ink-soft);
-  }
-  .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
-  .btn-primary {
-    background: var(--ink);
-    color: var(--amber-50);
-    border: 0;
-  }
-  .btn-primary:hover { background: var(--ink-strong); }
-  .btn-primary:disabled { opacity: 0.5; cursor: default; }
 
   @keyframes update-drop {
     from {

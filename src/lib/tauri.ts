@@ -843,6 +843,132 @@ function devPermissionSnapshot(provider?: unknown) {
   };
 }
 
+/*
+ * Browser-dev stand-in for `get_insights`. Deterministic (seeded off the day
+ * index, no Math.random) so the page doesn't flicker between renders and the
+ * smoke tests see stable numbers.
+ */
+function devInsights(days: number): unknown {
+  const span = days > 0 ? days : 120;
+  const noise = (n: number) => ((Math.sin(n * 12.9898) * 43758.5453) % 1 + 1) % 1;
+
+  const today = new Date();
+  const daily = Array.from({ length: span }, (_, i) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (span - 1 - i));
+    const weekend = date.getDay() === 0 || date.getDay() === 6;
+    const r = noise(i + 1);
+    const idle = r < (weekend ? 0.45 : 0.12);
+    const words = idle ? 0 : Math.round(400 + r * (weekend ? 1400 : 4200));
+    const transcriptions = words === 0 ? 0 : Math.max(1, Math.round(words / 95));
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return {
+      day: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+      words,
+      transcriptions,
+      speaking_ms: Math.round((words / 145) * 60_000),
+    };
+  });
+
+  const wordsInRange = daily.reduce((sum, d) => sum + d.words, 0);
+  const transcriptions = daily.reduce((sum, d) => sum + d.transcriptions, 0);
+  const speakingMs = daily.reduce((sum, d) => sum + d.speaking_ms, 0);
+
+  let current = 0;
+  for (let i = daily.length - 1; i >= 0 && daily[i].words > 0; i--) current++;
+  let longest = 0;
+  let run = 0;
+  for (const d of daily) {
+    run = d.words > 0 ? run + 1 : 0;
+    longest = Math.max(longest, run);
+  }
+
+  const hourly = Array.from({ length: 24 }, (_, h) => {
+    const bell = Math.exp(-((h - 14) ** 2) / 24) + 0.35 * Math.exp(-((h - 9) ** 2) / 8);
+    return Math.round(bell * wordsInRange * 0.11);
+  });
+
+  return {
+    range_days: days,
+    generated_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+    totals: {
+      total_words: wordsInRange + 218_400,
+      total_transcriptions: transcriptions,
+      total_speaking_ms: speakingMs,
+      avg_words_per_transcription: transcriptions ? Math.round(wordsInRange / transcriptions) : 0,
+      avg_wpm: 148,
+      best_wpm: 197,
+      words_in_range: wordsInRange,
+      words_prev_range: Math.round(wordsInRange * 0.91),
+    },
+    streak: {
+      current_days: current,
+      longest_days: longest,
+      longest_started_on: daily[Math.max(0, daily.length - longest - 4)]?.day ?? null,
+      longest_ended_on: daily[Math.max(0, daily.length - 5)]?.day ?? null,
+      longest_words: Math.round(wordsInRange * 0.62),
+      active_days: daily.filter((d) => d.words > 0).length + 96,
+    },
+    daily,
+    hourly,
+    providers: [
+      {
+        model: 'whisper-large-v3-turbo',
+        provider: 'groq',
+        task: 'transcription',
+        calls: transcriptions,
+        audio_ms: speakingMs,
+        input_chars: 0,
+        output_chars: 0,
+      },
+      {
+        model: 'llama-3.3-70b-versatile',
+        provider: 'groq',
+        task: 'cleanup',
+        calls: Math.round(transcriptions * 0.86),
+        audio_ms: 0,
+        input_chars: wordsInRange * 6,
+        output_chars: wordsInRange * 5,
+      },
+      {
+        model: 'gemini-3.5-flash',
+        provider: 'google',
+        task: 'cleanup',
+        calls: Math.round(transcriptions * 0.14),
+        audio_ms: 0,
+        input_chars: Math.round(wordsInRange * 0.9),
+        output_chars: Math.round(wordsInRange * 0.8),
+      },
+    ],
+    cleanup: {
+      raw_words: Math.round(wordsInRange * 1.08),
+      clean_words: wordsInRange,
+      edits_applied: Math.round(wordsInRange * 0.031),
+      dictionary_fixes: Math.round(wordsInRange * 0.009),
+      auto_learned_terms: 24,
+    },
+    words: {
+      top: [
+        { word: 'transcription', count: 412 },
+        { word: 'component', count: 388 },
+        { word: 'settings', count: 341 },
+        { word: 'basically', count: 297 },
+        { word: 'pipeline', count: 264 },
+        { word: 'window', count: 231 },
+        { word: 'actually', count: 210 },
+        { word: 'clipboard', count: 188 },
+        { word: 'dictation', count: 165 },
+        { word: 'backend', count: 142 },
+        { word: 'shortcut', count: 121 },
+        { word: 'accent', count: 104 },
+      ],
+      unique_words: 7_412,
+      longest_word: 'internationalisation',
+      avg_word_length: 4.7,
+    },
+  };
+}
+
 function assertDevText(value: unknown, field: string): string {
   if (typeof value !== 'string') {
     throw new Error(`${field} must be text.`);
@@ -878,6 +1004,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return [] as T;
     case 'get_stats':
       return { total_words: 0, avg_wpm: 0, day_streak: 0 } as T;
+    case 'get_insights':
+      return devInsights(Number(args?.days ?? 30)) as T;
     case 'get_memory_mb':
       return 0 as T;
     case 'local_models_supported_on_this_platform':
@@ -1327,6 +1455,9 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'start_setup_try_recording':
     case 'stop_setup_try_recording':
     case 'retry_transcription':
+    case 'resume_cancelled_capture':
+    case 'dismiss_cancelled_capture':
+    case 'copy_paste_failure_to_clipboard':
     case 'install_update':
     case 'start_calibration_monitoring':
     case 'stop_calibration_monitoring':

@@ -319,23 +319,26 @@ pub async fn stop_recording(
 ) -> Result<(), String> {
     crate::core::hotkey::set_handless_active(false);
     let taken = pipeline::take_recording_plain(state.inner());
+    if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
+        manager.set_recording_active(false);
+    }
     if let Some((session, exclusive_mic_session_id)) = taken {
-        tauri::async_runtime::spawn_blocking(move || {
-            let _ = session.stop();
-            if let Some(session_id) = exclusive_mic_session_id {
-                crate::system::volume::release_mic(session_id);
-            }
-            crate::media::sound::coordinated_unmute();
-            crate::system::media_control::end_dictation_media_pause();
+        let app_for_cancel = app.clone();
+        let state_for_cancel = state.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            pipeline::cancel_recording_with_resume(
+                &app_for_cancel,
+                &state_for_cancel,
+                session,
+                exclusive_mic_session_id,
+            )
+            .await;
         });
     } else {
         crate::media::sound::coordinated_unmute();
         crate::system::media_control::end_dictation_media_pause();
+        pipeline::hide_pill(&app);
     }
-    if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
-        manager.set_recording_active(false);
-    }
-    pipeline::hide_pill(&app);
     Ok(())
 }
 
@@ -354,4 +357,59 @@ pub async fn stop_handless_mode(
         crate::system::media_control::end_dictation_media_pause();
     }
     Ok(())
+}
+
+/// Resumes a cancelled recording's audio: starts a fresh hands-free
+/// recording that will be prepended with the previously-captured audio when
+/// it stops, so the finished dictation reads as one continuous take. Errs if
+/// the capture already expired or was already resumed/dismissed.
+#[tauri::command]
+pub async fn resume_cancelled_capture(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    let Some(audio) = pipeline::take_cancelled_capture_if_fresh(state.inner()) else {
+        return Err("Nothing to resume".to_string());
+    };
+    pipeline::emit_cancelled_capture_cleared(&app);
+    pipeline::reserve_starting_with_prepend(state.inner(), audio)?;
+    let target = WindowTarget::capture_foreground();
+    {
+        let mut st = lock_state(&state)?;
+        st.target = target;
+        st.pill_placement_stale = true;
+    }
+    pipeline::start_recording_session(&app, state.inner(), "handsfree", true);
+    crate::core::hotkey::set_handless_active(true);
+    Ok(())
+}
+
+/// Discards a cancelled recording's stashed audio without resuming it —
+/// called when the user explicitly dismisses the offer, either the pill's
+/// own dismiss (X) button or Home's dismiss button. The pill toast's plain
+/// 10s auto-hide does *not* call this: the capture stays resumable from Home
+/// for the full `CANCEL_RESUME_WINDOW` regardless of whether the toast is
+/// still on screen.
+#[tauri::command]
+pub async fn dismiss_cancelled_capture(app: AppHandle, state: tauri::State<'_, SharedState>) -> Result<(), String> {
+    if pipeline::take_cancelled_capture_if_fresh(state.inner()).is_some() {
+        pipeline::emit_cancelled_capture_cleared(&app);
+    }
+    Ok(())
+}
+
+/// Puts a failed dictation's text back on the clipboard so the user can
+/// paste it manually — called from the pill's "Paste failed" Copy button.
+/// The text itself never crosses to the frontend; only this command's
+/// success/failure result does.
+#[tauri::command]
+pub async fn copy_paste_failure_to_clipboard(
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    let Some(text) = pipeline::take_paste_failure_if_fresh(state.inner()) else {
+        return Err("Nothing to copy".to_string());
+    };
+    crate::core::injection::copy_to_clipboard(&text)
+        .await
+        .map_err(|e| e.to_string())
 }

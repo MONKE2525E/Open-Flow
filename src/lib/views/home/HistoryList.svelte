@@ -8,16 +8,22 @@
 
   export let recents: Entry[];
   export let failedEntry: { created_at: string } | null;
+  export let cancelledEntry: { created_at: string } | null;
   export let loading: boolean;
   export let hasMoreHistory: boolean;
   export let loadingMore: boolean;
   export let retrying: boolean;
+  export let resumingCancelled: boolean;
   export let copiedId: number | null;
   export let hk1: string;
   export let hk2: string;
   export let onRetry: () => void;
+  export let onContinueCancelled: () => void;
+  export let onDismissCancelled: () => void;
   export let onLoadOlder: () => void;
   export let onCopy: (entry: Entry) => void;
+
+  $: hasBanner = !!failedEntry || !!cancelledEntry;
 
   let flatItems: RenderItem[] = [];
   $: {
@@ -32,7 +38,7 @@
       }
       if (!seenHeaders.has(dayKey)) {
         seenHeaders.add(dayKey);
-        if (!(failedEntry && label === 'Today')) {
+        if (!(hasBanner && label === 'Today')) {
           acc.push({ type: 'header', label, key: `header-${dayKey}` });
         }
       }
@@ -162,7 +168,7 @@
     container;
     listContainer;
     appStore.updateInfo;
-    failedEntry;
+    hasBanner;
     updateLayout();
     updateVirtualList();
     // Recalculate list offset after the DOM has updated to handle banner toggles
@@ -246,27 +252,57 @@
 {#if loading}
   <div class="empty-state">Loading history…</div>
 {:else}
-  {#if failedEntry}
+  {#if hasBanner}
     <div class="day-head">Today</div>
     <div class="day-table">
-      <div
-        class="day-row"
-        transition:fly={{ y: -10, duration: 400, easing: expoOut }}
-      >
-        <div class="day-time">{fmtTime(failedEntry.created_at)}</div>
-        <div class="day-text error-msg">Looks like your last transcription failed.</div>
-        <button
-          class="retry-btn"
-          onclick={onRetry}
-          disabled={retrying}
+      {#if cancelledEntry}
+        <div
+          class="day-row"
+          transition:fly={{ y: -10, duration: 400, easing: expoOut }}
         >
-          {retrying ? '…' : 'Retry'}
-        </button>
-      </div>
+          <div class="day-time">{fmtTime(cancelledEntry.created_at)}</div>
+          <div class="day-text error-msg">You cancelled a recording — pick it back up?</div>
+          <div class="row-actions">
+            <button
+              class="dismiss-btn"
+              onclick={onDismissCancelled}
+              title="Discard"
+              aria-label="Discard"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                <path d="M6 6l12 12M6 18 18 6"/>
+              </svg>
+            </button>
+            <button
+              class="retry-btn"
+              onclick={onContinueCancelled}
+              disabled={resumingCancelled}
+            >
+              {resumingCancelled ? '…' : 'Continue'}
+            </button>
+          </div>
+        </div>
+      {/if}
+      {#if failedEntry}
+        <div
+          class="day-row"
+          transition:fly={{ y: -10, duration: 400, easing: expoOut }}
+        >
+          <div class="day-time">{fmtTime(failedEntry.created_at)}</div>
+          <div class="day-text error-msg">Looks like your last transcription failed.</div>
+          <button
+            class="retry-btn"
+            onclick={onRetry}
+            disabled={retrying}
+          >
+            {retrying ? '…' : 'Retry'}
+          </button>
+        </div>
+      {/if}
     </div>
   {/if}
 
-  {#if recents.length === 0 && !failedEntry}
+  {#if recents.length === 0 && !hasBanner}
     <div class="empty-state">
       No dictations yet. Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to get started.
     </div>
@@ -275,11 +311,11 @@
       <div style="height: {topSpacerHeight}px;"></div>
       {#each visibleItems as { item, index } (item.key)}
         {#if item.type === 'header'}
-          <div use:measureItem={item.key} class="day-head" class:muted={index > 0 || !!failedEntry}>
+          <div use:measureItem={item.key} class="day-head" class:muted={index > 0 || hasBanner}>
             {item.label}
           </div>
         {:else if item.type === 'row'}
-          <div use:measureItem={item.key} class="day-row" class:first-in-table={(index === 0 && !failedEntry) || flatItems[index - 1]?.type === 'header'}>
+          <div use:measureItem={item.key} class="day-row" class:first-in-table={(index === 0 && !hasBanner) || flatItems[index - 1]?.type === 'header'}>
             <div class="day-time">{fmtTime(item.entry.created_at)}</div>
             <div class="day-text">{item.entry.clean_text}</div>
             <button
@@ -412,6 +448,28 @@
     cursor: not-allowed;
   }
 
+  .row-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .dismiss-btn {
+    all: unset;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    color: var(--ink-mute);
+    transition: color 0.12s, background 0.12s;
+  }
+  .dismiss-btn:hover { color: var(--ink-strong); background: var(--control-active); }
+  .dismiss-btn svg { width: 11px; height: 11px; }
+
   .empty-state {
     padding: 32px 4px;
     font-size: 13px;
@@ -429,19 +487,6 @@
     padding: 1px 5px;
     color: var(--ink);
   }
-
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 12.5px;
-    font-family: var(--sans);
-    color: var(--ink-soft);
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
 
   @media (max-width: 720px) {
     .day-row {
