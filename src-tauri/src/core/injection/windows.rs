@@ -363,6 +363,21 @@ async fn windows_clipboard_sniff_context(target_hwnd: usize) -> Option<Injection
     }
 }
 
+// Post-paste verification loop timing (the matching logic itself lives in
+// `super::paste_tail_matches` / `super::full_text_confirms_paste`). Heavier
+// editors (ProseMirror-style rich text, React-rendered chat inputs) commit a
+// paste to their own state before the accessibility tree catches up — a UIA
+// read taken immediately after PASTE_SETTLE_MS can still see the pre-paste
+// text and read as a false mismatch. Chromium's a11y lag is variable and can
+// exceed a second while the editor is still settling, so retry with growing
+// gaps, then cross-check the control's full text, before ever reporting
+// failure (see the verify loop below).
+const PASTE_VERIFY_ATTEMPTS: u32 = 6;
+const PASTE_VERIFY_RETRY_MS: u64 = 100;
+const PASTE_VERIFY_RETRY_GROWTH_MS: u64 = 40;
+const PASTE_VERIFY_MAX_RETRY_MS: u64 = 260;
+const PASTE_VERIFY_FULLTEXT_ATTEMPTS: u32 = 2;
+
 #[allow(unused_variables)]
 pub(super) async fn inject_text(
     text: &str,
@@ -488,6 +503,117 @@ pub(super) async fn inject_text(
     tokio::time::sleep(tokio::time::Duration::from_millis(PASTE_SETTLE_MS)).await;
 
     restore_guard.restore_now();
+
+    // Best-effort post-paste verification: reuse the same UIA read already
+    // used pre-injection for caret reads, not new plumbing. Only act on a
+    // real CaretLocal readback — any other source (unavailable, permission
+    // missing, unsupported control, etc.) means UIA can't reliably tell
+    // either way (many working Chromium/Electron widgets fall in this
+    // bucket), so it's left lenient here.
+    //
+    // Chromium/ProseMirror-style editors commit a paste to their own state
+    // before the accessibility tree catches up, and that lag is variable —
+    // often well over the retry window — so a read taken too early reads the
+    // pre-paste text and flags a *successful* paste as failed (the false
+    // positives reported in Chrome). The loop retries with growing gaps and,
+    // before giving up, cross-checks the control's full text (the
+    // ValuePattern/document read reflects the DOM even when the caret-range
+    // read stays stale). A hard failure is only declared when the tree
+    // *freshly* read the caret as not containing our text. A read that stays
+    // frozen on the pre-injection tail means UIA never observed the change at
+    // all — an unverifiable paste, not a failed one — which we log and treat
+    // as best-effort success, since a false "paste failed" report is worse
+    // than an unverified-but-likely-fine paste.
+    if !adjusted.trim_end().is_empty() {
+        let pre_injection_tail = injection_probe.context_tail.as_str();
+        let mut verified = false;
+        // A caret-local read that differs from the pre-injection tail but
+        // still doesn't match our text is real evidence the paste didn't land
+        // where expected. Frozen reads (identical to before the paste) are no
+        // signal either way.
+        let mut saw_fresh_mismatch = false;
+        let mut saw_frozen = false;
+
+        for attempt in 0..PASTE_VERIFY_ATTEMPTS {
+            let post_probe = crate::core::context_probe::read_injection_context_probe().await;
+
+            if post_probe.source != ContextProbeSource::CaretLocal {
+                // This source can't tell us anything reliable — no point
+                // retrying either way.
+                verified = true;
+            } else {
+                // A read byte-identical to the pre-injection tail carries no
+                // new information — either the accessibility tree hasn't
+                // caught up with the paste yet, or the field truly didn't
+                // change. That is ambiguous, not proof the paste failed. A
+                // read that CHANGED and still doesn't contain our text is a
+                // real signal the paste went wrong, even in a field that was
+                // empty before.
+                let read_is_ambiguous = post_probe.context_tail == pre_injection_tail;
+                saw_frozen |= read_is_ambiguous;
+                if paste_tail_matches(&adjusted, &post_probe.context_tail) {
+                    verified = true;
+                } else if !read_is_ambiguous {
+                    saw_fresh_mismatch = true;
+                }
+            }
+
+            log::debug!(
+                "inject: post-paste verify attempt={} probe_source={} probe_tail_len={} injected_len={} verified={}",
+                attempt + 1,
+                post_probe.source.as_str(),
+                post_probe.context_tail.chars().count(),
+                adjusted.chars().count(),
+                verified
+            );
+
+            if verified {
+                break;
+            }
+            if attempt + 1 < PASTE_VERIFY_ATTEMPTS {
+                let grow =
+                    PASTE_VERIFY_RETRY_MS + (attempt as u64) * PASTE_VERIFY_RETRY_GROWTH_MS;
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    grow.min(PASTE_VERIFY_MAX_RETRY_MS),
+                ))
+                .await;
+            }
+        }
+
+        // Cross-check the full field text before concluding anything — the
+        // caret-range read can stay stale/anchored even after the document
+        // text reflects the paste (Chromium re-anchors lazily).
+        if !verified {
+            for _ in 0..PASTE_VERIFY_FULLTEXT_ATTEMPTS {
+                if let Some(full_text) = crate::api::auto_learn::read_focused_text() {
+                    if full_text_confirms_paste(&adjusted, &full_text) {
+                        verified = true;
+                        log::debug!("inject: post-paste verified via full-text match");
+                        break;
+                    }
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(PASTE_VERIFY_RETRY_MS))
+                    .await;
+            }
+        }
+
+        if !verified {
+            if saw_fresh_mismatch {
+                // The tree updated and the text before the caret genuinely
+                // doesn't contain our paste — a real failure.
+                log::warn!("inject: aborting — post-paste verification tail mismatch");
+                return Err(anyhow::anyhow!(
+                    "Paste could not be verified — target text does not match"
+                ));
+            }
+            // Frozen reads only: UIA never caught up with the paste. Treat
+            // this as unverifiable rather than failed.
+            log::warn!(
+                "inject: paste unverified after {} attempts (saw_frozen={saw_frozen}) — treating as best-effort success",
+                PASTE_VERIFY_ATTEMPTS,
+            );
+        }
+    }
 
     if target_hwnd != 0 && !adjusted.is_empty() {
         if let Ok(mut guard) = last_injection().lock() {
