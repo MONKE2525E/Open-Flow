@@ -844,15 +844,20 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
 
         if vk == VK_C {
             if is_down && unsafe { modifier_held(VK_CTRL) && modifier_held(VK_ALT) } {
+                // Only intercept (swallow) the chord when there's a callback
+                // to act on it — otherwise the user's Ctrl+Alt+C would be
+                // lost entirely, so let it fall through to the target app.
                 // Windows auto-repeat sends repeated WM_KEYDOWN/WM_SYSKEYDOWN
-                // while Ctrl+Alt+C is held; fire the copy callback only on the
+                // while the chord is held; fire the callback only on the
                 // first physical keydown while still intercepting the repeats.
-                if !COPY_LAST_KEY_DOWN.swap(true, Ordering::SeqCst) {
-                    if let Some(cb) = COPY_LAST_CB.get() {
-                        cb();
+                if COPY_LAST_CB.get().is_some() {
+                    if !COPY_LAST_KEY_DOWN.swap(true, Ordering::SeqCst) {
+                        if let Some(cb) = COPY_LAST_CB.get() {
+                            cb();
+                        }
                     }
+                    return LRESULT(1);
                 }
-                return LRESULT(1);
             }
             if is_up && COPY_LAST_KEY_DOWN.swap(false, Ordering::SeqCst) {
                 return LRESULT(1);

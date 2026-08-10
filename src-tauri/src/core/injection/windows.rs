@@ -485,23 +485,18 @@ pub(super) async fn inject_text(
     // expose exactly one native HWND for the whole content area, which
     // keeps OS keyboard focus regardless of what's focused (or isn't)
     // inside the DOM. When nothing inside the page claims focus, UIA's
-    // focused-element walk instead resolves to that container itself,
-    // reported here as control_type "pane"/"window" with no value/text
-    // pattern support (source falls through to UnsupportedControl). A real
-    // focused control — even one UIA can't read the *text* of — reports a
-    // more specific control type. This is a read-only signal (reuses the
-    // probe already fetched above), so it's safe where the old post-paste
-    // clipboard-sniff wasn't.
-    if injection_probe.source == ContextProbeSource::UnsupportedControl
-        && matches!(injection_probe.control_type.as_str(), "pane" | "window")
-    {
-        log::warn!(
-            "inject: aborting — focused element is the container ({}), not a text control",
-            injection_probe.control_type
-        );
-        restore_guard.restore_now();
-        anyhow::bail!("Nothing was focused to paste into");
-    }
+    // focused-element walk resolves to that container itself, reported as
+    // control_type "pane"/"window" with no text pattern support
+    // (UnsupportedControl).
+    //
+    // This probe is deliberately NOT used to abort the paste, though: many
+    // perfectly pasteable apps (Qt, Java Swing, Flutter, terminal emulators,
+    // custom Win32 controls, webviews without UIA initialized) also expose
+    // only a generic pane/window to UIA with UnsupportedControl — so
+    // rejecting that state would break dictation into all of them. The
+    // GetGUIThreadInfo has_focus guard above already answers "was anything
+    // focused at all"; this probe only feeds contextual formatting and
+    // post-paste verification, never a hard reject.
 
     if (contextual_caps || auto_spacing) && injection_probe.source.allows_history_fallback() {
         if let Some(history_probe) = fallback_probe_from_history(target_hwnd) {

@@ -628,9 +628,18 @@ fn compute_streak(daily: &[InsightsDay]) -> InsightsStreak {
     let active_days = daily.iter().filter(|d| d.words > 0).count() as i64;
 
     let mut current_days = 0i64;
-    for day in daily.iter().rev() {
+    // The series is zero-filled and ends on today. A quiet today (the day
+    // isn't over yet) must not zero a streak that's still alive through
+    // yesterday — GitHub-style, the streak holds until the day ends.
+    let mut iter = daily.iter().rev();
+    let mut pending_today = true;
+    for day in &mut iter {
         if day.words > 0 {
             current_days += 1;
+        } else if pending_today {
+            // Skip the empty trailing day (today) once; a second empty day
+            // is a real break.
+            pending_today = false;
         } else {
             break;
         }
@@ -820,6 +829,28 @@ mod tests {
         assert_eq!(insights.streak.longest_words, 8);
         assert_eq!(insights.streak.current_days, 0, "gap at the range end breaks the current streak");
         assert_eq!(insights.streak.active_days, 3);
+    }
+
+    #[test]
+    fn streak_survives_a_quiet_today() {
+        let db = test_db();
+        // Yesterday and the day before were active; today is silent (the day
+        // isn't over yet) — the streak must still read as alive.
+        insert_on_day(&db, 1, "yesterday", 2, 1000);
+        insert_on_day(&db, 2, "two days ago", 2, 1000);
+
+        let insights = query_insights(&db, 7).expect("insights");
+        assert_eq!(insights.streak.current_days, 2);
+    }
+
+    #[test]
+    fn streak_breaks_after_two_quiet_days() {
+        let db = test_db();
+        // Today and yesterday silent; the last activity is two days back.
+        insert_on_day(&db, 2, "two days ago", 2, 1000);
+
+        let insights = query_insights(&db, 7).expect("insights");
+        assert_eq!(insights.streak.current_days, 0);
     }
 
     #[test]
