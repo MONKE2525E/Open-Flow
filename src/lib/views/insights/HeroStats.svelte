@@ -90,7 +90,13 @@
     <p class="tile-label">total words dictated</p>
     <p class="tile-note">
       {#if books >= 1}
-        That's {books.toFixed(books < 10 ? 1 : 0)} full-length {books >= 2 ? 'books' : 'book'} of writing.
+        <!-- Pluralize off the displayed amount: "1 book" is singular, but
+             "1.5 books" isn't. -->
+        {#if books === 1}
+          That's 1 full-length book of writing.
+        {:else}
+          That's {books.toFixed(books < 10 ? 1 : 0)} full-length books of writing.
+        {/if}
       {:else if data.totals.total_words > 0}
         {Math.round(books * 100)}% of a full-length book so far.
       {:else}

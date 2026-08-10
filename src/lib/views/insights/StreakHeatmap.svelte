@@ -16,7 +16,9 @@
      column) would otherwise leave the card looking mostly empty. */
   const MIN_COLUMNS = 10;
 
-  const max = $derived(Math.max(...daily.map((d) => d.words), 0));
+  // Reduce rather than Math.max(...spread) — an all-time range can exceed the
+  // call-stack limit for spread arguments on a very long daily series.
+  const max = $derived(daily.reduce((m, d) => Math.max(m, d.words), 0));
 
   interface GridCell { day: string; words: number; noData: boolean }
 
@@ -65,7 +67,9 @@
      column. A month change landing mid-week would otherwise put two labels on
      the same column (or in immediately adjacent 14px columns, whose text
      overlaps), so a label is only placed when its column is clear of the
-     previous one. */
+     previous one. lastMonth advances on every boundary so each month is
+     considered exactly once — a skipped label is omitted, never misplaced
+     above a mid-month column. */
   const monthLabels = $derived.by(() => {
     const labels: Array<{ col: number; label: string }> = [];
     let lastMonth = -1;
@@ -73,14 +77,11 @@
     cells.forEach((cell, i) => {
       const month = parseLocalDay(cell.day).getMonth();
       if (month !== lastMonth) {
+        lastMonth = month;
         const col = Math.floor(i / 7);
-        // Only advance lastMonth when a label is actually placed — otherwise
-        // a month whose first column is too close to the previous label
-        // would be permanently omitted even if a later column fits.
         if (col >= lastCol + 2) {
           labels.push({ col, label: parseLocalDay(cell.day).toLocaleDateString([], { month: 'short' }) });
           lastCol = col;
-          lastMonth = month;
         }
       }
     });
@@ -93,6 +94,10 @@
     const sums = new Array(7).fill(0);
     const counts = new Array(7).fill(0);
     for (const d of daily) {
+      // Only days with actual dictation count toward the average and the
+      // minimum-activity gate — zero-word days (no-data padding or quiet
+      // days) would otherwise inflate the weekday coverage.
+      if (d.words <= 0) continue;
       const dow = parseLocalDay(d.day).getDay();
       sums[dow] += d.words;
       counts[dow] += 1;

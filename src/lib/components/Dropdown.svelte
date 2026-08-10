@@ -24,7 +24,8 @@
   });
 
   function handleOutsideClick(e: MouseEvent) {
-    if (closeSelector && (e.target as HTMLElement).closest(closeSelector)) return;
+    // e.target can be document/text nodes — closest() only exists on Element.
+    if (closeSelector && e.target instanceof Element && (e.target as HTMLElement).closest(closeSelector)) return;
     open = false;
   }
 

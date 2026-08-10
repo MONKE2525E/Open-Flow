@@ -126,6 +126,10 @@ const STOPWORDS: &[&str] = &[
     "while", "who", "whom", "why", "will", "with", "would", "you", "your", "yours",
 ];
 
+fn is_stopword(word: &str) -> bool {
+    STOPWORDS.binary_search(&word).is_ok()
+}
+
 /// Aggregated insights for `days` (`0` = all time). A brand-new install with
 /// no transcriptions returns a fully-populated zero payload, never an error.
 pub fn query_insights(db: &Db, days: i64) -> Result<Insights> {
@@ -254,6 +258,10 @@ fn parse_api_usage(api_used: &str) -> ApiUsageParts {
         for segment in primary.split(';') {
             let segment = segment.strip_prefix("secondary=").unwrap_or(segment);
             if let Some((provider, model)) = segment.split_once('/') {
+                // Uniform with the single-provider fallback below: drop a
+                // trailing /transcription so the model key is identical
+                // regardless of which format produced the row.
+                let model = model.strip_suffix("/transcription").unwrap_or(model);
                 if !provider.is_empty() && !model.is_empty() {
                     transcription.push((provider.to_string(), model.to_string()));
                 }
@@ -572,7 +580,7 @@ fn query_words(
             // Stopwords are excluded from the vocabulary insights — check
             // before tracking `longest` so a long filler word like
             // "because"/"themselves" never shows up as the longest word.
-            if char_len < MIN_WORD_CHARS || STOPWORDS.contains(&normalized.as_str()) {
+            if char_len < MIN_WORD_CHARS || is_stopword(&normalized) {
                 continue;
             }
             if char_len > longest.as_ref().map_or(0, |w| w.chars().count()) {
@@ -1078,6 +1086,18 @@ mod tests {
     }
 
     #[test]
+    fn stopwords_stay_sorted_for_binary_search() {
+        // `is_stopword` relies on binary_search over a sorted slice — a
+        // mis-sorted STOPWORDS would silently fail lookups.
+        assert!(STOPWORDS.windows(2).all(|w| w[0] < w[1]));
+        // Spot-check membership works for both ends and a middle entry.
+        assert!(is_stopword("a"));
+        assert!(is_stopword("because"));
+        assert!(is_stopword("yours"));
+        assert!(!is_stopword("verenu"));
+    }
+
+    #[test]
     fn parse_api_usage_handles_all_pipeline_formats() {
         let parts = parse_api_usage("groq/whisper-large-v3-turbo/transcription");
         assert_eq!(
@@ -1106,5 +1126,17 @@ mod tests {
         let parts = parse_api_usage("garbage");
         assert!(parts.transcription_models.is_empty());
         assert!(parts.cleanup_models.is_empty());
+    }
+
+    #[test]
+    fn parse_api_usage_strips_transcription_suffix_in_primary_branch() {
+        // The primary= branch must normalize model names exactly like the
+        // single-provider fallback — a trailing /transcription must not leak
+        // into the stored model key.
+        let parts = parse_api_usage("primary=groq/whisper-large-v3-turbo/transcription");
+        assert_eq!(
+            parts.transcription_models,
+            vec![("groq".to_string(), "whisper-large-v3-turbo".to_string())]
+        );
     }
 }

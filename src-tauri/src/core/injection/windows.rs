@@ -478,11 +478,7 @@ pub(super) async fn inject_text(
         },
     };
 
-    let mut injection_probe = if contextual_caps || auto_spacing {
-        crate::core::context_probe::read_injection_context_probe().await
-    } else {
-        unavailable_injection_probe()
-    };
+    let mut injection_probe = crate::core::context_probe::read_injection_context_probe().await;
 
     // GetGUIThreadInfo (checked above) can't tell "a real textbox is
     // focused inside this page" apart from "nothing is" — Chromium/Electron

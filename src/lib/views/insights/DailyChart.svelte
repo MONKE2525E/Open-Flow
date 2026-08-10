@@ -19,7 +19,9 @@
   /* Below this many points a line reads as noise — discrete bars are clearer. */
   const BAR_THRESHOLD = 14;
 
-  const max = $derived(niceCeiling(Math.max(...daily.map((d) => d.words), 0)));
+  // Reduce rather than Math.max(...spread) — an all-time range can exceed the
+  // call-stack limit for spread arguments on a very long daily series.
+  const max = $derived(niceCeiling(daily.reduce((m, d) => Math.max(m, d.words), 0)));
   const asBars = $derived(daily.length <= BAR_THRESHOLD);
   const plotH = H - PAD_TOP - PAD_BOTTOM;
 

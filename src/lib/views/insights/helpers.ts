@@ -8,8 +8,11 @@ export function fmtNumber(n: number): string {
 /** Compact form for hero tiles: 1.2k, 3.4M. Exact below 1000. */
 export function fmtCompact(n: number): { value: string; suffix: string } {
   const abs = Math.abs(n);
-  if (abs >= 1e6) return { value: (n / 1e6).toFixed(1), suffix: 'M' };
-  if (abs >= 1000) return { value: (n / 1000).toFixed(1), suffix: 'k' };
+  // Each tier's threshold accounts for the rounding of the tier below it:
+  // 999.6 renders as "1.0k" (not "1000") and 999_950 as "1.0M" (not
+  // "1000.0k").
+  if (Math.round(abs / 1000) >= 1000) return { value: (n / 1e6).toFixed(1), suffix: 'M' };
+  if (Math.round(abs) >= 1000) return { value: (n / 1000).toFixed(1), suffix: 'k' };
   return { value: String(Math.round(n)), suffix: '' };
 }
 
@@ -19,6 +22,12 @@ export function fmtUsd(n: number | null): string {
   // Only small *positive* amounts render as "<$0.01" — a negative amount
   // must format normally instead of being swallowed by the tiny-value branch.
   if (n > 0 && n < 0.01) return '<$0.01';
+  if (n < 0) {
+    // Keep the minus before the dollar sign, and let a value that rounds to
+    // zero (e.g. -0.004) render as plain $0.00 rather than "$-0.00".
+    const abs = n.toFixed(2).replace('-', '');
+    return abs === '0.00' ? '$0.00' : `-$${abs}`;
+  }
   return `$${n.toFixed(2)}`;
 }
 
