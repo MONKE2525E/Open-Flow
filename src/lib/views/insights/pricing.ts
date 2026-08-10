@@ -49,7 +49,10 @@ function normalizeModelId(model: string): string {
 
 function lookupRate(usage: InsightsProviderUsage): Rate | null {
   const key = normalizeModelId(usage.model);
-  return TASK_OVERRIDES[`${key}#${usage.task}`] ?? PRICING[key] ?? null;
+  // The backend writes tasks in lowercase, but normalize defensively so a
+  // mixed-case or whitespace-padded value still matches the override keys.
+  const task = usage.task.trim().toLowerCase();
+  return TASK_OVERRIDES[`${key}#${task}`] ?? PRICING[key] ?? null;
 }
 
 /** Cost in USD for one model's usage, or null when the model has no known rate. */

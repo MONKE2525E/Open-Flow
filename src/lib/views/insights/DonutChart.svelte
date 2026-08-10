@@ -358,7 +358,7 @@
     if (!canvasEl) return;
     syncCanvasSize();
     ctx = canvasEl.getContext('2d');
-    ctx?.scale(Math.max(1, window.devicePixelRatio || 1), Math.max(1, window.devicePixelRatio || 1));
+    applyDprScale();
     startValueTween();
   });
 
@@ -368,11 +368,18 @@
   $effect(() => {
     size;
     if (!ctx || !canvasEl) return;
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Resizing width/height resets the context state and transform matrix to
+    // identity, so the DPR scale must be re-applied *after* the resize.
     syncCanvasSize();
+    applyDprScale();
     scheduleFrame();
   });
+
+  function applyDprScale() {
+    if (!ctx) return;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
 
   function syncCanvasSize() {
     if (!canvasEl) return;

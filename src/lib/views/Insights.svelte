@@ -19,6 +19,7 @@
   let rangeOpen = $state(false);
 
   let fetchToken = 0;
+  let mounted = false;
 
   const rangeLabel = $derived(RANGE_OPTIONS.find((o) => o.value === range)?.label ?? 'Last 30 days');
   const isEmpty = $derived(!data || data.totals.total_transcriptions === 0);
@@ -31,12 +32,12 @@
     }
     try {
       const payload = await invoke<InsightsPayload>('get_insights', { days: range });
-      if (token !== fetchToken) return;
+      if (!mounted || token !== fetchToken) return;
       data = payload ?? EMPTY_INSIGHTS;
       status = 'loaded';
       error = '';
     } catch (err) {
-      if (token !== fetchToken) return;
+      if (!mounted || token !== fetchToken) return;
       console.error('IPC get_insights failed:', err);
       // A background refresh failure must not replace good data with an
       // error banner — the last known numbers stay up, next tick retries.
@@ -55,12 +56,13 @@
   }
 
   onMount(() => {
+    mounted = true;
     load();
     let unlisten: (() => void) | undefined;
-    let mounted = true;
     // Refresh live as new dictations land, so the page never shows stale
-    // numbers while it's open.
-    listen('verenu:transcribed', () => load())
+    // numbers while it's open. Silent so a background refresh never flashes
+    // the loading state.
+    listen('verenu:transcribed', () => load({ silent: true }))
       .then((cleanup) => {
         // If the component already unmounted while `listen` was still
         // resolving, tear the listener down immediately rather than leaking

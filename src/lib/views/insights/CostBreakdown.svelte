@@ -43,10 +43,12 @@
     </div>
   </header>
 
-  {#if segments.length === 0}
-    <p class="foot">No priced API usage in this range.</p>
+  {#if summary.rows.length === 0}
+    <p class="foot">No API usage recorded in this range.</p>
   {:else}
-    <DonutChart {segments} primaryLabel={fmtUsd(summary.total)} secondaryLabel="total" />
+    {#if segments.length > 0}
+      <DonutChart {segments} primaryLabel={fmtUsd(summary.total)} secondaryLabel="total" />
+    {/if}
 
     <table class="cost-table">
       <thead>

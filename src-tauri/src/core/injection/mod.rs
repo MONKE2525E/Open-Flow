@@ -653,6 +653,7 @@ fn lowercase_first_word_if_safe(text: &str) -> (String, bool) {
     out.push_str(&text[start + first_len..]);
     (out, true)
 }
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn unavailable_injection_probe() -> InjectionContextProbe {
     InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "unavailable")
 }
