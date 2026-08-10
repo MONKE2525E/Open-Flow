@@ -100,6 +100,68 @@ enum CursorContextState {
     },
 }
 
+// Post-paste verification text helpers. Pure functions (no UIA/OS access) so
+// they're unit-testable on every platform; the Windows injection path drives
+// the actual reads and owns the retry timing. They exist because Chromium/
+// ProseMirror-style editors (ChatGPT, Claude, Slack, ...) commit a paste to
+// their own state before the accessibility tree catches up — a caret-local
+// read taken too early still sees the pre-paste text, which used to flag a
+// *successful* paste as failed (the false positives reported in Chrome).
+
+// Capped suffix for the cheap tail check — enough to catch "nothing landed" or
+// "wrong window" without being thrown off by trailing whitespace/newline
+// normalization differences between what we sent and what UIA reports back.
+#[cfg_attr(not(windows), allow(dead_code))]
+const PASTE_VERIFY_SUFFIX_CHARS: usize = 20;
+
+// A `contains` cross-check on the control's full text only counts when the
+// fragment is long enough to be distinctive; short dictations rely on the
+// precise ends-with check instead.
+#[cfg_attr(not(windows), allow(dead_code))]
+const PASTE_VERIFY_CONTAINS_MIN_CHARS: usize = 12;
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn injected_suffix(injected: &str) -> String {
+    let mut chars: Vec<char> = injected
+        .trim_end()
+        .chars()
+        .rev()
+        .take(PASTE_VERIFY_SUFFIX_CHARS)
+        .collect();
+    chars.reverse();
+    chars.into_iter().collect()
+}
+
+// Cheap, lenient tail check for post-paste verification: true if the
+// control's freshly-read caret-local tail ends with (roughly) the end of what
+// we just injected.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn paste_tail_matches(injected: &str, probe_tail: &str) -> bool {
+    if injected.trim_end().is_empty() {
+        return true;
+    }
+    probe_tail.trim_end().ends_with(&injected_suffix(injected))
+}
+
+// Full-text cross-check for the caret-range-lag case: the caret-range read
+// can stay stale/anchored (or scoped to a stale block) even after the
+// accessibility tree reflects the paste in the document/value text. Verifies
+// the injected text actually reached the field by looking at the whole thing.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn full_text_confirms_paste(injected: &str, full_text: &str) -> bool {
+    let injected_trim = injected.trim_end();
+    if injected_trim.is_empty() {
+        return true;
+    }
+    let suffix = injected_suffix(injected);
+    if full_text.trim_end().ends_with(&suffix) {
+        return true;
+    }
+    // A paste into the middle of existing text leaves our tail mid-field, not
+    // at the very end — only trust that when the fragment is distinctive.
+    suffix.chars().count() >= PASTE_VERIFY_CONTAINS_MIN_CHARS && full_text.contains(&suffix)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +333,46 @@ mod tests {
         backspace_injection_history(22);
         let state = last_injection().lock().expect("lock");
         assert!(matches!(&*state, CursorContextState::Unknown { .. }));
+    }
+
+    #[test]
+    fn paste_tail_matches_matches_our_suffix() {
+        assert!(paste_tail_matches("hello world", "some prefix hello world"));
+        assert!(paste_tail_matches("hello world", "hello world"));
+        // trailing whitespace / newline normalization is tolerated
+        assert!(paste_tail_matches("hello world ", "prefix hello world\n"));
+        // long injected text only needs its final fragment to match
+        let long = "the quick brown fox jumps over the lazy dog near the river";
+        assert!(paste_tail_matches(
+            long,
+            "stale pre-paste text the quick brown fox jumps over the lazy dog near the river"
+        ));
+        // empty injected text trivially passes
+        assert!(paste_tail_matches("", "anything at all"));
+        // a genuinely different tail fails
+        assert!(!paste_tail_matches("hello world", "some other text"));
+    }
+
+    #[test]
+    fn full_text_confirms_paste_checks_whole_document() {
+        // appended at the end of the field
+        assert!(full_text_confirms_paste(
+            "dictated text here",
+            "existing prompt dictated text here"
+        ));
+        // pasted mid-document: our suffix sits mid-field, not at the end
+        assert!(full_text_confirms_paste(
+            "dictated text here",
+            "start dictated text here rest of document"
+        ));
+        // short dictation still verified by the precise ends-with check
+        assert!(full_text_confirms_paste("short", "abc short"));
+        // ...but a short fragment is never trusted as a mid-field contains
+        assert!(!full_text_confirms_paste("short", "abc shortx"));
+        // empty injected text trivially passes
+        assert!(full_text_confirms_paste("", "anything at all"));
+        // unrelated text fails
+        assert!(!full_text_confirms_paste("didn't paste", "totally unrelated text"));
     }
 }
 #[derive(Clone, Copy, Debug)]
