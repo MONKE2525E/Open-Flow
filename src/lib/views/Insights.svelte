@@ -41,7 +41,9 @@
       console.error('IPC get_insights failed:', err);
       // A background refresh failure must not replace good data with an
       // error banner — the last known numbers stay up, next tick retries.
-      if (!opts?.silent) {
+      // But if there's no data yet (initial load still in flight or failed),
+      // swallowing the error would leave the skeleton loading forever.
+      if (!opts?.silent || !data) {
         error = formatIpcError(err);
         status = 'error';
       }
