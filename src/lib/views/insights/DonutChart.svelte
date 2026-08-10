@@ -298,10 +298,16 @@
 
         const sweep = end - start;
         const minSweepForFillet = ((GAP + CORNER * 2) / radius) * 1.4;
-        const path =
+        // For sub-fillet sweeps, shrink the arc bounds by a tiny amount so
+        // the exact-annulus fallback never draws over its own boundary — but
+        // never so much that start passes end (that would invert the arc and
+        // sweep nearly 360 degrees).
+        const inset = Math.min(0.01, sweep / 3);
+        const filletPath =
           sweep > minSweepForFillet
             ? donutSegmentPath(cx, cy, start, end, segRadius, width, GAP, CORNER)
-            : sectorPath(cx, cy, start + 0.01, end - 0.01, segRadius, width);
+            : null;
+        const path = filletPath ?? sectorPath(cx, cy, start + inset, end - inset, segRadius, width);
 
         ctx!.globalAlpha = dimmed ? dimAlpha : 1;
         ctx!.fillStyle = resolvedColors.get(seg.id) ?? seg.color;

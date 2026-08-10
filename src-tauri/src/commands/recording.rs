@@ -325,7 +325,7 @@ pub async fn stop_recording(
     if let Some((session, exclusive_mic_session_id)) = taken {
         let app_for_cancel = app.clone();
         let state_for_cancel = state.inner().clone();
-        tauri::async_runtime::spawn(async move {
+        let handle = tauri::async_runtime::spawn(async move {
             pipeline::cancel_recording_with_resume(
                 &app_for_cancel,
                 &state_for_cancel,
@@ -333,6 +333,14 @@ pub async fn stop_recording(
                 exclusive_mic_session_id,
             )
             .await;
+        });
+        // The join handle is deliberately not awaited inline (stop_recording
+        // returns immediately), but a panicked/aborted task would otherwise
+        // be swallowed silently — log it so a broken cancel path is visible.
+        tauri::async_runtime::spawn(async move {
+            if handle.await.is_err() {
+                log::error!("cancel_recording_with_resume task panicked or was aborted");
+            }
         });
     } else {
         crate::media::sound::coordinated_unmute();
