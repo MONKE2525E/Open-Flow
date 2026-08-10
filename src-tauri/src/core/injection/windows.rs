@@ -544,10 +544,15 @@ pub(super) async fn inject_text(
             } else {
                 let tail_frozen = !pre_injection_tail.is_empty()
                     && post_probe.context_tail == pre_injection_tail;
-                saw_frozen |= tail_frozen;
+                // An empty pre-injection baseline (an empty field, or a control
+                // UIA couldn't read) leaves no known caret state to compare
+                // against, so a non-matching read is ambiguous — not proof the
+                // paste went wrong.
+                let read_is_ambiguous = tail_frozen || pre_injection_tail.is_empty();
+                saw_frozen |= read_is_ambiguous;
                 if paste_tail_matches(&adjusted, &post_probe.context_tail) {
                     verified = true;
-                } else if !tail_frozen {
+                } else if !read_is_ambiguous {
                     saw_fresh_mismatch = true;
                 }
             }
