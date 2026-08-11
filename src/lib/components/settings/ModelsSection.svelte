@@ -936,7 +936,7 @@
   </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="models-dropdown"
+    class="ui-dropdown models-dropdown"
     onkeydown={(event) => {
       if (event.key === 'Escape' && transcriptionModeDropdownOpen) {
         transcriptionModeDropdownOpen = false;
@@ -945,7 +945,7 @@
     }}
   >
     <button
-      class="btn-ghost models-dropdown-btn"
+      class="btn-ghost ui-dropdown-trigger models-dropdown-btn"
       type="button"
       onclick={() => (transcriptionModeDropdownOpen = !transcriptionModeDropdownOpen)}
       aria-haspopup="listbox"
@@ -961,7 +961,7 @@
     {#if transcriptionModeDropdownOpen}
       <div
         id="transcription-mode-menu"
-        class="models-dropdown-menu scroll-styled scroll-thumb-elev"
+        class="ui-dropdown-menu models-dropdown-menu scroll-styled scroll-thumb-elev"
         role="listbox"
         tabindex="-1"
         aria-label="Transcription strategy"
@@ -969,7 +969,7 @@
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
         <button
-          class="models-dropdown-item"
+          class="ui-dropdown-option models-dropdown-item"
           class:is-active={!dualTranscriptionEnabled}
           type="button"
           onclick={() => handleDualTranscription(false)}
@@ -980,7 +980,7 @@
           <small>Fastest, uses the primary model and fallbacks only on failure.</small>
         </button>
         <button
-          class="models-dropdown-item"
+          class="ui-dropdown-option models-dropdown-item"
           class:is-active={dualTranscriptionEnabled}
           type="button"
           onclick={() => handleDualTranscription(true)}
@@ -1004,7 +1004,7 @@
   </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="models-dropdown"
+    class="ui-dropdown models-dropdown"
     onkeydown={(event) => {
       if (event.key === 'Escape' && localModelMemoryDropdownOpen) {
         localModelMemoryDropdownOpen = false;
@@ -1013,7 +1013,7 @@
     }}
   >
     <button
-      class="btn-ghost models-dropdown-btn"
+      class="btn-ghost ui-dropdown-trigger models-dropdown-btn"
       type="button"
       use:animateWidth={{ text: localMemoryPolicyLabel(localModelMemoryPolicy), max: 220 }}
       onclick={() => (localModelMemoryDropdownOpen = !localModelMemoryDropdownOpen)}
@@ -1031,7 +1031,7 @@
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div
         id={LOCAL_MEMORY_POLICY_MENU_ID}
-        class="models-dropdown-menu scroll-styled scroll-thumb-elev"
+        class="ui-dropdown-menu models-dropdown-menu scroll-styled scroll-thumb-elev"
         role="listbox"
         tabindex="-1"
         aria-label="Local model memory policy options"
@@ -1041,7 +1041,7 @@
       >
         {#each localMemoryPolicyOptions as option}
           <button
-            class="models-dropdown-item"
+            class="ui-dropdown-option models-dropdown-item"
             class:is-active={localModelMemoryPolicy === option.value}
             type="button"
             onclick={() => updateLocalMemoryPolicy(option.value)}
@@ -1135,23 +1135,7 @@
     color: var(--ink-mute);
   }
 
-  .models-dropdown {
-    position: relative;
-    flex-shrink: 0;
-  }
-
   .models-dropdown-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: var(--r-md);
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    color: var(--ink);
-    font-size: 13px;
-    font-weight: 500;
     max-width: 220px;
   }
 
@@ -1161,56 +1145,9 @@
     white-space: nowrap;
   }
 
-  .models-dropdown-btn svg { transition: transform 150ms; }
-  .models-dropdown-btn svg.open { transform: rotate(180deg); }
-
   .models-dropdown-menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
     min-width: 220px;
     max-height: 220px;
-    overflow-y: auto;
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
-    z-index: 10;
-  }
-
-  .models-dropdown-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 8px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .models-dropdown-item:last-child {
-    border-bottom: none;
-  }
-
-  .models-dropdown-item:hover {
-    background: var(--paper);
-  }
-
-  .models-dropdown-item:focus-visible,
-  .models-dropdown-btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  .models-dropdown-item.is-active {
-    background: var(--accent-soft);
-    color: var(--ink);
-    font-weight: 500;
   }
 
   /* Keyed to the settings content column, not the window — this stacks when the

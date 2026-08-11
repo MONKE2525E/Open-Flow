@@ -38,8 +38,8 @@ use gates::{
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
     silence_floor_gate_rms, strip_hallucinated_suffix, MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
-pub(crate) use pill::{hide_pill, show_pill, update_pill_state};
-use pill::{reject_with_pill, show_error_pill};
+pub(crate) use pill::{hide_pill, show_copied_pill, show_pill, update_pill_state};
+use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_failed_pill};
 pub use session::*;
 use stages::*;
 pub use state::*;

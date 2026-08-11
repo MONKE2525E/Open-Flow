@@ -1,0 +1,214 @@
+/*
+ * Shared interactive-control primitives.
+ *
+ * Keep component-specific layout in its owning Svelte file. Visual treatment,
+ * state feedback, focus behavior, and motion belong here so one adjustment
+ * reaches every use of these primitives. See DESIGN.md for the public API.
+ */
+
+:root {
+  --ui-duration-fast: 150ms;
+  --ui-duration-base: 220ms;
+  --ui-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ui-focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+:where(button).btn-primary,
+:where(button).btn-ghost,
+:where(button).btn-danger {
+  align-items: center;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  display: inline-flex;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  gap: 6px;
+  justify-content: center;
+  line-height: 1.2;
+  min-height: 30px;
+  padding: 6px 14px;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease-out),
+    border-color var(--ui-duration-fast) var(--ui-ease-out),
+    color var(--ui-duration-fast) var(--ui-ease-out),
+    opacity var(--ui-duration-fast) var(--ui-ease-out),
+    transform var(--ui-duration-fast) var(--ui-ease-out);
+  white-space: nowrap;
+}
+
+:where(button).btn-primary {
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  color: var(--amber-50);
+  font-weight: 500;
+}
+
+:where(button).btn-primary:not(:disabled):hover {
+  background: var(--ink-strong);
+  border-color: var(--ink-strong);
+}
+
+:where(button).btn-ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+:where(button).btn-ghost:not(:disabled):hover {
+  background: var(--control-hover);
+  color: var(--ink-strong);
+}
+
+:where(button).btn-danger {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-line);
+  color: var(--danger);
+  font-weight: 500;
+}
+
+:where(button).btn-danger:not(:disabled):hover {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--on-accent);
+}
+
+:where(button).btn-compact {
+  border-radius: 6px;
+  font-size: 12px;
+  min-height: 28px;
+  padding: 5px 12px;
+}
+
+:where(button).btn-primary:disabled,
+:where(button).btn-ghost:disabled,
+:where(button).btn-danger:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+:where(button).btn-primary:focus-visible,
+:where(button).btn-ghost:focus-visible,
+:where(button).btn-danger:focus-visible,
+.ui-dropdown-trigger:focus-visible,
+.ui-dropdown-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: var(--ui-focus-ring);
+}
+
+/* Composite dropdown anatomy. Behaviour remains local when option content,
+   keyboard navigation, or selection side effects differ by feature. */
+.ui-dropdown {
+  position: relative;
+  flex-shrink: 0;
+}
+
+:where(button).ui-dropdown-trigger {
+  align-items: center;
+  background: var(--ui-dropdown-trigger-bg, var(--paper-2));
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--ink);
+  cursor: pointer;
+  display: inline-flex;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  gap: 8px;
+  min-height: var(--ui-dropdown-trigger-height, 32px);
+  padding: 0 12px;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease-out),
+    border-color var(--ui-duration-fast) var(--ui-ease-out),
+    color var(--ui-duration-fast) var(--ui-ease-out);
+}
+
+:where(button).ui-dropdown-trigger:hover,
+:where(button).ui-dropdown-trigger[aria-expanded='true'] {
+  background: var(--ui-dropdown-trigger-hover-bg, var(--control-hover));
+  border-color: var(--line-strong);
+}
+
+.ui-dropdown-trigger svg {
+  flex: 0 0 auto;
+  transition: transform var(--ui-duration-fast) var(--ui-ease-out);
+}
+
+.ui-dropdown-trigger[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.ui-dropdown-menu {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-popover);
+  max-height: var(--ui-dropdown-menu-max-height, 240px);
+  overflow-y: auto;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+}
+
+:where(button).ui-dropdown-option {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-strong);
+  cursor: pointer;
+  display: block;
+  font-family: var(--sans);
+  font-size: 12px;
+  overflow: hidden;
+  padding: 8px 12px;
+  text-align: left;
+  text-overflow: ellipsis;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease-out),
+    color var(--ui-duration-fast) var(--ui-ease-out);
+  white-space: nowrap;
+  width: 100%;
+}
+
+.ui-dropdown-option:last-child {
+  border-bottom: 0;
+}
+
+:where(button).ui-dropdown-option:hover {
+  background: var(--control-hover);
+}
+
+:where(button).ui-dropdown-option.active,
+:where(button).ui-dropdown-option.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+
+.ui-dropdown-menu--padded {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+}
+
+.ui-dropdown-menu--padded .ui-dropdown-option {
+  border-bottom: 0;
+  border-radius: var(--r-sm);
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  padding: 6px 10px;
+}
+
+.ui-dropdown-menu--padded .ui-dropdown-option:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ui-duration-fast: 80ms;
+    --ui-duration-base: 120ms;
+  }
+}

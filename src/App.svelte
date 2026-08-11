@@ -4,6 +4,7 @@
   import { cleanupPromptEditor } from './lib/stores.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
+  import Insights from './lib/views/Insights.svelte';
   import Dictionary from './lib/views/Dictionary.svelte';
   import Snippets from './lib/views/Snippets.svelte';
   import Style from './lib/views/Style.svelte';
@@ -224,6 +225,8 @@
         >
           {#if appStore.currentPage === 'home'}
             <Home />
+          {:else if appStore.currentPage === 'insights'}
+            <Insights />
           {:else if appStore.currentPage === 'dictionary'}
             <Dictionary />
           {:else if appStore.currentPage === 'snippets'}

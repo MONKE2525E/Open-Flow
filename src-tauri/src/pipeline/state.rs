@@ -4,6 +4,15 @@ use crate::pipeline::pill_position::PillPlacement;
 use std::sync::atomic::AtomicU64;
 
 pub(super) const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// How long a cancelled recording's audio stays resumable — matches
+/// `RETRY_WINDOW` so a missed pill notification (which auto-hides after 10s)
+/// still leaves plenty of time to continue it from the Home history list.
+pub(super) const CANCEL_RESUME_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// How long a failed paste's text stays available for the pill's Copy
+/// button to pull back onto the clipboard.
+pub(super) const PASTE_FAILURE_WINDOW: std::time::Duration = std::time::Duration::from_secs(300);
 // ---------- shared state ----------
 
 pub struct AppState {
@@ -12,6 +21,8 @@ pub struct AppState {
     pub pill_placement: Option<PillPlacement>,
     pub pill_placement_stale: bool,
     pub retry_capture: Option<RetryCapture>,
+    pub cancelled_capture: Option<CancelledCapture>,
+    pub paste_failure: Option<PasteFailure>,
 }
 
 /// Single source of truth for what the app is currently doing with the
@@ -90,6 +101,27 @@ pub struct RetryCapture {
     pub caps_lock_on: bool,
 }
 
+/// Audio from a recording the user cancelled, kept around briefly so the
+/// pill's "Cancelled" state can offer a Continue button that resumes
+/// recording (hands-free) with this audio prepended — see
+/// `peek_cancelled_capture_if_fresh`/`clear_cancelled_capture` and
+/// `commands::recording::resume_cancelled_capture`.
+#[derive(Clone)]
+pub struct CancelledCapture {
+    pub audio: CapturedAudio,
+    pub captured_at: std::time::Instant,
+}
+
+/// Final injected text from a dictation whose paste couldn't be confirmed
+/// (or definitely failed), kept around briefly so the pill's "Paste failed"
+/// state can offer a Copy button — see
+/// `commands::recording::copy_paste_failure_to_clipboard`.
+#[derive(Clone)]
+pub struct PasteFailure {
+    pub text: String,
+    pub captured_at: std::time::Instant,
+}
+
 pub(super) fn lock_state(state: &SharedState) -> anyhow::Result<MutexGuard<'_, AppState>> {
     state
         .lock()
@@ -119,6 +151,38 @@ pub fn reserve_starting(state: &SharedState) -> Result<(), String> {
     Ok(())
 }
 
+/// Reads the stashed cancelled capture (cloned) if present and fresh, without
+/// consuming it — so a resume attempt that fails partway doesn't destroy the
+/// resumable audio.
+pub fn peek_cancelled_capture_if_fresh(state: &SharedState) -> Option<CapturedAudio> {
+    let st = lock_state(state).ok()?;
+    st.cancelled_capture.as_ref().and_then(|c| {
+        if c.captured_at.elapsed() < CANCEL_RESUME_WINDOW {
+            Some(c.audio.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Clears the stashed cancelled capture after it has been successfully
+/// consumed by a resume.
+pub fn clear_cancelled_capture(state: &SharedState) {
+    if let Ok(mut st) = lock_state(state) {
+        st.cancelled_capture = None;
+    }
+}
+
+/// Attaches `audio` as the prepend audio of an already-reserved `Starting`
+/// lifecycle (see `commands::recording::resume_cancelled_capture`).
+pub fn set_starting_prepend_audio(state: &SharedState, audio: CapturedAudio) {
+    if let Ok(mut st) = lock_state(state) {
+        if let DictationLifecycle::Starting { prepend_audio } = &mut st.lifecycle {
+            *prepend_audio = Some(audio);
+        }
+    }
+}
+
 /// `Processing(active) -> Starting { prepend_audio: Some(active.captured_audio) }`
 /// in one step, so the old task loses ownership of its `ActivePipeline`
 /// atomically with the replacement recording being reserved. Returns the
@@ -138,6 +202,55 @@ pub fn take_active_pipeline_for_interrupt(state: &SharedState) -> Option<ActiveP
             st.lifecycle = other;
             None
         }
+    }
+}
+
+/// Takes `cancelled_capture`'s audio if present and still within
+/// `CANCEL_RESUME_WINDOW`. Always clears the slot (a stale or already-taken
+/// capture must not be resumable twice).
+pub fn take_cancelled_capture_if_fresh(state: &SharedState) -> Option<CapturedAudio> {
+    let mut st = lock_state(state).ok()?;
+    st.cancelled_capture.take().and_then(|c| {
+        if c.captured_at.elapsed() < CANCEL_RESUME_WINDOW {
+            Some(c.audio)
+        } else {
+            None
+        }
+    })
+}
+
+/// Takes `paste_failure`'s text if present and still within
+/// `PASTE_FAILURE_WINDOW`. Always clears the slot.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn take_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
+    let mut st = lock_state(state).ok()?;
+    st.paste_failure.take().and_then(|f| {
+        if f.captured_at.elapsed() < PASTE_FAILURE_WINDOW {
+            Some(f.text)
+        } else {
+            None
+        }
+    })
+}
+
+/// Reads `paste_failure`'s text if present and still within
+/// `PASTE_FAILURE_WINDOW`, without clearing the slot — so a transient
+/// clipboard failure can be retried instead of permanently losing the text.
+pub fn peek_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
+    let st = lock_state(state).ok()?;
+    st.paste_failure.as_ref().and_then(|f| {
+        if f.captured_at.elapsed() < PASTE_FAILURE_WINDOW {
+            Some(f.text.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Clears the `paste_failure` slot after it has been successfully handled.
+pub fn clear_paste_failure(state: &SharedState) {
+    if let Ok(mut st) = lock_state(state) {
+        st.paste_failure = None;
     }
 }
 
@@ -405,6 +518,24 @@ pub(super) fn emit_pipeline_failed(app: &AppHandle) {
     .ok();
 }
 
+/// Tells any open window (Home's history list in particular) that a
+/// recording was just cancelled and its audio is resumable for
+/// `CANCEL_RESUME_WINDOW`. Mirrors `emit_pipeline_failed`'s payload shape.
+pub(super) fn emit_cancelled_capture(app: &AppHandle) {
+    app.emit(
+        "verenu:cancelled-capture",
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+    )
+    .ok();
+}
+
+/// Tells any open window that the current cancelled capture is gone —
+/// resumed, explicitly dismissed, or expired — so a stale offer (pill toast
+/// or Home banner) doesn't linger past its usefulness.
+pub fn emit_cancelled_capture_cleared(app: &AppHandle) {
+    app.emit("verenu:cancelled-capture-cleared", ()).ok();
+}
+
 /// Tells the frontend to re-poll provider status immediately rather than
 /// waiting for its next 5-minute interval, because a pipeline call just
 /// failed in a way that looks provider-side (quota or a retryable
@@ -472,6 +603,8 @@ mod tests {
             pill_placement: None,
             pill_placement_stale: false,
             retry_capture: None,
+            cancelled_capture: None,
+            paste_failure: None,
         }))
     }
 
@@ -500,6 +633,84 @@ mod tests {
         assert!(reserve_starting(&state).is_ok());
         // Already Starting now — a second reservation must fail.
         assert!(reserve_starting(&state).is_err());
+    }
+
+    #[test]
+    fn peek_cancelled_capture_does_not_consume() {
+        let state = fresh_state();
+        {
+            let mut st = lock_state(&state).unwrap();
+            st.cancelled_capture = Some(CancelledCapture {
+                audio: fake_audio(500),
+                captured_at: std::time::Instant::now(),
+            });
+        }
+        // Peeking clones — the slot must survive for the later clear.
+        assert_eq!(
+            peek_cancelled_capture_if_fresh(&state).unwrap().duration_ms,
+            500
+        );
+        assert!(lock_state(&state).unwrap().cancelled_capture.is_some());
+    }
+
+    #[test]
+    fn clear_cancelled_capture_removes_the_slot() {
+        let state = fresh_state();
+        {
+            let mut st = lock_state(&state).unwrap();
+            st.cancelled_capture = Some(CancelledCapture {
+                audio: fake_audio(500),
+                captured_at: std::time::Instant::now(),
+            });
+        }
+        clear_cancelled_capture(&state);
+        assert!(lock_state(&state).unwrap().cancelled_capture.is_none());
+    }
+
+    #[test]
+    fn set_starting_prepend_audio_attaches_to_reserved_start() {
+        let state = fresh_state();
+        reserve_starting(&state).unwrap();
+        set_starting_prepend_audio(&state, fake_audio(500));
+        match &lock_state(&state).unwrap().lifecycle {
+            DictationLifecycle::Starting { prepend_audio } => {
+                assert_eq!(prepend_audio.as_ref().unwrap().duration_ms, 500)
+            }
+            _ => panic!("expected Starting with prepend_audio"),
+        };
+    }
+
+    #[test]
+    fn take_paste_failure_if_fresh_returns_text_once() {
+        let state = fresh_state();
+        {
+            let mut st = lock_state(&state).unwrap();
+            st.paste_failure = Some(PasteFailure {
+                text: "hello world".to_string(),
+                captured_at: std::time::Instant::now(),
+            });
+        }
+        assert_eq!(
+            take_paste_failure_if_fresh(&state),
+            Some("hello world".to_string())
+        );
+        // Already taken — a second call must return None.
+        assert_eq!(take_paste_failure_if_fresh(&state), None);
+    }
+
+    #[test]
+    fn take_paste_failure_if_fresh_expires_after_window() {
+        let state = fresh_state();
+        {
+            let mut st = lock_state(&state).unwrap();
+            st.paste_failure = Some(PasteFailure {
+                text: "stale".to_string(),
+                captured_at: std::time::Instant::now()
+                    - PASTE_FAILURE_WINDOW
+                    - std::time::Duration::from_secs(1),
+            });
+        }
+        assert_eq!(take_paste_failure_if_fresh(&state), None);
     }
 
     #[test]

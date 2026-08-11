@@ -59,6 +59,24 @@ const CLIPBOARD_WRITE_RETRY_MS: u64 = 50;
 #[cfg(target_os = "windows")]
 const MODIFIER_GAP_MS: u64 = 30;
 
+// Grace window for a Win key that still reads down right before a paste —
+// releasing Ctrl to stop dictation and releasing Win a beat later is normal
+// human timing, not the stuck-key OS bug this guards against. Polled at
+// WIN_KEY_GRACE_POLL_MS intervals up to WIN_KEY_GRACE_POLL_ATTEMPTS times
+// (150ms total) before escalating to forced recovery.
+#[cfg(target_os = "windows")]
+const WIN_KEY_GRACE_POLL_MS: u64 = 30;
+#[cfg(target_os = "windows")]
+const WIN_KEY_GRACE_POLL_ATTEMPTS: u32 = 5;
+
+// Settle time after releasing Win specifically, before the first
+// is_win_key_down() check. Win participates in OS-wide/shell hotkey
+// dispatch (unlike a plain app-level Ctrl/Alt release), which can need more
+// time to settle than MODIFIER_GAP_MS's 30ms — that constant was tuned for
+// beating an app's own message pump, not a system-wide hotkey matcher.
+#[cfg(target_os = "windows")]
+const WIN_KEY_RELEASE_SETTLE_MS: u64 = 80;
+
 // Settle time after the paste (Ctrl+V) before restoring saved clipboard
 // formats - gives the target app time to read the clipboard before we
 // overwrite it with the original contents. `SendInput` only queues the
@@ -635,6 +653,7 @@ fn lowercase_first_word_if_safe(text: &str) -> (String, bool) {
     out.push_str(&text[start + first_len..]);
     (out, true)
 }
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn unavailable_injection_probe() -> InjectionContextProbe {
     InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "unavailable")
 }
@@ -802,6 +821,7 @@ fn context_tail_signal(tail: &str) -> &'static str {
         Some(_) => "other",
     }
 }
+
 #[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
 pub fn reset_injection_history() {
     if let Ok(mut guard) = last_injection().lock() {

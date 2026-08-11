@@ -1,1 +1,1 @@
-See [CLAUDE.md](./CLAUDE.md) for all project context, conventions, and instructions.
+See [CLAUDE.md](./CLAUDE.md) for all project context, conventions, and instructions. Before adding or changing frontend controls, also read [DESIGN.md](./DESIGN.md): it defines the global button and dropdown primitives, animation rules, and control inventory.
