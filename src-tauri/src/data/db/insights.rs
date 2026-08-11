@@ -586,7 +586,8 @@ fn query_words(
             if char_len > longest.as_ref().map_or(0, |w| w.chars().count()) {
                 longest = Some(normalized.clone());
             }
-            *counts.entry(normalized.clone()).or_insert(0) += 1;
+            // Move `normalized` here — it's not referenced again this iteration.
+            *counts.entry(normalized).or_insert(0) += 1;
             length_sum += char_len as u64;
             length_count += 1;
         }

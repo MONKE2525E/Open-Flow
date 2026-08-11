@@ -350,6 +350,12 @@
         if (state === 'paste_failed') {
           showCopyBtn = false;
           copied = false;
+          // A stale copiedTimer from a previous copy click could fire goIdle()
+          // on the fresh paste_failed state — clear it alongside the others.
+          if (copiedTimer) {
+            clearTimeout(copiedTimer);
+            copiedTimer = null;
+          }
           if (copyBtnTimer) clearTimeout(copyBtnTimer);
           copyBtnTimer = setTimeout(() => {
             copyBtnTimer = null;
@@ -368,6 +374,10 @@
           if (pasteFailedDismissTimer) {
             clearTimeout(pasteFailedDismissTimer);
             pasteFailedDismissTimer = null;
+          }
+          if (copiedTimer) {
+            clearTimeout(copiedTimer);
+            copiedTimer = null;
           }
           showCopyBtn = false;
         }
@@ -446,9 +456,12 @@
     if (errorTimer) { clearTimeout(errorTimer); errorTimer = null; }
     const { invoke } = await import('@tauri-apps/api/core');
     // Don't go idle before the call — Rust emits 'processing' on success so
-    // the pill morphs from error to processing. Only fall back to idle if the
-    // retry itself fails, so a rejected retry still shows the error state.
-    await invoke('retry_transcription').catch(() => { goIdle(); });
+    // the pill morphs from error to processing. If the retry fails, only
+    // fall back to idle while still in the error state — the pill may have
+    // moved on to an active state (recording/handsfree) during the invoke.
+    await invoke('retry_transcription').catch(() => {
+      if (state === 'error') goIdle();
+    });
   }
 
   async function continueCancelled() {

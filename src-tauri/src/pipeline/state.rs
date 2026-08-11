@@ -104,7 +104,7 @@ pub struct RetryCapture {
 /// Audio from a recording the user cancelled, kept around briefly so the
 /// pill's "Cancelled" state can offer a Continue button that resumes
 /// recording (hands-free) with this audio prepended — see
-/// `reserve_starting_with_cancelled_capture` and
+/// `peek_cancelled_capture_if_fresh`/`clear_cancelled_capture` and
 /// `commands::recording::resume_cancelled_capture`.
 #[derive(Clone)]
 pub struct CancelledCapture {
@@ -151,32 +151,36 @@ pub fn reserve_starting(state: &SharedState) -> Result<(), String> {
     Ok(())
 }
 
-/// Atomically reserves `Starting` seeded with the stashed cancelled capture,
-/// but only if the state is idle. The capture is left in place when the
-/// reservation fails, so a busy state can never destroy resumable audio —
-/// the naive take-then-reserve order in
-/// `commands::recording::resume_cancelled_capture` lost it permanently when
-/// the reservation errored after the take.
-pub fn reserve_starting_with_cancelled_capture(
-    state: &SharedState,
-) -> Result<CapturedAudio, String> {
-    let mut st = lock_state(state).map_err(|e| e.to_string())?;
-    if !st.lifecycle.is_idle() {
-        return Err("Already recording".to_string());
-    }
-    let Some(audio) = st.cancelled_capture.take().and_then(|c| {
+/// Reads the stashed cancelled capture (cloned) if present and fresh, without
+/// consuming it — so a resume attempt that fails partway doesn't destroy the
+/// resumable audio.
+pub fn peek_cancelled_capture_if_fresh(state: &SharedState) -> Option<CapturedAudio> {
+    let st = lock_state(state).ok()?;
+    st.cancelled_capture.as_ref().and_then(|c| {
         if c.captured_at.elapsed() < CANCEL_RESUME_WINDOW {
-            Some(c.audio)
+            Some(c.audio.clone())
         } else {
             None
         }
-    }) else {
-        return Err("Nothing to resume".to_string());
-    };
-    st.lifecycle = DictationLifecycle::Starting {
-        prepend_audio: Some(audio.clone()),
-    };
-    Ok(audio)
+    })
+}
+
+/// Clears the stashed cancelled capture after it has been successfully
+/// consumed by a resume.
+pub fn clear_cancelled_capture(state: &SharedState) {
+    if let Ok(mut st) = lock_state(state) {
+        st.cancelled_capture = None;
+    }
+}
+
+/// Attaches `audio` as the prepend audio of an already-reserved `Starting`
+/// lifecycle (see `commands::recording::resume_cancelled_capture`).
+pub fn set_starting_prepend_audio(state: &SharedState, audio: CapturedAudio) {
+    if let Ok(mut st) = lock_state(state) {
+        if let DictationLifecycle::Starting { prepend_audio } = &mut st.lifecycle {
+            *prepend_audio = Some(audio);
+        }
+    }
 }
 
 /// `Processing(active) -> Starting { prepend_audio: Some(active.captured_audio) }`
@@ -632,7 +636,7 @@ mod tests {
     }
 
     #[test]
-    fn reserve_starting_with_cancelled_capture_preserves_capture_on_busy() {
+    fn peek_cancelled_capture_does_not_consume() {
         let state = fresh_state();
         {
             let mut st = lock_state(&state).unwrap();
@@ -641,15 +645,16 @@ mod tests {
                 captured_at: std::time::Instant::now(),
             });
         }
-        // Occupy the state so the reservation must fail.
-        reserve_starting(&state).unwrap();
-        assert!(reserve_starting_with_cancelled_capture(&state).is_err());
-        // The capture must survive the failed reservation.
+        // Peeking clones — the slot must survive for the later clear.
+        assert_eq!(
+            peek_cancelled_capture_if_fresh(&state).unwrap().duration_ms,
+            500
+        );
         assert!(lock_state(&state).unwrap().cancelled_capture.is_some());
     }
 
     #[test]
-    fn reserve_starting_with_cancelled_capture_reserves_with_audio() {
+    fn clear_cancelled_capture_removes_the_slot() {
         let state = fresh_state();
         {
             let mut st = lock_state(&state).unwrap();
@@ -658,24 +663,21 @@ mod tests {
                 captured_at: std::time::Instant::now(),
             });
         }
-        let taken = reserve_starting_with_cancelled_capture(&state).unwrap();
-        assert_eq!(taken.duration_ms, 500);
-        let lifecycle = lock_state(&state).unwrap();
-        match &lifecycle.lifecycle {
+        clear_cancelled_capture(&state);
+        assert!(lock_state(&state).unwrap().cancelled_capture.is_none());
+    }
+
+    #[test]
+    fn set_starting_prepend_audio_attaches_to_reserved_start() {
+        let state = fresh_state();
+        reserve_starting(&state).unwrap();
+        set_starting_prepend_audio(&state, fake_audio(500));
+        match &lock_state(&state).unwrap().lifecycle {
             DictationLifecycle::Starting { prepend_audio } => {
                 assert_eq!(prepend_audio.as_ref().unwrap().duration_ms, 500)
             }
             _ => panic!("expected Starting with prepend_audio"),
-        }
-    }
-
-    #[test]
-    fn reserve_starting_with_cancelled_capture_rejects_when_nothing_stashed() {
-        let state = fresh_state();
-        assert!(matches!(
-            reserve_starting_with_cancelled_capture(&state),
-            Err(ref e) if e == "Nothing to resume"
-        ));
+        };
     }
 
     #[test]

@@ -33,6 +33,9 @@ export function fmtUsd(n: number | null): string {
 
 /** "3h 12m" / "12m 04s" / "48s" */
 export function fmtDuration(ms: number): string {
+  // Guard non-finite/negative inputs — Math.floor of a negative would
+  // produce malformed strings like "-5s".
+  if (!Number.isFinite(ms) || ms < 0) return '0s';
   const totalSeconds = Math.round(ms / 1000);
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
@@ -54,7 +57,7 @@ export function bookEquivalent(words: number): number {
 
 /** Round a max value up to a readable axis ceiling (1/2/5 × 10^n). */
 export function niceCeiling(max: number): number {
-  if (max <= 0) return 1;
+  if (!Number.isFinite(max) || max <= 0) return 1;
   const magnitude = 10 ** Math.floor(Math.log10(max));
   // IEEE-754 rounding can nudge an exact boundary (0.2/0.1) just past it, so
   // compare with a small tolerance instead of raw <=.

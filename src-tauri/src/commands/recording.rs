@@ -378,8 +378,16 @@ pub async fn resume_cancelled_capture(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    let _audio = pipeline::reserve_starting_with_cancelled_capture(state.inner())?;
-    pipeline::emit_cancelled_capture_cleared(&app);
+    // Reserve first so a busy state fails before anything is consumed. The
+    // stashed capture is only cleared once the new session is actually
+    // underway — a mid-start failure (mic permissions, poisoned lock) must
+    // leave it resumable rather than destroying the audio.
+    pipeline::reserve_starting(state.inner())?;
+    let Some(audio) = pipeline::peek_cancelled_capture_if_fresh(state.inner()) else {
+        pipeline::cancel_starting_reservation(state.inner());
+        return Err("Nothing to resume".to_string());
+    };
+    pipeline::set_starting_prepend_audio(state.inner(), audio);
     let target = WindowTarget::capture_foreground();
     {
         let mut st = lock_state(&state)?;
@@ -388,6 +396,8 @@ pub async fn resume_cancelled_capture(
     }
     pipeline::start_recording_session(&app, state.inner(), "handsfree", true);
     crate::core::hotkey::set_handless_active(true);
+    pipeline::clear_cancelled_capture(state.inner());
+    pipeline::emit_cancelled_capture_cleared(&app);
     Ok(())
 }
 
