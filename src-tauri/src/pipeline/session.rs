@@ -211,8 +211,8 @@ pub fn start_recording_session_ex(
 /// long/loud enough to clear the normal recording quality gates — stashes it
 /// as a `CancelledCapture` and shows the pill's "Cancelled" state (Continue
 /// button resumes hands-free with this audio prepended, see
-/// `state::reserve_starting_with_cancelled_capture`). Otherwise behaves like
-/// a plain discard: unmute, end any media pause, hide the pill.
+/// `state::peek_cancelled_capture_if_fresh`). Otherwise behaves like a plain
+/// discard: unmute, end any media pause, hide the pill.
 ///
 /// Mirrors `stages::stop_and_capture_audio`'s gating (same constants
 /// `run_pipeline`/`transcribe_input_only` use), applied here instead of to a
