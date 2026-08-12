@@ -14,3 +14,13 @@ export async function ensureNotificationPermission(): Promise<boolean> {
     return false;
   }
 }
+
+export async function isNotificationPermissionGranted(): Promise<boolean> {
+  if (!isTauriRuntime()) return false;
+  try {
+    return await isPermissionGranted();
+  } catch (error) {
+    console.warn('Notification permission check failed:', error);
+    return false;
+  }
+}

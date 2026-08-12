@@ -16,7 +16,7 @@ export const MOTION_PX = {
   page: 18,
 } as const;
 
-export const NAV_ORDER = ['home', 'dictionary', 'snippets', 'style'] as const;
+export const NAV_ORDER = ['home', 'insights', 'dictionary', 'snippets', 'style'] as const;
 export const STYLE_TAB_ORDER = ['cleanup', 'personal', 'apps'] as const;
 
 export function directionFromOrder(current: string, next: string, order: readonly string[]): 1 | -1 {

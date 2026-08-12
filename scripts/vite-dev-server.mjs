@@ -22,6 +22,7 @@ const child = spawn(process.execPath, [viteEntry], {
   stdio: 'inherit',
   shell: false,
   env: process.env,
+  windowsHide: true,
 });
 
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
@@ -56,7 +57,15 @@ async function isServerReachable(url) {
       method: 'GET',
       signal: controller.signal,
     });
-    return response.ok || response.status < 500;
+    if (!response.ok) {
+      return false;
+    }
+
+    // Port 1420 is a convention, not proof that this project's Vite server is
+    // running. Reusing an unrelated local service makes Tauri load the wrong
+    // page and leaves the desktop window looking blank or transparent.
+    const html = await response.text();
+    return html.includes('<title>Verenu</title>');
   } catch {
     return false;
   } finally {

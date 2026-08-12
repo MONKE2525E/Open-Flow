@@ -161,19 +161,6 @@
     max-width: 360px;
   }
 
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 12.5px;
-    font-family: var(--sans);
-    color: var(--ink-soft);
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
-
   @media (max-width: 720px) {
     .snip-row {
       grid-template-columns: 1fr;

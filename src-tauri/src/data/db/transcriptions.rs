@@ -49,13 +49,32 @@ pub fn insert_transcription_returning(
     // Lifetime counter is intentionally separate from the transcriptions
     // table so history retention pruning never shrinks it. Committed in the
     // same transaction as the insert so a crash between the two can't leave
-    // total_words permanently undercounted.
+    // total_words permanently undercounted. Upsert because a fresh database
+    // (no transcriptions at migration time) may have no id=1 row yet.
     tx.execute(
-        "UPDATE lifetime_stats SET total_words = total_words + ?1 WHERE id = 1",
+        "INSERT INTO lifetime_stats (id, total_words) VALUES (1, ?1)
+         ON CONFLICT(id) DO UPDATE SET total_words = total_words + ?1",
         params![words],
     )?;
     tx.commit()?;
     Ok(entry)
+}
+
+/// Lifetime counter for dictionary substitutions actually applied to
+/// dictations. Like `total_words`, it is only ever incremented — never
+/// recomputed from history — so retention pruning can't shrink it. `count`
+/// is the number of dictionary substitution events from one dictation.
+pub fn increment_lifetime_dictionary_fixes(db: &Db, count: i64) -> Result<()> {
+    if count <= 0 {
+        return Ok(());
+    }
+    let conn = lock_conn(db)?;
+    conn.execute(
+        "INSERT INTO lifetime_stats (id, dictionary_fixes) VALUES (1, ?1)
+         ON CONFLICT(id) DO UPDATE SET dictionary_fixes = dictionary_fixes + ?1",
+        params![count],
+    )?;
+    Ok(())
 }
 
 pub fn query_recent(db: &Db) -> Result<Vec<RecentEntry>> {

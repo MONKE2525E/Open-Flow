@@ -5,6 +5,7 @@
   import { isWindows } from './lib/platform';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
+  import Insights from './lib/views/Insights.svelte';
   import Dictionary from './lib/views/Dictionary.svelte';
   import Snippets from './lib/views/Snippets.svelte';
   import Style from './lib/views/Style.svelte';
@@ -22,7 +23,7 @@
   import { scrollEdges } from './lib/scrollFade';
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
-  import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
+  import { MOTION_MS, MOTION_PX, NAV_ORDER, SETTINGS_SECTION_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
 
   type EffectiveTheme = 'light' | 'dark';
   type NativeTitleBarMetrics = { height: number; leftInset: number; rightInset: number; scaleFactor: number };
@@ -86,8 +87,26 @@
     }
   }
 
+  function openNotificationDestination(destination: string) {
+    if (destination === 'models') {
+      appStore.settingsAnimDir = directionFromOrder(
+        appStore.settingsSection,
+        'models',
+        SETTINGS_SECTION_ORDER,
+      );
+      appStore.settingsSection = 'models';
+      appStore.settingsOpen = true;
+      return;
+    }
+
+    appStore.settingsOpen = false;
+    appStore.currentPage = 'home';
+  }
+
   onMount(() => {
+    let mounted = true;
     let cleanupFn: (() => void) | undefined;
+    let stopNotificationClickListener: (() => void) | undefined;
     let stopAutomaticUpdateChecks: (() => void) | undefined;
     let stopLocalSttListeners: (() => void) | undefined;
     let stopLocalLlmListeners: (() => void) | undefined;
@@ -131,6 +150,18 @@
       });
       cleanupFn = unlisten;
     })();
+
+    listen<string>('verenu:notification-clicked', (event) => {
+      openNotificationDestination(event.payload);
+    })
+      .then((unlisten) => {
+        if (!mounted) {
+          unlisten();
+          return;
+        }
+        stopNotificationClickListener = unlisten;
+      })
+      .catch((error) => { console.warn('Failed to listen for notification clicks:', error); });
 
     // Synchronous: startAutomaticUpdateChecks fires its first check in the
     // background and returns the cleanup immediately, so there's no unmount
@@ -178,7 +209,9 @@
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
+      mounted = false;
       if (cleanupFn) cleanupFn();
+      if (stopNotificationClickListener) stopNotificationClickListener();
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
       if (stopLocalSttListeners) stopLocalSttListeners();
       if (stopLocalLlmListeners) stopLocalLlmListeners();
@@ -215,6 +248,8 @@
         >
           {#if appStore.currentPage === 'home'}
             <Home />
+          {:else if appStore.currentPage === 'insights'}
+            <Insights />
           {:else if appStore.currentPage === 'dictionary'}
             <Dictionary />
           {:else if appStore.currentPage === 'snippets'}

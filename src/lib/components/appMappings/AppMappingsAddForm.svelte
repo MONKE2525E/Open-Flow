@@ -268,7 +268,7 @@
       {/if}
     </div>
 
-    <div class="profile-drop-wrap" role="presentation" onclick={(event) => event.stopPropagation()}>
+    <div class="ui-dropdown profile-drop-wrap" role="presentation" onclick={(event) => event.stopPropagation()}>
       <select class="profile-select profile-select-hidden" bind:value={addProfile} tabindex="-1" aria-hidden="true">
         {#each profileOptions as profile}
           <option value={profile.id}>{profile.label}</option>
@@ -277,7 +277,7 @@
       <button
         bind:this={profileDropdownButton}
         type="button"
-        class="profile-drop-btn"
+        class="ui-dropdown-trigger profile-drop-btn"
         use:animateWidth={{ text: getProfileLabel(addProfile) }}
         onclick={() => (profileDropdownOpen ? profileDropdownOpen = false : openProfileDropdown())}
         onkeydown={handleProfileButtonKeydown}
@@ -293,7 +293,7 @@
       {#if profileDropdownOpen}
         <div
           id={ADD_PROFILE_MENU_ID}
-          class="profile-drop-menu scroll-styled"
+          class="ui-dropdown-menu profile-drop-menu scroll-styled"
           role="listbox"
           tabindex="-1"
           aria-label="Tone options"
@@ -304,7 +304,7 @@
           {#each profileOptions as profile}
             <button
               type="button"
-              class="profile-drop-item"
+              class="ui-dropdown-option profile-drop-item"
               class:active={addProfile === profile.id}
               onclick={() => {
                 addProfile = profile.id;
@@ -327,7 +327,7 @@
       {/if}
     </div>
 
-    <div class="cleanup-drop-wrap" role="presentation" onclick={(event) => event.stopPropagation()}>
+    <div class="ui-dropdown cleanup-drop-wrap" role="presentation" onclick={(event) => event.stopPropagation()}>
       <select class="cleanup-select cleanup-select-hidden" bind:value={addCleanupIntensity} tabindex="-1" aria-hidden="true">
         {#each cleanupIntensityChoices as choice}
           <option value={choice.id}>{choice.label}</option>
@@ -336,7 +336,7 @@
       <button
         bind:this={cleanupDropdownButton}
         type="button"
-        class="cleanup-drop-btn"
+        class="ui-dropdown-trigger cleanup-drop-btn"
         use:animateWidth={{ text: getCleanupIntensityLabel(addCleanupIntensity) }}
         onclick={() => (cleanupDropdownOpen ? cleanupDropdownOpen = false : openCleanupDropdown())}
         onkeydown={handleCleanupButtonKeydown}
@@ -352,7 +352,7 @@
       {#if cleanupDropdownOpen}
         <div
           id={ADD_CLEANUP_MENU_ID}
-          class="cleanup-drop-menu scroll-styled"
+          class="ui-dropdown-menu cleanup-drop-menu scroll-styled"
           role="listbox"
           tabindex="-1"
           aria-label="Cleanup intensity options"
@@ -363,7 +363,7 @@
           {#each cleanupIntensityChoices as choice}
             <button
               type="button"
-              class="cleanup-drop-item"
+              class="ui-dropdown-option cleanup-drop-item"
               class:active={addCleanupIntensity === choice.id}
               onclick={() => {
                 addCleanupIntensity = choice.id;
@@ -386,7 +386,7 @@
       {/if}
     </div>
 
-    <button type="button" class="btn-primary add-btn" onclick={submit} disabled={!addExe && !appSearch.trim()}>Add</button>
+    <button type="button" class="btn-primary btn-compact add-btn" onclick={submit} disabled={!addExe && !appSearch.trim()}>Add</button>
   </div>
 
   {#if pendingExe}
@@ -508,8 +508,7 @@
 
   .profile-drop-wrap,
   .cleanup-drop-wrap {
-    position: relative;
-    flex-shrink: 0;
+    --ui-dropdown-trigger-height: 28px;
   }
 
   .profile-select-hidden,
@@ -529,34 +528,10 @@
 
   .profile-drop-btn,
   .cleanup-drop-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: transparent;
-    border: 1px solid var(--line-strong);
+    --ui-dropdown-trigger-bg: transparent;
+    border-color: var(--line-strong);
     border-radius: 6px;
-    padding: 6px 12px;
     font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .profile-drop-btn:hover,
-  .cleanup-drop-btn:hover {
-    background: var(--control-hover);
-  }
-
-  .profile-drop-btn svg,
-  .cleanup-drop-btn svg {
-    transition: transform 150ms;
-  }
-
-  .profile-drop-btn svg.open,
-  .cleanup-drop-btn svg.open {
-    transform: rotate(180deg);
   }
 
   .profile-drop-btn span,
@@ -569,16 +544,7 @@
 
   .profile-drop-menu,
   .cleanup-drop-menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
     max-height: 200px;
-    overflow-y: auto;
-    z-index: 20;
   }
 
   .profile-drop-menu {
@@ -588,58 +554,6 @@
   .cleanup-drop-menu {
     min-width: 120px;
   }
-
-  .profile-drop-item,
-  .cleanup-drop-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 8px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .profile-drop-item:last-child,
-  .cleanup-drop-item:last-child {
-    border-bottom: none;
-  }
-
-  .profile-drop-item:hover,
-  .cleanup-drop-item:hover {
-    background: var(--control-hover);
-  }
-
-  .profile-drop-item.active,
-  .cleanup-drop-item.active {
-    background: var(--accent-soft);
-    color: var(--ink);
-    font-weight: 500;
-  }
-
-  .btn-primary {
-    background: var(--ink);
-    color: var(--amber-50);
-    border: 1px solid transparent;
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: opacity 0.15s;
-  }
-
-  .btn-primary:disabled { opacity: 0.4; cursor: default; }
-  .btn-primary:not(:disabled):hover { opacity: 0.82; }
 
   .add-btn {
     flex-shrink: 0;

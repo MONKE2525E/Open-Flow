@@ -29,6 +29,17 @@ pub async fn get_stats(app: AppHandle) -> Result<db::Stats, String> {
     .await
 }
 
+/// Aggregated insights for the Insights page. `days` is 7 | 30 | 90 | 0,
+/// where 0 means all time.
+#[tauri::command]
+pub async fn get_insights(app: AppHandle, days: i64) -> Result<db::Insights, String> {
+    let db = db_state(&app);
+    run_blocking("get_insights", move || {
+        db::query_insights(&db, days).map_err(|e| e.to_string())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn count_old_transcriptions(app: AppHandle, retention: String) -> Result<i64, String> {
     let Some(days) = store::history_retention_days(&retention) else {

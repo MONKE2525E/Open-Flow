@@ -224,8 +224,10 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     PILL_VISUALLY_ACTIVE.store(true, Ordering::SeqCst);
 
     // Click-through for passive states so nothing behind the pill is blocked.
-    // Handsfree needs real cursor events for its cancel/confirm buttons.
-    pill.set_ignore_cursor_events(state != "handsfree").ok();
+    // Handsfree, error (Retry), and cancelled (Undo/Dismiss) all have real
+    // buttons that need real cursor events.
+    let has_clickable_buttons = matches!(state, "handsfree" | "error" | "cancelled" | "paste_failed");
+    pill.set_ignore_cursor_events(!has_clickable_buttons).ok();
 
     // Show the window before emitting state so WebView2 is active when it
     // receives the event. WebView2 suspends event processing while hidden;
@@ -333,6 +335,38 @@ pub(crate) fn hide_pill(app: &AppHandle) {
         // The pill window is transparent + click-through in idle state, so
         // leaving it visible has no user-visible effect.
     }
+}
+
+/// Shows the pill's "Cancelled" state — a cancelled recording whose audio was
+/// good enough to stash for the pill's Continue button (see
+/// `pipeline::cancel_recording_with_resume`). Auto-dismiss is handled by the
+/// frontend (`PillApp.svelte`), same as `show_error_pill`.
+pub(super) fn show_cancelled_pill(app: &AppHandle) {
+    show_pill_msg(app, "cancelled", None);
+}
+
+/// Shows the pill's "Paste failed" state — injection didn't land (or
+/// couldn't be verified), but the finished text is safely stashed as
+/// `paste_failure` for the pill's Copy button (see
+/// `commands::recording::copy_paste_failure_to_clipboard`). Auto-dismiss is
+/// handled by the frontend, same as `show_error_pill`.
+pub(super) fn show_paste_failed_pill(app: &AppHandle) {
+    if super::start_stop_sounds_enabled(app) {
+        crate::media::sound::play(crate::media::sound::SoundCue::Error);
+    }
+    show_pill_msg(app, "paste_failed", None);
+}
+
+/// Shows the pill's "Copied" confirmation for the global copy-last-dictation
+/// shortcut (Ctrl+Alt+C / ⌥⌘C) — a lightweight, button-less toast so the
+/// user gets clear feedback the shortcut actually did something, even when
+/// nothing is focused to receive it. Auto-dismiss (5s) is handled by the
+/// frontend, same as the other transient pill states.
+pub(crate) fn show_copied_pill(app: &AppHandle, msg: &str) {
+    if super::start_stop_sounds_enabled(app) {
+        crate::media::sound::play(crate::media::sound::SoundCue::Stop);
+    }
+    show_pill_msg(app, "copied", Some(msg));
 }
 
 pub(super) async fn show_error_pill(app: &AppHandle, msg: &str) {

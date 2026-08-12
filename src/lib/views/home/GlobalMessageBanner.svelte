@@ -19,8 +19,8 @@
   .notice-wrap { position: relative; margin-bottom: 22px; }
   .global-banner {
     display: flex;
-    align-items: flex-start;
-    gap: 10px;
+    align-items: center;
+    gap: 12px;
     padding: 12px 18px;
     background: var(--warn-bg, rgba(196, 116, 42, 0.08));
     border: 1px solid var(--warn-line, rgba(196, 116, 42, 0.35));
@@ -31,14 +31,14 @@
   .global-icon {
     display: inline-grid;
     place-items: center;
-    flex: 0 0 18px;
-    height: 18px;
+    flex: 0 0 24px;
+    height: 24px;
     border-radius: 50%;
     color: var(--warning, #c4742a);
   }
   .global-icon svg {
-    width: 15px;
-    height: 15px;
+    width: 18px;
+    height: 18px;
   }
   .global-text { flex: 1; font-family: var(--serif); font-weight: 500; }
 </style>

@@ -40,6 +40,7 @@
 
   const navItems = [
     { id: 'home',       label: 'Home',       icon: 'home',     locked: false },
+    { id: 'insights',   label: 'Insights',   icon: 'chart',    locked: false },
     { id: 'dictionary', label: 'Dictionary', icon: 'book',     locked: false },
     { id: 'snippets',   label: 'Snippets',   icon: 'scissors', locked: false },
     { id: 'style',      label: 'Style',      icon: 'type',     locked: false },

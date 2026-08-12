@@ -8,16 +8,34 @@
   }: { open: boolean; closeSelector?: string; children?: import('svelte').Snippet } = $props();
 
   $effect(() => {
-    if (open) {
-      tick().then(() =>
-        window.addEventListener('click', handleOutsideClick, { once: true })
-      );
-    }
+    if (!open) return;
+
+    let disposed = false;
+    tick().then(() => {
+      if (!disposed) window.addEventListener('click', handleOutsideClick);
+    });
+    window.addEventListener('keydown', handleWindowKeydown);
+
+    return () => {
+      disposed = true;
+      window.removeEventListener('click', handleOutsideClick);
+      window.removeEventListener('keydown', handleWindowKeydown);
+    };
   });
 
   function handleOutsideClick(e: MouseEvent) {
-    if (closeSelector && (e.target as HTMLElement).closest(closeSelector)) return;
+    // closest() only exists on Element; a click target can be a Text node or
+    // document, so resolve to the nearest element first before testing the
+    // close selector (e.g. clicking the label text inside the trigger).
+    const target = e.target instanceof Element
+      ? e.target
+      : (e.target as Node)?.parentElement;
+    if (closeSelector && target?.closest(closeSelector)) return;
     open = false;
+  }
+
+  function handleWindowKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') open = false;
   }
 </script>
 

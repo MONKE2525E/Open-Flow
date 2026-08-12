@@ -467,11 +467,15 @@
   </p>
 {/if}
 <div class="setting-row">
+  <div><div class="label">Copy last dictation</div><div class="desc">Always available — re-copies your last dictation to the clipboard, in case a paste didn't land</div></div>
+  <span class="badge key-badge">{isMac ? '⌥⌘C' : 'Ctrl+Alt+C'}</span>
+</div>
+<div class="setting-row">
   <div class="lang-setting-text"><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect{languageScopeNote}</div></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="language-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && languageDropdownOpen) { languageDropdownOpen = false; e.stopPropagation(); } }}>
+  <div class="ui-dropdown language-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && languageDropdownOpen) { languageDropdownOpen = false; e.stopPropagation(); } }}>
     <button
-      class="btn-ghost language-btn"
+      class="btn-ghost ui-dropdown-trigger language-btn"
       use:animateWidth={{ text: getTranscriptionLanguageLabel(selectedLanguage) }}
       onclick={() => (languageDropdownOpen = !languageDropdownOpen)}
       aria-haspopup="true"
@@ -489,7 +493,7 @@
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         id={LANGUAGE_MENU_ID}
-        class="language-menu scroll-styled scroll-thumb-elev"
+        class="ui-dropdown-menu language-menu scroll-styled scroll-thumb-elev"
         aria-label="Spoken language options"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
@@ -497,7 +501,7 @@
       >
         {#each visibleLanguages as language}
           <button
-            class="language-item"
+            class="ui-dropdown-option language-item"
             class:active={selectedLanguage === language.code}
             onclick={() => saveLanguage(language.code)}
           >
@@ -515,9 +519,9 @@
     <div class="desc">{microphoneCopy.inputDeviceDescription}</div>
   </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="mic-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && micDropdownOpen) { micDropdownOpen = false; e.stopPropagation(); } }}>
+  <div class="ui-dropdown mic-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && micDropdownOpen) { micDropdownOpen = false; e.stopPropagation(); } }}>
     <button
-      class="btn-ghost mic-btn"
+      class="btn-ghost ui-dropdown-trigger mic-btn"
       use:animateWidth={{ text: selectedMic || microphoneCopy.defaultDevice, max: 180 }}
       onclick={() => (micDropdownOpen = !micDropdownOpen)}
       aria-haspopup="true"
@@ -534,15 +538,15 @@
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         id={MIC_MENU_ID}
-        class="mic-menu scroll-styled scroll-thumb-elev"
+        class="ui-dropdown-menu ui-dropdown-menu--padded mic-menu scroll-styled scroll-thumb-elev"
         aria-label="Microphone device options"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
-        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{microphoneCopy.defaultDevice}</button>
+        <button class="ui-dropdown-option mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{microphoneCopy.defaultDevice}</button>
         {#each microphones as m}
-          <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>{m}</button>
+          <button class="ui-dropdown-option mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>{m}</button>
         {/each}
         {#if microphones.length === 0}
           <div class="mic-empty">{microphoneCopy.noDevicesFound}</div>
@@ -659,25 +663,9 @@
   .keybind-btn.success { background: color-mix(in srgb, var(--accent) 82%, white 18%); color: var(--on-accent); transform: scale(1.03); }
   .keybind-btn.error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); animation: none; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
-  .mic-dropdown { position: relative; flex-shrink: 0; }
   .mic-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: var(--r-md);
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    color: var(--ink);
-    font-size: 13px;
-    font-weight: 500;
     max-width: 180px;
   }
-  .mic-btn svg { transition: transform 0.2s; }
-  .mic-btn svg.open { transform: rotate(180deg); }
-  .language-btn svg { transition: transform 150ms; }
-  .language-btn svg.open { transform: rotate(180deg); }
   .mic-btn-label {
     min-width: 0;
     overflow: hidden;
@@ -687,44 +675,13 @@
     text-align: left;
   }
   .mic-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
     width: 220px;
-    max-height: 240px;
-    overflow-y: auto;
-    background: var(--bg-elev);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--r-md);
-    box-shadow: 0 4px 16px var(--shadow-md);
-    z-index: 10;
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
   }
-  .mic-item {
-    width: 100%;
-    text-align: left;
-    padding: 6px 10px;
-    border-radius: var(--r-sm);
-    font-size: 12.5px;
-    color: var(--ink-soft);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .mic-item:hover { background: var(--paper-2); color: var(--ink); }
-  .mic-item.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
   .mic-empty { padding: 8px 10px; font-size: 12px; color: var(--ink-mute); text-align: center; }
   /* Let the label+desc column take remaining width and wrap within itself,
      so the (sometimes long) language-scope note never runs under the
      fixed-width dropdown button to its right. */
   .lang-setting-text { min-width: 0; flex: 1; padding-right: 14px; }
-  .language-dropdown { position: relative; flex-shrink: 0; }
   .language-btn { max-width: 210px; }
   .language-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
   .language-code {
@@ -734,36 +691,14 @@
     text-transform: uppercase;
   }
   .language-menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
     min-width: 220px;
     max-width: 280px;
     max-height: 260px;
-    overflow-y: auto;
-    z-index: 10;
   }
   .language-item {
     display: flex;
-    justify-content: space-between;
     gap: 12px;
-    width: 100%;
-    text-align: left;
-    padding: 8px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    justify-content: space-between;
   }
   .language-item span:last-child {
     color: var(--ink-faint);
@@ -771,9 +706,6 @@
     font-size: 10.5px;
     text-transform: uppercase;
   }
-  .language-item:last-child { border-bottom: none; }
-  .language-item:hover { background: var(--paper); }
-  .language-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
   .appearance-segment {
     position: relative;
     display: inline-flex;
@@ -862,30 +794,4 @@
     justify-content: flex-end;
     gap: 8px;
   }
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 12.5px;
-    font-family: var(--sans);
-    color: var(--ink-soft);
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
-  .btn-primary {
-    background: var(--ink);
-    color: var(--amber-50);
-    border: 0;
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 12.5px;
-    font-weight: 500;
-    font-family: var(--sans);
-    cursor: pointer;
-    white-space: nowrap;
-    transition: opacity 0.15s;
-  }
-  .btn-primary:hover { opacity: 0.82; }
 </style>
