@@ -137,6 +137,7 @@ PROFILE_SUITES = {
 JS_TESTS = [
     # ── SUITE: ui ─────────────────────────────────────────────────────────────
     ("smoke/test.cjs",                               "ui",        "App mount & DOM structure",            {"retry": 1, "timeout_s": 45}),
+    ("integration/playwright-test-onboarding-layout-dev.cjs", "ui", "Onboarding layout and visual contracts", {"retry": 1, "timeout_s": 120}),
     ("smoke/playwright-test-ui.cjs",                 "ui",        "Navigation & interaction",             {"retry": 2, "timeout_s": 90}),
     ("smoke/playwright-test-fixes.cjs",              "ui",        "Element contract assertions",          {"retry": 1, "timeout_s": 45}),
     ("smoke/test-app.cjs",                           "ui",        "App mappings flow",                    {"retry": 2, "timeout_s": 90}),

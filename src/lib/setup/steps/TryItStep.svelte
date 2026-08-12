@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke, listen } from '../../tauri';
   import { isMac } from '../../platform';
+  import { classifyIpcError } from '../../errors';
   import { hotkeyCodes, hotkeyLabels, hotkeyWatchCodes, matchesHotkey } from '../../hotkey.svelte';
 
   const keyLabels = $derived(hotkeyLabels());
@@ -16,6 +17,14 @@
   let destroyed = false;
 
   let status = $derived(sampleText.trim().length > 0 ? 'success' : 'waiting');
+  const errorTitle = $derived(
+    /no speech|didn.t hear|too quiet/i.test(errorMessage)
+      ? "We didn't hear any speech"
+      : 'That recording did not go through',
+  );
+  const errorDetail = $derived(
+    `${errorMessage.replace(/[.!?]+$/, '')}. Check your microphone, then hold the hotkey until you finish speaking.`,
+  );
 
   function tryItFieldFocused() {
     return typeof document !== 'undefined' && document.activeElement === textareaEl;
@@ -37,8 +46,8 @@
       }
       localRecording = true;
     } catch (err) {
-      if (!destroyed && !String(err).includes('Already recording')) {
-        errorMessage = String(err || 'Failed to start recording.');
+      if (!destroyed && classifyIpcError(err).kind !== 'already-recording') {
+        errorMessage = classifyIpcError(err).message;
       }
     } finally {
       localStartInFlight = false;
@@ -51,7 +60,7 @@
     try {
       await invoke('stop_setup_try_recording');
     } catch (err) {
-      errorMessage = String(err || 'Failed to stop recording.');
+      errorMessage = classifyIpcError(err).message;
     }
   }
 
@@ -95,7 +104,9 @@
 
     listen<string>('verenu:error', (ev) => {
       if (destroyed) return;
-      errorMessage = ev.payload || 'Something went wrong with that recording.';
+      errorMessage = ev.payload
+        ? classifyIpcError(ev.payload).message
+        : 'Something went wrong with that recording.';
     }).then((unsub) => {
       if (destroyed) unsub();
       else unlistenError = unsub;
@@ -138,7 +149,7 @@
     {#each keyLabels as k, i}
       {#if i > 0}<span>+</span>{/if}<kbd>{k}</kbd>
     {/each}
-    <p>Hold {keyLabels.length > 1 ? 'the keys' : 'the key'}, say a sentence, then release.</p>
+    <p><strong>1.</strong> Focus the field &nbsp; <strong>2.</strong> Hold the hotkey and speak &nbsp; <strong>3.</strong> Release to finish</p>
     {#if isMac && hotkeyCodes()[0] === 'F5'}
       <p class="tryit-note">Nothing happening? F5 may be opening macOS Dictation — turn it off in System Settings → Keyboard → Dictation, or hold Fn with F5.</p>
     {/if}
@@ -154,12 +165,26 @@
   ></textarea>
 
   {#if errorMessage}
-    <p class="tryit-error">{errorMessage}</p>
+    <div class="tryit-feedback tryit-error" role="alert">
+      <span class="feedback-icon" aria-hidden="true">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 17h.01"/></svg>
+      </span>
+      <span class="feedback-copy">
+        <strong>{errorTitle}</strong>
+        <span>{errorDetail}</span>
+      </span>
+      <button class="btn-ghost btn-compact tryit-reset" onclick={reset}>Try again</button>
+    </div>
   {:else if status === 'success'}
-    <div class="tryit-success">
-      <span class="status-icon">OK</span>
-      <span>It works. That's the whole pipeline: transcription, cleanup, and injection.</span>
-      <button class="tryit-reset" onclick={reset}>Try again</button>
+    <div class="tryit-feedback tryit-success" role="status">
+      <span class="feedback-icon" aria-hidden="true">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.6 2.6L16.5 9"/></svg>
+      </span>
+      <span class="feedback-copy">
+        <strong>Everything works</strong>
+        <span>Transcription, cleanup, and text insertion all completed successfully.</span>
+      </span>
+      <button class="btn-ghost btn-compact tryit-reset" onclick={reset}>Try again</button>
     </div>
   {:else}
     <p class="tryit-hint">Nothing happens until you hold the hotkey; this field doesn't auto-fill.</p>
@@ -178,16 +203,7 @@
     padding: 14px 16px;
   }
 
-  .tryit-callout kbd {
-    font-family: var(--mono);
-    font-size: 12px;
-    background: var(--bg-elev);
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    padding: 3px 8px;
-  }
-
-  .tryit-callout span { color: var(--ink-faint); font-size: 12px; }
+  .tryit-callout span { color: var(--ink-faint); padding: 0 3px; }
 
   .tryit-callout p {
     margin: 0 0 0 4px;
@@ -195,6 +211,8 @@
     color: var(--ink-soft);
     flex-basis: 100%;
   }
+
+  .tryit-callout p strong { color: var(--accent-ink); font-weight: 650; }
 
   .tryit-callout .tryit-note {
     margin-top: 6px;
@@ -219,45 +237,49 @@
   }
 
   .tryit-field:focus { border-color: var(--accent); }
-  .tryit-field.filled { border-color: var(--accent); background: var(--accent-soft); }
+  .tryit-field.filled { border-color: var(--success-line); background: var(--success-bg); }
 
   .tryit-hint { font-size: 12px; color: var(--ink-faint); margin: 0; }
 
-  .tryit-error { font-size: 12.5px; color: var(--danger); margin: 0; }
+  .tryit-feedback {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--r-sm);
+  }
 
   .tryit-success {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12.5px;
-    color: var(--ink-soft);
+    border: 1px solid var(--success-line);
+    background: var(--success-bg);
   }
 
-  .status-icon {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: var(--accent-soft);
-    color: var(--accent-ink);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10px;
-    font-weight: 700;
-    flex-shrink: 0;
+  .tryit-error {
+    border: 1px solid var(--danger-line);
+    background: var(--danger-bg);
   }
+
+  .feedback-icon { display: flex; flex-shrink: 0; }
+  .tryit-success .feedback-icon { color: var(--success); }
+  .tryit-error .feedback-icon { color: var(--danger); }
+
+  .feedback-copy {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+    text-align: left;
+  }
+  .feedback-copy strong { color: var(--ink-strong); font-size: 12px; font-weight: 650; }
+  .feedback-copy > span { color: var(--ink-mute); font-size: 11.5px; line-height: 1.4; }
 
   .tryit-reset {
     margin-left: auto;
-    background: transparent;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    padding: 3px 10px;
-    font-size: 11.5px;
-    color: var(--ink-mute);
-    cursor: pointer;
     flex-shrink: 0;
   }
 
-  .tryit-reset:hover { color: var(--ink-strong); border-color: var(--accent); }
+  @media (max-width: 680px) {
+    .tryit-feedback { align-items: flex-start; }
+  }
 </style>
