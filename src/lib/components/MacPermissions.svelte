@@ -352,7 +352,11 @@
 {/snippet}
 
 {#if isMac}
-  <div class="mac-permissions">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- Escape collapses the open diagnostics panel no matter which control
+       inside it has focus (setup wizard, settings), one layer at a time.
+       preventDefault marks the key as handled for Settings' window guard. -->
+  <div class="mac-permissions" onkeydown={(event) => { if (event.key === 'Escape' && showDiagnostics) { event.preventDefault(); showDiagnostics = false; } }}>
   {#if variant === 'setup' && allGranted}
     <div class="permission-success" in:fly={{ y: -8, duration: motionMs(220), easing: expoOut }}>
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>

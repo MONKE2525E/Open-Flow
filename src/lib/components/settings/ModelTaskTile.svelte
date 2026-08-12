@@ -87,7 +87,11 @@
   const cloudSections = $derived(providerSections.filter((section) => section.tasks.includes(type)));
 </script>
 
-<div class="task-tile" class:task-open={opened}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- Escape collapses the open tile no matter which control inside it has
+     focus, so the key backs out one layer at a time (tile → Settings).
+     preventDefault marks the key as handled for Settings' window guard. -->
+<div class="task-tile" class:task-open={opened} onkeydown={(event) => { if (event.key === 'Escape' && opened) { event.preventDefault(); onToggleOpen(type); } }}>
   <button class="tile-head" onclick={() => onToggleOpen(type)} aria-expanded={opened}>
     <div class="head-left">
       <span class="head-title">{taskLabel(type)}</span>

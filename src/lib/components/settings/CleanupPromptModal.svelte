@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { tick } from 'svelte';
   import { slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { invoke } from '../../tauri';
@@ -9,6 +8,7 @@
     cleanupPromptOverridesStore,
     closeCleanupPromptEditor,
   } from '../../stores.svelte';
+  import { modalFocusTrap } from '../../modalFocus';
   import {
     modalBackdrop,
     expandFromOrigin,
@@ -45,7 +45,6 @@
     | { status: 'failed'; report?: PromptTestReport; error?: string };
 
   let modalEl = $state<HTMLDivElement | null>(null);
-  let previousFocusEl: HTMLElement | null = null;
 
   let draft = $state('');
   let defaultText = $state('');
@@ -111,23 +110,15 @@
     loadDraft();
   });
 
+  // The textarea only mounts after the draft IPC returns (loading gate). The
+  // focus trap lands on the card while loading; hand focus to the editor once
+  // it exists, unless the user has already moved inside the dialog.
   $effect(() => {
-    if (!cleanupPromptEditor.open) return;
-    const target = previousFocusEl;
-    previousFocusEl = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-
-    tick().then(() => {
-      const textarea = modalEl?.querySelector<HTMLElement>('textarea');
-      (textarea ?? modalEl)?.focus();
-    });
-
-    return () => {
-      if (target?.isConnected) {
-        requestAnimationFrame(() => target.focus());
-      }
-    };
+    if (!cleanupPromptEditor.open || loading) return;
+    const textarea = modalEl?.querySelector<HTMLElement>('textarea');
+    if (!textarea) return;
+    const active = document.activeElement;
+    if (active === modalEl || active === document.body) textarea.focus();
   });
 
   async function loadDraft() {
@@ -232,37 +223,11 @@
     handleClose();
   }
 
-  function getFocusable(): HTMLElement[] {
-    if (!modalEl) return [];
-    const sel = [
-      'button:not([disabled])',
-      'textarea:not([disabled])',
-      'input:not([disabled])',
-      '[tabindex]:not([tabindex="-1"])',
-    ].join(',');
-    return Array.from(modalEl.querySelectorAll<HTMLElement>(sel)).filter(
-      (el) => el.offsetParent !== null
-    );
-  }
-
+  // The focus trap owns Tab cycling and focus restore; Escape stays here so a
+  // dialog is always one key away from dismissal (Settings' Escape guard
+  // yields while [role="dialog"] is present).
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      const active = e.target as HTMLElement | null;
-      if (active?.tagName === 'TEXTAREA') return;
-      handleClose();
-      return;
-    }
-    if (e.key !== 'Tab') return;
-    const focusable = getFocusable();
-    if (!focusable.length) { e.preventDefault(); modalEl?.focus(); return; }
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
-    if (e.shiftKey && (active === first || active === modalEl)) {
-      e.preventDefault(); last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault(); first.focus();
-    }
+    if (e.key === 'Escape') handleClose();
   }
 
   const failedLiveResults = $derived(
@@ -296,7 +261,11 @@
 
   <div
     bind:this={modalEl}
-    class="prompt-modal-card"
+    class="prompt-modal-card ui-modal-card"
+    use:modalFocusTrap={{
+      active: true,
+      initialFocus: () => modalEl?.querySelector<HTMLElement>('textarea') ?? modalEl,
+    }}
     role="dialog"
     aria-modal="true"
     aria-label="Edit cleanup prompt"
