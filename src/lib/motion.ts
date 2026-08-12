@@ -80,6 +80,20 @@ export function pageSwap(node: HTMLElement, params: MotionTransitionParams = {},
   const distance = params.distance ?? motionPx(MOTION_PX.page);
   const isOutro = options.direction === 'out';
 
+  // Apply the visibility state atomically when the transition is created, not
+  // on the first tick: an outgoing page must be inert + aria-hidden from the
+  // instant it starts leaving (the smoke contract reads it mid-transition),
+  // and an incoming page must be interactive from the instant it mounts.
+  if (isOutro) {
+    node.inert = true;
+    node.setAttribute('aria-hidden', 'true');
+    node.style.pointerEvents = 'none';
+  } else {
+    node.inert = false;
+    node.removeAttribute('aria-hidden');
+    node.style.pointerEvents = '';
+  }
+
   return {
     duration,
     easing: cubicOut,

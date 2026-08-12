@@ -119,7 +119,13 @@
   }
 </script>
 
-<div class="task-tile" class:task-open={opened}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- Escape collapses the open tile no matter which control inside it has
+     focus, so the key backs out one layer at a time (tile → Settings). The
+     per-model language disclosure handles Escape first (see .local-meta-toggle)
+     so the innermost layer always closes before the tile. preventDefault
+     marks the key as handled for Settings' window guard. -->
+<div class="task-tile" class:task-open={opened} onkeydown={(event) => { if (event.key === 'Escape' && opened) { event.preventDefault(); onToggleOpen(); } }}>
   <button class="tile-head" onclick={onToggleOpen} aria-expanded={opened}>
     <div class="head-left">
       <span class="head-title">Speech-to-text</span>
@@ -535,6 +541,11 @@
   .local-meta-toggle:hover {
     border-color: color-mix(in srgb, var(--accent) 20%, var(--line));
     color: var(--ink-soft);
+  }
+
+  .local-meta-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
   .local-meta-toggle.is-open {

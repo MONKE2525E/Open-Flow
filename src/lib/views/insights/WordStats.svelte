@@ -86,6 +86,12 @@
               class:open={wordExpanded}
               aria-expanded={wordExpanded}
               onclick={() => (wordExpanded = !wordExpanded)}
+              onkeydown={(event) => {
+                if (event.key === 'Escape' && wordExpanded) {
+                  event.preventDefault();
+                  wordExpanded = false;
+                }
+              }}
               title={wordExpanded ? 'Click to collapse' : 'Click to see the full word'}
             >
               <span class="word-toggle-text">{rawWord}</span>
