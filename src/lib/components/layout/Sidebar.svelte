@@ -349,18 +349,19 @@
    * so the footer never moves.
    */
   .nav-section {
-    padding: 4px 8px;
+    /* The settings rail sits 12px below the brand block; the app nav starts
+       a bit lower (24px) so the clickable list reads as stepped down from the
+       brand without floating. The rail's grid cell absorbs the taller list
+       during the settings morph. */
+    padding: 12px 8px 4px;
     display: grid;
   }
 
-  /* Windows puts the Verenu icon/name in the native caption. Leave a deliberate
-     gap below that frame before the first navigation target. */
-  .sidebar.sidebar-windows .nav-section { padding-top: 22px; }
+  .sidebar:not(.rail-settings) .nav-section { padding-top: 24px; }
 
-  /* The native caption already carries the icon and wordmark, so the in-rail
-     brand block would duplicate it. It stays on macOS, where the hidden
-     titlebar leaves the rail top as the only header. */
-  .sidebar.sidebar-windows :global(.brand) { display: none; }
+  /* No Windows-specific nav offset: the brand block owns the rail header on
+     every platform, and its min-height matches the native titlebar height, so
+     the first nav target always starts below the caption. */
 
   .rail-list {
     grid-area: 1 / 1;
@@ -411,8 +412,8 @@
     display: flex;
     align-items: center;
     gap: 9px;
-    min-height: 42px;
-    padding: 8px;
+    min-height: 30px;
+    padding: 6px;
     border-radius: 7px;
     color: var(--ink-soft);
     cursor: pointer;

@@ -365,6 +365,31 @@ fn main() {
                 );
             }
             start_frontend_watchdog(app.handle(), frontend_readiness.clone());
+            // macOS logout sends SIGTERM to the app. Tauri delivers
+            // RunEvent::Exit only for its own quit paths, so without this
+            // hook a SIGTERM would kill the process without unloading the
+            // local cleanup model, orphaning llama-server. Routing it through
+            // app.exit(0) runs the normal Exit cleanup (see the `run` closure
+            // below). Unix-only: console signals do not reach Windows GUI
+            // apps, and Windows logoff is handled separately in
+            // on_window_event.
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{signal, SignalKind};
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut sigterm = match signal(SignalKind::terminate()) {
+                        Ok(sigterm) => sigterm,
+                        Err(err) => {
+                            log::warn!("could not register SIGTERM handler: {err}");
+                            return;
+                        }
+                    };
+                    sigterm.recv().await;
+                    log::info!("received SIGTERM; exiting cleanly");
+                    app_handle.exit(0);
+                });
+            }
             let local_stt_manager = local_transcription_manager.clone();
             let local_llm_manager = local_cleanup_manager.clone();
             let app_handle = app.handle().clone();
@@ -428,6 +453,16 @@ fn main() {
             if window.label() == "main" {
                 match event {
                     tauri::WindowEvent::CloseRequested { api, .. } => {
+                        // The OS is tearing the session down (Windows logoff or
+                        // shutdown): let the window actually close instead of
+                        // hiding to tray, or the process outlives the session
+                        // (Windows waits ~5s then force-kills it, which also
+                        // skips RunEvent::Exit and can orphan llama-server.exe).
+                        // On other platforms the session helper reports false
+                        // and the normal hide-to-tray path below runs.
+                        if crate::system::session::system_is_shutting_down() {
+                            return;
+                        }
                         api.prevent_close();
                         #[cfg(target_os = "macos")]
                         {
@@ -578,6 +613,9 @@ fn main() {
             if let tauri::RunEvent::Reopen { .. } = _event {
                 show_main_window(_app);
             }
+            if let tauri::RunEvent::ExitRequested { .. } = _event {
+                log::info!("app exit requested");
+            }
             // Local cleanup runs llama-server.exe as a real child OS process
             // (unlike local_stt, which is in-process). Child processes are
             // not automatically killed when their parent exits on Windows —
@@ -585,15 +623,16 @@ fn main() {
             // loaded would orphan llama-server.exe, leaving it running
             // indefinitely and holding the loaded model's RAM/VRAM.
             if let tauri::RunEvent::Exit = _event {
-                _app.state::<crate::local_llm::LocalLlmManager>()
-                    .unload(_app);
+                log::info!("app exiting; unloading local models");
+                crate::system::shutdown_local_models(_app);
+                log::info!("app shutdown complete");
             }
         });
 }
 
 #[cfg(target_os = "windows")]
 fn wait_for_relaunch_parent_exit() {
-    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows::Win32::System::Threading::{
         OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
     };
@@ -615,7 +654,22 @@ fn wait_for_relaunch_parent_exit() {
             }
         };
 
-        let wait_result = WaitForSingleObject(handle, 5_000);
+        // The old instance may take longer than 5 s to exit (slow model
+        // unload during RunEvent::Exit). Waiting on the same handle in slices
+        // up to a 15 s total budget keeps this bounded while still refusing to
+        // open the database while the parent holds it: two live connections to
+        // the same SQLite file would let the single-instance plugin hand off
+        // to the dying parent and leave the user with no running app.
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let wait_result = loop {
+            let result = WaitForSingleObject(handle, 5_000);
+            // WAIT_TIMEOUT means the parent is still alive: keep waiting up to
+            // the deadline. Any other result is terminal (signaled, or a
+            // WAIT_FAILED that would otherwise busy-spin), so leave the loop.
+            if result != WAIT_TIMEOUT || std::time::Instant::now() >= deadline {
+                break result;
+            }
+        };
         if wait_result != WAIT_OBJECT_0 {
             early_startup_warn(&format!(
                 "Relaunch waited for parent process {parent_pid} but got result {}",
