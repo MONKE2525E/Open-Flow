@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Windows variant of icon-source.svg: the paper tile fills the whole canvas
+       (no inset) so the taskbar/exe icon renders at full size next to
+       neighboring apps. macOS keeps the inset tile in icon-source.svg.
+       Regenerate src-tauri/icons with `powershell scripts/generate-icons.ps1`. -->
+  <rect x="0" y="0" width="512" height="512" rx="96" fill="#f9f7f3"/>
+
+  <!-- 5 bars optically centered (same canonical proportions as icon-source.svg) -->
+  <!-- bar width: 38px, gap: 16px, total: 5×38 + 4×16 = 254px -->
+  <!-- x-start: (512 - 254) / 2 = 129 -->
+  <!-- baseline y: 360, max height: 208px -->
+  <rect x="129" y="290" width="38" height="70"  rx="19" fill="#d97757"/>
+  <rect x="183" y="220" width="38" height="140" rx="19" fill="#d97757"/>
+  <rect x="237" y="152" width="38" height="208" rx="19" fill="#d97757"/>
+  <rect x="291" y="240" width="38" height="120" rx="19" fill="#d97757"/>
+  <rect x="345" y="298" width="38" height="62"  rx="19" fill="#d97757"/>
+</svg>
