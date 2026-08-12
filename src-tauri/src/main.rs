@@ -346,9 +346,18 @@ fn main() {
             };
 
             app_tray::setup_tray(app)?;
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                let theme = window.theme().ok();
+                crate::system::windows_titlebar::enable(&window, theme)
+                    .map_err(|error| {
+                        let source: Box<dyn std::error::Error> = Box::new(std::io::Error::other(error));
+                        tauri::Error::Setup(source.into())
+                    })?;
+            }
             app_hotkey::setup_hotkey(app, shared.clone());
-            // setup_tray() already applies native window chrome (both platforms) via
-            // apply_runtime_icons() — no need to call apply_native_main_window_chrome again here.
+            // setup_tray() already applies runtime icons (both platforms) via
+            // apply_runtime_icons() — no need to call it again here.
             #[cfg(target_os = "macos")]
             {
                 crate::system::mac_app::set_accessory_activation_policy_on_main_thread(
@@ -450,9 +459,19 @@ fn main() {
                             .unwrap_or("system")
                             == "system"
                         {
-                            // apply_runtime_icons() already applies native window chrome
-                            // (both platforms) internally — no separate call needed here.
+                            // apply_runtime_icons() already applies runtime icons
+                            // internally — no separate call needed here.
                             apply_runtime_icons(app, Some(*theme));
+                        }
+                        #[cfg(target_os = "windows")]
+                        if let Some(webview) = window.app_handle().get_webview_window("main") {
+                            crate::system::windows_titlebar::refresh(&webview, Some(*theme));
+                        }
+                    }
+                    #[cfg(target_os = "windows")]
+                    tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                        if let Some(webview) = window.app_handle().get_webview_window("main") {
+                            crate::system::windows_titlebar::refresh(&webview, window.theme().ok());
                         }
                     }
                     _ => {}
@@ -460,6 +479,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            system::windows_titlebar::get_native_titlebar_metrics,
             commands::save_hotkey,
             commands::check_hotkey,
             commands::save_api_key,

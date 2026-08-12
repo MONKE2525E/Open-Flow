@@ -10,3 +10,13 @@ pub mod number_parser;
 pub mod platform;
 pub mod text;
 pub mod volume;
+#[cfg(target_os = "windows")]
+pub mod windows_titlebar;
+#[cfg(not(target_os = "windows"))]
+pub mod windows_titlebar {
+    #[tauri::command]
+    pub fn get_native_titlebar_metrics() -> Result<(), String> {
+        Err("native title bar metrics are only available on Windows".to_owned())
+    }
+}
+

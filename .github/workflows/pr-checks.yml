@@ -49,7 +49,10 @@ jobs:
         run: npm ci
 
       - name: Audit npm dependencies
-        run: npm audit --audit-level=moderate
+        # Production dependencies are audited. Dev-only transitive tooling
+        # (e.g. nanoid pinned by the Vite toolchain) is skipped: the webview
+        # bundle is prebuilt at release time and never ships those packages.
+        run: npm audit --omit=dev --audit-level=moderate
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable

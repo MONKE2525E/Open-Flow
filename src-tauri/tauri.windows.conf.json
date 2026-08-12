@@ -18,5 +18,10 @@
         "shadow": true
       }
     ]
+  },
+  "bundle": {
+    "resources": {
+      "native/windows/runtime/**/*": ""
+    }
   }
 }

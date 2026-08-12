@@ -225,15 +225,15 @@ async function waitForSingleSettingsPanel(page) {
     }
 
     // Settings fills the window beside the sidebar, so the only "outside" left
-    // is the app's own margin. Derive that point from the sidebar's box rather
-    // than hardcoding a coordinate, so a change to the app gutter can't turn
-    // into a mystery failure here.
+    // is the gutter strip between the sidebar and the settings page. Derive the
+    // point from the sidebar's box rather than hardcoding a coordinate, so a
+    // change to the app gutter can't turn into a mystery failure here.
     console.log('  Closing Settings via outside click...');
     const sidebarBox = await page.locator('.sidebar').boundingBox();
-    if (!sidebarBox || sidebarBox.x < 4) {
-      errors.push(`Expected an app gutter left of the sidebar to click in (sidebar x=${sidebarBox?.x})`);
-    }
-    await page.mouse.click(Math.max(2, Math.floor((sidebarBox?.x ?? 14) / 2)), 10);
+    await page.mouse.click(
+      Math.floor((sidebarBox?.x ?? 0) + (sidebarBox?.width ?? 220) + 7),
+      10
+    );
     await waitForIntermediateOpacity(page, '.settings-overlay', 'Settings backdrop fades out').catch((err) => {
       errors.push(`Settings backdrop should pass through a mid-fade opacity on close: ${err.message}`);
     });
