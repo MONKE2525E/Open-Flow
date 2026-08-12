@@ -55,14 +55,14 @@
       <circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/>
     </svg>
     <input
-      class="search-input"
+      class="ui-input ui-input--dense"
       type="text"
       placeholder="Search snippets…"
       bind:value={search}
       aria-label="Search snippets"
     />
     {#if search}
-      <button class="clear-btn" onclick={() => search = ''} aria-label="Clear">
+      <button class="clear-btn ui-focus-ring" onclick={() => search = ''} aria-label="Clear">
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
     {/if}
@@ -72,7 +72,7 @@
     <span class="sort-indicator" style={sortIndicatorStyle}></span>
     {#each sortLabels as { key, label }}
       <button
-        class="sort-pill"
+        class="sort-pill ui-focus-ring"
         class:active={sort === key}
         aria-pressed={sort === key}
         bind:this={sortButtonEls[key]}
@@ -100,28 +100,24 @@
     flex: 1 1 260px;
     min-width: 160px;
     background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     padding: 6px 10px;
     display: flex;
     align-items: center;
     gap: 7px;
     color: var(--ink-mute);
-    transition: border-color 0.15s;
   }
-  .search:focus-within { border-color: var(--arm-300); }
-
-  .search-input {
+  .search .ui-input {
     flex: 1;
-    background: transparent;
-    border: 0;
-    outline: none;
-    font-size: 13px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
     min-width: 0;
+    background: transparent;
+    border: 1px solid transparent;
   }
-  .search-input::placeholder { color: var(--ink-mute); }
+  .search .ui-input:focus-visible {
+    border-color: var(--accent);
+    box-shadow: var(--ui-focus-ring);
+    outline: none;
+  }
 
   .clear-btn {
     background: transparent;
@@ -141,7 +137,7 @@
     gap: 2px;
     background: var(--bg-elev);
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     padding: 3px;
     position: relative;
     overflow: hidden;
@@ -153,7 +149,7 @@
     top: 3px;
     left: 3px;
     height: calc(100% - 6px);
-    border-radius: 5px;
+    border-radius: calc(var(--r-sm) - 3px);
     background: var(--accent-soft);
     z-index: 0;
     pointer-events: none;
@@ -163,7 +159,7 @@
   .sort-pill {
     background: transparent;
     border: 0;
-    border-radius: 5px;
+    border-radius: calc(var(--r-sm) - 3px);
     box-sizing: border-box;
     height: 24px;
     padding: 0 9px;
