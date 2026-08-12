@@ -239,7 +239,7 @@
     position: absolute;
     top: 0;
     bottom: var(--app-gutter);
-    left: calc(var(--sidebar-w) + var(--app-gutter) * 2);
+    left: calc(var(--sidebar-w) + var(--app-gutter));
     right: 0;
     z-index: 1;
     background: transparent;
@@ -248,6 +248,10 @@
     flex-direction: column;
     overflow: hidden;
   }
+
+  /* Settings is rooted directly in .app, unlike the regular views inside
+     .body. Reserve the custom Windows caption row so its shared page padding
+     starts at the same visual height as Home, Insights, and the libraries. */
 
   /*
    * Reserves the same gutter .panel does via `scrollbar-gutter: stable`, so the

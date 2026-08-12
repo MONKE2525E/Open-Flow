@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { appStore } from './lib/stores';
   import { cleanupPromptEditor } from './lib/stores.svelte';
+  import { isWindows } from './lib/platform';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
   import Dictionary from './lib/views/Dictionary.svelte';
@@ -11,7 +12,7 @@
   import CleanupPromptModal from './lib/components/settings/CleanupPromptModal.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
-  import { getVersion, invoke, listen } from './lib/tauri';
+  import { getVersion, invoke, isTauriRuntime, listen } from './lib/tauri';
   import { startAutomaticUpdateChecks } from './lib/updates';
   import { startLocalSttListeners } from './lib/localSttStore.svelte';
   import { startLocalLlmListeners } from './lib/localLlmStore.svelte';
@@ -24,6 +25,17 @@
   import { MOTION_MS, MOTION_PX, NAV_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
 
   type EffectiveTheme = 'light' | 'dark';
+  type NativeTitleBarMetrics = { height: number; leftInset: number; rightInset: number; scaleFactor: number };
+
+  function applyNativeTitleBarMetrics(metrics: NativeTitleBarMetrics | null) {
+    // Browser dev mode and the test harness have no Windows caption; skip
+    // silently instead of logging a crash for a missing metrics payload.
+    if (!metrics) return;
+    const root = document.documentElement;
+    root.style.setProperty('--native-titlebar-height', `${metrics.height}px`);
+    root.style.setProperty('--native-caption-left-inset', `${metrics.leftInset}px`);
+    root.style.setProperty('--native-caption-right-inset', `${metrics.rightInset}px`);
+  }
 
   function systemTheme(): EffectiveTheme {
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -82,6 +94,16 @@
     let stopDownloadManagerListeners: (() => void) | undefined;
     let stopProviderStatusChecks: (() => void) | undefined;
     let stopApiHealthChecks: (() => void) | undefined;
+    let stopTitleBarMetricsListener: (() => void) | undefined;
+
+    if (isWindows && isTauriRuntime()) {
+      invoke<NativeTitleBarMetrics>('get_native_titlebar_metrics')
+        .then(applyNativeTitleBarMetrics)
+        .catch((error) => console.error('Failed to read native title bar metrics:', error));
+      listen<NativeTitleBarMetrics>('verenu:native-titlebar-metrics', (event) => applyNativeTitleBarMetrics(event.payload))
+        .then((unlisten) => { stopTitleBarMetricsListener = unlisten; })
+        .catch((error) => console.error('Failed to listen for native title bar metrics:', error));
+    }
 
     (async () => {
       try {
@@ -163,6 +185,7 @@
       if (stopDownloadManagerListeners) stopDownloadManagerListeners();
       if (stopProviderStatusChecks) stopProviderStatusChecks();
       if (stopApiHealthChecks) stopApiHealthChecks();
+      if (stopTitleBarMetricsListener) stopTitleBarMetricsListener();
       media?.removeEventListener?.('change', onSystemThemeChange);
       clearInterval(connectivityTimer);
       document.removeEventListener('visibilitychange', handleVisibility);
@@ -170,7 +193,7 @@
   });
 </script>
 
-<div class="app">
+<div class="app" class:app-windows={isWindows}>
   {#if appStore.setupComplete === false}
     <Setup />
   {/if}
@@ -272,11 +295,18 @@
     position: relative;
   }
 
+  /* The native Windows caption is non-client chrome, so it does not consume
+     space inside this app shell. Keep Windows pages close to that boundary
+     without changing the established macOS page rhythm. */
+  .app.app-windows {
+    --page-pad-y: calc(var(--native-titlebar-height, 32px) + 10px);
+  }
+
   .body {
     flex: 1;
     display: flex;
     min-height: 0;
-    padding: 0 0 var(--app-gutter) var(--app-gutter);
+    padding: 0 0 var(--app-gutter) 0;
     gap: var(--app-gutter);
     position: relative;
   }
@@ -290,7 +320,7 @@
    */
   .content-fade {
     position: absolute;
-    left: calc(var(--sidebar-w) + var(--app-gutter) * 2);
+    left: calc(var(--sidebar-w) + var(--app-gutter));
     right: var(--scrollbar-w, 0);
     height: 30px;
     pointer-events: none;
