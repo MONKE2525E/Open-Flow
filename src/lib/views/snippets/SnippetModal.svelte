@@ -93,10 +93,6 @@
   }
 
   $effect(() => {
-    if (triggerInput) setTimeout(() => triggerInput?.focus(), 50);
-  });
-
-  $effect(() => {
     draftExpansion;
     autoGrow(expansionEl);
   });

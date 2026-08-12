@@ -123,11 +123,20 @@
 
   function onWindowKeydown(e: KeyboardEvent) {
     if (appStore.settingsOpen && e.key === 'Escape') {
+      // An inner layer already consumed the key (dropdown, disclosure, tile,
+      // hotkey capture). Svelte-delegated element handlers flush state before
+      // this window listener runs, so the DOM guards below can no longer see
+      // the layer that handled it — defaultPrevented is the reliable signal.
+      if (e.defaultPrevented) return;
       const target = e.target as HTMLElement | null;
       if (target?.closest('input, textarea, select, [contenteditable="true"]')) {
         return;
       }
-      if (typeof document !== 'undefined' && document.querySelector('[aria-expanded="true"]')) {
+      // A dropdown menu or an open dialog owns Escape while it is up: closing
+      // Settings underneath the confirm dialogs (beta updates, delete history,
+      // cleanup off) would skip a layer and drop the user out of Settings
+      // entirely instead of just dismissing the dialog.
+      if (typeof document !== 'undefined' && document.querySelector('[aria-expanded="true"], [role="dialog"]')) {
         return;
       }
       close();
