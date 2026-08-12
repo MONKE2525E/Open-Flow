@@ -47,6 +47,7 @@
     gap: 13px;
     border-radius: var(--r-md);
     padding: 13px 15px;
+    min-height: 66px;
   }
 
   .provider-icon {
@@ -85,9 +86,10 @@
   }
 
   .trademark-note {
-    font-size: 11px;
+    font-size: 10.5px;
     color: var(--ink-faint);
     line-height: 1.5;
     margin: 0;
+    opacity: 0.82;
   }
 </style>
