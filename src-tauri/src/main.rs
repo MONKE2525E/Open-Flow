@@ -632,7 +632,7 @@ fn main() {
 
 #[cfg(target_os = "windows")]
 fn wait_for_relaunch_parent_exit() {
-    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows::Win32::System::Threading::{
         OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
     };
@@ -654,7 +654,22 @@ fn wait_for_relaunch_parent_exit() {
             }
         };
 
-        let wait_result = WaitForSingleObject(handle, 5_000);
+        // The old instance may take longer than 5 s to exit (slow model
+        // unload during RunEvent::Exit). Waiting on the same handle in slices
+        // up to a 15 s total budget keeps this bounded while still refusing to
+        // open the database while the parent holds it: two live connections to
+        // the same SQLite file would let the single-instance plugin hand off
+        // to the dying parent and leave the user with no running app.
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let wait_result = loop {
+            let result = WaitForSingleObject(handle, 5_000);
+            // WAIT_TIMEOUT means the parent is still alive: keep waiting up to
+            // the deadline. Any other result is terminal (signaled, or a
+            // WAIT_FAILED that would otherwise busy-spin), so leave the loop.
+            if result != WAIT_TIMEOUT || std::time::Instant::now() >= deadline {
+                break result;
+            }
+        };
         if wait_result != WAIT_OBJECT_0 {
             early_startup_warn(&format!(
                 "Relaunch waited for parent process {parent_pid} but got result {}",
