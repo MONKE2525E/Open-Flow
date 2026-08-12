@@ -26,9 +26,13 @@
 <style>
   .brand {
     min-height: var(--native-titlebar-height, 32px);
-    padding: 15px 18px 0;
+    /* Brand header: 16px breathing room from the top, and the mark's left edge
+       (16px) aligns with the nav icons below it, so the logo establishes the
+       starting alignment for the navigation. The nav-section's 12px top
+       padding supplies the gap to the first nav target. */
+    padding: 16px 18px 0 16px;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 10px;
   }
 
