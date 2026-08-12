@@ -1,26 +1,36 @@
 <script lang="ts">
-  import { accentStep, fmtDay, fmtDayLong, fmtNumber, intensityLevel, parseLocalDay } from './helpers';
+  import { onMount } from 'svelte';
+  import { fmtDay, fmtDayLong, fmtNumber, parseLocalDay } from './helpers';
   import AnimatedNumber from './AnimatedNumber.svelte';
   import ChartTooltip from './ChartTooltip.svelte';
   import type { InsightsDay, InsightsStreak } from './types';
 
-  let { daily, streak }: { daily: InsightsDay[]; streak: InsightsStreak } = $props();
+  let {
+    daily,
+    streak,
+    historyStartedOn,
+  }: { daily: InsightsDay[]; streak: InsightsStreak; historyStartedOn: string | null } = $props();
 
-  const CELL = 11;
-  const GAP = 3;
+  const CELL = 12;
+  const GAP = 4;
   const STEP = CELL + GAP;
+  const MIN_WEEKS = 18;
+  const RIGHT_GUTTER = 10;
   const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
   /* Minimum grid width, in weeks — short ranges (a 7-day view is only one
      column) would otherwise leave the card looking mostly empty. */
-  const MIN_COLUMNS = 10;
 
   // Reduce rather than Math.max(...spread) — an all-time range can exceed the
   // call-stack limit for spread arguments on a very long daily series.
-  const max = $derived(daily.reduce((m, d) => Math.max(m, d.words), 0));
+  interface GridCell { day: string; words: number; noData: boolean; streakDays: number }
 
-  interface GridCell { day: string; words: number; noData: boolean }
+  function streakColor(days: number, longest: number): string {
+    if (days <= 0) return 'var(--control-hover)';
+    const pct = longest <= 1 ? 100 : 8 + (days / longest) * 92;
+    return `color-mix(in srgb, var(--accent) ${pct.toFixed(2)}%, var(--paper-2))`;
+  }
 
   /*
    * Every cell is a real calendar date, generated as one unbroken sequence —
@@ -30,7 +40,7 @@
    * correct by construction and there's nothing to hover that isn't an
    * actual date.
    */
-  const cells = $derived.by((): GridCell[] => {
+  const allCells = $derived.by((): GridCell[] => {
     const pad = (n: number) => String(n).padStart(2, '0');
     const toKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
@@ -43,7 +53,7 @@
 
     const firstRealDate = daily.length > 0 ? parseLocalDay(daily[0].day) : lastDate;
     const daysSpanningReal = Math.round((endDate.getTime() - firstRealDate.getTime()) / 86_400_000) + 1;
-    const totalWeeks = Math.max(MIN_COLUMNS, Math.ceil(daysSpanningReal / 7));
+    const totalWeeks = Math.ceil(daysSpanningReal / 7);
 
     const startDate = new Date(endDate);
     startDate.setDate(startDate.getDate() - (totalWeeks * 7 - 1));
@@ -51,17 +61,47 @@
     const byDay = new Map(daily.map((d) => [d.day, d]));
     const list: GridCell[] = [];
     const cursor = new Date(startDate);
+    let run = 0;
     for (let i = 0; i < totalWeeks * 7; i++) {
       const key = toKey(cursor);
       const real = byDay.get(key);
-      list.push(real ? { day: key, words: real.words, noData: false } : { day: key, words: 0, noData: true });
+      const outsideHistory = !historyStartedOn || key < historyStartedOn || cursor > today;
+      if (real && !outsideHistory) {
+        run = real.words > 0 ? run + 1 : 0;
+        list.push({ day: key, words: real.words, noData: false, streakDays: run });
+      } else {
+        run = 0;
+        list.push({ day: key, words: 0, noData: true, streakDays: 0 });
+      }
       cursor.setDate(cursor.getDate() + 1);
     }
     return list;
   });
 
+  let gridHost = $state<HTMLDivElement | null>(null);
+  let availableWidth = $state(640);
+  const visibleWeekCount = $derived(
+    Math.max(MIN_WEEKS, Math.min(53, Math.floor((availableWidth - RIGHT_GUTTER + GAP) / STEP)))
+  );
+  const cells = $derived(allCells.slice(-visibleWeekCount * 7));
+  const longestVisibleScale = $derived(Math.max(1, allCells.reduce((max, cell) => Math.max(max, cell.streakDays), 0)));
+  const legendDays = $derived(Array.from(new Set([
+    1,
+    Math.max(1, Math.ceil(longestVisibleScale / 3)),
+    Math.max(1, Math.ceil(longestVisibleScale * 2 / 3)),
+    longestVisibleScale,
+  ])));
   const columnCount = $derived(Math.ceil(cells.length / 7));
   const gridWidth = $derived(columnCount * STEP - GAP);
+
+  onMount(() => {
+    if (!gridHost) return;
+    const update = () => { availableWidth = gridHost?.clientWidth ?? 640; };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(gridHost);
+    return () => observer.disconnect();
+  });
 
   /* One label per month the grid spans, positioned above that month's first
      column. A month change landing mid-week would otherwise put two labels on
@@ -110,6 +150,17 @@
     return { name: WEEKDAY_NAMES[averages.indexOf(peak)], avg: peak };
   });
 
+  const rangeActivity = $derived.by(() => {
+    const active = cells.filter((day) => !day.noData && day.words > 0);
+    const words = active.reduce((sum, day) => sum + day.words, 0);
+    return { days: active.length, average: active.length > 0 ? words / active.length : 0 };
+  });
+  const visibleActiveDays = $derived(cells.filter((day) => !day.noData && day.words > 0).length);
+  const visibleRangeLabel = $derived.by(() => {
+    if (cells.length === 0) return 'recent activity';
+    return `${fmtDay(cells[0].day)} to ${fmtDay(cells[cells.length - 1].day)}`;
+  });
+
   let hover = $state<GridCell | null>(null);
   let hoverPos = $state<{ x: number; y: number } | null>(null);
 
@@ -142,7 +193,7 @@
   <header class="card-head">
     <div>
       <h2 class="card-h"><AnimatedNumber value={streak.current_days} /> day streak</h2>
-      <p class="card-sub">{fmtNumber(streak.active_days)} active days all time</p>
+      <p class="card-sub">{fmtNumber(visibleActiveDays)} active days shown · {visibleRangeLabel}</p>
     </div>
     <div class="best">
       <span class="best-num"><AnimatedNumber value={streak.longest_days} /></span>
@@ -150,15 +201,18 @@
     </div>
   </header>
 
-  <div class="grid-row">
+  <div class="heat-layout">
+   <div class="heat-main">
+    <div class="grid-row">
     <div class="weekday-col" aria-hidden="true">
       {#each WEEKDAY_LABELS as label}
         <span>{label}</span>
       {/each}
     </div>
 
-    <div class="grid-scroll scroll-styled" onscroll={clearHover}>
-      <div class="month-row" style:width="{gridWidth}px" aria-hidden="true">
+    <div class="grid-scroll" bind:this={gridHost}>
+     <div class="calendar-content" style:width="{gridWidth}px">
+      <div class="month-row" aria-hidden="true">
         {#each monthLabels as m}
           <span style:left="{m.col * STEP}px">{m.label}</span>
         {/each}
@@ -181,56 +235,71 @@
             <span
               class="cell"
               role="presentation"
-              style:background={accentStep(intensityLevel(cell.words, max))}
+              style:background={streakColor(cell.streakDays, longestVisibleScale)}
               onpointerenter={(e) => onEnter(cell, e)}
               onpointerleave={clearHover}
             ></span>
           {/if}
         {/each}
       </div>
+     </div>
     </div>
+    </div>
+
+    <div class="legend">
+      <span class="legend-label">Day 1</span>
+      {#each legendDays as day}
+        <span class="cell cell-key" style:background={streakColor(day, longestVisibleScale)} aria-hidden="true"></span>
+      {/each}
+      <span class="legend-label legend-label-more">Day {longestVisibleScale}</span>
+      <span class="legend-gap"></span>
+      <span class="cell cell-nodata" aria-hidden="true"></span>
+      <span class="legend-label">Not tracked</span>
+    </div>
+   </div>
+
+   <div class="heat-side">
+    {#if daily.length === 0}
+      <p class="foot">No activity to chart yet.</p>
+    {:else if streak.longest_days === 0}
+      <p class="foot">Dictate on two days in a row to start a streak.</p>
+    {:else}
+      <div class="streak-stats">
+        <div class="stat">
+          <span class="stat-label">Longest streak</span>
+          <span class="stat-value">{streak.longest_days} {streak.longest_days === 1 ? 'day' : 'days'}</span>
+          <span class="stat-sub">{fmtNumber(streak.longest_words)} words{#if longestRange} · {longestRange}{/if}</span>
+        </div>
+        {#if bestWeekday}
+          <div class="stat">
+            <span class="stat-label">Best day</span>
+            <span class="stat-value">{bestWeekday.name}</span>
+            <span class="stat-sub">{fmtNumber(bestWeekday.avg)} words on average</span>
+          </div>
+        {/if}
+        <div class="stat">
+          <span class="stat-label">Average active day</span>
+          <span class="stat-sub">{fmtNumber(rangeActivity.average)} words per active day</span>
+        </div>
+      </div>
+    {/if}
+   </div>
   </div>
+
   {#if hoverPos && hover}
     <ChartTooltip x={hoverPos.x} y={hoverPos.y} visible={true}>
       {#if hover.noData}
-        <strong>No data</strong>
+        <strong>Not tracked</strong>
       {:else}
-        <strong>{fmtNumber(hover.words)}</strong> words
+        {#if hover.streakDays > 0}
+          <strong>Day {hover.streakDays} of streak</strong>
+          <div class="tooltip-dim">{fmtNumber(hover.words)} words</div>
+        {:else}
+          <strong>No dictation</strong>
+        {/if}
       {/if}
       <div class="tooltip-dim">{fmtDayLong(hover.day)}</div>
     </ChartTooltip>
-  {/if}
-
-  <div class="legend">
-    <span class="legend-label">Less</span>
-    {#each [0, 1, 2, 3, 4] as level}
-      <span class="cell cell-key" style:background={accentStep(level as 0 | 1 | 2 | 3 | 4)} aria-hidden="true"></span>
-    {/each}
-    <span class="legend-label legend-label-more">More</span>
-    <span class="legend-gap"></span>
-    <span class="cell cell-nodata" aria-hidden="true"></span>
-    <span class="legend-label">No data</span>
-  </div>
-
-  {#if daily.length === 0}
-    <p class="foot">No activity to chart yet.</p>
-  {:else if streak.longest_days === 0}
-    <p class="foot">Dictate on two days in a row to start a streak.</p>
-  {:else}
-    <div class="streak-stats">
-      <div class="stat">
-        <span class="stat-label">Longest streak</span>
-        <span class="stat-value">{streak.longest_days} {streak.longest_days === 1 ? 'day' : 'days'}</span>
-        <span class="stat-sub">{fmtNumber(streak.longest_words)} words{#if longestRange} · {longestRange}{/if}</span>
-      </div>
-      {#if bestWeekday}
-        <div class="stat">
-          <span class="stat-label">Best day</span>
-          <span class="stat-value">{bestWeekday.name}</span>
-          <span class="stat-sub">{fmtNumber(bestWeekday.avg)} words on average</span>
-        </div>
-      {/if}
-    </div>
   {/if}
 
   <table class="sr-only">
@@ -245,39 +314,10 @@
 </section>
 
 <style>
-  .card {
-    position: relative;
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: 15px 18px 13px;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .card-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 14px;
-  }
-
-  .card-h {
-    font-family: var(--serif);
-    font-size: 17px;
-    font-weight: 500;
-    margin: 0;
-    color: var(--ink);
-    letter-spacing: -0.01em;
-  }
-
-  .card-sub {
-    margin: 3px 0 0;
-    font-size: 11.5px;
-    color: var(--ink-mute);
-  }
+  /* .card / .card-head / .card-h / .card-sub are owned by Insights.svelte —
+     except position, which the hover tooltip anchors against via
+     closest('.card'). */
+  .card { position: relative; }
 
   .best { text-align: right; }
   .best-num {
@@ -296,36 +336,58 @@
     color: var(--ink-mute);
   }
 
+  /* Calendar left, streak figures in a ruled right rail. The calendar has an
+     intrinsic width (fixed 12px cells), so left-aligning it and giving the
+     leftover width to the rail keeps the row filled instead of stranding a
+     small grid in the middle of the page. */
+  .heat-layout {
+    display: flex;
+    gap: clamp(18px, 3vw, 32px);
+    align-items: flex-start;
+  }
+
+  .heat-main { flex: 1 1 auto; min-width: 0; }
+
+  .heat-side {
+    flex: 0 0 clamp(200px, 24%, 300px);
+    border-left: 1px solid var(--line);
+    padding-left: clamp(18px, 3vw, 32px);
+  }
+
   .grid-row {
     display: flex;
     gap: 6px;
-    justify-content: center;
   }
 
   .weekday-col {
     display: grid;
-    grid-template-rows: repeat(7, 11px);
-    gap: 3px;
-    flex: 0 0 auto;
+    grid-template-rows: repeat(7, 12px);
+    gap: 4px;
+    flex: 0 0 25px;
     padding-top: 16px; /* clears the month-row above the grid */
   }
   .weekday-col span {
     font-size: 9px;
-    line-height: 11px;
+    line-height: 12px;
     color: var(--ink-mute);
     white-space: nowrap;
   }
 
   .grid-scroll {
-    overflow-x: auto;
-    padding-bottom: 2px;
+    overflow: hidden;
     min-width: 0;
+    flex: 1;
+  }
+
+  .calendar-content {
+    margin-left: auto;
+    margin-right: 10px;
   }
 
   .month-row {
     position: relative;
-    height: 13px;
-    margin-bottom: 3px;
+    height: 15px;
+    margin-bottom: 4px;
   }
   .month-row span {
     position: absolute;
@@ -334,19 +396,24 @@
     color: var(--ink-mute);
     white-space: nowrap;
   }
+  /* A month can begin in the final visible week. Keep that final label inside
+     the clipped chart instead of letting its text run past the stats rail. */
+  .month-row span:last-child {
+    left: auto !important;
+    right: 0;
+  }
 
   .grid {
-    position: relative;
     display: grid;
-    grid-template-rows: repeat(7, 11px);
+    grid-template-rows: repeat(7, 12px);
     grid-auto-flow: column;
-    grid-auto-columns: 11px;
-    gap: 3px;
+    grid-auto-columns: 12px;
+    gap: 4px;
   }
 
   .cell {
-    width: 11px;
-    height: 11px;
+    width: 12px;
+    height: 12px;
     border-radius: 3px;
     display: block;
     /* A flat fill at 0-intensity nearly disappears against the card
@@ -358,8 +425,8 @@
      reads as "no data" at a glance instead of blending in as a low-activity
      day — --paper-2 was too close to the accent-tinted cells' own dark end. */
   .cell-nodata {
-    background: color-mix(in srgb, var(--ink) 14%, transparent);
-    box-shadow: inset 0 0 0 1px var(--line);
+    background: color-mix(in srgb, var(--ink) 11%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 20%, transparent);
   }
 
   .legend {
@@ -367,7 +434,6 @@
     align-items: center;
     gap: 3px;
     margin-top: 14px;
-    justify-content: center;
   }
   .legend-label {
     font-size: 10.5px;
@@ -377,8 +443,21 @@
   .legend-label-more { margin-left: 3px; }
   .legend-gap { width: 10px; }
 
+  /* Stacked, the rail's vertical rule becomes a horizontal one. */
+  @media (max-width: 900px) {
+    .heat-layout { flex-direction: column; }
+    .heat-side {
+      flex: 1 1 auto;
+      align-self: stretch;
+      border-left: 0;
+      padding-left: 0;
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+    }
+  }
+
   .foot {
-    margin: 10px 0 0;
+    margin: 0;
     font-size: 11.5px;
     color: var(--ink-soft);
     line-height: 1.45;
@@ -388,11 +467,8 @@
      its own value and sub-line so it can be read at a glance. */
   .streak-stats {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px 16px;
-    margin-top: 14px;
-    padding-top: 12px;
-    border-top: 1px solid var(--line);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
   }
   .stat {
     display: flex;

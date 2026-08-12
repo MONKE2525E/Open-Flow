@@ -69,6 +69,10 @@ export interface InsightsPayload {
   streak: InsightsStreak;
   /** One row per calendar day in range, zero days included, ascending. */
   daily: InsightsDay[];
+  /** Compact rolling year; the heatmap displays only the weeks that fit. */
+  streak_daily: InsightsDay[];
+  /** First locally recorded transcription date, used to distinguish pre-history from quiet days. */
+  history_started_on: string | null;
   /** Length 24 — words per hour-of-day, local time. */
   hourly: number[];
   providers: InsightsProviderUsage[];
@@ -98,6 +102,8 @@ export const EMPTY_INSIGHTS: InsightsPayload = {
     active_days: 0,
   },
   daily: [],
+  streak_daily: [],
+  history_started_on: null,
   hourly: new Array(24).fill(0),
   providers: [],
   cleanup: {

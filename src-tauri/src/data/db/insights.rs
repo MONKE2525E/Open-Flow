@@ -25,6 +25,10 @@ pub struct Insights {
     pub totals: InsightsTotals,
     pub streak: InsightsStreak,
     pub daily: Vec<InsightsDay>,
+    /// One compact rolling year. The frontend shows as many fixed-width weeks
+    /// as fit without scrolling.
+    pub streak_daily: Vec<InsightsDay>,
+    pub history_started_on: Option<String>,
     pub hourly: Vec<i64>,
     pub providers: Vec<InsightsProviderUsage>,
     pub cleanup: InsightsCleanup,
@@ -138,11 +142,18 @@ pub fn query_insights(db: &Db, days: i64) -> Result<Insights> {
 
     let totals = query_totals(&conn, &range_start, &range_end, days)?;
     let daily = query_daily(&conn, &range_start, &range_end)?;
+    let (streak_start, streak_end) = rolling_year_bounds(&conn)?;
+    let streak_daily = query_daily(&conn, &streak_start, &streak_end)?;
+    let history_started_on = conn.query_row(
+        "SELECT date(MIN(created_at), 'localtime') FROM transcriptions",
+        [],
+        |r| r.get(0),
+    )?;
     let hourly = query_hourly(&conn, &range_start, &range_end)?;
     let providers = query_providers(&conn, &range_start, &range_end)?;
     let cleanup = query_cleanup(&conn, &range_start, &range_end)?;
     let words = query_words(&conn, &range_start, &range_end)?;
-    let streak = compute_streak(&daily);
+    let streak = compute_streak(&streak_daily);
 
     Ok(Insights {
         range_days: days,
@@ -150,6 +161,8 @@ pub fn query_insights(db: &Db, days: i64) -> Result<Insights> {
         totals,
         streak,
         daily,
+        streak_daily,
+        history_started_on,
         hourly,
         providers,
         cleanup,
@@ -312,6 +325,18 @@ fn range_bounds(conn: &Connection, days: i64) -> Result<(String, String)> {
         )?
     };
     Ok((start, today))
+}
+
+/// One compact rolling year ending today. The frontend clips this to however
+/// many fixed-width weeks fit in the current window.
+fn rolling_year_bounds(conn: &Connection) -> Result<(String, String)> {
+    let end: String = conn.query_row("SELECT date('now', 'localtime')", [], |r| r.get(0))?;
+    let start: String = conn.query_row(
+        "SELECT date('now', 'localtime', '-364 days')",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok((start, end))
 }
 
 fn query_totals(
@@ -812,6 +837,21 @@ mod tests {
     }
 
     #[test]
+    fn streak_calendar_retains_one_compact_year() {
+        let db = test_db();
+        insert_on_day(&db, 2, "recent activity", 3, 1_500);
+
+        let insights = query_insights(&db, 7).expect("insights");
+        assert_eq!(insights.daily.len(), 7, "page data respects the selected range");
+        assert_eq!(insights.streak_daily.len(), 365, "one compact year is retained");
+        assert_eq!(
+            insights.streak_daily.last().map(|d| d.day.as_str()),
+            Some(local_day_string(0).as_str()),
+            "calendar ends today"
+        );
+    }
+
+    #[test]
     fn streak_counts_a_three_day_run_followed_by_a_gap() {
         let db = test_db();
         insert_on_day(&db, 6, "run one", 2, 1000);
@@ -1009,6 +1049,8 @@ mod tests {
             "totals",
             "streak",
             "daily",
+            "streak_daily",
+            "history_started_on",
             "hourly",
             "providers",
             "cleanup",

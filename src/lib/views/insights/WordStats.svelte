@@ -126,30 +126,7 @@
 </section>
 
 <style>
-  .card {
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: 15px 18px 16px;
-    min-width: 0;
-  }
-
-  .card-head { margin-bottom: 14px; }
-
-  .card-h {
-    font-family: var(--serif);
-    font-size: 17px;
-    font-weight: 500;
-    margin: 0;
-    color: var(--ink);
-    letter-spacing: -0.01em;
-  }
-
-  .card-sub {
-    margin: 3px 0 0;
-    font-size: 11.5px;
-    color: var(--ink-mute);
-  }
+  /* .card / .card-head / .card-h / .card-sub are owned by Insights.svelte. */
 
   .split {
     display: grid;

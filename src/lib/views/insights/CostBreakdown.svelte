@@ -33,6 +33,17 @@
     const tokens = (row.input_chars + row.output_chars) / 4;
     return `~${fmtNumber(tokens)} tokens`;
   }
+
+  function averageUsageLabel(row: InsightsProviderUsage): string {
+    if (row.calls <= 0) return '—';
+    if (row.audio_ms > 0) return `${fmtDuration(row.audio_ms / row.calls)} / transcription`;
+    const tokens = (row.input_chars + row.output_chars) / 4;
+    return `~${fmtNumber(tokens / row.calls)} tokens / cleanup`;
+  }
+
+  function averageCostLabel(row: { calls: number; cost: number | null }): string {
+    return row.calls > 0 && row.cost !== null ? fmtUsd(row.cost / row.calls) : '—';
+  }
 </script>
 
 <section class="card">
@@ -54,9 +65,10 @@
       <thead>
         <tr>
           <th scope="col">Model</th>
-          <th scope="col" class="num">Calls</th>
-          <th scope="col" class="num">Usage</th>
+          <th scope="col" class="num">Total usage</th>
+          <th scope="col" class="num">Average usage</th>
           <th scope="col" class="num">Est. cost</th>
+          <th scope="col" class="num">Avg. cost</th>
           <th scope="col" class="num">Share</th>
         </tr>
       </thead>
@@ -65,11 +77,12 @@
           <tr>
             <th scope="row">
               <span class="model">{row.model}</span>
-              <span class="task">{row.task}</span>
+              <span class="task">{row.task} · {row.provider} · {fmtNumber(row.calls)} calls</span>
             </th>
-            <td class="num">{fmtNumber(row.calls)}</td>
             <td class="num">{usageLabel(row)}</td>
+            <td class="num avg-usage">{averageUsageLabel(row)}</td>
             <td class="num">{fmtUsd(row.cost)}</td>
+            <td class="num">{averageCostLabel(row)}</td>
             <td class="num">{row.cost === null ? '—' : `${(row.share * 100).toFixed(1)}%`}</td>
           </tr>
         {/each}
@@ -83,43 +96,14 @@
 </section>
 
 <style>
-  .card {
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: 15px 18px 14px;
-    min-width: 0;
-  }
-
-  .card-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 14px;
-  }
-
-  .card-h {
-    font-family: var(--serif);
-    font-size: 17px;
-    font-weight: 500;
-    margin: 0;
-    color: var(--ink);
-    letter-spacing: -0.01em;
-  }
-
-  .card-sub {
-    margin: 3px 0 0;
-    font-size: 11.5px;
-    color: var(--ink-mute);
-    line-height: 1.4;
-  }
+  /* .card / .card-head / .card-h / .card-sub are owned by Insights.svelte. */
 
   .cost-table {
     width: 100%;
     border-collapse: collapse;
     margin-top: 16px;
     font-size: 11.5px;
+    table-layout: fixed;
   }
   .cost-table th,
   .cost-table td {
@@ -128,6 +112,7 @@
     border-bottom: 1px solid var(--line);
     font-weight: 400;
   }
+  .cost-table th:first-child { width: 34%; }
   .cost-table thead th {
     font-size: 10px;
     letter-spacing: 0.06em;
@@ -151,8 +136,14 @@
     color: var(--ink);
   }
   .task {
+    display: block;
     font-size: 10.5px;
     color: var(--ink-mute);
+  }
+
+  @media (max-width: 760px) {
+    .cost-table { table-layout: auto; }
+    .avg-usage { display: none; }
   }
 
   .foot {

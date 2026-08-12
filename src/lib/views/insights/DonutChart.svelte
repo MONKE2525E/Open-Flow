@@ -503,7 +503,10 @@
     list-style: none;
     margin: 0;
     padding: 0;
-    flex: 1 1 200px;
+    /* Keep model prices beside their names instead of distributing them over
+       the full editorial measure on wide windows. */
+    flex: 0 1 560px;
+    width: min(100%, 560px);
     min-width: 0;
     display: flex;
     flex-direction: column;
