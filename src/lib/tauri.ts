@@ -869,19 +869,39 @@ function devInsights(days: number): unknown {
       speaking_ms: Math.round((words / 145) * 60_000),
     };
   });
+  const streakStart = new Date(today);
+  streakStart.setDate(today.getDate() - 364);
+  const streakSpan = 365;
+  const streakDaily = Array.from({ length: streakSpan }, (_, i) => {
+    const date = new Date(today);
+    date.setTime(streakStart.getTime());
+    date.setDate(streakStart.getDate() + i);
+    const weekend = date.getDay() === 0 || date.getDay() === 6;
+    const r = noise(i + 101);
+    const idle = r < (weekend ? 0.45 : 0.12);
+    const words = idle ? 0 : Math.round(400 + r * (weekend ? 1400 : 4200));
+    const transcriptions = words === 0 ? 0 : Math.max(1, Math.round(words / 95));
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return {
+      day: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+      words,
+      transcriptions,
+      speaking_ms: Math.round((words / 145) * 60_000),
+    };
+  });
 
   const wordsInRange = daily.reduce((sum, d) => sum + d.words, 0);
   const transcriptions = daily.reduce((sum, d) => sum + d.transcriptions, 0);
   const speakingMs = daily.reduce((sum, d) => sum + d.speaking_ms, 0);
 
   let current = 0;
-  for (let i = daily.length - 1; i >= 0 && daily[i].words > 0; i--) current++;
+  for (let i = streakDaily.length - 1; i >= 0 && streakDaily[i].words > 0; i--) current++;
   let longest = 0;
   let run = 0;
   let runStart: string | null = null;
   let longestStartedOn: string | null = null;
   let longestEndedOn: string | null = null;
-  for (const d of daily) {
+  for (const d of streakDaily) {
     if (d.words > 0) {
       if (run === 0) runStart = d.day;
       run += 1;

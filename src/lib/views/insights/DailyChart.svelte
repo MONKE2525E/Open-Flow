@@ -165,16 +165,11 @@
           stroke="var(--accent)" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"
           vector-effect="non-scaling-stroke"
         />
-        {#if !asBars}
-          <circle
-            cx={x(hover)} cy={y(daily[hover].words)} r="4.5"
-            fill="var(--accent)" stroke="var(--bg-elev)" stroke-width="2.5"
-            vector-effect="non-scaling-stroke"
-            class="hover-dot"
-          />
-        {/if}
       {/if}
     </svg>
+    {#if hoverPos && !asBars}
+      <span class="hover-dot" style:left="{hoverPos.x}px" style:top="{hoverPos.y}px" aria-hidden="true"></span>
+    {/if}
     <div class="axis">
       <span>{daily.length ? fmtDayLong(daily[0].day) : ''}</span>
       <span>{daily.length > 1 ? fmtDayLong(daily[daily.length - 1].day) : ''}</span>
@@ -189,38 +184,7 @@
 </section>
 
 <style>
-  .card {
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: 15px 18px 13px;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .card-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 10px;
-  }
-
-  .card-h {
-    font-family: var(--serif);
-    font-size: 17px;
-    font-weight: 500;
-    margin: 0;
-    color: var(--ink);
-    letter-spacing: -0.01em;
-  }
-
-  .card-sub {
-    margin: 3px 0 0;
-    font-size: 11.5px;
-    color: var(--ink-mute);
-  }
+  /* .card / .card-head / .card-h / .card-sub are owned by Insights.svelte. */
 
   .readout {
     text-align: right;
@@ -267,6 +231,15 @@
   }
 
   .hover-dot {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2.5px solid var(--bg-elev);
+    box-sizing: border-box;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
     filter: drop-shadow(0 1px 3px color-mix(in srgb, var(--accent) 55%, transparent));
   }
 </style>

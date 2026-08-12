@@ -3,6 +3,7 @@
   import { fade } from 'svelte/transition';
   import { invoke, listen } from '../tauri';
   import { formatIpcError } from '../stores';
+  import { MOTION_MS, motionMs } from '../motion';
   import Dropdown from '../components/Dropdown.svelte';
   import HeroStats from './insights/HeroStats.svelte';
   import DailyChart from './insights/DailyChart.svelte';
@@ -17,6 +18,7 @@
   let status = $state<'loading' | 'loaded' | 'error'>('loading');
   let error = $state('');
   let rangeOpen = $state(false);
+  let displayVersion = $state(0);
 
   let fetchToken = 0;
   let mounted = false;
@@ -36,6 +38,9 @@
       data = payload ?? EMPTY_INSIGHTS;
       status = 'loaded';
       error = '';
+      // Keep the previous range visible while its replacement loads, then
+      // give the refreshed figures one deliberate, reduced-motion-aware entry.
+      displayVersion += 1;
     } catch (err) {
       if (!mounted || token !== fetchToken) return;
       console.error('IPC get_insights failed:', err);
@@ -143,22 +148,20 @@
   </div>
 
   {#if status === 'error' && !data}
-    <div class="empty-state empty-state-error" role="alert" in:fade={{ duration: 220 }}>
+    <div class="empty-state empty-state-error" role="alert" in:fade={{ duration: motionMs(MOTION_MS.base) }}>
       <p class="empty-h">Could not load insights</p>
       <p class="empty-sub">The backend is unavailable right now. {error}</p>
       <button type="button" class="btn-ghost" onclick={() => load()}>Try again</button>
     </div>
   {:else if status === 'loading' && !data}
-    <div class="grid" aria-busy="true" aria-label="Loading insights">
-      <div class="skeleton span-4"></div>
-      <div class="skeleton span-4"></div>
-      <div class="skeleton span-4"></div>
-      <div class="skeleton span-8 tall"></div>
-      <div class="skeleton span-4 tall"></div>
-      <div class="skeleton span-12 tall"></div>
+    <div class="skeletons" aria-busy="true" aria-label="Loading insights">
+      <div class="skeleton skeleton-band"></div>
+      <div class="skeleton tall"></div>
+      <div class="skeleton"></div>
+      <div class="skeleton"></div>
     </div>
   {:else if data && isEmpty}
-    <div class="empty-state" in:fade={{ duration: 220 }}>
+    <div class="empty-state" in:fade={{ duration: motionMs(MOTION_MS.base) }}>
       <p class="empty-h">No dictations yet</p>
       <p class="empty-sub">Hold your hotkey and say something. Once you've dictated a few times, your streaks, speed, and cost estimates will show up here.</p>
     </div>
@@ -169,17 +172,17 @@
       <p class="fetch-status" role="status" aria-live="polite">Refreshing insights…</p>
     {/if}
 
-    <HeroStats {data} {rangeLabel} />
+    {#key displayVersion}
+      <div class="insights-results" in:fade={{ duration: motionMs(MOTION_MS.base) }}>
+        <HeroStats {data} {rangeLabel} />
 
-    <div class="grid">
-      <div class="span-8"><DailyChart daily={data.daily} {rangeLabel} /></div>
-      <div class="span-4"><StreakHeatmap daily={data.daily} streak={data.streak} /></div>
-      <div class="span-6"><CostBreakdown providers={data.providers} {rangeLabel} /></div>
-      <div class="span-6"><HourStrip hourly={data.hourly} /></div>
-      <div class="span-12">
+        <DailyChart daily={data.daily} {rangeLabel} />
+        <StreakHeatmap daily={data.streak_daily} streak={data.streak} historyStartedOn={data.history_started_on} />
+        <HourStrip hourly={data.hourly} />
         <WordStats words={data.words} cleanup={data.cleanup} totals={data.totals} />
+        <CostBreakdown providers={data.providers} {rangeLabel} />
       </div>
-    </div>
+    {/key}
   {/if}
 </div>
 
@@ -216,49 +219,61 @@
     --ui-dropdown-trigger-height: 28px;
   }
 
-  .range-picker .ui-dropdown-trigger {
-    --ui-dropdown-trigger-bg: transparent;
-    border-color: var(--line-strong);
-    border-radius: 6px;
-    font-size: 12px;
-  }
-
   .fetch-status { margin: 0 0 10px; font-size: 12px; color: var(--ink-mute); }
   .fetch-status-error { color: var(--danger); }
 
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(12, minmax(0, 1fr));
-    gap: 14px;
-  }
-
-  /* display:flex + a flex:1 child makes each card fill the tallest sibling in
-     its row (e.g. cost breakdown's table vs. the shorter hour strip), instead
-     of every card sizing to its own content. */
-  .span-4,
-  .span-6,
-  .span-8,
-  .span-12 {
-    min-width: 0;
+  /* Section shell for every child component. Owned here rather than repeated
+     in each of them, so the page's visual weight has a single lever. These are
+     sections in an editorial page — a serif sub-heading over a hairline rule,
+     sitting on bare paper — not cards. Elevation stays reserved for modals and
+     popovers, per DESIGN.md. */
+  .content-inner :global(.card) {
     display: flex;
     flex-direction: column;
+    min-width: 0;
+    margin-bottom: 30px;
   }
-  .span-4  { grid-column: span 4; }
-  .span-6  { grid-column: span 6; }
-  .span-8  { grid-column: span 8; }
-  .span-12 { grid-column: span 12; }
 
-  .span-4 :global(.card),
-  .span-6 :global(.card),
-  .span-8 :global(.card),
-  .span-12 :global(.card) {
-    flex: 1;
+  .content-inner :global(.card:last-child) { margin-bottom: 0; }
+
+  .insights-results { min-width: 0; }
+
+  .content-inner :global(.card-head) {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 8px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* Matches .settings-subhead — 17px was a card title, this is a section head. */
+  .content-inner :global(.card-h) {
+    font-family: var(--serif);
+    font-size: 14px;
+    font-weight: 500;
+    margin: 0;
+    color: var(--ink-soft);
+    letter-spacing: -0.01em;
+  }
+
+  .content-inner :global(.card-sub) {
+    margin: 3px 0 0;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--ink-mute);
+  }
+
+  .skeletons {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
   }
 
   .skeleton {
-    height: 118px;
-    border-radius: var(--r-md);
-    border: 1px solid var(--line);
+    height: 96px;
+    border-radius: var(--r-sm);
     background: linear-gradient(
       100deg,
       var(--bg-elev) 30%,
@@ -268,7 +283,8 @@
     background-size: 300% 100%;
     animation: shimmer 1.4s linear infinite;
   }
-  .skeleton.tall { height: 232px; }
+  .skeleton.tall { height: 200px; }
+  .skeleton-band { height: 116px; }
 
   @keyframes shimmer {
     from { background-position: 150% 0; }
@@ -302,8 +318,6 @@
   }
 
   @media (max-width: 900px) {
-    .grid { grid-template-columns: 1fr; }
-    .span-4, .span-6, .span-8, .span-12 { grid-column: span 1; }
     .head { flex-direction: column; }
   }
 

@@ -132,21 +132,27 @@
 </div>
 
 <style>
+  /* A summary band on bare paper, not three cards: columns are separated by
+     the same 1px hairline the rest of the app uses between rows, and the band
+     itself is closed off by a rule before the first section below it. */
   .hero {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 14px;
-    margin-bottom: 14px;
+    gap: clamp(18px, 3vw, 32px);
+    padding-bottom: 20px;
+    margin-bottom: 26px;
+    border-bottom: 1px solid var(--line);
   }
 
   .tile {
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: 16px 18px 15px;
     min-width: 0;
     display: flex;
     flex-direction: column;
+  }
+
+  .tile + .tile {
+    border-left: 1px solid var(--line);
+    padding-left: clamp(18px, 3vw, 32px);
   }
 
   .tile-head {
@@ -175,8 +181,8 @@
 
   .delta {
     position: absolute;
-    top: 14px;
-    right: 14px;
+    top: 0;
+    right: 0;
     display: inline-flex;
     align-items: center;
     gap: 3px;
@@ -284,5 +290,19 @@
 
   @media (max-width: 900px) {
     .hero { grid-template-columns: 1fr; }
+    /* Stacked, the vertical rules become horizontal ones — same trick
+       StatsCard uses when its row collapses. */
+    .tile + .tile {
+      border-left: 0;
+      padding-left: 0;
+      border-top: 1px solid var(--line);
+      padding-top: clamp(18px, 3vw, 32px);
+    }
+    /* Stacked, the gauge lines up with the other two rather than floating
+       centred in its own row. */
+    .tile-gauge {
+      align-items: flex-start;
+      text-align: left;
+    }
   }
 </style>
