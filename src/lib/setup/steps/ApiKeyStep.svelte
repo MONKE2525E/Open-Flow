@@ -3,7 +3,15 @@
   import { providerGuides } from '../setupData';
   import { isMac } from '../../platform';
   import { fade } from 'svelte/transition';
+  import { onMount } from 'svelte';
   import { motionMs } from '../../motion';
+  import {
+    localSttStore,
+    refreshLocalModels,
+    refreshLocalState,
+    downloadLocalModel,
+    cancelLocalModelDownload,
+  } from '../../localSttStore.svelte';
 
   type KeyValidation = { status: 'idle' | 'checking' | 'valid' | 'invalid' | 'unknown'; message: string };
 
@@ -54,6 +62,25 @@
   const slideCount = $derived(guide.steps.length);
   const safeSlide = $derived(Math.min(slide, Math.max(0, slideCount - 1)));
   const currentShot = $derived(shotsByKey.get(`${provider}-${safeSlide + 1}`));
+  const localModel = $derived(localSttStore.models.find((model) => model.id === 'parakeet-v3'));
+  const localDownloading = $derived(
+    localSttStore.state.downloading_model_id === 'parakeet-v3' || localModel?.is_downloading === true,
+  );
+  const localProgress = $derived(localSttStore.downloadProgress['parakeet-v3']?.progress ?? 0);
+  const localStage = $derived(localSttStore.downloadStage['parakeet-v3'] ?? 'downloading');
+
+  onMount(() => {
+    if (provider !== 'local') return;
+    void Promise.all([refreshLocalModels(), refreshLocalState()]);
+  });
+
+  function startLocalDownload() {
+    void downloadLocalModel('parakeet-v3');
+  }
+
+  function stopLocalDownload() {
+    void cancelLocalModelDownload('parakeet-v3');
+  }
 
   // Reset the carousel when the provider changes underneath us.
   $effect(() => {
@@ -64,6 +91,12 @@
   function step(delta: number) {
     if (slideCount <= 0) return;
     slide = (safeSlide + delta + slideCount) % slideCount;
+  }
+
+  function onTutorialKeydown(event: KeyboardEvent) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    step(event.key === 'ArrowLeft' ? -1 : 1);
   }
 
   async function openExternal(url: string) {
@@ -80,15 +113,48 @@
 
 <div class="step apikey-step">
   {#if provider === 'local'}
-    <div class="key-guide">
-      <p class="group-label">Local setup</p>
-      <ol class="guide-steps">
-        {#each guide.steps as s}
-          <li>{s}</li>
-        {/each}
-      </ol>
-      <div class="local-note">
-        You can finish setup without any cloud credential. Local transcription still needs the model download before dictation works.
+    <div class="local-setup">
+      <div class="local-intro">
+        <span class="local-kicker">Private by design</span>
+        <h3>No account, subscription, or API key</h3>
+        <p>Your audio and transcript stay on this device. Download the speech model now, then choose how much local cleanup you want on the next page.</p>
+      </div>
+
+      <div class="local-model-card" class:is-ready={localModel?.is_downloaded}>
+        <div class="local-model-copy">
+          <div class="local-model-head">
+            <strong>Parakeet V3</strong>
+            <span>Recommended</span>
+          </div>
+          <p>Fast local transcription in 25 languages</p>
+          <span class="local-model-meta">About {localModel?.size_mb ?? 456} MB · runs offline after download</span>
+        </div>
+        {#if localModel?.is_downloaded}
+          <div class="local-ready" role="status">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+            Ready
+          </div>
+        {:else if localDownloading}
+          <button class="local-download cancel" type="button" onclick={stopLocalDownload}>Cancel</button>
+        {:else}
+          <button class="local-download" type="button" onclick={startLocalDownload}>Download model</button>
+        {/if}
+      </div>
+
+      {#if localDownloading}
+        <div class="local-progress" role="status" aria-live="polite">
+          <div class="local-progress-row">
+            <span>{localStage === 'verifying' ? 'Verifying' : localStage === 'extracting' ? 'Installing' : 'Downloading'}</span>
+            <span>{Math.round(localProgress * 100)}%</span>
+          </div>
+          <div class="local-progress-track"><span style={`width: ${Math.max(4, localProgress * 100)}%`}></span></div>
+        </div>
+      {/if}
+
+      <div class="local-path" aria-label="Local setup steps">
+        <div><span>1</span><strong>Download</strong><small>Get the speech model</small></div>
+        <div><span>2</span><strong>Choose</strong><small>Pick cleanup on the next page</small></div>
+        <div><span>3</span><strong>Dictate</strong><small>Work privately and offline</small></div>
       </div>
     </div>
 
@@ -117,12 +183,12 @@
     </div>
 
   {:else if mode === 'tutorial'}
-    <div class="tutorial" in:fade={{ duration: motionMs(180) }}>
+    <div class="tutorial" aria-label="API key tutorial">
       <div class="shot-frame">
         {#key slide}
           <div class="shot-inner" in:fade={{ duration: motionMs(150) }}>
             {#if currentShot}
-              <img class="shot-img" src={currentShot} alt="Step {safeSlide + 1}: {guide.steps[safeSlide]}" />
+              <img class="shot-img" src={currentShot} alt={guide.steps[safeSlide].alt} />
             {:else}
               <!-- No screenshot for this step yet (see src/assets/setup/README.md).
                    The step number and caption are both already in the row below,
@@ -138,18 +204,20 @@
 
       <div class="shot-caption">
         <button
-          class="shot-nav"
+          class="shot-nav ui-focus-ring"
           onclick={() => step(-1)}
+          onkeydown={onTutorialKeydown}
           disabled={slideCount < 2}
           aria-label="Previous step"
         ><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
         <div class="shot-caption-text">
           <span class="shot-step">Step {safeSlide + 1} of {slideCount}</span>
-          <span class="shot-text">{guide.steps[safeSlide]}</span>
+          <span class="shot-text">{guide.steps[safeSlide].caption}</span>
         </div>
         <button
-          class="shot-nav"
+          class="shot-nav ui-focus-ring"
           onclick={() => step(1)}
+          onkeydown={onTutorialKeydown}
           disabled={slideCount < 2}
           aria-label="Next step"
         ><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg></button>
@@ -186,11 +254,11 @@
       </div>
 
       {#if keyError}
-        <p class="key-error">{keyError}</p>
+        <p class="key-error" role="alert">{keyError}</p>
       {/if}
 
       {#if keySaved && !apiKeyDraft}
-        <div class="key-status" class:is-bad={keyValidation.status === 'invalid'} class:is-warn={keyValidation.status === 'unknown'}>
+        <div class="key-status" role="status" aria-live="polite" class:is-bad={keyValidation.status === 'invalid'} class:is-warn={keyValidation.status === 'unknown'}>
           {#if keyValidation.status === 'checking'}
             <span class="status-spinner" aria-hidden="true"></span>
             <span>Verifying key…</span>
@@ -260,7 +328,7 @@
     justify-content: center;
     text-align: center;
     gap: 7px;
-    min-height: 148px;
+    min-height: 156px;
     background: var(--bg-elev);
     border: 1.5px solid var(--line);
     border-radius: var(--r-md);
@@ -289,7 +357,7 @@
     position: relative;
     /* Height drives width. `width:100% + max-height` let aspect-ratio compute a
        316px box that max-height then clipped, cutting the bottom off every shot. */
-    height: 260px;
+    height: clamp(220px, 38vh, 300px);
     aspect-ratio: 16 / 9;
     max-width: 100%;
     margin: 0 auto;
@@ -304,6 +372,8 @@
   .shot-inner { position: absolute; inset: 0; display: grid; place-items: center; }
 
   .shot-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+  .tutorial:focus-within .shot-frame { border-color: color-mix(in srgb, var(--accent) 62%, var(--line)); }
 
   .shot-placeholder {
     display: flex;
@@ -387,27 +457,67 @@
   }
 
   /* ── Paste ────────────────────────────────────────────────────────── */
-  .key-guide {
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: 16px 18px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+  .local-setup { display: flex; flex-direction: column; gap: 12px; }
+  .local-intro { display: flex; flex-direction: column; gap: 5px; }
+  .local-kicker {
+    width: fit-content;
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: var(--success-bg);
+    color: var(--success);
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: .04em;
+    text-transform: uppercase;
   }
-
-  .guide-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 5px; }
-  .guide-steps li { font-size: 13px; color: var(--ink-soft); line-height: 1.45; }
-
-  .local-note {
-    padding: 10px 12px;
+  .local-intro h3 { margin: 0; font-family: var(--serif); font-size: 19px; font-weight: 500; color: var(--ink-strong); }
+  .local-intro p { margin: 0; color: var(--ink-mute); font-size: 12.5px; line-height: 1.5; max-width: 590px; }
+  .local-model-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 15px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--setup-card-radius);
+    background: var(--bg-elev);
+  }
+  .local-model-card.is-ready { border-color: var(--success-line); background: var(--success-bg); }
+  .local-model-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+  .local-model-head { display: flex; align-items: center; gap: 8px; }
+  .local-model-head strong { color: var(--ink-strong); font-family: var(--serif); font-size: 15px; font-weight: 500; }
+  .local-model-head span { color: var(--accent-ink); font-size: 10.5px; font-weight: 600; }
+  .local-model-copy p { margin: 0; color: var(--ink-soft); font-size: 12px; }
+  .local-model-meta { color: var(--ink-faint); font-size: 10.5px; }
+  .local-download {
+    flex-shrink: 0;
+    min-width: 126px;
+    padding: 8px 11px;
+    border: 1px solid var(--accent);
     border-radius: var(--r-sm);
-    border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
-    background: color-mix(in srgb, var(--accent-soft) 42%, var(--paper-2));
-    color: var(--ink-soft);
-    font-size: 12.5px;
-    line-height: 1.45;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font: 600 11.5px var(--sans);
+    cursor: pointer;
+  }
+  .local-download:hover { background: color-mix(in srgb, var(--accent) 18%, var(--paper-2)); }
+  .local-download:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .local-download.cancel { border-color: var(--line-strong); background: transparent; color: var(--ink-mute); }
+  .local-ready { display: inline-flex; align-items: center; gap: 5px; color: var(--success); font-size: 12px; font-weight: 650; }
+  .local-progress { display: flex; flex-direction: column; gap: 6px; }
+  .local-progress-row { display: flex; justify-content: space-between; color: var(--ink-mute); font-size: 10.5px; }
+  .local-progress-track { height: 5px; overflow: hidden; border-radius: 999px; background: var(--line); }
+  .local-progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 180ms ease; }
+  .local-path { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: var(--setup-card-radius); background: var(--paper-2); }
+  .local-path > div { display: grid; grid-template-columns: 22px 1fr; column-gap: 7px; row-gap: 1px; padding: 11px 12px; text-align: left; }
+  .local-path > div + div { border-left: 1px solid var(--line); }
+  .local-path span { grid-row: 1 / 3; align-self: center; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-ink); font-size: 10px; font-weight: 700; }
+  .local-path strong { color: var(--ink-strong); font-size: 11.5px; font-weight: 600; }
+  .local-path small { color: var(--ink-faint); font-size: 9.5px; line-height: 1.3; }
+
+  @media (max-height: 660px) {
+    .local-setup { gap: 9px; }
+    .local-model-card { padding: 11px 13px; }
+    .local-path > div { padding: 8px 10px; }
   }
 
   .key-input-wrap { display: flex; flex-direction: column; gap: 9px; }
@@ -537,5 +647,10 @@
   @media (prefers-reduced-motion: reduce) {
     .fork-card { transition: none; }
     .status-spinner { animation-duration: 1.4s; }
+  }
+
+  @media (max-height: 660px) {
+    .shot-frame { height: clamp(190px, 34vh, 230px); }
+    .fork-card { min-height: 126px; padding: 18px; }
   }
 </style>

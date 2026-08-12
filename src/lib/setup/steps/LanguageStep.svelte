@@ -1,10 +1,15 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { transcriptionLanguages, type TranscriptionLanguageCode } from '../../transcriptionLanguages';
+  import { focusListboxOption, handleListboxOptionKeydown } from '../../components/appMappings/listbox';
 
   let { language = $bindable() }: { language: TranscriptionLanguageCode } = $props();
 
+  const LANG_MENU_ID = 'lang-listbox';
+
   let query = $state('');
   let listEl = $state<HTMLDivElement | null>(null);
+  let searchInput = $state<HTMLInputElement | null>(null);
 
   // Common dictation languages float to the top of an otherwise A–Z list, so
   // the usual answer is one click away without hiding the other 51.
@@ -28,6 +33,21 @@
     language = code;
   }
 
+  // Land keyboard focus on the selected (or first) option whenever the list
+  // (re)appears, and send Escape/arrow keys back to the search box.
+  onMount(() => {
+    void focusListboxOption(LANG_MENU_ID);
+  });
+
+  function restoreToSearchOrTrigger() {
+    searchInput?.focus();
+  }
+
+  function clearSearch() {
+    query = '';
+    void focusListboxOption(LANG_MENU_ID);
+  }
+
   // Enter on the search box takes the only remaining match — faster than
   // reaching for the mouse once you have typed enough to narrow it down.
   function onSearchKey(event: KeyboardEvent) {
@@ -44,6 +64,7 @@
     <div class="lang-search">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <input
+        bind:this={searchInput}
         class="lang-search-input"
         type="text"
         bind:value={query}
@@ -54,7 +75,7 @@
         autocomplete="off"
       />
       {#if query}
-        <button class="lang-clear" onclick={() => { query = ''; }} aria-label="Clear search">
+        <button class="lang-clear ui-focus-ring" onclick={clearSearch} aria-label="Clear search">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       {/if}
@@ -63,6 +84,7 @@
     <!-- data-scroll-region: scrolling is this control's design, not a layout
          overflow — see tests/manual/setup-layout-bounds.js -->
     <div
+      id={LANG_MENU_ID}
       class="lang-list scroll-styled"
       data-scroll-region
       bind:this={listEl}
@@ -76,7 +98,9 @@
           class:selected={language === lang.code}
           role="option"
           aria-selected={language === lang.code}
+          tabindex={language === lang.code ? 0 : -1}
           onclick={() => pick(lang.code)}
+          onkeydown={(event) => handleListboxOptionKeydown(event, LANG_MENU_ID, restoreToSearchOrTrigger)}
         >
           <span class="lang-name">{lang.label}</span>
           <span class="lang-code">{lang.code}</span>
@@ -180,4 +204,9 @@
 
   .lang-note { margin: 0; font-size: 12px; color: var(--ink-mute); line-height: 1.55; }
   .lang-note strong { color: var(--ink-soft); font-weight: 600; }
+
+  @media (max-height: 660px) {
+    .lang-list { height: 196px; }
+    .lang-row { padding-block: 6px; }
+  }
 </style>
