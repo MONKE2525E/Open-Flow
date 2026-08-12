@@ -102,20 +102,12 @@
       <p class="page-sub">How much you dictate, how fast, and what it costs. Everything here is computed locally from your own history — nothing leaves your machine.</p>
     </div>
 
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="ui-dropdown range-picker"
-      onclick={(event) => event.stopPropagation()}
-      onkeydown={(event) => {
-        if (event.key === 'Escape' && rangeOpen) {
-          rangeOpen = false;
-          event.stopPropagation();
-        }
-      }}
-    >
+    <!-- The shared Dropdown owns Escape, outside-click, and arrow navigation
+         for the range menu once it is open. -->
+    <div class="ui-dropdown range-picker">
       <button
         type="button"
-        class="ui-dropdown-trigger"
+        class="ui-dropdown-trigger ui-dropdown-trigger--compact"
         aria-expanded={rangeOpen}
         aria-haspopup="listbox"
         onclick={() => (rangeOpen = !rangeOpen)}
