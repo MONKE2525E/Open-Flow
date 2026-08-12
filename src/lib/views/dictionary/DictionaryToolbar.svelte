@@ -97,8 +97,10 @@
     flex: 1 1 260px;
     min-width: 160px;
     background: var(--bg-elev);
+    border: 1px solid var(--line);
     border-radius: var(--r-sm);
-    padding: 6px 10px;
+    height: 32px;
+    padding: 0 9px;
     display: flex;
     align-items: center;
     gap: 7px;
@@ -178,6 +180,25 @@
   .sort-pill:hover:not(.active) { background: var(--control-hover); }
   .sort-pill.active { color: var(--accent-ink); }
   .sort-pill.active:hover { background: transparent; }
+
+  .btn-primary {
+    background: var(--ink);
+    color: var(--amber-50);
+    border: 0;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 12.5px;
+    font-weight: 500;
+    font-family: var(--sans);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  .btn-primary:disabled { opacity: 0.4; cursor: default; }
+  .btn-primary:not(:disabled):hover { opacity: 0.82; }
 
   @media (max-width: 720px) {
     .search { flex-basis: 100%; }
