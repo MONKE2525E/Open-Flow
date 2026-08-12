@@ -97,8 +97,10 @@
     flex: 1 1 260px;
     min-width: 160px;
     background: var(--bg-elev);
+    border: 1px solid var(--line);
     border-radius: var(--r-sm);
-    padding: 6px 10px;
+    height: 32px;
+    padding: 0 9px;
     display: flex;
     align-items: center;
     gap: 7px;
