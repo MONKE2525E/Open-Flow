@@ -214,7 +214,7 @@
      <div class="calendar-content" style:width="{gridWidth}px">
       <div class="month-row" aria-hidden="true">
         {#each monthLabels as m}
-          <span style:left="{m.col * STEP}px">{m.label}</span>
+          <span class:edge={m.col >= columnCount - 2} style:left="{m.col * STEP}px">{m.label}</span>
         {/each}
       </div>
       <div
@@ -398,7 +398,7 @@
   }
   /* A month can begin in the final visible week. Keep that final label inside
      the clipped chart instead of letting its text run past the stats rail. */
-  .month-row span:last-child {
+  .month-row span.edge {
     left: auto !important;
     right: 0;
   }

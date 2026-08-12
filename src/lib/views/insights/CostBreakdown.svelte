@@ -66,7 +66,7 @@
         <tr>
           <th scope="col">Model</th>
           <th scope="col" class="num">Total usage</th>
-          <th scope="col" class="num">Average usage</th>
+          <th scope="col" class="num avg-usage">Average usage</th>
           <th scope="col" class="num">Est. cost</th>
           <th scope="col" class="num">Avg. cost</th>
           <th scope="col" class="num">Share</th>
