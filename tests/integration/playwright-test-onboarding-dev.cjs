@@ -107,7 +107,19 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
       // Try It field did not appear
     }
     if (hasTryItStep) {
-      await page.locator('.btn-skip').click();
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent('tauri:verenu:error', { detail: 'No speech detected' })));
+      await page.locator('.tryit-error').waitFor({ state: 'visible', timeout: TIMEOUT });
+      const errorCopy = (await page.locator('.tryit-error').textContent()) || '';
+      if (!errorCopy.includes("We didn't hear any speech") || !errorCopy.includes('Try again')) {
+        errors.push('Try It error did not provide a clear recovery panel');
+      }
+      await page.getByRole('button', { name: 'Try again' }).click();
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent('tauri:verenu:transcribed', { detail: 'Setup test succeeded.' })));
+      await page.locator('.tryit-success').waitFor({ state: 'visible', timeout: TIMEOUT });
+      if (await page.locator('.tryit-success .feedback-icon', { hasText: 'OK' }).count()) {
+        errors.push('Try It success still uses the mismatched OK badge');
+      }
+      await page.getByRole('button', { name: 'Next' }).click();
     }
 
     await page.locator('.done-summary').waitFor({ state: 'visible', timeout: TIMEOUT });
@@ -118,6 +130,8 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     if (!summaryText.includes('Formal')) errors.push('Done summary did not keep tone choice');
     if (!summaryText.includes('Spanish')) errors.push('Done summary did not keep language choice');
     if (!summaryText.includes('Speakers')) errors.push('Done summary did not keep audio environment choice');
+    if ((await page.locator('.summary-group').count()) !== 4) errors.push('Done summary should show provider, writing, language, and audio separately');
+    if ((await page.locator('.done-quickstart .quick-step').count()) !== 3) errors.push('Done page should teach hold, speak, and release');
 
     await page.getByRole('button', { name: 'Start dictating' }).click();
     await page.locator('h1.page-h:has-text("Welcome back")').waitFor({ state: 'visible', timeout: TIMEOUT });

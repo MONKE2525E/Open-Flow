@@ -62,7 +62,6 @@
   </div>
 
   <div class="preview-box">
-    <span class="group-label">Preview</span>
     <!-- Stacked in one grid cell so the outgoing and incoming previews
          cross-fade in place instead of the box snapping to a new height. -->
     <div class="preview-stack">
@@ -72,9 +71,9 @@
             <p class="preview-off">Cleanup is off — whatever you say is injected exactly as transcribed.</p>
           {:else}
             <div class="preview-row">
-              <span class="preview-before">"{preview.before}"</span>
+              <span class="preview-sample"><span class="preview-label">Before</span><span class="preview-before">"{preview.before}"</span></span>
               <span class="preview-arrow" aria-hidden="true">→</span>
-              <span class="preview-after">"{preview.after}"</span>
+              <span class="preview-sample"><span class="preview-label">After</span><span class="preview-after">"{preview.after}"</span></span>
             </div>
           {/if}
         </div>
@@ -108,7 +107,7 @@
   .style-grid > :global(*) { grid-column: span 3; }
   .tone-grid > :global(*) { grid-column: span 4; }
 
-  .style-card { min-height: 68px; justify-content: flex-start; }
+  .style-card { min-height: 72px; justify-content: flex-start; }
 
   .card-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
   .card-name { font-size: 12.5px; font-weight: 500; color: var(--ink-strong); }
@@ -120,8 +119,7 @@
     border-radius: var(--r-md);
     padding: 11px 14px;
     display: flex;
-    align-items: center;
-    gap: 12px;
+    align-items: stretch;
     /* Tallest state (two wrapped lines) reserved up front, so switching
        intensity cross-fades the text without resizing the box. */
     min-height: 62px;
@@ -131,7 +129,10 @@
   .preview-stack { flex: 1; min-width: 0; display: grid; }
   .preview-stack > :global(*) { grid-column: 1; grid-row: 1; align-self: center; }
 
-  .preview-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+  .preview-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0; }
+
+  .preview-sample { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .preview-label { font-size: 9.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-faint); }
 
   .preview-before { font-size: 12px; font-style: italic; color: var(--ink-mute); line-height: 1.4; }
 
@@ -144,5 +145,7 @@
   @media (max-width: 720px) {
     .style-grid > :global(*) { grid-column: span 6; }
     .tone-grid > :global(*) { grid-column: span 6; }
+    .preview-row { grid-template-columns: 1fr; gap: 5px; }
+    .preview-arrow { display: none; }
   }
 </style>
