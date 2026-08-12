@@ -112,8 +112,10 @@
             —
           {:else if trimPct < 0}
             trimmed <AnimatedNumber value={Math.abs(trimPct)} format={(n) => `${n.toFixed(1)}%`} />
-          {:else}
+          {:else if trimPct > 0}
             grew <AnimatedNumber value={trimPct} format={(n) => `${n.toFixed(1)}%`} />
+          {:else}
+            no change
           {/if}
         </dd>
       </div>

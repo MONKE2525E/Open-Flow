@@ -269,7 +269,7 @@
     });
     const total = values.reduce((a, b) => a + b, 0);
 
-    const dimT = reduced ? (dimming ? 1 : 0) : easeOutCubic(Math.min(1, (now - dimStart) / HOVER_MS));
+    const dimT = reduced ? 1 : easeOutCubic(Math.min(1, (now - dimStart) / HOVER_MS));
     const dimAlpha = reduced
       ? (dimming ? DIM_ALPHA : 1)
       : dimFromAlpha + ((dimming ? DIM_ALPHA : 1) - dimFromAlpha) * dimT;

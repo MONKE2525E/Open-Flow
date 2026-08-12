@@ -47,7 +47,7 @@ export function fmtDuration(ms: number): string {
 
 /** null when there is no previous window to compare against. */
 export function pctDelta(current: number, previous: number): number | null {
-  if (!Number.isFinite(previous) || previous <= 0) return null;
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || previous <= 0) return null;
   return ((current - previous) / previous) * 100;
 }
 

@@ -39,8 +39,9 @@
       status = 'loaded';
       error = '';
       // Keep the previous range visible while its replacement loads, then
-      // give the refreshed figures one deliberate, reduced-motion-aware entry.
-      displayVersion += 1;
+      // give explicit range/manual refreshes one deliberate entry. Silent
+      // polling must update values in place so chart hover/focus state survives.
+      if (!opts?.silent) displayVersion += 1;
     } catch (err) {
       if (!mounted || token !== fetchToken) return;
       console.error('IPC get_insights failed:', err);
