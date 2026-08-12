@@ -3,10 +3,10 @@
   import { invoke } from '../../tauri';
   import { appStore } from '../../stores';
   import { icons } from '../../icons';
-  import { isMac } from '../../platform';
+  import { isMac, isWindows } from '../../platform';
   import { MOTION_MS, SETTINGS_SECTION_ORDER, directionFromOrder, motionMs, motionPx } from '../../motion';
   import { visibleSettingsSections, type SettingsSectionId } from '../../settingsSections';
-  import LogoMark from './LogoMark.svelte';
+  import Brand from './Brand.svelte';
   import LocalDownloadProgress from '../settings/LocalDownloadProgress.svelte';
   import {
     getActiveDownloads,
@@ -175,23 +175,8 @@
   });
 </script>
 
-<aside class="sidebar" class:rail-settings={appStore.settingsOpen} bind:this={sidebarEl}>
-  <div class="brand">
-    <div class="brand-mark">
-      <LogoMark />
-    </div>
-    <div class="brand-name">
-      <span>Verenu</span>
-      {#if appStore.betaUpdatesEnabled}
-        <span
-          class="beta-marker"
-          aria-label="Beta updates enabled"
-          in:fly|global={{ y: -4, duration: motionMs(180), easing: cubicOut }}
-          out:fly|global={{ y: -5, duration: motionMs(220), easing: cubicOut }}
-        >BETA</span>
-      {/if}
-    </div>
-  </div>
+<aside class="sidebar" class:rail-settings={appStore.settingsOpen} class:sidebar-windows={isWindows} bind:this={sidebarEl}>
+  <Brand />
 
   <div class="rail-pill" class:rail-pill-snap={pillSnap} style="top:{pillTop}px; height:{pillHeight}px"></div>
 
@@ -235,7 +220,7 @@
             in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: railDelay(i, RAIL_IN_DELAY_MS), easing: cubicOut }}
             out:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_OUT_MS), delay: railDelay(i, 0, RAIL_OUT_STAGGER_MS), easing: cubicOut }}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.currentPage === entry.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[entry.icon]}</svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.currentPage === entry.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[entry.icon]}</svg>
             <span>{entry.label}</span>
             {#if entry.locked}
               <span class="lock-tag">Soon</span>
@@ -297,10 +282,10 @@
       onclick={appStore.settingsOpen ? backToApp : openSettings}
     >
       {#if appStore.settingsOpen}
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
         <span>Back to app</span>
       {:else}
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons.settings}</svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons.settings}</svg>
         <span>Settings</span>
       {/if}
     </button>
@@ -336,51 +321,15 @@
   .sidebar {
     width: var(--sidebar-w);
     background: var(--bg-elev);
-    border-radius: var(--r-md);
-    border: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    /* .body keeps its bottom gutter for the content column; pull the sidebar
+       through it so it runs flush into the bottom-left window corner. */
+    margin-bottom: calc(-1 * var(--app-gutter));
     position: relative;
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
     overflow: hidden;
-  }
-
-  .brand {
-    padding: 16px 18px 14px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .brand-mark {
-    width: 24px;
-    height: 20px;
-    color: var(--accent);
-  }
-
-  .brand-mark :global(svg) { display: block; }
-
-  .brand-name {
-    font-family: var(--serif);
-    font-size: 17px;
-    letter-spacing: -0.015em;
-    font-weight: 500;
-    color: var(--ink);
-    white-space: nowrap;
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-  }
-
-  .beta-marker {
-    font-family: var(--sans);
-    font-size: 8.5px;
-    font-weight: 750;
-    letter-spacing: 0.08em;
-    line-height: 1;
-    color: var(--accent);
-    position: relative;
-    top: -5px;
   }
 
   /*
@@ -403,6 +352,15 @@
     padding: 4px 8px;
     display: grid;
   }
+
+  /* Windows puts the Verenu icon/name in the native caption. Leave a deliberate
+     gap below that frame before the first navigation target. */
+  .sidebar.sidebar-windows .nav-section { padding-top: 22px; }
+
+  /* The native caption already carries the icon and wordmark, so the in-rail
+     brand block would duplicate it. It stays on macOS, where the hidden
+     titlebar leaves the rail top as the only header. */
+  .sidebar.sidebar-windows :global(.brand) { display: none; }
 
   .rail-list {
     grid-area: 1 / 1;
@@ -452,12 +410,13 @@
     background: transparent;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 7px 10px;
+    gap: 9px;
+    min-height: 42px;
+    padding: 8px;
     border-radius: 7px;
     color: var(--ink-soft);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 450;
     user-select: none;
     position: relative;
@@ -468,6 +427,13 @@
   .nav-item :global(svg),
   .settings-nav-item :global(svg),
   .settings-back :global(svg) { opacity: 0.75; flex-shrink: 0; }
+
+  .sidebar-windows .nav-item :global(svg),
+  .sidebar-windows .settings-nav-item :global(svg),
+  .sidebar-windows .settings-back :global(svg) {
+    width: 15px;
+    height: 15px;
+  }
 
   .nav-item:hover,
   .settings-nav-item:hover,
