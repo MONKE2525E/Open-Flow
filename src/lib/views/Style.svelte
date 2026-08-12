@@ -67,6 +67,34 @@
     tab = id;
   }
 
+  // The tabs declare role="tab", so they get the full APG pattern: only the
+  // selected tab is in the tab order, and Left/Right/Home/End move and select
+  // with automatic activation (the panels are lightweight).
+  let tablistEl = $state<HTMLDivElement | null>(null);
+
+  function handleTablistKeydown(event: KeyboardEvent) {
+    const tabButtons = tablistEl?.querySelectorAll<HTMLButtonElement>('.tab') ?? [];
+    if (tabButtons.length === 0) return;
+    const index = Array.from(tabButtons).indexOf(document.activeElement as HTMLButtonElement);
+    if (index === -1) return;
+
+    let next: number | null = null;
+    if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabButtons.length - 1;
+    else if (event.key === 'ArrowLeft') next = (index - 1 + tabButtons.length) % tabButtons.length;
+    else if (event.key === 'ArrowRight') next = (index + 1) % tabButtons.length;
+    if (next === null) return;
+
+    event.preventDefault();
+    const target = tabButtons[next];
+    target.focus();
+    const id = target.id.replace('style-tab-', '');
+    if (id !== tab) {
+      tabDir = directionFromOrder(tab, id, STYLE_TAB_ORDER);
+      tab = id;
+    }
+  }
+
   $effect(() => {
     if (!mountedTabs[tab]) {
       mountedTabs = { ...mountedTabs, [tab]: true };
@@ -85,15 +113,24 @@
         tone, intensity, and app-specific overrides only apply during the cleanup step. Your
         choices below are kept, just not used.
       </p>
-      <button type="button" class="cleanup-off-link" onclick={() => emit('open-flow:open-settings-section', 'general')}>
+      <button type="button" class="cleanup-off-link ui-focus-ring" onclick={() => emit('open-flow:open-settings-section', 'general')}>
         Turn Cleanup back on in Settings → General
       </button>
     </div>
   {/if}
 
-  <div class="tabs">
+  <div class="tabs" role="tablist" tabindex="-1" bind:this={tablistEl} onkeydown={handleTablistKeydown}>
     {#each tabs as t}
-      <button class="tab" class:active={tab === t.id} onclick={() => selectTab(t.id)}>
+      <button
+        class="tab ui-focus-ring"
+        class:active={tab === t.id}
+        role="tab"
+        id="style-tab-{t.id}"
+        tabindex={tab === t.id ? 0 : -1}
+        aria-selected={tab === t.id}
+        aria-controls="style-panel-{t.id}"
+        onclick={() => selectTab(t.id)}
+      >
         {t.label}
         {#if t.pill}
           <span class="pill">{t.pill}</span>
@@ -109,6 +146,9 @@
     {#key tab}
       <div
         class="tab-wrapper"
+        role="tabpanel"
+        id="style-panel-{tab}"
+        aria-labelledby="style-tab-{tab}"
         in:pageSwap={{ axis: 'x', distance: tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel) }}
         out:pageSwap={{ axis: 'x', distance: -tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.base + 40) }}
       >
