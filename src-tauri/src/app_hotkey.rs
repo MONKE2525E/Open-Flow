@@ -371,3 +371,42 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handsfree_stop_guard_consumes_the_followup_click_but_not_escape() {
+        let now = Instant::now();
+        let mut guard = HandsfreeStopGuard::default();
+        guard.arm(now);
+
+        for event in [
+            HotkeyEvent::Press,
+            HotkeyEvent::Release,
+            HotkeyEvent::HandlessToggle,
+            HotkeyEvent::Cancel,
+        ] {
+            assert!(guard.suppresses(event, now + Duration::from_millis(1)));
+        }
+        assert!(!guard.suppresses(HotkeyEvent::EscapeCancel, now + Duration::from_millis(1)));
+        assert!(!guard.suppresses(HotkeyEvent::CopyLast, now + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn handsfree_stop_guard_expires_after_the_double_tap_window() {
+        let now = Instant::now();
+        let mut guard = HandsfreeStopGuard::default();
+        guard.arm(now);
+
+        assert!(!guard.suppresses(
+            HotkeyEvent::Press,
+            now + HANDSFREE_STOP_GUARD + Duration::from_millis(1),
+        ));
+        assert!(!guard.suppresses(
+            HotkeyEvent::Press,
+            now + HANDSFREE_STOP_GUARD + Duration::from_millis(2),
+        ));
+    }
+}
