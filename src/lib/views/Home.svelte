@@ -67,8 +67,9 @@
     load(true);
   }
 
-  function clearHistoryFilters() {
-    if (search === '' && appFilter === null) return;
+  function resetHistoryFilters(): boolean {
+    const had = search !== '' || debouncedSearch !== '' || appFilter !== null;
+    if (!had) return false;
     search = '';
     debouncedSearch = '';
     appFilter = null;
@@ -76,7 +77,17 @@
       clearTimeout(searchTimer);
       searchTimer = null;
     }
-    load(true);
+    return true;
+  }
+
+  // Filters are session-only. Page navigation unmounts Home (fresh state on
+  // return); Settings is a full-screen overlay that keeps Home mounted, so
+  // clear the filter there too and refresh the list behind it. A restart
+  // clears them naturally since nothing is persisted.
+  $: if (appStore.currentPage !== 'home' || appStore.settingsOpen) {
+    if (resetHistoryFilters()) {
+      load(true);
+    }
   }
 
   async function retryTranscription() {
@@ -315,7 +326,6 @@
         {appFilter}
         onSearchChange={handleSearchChange}
         onAppFilterChange={handleAppFilterChange}
-        onClearFilters={clearHistoryFilters}
         onRetry={retryTranscription}
         onContinueCancelled={continueCancelled}
         onDismissCancelled={dismissCancelled}

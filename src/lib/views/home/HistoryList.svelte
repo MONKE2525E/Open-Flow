@@ -24,7 +24,6 @@
   export let appFilter: string | null;
   export let onSearchChange: (value: string) => void;
   export let onAppFilterChange: (app: string | null) => void;
-  export let onClearFilters: () => void;
   export let onRetry: () => void;
   export let onContinueCancelled: () => void;
   export let onDismissCancelled: () => void;
@@ -339,7 +338,6 @@
     {appFilter}
     {onSearchChange}
     {onAppFilterChange}
-    {onClearFilters}
   />
 
   {#if recents.length === 0 && !hasBanner}
@@ -347,7 +345,6 @@
       <div class="empty-state">
         <p class="empty-h">No matches</p>
         <p class="empty-sub">Nothing matches your current search and filters.</p>
-        <button class="btn-ghost" onclick={onClearFilters}>Clear filters</button>
       </div>
     {:else}
       <div class="empty-state">

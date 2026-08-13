@@ -109,17 +109,21 @@ const historyMockWrap = function () {
       errors.push(`app filter wrong: ${JSON.stringify(byApp)}`);
     }
 
-    // No matches → clear empty state.
+    // No matches → empty state; reset via the search × and the dropdown's
+    // "All apps" option (there is deliberately no separate "Clear filters"
+    // button).
     await search.fill('zzzz nothing matches');
     await page.waitForTimeout(500);
     const noMatch = await page.locator('.empty-state .empty-h').innerText();
     if (noMatch !== 'No matches') errors.push(`empty state heading wrong: "${noMatch}"`);
-    // The toolbar's "Clear filters" resets everything; the empty-state button
-    // is a second, equivalent affordance.
-    await page.locator('.clear-filters-btn').click();
+    await page.getByRole('button', { name: 'Clear search' }).click();
+    await page.waitForTimeout(300);
+    await page.locator('.history-app-dropdown button').click();
+    await page.waitForTimeout(200);
+    await page.locator('#history-app-menu [role="option"]:has-text("All apps")').click();
     await page.waitForTimeout(500);
-    if ((await page.locator('.day-row').count()) !== 6) errors.push('clearing filters must restore all rows');
-    if ((await page.locator('.empty-state').count()) !== 0) errors.push('empty state must disappear after clearing filters');
+    if ((await page.locator('.day-row').count()) !== 6) errors.push('resetting to All apps must restore all rows');
+    if ((await page.locator('.empty-state').count()) !== 0) errors.push('empty state must disappear after resetting to All apps');
 
     // Pagination contract intact: "Load older" only when a full page is present
     // is exercised by the frozen smoke test; here just ensure no error surfaced.

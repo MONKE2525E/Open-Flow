@@ -8,11 +8,8 @@
   export let appFilter: string | null;
   export let onSearchChange: (value: string) => void;
   export let onAppFilterChange: (app: string | null) => void;
-  export let onClearFilters: () => void;
 
   let appDropdownOpen = false;
-
-  $: filtersActive = (search ?? '').trim().length > 0 || appFilter !== null;
 </script>
 
 <div class="history-toolbar">
@@ -121,12 +118,6 @@
       </div>
     </Dropdown>
   </div>
-
-  {#if filtersActive}
-    <button class="btn-ghost clear-filters-btn ui-focus-ring" onclick={onClearFilters}>
-      Clear filters
-    </button>
-  {/if}
 </div>
 
 <style>
@@ -217,12 +208,6 @@
     width: max-content;
     min-width: 180px;
     max-width: 280px;
-  }
-
-  .clear-filters-btn {
-    height: 32px;
-    white-space: nowrap;
-    flex-shrink: 0;
   }
 
   @media (max-width: 560px) {
