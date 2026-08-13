@@ -56,6 +56,13 @@
 
   function handleAppFilterChange(app: string | null) {
     if (appFilter === app) return;
+    // A pending debounce would otherwise fire a stale search query right after
+    // this load — flush it so the filter change queries once with current state.
+    if (searchTimer) {
+      clearTimeout(searchTimer);
+      searchTimer = null;
+      debouncedSearch = search;
+    }
     appFilter = app;
     load(true);
   }
@@ -257,6 +264,10 @@
       if (cancelledTimer) {
         clearTimeout(cancelledTimer);
         cancelledTimer = null;
+      }
+      if (searchTimer) {
+        clearTimeout(searchTimer);
+        searchTimer = null;
       }
     };
   });

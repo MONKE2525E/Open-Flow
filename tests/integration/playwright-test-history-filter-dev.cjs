@@ -1,5 +1,8 @@
 'use strict';
 
+const path = require('path');
+const os = require('os');
+
 // History search + app filter UX. Exercises the real Home/HistoryList/
 // HistoryToolbar against a filtering `get_recent`/`get_history_apps` mock so
 // the search → SQLite-arg wiring, the app dropdown, the combined filter, the
@@ -7,6 +10,8 @@
 
 const { chromium } = require('playwright');
 const { tauriMock } = require('../smoke/_tauri-mock.cjs');
+
+const FAILURE_SCREENSHOT = path.join(os.tmpdir(), 'verenu-history-filter-fail.png');
 
 // Overrides the frozen smoke mock's history commands with a filtering variant
 // that carries app names + durations, so the frontend's real flow is exercised.
@@ -25,7 +30,7 @@ const historyMockWrap = function () {
       const limit = Number(args?.limit ?? 100);
       const offset = Number(args?.offset ?? 0);
       const search = typeof args?.search === 'string' ? args.search.trim().toLowerCase() : '';
-      const appName = typeof args?.appName === 'string' ? args.appName : null;
+      const appName = typeof args?.appName === 'string' ? args.appName : (typeof args?.app_name === 'string' ? args.app_name : null);
       let filtered = entries.filter((e) => {
         if (search && !e.clean_text.toLowerCase().includes(search) && !e.raw_text.toLowerCase().includes(search)) {
           return false;
@@ -121,7 +126,7 @@ const historyMockWrap = function () {
     if (errors.length > 0) {
       console.error('FAILURES:');
       errors.forEach((e) => console.error('  ' + e));
-      await page.screenshot({ path: 'C:/Users/noah7/AppData/Local/Temp/opencode/history-filter-fail.png', fullPage: true });
+      await page.screenshot({ path: FAILURE_SCREENSHOT, fullPage: true });
       process.exit(1);
     }
     console.log('PASS — history search, app filter, metadata, and clear-all work together.');

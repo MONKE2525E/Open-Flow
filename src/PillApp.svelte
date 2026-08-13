@@ -591,6 +591,7 @@
       if (pasteFailedDismissTimer) clearTimeout(pasteFailedDismissTimer);
       if (copiedTimer) clearTimeout(copiedTimer);
       if (copiedPillTimer) clearTimeout(copiedPillTimer);
+      clearStage();
       unlisteners.forEach(u => u());
     };
   });

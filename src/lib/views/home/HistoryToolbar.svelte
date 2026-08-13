@@ -12,7 +12,7 @@
 
   let appDropdownOpen = false;
 
-  $: filtersActive = search.trim().length > 0 || appFilter !== null;
+  $: filtersActive = (search ?? '').trim().length > 0 || appFilter !== null;
 </script>
 
 <div class="history-toolbar">
@@ -101,7 +101,7 @@
               class:active={!appFilter}
               role="option"
               aria-selected={!appFilter}
-              onclick={() => onAppFilterChange(null)}
+              onclick={() => { onAppFilterChange(null); appDropdownOpen = false; }}
             >
               All apps
             </button>
@@ -111,7 +111,7 @@
                 class:active={appFilter === app}
                 role="option"
                 aria-selected={appFilter === app}
-                onclick={() => onAppFilterChange(app)}
+                onclick={() => { onAppFilterChange(app); appDropdownOpen = false; }}
               >
                 {formatAppLabel(app)}
               </button>
