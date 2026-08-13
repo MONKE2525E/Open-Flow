@@ -55,7 +55,7 @@ export function fallbackReason(result) {
   const normalizedOutput = output.replace(/[_-]+/g, " ");
   if (/\b(?:quota|resource exhausted|insufficient quota|daily limit|usage limit|out of extra usage|model cooldown|cooling down|capacity on this model)\b/i.test(normalizedOutput)) return "quota";
   if (/\b(?:rate\s*limit|too many requests|429)\b/i.test(normalizedOutput)) return "rate_limit";
-  if (FALLBACK_ERROR_PATTERNS.some((pattern) => pattern.test(output))) return "model_unavailable";
+  if (FALLBACK_ERROR_PATTERNS.some((pattern) => pattern.test(normalizedOutput))) return "model_unavailable";
   return null;
 }
 

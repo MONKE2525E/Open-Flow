@@ -73,6 +73,7 @@ test("quota, rate-limit, and model-unavailable failures are fallback eligible", 
     [{ code: 1, stderr: "model gemini-3.7-flash-high not found" }, "model_unavailable"],
     [{ code: 1, stderr: "no available model for this request" }, "model_unavailable"],
     [{ code: 1, stderr: "model gemini-3.7-flash-high\nnot found" }, "model_unavailable"],
+    [{ code: 1, stderr: "MODEL_NOT_FOUND: gemini-3.7-flash-high" }, "model_unavailable"],
   ];
 
   for (const [result, reason] of cases) {
