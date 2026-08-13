@@ -607,7 +607,7 @@
          class:from-loading={prevState === 'loading_local_model'}
          class:dying={dying}>
       <div class="stage-counter" aria-hidden="true">
-        <div class="stage-roll" style="transform: translateY({stageIndex * -STAGE_ROW_H}px)">
+        <div class="stage-roll" style="transform: translateY({Math.max(0, stageIndex) * -STAGE_ROW_H}px)">
           {#each STAGE_ROWS as label, i (label)}
             <span class="stage-row">{label}</span>
           {/each}
