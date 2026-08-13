@@ -7,6 +7,7 @@ import {
   failureCategory,
   fallbackReason,
   formatProgressSummary,
+  normalizeReviewModel,
   reviewOutcome,
   selectReviewModels,
   shouldFallback,
@@ -22,6 +23,16 @@ test("selectReviewModels returns Gemini then Claude defaults", () => {
       changedLines: 0,
     },
   );
+});
+
+test("legacy configured model names migrate to the current review models", () => {
+  assert.equal(normalizeReviewModel("gemini-3.6-flash-high", DEFAULT_MODEL), DEFAULT_MODEL);
+  assert.equal(normalizeReviewModel("claude-sonnet-4.6", DEFAULT_FALLBACK_MODEL), DEFAULT_FALLBACK_MODEL);
+  assert.deepEqual(selectReviewModels({
+    apiKey: "present",
+    primaryModel: "gemini-3.6-flash-high",
+    fallbackModel: "claude-sonnet-4.6",
+  }).models, [DEFAULT_MODEL, DEFAULT_FALLBACK_MODEL]);
 });
 
 test("selectReviewModels preserves configured ordering and removes duplicates", () => {

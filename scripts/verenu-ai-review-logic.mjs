@@ -1,12 +1,22 @@
 export const DEFAULT_MODEL = "gemini-3.7-flash-high";
 export const DEFAULT_FALLBACK_MODEL = "claude-sonnet-4-6";
 
+const LEGACY_MODEL_ALIASES = new Map([
+  ["gemini-3.6-flash-high", DEFAULT_MODEL],
+  ["claude-sonnet-4.6", DEFAULT_FALLBACK_MODEL],
+]);
+
 const FALLBACK_ERROR_PATTERNS = [
   /\b(?:model|engine)\b.{0,60}\b(?:not found|not available|unavailable|does not exist|unknown)\b/is,
   /\b(?:not found|not available|unavailable|does not exist|unknown)\b.{0,60}\b(?:model|engine)\b/is,
   /\bno available (?:model|engine)\b/i,
 ];
 const SAFE_FAILURE_REASONS = new Set(["quota", "rate_limit", "model_unavailable", "preview_failed", "review_failed", "setup_failed", "provider_not_configured"]);
+
+export function normalizeReviewModel(model, defaultModel) {
+  const configuredModel = String(model ?? "").trim();
+  return LEGACY_MODEL_ALIASES.get(configuredModel) || configuredModel || defaultModel;
+}
 
 export function selectReviewModels({
   apiKey,
@@ -17,7 +27,10 @@ export function selectReviewModels({
 } = {}) {
   if (!String(apiKey ?? '').trim()) return null;
 
-  const models = [...new Set([primaryModel, fallbackModel].map((model) => String(model || "").trim()).filter(Boolean))];
+  const models = [...new Set([
+    normalizeReviewModel(primaryModel, DEFAULT_MODEL),
+    normalizeReviewModel(fallbackModel, DEFAULT_FALLBACK_MODEL),
+  ].filter(Boolean))];
   if (models.length === 0) return null;
 
   const additionCount = Number(additions);
