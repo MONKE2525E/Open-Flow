@@ -124,6 +124,7 @@ pub fn start_recording_session_ex(
             let raw_level_arc = session.raw_level.clone();
             let active_arc = session.active.clone();
             let start_cue_active = session.active.clone();
+            let target_hwnd;
             {
                 let mut st = match lock_state(state) {
                     Ok(st) => st,
@@ -160,6 +161,7 @@ pub fn start_recording_session_ex(
                     handless_from_hold: false,
                     prepend_audio,
                 };
+                target_hwnd = st.target.id;
             }
             if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
                 manager.set_recording_active(true);
@@ -170,7 +172,6 @@ pub fn start_recording_session_ex(
                 // (resolved from the same captured target the pipeline uses)
                 // so the recording pill can show it. Best-effort — a failed
                 // read simply leaves the label hidden.
-                let target_hwnd = lock_state(state).map(|st| st.target.id).unwrap_or(0);
                 emit_profile_for_window(app, target_hwnd);
             }
             spawn_level_emitter(

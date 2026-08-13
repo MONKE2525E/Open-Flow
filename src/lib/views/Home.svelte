@@ -143,7 +143,13 @@
     } catch { /* clipboard not available in dev */ }
   }
 
+  // A monotonically increasing sequence number lets a superseded load()
+  // (e.g. a search debounce firing right after an app-filter change) detect
+  // that a newer request is in flight and discard its own stale result.
+  let loadSeq = 0;
+
   async function load(reset = true) {
+    const seq = ++loadSeq;
     const nextOffset = reset ? 0 : recents.length;
     try {
       const [r, s] = await Promise.all([
@@ -155,10 +161,12 @@
         }),
         reset ? invoke<Stats>('get_stats') : Promise.resolve(stats),
       ]);
+      if (seq !== loadSeq) return;
       recents = reset ? (r ?? []) : [...recents, ...(r ?? [])];
       stats = s;
       hasMoreHistory = (r?.length ?? 0) === HISTORY_PAGE_SIZE;
     } catch (err) {
+      if (seq !== loadSeq) return;
       console.error('Home load failed:', err);
       if (reset) {
         recents = [];
