@@ -15,11 +15,37 @@ pub(super) const CANCEL_RESUME_WINDOW: std::time::Duration = std::time::Duration
 pub(super) const PASTE_FAILURE_WINDOW: std::time::Duration = std::time::Duration::from_secs(300);
 // ---------- shared state ----------
 
+/// Default pill window width (logical points) before the frontend reports the
+/// real content width. Deliberately the *smallest* content width (the bare
+/// recording capsule, matching PillApp.svelte's MIN_PILL_WINDOW_W) rather than
+/// the historical fixed 380: the frontend widens the window within a frame of
+/// mounting whenever it needs more, so starting small means the very first
+/// reveal never flashes a 380px-wide transparent click-capture band around a
+/// 72px pill.
+pub const DEFAULT_PILL_WIDTH_POINTS: f64 = 96.0;
+
+/// Default pill window height (logical points) — the bare 34px capsule plus
+/// vertical shadow/entrance-transform margin (PillApp.svelte's
+/// MIN_PILL_WINDOW_H). Grows when the profile label floats above the pill
+/// (see `pill_height_points`).
+pub const DEFAULT_PILL_HEIGHT_POINTS: f64 = 54.0;
+
 pub struct AppState {
     pub lifecycle: DictationLifecycle,
     pub target: WindowTarget,
     pub pill_placement: Option<PillPlacement>,
     pub pill_placement_stale: bool,
+    /// Width (logical points / CSS px) the pill window should be sized to —
+    /// reported by the frontend from the measured visible content so the
+    /// transparent click-capture zone around the pill stays as small as the
+    /// pill itself (see `commands::recording::set_pill_size`). Used by the
+    /// placement math so reveals and cross-monitor moves size to the content
+    /// instead of snapping back to the old fixed 380px.
+    pub pill_width_points: f64,
+    /// Height (logical points) the pill window should be sized to. Tracks the
+    /// profile label floating above the capsule; the window grows upward so
+    /// the pill itself stays visually pinned.
+    pub pill_height_points: f64,
     pub retry_capture: Option<RetryCapture>,
     pub cancelled_capture: Option<CancelledCapture>,
     pub paste_failure: Option<PasteFailure>,
@@ -602,6 +628,8 @@ mod tests {
             target: WindowTarget::default(),
             pill_placement: None,
             pill_placement_stale: false,
+            pill_width_points: DEFAULT_PILL_WIDTH_POINTS,
+            pill_height_points: DEFAULT_PILL_HEIGHT_POINTS,
             retry_capture: None,
             cancelled_capture: None,
             paste_failure: None,
