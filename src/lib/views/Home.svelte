@@ -34,6 +34,44 @@
   let loadingMore = false;
   let hasMoreHistory = false;
 
+  // History search + app filter. Search is debounced; the app list comes from
+  // the backend so filtering stays in SQLite (pagination is preserved).
+  let search = '';
+  let debouncedSearch = '';
+  let appFilter: string | null = null;
+  let apps: string[] = [];
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function handleSearchChange(value: string) {
+    search = value;
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      searchTimer = null;
+      if (debouncedSearch !== value) {
+        debouncedSearch = value;
+        load(true);
+      }
+    }, 120);
+  }
+
+  function handleAppFilterChange(app: string | null) {
+    if (appFilter === app) return;
+    appFilter = app;
+    load(true);
+  }
+
+  function clearHistoryFilters() {
+    if (search === '' && appFilter === null) return;
+    search = '';
+    debouncedSearch = '';
+    appFilter = null;
+    if (searchTimer) {
+      clearTimeout(searchTimer);
+      searchTimer = null;
+    }
+    load(true);
+  }
+
   async function retryTranscription() {
     if (retrying) return;
     retrying = true;
@@ -91,7 +129,12 @@
     const nextOffset = reset ? 0 : recents.length;
     try {
       const [r, s] = await Promise.all([
-        invoke<Entry[]>('get_recent', { limit: HISTORY_PAGE_SIZE, offset: nextOffset }),
+        invoke<Entry[]>('get_recent', {
+          limit: HISTORY_PAGE_SIZE,
+          offset: nextOffset,
+          search: debouncedSearch.trim() || undefined,
+          appName: appFilter ?? undefined,
+        }),
         reset ? invoke<Stats>('get_stats') : Promise.resolve(stats),
       ]);
       recents = reset ? (r ?? []) : [...recents, ...(r ?? [])];
@@ -140,6 +183,9 @@
 
   onMount(() => {
     getVersion().then(v => currentVersion = v);
+    invoke<string[] | null>('get_history_apps')
+      .then(list => { apps = list ?? []; })
+      .catch(() => { apps = []; });
     invoke<string[] | null>('get_setting', { key: 'hotkey' })
       .then(hk => { if (hk?.length === 2) hotkey = hk; })
       .catch(() => { /* use platform default if setting unavailable */ });
@@ -253,6 +299,12 @@
         {copiedId}
         {hk1}
         {hk2}
+        {search}
+        {apps}
+        {appFilter}
+        onSearchChange={handleSearchChange}
+        onAppFilterChange={handleAppFilterChange}
+        onClearFilters={clearHistoryFilters}
         onRetry={retryTranscription}
         onContinueCancelled={continueCancelled}
         onDismissCancelled={dismissCancelled}

@@ -186,7 +186,7 @@ mod tests {
         let db = open(path.to_str().expect("path string")).expect("open repairs stuck db");
 
         // Inserting a new transcription must succeed now that spoken_words exists.
-        insert_transcription_returning(&db, "second clip", "second clip", 2, 1000, "test")
+        insert_transcription_returning(&db, "second clip", "second clip", 2, 1000, "test", None)
             .expect("insert after repair");
 
         let conn = lock_conn(&db).expect("lock");
@@ -549,7 +549,7 @@ mod tests {
             "",
         )
         .expect("snippet");
-        insert_transcription_returning(&db, "sig.", "A long email signature", 9, 2000, "test")
+        insert_transcription_returning(&db, "sig.", "A long email signature", 9, 2000, "test", None)
             .expect("transcription");
 
         let stats = query_stats(&db).expect("stats");
@@ -569,6 +569,7 @@ mod tests {
             4,
             2000,
             "test",
+            None,
         )
         .expect("transcription");
 
@@ -581,9 +582,9 @@ mod tests {
     fn stats_avg_wpm_excludes_pure_snippet_rows_from_average() {
         let db = test_db();
         insert_snippet(&db, "sig", "A long email signature", "").expect("snippet");
-        insert_transcription_returning(&db, "hello world", "hello world", 2, 1000, "test")
+        insert_transcription_returning(&db, "hello world", "hello world", 2, 1000, "test", None)
             .expect("normal transcription");
-        insert_transcription_returning(&db, "sig.", "A long email signature", 4, 1000, "test")
+        insert_transcription_returning(&db, "sig.", "A long email signature", 4, 1000, "test", None)
             .expect("snippet transcription");
 
         let stats = query_stats(&db).expect("stats");
@@ -608,6 +609,7 @@ mod tests {
                 3,
                 1000,
                 "test",
+                None,
             )
             .expect("transcription");
         }
@@ -621,9 +623,9 @@ mod tests {
     #[test]
     fn prune_transcriptions_older_than_deletes_only_old_rows() {
         let db = test_db();
-        insert_transcription_returning(&db, "old one", "old one", 2, 1000, "test")
+        insert_transcription_returning(&db, "old one", "old one", 2, 1000, "test", None)
             .expect("old transcription");
-        insert_transcription_returning(&db, "recent one", "recent one", 2, 1000, "test")
+        insert_transcription_returning(&db, "recent one", "recent one", 2, 1000, "test", None)
             .expect("recent transcription");
         {
             let conn = lock_conn(&db).expect("lock");
@@ -651,9 +653,9 @@ mod tests {
     #[test]
     fn pruning_old_transcriptions_does_not_reduce_lifetime_word_total() {
         let db = test_db();
-        insert_transcription_returning(&db, "old one", "old one", 5, 1000, "test")
+        insert_transcription_returning(&db, "old one", "old one", 5, 1000, "test", None)
             .expect("old transcription");
-        insert_transcription_returning(&db, "recent one", "recent one", 3, 1000, "test")
+        insert_transcription_returning(&db, "recent one", "recent one", 3, 1000, "test", None)
             .expect("recent transcription");
         {
             let conn = lock_conn(&db).expect("lock");

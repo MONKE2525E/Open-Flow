@@ -166,6 +166,12 @@ pub fn start_recording_session_ex(
             }
             if options.show_recording_pill {
                 show_pill(app, pill_state);
+                // Surface the tone profile that will apply to this dictation
+                // (resolved from the same captured target the pipeline uses)
+                // so the recording pill can show it. Best-effort — a failed
+                // read simply leaves the label hidden.
+                let target_hwnd = lock_state(state).map(|st| st.target.id).unwrap_or(0);
+                emit_profile_for_window(app, target_hwnd);
             }
             spawn_level_emitter(
                 app.clone(),

@@ -1,6 +1,13 @@
 import type { UpdateInfo } from '../../stores';
 
-export interface Entry { id: number; clean_text: string; words: number; created_at: string; }
+export interface Entry {
+  id: number;
+  clean_text: string;
+  words: number;
+  created_at: string;
+  app_name?: string | null;
+  duration_ms?: number;
+}
 export interface Stats { total_words: number; avg_wpm: number; day_streak: number; }
 
 export type RenderItem =
@@ -8,6 +15,18 @@ export type RenderItem =
   | { type: 'row'; key: string; entry: Entry };
 
 export const HISTORY_PAGE_SIZE = 100;
+
+/** Prettifies a stored lowercase executable name (e.g. "outlook.exe") for
+ * display ("Outlook"). Falls back to the raw value for anything odd. */
+export function formatAppLabel(appName: string): string {
+  const base = appName.trim().toLowerCase().replace(/\.exe$/, '');
+  if (!base) return appName;
+  return base
+    .split(/[._\-\s+]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
 
 export function getGreeting(): string {
   const now = new Date();

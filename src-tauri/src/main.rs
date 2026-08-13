@@ -569,6 +569,7 @@ fn main() {
             commands::show_main,
             commands::hide_main,
             commands::get_recent,
+            commands::get_history_apps,
             commands::get_stats,
             commands::get_insights,
             commands::count_old_transcriptions,

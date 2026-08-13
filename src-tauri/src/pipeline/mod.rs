@@ -38,7 +38,9 @@ use gates::{
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
     silence_floor_gate_rms, strip_hallucinated_suffix, MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
-pub(crate) use pill::{hide_pill, show_copied_pill, show_pill, update_pill_state};
+pub(crate) use pill::{
+    emit_pill_profile, emit_pill_stage, hide_pill, show_copied_pill, show_pill, update_pill_state,
+};
 use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_failed_pill};
 pub use session::*;
 use stages::*;
@@ -108,6 +110,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
 
     let mut transcribed: Option<String> = None;
     let mut last_err: Option<anyhow::Error> = None;
+    emit_pill_stage(&app, "transcribing");
     for (provider_id, model) in transcription_model_chain(&cfg) {
         let language = cfg.transcription_language.clone();
         let key = cfg.key_for(&provider_id).to_owned();
@@ -346,6 +349,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         state::leave_processing_if_owned(&state, generation);
         return;
     };
+    // The profile is now resolved — surface it so the pill can show which
+    // style applies to this dictation (same value emitted at record start).
+    emit_pill_profile(&app, &profile);
     log::debug!(
         "pipeline: config t_provider={} c_provider={} t_model={} c_model={} cleanup_enabled={} intensity={} app_context_hint={} profile={}",
         cfg.transcription_provider,
@@ -421,6 +427,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     }
 
     let stage_transcribe = std::time::Instant::now();
+    emit_pill_stage(&app, "transcribing");
     let transcribe_race = tokio::select! {
         r = run_transcription(&app, &captured_audio, &cfg) => Some(r),
         _ = wait_for_cancel(&mut cancel_rx) => None,
@@ -513,6 +520,20 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     }
 
     let stage_cleanup = std::time::Instant::now();
+    // Only advertise the cleaning stage when the cleanup LLM will actually run
+    // (cleanup enabled + intensity + a key in the chain). When cleanup is off
+    // the cleanup call resolves to local snippet/dictionary work that is
+    // effectively instant, so advertising it would just flash the label.
+    let cleanup_will_run_llm = should_run_cleanup_llm(
+        cfg.cleanup_enabled,
+        has_cleanup_key_in_chain(&cfg),
+        true,
+        &cfg.cleanup_intensity,
+        &profile,
+    );
+    if cleanup_will_run_llm {
+        emit_pill_stage(&app, "cleaning");
+    }
     let cleanup_race = tokio::select! {
         r = run_cleanup_and_snippets(&app, &raw, alternate.as_ref(), &cfg, &profile, app_context.as_deref()) => Some(r),
         _ = wait_for_cancel(&mut cancel_rx) => None,
@@ -550,6 +571,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // finalize (see core/injection's serialized critical section). Failure
     // here means an interrupt/Escape branch already took ownership of this
     // generation; abandon without inserting anything.
+    emit_pill_stage(&app, "pasting");
     if !state::enter_finalizing(&state, generation) {
         return;
     }
@@ -647,7 +669,9 @@ pub async fn retry_transcription_impl(
 
     let mapping = resolve_app_mapping(Some(&settings_store), &capture.process_name);
     capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
+    emit_pill_profile(app, &capture.profile);
 
+    emit_pill_stage(app, "transcribing");
     let Some((raw_unorm, api_used, alternate)) = run_transcription(app, &capture.audio, &cfg).await
     else {
         hide_pill(app);
@@ -671,6 +695,15 @@ pub async fn retry_transcription_impl(
         hide_pill(app);
         anyhow::bail!("Recording was too quiet — nothing was transcribed");
     }
+    if should_run_cleanup_llm(
+        cfg.cleanup_enabled,
+        has_cleanup_key_in_chain(&cfg),
+        true,
+        &cfg.cleanup_intensity,
+        &capture.profile,
+    ) {
+        emit_pill_stage(app, "cleaning");
+    }
     let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) =
         run_cleanup_and_snippets(
             app,
@@ -691,6 +724,7 @@ pub async fn retry_transcription_impl(
         format!("{api_used};cleanup={cleanup_api_used}")
     };
 
+    emit_pill_stage(app, "pasting");
     finalize_pipeline_completion(
         app,
         state,

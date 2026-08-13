@@ -369,6 +369,26 @@ pub(crate) fn show_copied_pill(app: &AppHandle, msg: &str) {
     show_pill_msg(app, "copied", Some(msg));
 }
 
+/// Emits the current processing sub-stage to the pill window. The pill is
+/// already showing `processing`; this only refines what it displays
+/// ("Transcribing…" / "Cleaning…" / "Pasting…"). Payload is a bare stage id
+/// string; the frontend maps it to a label, so adding a stage never requires
+/// an IPC schema change.
+pub(crate) fn emit_pill_stage(app: &AppHandle, stage: &str) {
+    if let Some(pill) = app.get_webview_window("pill") {
+        pill.emit("pill-stage", stage).ok();
+    }
+}
+
+/// Emits the resolved tone profile (e.g. "casual") to the pill window so it
+/// can show which style will apply to the current dictation. Emitted from the
+/// pipeline itself — the frontend never re-resolves it.
+pub(crate) fn emit_pill_profile(app: &AppHandle, profile: &str) {
+    if let Some(pill) = app.get_webview_window("pill") {
+        pill.emit("pill-profile", profile).ok();
+    }
+}
+
 pub(super) async fn show_error_pill(app: &AppHandle, msg: &str) {
     log::error!("pipeline error: {msg}");
     app.emit("verenu:error", msg).ok();

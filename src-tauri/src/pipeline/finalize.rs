@@ -63,6 +63,11 @@ pub(super) async fn finalize_pipeline_completion(
     let words = ctx.raw.split_whitespace().count() as i64;
     let db_for_insert = db_handle.inner().clone();
     let raw_for_insert = ctx.raw.to_string();
+    // History's per-entry app metadata is the lowercase executable name. The
+    // "unknown" fallback from window_context carries no signal (failed read /
+    // lost foreground), so it is stored as NULL and simply has no app.
+    let app_name_for_insert = (!ctx.process_name.is_empty() && ctx.process_name != "unknown")
+        .then(|| ctx.process_name.clone());
     // `final_text_substituted` already has caps-lock uppercasing AND
     // dictionary substitution applied (see above) — it's the same text that
     // gets injected below. History must save exactly that, not
@@ -82,6 +87,7 @@ pub(super) async fn finalize_pipeline_completion(
             words,
             duration_for_insert,
             &api_used_for_insert,
+            app_name_for_insert.as_deref(),
         )?;
         if dictionary_fixes_applied > 0 {
             // Lifetime counter for the Insights "fixes made by Verenu" card;

@@ -15,10 +15,14 @@ CREATE TABLE IF NOT EXISTS transcriptions (
   spoken_words INTEGER,
   duration_ms INTEGER NOT NULL DEFAULT 0,
   api_used    TEXT    NOT NULL DEFAULT '',
+  app_name    TEXT,
   created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_transcriptions_created_at
   ON transcriptions(created_at);
+-- Note: idx_transcriptions_app_name is NOT declared here because SCHEMA runs
+-- before migrations, and a legacy database predating the app_name column would
+-- fail the index build. The v13 migration adds the column then the index.
 CREATE TABLE IF NOT EXISTS lifetime_stats (
   id               INTEGER PRIMARY KEY CHECK (id = 1),
   total_words      INTEGER NOT NULL DEFAULT 0,
@@ -349,6 +353,28 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
                 "ALTER TABLE lifetime_stats ADD COLUMN dictionary_fixes INTEGER NOT NULL DEFAULT 0;",
             )?;
             conn.execute_batch("PRAGMA user_version = 11;")?;
+            Ok(())
+        })?;
+    }
+    if user_version < 13 {
+        log::info!("db: migrating schema {user_version} -> 13");
+        // Per-dictation foreground app (the lowercase executable name, e.g.
+        // "outlook.exe") so History can filter/annotate by app. The value was
+        // never persisted before v13, so past rows keep NULL and simply have
+        // no app metadata. Declared in SCHEMA for fresh databases;
+        // ensure_table_column is idempotent for databases that already have it.
+        run_migration(&mut conn, |conn| {
+            ensure_table_column(
+                conn,
+                "transcriptions",
+                "app_name",
+                "ALTER TABLE transcriptions ADD COLUMN app_name TEXT;",
+            )?;
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_transcriptions_app_name
+                   ON transcriptions(app_name);
+                 PRAGMA user_version = 13;",
+            )?;
             Ok(())
         })?;
     }

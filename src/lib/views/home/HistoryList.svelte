@@ -4,7 +4,9 @@
   import { expoOut } from 'svelte/easing';
   import { icons } from '../../icons';
   import { appStore } from '../../stores';
-  import { fmtDate, fmtTime, type Entry, type RenderItem } from './helpers';
+  import { fmtDuration } from '../insights/helpers';
+  import HistoryToolbar from './HistoryToolbar.svelte';
+  import { fmtDate, fmtTime, formatAppLabel, type Entry, type RenderItem } from './helpers';
 
   export let recents: Entry[];
   export let failedEntry: { created_at: string } | null;
@@ -17,6 +19,12 @@
   export let copiedId: number | null;
   export let hk1: string;
   export let hk2: string;
+  export let search: string;
+  export let apps: string[];
+  export let appFilter: string | null;
+  export let onSearchChange: (value: string) => void;
+  export let onAppFilterChange: (app: string | null) => void;
+  export let onClearFilters: () => void;
   export let onRetry: () => void;
   export let onContinueCancelled: () => void;
   export let onDismissCancelled: () => void;
@@ -24,6 +32,20 @@
   export let onCopy: (entry: Entry) => void;
 
   $: hasBanner = !!failedEntry || !!cancelledEntry;
+  $: filtersActive = search.trim().length > 0 || appFilter !== null;
+
+  function rowMeta(entry: Entry): string {
+    const parts: string[] = [];
+    if (entry.app_name) parts.push(formatAppLabel(entry.app_name));
+    if (
+      typeof entry.duration_ms === 'number' &&
+      Number.isFinite(entry.duration_ms) &&
+      entry.duration_ms >= 0
+    ) {
+      parts.push(fmtDuration(entry.duration_ms));
+    }
+    return parts.join(' · ');
+  }
 
   let flatItems: RenderItem[] = [];
   $: {
@@ -56,7 +78,7 @@
   }
 
   const DEFAULT_HEADER_HEIGHT = 38;
-  const DEFAULT_ROW_HEIGHT = 58;
+  const DEFAULT_ROW_HEIGHT = 74;
 
   let container: HTMLElement | null = null;
   let listContainer: HTMLElement | null = null;
@@ -168,6 +190,10 @@
     container;
     listContainer;
     appStore.updateInfo;
+    // The toolbar's "Clear filters" button appears/disappears with filter
+    // state, which changes the list's vertical offset — recompute when it
+    // toggles, not just when history rows change.
+    filtersActive;
     // Depend on the entries directly, not the derived `hasBanner` boolean —
     // swapping one banner for the other keeps the boolean true, so the block
     // would otherwise not re-run and `listOffset` would go stale.
@@ -307,10 +333,27 @@
     </div>
   {/if}
 
+  <HistoryToolbar
+    {search}
+    {apps}
+    {appFilter}
+    {onSearchChange}
+    {onAppFilterChange}
+    {onClearFilters}
+  />
+
   {#if recents.length === 0 && !hasBanner}
-    <div class="empty-state">
-      No dictations yet. Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to get started.
-    </div>
+    {#if filtersActive}
+      <div class="empty-state">
+        <p class="empty-h">No matches</p>
+        <p class="empty-sub">Nothing matches your current search and filters.</p>
+        <button class="btn-ghost" onclick={onClearFilters}>Clear filters</button>
+      </div>
+    {:else}
+      <div class="empty-state">
+        No dictations yet. Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to get started.
+      </div>
+    {/if}
   {:else}
     <div bind:this={listContainer}>
       <div style="height: {topSpacerHeight}px;"></div>
@@ -322,7 +365,12 @@
         {:else if item.type === 'row'}
           <div use:measureItem={item.key} class="day-row" class:first-in-table={(index === 0 && !hasBanner) || flatItems[index - 1]?.type === 'header'}>
             <div class="day-time">{fmtTime(item.entry.created_at)}</div>
-            <div class="day-text">{item.entry.clean_text}</div>
+            <div class="day-main">
+              <div class="day-text">{item.entry.clean_text}</div>
+              {#if rowMeta(item.entry)}
+                <div class="day-meta">{rowMeta(item.entry)}</div>
+              {/if}
+            </div>
             <button
               class="copy-btn"
               class:copied={copiedId === item.entry.id}
@@ -425,6 +473,23 @@
     overflow-wrap: anywhere;
   }
 
+  .day-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .day-meta {
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    letter-spacing: 0.01em;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .error-msg {
     color: var(--ink-mute);
     font-style: italic;
@@ -480,6 +545,28 @@
     font-size: 13px;
     color: var(--ink-mute);
     font-style: italic;
+  }
+
+  .empty-state .empty-h,
+  .empty-state .empty-sub {
+    font-style: normal;
+  }
+
+  .empty-h {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 17px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  .empty-sub {
+    font-size: 12.5px;
+    color: var(--ink-mute);
+    line-height: 1.5;
+    margin: 0 0 10px;
+    max-width: 360px;
   }
 
   .empty-state :global(kbd) {
