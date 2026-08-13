@@ -177,12 +177,7 @@ async fn check_repo(
         return Ok(None);
     };
 
-    if !should_offer_release_for_channel(
-        &display_version,
-        &current_package_version(),
-        channel,
-        require_newer,
-    ) {
+    if !should_offer_release(&display_version, &current_package_version(), require_newer) {
         return Ok(None);
     }
 
@@ -402,47 +397,23 @@ fn normalize_version(tag: &str) -> String {
 }
 
 fn is_newer(latest: &str, current: &str) -> bool {
-    compare_versions(latest, current) == std::cmp::Ordering::Greater
+    let latest = release_version(latest).unwrap_or_else(|| normalize_version(latest));
+    let current = release_version(current).unwrap_or_else(|| normalize_version(current));
+    let Some(latest) = parse_version(&latest) else {
+        return false;
+    };
+    let Some(current) = parse_version(&current) else {
+        return false;
+    };
+
+    // CI nightly identifiers are build metadata for update purposes. The
+    // packaged application keeps the stable Cargo version, so comparing the
+    // suffix would offer the same nightly release again on every check.
+    latest.core > current.core
 }
 
 fn should_offer_release(latest: &str, current: &str, require_newer: bool) -> bool {
     !require_newer || is_newer(latest, current)
-}
-
-/// SemVer deliberately considers `0.16.2-nightly` older than the final
-/// `0.16.2` release. That rule is normally correct, but an opted-in beta user
-/// needs to be able to move from the stable build to that matching nightly.
-/// The channel gate has already verified that `latest` is a beta release.
-fn should_offer_release_for_channel(
-    latest: &str,
-    current: &str,
-    channel: UpdateChannel,
-    require_newer: bool,
-) -> bool {
-    if should_offer_release(latest, current, require_newer) {
-        return true;
-    }
-
-    if !require_newer || channel != UpdateChannel::Beta {
-        return false;
-    }
-
-    let latest = parse_version(latest);
-    let current = parse_version(current);
-
-    matches!(
-        (latest, current),
-        (
-            Some(ParsedVersion {
-                core: latest_core,
-                prerelease: Some(_),
-            }),
-            Some(ParsedVersion {
-                core: current_core,
-                prerelease: None,
-            }),
-        ) if latest_core == current_core
-    )
 }
 
 fn current_update_target() -> UpdateTarget {
@@ -551,7 +522,7 @@ mod tests {
     use super::{
         current_package_version, find_asset_with_suffix, is_authorized_release_asset_url, is_newer,
         normalize_version, parse_prerelease_parts, release_version, select_release,
-        select_release_asset_for_target, should_offer_release, should_offer_release_for_channel,
+        select_release_asset_for_target, should_offer_release,
         GhAsset, GhRelease, InstallMode, UpdateChannel, UpdateTarget, VersionPart,
     };
 
@@ -766,35 +737,19 @@ mod tests {
     }
 
     #[test]
-    fn beta_channel_can_replace_a_same_core_stable_release() {
-        assert!(should_offer_release_for_channel(
-            "0.16.2-nightly.20260804",
-            "0.16.2",
-            UpdateChannel::Beta,
-            true,
+    fn nightly_suffixes_do_not_make_a_same_core_update_newer() {
+        assert!(!is_newer("0.16.6-nightly.20260811", "0.16.6"));
+        assert!(!should_offer_release(
+            "0.16.6-nightly.20260811",
+            "0.16.6",
+            true
         ));
-        assert!(!should_offer_release_for_channel(
-            "0.16.2-nightly.20260804",
-            "0.16.2",
-            UpdateChannel::Stable,
-            true,
+        assert!(!is_newer(
+            "0.16.6-nightly.20260811",
+            "0.16.6-nightly.20260810"
         ));
-        assert!(!should_offer_release_for_channel(
-            "0.16.2-nightly.20260803",
-            "0.16.2-nightly.20260804",
-            UpdateChannel::Beta,
-            true,
-        ));
+        assert!(is_newer("0.16.7-nightly.20260811", "0.16.6"));
     }
-
-    #[test]
-    fn prerelease_versions_compare_without_losing_build_order() {
-        assert!(is_newer("0.15.1-beta.2", "0.15.1-beta.1"));
-        assert!(!is_newer("0.15.1-beta.1", "0.15.1-beta.2"));
-        assert!(!is_newer("0.15.1-beta.2", "0.15.1"));
-        assert!(is_newer("0.15.2-beta.1", "0.15.1"));
-    }
-
     #[test]
     fn current_package_version_uses_cargo_package_version_as_is() {
         assert_eq!(current_package_version(), env!("CARGO_PKG_VERSION"));
