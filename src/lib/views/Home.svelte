@@ -81,10 +81,10 @@
   }
 
   // Filters are session-only. Page navigation unmounts Home (fresh state on
-  // return); Settings is a full-screen overlay that keeps Home mounted, so
-  // clear the filter there too and refresh the list behind it. A restart
-  // clears them naturally since nothing is persisted.
-  $: if (appStore.currentPage !== 'home' || appStore.settingsOpen) {
+  // return, no reload needed); Settings is a full-screen overlay that keeps
+  // Home mounted, so clear the filter there and refresh the list behind it.
+  // A restart clears them naturally since nothing is persisted.
+  $: if (appStore.settingsOpen) {
     if (resetHistoryFilters()) {
       load(true);
     }

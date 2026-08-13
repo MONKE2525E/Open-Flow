@@ -1,10 +1,9 @@
 <script lang="ts">
   import Dropdown from '../../components/Dropdown.svelte';
-  import { cleanAppName } from '../../appMappings';
   import { formatAppLabel } from './helpers';
 
   export let search: string;
-  export let apps: string[];
+  export let apps: string[] = [];
   export let appFilter: string | null;
   export let onSearchChange: (value: string) => void;
   export let onAppFilterChange: (app: string | null) => void;
@@ -69,7 +68,7 @@
           aria-controls="history-app-menu"
           onclick={() => (appDropdownOpen = !appDropdownOpen)}
         >
-          <span>{appFilter ? cleanAppName(appFilter) : 'All apps'}</span>
+          <span>{appFilter ? formatAppLabel(appFilter) : 'All apps'}</span>
           <svg
             class="ui-chevron"
             class:open={appDropdownOpen}

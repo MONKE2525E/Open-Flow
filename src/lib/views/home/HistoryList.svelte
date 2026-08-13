@@ -31,7 +31,7 @@
   export let onCopy: (entry: Entry) => void;
 
   $: hasBanner = !!failedEntry || !!cancelledEntry;
-  $: filtersActive = search.trim().length > 0 || appFilter !== null;
+  $: filtersActive = (search ?? '').trim().length > 0 || appFilter !== null;
 
   function rowMeta(entry: Entry): string {
     const parts: string[] = [];

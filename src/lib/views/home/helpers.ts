@@ -16,10 +16,11 @@ export type RenderItem =
 
 export const HISTORY_PAGE_SIZE = 100;
 
-/** Prettifies a stored lowercase executable name (e.g. "outlook.exe") for
- * display ("Outlook"). Falls back to the raw value for anything odd. */
+/** Prettifies a stored lowercase executable name (e.g. "outlook.exe" on
+ * Windows or "slack.app" on macOS) for display ("Outlook" / "Slack"). Falls
+ * back to the raw value for anything odd. */
 export function formatAppLabel(appName: string): string {
-  const base = appName.trim().toLowerCase().replace(/\.exe$/, '');
+  const base = appName.trim().toLowerCase().replace(/\.(exe|app)$/, '');
   if (!base) return appName;
   return base
     .split(/[._\-\s+]+/)

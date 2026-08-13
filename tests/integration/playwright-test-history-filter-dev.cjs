@@ -131,12 +131,13 @@ const historyMockWrap = function () {
       console.error('FAILURES:');
       errors.forEach((e) => console.error('  ' + e));
       await page.screenshot({ path: FAILURE_SCREENSHOT, fullPage: true });
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     console.log('PASS — history search, app filter, metadata, and clear-all work together.');
   } catch (err) {
     console.error('FAIL — test threw:', err.message);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await browser.close();
   }
