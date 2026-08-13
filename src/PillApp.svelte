@@ -83,55 +83,6 @@
 
   const BARS = 12;
 
-  // --- Content-fit window sizing -------------------------------------------
-  // The pill window's native size follows the visible content (capsule +
-  // profile label floating above it + expanded error text) so the transparent
-  // click-capture zone around the pill never exceeds the pill itself.
-  // Measured here (CSS px == logical points on the pill's monitor) and pushed
-  // to the backend, which resizes the window center-anchored horizontally and
-  // bottom-anchored vertically, so the pill never moves while it grows.
-  // `offsetWidth/offsetHeight` are layout dimensions, so the entrance/exit
-  // scale transforms don't pollute the measurement.
-  const PILL_PAD_W = 20; // shadow bleed margin (10px per side)
-  const PILL_PAD_H = 10; // shadow bleed margin (5px top + bottom)
-  const MIN_PILL_WINDOW_W = 92; // smallest capsule (recording) + PAD_W
-  const MIN_PILL_WINDOW_H = 44; // bare capsule + PAD_H
-  let clusterEl: HTMLDivElement | null = null;
-  let lastSentWidth = 0;
-  let lastSentHeight = 0;
-  // Deferred "final size" report: growth is sent immediately (so content is
-  // never clipped mid-transition), but shrinking waits for ~100ms of quiet —
-  // a shrinking pill's ResizeObserver fires every animation frame, and chasing
-  // it with a native resize per frame is exactly the flicker this avoids.
-  let settleTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function reportPillSize(width: number, height: number) {
-    const w = Math.max(Math.round(width + PILL_PAD_W), MIN_PILL_WINDOW_W);
-    const h = Math.max(Math.round(height + PILL_PAD_H), MIN_PILL_WINDOW_H);
-    if (w === lastSentWidth && h === lastSentHeight) return;
-    lastSentWidth = w;
-    lastSentHeight = h;
-    import('@tauri-apps/api/core')
-      .then(({ invoke }) => invoke('set_pill_size', { width: w, height: h }))
-      .catch(() => {});
-  }
-
-  function measureAndResize() {
-    if (!clusterEl) return;
-    const w = Math.max(Math.round(clusterEl.offsetWidth + PILL_PAD_W), MIN_PILL_WINDOW_W);
-    const h = Math.max(Math.round(clusterEl.offsetHeight + PILL_PAD_H), MIN_PILL_WINDOW_H);
-    if (w > lastSentWidth || h > lastSentHeight) {
-      reportPillSize(clusterEl.offsetWidth, clusterEl.offsetHeight);
-    }
-    if (settleTimer) clearTimeout(settleTimer);
-    settleTimer = setTimeout(() => {
-      settleTimer = null;
-      if (clusterEl) reportPillSize(clusterEl.offsetWidth, clusterEl.offsetHeight);
-    }, 100);
-  }
-
-  let pillResizeObserver: ResizeObserver | null = null;
-
   // Snap CSS-px lengths to a whole number of device pixels. On fractional DPI
   // scaling (e.g. 1.25×/1.5×) a hardcoded 3px bar maps to a fractional device
   // width, and Chromium rounds each bar's edges independently — so neighboring
@@ -355,10 +306,6 @@
         : ERROR_COLLAPSED_WIDTH;
       errWidth = errWidthNatural;
       errOpen = true;
-      // Eagerly size the native window to the target before the CSS width
-      // transition starts, so the growing error pill is never clipped while
-      // the ResizeObserver catch-up lags the transition.
-      reportPillSize(errWidthNatural, clusterEl?.offsetHeight ?? 34);
     };
 
     if (wasOpen) {
@@ -378,15 +325,6 @@
     // Arm the cross-monitor DPI watcher (defined at component scope above so
     // refreshDpr can re-arm it as the pill moves between displays).
     armDprWatch();
-
-    // Track the rendered content size so the native window stays snug around
-    // it. Fires on every width transition/animation frame of the pill, on
-    // label/stage text appearing, and on the initial idle mount (which
-    // pre-sizes the window to the minimum before the first reveal).
-    if (clusterEl && typeof ResizeObserver !== 'undefined') {
-      pillResizeObserver = new ResizeObserver(() => measureAndResize());
-      pillResizeObserver.observe(clusterEl);
-    }
 
     (async () => {
       const { listen } = await import('@tauri-apps/api/event');
@@ -574,12 +512,6 @@
 
     return () => {
       mounted = false;
-      if (settleTimer) {
-        clearTimeout(settleTimer);
-        settleTimer = null;
-      }
-      pillResizeObserver?.disconnect();
-      pillResizeObserver = null;
       mq?.removeEventListener('change', onDprChange);
       cancelAnimationFrame(rafId);
       if (errorTimer) clearTimeout(errorTimer);
@@ -657,10 +589,9 @@
 <!-- --bar-w/--bar-gap live on .wrap so every pill state (incl. processing, which
      has no bars of its own) inherits the DPI-snapped values for its width calc. -->
 <div class="wrap" style="--bar-w:{barW}px; --bar-gap:{barGap}px">
-  <div class="pill-cluster" bind:this={clusterEl}>
-    {#if profileLabel && (state === 'recording' || state === 'processing' || state === 'handsfree' || state === 'loading_local_model')}
-      <span class="pill-profile">{profileLabel}</span>
-    {/if}
+  {#if profileLabel && (state === 'recording' || state === 'processing' || state === 'handsfree' || state === 'loading_local_model')}
+    <span class="pill-profile">{profileLabel}</span>
+  {/if}
 
   {#if state === 'recording'}
     <div class="pill recording" class:dying={dying}>
@@ -774,7 +705,6 @@
       {/if}
     </div>
   {/if}
-  </div>
 </div>
 
 <style>
@@ -794,18 +724,7 @@
     justify-content: center;
   }
 
-  /* Measured wrapper — the backend sizes the native window to this element's
-     size (see measureAndResize) so the transparent click-capture zone stays
-     as small as the visible content. Column layout: the profile label floats
-     above the capsule (centered) instead of pushing it off-center. */
-  .pill-cluster {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-  }
-
-  /* Resolved tone profile, shown as a small floating tag above the pill so
+  /* Resolved tone profile, shown as a small floating tag beside the pill so
      the otherwise-invisible style setting stays legible without crowding or
      offsetting the pill capsule itself. Fades in softly so its appearance
      reads as the pill growing, not a new element popping in. */
