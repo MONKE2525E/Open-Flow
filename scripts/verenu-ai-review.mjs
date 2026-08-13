@@ -35,6 +35,7 @@ import {
   failureCategory,
   fallbackReason,
   formatProgressSummary,
+  reviewOutcome,
   selectReviewModels,
   shouldFallback,
 } from "./verenu-ai-review-logic.mjs";
@@ -643,23 +644,29 @@ async function main() {
 
     const findings = parseOcrFindings(result.stdout);
     await postFindings(prNumber, pr, findings);
+    const outcome = reviewOutcome(findings);
+    const finalStage = outcome.hasFindings ? "findings" : "complete";
 
     stateComment = await updateProgress(
       prNumber,
       stateComment,
-      formatProgressSummary({ stage: "complete", model: activeModel, mode, findings: findings.length, headSha: pr.head.sha }),
+      formatProgressSummary({ stage: finalStage, model: activeModel, mode, findings: outcome.count, headSha: pr.head.sha }),
       {
         ...baseState,
         model: activeModel,
         attemptedModels: [...attemptedModels],
         fallbackUsed: activeModel !== selection.model,
-        status: "completed",
-        stage: "complete",
-        findings: findings.length,
+        status: outcome.hasFindings ? "failed" : "completed",
+        stage: finalStage,
+        findings: outcome.count,
         timestamp: new Date().toISOString(),
         completed: true,
       },
     );
+    if (outcome.hasFindings) {
+      console.error(`OCR review found ${outcome.count} finding${outcome.count === 1 ? "" : "s"}`);
+      process.exitCode = outcome.exitCode;
+    }
   } catch (err) {
     stateComment = await updateProgress(
       prNumber,
