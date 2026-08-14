@@ -29,6 +29,7 @@
   let preserveExpanded = $state(false);
   let groupEl = $state<HTMLElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
+  let appTriggerEl = $state<HTMLButtonElement | null>(null);
 
   let filtersActive = $derived((search ?? '').trim().length > 0 || appFilter !== null);
   let expanded = $derived(uiExpanded || filtersActive);
@@ -46,9 +47,15 @@
     });
   }
 
-  function selectAppFilter(app: string | null) {
+  async function selectAppFilter(app: string | null) {
+    preserveExpanded = true;
     appDropdownOpen = false;
     onAppFilterChange(app);
+    await tick();
+    appTriggerEl?.focus();
+    requestAnimationFrame(() => {
+      preserveExpanded = false;
+    });
   }
 
   function handleGroupFocusOut() {
@@ -101,6 +108,7 @@
       <Dropdown bind:open={appDropdownOpen} closeSelector=".history-app-dropdown">
         <div class="ui-dropdown history-app-dropdown">
           <button
+            bind:this={appTriggerEl}
             class="ui-dropdown-trigger ui-dropdown-trigger--compact history-app-trigger"
             aria-haspopup="listbox"
             aria-expanded={appDropdownOpen}
