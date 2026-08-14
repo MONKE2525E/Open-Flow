@@ -354,10 +354,8 @@ fn query_totals(
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
 
-    // Identical definition to query_stats (average of each clip's own wpm)
-    // so the Insights "All time" number matches the Home page exactly;
-    // scoped to the range here. Not total_words/total_duration — that
-    // aggregates differently and makes the two pages disagree.
+    // Identical definition to query_stats (average of each clip's own wpm),
+    // scoped to the selected Insights range.
     let avg_wpm: f64 = conn.query_row(
         "SELECT COALESCE(AVG(CAST(spoken_words AS REAL) * 60000.0 / duration_ms), 0.0)
          FROM transcriptions
@@ -373,12 +371,6 @@ fn query_totals(
          WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2
            AND duration_ms > 0 AND spoken_words > 0",
         params![range_start, range_end],
-        |r| r.get(0),
-    )?;
-
-    let total_words: i64 = conn.query_row(
-        "SELECT COALESCE((SELECT total_words FROM lifetime_stats WHERE id = 1), 0)",
-        [],
         |r| r.get(0),
     )?;
 
@@ -404,7 +396,9 @@ fn query_totals(
     };
 
     Ok(InsightsTotals {
-        total_words,
+        // Insights is range-filtered. The lifetime counter is still used by
+        // the Home page, but it must not leak into a selected Insights range.
+        total_words: words_in_range,
         total_transcriptions,
         total_speaking_ms,
         avg_words_per_transcription,
@@ -806,6 +800,18 @@ mod tests {
         assert_eq!(insights.range_days, 0);
         assert_eq!(insights.totals.words_in_range, 4);
         assert_eq!(insights.totals.words_prev_range, 0);
+    }
+
+    #[test]
+    fn selected_range_total_words_excludes_older_transcriptions() {
+        let db = test_db();
+        insert_on_day(&db, 8, "older words", 10, 1000);
+        insert_on_day(&db, 2, "recent words", 4, 1000);
+
+        let insights = query_insights(&db, 7).expect("insights");
+
+        assert_eq!(insights.totals.total_words, 4);
+        assert_eq!(insights.totals.words_in_range, 4);
     }
 
     #[test]

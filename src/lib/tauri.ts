@@ -925,7 +925,7 @@ function devInsights(days: number): unknown {
     range_days: days,
     generated_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
     totals: {
-      total_words: wordsInRange + 218_400,
+      total_words: wordsInRange,
       total_transcriptions: transcriptions,
       total_speaking_ms: speakingMs,
       avg_words_per_transcription: transcriptions ? Math.round(wordsInRange / transcriptions) : 0,
