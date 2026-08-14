@@ -396,15 +396,6 @@ pub(crate) fn emit_pill_stage(app: &AppHandle, stage: &str) {
     }
 }
 
-/// Emits the resolved tone profile (e.g. "casual") to the pill window so it
-/// can show which style will apply to the current dictation. Emitted from the
-/// pipeline itself — the frontend never re-resolves it.
-pub(crate) fn emit_pill_profile(app: &AppHandle, profile: &str) {
-    if let Some(pill) = app.get_webview_window("pill") {
-        pill.emit("pill-profile", profile).ok();
-    }
-}
-
 pub(super) async fn show_error_pill(app: &AppHandle, msg: &str) {
     log::error!("pipeline error: {msg}");
     app.emit("verenu:error", msg).ok();
