@@ -257,10 +257,11 @@
 
   function reportPillSize(width: number, height: number) {
     const w = windowWidthFor(width);
-    const h = windowHeightFor(height);
-    if (pillSizeInFlight) {
-      pillSizePending = w === lastSentWidth && h === lastSentHeight ? null : { w, h };
-      return;
+      const h = windowHeightFor(height);
+      if (pillSizeInFlight) {
+        pillSizePending =
+          pillSizeInFlightTarget?.w === w && pillSizeInFlightTarget.h === h ? null : { w, h };
+        return;
     }
     if (w === lastSentWidth && h === lastSentHeight) return;
     sendPillSize(w, h);
