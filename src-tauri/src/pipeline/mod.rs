@@ -47,7 +47,6 @@ pub(crate) use pill_position::{
     apply_pill_placement, placement_for_current_monitor, PillPlacement,
 };
 pub use session::*;
-pub(crate) use repair::*;
 use stages::*;
 pub use state::*;
 

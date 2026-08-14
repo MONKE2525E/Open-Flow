@@ -288,23 +288,6 @@ pub(super) async fn finalize_pipeline_completion(
         log::debug!("pipeline: skipping hide_pill — paste_failed pill stays up");
     }
 
-    if should_offer_repair {
-        if let Some(context) = ctx.context {
-            super::begin_feedback(
-                app,
-                state,
-                ctx.raw,
-                ctx.final_text_before_dict,
-                &private_text,
-                ctx.process_name.clone(),
-                ctx.browser_domain,
-                context,
-                ctx.dict_entries,
-                ctx.cfg,
-            );
-        }
-    }
-
     if !ctx.cleanup_cache_key.is_empty() {
         auto_learn::start_cache_rejection_monitor(
             private_text.clone(),
