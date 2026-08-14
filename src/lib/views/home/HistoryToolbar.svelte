@@ -3,7 +3,6 @@
 	import { scale, slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import Dropdown from '../../components/Dropdown.svelte';
-	import { cleanAppName } from '../../appMappings';
 	import { formatAppLabel } from './helpers';
 	import { motionMs, MOTION_MS } from '../../motion';
 
@@ -47,7 +46,7 @@
 					aria-controls="history-app-menu"
 					onclick={() => (appDropdownOpen = !appDropdownOpen)}
 				>
-					<span>{appFilter ? cleanAppName(appFilter) : 'All apps'}</span>
+					<span>{appFilter ? formatAppLabel(appFilter) : 'All apps'}</span>
 					<svg class="ui-chevron" class:open={appDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
 				</button>
 				{#if appDropdownOpen}
