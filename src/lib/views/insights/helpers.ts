@@ -94,7 +94,9 @@ export function parseLocalDay(day: string): Date {
 
 export function fmtDay(day: string): string {
   try {
-    return parseLocalDay(day).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const date = parseLocalDay(day);
+    if (Number.isNaN(date.getTime())) return day;
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   } catch {
     return day;
   }
@@ -102,7 +104,9 @@ export function fmtDay(day: string): string {
 
 export function fmtDayLong(day: string): string {
   try {
-    return parseLocalDay(day).toLocaleDateString([], {
+    const date = parseLocalDay(day);
+    if (Number.isNaN(date.getTime())) return day;
+    return date.toLocaleDateString([], {
       weekday: 'short',
       month: 'short',
       day: 'numeric',

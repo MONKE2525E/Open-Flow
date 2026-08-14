@@ -139,7 +139,7 @@
   <!-- Renders above every surface it can open from: settings (z-60), the
        cleanup-prompt modal (z-70), and the setup wizard overlay (z-100). -->
   <div class="preset-confirm-wrap">
-    <div class="ui-modal-backdrop" in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></div>
+    <button type="button" class="ui-modal-backdrop" aria-label="Close dialog" onclick={() => (confirmDelete = false)} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
     <div
       class="modal-card ui-modal-card"
       use:modalFocusTrap={{

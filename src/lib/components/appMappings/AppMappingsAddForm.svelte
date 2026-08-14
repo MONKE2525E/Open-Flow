@@ -208,7 +208,7 @@
             <button
               type="button"
               class="app-picker-item"
-              onclick={() => pickApp(app)}
+              onclick={(event) => pickApp(app, event)}
               onkeydown={(event) =>
                 handleListboxOptionKeydown(event, APP_PICKER_MENU_ID, () => {
                   appPickerOpen = false;

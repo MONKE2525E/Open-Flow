@@ -5,7 +5,7 @@
    * the hovered segment and dims the rest — both from the ring and from the
    * legend. No chart library; the ring is hand-drawn per frame.
    */
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { reducedMotionEnabled } from '../../motion';
 
   export interface DonutSegment {
@@ -209,12 +209,14 @@
     // A hovered segment may no longer exist after a data change (e.g. range
     // filter removed it) — a stale id would dim the whole chart and legend
     // until the next hover. Drop it and any dim state.
-    if (hoveredId !== null && !segments.some((s) => s.id === hoveredId)) {
-      hoveredId = null;
-      dimming = false;
-      dimFromAlpha = 1;
-    }
-    startValueTween();
+    untrack(() => {
+      if (hoveredId !== null && !segments.some((s) => s.id === hoveredId)) {
+        hoveredId = null;
+        dimming = false;
+        dimFromAlpha = 1;
+      }
+      startValueTween();
+    });
   });
 
   function setHover(id: string | null) {
