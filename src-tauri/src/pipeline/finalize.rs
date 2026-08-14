@@ -194,9 +194,9 @@ pub(super) async fn finalize_pipeline_completion(
     );
 
     let clipboard_is_leading = ctx.clipboard_plan.is_some_and(|plan| {
-        final_text_substituted
-            .trim_start()
-            .starts_with(plan.markers.first().map(String::as_str).unwrap_or_default())
+        plan.markers.first().is_some_and(|marker| {
+            final_text_substituted.trim_start().starts_with(marker)
+        })
     });
     let injected = if ctx.event_only {
         injection::InjectionOutcome {

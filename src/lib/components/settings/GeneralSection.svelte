@@ -644,7 +644,7 @@
   </div>
   <div class="clipboard-phrase-controls">
     <input id="clipboard-phrase" class="ui-input" bind:value={clipboardPhrase} onblur={saveClipboardPhrase} disabled={isMac} aria-label="Phrase to insert clipboard text" aria-invalid={clipboardPhraseError ? 'true' : undefined} />
-    <div aria-disabled={isMac}><Toggle checked={clipboardPhraseEnabled} onchange={handleClipboardPhrase} label="Clipboard phrase" /></div>
+    <div aria-disabled={isMac} inert={isMac || undefined}><Toggle checked={clipboardPhraseEnabled} onchange={handleClipboardPhrase} label="Clipboard phrase" /></div>
   </div>
 </div>
 
