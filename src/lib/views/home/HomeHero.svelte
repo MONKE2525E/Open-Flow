@@ -10,7 +10,7 @@
     </h2>
     <p class="hero-photo-sub">
       Verenu works in any app. Try it in
-      <em class="hero-em">email, messages, docs</em> â€” or anywhere else.
+      <em class="hero-em">email, messages, docs</em> &mdash; or anywhere else.
     </p>
   </div>
 </div>
@@ -34,11 +34,7 @@
     pointer-events: none;
   }
 
-  .hero-photo-content {
-    position: relative;
-    padding: 22px 28px;
-    max-width: min(520px, 100%);
-  }
+  .hero-photo-content { position: relative; padding: 22px 28px; max-width: min(520px, 100%); }
 
   .hero-photo-title {
     font-family: var(--serif);
@@ -75,12 +71,7 @@
   }
 
   @media (max-width: 720px) {
-    .hero-photo-content {
-      padding: 18px 20px;
-    }
-
-    .hero-photo-title {
-      font-size: 20px;
-    }
+    .hero-photo-content { padding: 18px 20px; }
+    .hero-photo-title { font-size: 20px; }
   }
 </style>
