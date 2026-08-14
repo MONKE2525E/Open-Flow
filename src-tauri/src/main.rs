@@ -260,6 +260,8 @@ fn main() {
         target: WindowTarget::default(),
         pill_placement: None,
         pill_placement_stale: false,
+        pill_width_points: pipeline::DEFAULT_PILL_WIDTH_POINTS,
+        pill_height_points: pipeline::DEFAULT_PILL_HEIGHT_POINTS,
         retry_capture: None,
         cancelled_capture: None,
         paste_failure: None,
