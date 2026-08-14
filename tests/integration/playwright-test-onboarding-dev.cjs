@@ -76,14 +76,19 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     await page.locator('button.pick-card', { has: page.locator('.card-name', { hasText: 'Formal' }) }).click();
     await page.getByRole('button', { name: 'Next' }).click();
 
-    // Clipboard phrases are opt-in. Enabling it reveals and focuses the field.
-    await page.locator('.clipboard-choice:has-text("Turn it on")').click();
-    const clipboardPhrase = page.locator('.clipboard-phrase-input');
-    await clipboardPhrase.waitFor({ state: 'visible', timeout: TIMEOUT });
-    if (!(await clipboardPhrase.evaluate((input) => document.activeElement === input))) {
-      errors.push('Clipboard phrase field did not receive focus after enabling the feature');
+    // Clipboard phrases are Windows-only and opt-in. On macOS this step is
+    // intentionally absent, so the shared onboarding fixture must continue
+    // directly to the language step.
+    const hasClipboardStep = (await page.locator('.clipboard-choice').count()) > 0;
+    if (hasClipboardStep) {
+      await page.locator('.clipboard-choice:has-text("Turn it on")').click();
+      const clipboardPhrase = page.locator('.clipboard-phrase-input');
+      await clipboardPhrase.waitFor({ state: 'visible', timeout: TIMEOUT });
+      if (!(await clipboardPhrase.evaluate((input) => document.activeElement === input))) {
+        errors.push('Clipboard phrase field did not receive focus after enabling the feature');
+      }
+      await clipboardPhrase.fill('paste project context');
     }
-    await clipboardPhrase.fill('paste project context');
     await page.getByRole('button', { name: 'Next' }).click();
 
     // Spoken language is its own step now — a searchable list, not chips.
@@ -156,8 +161,10 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     if (persisted.appearance_mode !== 'system') errors.push('Appearance should default to system');
     if (persisted.mute_audio !== true) errors.push('Speakers answer did not enable mute_audio');
     if (persisted.pause_media_during_dictation !== true) errors.push('Speakers answer did not enable pause_media_during_dictation');
-    if (persisted.clipboard_phrase_enabled !== true) errors.push('Clipboard phrase choice did not persist as enabled');
-    if (persisted.clipboard_phrase !== 'paste project context') errors.push('Clipboard phrase wording did not persist');
+    if (hasClipboardStep) {
+      if (persisted.clipboard_phrase_enabled !== true) errors.push('Clipboard phrase choice did not persist as enabled');
+      if (persisted.clipboard_phrase !== 'paste project context') errors.push('Clipboard phrase wording did not persist');
+    }
 
     // Smart processing is no longer a page of toggles — it is all on by default.
     for (const key of [

@@ -288,31 +288,36 @@ pub(super) async fn finalize_pipeline_completion(
         log::debug!("pipeline: skipping hide_pill — paste_failed pill stays up");
     }
 
-    if !ctx.cleanup_cache_key.is_empty() {
-        auto_learn::start_cache_rejection_monitor(
-            private_text.clone(),
-            ctx.cleanup_cache_key,
-            ctx.target_hwnd,
-            db_handle.inner().clone(),
-            app.clone(),
-        );
-    }
-    if ctx.cfg.auto_learn_enabled {
-        if !applied_dict_ids.is_empty() {
-            auto_learn::start_rejection_monitor(
+    // Clipboard-expanded output is intentionally not monitored: its exact
+    // text must stay out of correction/focused-text probes, and the private
+    // placeholder cannot match the text that was delivered to the editor.
+    if ctx.clipboard_plan.is_none() {
+        if !ctx.cleanup_cache_key.is_empty() {
+            auto_learn::start_cache_rejection_monitor(
                 private_text.clone(),
-                applied_dict_ids,
+                ctx.cleanup_cache_key,
                 ctx.target_hwnd,
                 db_handle.inner().clone(),
                 app.clone(),
             );
         }
-        auto_learn::start_monitor(
-            private_text,
-            ctx.process_name,
-            db_handle.inner().clone(),
-            app.clone(),
-        );
+        if ctx.cfg.auto_learn_enabled {
+            if !applied_dict_ids.is_empty() {
+                auto_learn::start_rejection_monitor(
+                    private_text.clone(),
+                    applied_dict_ids,
+                    ctx.target_hwnd,
+                    db_handle.inner().clone(),
+                    app.clone(),
+                );
+            }
+            auto_learn::start_monitor(
+                private_text,
+                ctx.process_name,
+                db_handle.inner().clone(),
+                app.clone(),
+            );
+        }
     }
 
     Ok(entry)

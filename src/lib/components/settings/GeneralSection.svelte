@@ -649,7 +649,7 @@
 </div>
 
 {#if confirmCleanupOff}
-  <div class="ui-modal-backdrop" in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></div>
+  <button class="ui-modal-backdrop" aria-label="Close dialog" onclick={() => (confirmCleanupOff = false)} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
   <div
     class="modal-card ui-modal-card"
     use:modalFocusTrap={{
