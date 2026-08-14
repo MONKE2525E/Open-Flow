@@ -125,13 +125,24 @@
   // value — an over-large guess cost an extra native resize on every entry
   // into processing, purely to correct the guess.
   const STAGE_FALLBACK_W = 72;
+  // The live label being measured against sits in .stage-sizer, a plain
+  // (untransformed) element — but the ACTIVE label the width actually has to
+  // fit lives inside .stage-roll, which carries a permanent `transform:
+  // translateY(...)` for the counter-roll effect. That transform promotes it
+  // to its own compositing layer, and text on a composited layer measures a
+  // little wider in Chromium than the same text laid out normally — measured
+  // at ~0.7–1.4px in testing. Small and constant, not a transition artifact,
+  // so it doesn't resolve on its own; it read as every stage label having its
+  // last pixel or two of tail (often the "…") shaved off, permanently. A
+  // small fixed pad absorbs it without the pill visibly gaining width.
+  const STAGE_WIDTH_SAFETY_PX = 3;
 
   function readStageWidths(node: HTMLElement) {
     const next = { ...stageWidthByLabel };
     let changed = false;
     node.querySelectorAll<HTMLElement>('[data-stage-label]').forEach((row) => {
       const label = row.dataset.stageLabel;
-      const w = Math.ceil(row.getBoundingClientRect().width);
+      const w = Math.ceil(row.getBoundingClientRect().width) + STAGE_WIDTH_SAFETY_PX;
       if (label && w > 0 && next[label] !== w) {
         next[label] = w;
         changed = true;
@@ -1094,6 +1105,27 @@
     overflow: hidden;
     width: 100vw; height: 100vh;
     font-family: var(--sans);
+  }
+
+  /* Click-through is OFF for handsfree/error/cancelled/paste_failed (see
+     pill.rs's has_clickable_buttons) so their Retry/Dismiss/Confirm buttons
+     are real, clickable controls — which means WebView2 receives real mouse
+     events there, and nothing had ever told it not to behave like a normal
+     web page about it. Two default browser behaviors both rendered as a
+     stray blue rounded box floating behind the pill, easy to mistake for a
+     completely unrelated system overlay: dragging across the pill text
+     produced an ordinary text selection highlight, and clicking a button
+     left it holding focus, which draws Chromium's default blue
+     :focus-visible ring around the nearest focusable ancestor. This is a
+     floating notification overlay, not a page — nothing in it needs to be
+     selectable or keyboard-focused, so both are simply off. */
+  :global(*) {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  :global(*:focus),
+  :global(*:focus-visible) {
+    outline: none;
   }
 
   .wrap {
