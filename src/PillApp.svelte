@@ -634,7 +634,10 @@
         // A fresh recording starts a brand-new dictation: drop the previous
         // one's profile/stage. Terminal states are no longer "in progress", so
         // they clear too (idle is handled by goIdle).
-        if (incoming !== 'processing') {
+        if (
+          incoming !== 'processing' &&
+          incoming !== 'loading_local_model'
+        ) {
           clearStage();
         }
         if (incoming === 'recording') {
