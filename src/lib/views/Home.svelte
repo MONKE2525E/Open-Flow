@@ -453,6 +453,18 @@
     font-family: var(--mono);
     font-size: 11px;
   }
+  .copy-tip-toast .toast-close {
+    margin-left: 4px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ink-mute);
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    opacity: 0.65;
+  }
+  .copy-tip-toast .toast-close:hover { opacity: 1; }
 
   /* Flat stats */
   .stat-stack { display: flex; flex-direction: column; gap: 22px; }
