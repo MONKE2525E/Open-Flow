@@ -111,6 +111,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         anyhow::bail!(message);
     }
 
+    emit_pill_stage(&app, "transcribing");
     let mut transcribed: Option<String> = None;
     let mut last_err: Option<anyhow::Error> = None;
     for (provider_id, model) in transcription_model_chain(&cfg) {
