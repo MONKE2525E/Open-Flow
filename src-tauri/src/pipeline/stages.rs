@@ -1103,6 +1103,7 @@ async fn run_cleanup_provider_chain(
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
 // instruction override application. Returns (final_text_before_dict,
 // dictionary entries, cache key, cleanup provider/model metadata).
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_cleanup_and_snippets(
     app: &AppHandle,
     raw: &str,
@@ -1110,6 +1111,9 @@ pub(super) async fn run_cleanup_and_snippets(
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
+    context_id: i64,
+    protected_instruction: Option<&str>,
+    gen: u64,
 ) -> Option<(String, Vec<db::DictionaryEntry>, String, String)> {
     let db_handle = app.state::<DbHandle>();
     match run_cleanup_and_snippets_for_db(
@@ -1119,21 +1123,19 @@ pub(super) async fn run_cleanup_and_snippets(
         cfg,
         profile,
         app_context,
+        context_id,
+        protected_instruction,
         Some(app),
+        gen,
     )
     .await
     {
         Ok(result) => Some(result),
         Err(e) => {
-            let mut user_msg = format!("Cleanup failed: {}", trim_err(&e.to_string()));
-            if let Some(parsed) = crate::api::parse_auth_401_error(&e.to_string()) {
-                user_msg = format!(
-                    "Cleanup failed: {}",
-                    crate::api::auth_401_display_message(&parsed)
-                );
-            }
+            let user_msg = format!("Cleanup failed: {}", crate::api::user_facing_error(&e));
             log::error!(
-                "pipeline: cleanup failed error={}",
+                "pipeline: cleanup failed gen={} error={}",
+                gen,
                 trim_err(&e.to_string())
             );
             if crate::api::is_retryable_provider_error(&e) {
@@ -1145,6 +1147,7 @@ pub(super) async fn run_cleanup_and_snippets(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_cleanup_and_snippets_for_db(
     db_handle: &DbHandle,
     raw: &str,
@@ -1152,19 +1155,24 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
+    context_id: i64,
+    protected_instruction: Option<&str>,
     app: Option<&AppHandle>,
+    gen: u64,
 ) -> anyhow::Result<(String, Vec<db::DictionaryEntry>, String, String)> {
-    let mut db_snippets = db::query_snippets(db_handle).unwrap_or_default();
-    let dict_entries = db::query_dictionary(db_handle).unwrap_or_default();
+    let mut db_snippets = db::query_snippets_for_context(db_handle, context_id).unwrap_or_default();
+    let dict_entries = db::query_dictionary_for_context(db_handle, context_id).unwrap_or_default();
     log::debug!(
-        "pipeline: cleanup inputs snippets={} dict_entries={}",
+        "pipeline: cleanup inputs gen={} snippets={} dict_entries={}",
+        gen,
         db_snippets.len(),
         dict_entries.len()
     );
 
     let snippet_instructions = snippets::collect_snippet_instructions_from(raw, &db_snippets);
     log::debug!(
-        "pipeline: cleanup stage start raw_chars={} snippet_override_lines={} cleanup_enabled={}",
+        "pipeline: cleanup stage start gen={} raw_chars={} snippet_override_lines={} cleanup_enabled={}",
+        gen,
         raw.chars().count(),
         snippet_instructions
             .lines()
@@ -1200,7 +1208,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
     );
 
     let dict_instructions = dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
-    let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str()]
+    let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str(), protected_instruction.unwrap_or("")]
         .iter()
         .filter(|s| !s.is_empty())
         .copied()
@@ -1221,7 +1229,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
         &cfg.cleanup_intensity,
         profile,
     ) {
-        let cache_plan = cleanup_cache_plan(
+        let cache_plan = cleanup_cache_plan_for_context(
             &expanded,
             profile,
             &cfg.cleanup_intensity,
@@ -1230,9 +1238,17 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             alternate
                 .as_ref()
                 .map(|_| dual_cleanup_context_fingerprint(cfg, &extra_rules, app_context)),
+            Some(context_id),
         );
-        let cache_key = cache_plan.key.clone();
-        if !cache_key.is_empty() {
+        // Protected clipboard payloads are unique per invocation and must not
+        // reuse or populate the cleanup cache, even though the marker itself
+        // is intentionally stable enough to be safe in the prompt.
+        let cache_key = if protected_instruction.is_some() {
+            String::new()
+        } else {
+            cache_plan.key.clone()
+        };
+        if protected_instruction.is_none() && !cache_key.is_empty() {
             used_cache_key = cache_key.clone();
             if let Some(overridden) = cleanup_cache_hit_text(
                 db_handle,

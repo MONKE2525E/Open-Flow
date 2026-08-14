@@ -417,6 +417,12 @@ pub(super) async fn show_error_pill(app: &AppHandle, msg: &str) {
     show_pill_msg(app, "error", Some(msg));
 }
 
+/// A delivered dictation can still have a clipboard-phrase warning. This is
+/// deliberately passive: the text already reached its destination.
+pub(crate) fn show_clipboard_warning_pill(app: &AppHandle, msg: &str) {
+    show_pill_msg(app, "clipboard_warning", Some(msg));
+}
+
 /// Shows the pill in error state for a quality-gate rejection without
 /// focusing the main window or blocking the pipeline task.
 pub(super) fn reject_with_pill(app: &AppHandle, msg: &str) {

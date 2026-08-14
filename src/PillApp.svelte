@@ -2,7 +2,8 @@
   import { onMount, tick } from 'svelte';
   import { getProfileLabel } from './lib/appMappings';
 
-  type PillState = 'idle' | 'recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'paste_failed' | 'copied';
+  type PillState = 'idle' | 'recording' | 'repair_recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'paste_failed' | 'copied' | 'clipboard_warning' | 'feedback_prompt' | 'repair_input' | 'repair_processing' | 'repair_proposal' | 'repair_applying' | 'repair_done' | 'repair_error';
+  type RepairProposal = { id: number; summary: string; scope: string };
   let state: PillState = 'idle';
   let errorMsg = '';
   let errOpen = false;
@@ -680,7 +681,7 @@
             errorTimer = null;
             if (state === 'error') goIdle();
           }, 10000);
-        } else if (state !== 'copied') {
+        } else if (state !== 'copied' && state !== 'clipboard_warning') {
           // Don't clear errorMsg on 'copied' — show_copied_pill carries its
           // confirmation text through the pill-error event, which fires just
           // before this pill-state one.
@@ -767,11 +768,11 @@
           showCopyBtn = false;
         }
 
-        if (state === 'copied') {
+        if (state === 'copied' || state === 'clipboard_warning') {
           if (copiedPillTimer) clearTimeout(copiedPillTimer);
           copiedPillTimer = setTimeout(() => {
             copiedPillTimer = null;
-            if (state === 'copied') goIdle();
+            if (state === 'copied' || state === 'clipboard_warning') goIdle();
           }, 5000);
         } else if (copiedPillTimer) {
           clearTimeout(copiedPillTimer);
@@ -1059,6 +1060,17 @@
           <path d="M6 6l12 12M6 18 18 6"/>
         </svg>
       </button>
+    </div>
+
+  {:else if state === 'clipboard_warning'}
+    <div class="pill copied clipboard-warning" class:dying={dying}>
+      <svg class="copied-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M12 8v4"/>
+        <circle cx="12" cy="16" r="1" fill="currentColor" stroke="none"/>
+      </svg>
+      <span class="copied-text">{errorMsg || 'Clipboard phrase skipped'}</span>
+      <button class="hf-btn copied-dismiss" onclick={dismissCopied} aria-label="Dismiss"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 6l12 12M6 18 18 6"/></svg></button>
     </div>
 
   {:else if state === 'handsfree'}

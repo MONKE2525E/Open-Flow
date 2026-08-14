@@ -19,22 +19,24 @@
   import PermissionsStep from '../setup/steps/PermissionsStep.svelte';
   import ModelsStep from '../setup/steps/ModelsStep.svelte';
   import WritingStyleStep from '../setup/steps/WritingStyleStep.svelte';
+  import ClipboardPhraseStep from '../setup/steps/ClipboardPhraseStep.svelte';
   import LanguageStep from '../setup/steps/LanguageStep.svelte';
   import AudioEnvironmentStep from '../setup/steps/AudioEnvironmentStep.svelte';
   import CalibrationStep from '../setup/steps/CalibrationStep.svelte';
   import TryItStep from '../setup/steps/TryItStep.svelte';
   import DoneStep from '../setup/steps/DoneStep.svelte';
 
-  const TOTAL_STEPS = isMac ? 9 : 8;
+  const TOTAL_STEPS = 9;
   const providerStep = 1;
   const apiKeyStep = 2;
   const permissionStep = isMac ? 3 : -1;
   const modelsStep = isMac ? 4 : 3;
   const writingStyleStep = isMac ? 5 : 4;
-  const languageStep = isMac ? 6 : 5;
-  const audioEnvStep = isMac ? 7 : 6;
-  const calibrationStep = isMac ? 8 : 7;
-  const tryItStep = isMac ? 9 : 8;
+  const clipboardPhraseStep = isMac ? -1 : 5;
+  const languageStep = 6;
+  const audioEnvStep = 7;
+  const calibrationStep = 8;
+  const tryItStep = 9;
   const doneStep = TOTAL_STEPS + 1;
 
   let step = $state(0);
@@ -66,6 +68,8 @@
   let tone = $state<ToneId>('casual');
   let language = $state<TranscriptionLanguageCode>('en');
   let usesHeadphones = $state(true);
+  let clipboardPhraseEnabled = $state(false);
+  let clipboardPhrase = $state('paste clipboard here');
   let saveError = $state('');
   let finishing = $state(false);
 
@@ -75,12 +79,17 @@
   let effectiveCleanupName = $derived(modelPreset?.target && !modelPreset.target.cleanupEnabled ? 'Off' : cleanupName);
   let toneName = $derived(toneCards.find((t) => t.id === tone)?.name ?? '');
   let languageLabel = $derived(getTranscriptionLanguageLabel(language));
+  let clipboardPhraseValid = $derived.by(() => {
+    const normalized = clipboardPhrase.trim().replace(/\s+/g, ' ');
+    const length = [...normalized].length;
+    return length >= 5 && length <= 80 && /[\p{L}\p{N}]/u.test(normalized);
+  });
 
   onMount(async () => {
     void loadHotkey();
     try {
       const [
-        savedLanguage, savedProvider, savedIntensity, savedTone, keyStatus, savedMute,
+        savedLanguage, savedProvider, savedIntensity, savedTone, keyStatus, savedMute, savedClipboardPhraseEnabled, savedClipboardPhrase,
       ] = await Promise.all([
         invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
         invoke<ProviderId | null>('get_setting', { key: 'transcription_provider' }),
@@ -88,6 +97,8 @@
         invoke<ToneId | null>('get_setting', { key: 'default_tone' }),
         invoke<Record<ProviderId, boolean> | null>('get_api_key_status'),
         invoke<boolean | null>('get_setting', { key: 'mute_audio' }),
+        invoke<boolean | null>('get_setting', { key: 'clipboard_phrase_enabled' }),
+        invoke<string | null>('get_setting', { key: 'clipboard_phrase' }),
       ]);
       if (savedLanguage && transcriptionLanguages.some((o) => o.code === savedLanguage)) language = savedLanguage;
       if (savedProvider && providers.some((p) => p.id === savedProvider)) provider = savedProvider;
@@ -98,6 +109,8 @@
       }
       // Muting implies speakers — that's the only reason the setting is on.
       if (savedMute === true) usesHeadphones = false;
+      if (savedClipboardPhraseEnabled === true) clipboardPhraseEnabled = true;
+      if (savedClipboardPhrase) clipboardPhrase = savedClipboardPhrase;
     } catch {}
   });
 
@@ -292,6 +305,8 @@
         () => saveSetting('caps_lock_uppercase_enabled', true),
         () => saveSetting('app_context_hint', true),
         () => saveSetting('auto_learn_enabled', true),
+        () => saveSetting('clipboard_phrase_enabled', clipboardPhraseEnabled),
+        () => saveSetting('clipboard_phrase', clipboardPhrase.trim().replace(/\s+/g, ' ')),
       ];
       for (const save of settingsToSave) await save();
       await invoke('set_autostart', { enabled: true });
@@ -337,6 +352,7 @@
     if (isMac && s === permissionStep) return { name: 'Permissions', title: 'Check your macOS permissions', subtitle: 'Verenu needs these to hear your voice and type for you.' };
     if (s === modelsStep) return { name: 'Models', title: 'How should Verenu run?', subtitle: 'Each option picks a transcription and cleanup model for you.' };
     if (s === writingStyleStep) return { name: 'Writing Style', title: 'How should your dictation sound?', subtitle: 'Cleanup intensity and tone shape every transcription. You can override both per-app later.' };
+    if (s === clipboardPhraseStep) return { name: 'Clipboard', title: 'Want a clipboard phrase?', subtitle: 'Say a phrase and Verenu inserts the text you most recently copied.' };
     if (s === languageStep) return { name: 'Language', title: 'What language will you dictate in?', subtitle: "This is the language Verenu expects to hear. The app's own interface stays in English." };
     if (s === audioEnvStep) return { name: 'Audio', title: 'Headphones or speakers?', subtitle: 'This decides whether Verenu needs to silence your other audio while you dictate.' };
     if (s === calibrationStep) return { name: 'Microphone', title: setupCalibrationCopy.title, subtitle: setupCalibrationCopy.subtitle };
@@ -395,6 +411,13 @@
       return bar({
         rightLabel: localNeedsChoice ? 'Choose a setup' : 'Next',
         rightDisabled: localNeedsChoice,
+        onRight: goNext,
+      });
+    }
+    if (step === clipboardPhraseStep) {
+      return bar({
+        rightLabel: 'Next',
+        rightDisabled: clipboardPhraseEnabled && !clipboardPhraseValid,
         onRight: goNext,
       });
     }
@@ -509,6 +532,8 @@
       <ModelsStep apiKeyStatus={providerKeyStatus} bind:preset={modelPreset} onOpenApiKeys={() => jumpToStep(apiKeyStep)} />
     {:else if step === writingStyleStep}
       <WritingStyleStep bind:intensity={cleanupIntensity} bind:tone />
+    {:else if step === clipboardPhraseStep}
+      <ClipboardPhraseStep bind:enabled={clipboardPhraseEnabled} bind:phrase={clipboardPhrase} />
     {:else if step === languageStep}
       <LanguageStep bind:language />
     {:else if step === audioEnvStep}

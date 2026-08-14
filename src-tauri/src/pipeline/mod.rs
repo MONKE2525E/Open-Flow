@@ -14,6 +14,7 @@ use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 
 mod cache;
 mod chains;
+mod clipboard_phrase;
 mod finalize;
 #[cfg(any(test, debug_assertions))]
 mod fixture;
@@ -39,13 +40,14 @@ use gates::{
     silence_floor_gate_rms, strip_hallucinated_suffix, MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
 pub(crate) use pill::{
-    emit_pill_profile, emit_pill_stage, hide_pill, show_copied_pill, show_pill, update_pill_state,
+    emit_pill_profile, emit_pill_stage, hide_pill, show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
 };
 use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_failed_pill};
 pub(crate) use pill_position::{
     apply_pill_placement, placement_for_current_monitor, PillPlacement,
 };
 pub use session::*;
+pub(crate) use repair::*;
 use stages::*;
 pub use state::*;
 
@@ -527,10 +529,31 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         return;
     }
 
+    let (raw_for_cleanup, clipboard_plan, clipboard_warning) =
+        prepare_clipboard_phrase(&cfg, &raw).await;
+    let clipboard_instruction = clipboard_plan.as_ref().map(clipboard_phrase::cleanup_instruction);
+
     let stage_cleanup = std::time::Instant::now();
+    // Only advertise the cleaning stage when the cleanup LLM will actually run
+    // (cleanup enabled + intensity + a key in the chain). When cleanup is off
+    // the cleanup call resolves to local snippet/dictionary work that is
+    // effectively instant, so advertising it would just flash the label.
+    let cleanup_will_run_llm = should_run_cleanup_llm(
+        cfg.cleanup_enabled,
+        has_cleanup_key_in_chain(&cfg),
+        true,
+        &cfg.cleanup_intensity,
+        &profile,
+    );
+    if cleanup_will_run_llm {
+        emit_pill_stage(&app, "cleaning");
+    }
     let cleanup_race = tokio::select! {
-        r = run_cleanup_and_snippets(&app, &raw, alternate.as_ref(), &cfg, &profile, app_context.as_deref()) => Some(r),
-        _ = wait_for_cancel(&mut cancel_rx) => None,
+        r = run_cleanup_and_snippets(&app, &raw_for_cleanup, alternate.as_ref(), &cfg, &profile, app_context.as_deref(), context_id, clipboard_instruction.as_deref(), generation) => Some(r),
+        _ = wait_for_cancel(&mut cancel_rx) => {
+            log::info!("pipeline: cancelled gen={generation} (during cleanup)");
+            None
+        }
     };
     let Some(cleanup_outcome) = cleanup_race else {
         state::leave_processing_if_owned(&state, generation);
@@ -576,6 +599,8 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         PipelineCompletionContext {
             raw: &raw,
             final_text_before_dict: &final_text,
+            clipboard_plan: clipboard_plan.as_ref(),
+            clipboard_warning,
             dict_entries: &dict_entries,
             duration_ms: captured_audio.duration_ms,
             api_used: &api_used,
@@ -686,14 +711,29 @@ pub async fn retry_transcription_impl(
         hide_pill(app);
         anyhow::bail!("Recording was too quiet — nothing was transcribed");
     }
+    if should_run_cleanup_llm(
+        cfg.cleanup_enabled,
+        has_cleanup_key_in_chain(&cfg),
+        true,
+        &cfg.cleanup_intensity,
+        &capture.profile,
+    ) {
+        emit_pill_stage(app, "cleaning");
+    }
+    let (raw_for_cleanup, clipboard_plan, clipboard_warning) =
+        prepare_clipboard_phrase(&cfg, &raw).await;
+    let clipboard_instruction = clipboard_plan.as_ref().map(clipboard_phrase::cleanup_instruction);
     let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) =
         run_cleanup_and_snippets(
             app,
-            &raw,
+            &raw_for_cleanup,
             alternate.as_ref(),
             &cfg,
             &capture.profile,
             capture.app_context.as_deref(),
+            capture.context_id,
+            clipboard_instruction.as_deref(),
+            0,
         )
         .await
     else {
@@ -706,12 +746,15 @@ pub async fn retry_transcription_impl(
         format!("{api_used};cleanup={cleanup_api_used}")
     };
 
+    emit_pill_stage(app, "pasting");
     finalize_pipeline_completion(
         app,
         state,
         PipelineCompletionContext {
             raw: &raw,
             final_text_before_dict: &final_text,
+            clipboard_plan: clipboard_plan.as_ref(),
+            clipboard_warning,
             dict_entries: &dict_entries,
             duration_ms: capture.audio.duration_ms,
             api_used: &api_used,
@@ -723,6 +766,8 @@ pub async fn retry_transcription_impl(
             captured_at: capture.captured_at,
             event_only: false,
             caps_lock_on: capture.caps_lock_on,
+            context: None,
+            browser_domain: None,
         },
     )
     .await

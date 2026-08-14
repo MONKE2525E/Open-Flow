@@ -30,6 +30,7 @@ enum SettingKind {
     SoundEffectsVolume,
     AppMappings,
     Hotkey,
+    ClipboardPhrase,
 }
 
 #[derive(Clone, Copy)]
@@ -198,6 +199,8 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::AUTOSTART_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::CAPS_LOCK_UPPERCASE, SettingKind::Bool, true, true),
+    setting_spec(store::CLIPBOARD_PHRASE_ENABLED, SettingKind::Bool, true, true),
+    setting_spec(store::CLIPBOARD_PHRASE, SettingKind::ClipboardPhrase, true, true),
 ];
 
 fn spec_for(key: &str) -> Option<&'static SettingSpec> {
@@ -290,6 +293,10 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
             .as_str()
             .is_some_and(store::is_supported_local_model_memory_policy),
         SettingKind::ModelMap => is_model_map(value),
+        SettingKind::ClipboardPhrase => value
+            .as_str()
+            .map(store::normalize_clipboard_phrase)
+            .is_some_and(|v| store::is_valid_clipboard_phrase(&v)),
         SettingKind::StringArray => is_non_empty_string_array(value),
         SettingKind::CleanupPromptOverrides => is_cleanup_prompt_override_map(value),
         SettingKind::AppearanceMode => value

@@ -220,6 +220,9 @@ pub const VERENU_SERVICE_CHECKS_ENABLED: &str = "verenu_service_checks_enabled";
 pub const HISTORY_RETENTION: &str = "history_retention";
 pub const AUTOSTART_ENABLED: &str = "autostart_enabled";
 pub const CAPS_LOCK_UPPERCASE: &str = "caps_lock_uppercase_enabled";
+pub const CLIPBOARD_PHRASE_ENABLED: &str = "clipboard_phrase_enabled";
+pub const CLIPBOARD_PHRASE: &str = "clipboard_phrase";
+pub const DEFAULT_CLIPBOARD_PHRASE: &str = "paste clipboard here";
 pub const LOCAL_MODEL_MEMORY_POLICY: &str = "local_model_memory_policy";
 
 pub const DEFAULT_TONES: &[&str] = &["casual", "formal", "very_casual"];
@@ -284,6 +287,8 @@ pub struct PipelineConfig {
     pub contextual_caps_enabled: bool,
     pub auto_spacing_enabled: bool,
     pub caps_lock_uppercase_enabled: bool,
+    pub clipboard_phrase_enabled: bool,
+    pub clipboard_phrase: String,
     pub macos_clipboard_sniff_enabled: bool,
     pub advanced_model_ui: bool,
     pub local_model_memory_policy: String,
@@ -559,6 +564,16 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
             .get(CAPS_LOCK_UPPERCASE)
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        clipboard_phrase_enabled: store
+            .get(CLIPBOARD_PHRASE_ENABLED)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        clipboard_phrase: store
+            .get(CLIPBOARD_PHRASE)
+            .and_then(|v| v.as_str())
+            .map(normalize_clipboard_phrase)
+            .filter(|v| is_valid_clipboard_phrase(v))
+            .unwrap_or_else(|| DEFAULT_CLIPBOARD_PHRASE.to_string()),
         macos_clipboard_sniff_enabled: store
             .get(MACOS_CLIPBOARD_SNIFF)
             .and_then(|v| v.as_bool())
@@ -574,6 +589,15 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
             is_supported_local_model_memory_policy,
         ),
     }
+}
+
+pub fn normalize_clipboard_phrase(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub fn is_valid_clipboard_phrase(value: &str) -> bool {
+    let count = value.chars().count();
+    (5..=80).contains(&count) && value.chars().any(char::is_alphanumeric)
 }
 
 pub const DEFAULT_MIC_GAIN: f32 = 3.5;

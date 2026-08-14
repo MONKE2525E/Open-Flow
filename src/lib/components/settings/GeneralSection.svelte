@@ -5,6 +5,7 @@
   import { expoOut } from 'svelte/easing';
   import { isMac, formatKeyLabel, defaultHotkey } from '../../platform';
   import Toggle from '../Toggle.svelte';
+  import Dropdown from '../Dropdown.svelte';
   import { appStore } from '../../stores';
   import { saveSetting, type AppearanceMode } from '../../settings';
   import { modalFocusTrap } from '../../modalFocus';
@@ -47,6 +48,9 @@
   let contextualCaps = $state(true);
   let autoSpacing = $state(true);
   let capsLockUppercase = $state(false);
+  let clipboardPhraseEnabled = $state(false);
+  let clipboardPhrase = $state('paste clipboard here');
+  let clipboardPhraseError = $state('');
   let hotkey = $state(defaultHotkey);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
@@ -153,6 +157,8 @@
       invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'caps_lock_uppercase_enabled' }),
+      invoke<boolean | null>('get_setting', { key: 'clipboard_phrase_enabled' }),
+      invoke<string | null>('get_setting', { key: 'clipboard_phrase' }),
       invoke<string[]>('get_microphones'),
       invoke<string | null>('get_setting', { key: 'microphone_device' }),
     ]);
@@ -165,6 +171,8 @@
     contextualCaps = val<boolean | null>(5, null) ?? true;
     autoSpacing = val<boolean | null>(6, null) ?? true;
     capsLockUppercase = val<boolean | null>(7, null) ?? false;
+    clipboardPhraseEnabled = val<boolean | null>(8, null) ?? false;
+    clipboardPhrase = val<string | null>(9, null) ?? 'paste clipboard here';
 
     const hk = val<string[] | null>(1, null);
     if (hk && hk.length === 2) hotkey = hk;
@@ -180,18 +188,12 @@
     }
     initialLanguageLoaded = true;
 
-    microphones = val<string[]>(8, []);
-    selectedMic = val<string | null>(9, null) ?? '';
+    microphones = val<string[]>(10, []);
+    selectedMic = val<string | null>(11, null) ?? '';
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
     });
-  }
-
-  function handleWindowClick(e: MouseEvent) {
-    const target = e.target as HTMLElement;
-    if (micDropdownOpen && !target.closest('.mic-dropdown')) micDropdownOpen = false;
-    if (languageDropdownOpen && !target.closest('.language-dropdown')) languageDropdownOpen = false;
   }
 
   async function saveMic(name: string) {
@@ -327,6 +329,46 @@
     } catch (err) {
       capsLockUppercase = !value;
       console.error('save caps_lock_uppercase_enabled failed:', err);
+    }
+  }
+
+  function normalizedClipboardPhrase(value: string) {
+    return value.trim().replace(/\s+/g, ' ');
+  }
+
+  function clipboardPhraseValidation(value: string) {
+    const normalized = normalizedClipboardPhrase(value);
+    const length = [...normalized].length;
+    if (length < 5 || length > 80 || !/[\p{L}\p{N}]/u.test(normalized)) {
+      return 'Use 5–80 characters and include a letter or number.';
+    }
+    return '';
+  }
+
+  async function saveClipboardPhrase() {
+    const normalized = normalizedClipboardPhrase(clipboardPhrase);
+    clipboardPhraseError = clipboardPhraseValidation(normalized);
+    if (clipboardPhraseError) return false;
+    clipboardPhrase = normalized;
+    try {
+      await saveSetting('clipboard_phrase', normalized);
+      return true;
+    } catch (err) {
+      clipboardPhraseError = 'Could not save this phrase.';
+      console.error('save clipboard_phrase failed:', err);
+      return false;
+    }
+  }
+
+  async function handleClipboardPhrase(value: boolean) {
+    if (isMac) return;
+    if (value && !(await saveClipboardPhrase())) return;
+    clipboardPhraseEnabled = value;
+    try {
+      await saveSetting('clipboard_phrase_enabled', value);
+    } catch (err) {
+      clipboardPhraseEnabled = !value;
+      console.error('save clipboard_phrase_enabled failed:', err);
     }
   }
 
@@ -594,12 +636,22 @@
   <div><div class="label">Automatic caps lock detection</div><div class="desc">When Caps Lock is on, output your dictation in ALL CAPS</div></div>
   <Toggle checked={capsLockUppercase} onchange={handleCapsLockUppercase} label="Automatic caps lock detection" />
 </div>
+<div class="setting-row clipboard-phrase-row">
+  <div>
+    <div class="label">Clipboard phrase</div>
+    <div class="desc">{isMac ? 'Available on Windows. Clipboard text stays private.' : 'Insert current clipboard text. It stays private.'}</div>
+    {#if clipboardPhraseError}<div class="clipboard-phrase-error">{clipboardPhraseError}</div>{/if}
+  </div>
+  <div class="clipboard-phrase-controls">
+    <input id="clipboard-phrase" class="ui-input" bind:value={clipboardPhrase} onblur={saveClipboardPhrase} disabled={isMac} aria-label="Phrase to insert clipboard text" aria-invalid={clipboardPhraseError ? 'true' : undefined} />
+    <div aria-disabled={isMac}><Toggle checked={clipboardPhraseEnabled} onchange={handleClipboardPhrase} label="Clipboard phrase" /></div>
+  </div>
+</div>
 
 {#if confirmCleanupOff}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <button class="modal-backdrop" aria-label="Close dialog" onclick={() => (confirmCleanupOff = false)} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
+  <div class="ui-modal-backdrop" in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></div>
   <div
-    class="modal-card"
+    class="modal-card ui-modal-card"
     use:modalFocusTrap={{
       active: confirmCleanupOff,
       initialFocus: () => cleanupCancelButton,
@@ -636,6 +688,15 @@
     line-height: 1.5;
     color: var(--ink-mute);
     max-width: 52ch;
+  }
+  .clipboard-phrase-row { gap: 16px; }
+  .clipboard-phrase-controls { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  .clipboard-phrase-row .ui-input { width: 220px; }
+  .clipboard-phrase-error { margin-top: 5px; font-size: 11px; color: var(--danger); }
+  @container settings-column (max-width: 620px) {
+    .clipboard-phrase-row { align-items: flex-start; flex-direction: column; }
+    .clipboard-phrase-controls { width: 100%; justify-content: space-between; }
+    .clipboard-phrase-row .ui-input { width: min(320px, calc(100% - 42px)); }
   }
   .hotkey-tip strong { color: var(--ink-soft); font-weight: 600; }
 

@@ -897,6 +897,15 @@ pub async fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
     }
 }
 
+/// Snapshot current plain text before the pipeline writes its injection payload.
+/// Clipboard phrase insertion is deliberately Windows-only for now.
+pub async fn read_current_clipboard_text() -> Option<String> {
+    #[cfg(windows)]
+    { return windows::read_clipboard_text().await; }
+    #[cfg(not(windows))]
+    { None }
+}
+
 #[allow(unused_variables)]
 pub async fn inject_text(
     text: &str,

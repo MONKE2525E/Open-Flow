@@ -63,7 +63,7 @@ async function layoutState(page) {
       await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: TIMEOUT });
       const actionbarTops = [];
 
-      for (let index = 0; index < 10; index += 1) {
+      for (let index = 0; index < 11; index += 1) {
         await page.waitForTimeout(340);
         const state = await layoutState(page);
         const heading = (await page.locator('.setup-header h2, .brand-name, .done-title').first().textContent())?.trim() || `step ${index}`;
