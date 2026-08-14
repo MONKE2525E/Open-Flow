@@ -98,7 +98,7 @@
           class:selected={language === lang.code}
           role="option"
           aria-selected={language === lang.code}
-          tabindex={language === lang.code ? 0 : -1}
+          tabindex={language === lang.code || (!filtered.some((item) => item.code === language) && lang === filtered[0]) ? 0 : -1}
           onclick={() => pick(lang.code)}
           onkeydown={(event) => handleListboxOptionKeydown(event, LANG_MENU_ID, restoreToSearchOrTrigger)}
         >

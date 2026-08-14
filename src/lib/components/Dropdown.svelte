@@ -86,7 +86,8 @@
     const target = e.target instanceof Element
       ? e.target
       : (e.target as Node)?.parentElement;
-    if (closeSelector && target?.closest(closeSelector)) return;
+    const containerSelector = closeSelector || '.ui-dropdown';
+    if (target?.closest(containerSelector)) return;
     open = false;
   }
 
