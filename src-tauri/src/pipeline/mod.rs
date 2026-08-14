@@ -38,7 +38,8 @@ pub use fixture::{
 use gates::{
     effective_recording_rms, has_spoken_content, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
-    silence_floor_gate_rms, strip_hallucinated_suffix, MIN_RECORDING_MS, MIN_RECORDING_RMS,
+    silence_floor_gate_rms, strip_hallucinated_suffix,
+    MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
 pub(crate) use pill::{
     emit_pill_profile, emit_pill_stage, hide_pill, show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
