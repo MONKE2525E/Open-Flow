@@ -22,7 +22,6 @@ mod gates;
 mod pill;
 mod pill_animation;
 mod pill_position;
-mod repair;
 mod session;
 mod stages;
 mod state;
@@ -38,7 +37,7 @@ pub use fixture::{
 use gates::{
     effective_recording_rms, has_spoken_content, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
-    silence_floor_gate_rms, strip_hallucinated_suffix,
+    silence_floor_gate_rms, strip_hallucinated_suffix, strip_trailing_hallucination,
     MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
 pub(crate) use pill::{
@@ -49,7 +48,6 @@ pub(crate) use pill_position::{
     apply_pill_placement, placement_for_current_monitor, PillPlacement,
 };
 pub use session::*;
-pub(crate) use repair::*;
 use stages::*;
 pub use state::*;
 
