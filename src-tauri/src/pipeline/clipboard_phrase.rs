@@ -22,6 +22,9 @@ pub(super) fn replace_phrase_with_marker(
     if needle.is_empty() {
         return None;
     }
+    if lower.len() < needle.len() {
+        return None;
+    }
     let mut matches = Vec::new();
     for start in 0..=lower.len().saturating_sub(needle.len()) {
         let end = start + needle.len();
@@ -183,5 +186,10 @@ mod tests {
         let plan =
             replace_phrase_with_marker("Bitte PÄSTE hier", "pÄste hier", "text".into()).unwrap();
         assert_eq!(restore(&plan.pre_cleanup, &plan), Some("Bitte text".into()));
+    }
+
+    #[test]
+    fn ignores_text_shorter_than_phrase_without_panicking() {
+        assert!(replace_phrase_with_marker("paste", "paste clipboard here", "text".into()).is_none());
     }
 }
