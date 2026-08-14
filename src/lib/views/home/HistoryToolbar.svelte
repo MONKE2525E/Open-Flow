@@ -6,20 +6,31 @@
 	import { formatAppLabel } from './helpers';
 	import { motionMs, MOTION_MS } from '../../motion';
 
-  export let search: string;
-  export let apps: string[] = [];
-  export let appFilter: string | null;
-	export let onSearchChange: (value: string) => void;
-	export let onAppFilterChange: (app: string | null) => void;
-	export let onClearFilters: () => void;
+	type Props = {
+		search: string;
+		apps?: string[];
+		appFilter: string | null;
+		onSearchChange: (value: string) => void;
+		onAppFilterChange: (app: string | null) => void;
+		onClearFilters: () => void;
+	};
 
-	let appDropdownOpen = false;
-	let uiExpanded = false;
-	let groupEl: HTMLElement | null = null;
-	let inputEl: HTMLInputElement | null = null;
+	let {
+		search,
+		apps = [],
+		appFilter,
+		onSearchChange,
+		onAppFilterChange,
+		onClearFilters,
+	}: Props = $props();
 
-	$: filtersActive = (search ?? '').trim().length > 0 || appFilter !== null;
-	$: expanded = uiExpanded || filtersActive;
+	let appDropdownOpen = $state(false);
+	let uiExpanded = $state(false);
+	let groupEl = $state<HTMLElement | null>(null);
+	let inputEl = $state<HTMLInputElement | null>(null);
+
+	let filtersActive = $derived((search ?? '').trim().length > 0 || appFilter !== null);
+	let expanded = $derived(uiExpanded || filtersActive);
 
 	async function expandSearch() {
 		uiExpanded = true;

@@ -112,8 +112,7 @@ const historyMockWrap = function () {
     }
 
     // No matches → empty state; reset via the search × and the dropdown's
-    // "All apps" option (there is deliberately no separate "Clear filters"
-    // button).
+    // "All apps" option before exercising the explicit Clear filters action.
     await search.fill('zzzz nothing matches');
     await page.waitForTimeout(500);
     const noMatch = await page.locator('.empty-state .empty-h').innerText();
