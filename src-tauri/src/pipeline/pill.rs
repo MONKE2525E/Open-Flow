@@ -229,7 +229,7 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     // Handsfree, error (Retry), and cancelled (Undo/Dismiss) all have real
     // buttons that need real cursor events.
     let has_clickable_buttons =
-        matches!(state, "handsfree" | "error" | "cancelled" | "paste_failed");
+        matches!(state, "handsfree" | "error" | "cancelled" | "paste_failed" | "copied");
     pill.set_ignore_cursor_events(!has_clickable_buttons).ok();
 
     // Show the window before emitting state so WebView2 is active when it
