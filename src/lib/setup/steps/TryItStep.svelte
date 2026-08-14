@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke, listen } from '../../tauri';
   import { isMac } from '../../platform';
-  import { classifyIpcError } from '../../errors';
+  import { formatIpcError } from '../../stores.svelte';
   import { hotkeyCodes, hotkeyLabels, hotkeyWatchCodes, matchesHotkey } from '../../hotkey.svelte';
 
   const keyLabels = $derived(hotkeyLabels());
@@ -46,8 +46,9 @@
       }
       localRecording = true;
     } catch (err) {
-      if (!destroyed && classifyIpcError(err).kind !== 'already-recording') {
-        errorMessage = classifyIpcError(err).message;
+      const message = formatIpcError(err);
+      if (!destroyed && !message.toLowerCase().includes('already recording')) {
+        errorMessage = message;
       }
     } finally {
       localStartInFlight = false;
@@ -60,7 +61,7 @@
     try {
       await invoke('stop_setup_try_recording');
     } catch (err) {
-      errorMessage = classifyIpcError(err).message;
+      errorMessage = formatIpcError(err);
     }
   }
 
@@ -105,7 +106,7 @@
     listen<string>('verenu:error', (ev) => {
       if (destroyed) return;
       errorMessage = ev.payload
-        ? classifyIpcError(ev.payload).message
+        ? formatIpcError(ev.payload)
         : 'Something went wrong with that recording.';
     }).then((unsub) => {
       if (destroyed) unsub();
