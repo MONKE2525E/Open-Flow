@@ -219,21 +219,24 @@
   // stutter the window. A newer size while one is in flight just overwrites
   // the pending slot, so only the latest value gets sent once the current
   // call resolves.
-  let pillSizeInFlight = false;
-  let pillSizePending: { w: number; h: number } | null = null;
+    let pillSizeInFlight = false;
+    let pillSizeInFlightTarget: { w: number; h: number } | null = null;
+    let pillSizePending: { w: number; h: number } | null = null;
 
-  function sendPillSize(w: number, h: number) {
-    pillSizeInFlight = true;
-    import('@tauri-apps/api/core')
+    function sendPillSize(w: number, h: number) {
+      pillSizeInFlight = true;
+      pillSizeInFlightTarget = { w, h };
+      import('@tauri-apps/api/core')
       .then(({ invoke }) => invoke('set_pill_size', { width: w, height: h }))
       .then(() => {
         lastSentWidth = w;
         lastSentHeight = h;
       })
       .catch(() => {})
-      .finally(() => {
-        pillSizeInFlight = false;
-        if (pillSizePending) {
+        .finally(() => {
+          pillSizeInFlight = false;
+          pillSizeInFlightTarget = null;
+          if (pillSizePending) {
           const next = pillSizePending;
           pillSizePending = null;
           sendPillSize(next.w, next.h);
