@@ -478,8 +478,9 @@
   });
 
   loadSettings();
+
 </script>
-<svelte:window onclick={handleWindowClick} onkeydown={handleCleanupModalKeydown} />
+<svelte:window onkeydown={handleCleanupModalKeydown} />
 
 <h2 class="settings-h">General</h2>
 <h3 class="settings-subhead first">Dictation</h3>

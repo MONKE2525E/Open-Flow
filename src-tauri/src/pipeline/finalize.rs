@@ -279,13 +279,14 @@ pub(super) async fn finalize_pipeline_completion(
     // show_paste_failed_pill just showed a few lines up — hide_pill would
     // instantly revert it to idle before the button even has a chance to
     // fade in, let alone be clicked.
-    if injected.case_decision != "inject_failed" && injected.case_decision != "clipboard_fallback" {
-        hide_pill(app);
-        if let Some(message) = clipboard_warning {
-            super::show_clipboard_warning_pill(app, message);
-        }
+    if injected.case_decision == "inject_failed" || injected.case_decision == "clipboard_fallback" {
+        log::debug!("pipeline: preserving terminal pill state case_decision={}", injected.case_decision);
+    } else if let Some(message) = clipboard_warning {
+        // Replace the processing pill directly so a passive warning does not
+        // flash through idle on its way to the final state.
+        super::show_clipboard_warning_pill(app, message);
     } else {
-        log::debug!("pipeline: skipping hide_pill — paste_failed pill stays up");
+        hide_pill(app);
     }
 
     // Clipboard-expanded output is intentionally not monitored: its exact

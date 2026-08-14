@@ -28,6 +28,7 @@
 <div class="step clipboard-phrase-step">
   <div class="clipboard-choice-grid" role="radiogroup" aria-label="Clipboard phrase">
     <button
+      type="button"
       class="pick-card clipboard-choice"
       class:selected={enabled}
       role="radio"
@@ -43,6 +44,7 @@
       </div>
     </button>
     <button
+      type="button"
       class="pick-card clipboard-choice"
       class:selected={!enabled}
       role="radio"
