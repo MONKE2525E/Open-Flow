@@ -196,6 +196,12 @@
     });
   }
 
+  function handleWindowClick(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    if (micDropdownOpen && !target.closest('.mic-dropdown')) micDropdownOpen = false;
+    if (languageDropdownOpen && !target.closest('.language-dropdown')) languageDropdownOpen = false;
+  }
+
   async function saveMic(name: string) {
     selectedMic = name;
     micDropdownOpen = false;
