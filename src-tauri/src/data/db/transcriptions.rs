@@ -145,11 +145,12 @@ pub fn query_recent_page(
     // overhead in SQLite.
     let mut sql = String::from(
         "SELECT id, clean_text, words, duration_ms, app_name, created_at \
-         FROM transcriptions WHERE (?1 IS NULL OR app_name = ?1)",
+         FROM transcriptions WHERE (? IS NULL OR app_name = ?)",
     );
-    let mut values: Vec<rusqlite::types::Value> = vec![app_name
+    let app_value = app_name
         .map(|s| rusqlite::types::Value::from(s.to_string()))
-        .unwrap_or(rusqlite::types::Value::Null)];
+        .unwrap_or(rusqlite::types::Value::Null);
+    let mut values: Vec<rusqlite::types::Value> = vec![app_value.clone(), app_value];
     for term in &terms {
         sql.push_str(
             " AND (lower(clean_text) LIKE '%' || lower(?) || '%' ESCAPE '\\' \

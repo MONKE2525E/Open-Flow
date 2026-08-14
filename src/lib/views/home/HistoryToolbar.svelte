@@ -167,8 +167,6 @@
     outline: none;
   }
 
-	.history-search .ui-input:focus-visible { outline: none; }
-
   .clear-btn {
     background: transparent;
     border: 0;
