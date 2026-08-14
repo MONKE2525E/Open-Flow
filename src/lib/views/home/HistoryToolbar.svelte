@@ -103,6 +103,7 @@
 		{#if search}
         <button
           class="clear-btn ui-focus-ring"
+          onmousedown={(event) => event.preventDefault()}
           onclick={() => onSearchChange('')}
           aria-label="Clear search"
         >

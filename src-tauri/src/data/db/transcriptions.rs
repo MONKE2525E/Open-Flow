@@ -145,17 +145,24 @@ pub fn query_recent_page(
     // overhead in SQLite.
     let mut sql = String::from(
         "SELECT id, clean_text, words, duration_ms, app_name, created_at \
-         FROM transcriptions WHERE (? IS NULL OR app_name = ?)",
+         FROM transcriptions",
     );
-    let app_value = app_name
-        .map(|s| rusqlite::types::Value::from(s.to_string()))
-        .unwrap_or(rusqlite::types::Value::Null);
-    let mut values: Vec<rusqlite::types::Value> = vec![app_value.clone(), app_value];
+    let mut values: Vec<rusqlite::types::Value> = Vec::new();
+    if let Some(app_name) = app_name {
+        sql.push_str(" WHERE app_name = ?");
+        values.push(rusqlite::types::Value::from(app_name.to_string()));
+    }
     for term in &terms {
         sql.push_str(
-            " AND (lower(clean_text) LIKE '%' || lower(?) || '%' ESCAPE '\\' \
+            if values.is_empty() && app_name.is_none() {
+                " WHERE (lower(clean_text) LIKE '%' || lower(?) || '%' ESCAPE '\\' \
              OR lower(raw_text) LIKE '%' || lower(?) || '%' ESCAPE '\\' \
-             OR lower(app_name) LIKE '%' || lower(?) || '%' ESCAPE '\\')",
+             OR lower(app_name) LIKE '%' || lower(?) || '%' ESCAPE '\\')"
+            } else {
+                " AND (lower(clean_text) LIKE '%' || lower(?) || '%' ESCAPE '\\' \
+             OR lower(raw_text) LIKE '%' || lower(?) || '%' ESCAPE '\\' \
+             OR lower(app_name) LIKE '%' || lower(?) || '%' ESCAPE '\\')"
+            },
         );
         for _ in 0..3 {
             values.push(rusqlite::types::Value::from(term.clone()));
