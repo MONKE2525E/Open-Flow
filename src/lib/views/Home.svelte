@@ -1,9 +1,15 @@
+<script context="module" lang="ts">
+  let copyTipShown = false;
+</script>
+
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { fly } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
   import { invoke, getVersion, listen } from '../tauri';
   import { appStore } from '../stores';
   import { saveSetting } from '../settings';
-  import { formatKeyLabel, defaultHotkey } from '../platform';
+  import { formatKeyLabel, defaultHotkey, copyLastHotkey } from '../platform';
   import { getGreeting, HISTORY_PAGE_SIZE, type Entry, type Stats } from './home/helpers';
   import HomeHero from './home/HomeHero.svelte';
   import UpdateBanner from './home/UpdateBanner.svelte';
@@ -15,6 +21,7 @@
   let hotkey = defaultHotkey;
   $: hk1 = formatKeyLabel(hotkey[0]);
   $: hk2 = formatKeyLabel(hotkey[1]);
+  $: copyLastLabel = copyLastHotkey.map(formatKeyLabel).join(' ');
 
   let copiedId: number | null = null;
   let currentVersion = '';
@@ -41,6 +48,23 @@
   let appFilter: string | null = null;
   let apps: string[] = [];
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  let showCopyTip = false;
+  let copyTipShowTimer: ReturnType<typeof setTimeout> | null = null;
+  let copyTipHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function dismissCopyTip() {
+    showCopyTip = false;
+    if (copyTipHideTimer) {
+      clearTimeout(copyTipHideTimer);
+      copyTipHideTimer = null;
+    }
+  }
+
+  function showCopyTipNow() {
+    if (copyTipHideTimer) clearTimeout(copyTipHideTimer);
+    showCopyTip = true;
+    copyTipHideTimer = setTimeout(dismissCopyTip, 6000);
+  }
 
   function handleSearchChange(value: string) {
     search = value;
@@ -78,6 +102,11 @@
       searchTimer = null;
     }
     return true;
+  }
+
+  function clearHistoryFilters() {
+    if (!resetHistoryFilters()) return;
+    load(true);
   }
 
   // Filters are session-only. Page navigation unmounts Home (fresh state on
@@ -140,6 +169,7 @@
       await navigator.clipboard.writeText(entry.clean_text);
       copiedId = entry.id;
       setTimeout(() => { copiedId = null; }, 1500);
+      showCopyTipNow();
     } catch { /* clipboard not available in dev */ }
   }
 
@@ -217,6 +247,11 @@
       .catch(() => { /* use platform default if setting unavailable */ });
     load();
 
+    if (!copyTipShown) {
+      copyTipShown = true;
+      copyTipShowTimer = setTimeout(showCopyTipNow, 1200);
+    }
+
     let mounted = true;
     const unlisteners: (() => void)[] = [];
 
@@ -288,6 +323,8 @@
         clearTimeout(searchTimer);
         searchTimer = null;
       }
+      if (copyTipShowTimer) clearTimeout(copyTipShowTimer);
+      if (copyTipHideTimer) clearTimeout(copyTipHideTimer);
     };
   });
 </script>
@@ -334,6 +371,7 @@
         {appFilter}
         onSearchChange={handleSearchChange}
         onAppFilterChange={handleAppFilterChange}
+        onClearFilters={clearHistoryFilters}
         onRetry={retryTranscription}
         onContinueCancelled={continueCancelled}
         onDismissCancelled={dismissCancelled}
@@ -348,6 +386,14 @@
     </div>
   </div>
 </div>
+
+{#if showCopyTip}
+  <div class="copy-tip-toast" role="status" transition:fly={{ y: 6, duration: 180, easing: expoOut }}>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 22h4M12 2a6 6 0 0 0-4 10.5c.7.6 1 1.4 1 2.5h6c0-1.1.3-1.9 1-2.5A6 6 0 0 0 12 2Z" /></svg>
+    <span>Tip: press <kbd>{copyLastLabel}</kbd> anytime to copy your last transcription.</span>
+    <button class="toast-close ui-focus-ring" onclick={dismissCopyTip} aria-label="Dismiss tip">✕</button>
+  </div>
+{/if}
 
 <style>
   .content-inner {
@@ -379,6 +425,34 @@
   }
 
   .page-sub { color: var(--ink-mute); font-size: 12.5px; margin: 0 0 22px; }
+
+  .copy-tip-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: min(480px, calc(100vw - 32px));
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--bg-elev);
+    color: var(--ink-soft);
+    box-shadow: var(--shadow-popover);
+    font-size: 12.5px;
+  }
+  .copy-tip-toast kbd {
+    padding: 1px 5px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--paper-2);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
 
   /* Flat stats */
   .stat-stack { display: flex; flex-direction: column; gap: 22px; }

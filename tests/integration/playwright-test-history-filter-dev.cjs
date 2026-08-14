@@ -66,6 +66,8 @@ const historyMockWrap = function () {
     await page.goto('http://localhost:1420', { waitUntil: 'networkidle', timeout: 15_000 });
     await page.locator('h1.page-h:has-text("Welcome back")').waitFor({ state: 'visible', timeout: 12_000 });
 
+    // Search is intentionally collapsed to a bare icon until it is needed.
+    await page.getByRole('button', { name: 'Search history' }).click();
     const search = page.getByRole('textbox', { name: 'Search history' });
     await search.waitFor({ state: 'visible', timeout: 5_000 });
 
@@ -124,6 +126,14 @@ const historyMockWrap = function () {
     await page.waitForTimeout(500);
     if ((await page.locator('.day-row').count()) !== 6) errors.push('resetting to All apps must restore all rows');
     if ((await page.locator('.empty-state').count()) !== 0) errors.push('empty state must disappear after resetting to All apps');
+
+    // The explicit clear action enters with a horizontal transition and resets
+    // both controls together.
+    await search.fill('accounting');
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: 'Clear filters' }).click();
+    await page.waitForTimeout(500);
+    if ((await page.locator('.day-row').count()) !== 6) errors.push('Clear filters must restore all rows');
 
     // Pagination contract intact: "Load older" only when a full page is present
     // is exercised by the frozen smoke test; here just ensure no error surfaced.

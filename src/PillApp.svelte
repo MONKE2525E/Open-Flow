@@ -722,6 +722,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    position: relative;
   }
 
   /* Resolved tone profile, shown as a small floating tag beside the pill so
@@ -729,6 +730,8 @@
      offsetting the pill capsule itself. Fades in softly so its appearance
      reads as the pill growing, not a new element popping in. */
   .pill-profile {
+    position: absolute;
+    left: calc(50% + 76px);
     font-size: 10.5px;
     font-weight: 500;
     letter-spacing: 0.02em;

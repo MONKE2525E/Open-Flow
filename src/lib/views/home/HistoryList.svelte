@@ -24,6 +24,7 @@
   export let appFilter: string | null;
   export let onSearchChange: (value: string) => void;
   export let onAppFilterChange: (app: string | null) => void;
+  export let onClearFilters: () => void;
   export let onRetry: () => void;
   export let onContinueCancelled: () => void;
   export let onDismissCancelled: () => void;
@@ -338,6 +339,7 @@
     {appFilter}
     {onSearchChange}
     {onAppFilterChange}
+    {onClearFilters}
   />
 
   {#if recents.length === 0 && !hasBanner}

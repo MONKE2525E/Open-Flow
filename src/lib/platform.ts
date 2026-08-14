@@ -50,3 +50,8 @@ export function formatKeyLabel(code: string): string {
  * adjacent bottom-row keys, no Fn/Spotlight conflict). Windows keeps its chord.
  */
 export const defaultHotkey: string[] = isMac ? ['AltLeft', 'Space'] : ['ControlLeft', 'MetaLeft'];
+
+/** Platform label for the fixed copy-last-dictation shortcut. */
+export const copyLastHotkey: string[] = isMac
+	? ['AltLeft', 'MetaLeft', 'KeyC']
+	: ['ControlLeft', 'AltLeft', 'KeyC'];
