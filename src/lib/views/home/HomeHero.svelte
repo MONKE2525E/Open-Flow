@@ -10,7 +10,7 @@
     </h2>
     <p class="hero-photo-sub">
       Verenu works in any app. Try it in
-      <em class="hero-em">email, messages, docs</em> — or anywhere else.
+      <em class="hero-em">email, messages, docs</em> â€” or anywhere else.
     </p>
   </div>
 </div>
@@ -20,7 +20,7 @@
     position: relative;
     border-radius: var(--r-lg);
     overflow: hidden;
-    margin-bottom: 22px;
+    margin-bottom: 16px;
     height: clamp(112px, 14vw, 160px);
     background: var(--arm-950);
   }
