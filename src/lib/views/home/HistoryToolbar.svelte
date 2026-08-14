@@ -53,10 +53,21 @@
 
   function handleGroupFocusOut() {
     requestAnimationFrame(() => {
-      if (preserveExpanded) return;
-      if (groupEl && document.activeElement && groupEl.contains(document.activeElement)) return;
-      if (!filtersActive) uiExpanded = false;
+      if (preserveExpanded) {
+        // Some browsers finish the pointer transition after the replacement
+        // frame, briefly leaving body as the active element. Give the input a
+        // short settling window before deciding the group was really exited.
+        setTimeout(collapseIfFocusLeft, 300);
+        return;
+      }
+      collapseIfFocusLeft();
     });
+  }
+
+  function collapseIfFocusLeft() {
+    if (filtersActive) return;
+    if (groupEl && document.activeElement && groupEl.contains(document.activeElement)) return;
+    uiExpanded = false;
   }
 </script>
 
