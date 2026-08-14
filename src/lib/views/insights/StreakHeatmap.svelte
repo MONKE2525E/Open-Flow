@@ -53,7 +53,7 @@
 
     const firstRealDate = daily.length > 0 ? parseLocalDay(daily[0].day) : lastDate;
     const daysSpanningReal = Math.round((endDate.getTime() - firstRealDate.getTime()) / 86_400_000) + 1;
-    const totalWeeks = Math.ceil(daysSpanningReal / 7);
+    const totalWeeks = Math.max(MIN_WEEKS, Math.ceil(daysSpanningReal / 7));
 
     const startDate = new Date(endDate);
     startDate.setDate(startDate.getDate() - (totalWeeks * 7 - 1));

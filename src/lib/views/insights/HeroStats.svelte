@@ -234,10 +234,6 @@
     height: auto;
     display: block;
   }
-  .gauge-fill {
-    transition: stroke-dasharray var(--ui-duration-base) var(--ui-ease-out);
-  }
-
   .gauge-tick {
     font-family: var(--serif);
     font-size: 10px;
