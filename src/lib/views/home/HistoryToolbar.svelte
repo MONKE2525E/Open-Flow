@@ -26,6 +26,7 @@
 
   let appDropdownOpen = $state(false);
   let uiExpanded = $state(false);
+  let preserveExpanded = $state(false);
   let groupEl = $state<HTMLElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
 
@@ -33,9 +34,16 @@
   let expanded = $derived(uiExpanded || filtersActive);
 
   async function expandSearch() {
+    // Replacing the focused icon button with the input emits focusout before
+    // the new input can receive focus. Keep the group open through that one
+    // DOM transition so keyboard and automation users can type immediately.
+    preserveExpanded = true;
     uiExpanded = true;
     await tick();
     inputEl?.focus();
+    requestAnimationFrame(() => {
+      preserveExpanded = false;
+    });
   }
 
   function selectAppFilter(app: string | null) {
@@ -45,6 +53,7 @@
 
   function handleGroupFocusOut() {
     requestAnimationFrame(() => {
+      if (preserveExpanded) return;
       if (groupEl && document.activeElement && groupEl.contains(document.activeElement)) return;
       if (!filtersActive) uiExpanded = false;
     });
