@@ -257,7 +257,6 @@
 <div class="prompt-modal-wrap">
   <div
     class="prompt-modal-backdrop"
-    aria-hidden="true"
     onclick={onBackdropClick}
     onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onBackdropClick(); } }}
     role="button"
