@@ -735,7 +735,7 @@ mod tests {
     }
 
     fn insert_on_day(db: &Db, days_ago: i64, text: &str, words: i64, duration_ms: i64) -> i64 {
-        let entry = insert_transcription_returning(db, text, text, words, duration_ms, "groq/whisper-large-v3-turbo")
+        let entry = insert_transcription_returning(db, text, text, words, duration_ms, "groq/whisper-large-v3-turbo", None)
             .expect("insert transcription");
         {
             let conn = lock_conn(db).expect("lock");
@@ -925,6 +925,7 @@ mod tests {
             3,
             1000,
             "groq/whisper-large-v3-turbo",
+            None,
         )
         .expect("insert transcription");
         let created_at = utc_for_local_day(2, 23, 50);
@@ -963,7 +964,7 @@ mod tests {
     fn top_words_exclude_stopwords_and_sort_descending() {
         let db = test_db();
         let text = "the the the and and and apple banana banana cherry the";
-        insert_transcription_returning(&db, text, text, 11, 1000, "groq/whisper-large-v3-turbo")
+        insert_transcription_returning(&db, text, text, 11, 1000, "groq/whisper-large-v3-turbo", None)
             .expect("insert transcription");
 
         let insights = query_insights(&db, 7).expect("insights");
@@ -989,7 +990,7 @@ mod tests {
     fn top_words_strip_punctuation_and_drop_short_tokens() {
         let db = test_db();
         let text = "React, Vue! React? Vue. Svelte. i a um go";
-        insert_transcription_returning(&db, text, text, 10, 1000, "groq/whisper-large-v3-turbo")
+        insert_transcription_returning(&db, text, text, 10, 1000, "groq/whisper-large-v3-turbo", None)
             .expect("insert transcription");
 
         let insights = query_insights(&db, 7).expect("insights");

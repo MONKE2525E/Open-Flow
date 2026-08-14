@@ -145,6 +145,7 @@ JS_TESTS = [
     ("integration/playwright-test-surface-dev.cjs",    "ui",      "Snippets, dictionary, style surfaces", {"retry": 1, "timeout_s": 120}),
     ("integration/playwright-test-offline-dev.cjs",    "ui",      "Offline toast in browser dev mode",    {"retry": 1, "timeout_s": 60}),
     ("integration/playwright-test-fullscreen-settings-dev.cjs", "ui", "Full-screen settings & rail morph", {"retry": 2, "timeout_s": 120}),
+    ("integration/playwright-test-history-filter-dev.cjs",       "ui", "History search & app filter",      {"retry": 1, "timeout_s": 90}),
 
     # ── SUITE: state ──────────────────────────────────────────────────────────
     ("smoke/playwright-test-state.cjs",                "state",     "Settings state persistence",       {"retry": 2, "timeout_s": 90}),

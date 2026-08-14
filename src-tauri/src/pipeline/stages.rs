@@ -263,6 +263,29 @@ pub(super) fn apply_app_style_overrides(
         .unwrap_or_else(|| cfg.default_tone.clone())
 }
 
+/// Resolves the tone profile that would apply to a foreground window without
+/// running the full pipeline, and emits it to the pill so the recording state
+/// can show which style will apply. Used at recording start, where the full
+/// `open_config_and_context` (chain validation + error pills) is too heavy and
+/// would double-resolve; the pipeline re-emits the same value at processing
+/// time so the shown profile always matches what actually runs.
+pub(super) fn emit_profile_for_window(app: &AppHandle, hwnd: usize) {
+    if hwnd == 0 {
+        return;
+    }
+    let process_name = window_context::get_process_name_for_hwnd(hwnd).unwrap_or_default();
+    if process_name.is_empty() {
+        return;
+    }
+    let Ok(settings) = store::settings_snapshot(app) else {
+        return;
+    };
+    let mapping = resolve_app_mapping(Some(&settings), &process_name);
+    let mut cfg = store::load_pipeline_config(&settings);
+    let profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
+    crate::pipeline::pill::emit_pill_profile(app, &profile);
+}
+
 /// Casual/formal cleanup sometimes omits a closing period on short utterances.
 /// That leaves a bare word before the caret, which the contextual-capitalization
 /// probe then reads as a mid-sentence continuation — so the *next* dictation has

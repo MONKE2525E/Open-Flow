@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { getProfileLabel } from './lib/appMappings';
 
   type PillState = 'idle' | 'recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'paste_failed' | 'copied';
   let state: PillState = 'idle';
@@ -23,6 +24,62 @@
   let prevState: PillState = 'idle';
   let dying = false;
   let dyingTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Resolved tone profile for the current dictation (label form, e.g. "Casual"),
+  // emitted by the backend from the pipeline's own resolution.
+  let profileLabel: string | null = null;
+
+  // Processing sub-stage ("Transcribing…" / "Cleaning…" / "Pasting…"), driven
+  // by real `pill-stage` events from the pipeline. All three rows stay mounted
+  // in a fixed stack (see .stage-roll) and the active one is selected by index,
+  // so a stage change is a pure transform roll — the text never remounts, which
+  // is what makes the transition flicker-free. A stage only replaces the
+  // previous one once it has been visible a minimum time, so a sub-400ms stage
+  // (e.g. cleanup resolving instantly when disabled) can't flash; the newest
+  // pending stage always wins and terminal states clear everything.
+  const STAGE_MIN_MS = 400;
+  const STAGE_ROWS = ['Transcribing…', 'Cleaning…', 'Pasting…'] as const;
+  const STAGE_INDEX: Record<string, number> = {
+    transcribing: 0,
+    cleaning: 1,
+    pasting: 2,
+  };
+  const STAGE_ROW_H = 14;
+  let stageIndex = -1;
+  let pendingStageIndex: number | null = null;
+  let stageTimer: ReturnType<typeof setTimeout> | null = null;
+  let stageShownAt = 0;
+
+  function onPillStage(stageName: string) {
+    const idx = STAGE_INDEX[stageName];
+    if (idx === undefined || state === 'idle' || stageIndex === idx) return;
+    if (stageIndex === -1 || performance.now() - stageShownAt >= STAGE_MIN_MS) {
+      stageIndex = idx;
+      stageShownAt = performance.now();
+      pendingStageIndex = null;
+      return;
+    }
+    pendingStageIndex = idx;
+    if (stageTimer) return;
+    const remaining = STAGE_MIN_MS - (performance.now() - stageShownAt);
+    stageTimer = setTimeout(() => {
+      stageTimer = null;
+      if (pendingStageIndex !== null) {
+        stageIndex = pendingStageIndex;
+        pendingStageIndex = null;
+        stageShownAt = performance.now();
+      }
+    }, remaining);
+  }
+
+  function clearStage() {
+    if (stageTimer) {
+      clearTimeout(stageTimer);
+      stageTimer = null;
+    }
+    pendingStageIndex = null;
+    stageIndex = -1;
+  }
 
   const BARS = 12;
 
@@ -174,6 +231,8 @@
       dyingTimer = null;
       prevState = state;
       state = 'idle';
+      clearStage();
+      profileLabel = null;
       smoothed = 0;
       errOpen = false;
       errWidth = 0;
@@ -273,6 +332,22 @@
       const l1 = await listen<string>('pill-state', (ev) => {
         const incoming = (ev.payload as PillState) || 'idle';
         if (hfTimer !== null) { clearTimeout(hfTimer); hfTimer = null; }
+
+        // A fresh recording starts a brand-new dictation: drop the previous
+        // one's profile/stage. Terminal states are no longer "in progress", so
+        // they clear too (idle is handled by goIdle).
+        if (incoming === 'recording') {
+          profileLabel = null;
+          clearStage();
+        } else if (
+          incoming === 'error' ||
+          incoming === 'cancelled' ||
+          incoming === 'paste_failed' ||
+          incoming === 'copied'
+        ) {
+          clearStage();
+          profileLabel = null;
+        }
 
         if (incoming === 'idle' && state !== 'idle') {
           stopRaf();
@@ -412,6 +487,19 @@
       if (!mounted) { l3(); return; }
       unlisteners.push(l3);
 
+      const l5 = await listen<string>('pill-profile', (ev) => {
+        const profile = ev.payload;
+        profileLabel = profile && profile !== 'unknown' ? getProfileLabel(profile) : null;
+      });
+      if (!mounted) { l5(); return; }
+      unlisteners.push(l5);
+
+      const l6 = await listen<string>('pill-stage', (ev) => {
+        onPillStage(ev.payload);
+      });
+      if (!mounted) { l6(); return; }
+      unlisteners.push(l6);
+
       // Fired when the cancelled capture is resumed or dismissed from
       // *another* window (Home's banner) — if this toast is still showing,
       // it's now stale, so drop it without re-invoking dismiss.
@@ -435,6 +523,7 @@
       if (pasteFailedDismissTimer) clearTimeout(pasteFailedDismissTimer);
       if (copiedTimer) clearTimeout(copiedTimer);
       if (copiedPillTimer) clearTimeout(copiedPillTimer);
+      clearStage();
       unlisteners.forEach(u => u());
     };
   });
@@ -500,6 +589,10 @@
 <!-- --bar-w/--bar-gap live on .wrap so every pill state (incl. processing, which
      has no bars of its own) inherits the DPI-snapped values for its width calc. -->
 <div class="wrap" style="--bar-w:{barW}px; --bar-gap:{barGap}px">
+  {#if profileLabel && (state === 'recording' || state === 'processing' || state === 'handsfree' || state === 'loading_local_model')}
+    <span class="pill-profile">{profileLabel}</span>
+  {/if}
+
   {#if state === 'recording'}
     <div class="pill recording" class:dying={dying}>
       {#each barHeights as h, i (i)}
@@ -513,7 +606,14 @@
          class:from-hf={prevState === 'handsfree'}
          class:from-loading={prevState === 'loading_local_model'}
          class:dying={dying}>
-      <div class="scan-line"></div>
+      <div class="stage-counter" aria-hidden="true">
+        <div class="stage-roll" style="transform: translateY({Math.max(0, stageIndex) * -STAGE_ROW_H}px)">
+          {#each STAGE_ROWS as label, i (label)}
+            <span class="stage-row">{label}</span>
+          {/each}
+        </div>
+      </div>
+      <div class="spinner"></div>
     </div>
 
   {:else if state === 'loading_local_model'}
@@ -613,15 +713,40 @@
     margin: 0; padding: 0;
     background: transparent;
     overflow: hidden;
-    width: 100vw; height: 44px;
+    width: 100vw; height: 100vh;
     font-family: var(--sans);
   }
 
   .wrap {
-    width: 100vw; height: 44px;
+    width: 100vw; height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
+    position: relative;
+  }
+
+  /* Resolved tone profile, shown as a small floating tag beside the pill so
+     the otherwise-invisible style setting stays legible without crowding or
+     offsetting the pill capsule itself. Fades in softly so its appearance
+     reads as the pill growing, not a new element popping in. */
+  .pill-profile {
+    position: absolute;
+    left: calc(50% + 76px);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--pill-muted);
+    background: var(--pill-bg);
+    border-radius: 999px;
+    padding: 2px 8px;
+    white-space: nowrap;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+    animation: chipIn 0.18s ease-out both;
+  }
+  @keyframes chipIn {
+    from { opacity: 0; transform: translateY(-3px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
 
   .pill {
@@ -681,7 +806,7 @@
   }
 
   /* Processing */
-  .pill.processing { width: 100px; padding: 0 14px; }
+  .pill.processing { width: 140px; padding: 0 12px; gap: 7px; }
   .pill.loading-local { width: 144px; padding: 0 14px; gap: 9px; }
 
   /* Recording→processing: grow in width */
@@ -691,11 +816,7 @@
   @keyframes processIn {
     /* start from the recording pill's DPI-snapped width so there's no jump */
     from { width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 14px); }
-    to   { width: 100px; }
-  }
-  /* Scan line fades in after the pill has grown */
-  .pill.processing.from-rec .scan-line {
-    animation: scanIn 0.18s ease 0.18s both;
+    to   { width: 140px; }
   }
 
   /* Handsfree→processing: pill shrinks slightly */
@@ -706,10 +827,7 @@
     /* start from the expanded handsfree pill's DPI-snapped width (bars + 54px of
        buttons/padding/gaps) so there's no jump at fractional DPI */
     from { width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 54px); }
-    to   { width: 100px; }
-  }
-  .pill.processing.from-hf .scan-line {
-    animation: scanIn 0.18s ease 0.08s both;
+    to   { width: 140px; }
   }
 
   /* Processing→loading model: grow smoothly into the wider pill instead of
@@ -719,7 +837,7 @@
     animation: loadingLocalIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
   @keyframes loadingLocalIn {
-    from { width: 100px; }
+    from { width: 140px; }
     to   { width: 144px; }
   }
   /* Comma-separated, not a separate rule: the entrance fade and the
@@ -740,10 +858,7 @@
   }
   @keyframes processFromLoading {
     from { width: 144px; }
-    to   { width: 100px; }
-  }
-  .pill.processing.from-loading .scan-line {
-    animation: scanIn 0.18s ease 0.08s both;
+    to   { width: 140px; }
   }
 
   /* If the pipeline exits idle mid-transition (e.g. cancelled right as a
@@ -758,27 +873,48 @@
     animation: pillOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
   }
 
-  /* Scan line: dim track with a bright light sweeping back and forth */
-  .scan-line {
-    flex: 1;
-    height: 2px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.12);
-    position: relative;
+  /* Stage counter: all three stage labels stay mounted in one vertical stack
+     and the active one is picked by a translateY roll — no remounting, no
+     opacity flashes, just a mechanical-counter roll between stages. The clip
+     window is exactly one row tall; the stack's width is the widest row, so
+     the pill's width never changes between stages. */
+  .stage-counter {
+    height: 14px;
     overflow: hidden;
+    display: flex;
   }
-  .scan-line::after {
-    content: '';
-    position: absolute;
-    top: 0; left: -40%;
-    width: 80%; height: 100%;
-    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.9) 50%, transparent 100%);
-    border-radius: 999px;
-    animation: scan 1.1s ease-in-out infinite alternate;
+  .stage-roll {
+    display: flex;
+    flex-direction: column;
+    will-change: transform;
+    transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   }
-  @keyframes scan {
-    from { left: -40%; }
-    to   { left: 60%; }
+  /* A soft white light sweeps across the letters while the stage is active —
+     the scan lives on the text itself (background-clip), replacing the old
+     separate moving line so nothing flickers past the label. */
+  .stage-row {
+    height: 14px;
+    line-height: 14px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+    color: transparent;
+    background-image: linear-gradient(
+      90deg,
+      var(--pill-muted-strong) 0%,
+      var(--pill-muted-strong) 44%,
+      rgba(255, 255, 255, 0.95) 50%,
+      var(--pill-muted-strong) 56%,
+      var(--pill-muted-strong) 100%
+    );
+    background-size: 200% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    animation: stage-scan 2.2s ease-in-out infinite alternate;
+  }
+  @keyframes stage-scan {
+    from { background-position: -110% 0; }
+    to   { background-position: 10% 0; }
   }
   @keyframes scanIn {
     from { opacity: 0; }
@@ -951,9 +1087,11 @@
   .hf-btn.confirm:hover { color: var(--accent-ink); }
 
   @keyframes hfBtnIn {
-    from { opacity: 0; transform: scale(0.7); }
-    to   { opacity: 1; transform: scale(1); }
+    /* Gentle fade + tiny rise, deliberately no scale — a pop reads as the UI
+       switching elements on and off, a settle reads as the pill growing. */
+    from { opacity: 0; transform: translateY(3px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
-  .hf-btn.cancel  { animation: hfBtnIn 0.12s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
-  .hf-btn.confirm { animation: hfBtnIn 0.12s cubic-bezier(0.34, 1.56, 0.64, 1) 0.02s both; }
+  .hf-btn.cancel  { animation: hfBtnIn 0.16s ease-out both; }
+  .hf-btn.confirm { animation: hfBtnIn 0.16s ease-out 0.03s both; }
 </style>

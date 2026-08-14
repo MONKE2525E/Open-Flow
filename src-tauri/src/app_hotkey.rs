@@ -297,7 +297,7 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     let app_for_copy = app_hk.clone();
                     tauri::async_runtime::spawn(async move {
                         let recent = tokio::task::spawn_blocking(move || {
-                            crate::data::db::query_recent_page(&db_handle, 1, 0)
+                            crate::data::db::query_recent_page(&db_handle, 1, 0, None, None)
                         })
                         .await
                         .ok()

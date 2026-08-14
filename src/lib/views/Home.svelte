@@ -1,9 +1,15 @@
+<script context="module" lang="ts">
+  let copyTipShown = false;
+</script>
+
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { fly } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
   import { invoke, getVersion, listen } from '../tauri';
   import { appStore } from '../stores';
   import { saveSetting } from '../settings';
-  import { formatKeyLabel, defaultHotkey } from '../platform';
+  import { formatKeyLabel, defaultHotkey, copyLastHotkey } from '../platform';
   import { getGreeting, HISTORY_PAGE_SIZE, type Entry, type Stats } from './home/helpers';
   import HomeHero from './home/HomeHero.svelte';
   import UpdateBanner from './home/UpdateBanner.svelte';
@@ -15,6 +21,7 @@
   let hotkey = defaultHotkey;
   $: hk1 = formatKeyLabel(hotkey[0]);
   $: hk2 = formatKeyLabel(hotkey[1]);
+  $: copyLastLabel = copyLastHotkey.map(formatKeyLabel).join(' ');
 
   let copiedId: number | null = null;
   let currentVersion = '';
@@ -33,6 +40,84 @@
   let loading = true;
   let loadingMore = false;
   let hasMoreHistory = false;
+
+  // History search + app filter. Search is debounced; the app list comes from
+  // the backend so filtering stays in SQLite (pagination is preserved).
+  let search = '';
+  let debouncedSearch = '';
+  let appFilter: string | null = null;
+  let apps: string[] = [];
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  let showCopyTip = false;
+  let copyTipShowTimer: ReturnType<typeof setTimeout> | null = null;
+  let copyTipHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function dismissCopyTip() {
+    showCopyTip = false;
+    if (copyTipHideTimer) {
+      clearTimeout(copyTipHideTimer);
+      copyTipHideTimer = null;
+    }
+  }
+
+  function showCopyTipNow() {
+    if (copyTipHideTimer) clearTimeout(copyTipHideTimer);
+    showCopyTip = true;
+    copyTipHideTimer = setTimeout(dismissCopyTip, 6000);
+  }
+
+  function handleSearchChange(value: string) {
+    search = value;
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      searchTimer = null;
+      if (debouncedSearch !== value) {
+        debouncedSearch = value;
+        load(true);
+      }
+    }, 120);
+  }
+
+  function handleAppFilterChange(app: string | null) {
+    if (appFilter === app) return;
+    // A pending debounce would otherwise fire a stale search query right after
+    // this load — flush it so the filter change queries once with current state.
+    if (searchTimer) {
+      clearTimeout(searchTimer);
+      searchTimer = null;
+      debouncedSearch = search;
+    }
+    appFilter = app;
+    load(true);
+  }
+
+  function resetHistoryFilters(): boolean {
+    const had = search !== '' || debouncedSearch !== '' || appFilter !== null;
+    if (!had) return false;
+    search = '';
+    debouncedSearch = '';
+    appFilter = null;
+    if (searchTimer) {
+      clearTimeout(searchTimer);
+      searchTimer = null;
+    }
+    return true;
+  }
+
+  function clearHistoryFilters() {
+    if (!resetHistoryFilters()) return;
+    load(true);
+  }
+
+  // Filters are session-only. Page navigation unmounts Home (fresh state on
+  // return, no reload needed); Settings is a full-screen overlay that keeps
+  // Home mounted, so clear the filter there and refresh the list behind it.
+  // A restart clears them naturally since nothing is persisted.
+  $: if (appStore.settingsOpen) {
+    if (resetHistoryFilters()) {
+      load(true);
+    }
+  }
 
   async function retryTranscription() {
     if (retrying) return;
@@ -84,20 +169,34 @@
       await navigator.clipboard.writeText(entry.clean_text);
       copiedId = entry.id;
       setTimeout(() => { copiedId = null; }, 1500);
+      showCopyTipNow();
     } catch { /* clipboard not available in dev */ }
   }
 
+  // A monotonically increasing sequence number lets a superseded load()
+  // (e.g. a search debounce firing right after an app-filter change) detect
+  // that a newer request is in flight and discard its own stale result.
+  let loadSeq = 0;
+
   async function load(reset = true) {
+    const seq = ++loadSeq;
     const nextOffset = reset ? 0 : recents.length;
     try {
       const [r, s] = await Promise.all([
-        invoke<Entry[]>('get_recent', { limit: HISTORY_PAGE_SIZE, offset: nextOffset }),
+        invoke<Entry[]>('get_recent', {
+          limit: HISTORY_PAGE_SIZE,
+          offset: nextOffset,
+          search: debouncedSearch.trim() || undefined,
+          appName: appFilter ?? undefined,
+        }),
         reset ? invoke<Stats>('get_stats') : Promise.resolve(stats),
       ]);
+      if (seq !== loadSeq) return;
       recents = reset ? (r ?? []) : [...recents, ...(r ?? [])];
       stats = s;
       hasMoreHistory = (r?.length ?? 0) === HISTORY_PAGE_SIZE;
     } catch (err) {
+      if (seq !== loadSeq) return;
       console.error('Home load failed:', err);
       if (reset) {
         recents = [];
@@ -140,10 +239,18 @@
 
   onMount(() => {
     getVersion().then(v => currentVersion = v);
+    invoke<string[] | null>('get_history_apps')
+      .then(list => { apps = list ?? []; })
+      .catch(() => { apps = []; });
     invoke<string[] | null>('get_setting', { key: 'hotkey' })
       .then(hk => { if (hk?.length === 2) hotkey = hk; })
       .catch(() => { /* use platform default if setting unavailable */ });
     load();
+
+    if (!copyTipShown) {
+      copyTipShown = true;
+      copyTipShowTimer = setTimeout(showCopyTipNow, 1200);
+    }
 
     let mounted = true;
     const unlisteners: (() => void)[] = [];
@@ -212,6 +319,12 @@
         clearTimeout(cancelledTimer);
         cancelledTimer = null;
       }
+      if (searchTimer) {
+        clearTimeout(searchTimer);
+        searchTimer = null;
+      }
+      if (copyTipShowTimer) clearTimeout(copyTipShowTimer);
+      if (copyTipHideTimer) clearTimeout(copyTipHideTimer);
     };
   });
 </script>
@@ -253,6 +366,12 @@
         {copiedId}
         {hk1}
         {hk2}
+        {search}
+        {apps}
+        {appFilter}
+        onSearchChange={handleSearchChange}
+        onAppFilterChange={handleAppFilterChange}
+        onClearFilters={clearHistoryFilters}
         onRetry={retryTranscription}
         onContinueCancelled={continueCancelled}
         onDismissCancelled={dismissCancelled}
@@ -267,6 +386,14 @@
     </div>
   </div>
 </div>
+
+{#if showCopyTip}
+  <div class="copy-tip-toast" role="status" transition:fly={{ y: 6, duration: 180, easing: expoOut }}>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 22h4M12 2a6 6 0 0 0-4 10.5c.7.6 1 1.4 1 2.5h6c0-1.1.3-1.9 1-2.5A6 6 0 0 0 12 2Z" /></svg>
+    <span>Tip: press <kbd>{copyLastLabel}</kbd> anytime to copy your last transcription.</span>
+    <button class="toast-close ui-focus-ring" onclick={dismissCopyTip} aria-label="Dismiss tip">✕</button>
+  </div>
+{/if}
 
 <style>
   .content-inner {
@@ -298,6 +425,46 @@
   }
 
   .page-sub { color: var(--ink-mute); font-size: 12.5px; margin: 0 0 22px; }
+
+  .copy-tip-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: min(480px, calc(100vw - 32px));
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--bg-elev);
+    color: var(--ink-soft);
+    box-shadow: var(--shadow-popover);
+    font-size: 12.5px;
+  }
+  .copy-tip-toast kbd {
+    padding: 1px 5px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--paper-2);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .copy-tip-toast .toast-close {
+    margin-left: 4px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ink-mute);
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    opacity: 0.65;
+  }
+  .copy-tip-toast .toast-close:hover { opacity: 1; }
 
   /* Flat stats */
   .stat-stack { display: flex; flex-direction: column; gap: 22px; }
