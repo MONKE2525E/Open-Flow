@@ -4,6 +4,7 @@
   import { cleanupPromptEditor } from './lib/stores.svelte';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
+  import Insights from './lib/views/Insights.svelte';
   import Dictionary from './lib/views/Dictionary.svelte';
   import Snippets from './lib/views/Snippets.svelte';
   import Style from './lib/views/Style.svelte';
@@ -63,6 +64,21 @@
     requestAnimationFrame(() => {
       contentEl?.scrollTo({ top: 0, behavior: reducedMotionEnabled() ? 'auto' : 'smooth' });
     });
+  });
+
+  // The wizard is the first thing in the app and unmounts when it finishes;
+  // without this, focus drops to <body> and a keyboard user lands nowhere.
+  // Land on the first rail entry (Home) only on a real completion transition
+  // (wizard → app), so a normal app start never gets an unexpected focus ring.
+  let prevSetupComplete = appStore.setupComplete;
+  $effect(() => {
+    const complete = appStore.setupComplete;
+    if (!prevSetupComplete && complete) {
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>('.sidebar .nav-item')?.focus();
+      });
+    }
+    prevSetupComplete = complete;
   });
 
   async function pingConnectivity() {
@@ -224,6 +240,8 @@
         >
           {#if appStore.currentPage === 'home'}
             <Home />
+          {:else if appStore.currentPage === 'insights'}
+            <Insights />
           {:else if appStore.currentPage === 'dictionary'}
             <Dictionary />
           {:else if appStore.currentPage === 'snippets'}

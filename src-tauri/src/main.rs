@@ -260,7 +260,11 @@ fn main() {
         target: WindowTarget::default(),
         pill_placement: None,
         pill_placement_stale: false,
+        pill_width_points: pipeline::DEFAULT_PILL_WIDTH_POINTS,
+        pill_height_points: pipeline::DEFAULT_PILL_HEIGHT_POINTS,
         retry_capture: None,
+        cancelled_capture: None,
+        paste_failure: None,
     }));
 
     std::fs::create_dir_all(app_data_dir()).ok();
@@ -513,6 +517,7 @@ fn main() {
             commands::hide_main,
             commands::get_recent,
             commands::get_stats,
+            commands::get_insights,
             commands::count_old_transcriptions,
             commands::get_cleanup_cache_status,
             commands::clear_cleanup_cache,
@@ -531,6 +536,10 @@ fn main() {
             commands::stop_setup_try_recording,
             commands::stop_recording,
             commands::stop_handless_mode,
+            commands::resume_cancelled_capture,
+            commands::dismiss_cancelled_capture,
+            commands::copy_paste_failure_to_clipboard,
+            commands::set_pill_size,
             commands::get_installed_apps,
             commands::get_app_mappings,
             commands::save_app_mappings,

@@ -8,8 +8,11 @@ use crate::pipeline::pill_position::PillPlacement;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
-const PILL_WIDTH_POINTS: f64 = 380.0;
-const PILL_HEIGHT_POINTS: f64 = 44.0;
+/// Initial window size at creation. Kept in step with the state defaults so
+/// the window is never created wider than the content it will hold — the
+/// frontend re-reports the real content size as soon as it mounts.
+const PILL_WIDTH_POINTS: f64 = super::DEFAULT_PILL_WIDTH_POINTS;
+const PILL_HEIGHT_POINTS: f64 = super::DEFAULT_PILL_HEIGHT_POINTS;
 
 /// Guards the animated path's deferred reveal against being overtaken by a
 /// newer `show_pill_msg` call. The animated cross-monitor move (see
@@ -132,12 +135,11 @@ pub(crate) fn update_pill_state(app: &AppHandle, state: &str) {
 }
 
 /// Shows the pill window in the given state, optionally carrying an error
-/// message. The window is always kept at the same width regardless of state
-/// (room enough for the error text to expand into), so within a single
-/// monitor it never needs to resize or reposition after its first
-/// appearance. Handsfree's click-capture zone is therefore wider than the
-/// visible pill; clicks in the empty space around it are swallowed instead
-/// of passing through while handsfree is active. Moving to a different
+/// message. The window is sized to whatever the frontend last reported as its
+/// visible content width (see `commands::recording::set_pill_size`), so the
+/// transparent click-capture zone tracks the pill rather than a fixed band —
+/// in a button-bearing state like handsfree, only the capsule itself swallows
+/// clicks, and everything beside it passes through. Moving to a different
 /// monitor, whether or not its scale factor differs, animates the move on
 /// Windows (see `pill_animation.rs`) instead of jumping instantly, since an
 /// instant cross-monitor move on this window either visibly snapped
@@ -224,8 +226,11 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     PILL_VISUALLY_ACTIVE.store(true, Ordering::SeqCst);
 
     // Click-through for passive states so nothing behind the pill is blocked.
-    // Handsfree needs real cursor events for its cancel/confirm buttons.
-    pill.set_ignore_cursor_events(state != "handsfree").ok();
+    // Handsfree, error (Retry), and cancelled (Undo/Dismiss) all have real
+    // buttons that need real cursor events.
+    let has_clickable_buttons =
+        matches!(state, "handsfree" | "error" | "cancelled" | "paste_failed" | "copied");
+    pill.set_ignore_cursor_events(!has_clickable_buttons).ok();
 
     // Show the window before emitting state so WebView2 is active when it
     // receives the event. WebView2 suspends event processing while hidden;
@@ -285,11 +290,13 @@ fn next_pill_placement<R: Runtime>(
     app: &AppHandle,
     pill: &WebviewWindow<R>,
 ) -> Option<PillPlacement> {
-    let (target_point, cached, stale) = {
+    let (target_point, width_points, height_points, cached, stale) = {
         let state = app.try_state::<SharedState>()?;
         let guard = state.lock().ok()?;
         (
             guard.target.display_point,
+            guard.pill_width_points,
+            guard.pill_height_points,
             guard.pill_placement,
             guard.pill_placement_stale,
         )
@@ -299,7 +306,13 @@ fn next_pill_placement<R: Runtime>(
         return None;
     }
 
-    let resolved = super::pill_position::resolve_pill_placement(pill, target_point).or(cached);
+    let resolved = super::pill_position::resolve_pill_placement(
+        pill,
+        target_point,
+        width_points,
+        height_points,
+    )
+    .or(cached);
 
     if let Some(placement) = resolved {
         if stale || cached != Some(placement) {
@@ -327,11 +340,59 @@ pub(crate) fn hide_pill(app: &AppHandle) {
         super::pill_animation::cancel_pending_pill_tween();
 
         pill.emit("pill-state", "idle").ok();
+        // Re-enable click-through: after a button-bearing state (handsfree,
+        // error, cancelled, paste_failed) reveal_pill left the window
+        // click-capturing. Idle is invisible, so it must never swallow clicks
+        // in the pill's zone even though the pill content has disappeared.
+        pill.set_ignore_cursor_events(true).ok();
         // Do not call pill.hide() - hiding the window suspends the WebView2
         // renderer. The next show_pill("recording") emit would then be lost
         // before WebView2 wakes up, causing only "processing" to appear.
         // The pill window is transparent + click-through in idle state, so
         // leaving it visible has no user-visible effect.
+    }
+}
+
+/// Shows the pill's "Cancelled" state — a cancelled recording whose audio was
+/// good enough to stash for the pill's Continue button (see
+/// `pipeline::cancel_recording_with_resume`). Auto-dismiss is handled by the
+/// frontend (`PillApp.svelte`), same as `show_error_pill`.
+pub(super) fn show_cancelled_pill(app: &AppHandle) {
+    show_pill_msg(app, "cancelled", None);
+}
+
+/// Shows the pill's "Paste failed" state — injection didn't land (or
+/// couldn't be verified), but the finished text is safely stashed as
+/// `paste_failure` for the pill's Copy button (see
+/// `commands::recording::copy_paste_failure_to_clipboard`). Auto-dismiss is
+/// handled by the frontend, same as `show_error_pill`.
+pub(super) fn show_paste_failed_pill(app: &AppHandle) {
+    if super::start_stop_sounds_enabled(app) {
+        crate::media::sound::play(crate::media::sound::SoundCue::Error);
+    }
+    show_pill_msg(app, "paste_failed", None);
+}
+
+/// Shows the pill's "Copied" confirmation for the global copy-last-dictation
+/// shortcut (Ctrl+Alt+C / ⌥⌘C) — a lightweight, button-less toast so the
+/// user gets clear feedback the shortcut actually did something, even when
+/// nothing is focused to receive it. Auto-dismiss (5s) is handled by the
+/// frontend, same as the other transient pill states.
+pub(crate) fn show_copied_pill(app: &AppHandle, msg: &str) {
+    if super::start_stop_sounds_enabled(app) {
+        crate::media::sound::play(crate::media::sound::SoundCue::Stop);
+    }
+    show_pill_msg(app, "copied", Some(msg));
+}
+
+/// Emits the current processing sub-stage to the pill window. The pill is
+/// already showing `processing`; this only refines what it displays
+/// ("Transcribing…" / "Cleaning…" / "Pasting…"). Payload is a bare stage id
+/// string; the frontend maps it to a label, so adding a stage never requires
+/// an IPC schema change.
+pub(crate) fn emit_pill_stage(app: &AppHandle, stage: &str) {
+    if let Some(pill) = app.get_webview_window("pill") {
+        pill.emit("pill-stage", stage).ok();
     }
 }
 

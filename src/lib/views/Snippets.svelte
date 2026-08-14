@@ -107,7 +107,12 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && !modal) selected = null;
+    if (e.key === 'Escape' && !modal) {
+      selected = null;
+      // Escape is the "back out" key: disarm a pending destructive delete too,
+      // so re-selecting the same row doesn't resurrect the Confirm state.
+      deleteTarget = null;
+    }
   }
 </script>
 
@@ -271,38 +276,6 @@
     margin: 0 0 10px;
     max-width: 360px;
   }
-
-  .btn-primary {
-    background: var(--ink);
-    color: var(--amber-50);
-    border: 0;
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 12.5px;
-    font-weight: 500;
-    font-family: var(--sans);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: opacity 0.15s;
-  }
-  .btn-primary:disabled { opacity: 0.4; cursor: default; }
-  .btn-primary:not(:disabled):hover { opacity: 0.82; }
-
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 12.5px;
-    font-family: var(--sans);
-    color: var(--ink-soft);
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
 
   @media (max-width: 1060px) {
     .snip-layout {

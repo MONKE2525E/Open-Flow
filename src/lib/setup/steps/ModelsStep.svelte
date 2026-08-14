@@ -179,6 +179,7 @@
   .models-picker :global(.preset-name) { font-size: 15px; }
   .models-picker :global(.preset-tagline) { font-size: 12px; }
   .models-picker :global(.preset-action-btn) { min-height: 26px; padding: 4px 10px; }
+  .models-picker :global(.preset-card) { min-height: 72px; border-radius: var(--setup-card-radius); }
 
   /* Short windows: four cards plus a footnote don't fit. The footnote is the
      least load-bearing thing on the step, so it goes first. */

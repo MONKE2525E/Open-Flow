@@ -28,7 +28,9 @@ Verenu is an open-source AI dictation desktop app for Windows and macOS — a fr
 
 ## Design System
 
-See [docs/colors.md](docs/colors.md) for the complete color palette, typography, and theming system.
+Read [DESIGN.md](DESIGN.md) before creating or restyling frontend controls. It is the source of truth for shared button variants, dropdown anatomy, UI motion, and the complete control inventory. See [docs/colors.md](docs/colors.md) for the complete color palette, typography, and theming system.
+
+Shared interactive styles live in `src/ui.css`; do not recreate `.btn-primary`, `.btn-ghost`, `.btn-danger`, or `.ui-dropdown-*` styles inside a Svelte component. Preserve feature-specific controls when they communicate a distinct state, such as navigation, recording, selection cards, or system permissions.
 
 ## Build & Dev Commands
 

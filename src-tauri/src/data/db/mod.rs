@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 mod cleanup_cache;
 mod dictionary;
+mod insights;
 mod schema;
 mod snippets;
 mod transcriptions;
@@ -21,6 +22,7 @@ mod validation;
 
 pub use cleanup_cache::*;
 pub use dictionary::*;
+pub use insights::*;
 pub use schema::*;
 pub use snippets::*;
 pub use transcriptions::*;

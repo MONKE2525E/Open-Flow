@@ -354,9 +354,9 @@
   </div>
   <div class="simulation-actions">
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="simulation-provider-dropdown" onclick={(event) => event.stopPropagation()} onkeydown={(event) => { if (event.key === 'Escape') providerDropdownOpen = false; }}>
+    <div class="ui-dropdown simulation-provider-dropdown" onclick={(event) => event.stopPropagation()} onkeydown={(event) => { if (event.key === 'Escape') providerDropdownOpen = false; }}>
       <button
-        class="btn-ghost simulation-provider-button"
+        class="btn-ghost ui-dropdown-trigger simulation-provider-button"
         onclick={() => (providerDropdownOpen = !providerDropdownOpen)}
         aria-haspopup="true"
         aria-expanded={providerDropdownOpen}
@@ -372,7 +372,7 @@
         <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
         <div
           id="provider-status-preview-menu"
-          class="simulation-provider-menu"
+          class="ui-dropdown-menu ui-dropdown-menu--padded simulation-provider-menu"
           aria-label="Provider status preview options"
           onclick={(event) => event.stopPropagation()}
           in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
@@ -380,7 +380,7 @@
         >
           {#each simulatedProviders as provider}
             <button
-              class="simulation-provider-item"
+              class="ui-dropdown-option simulation-provider-item"
               class:active={simulatedProvider === provider.id}
               onclick={() => { simulatedProvider = provider.id; providerDropdownOpen = false; }}
             >{provider.label}</button>
@@ -406,7 +406,7 @@
     <Dropdown bind:open={notificationDropdownOpen} closeSelector=".notification-test-dropdown">
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="notification-test-dropdown"
+        class="ui-dropdown notification-test-dropdown"
         onclick={(event) => event.stopPropagation()}
         onkeydown={(event) => {
           if (event.key === 'Escape' && notificationDropdownOpen) {
@@ -416,7 +416,7 @@
         }}
       >
         <button
-          class="btn-ghost notification-test-dropdown-button"
+          class="btn-ghost ui-dropdown-trigger notification-test-dropdown-button"
           type="button"
           use:animateWidth={{ text: notificationTypeLabel(), max: 180 }}
           onclick={() => (notificationDropdownOpen = !notificationDropdownOpen)}
@@ -434,7 +434,7 @@
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div
             id="notification-test-menu"
-            class="notification-test-menu"
+            class="ui-dropdown-menu ui-dropdown-menu--padded notification-test-menu"
             role="listbox"
             tabindex="0"
             aria-label="Notification type options"
@@ -444,7 +444,7 @@
           >
             {#each notificationTestTypes as option}
               <button
-                class="notification-test-item"
+                class="ui-dropdown-option notification-test-item"
                 class:active={notificationTestType === option.value}
                 type="button"
                 role="option"
@@ -578,60 +578,17 @@
     flex-wrap: wrap;
     gap: 8px;
   }
-  .notification-test-dropdown {
-    position: relative;
-    flex-shrink: 0;
-  }
   .notification-test-dropdown-button {
-    display: inline-flex;
-    align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: var(--r-md);
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    color: var(--ink);
-    font-size: 13px;
-    font-weight: 500;
   }
-  .notification-test-dropdown-button svg { transition: transform 150ms; }
-  .notification-test-dropdown-button svg.open { transform: rotate(180deg); }
   .notification-test-send-button {
     display: inline-flex;
     align-items: center;
     height: 32px;
   }
   .notification-test-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
     min-width: 170px;
-    padding: 4px;
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-popover);
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
   }
-  .notification-test-item {
-    width: 100%;
-    padding: 6px 10px;
-    border: none;
-    border-radius: var(--r-sm);
-    background: transparent;
-    color: var(--ink-soft);
-    font: inherit;
-    font-size: 12.5px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .notification-test-item:hover { background: var(--paper-2); color: var(--ink); }
-  .notification-test-item.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
   .actions {
     display: flex;
     gap: 8px;
@@ -642,54 +599,12 @@
     justify-content: flex-end;
     gap: 8px;
   }
-  .simulation-provider-dropdown {
-    position: relative;
-    flex-shrink: 0;
-  }
   .simulation-provider-button {
-    display: inline-flex;
-    align-items: center;
     gap: 6px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: var(--r-md);
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    color: var(--ink);
-    font-size: 13px;
-    font-weight: 500;
   }
-  .simulation-provider-button svg { transition: transform 150ms; }
-  .simulation-provider-button svg.open { transform: rotate(180deg); }
   .simulation-provider-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
     min-width: 160px;
-    padding: 4px;
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-popover);
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
   }
-  .simulation-provider-item {
-    width: 100%;
-    padding: 6px 10px;
-    border: none;
-    border-radius: var(--r-sm);
-    background: transparent;
-    color: var(--ink-soft);
-    font: inherit;
-    font-size: 12.5px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .simulation-provider-item:hover { background: var(--paper-2); color: var(--ink); }
-  .simulation-provider-item.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
   .privacy-warn {
     margin: 10px 0 4px;
     padding: 10px 12px;

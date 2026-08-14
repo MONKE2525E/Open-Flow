@@ -93,10 +93,6 @@
   }
 
   $effect(() => {
-    if (triggerInput) setTimeout(() => triggerInput?.focus(), 50);
-  });
-
-  $effect(() => {
     draftExpansion;
     autoGrow(expansionEl);
   });
@@ -399,35 +395,4 @@
   }
   .instructions-input:focus { border-color: var(--arm-400); border-style: solid; }
 
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 12.5px;
-    font-family: var(--sans);
-    color: var(--ink-soft);
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
-
-  .btn-primary {
-    background: var(--ink);
-    color: var(--amber-50);
-    border: 0;
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 12.5px;
-    font-weight: 500;
-    font-family: var(--sans);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: opacity 0.15s;
-  }
-  .btn-primary:disabled { opacity: 0.4; cursor: default; }
-  .btn-primary:not(:disabled):hover { opacity: 0.82; }
 </style>
