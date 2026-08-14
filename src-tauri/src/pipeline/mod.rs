@@ -40,14 +40,13 @@ use gates::{
     MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
 pub(crate) use pill::{
-    emit_pill_profile, emit_pill_stage, hide_pill, show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
+    emit_pill_stage, hide_pill, show_copied_pill, show_pill, update_pill_state,
 };
 use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_failed_pill};
 pub(crate) use pill_position::{
     apply_pill_placement, placement_for_current_monitor, PillPlacement,
 };
 pub use session::*;
-pub(crate) use repair::*;
 use stages::*;
 pub use state::*;
 
