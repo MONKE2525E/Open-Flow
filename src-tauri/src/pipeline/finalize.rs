@@ -279,7 +279,7 @@ pub(super) async fn finalize_pipeline_completion(
     // show_paste_failed_pill just showed a few lines up — hide_pill would
     // instantly revert it to idle before the button even has a chance to
     // fade in, let alone be clicked.
-    if injected.case_decision != "inject_failed" {
+    if injected.case_decision != "inject_failed" && injected.case_decision != "clipboard_fallback" {
         hide_pill(app);
         if let Some(message) = clipboard_warning {
             super::show_clipboard_warning_pill(app, message);
