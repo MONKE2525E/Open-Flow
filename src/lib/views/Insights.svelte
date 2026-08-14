@@ -18,30 +18,32 @@
   let status = $state<'loading' | 'loaded' | 'error'>('loading');
   let error = $state('');
   let rangeOpen = $state(false);
-  let displayVersion = $state(0);
 
   let fetchToken = 0;
   let mounted = false;
 
   const rangeLabel = $derived(RANGE_OPTIONS.find((o) => o.value === range)?.label ?? 'Last 30 days');
+  const dataRangeLabel = $derived(
+    RANGE_OPTIONS.find((o) => o.value === data?.range_days)?.label ?? rangeLabel,
+  );
   const isEmpty = $derived(!data || data.totals.total_transcriptions === 0);
 
-  async function load(opts?: { silent?: boolean }) {
+  async function load(opts?: { silent?: boolean; days?: InsightsRange }) {
     const token = ++fetchToken;
+    const requestedRange = opts?.days ?? range;
     if (!opts?.silent) {
       status = 'loading';
       error = '';
     }
     try {
-      const payload = await invoke<InsightsPayload>('get_insights', { days: range });
+      const payload = await invoke<InsightsPayload>('get_insights', { days: requestedRange });
       if (!mounted || token !== fetchToken) return;
-      data = payload ?? EMPTY_INSIGHTS;
+      if (payload && payload.range_days !== requestedRange) {
+        throw new Error(`Insights response used ${payload.range_days} days instead of ${requestedRange}.`);
+      }
+      data = payload ?? { ...EMPTY_INSIGHTS, range_days: requestedRange };
       status = 'loaded';
       error = '';
-      // Keep the previous range visible while its replacement loads, then
-      // give explicit range/manual refreshes one deliberate entry. Silent
-      // polling must update values in place so chart hover/focus state survives.
-      if (!opts?.silent) displayVersion += 1;
     } catch (err) {
       if (!mounted || token !== fetchToken) return;
       console.error('IPC get_insights failed:', err);
@@ -67,7 +69,7 @@
     rangeOpen = false;
     if (next === range) return;
     range = next;
-    load();
+    load({ days: next });
   }
 
   onMount(() => {
@@ -167,23 +169,23 @@
       <p class="empty-sub">Hold your hotkey and say something. Once you've dictated a few times, your streaks, speed, and cost estimates will show up here.</p>
     </div>
   {:else if data}
-    {#if status === 'error'}
-      <p class="fetch-status fetch-status-error" role="alert">Refresh failed: {error}</p>
-    {:else if status === 'loading'}
-      <p class="fetch-status" role="status" aria-live="polite">Refreshing insights…</p>
-    {/if}
+    <div class="insights-results-shell" class:refreshing={status === 'loading'} aria-busy={status === 'loading'}>
+      {#if status === 'loading'}
+        <p class="fetch-status refresh-status" role="status" aria-live="polite">Refreshing insights…</p>
+      {:else if status === 'error'}
+        <p class="fetch-status fetch-status-error" role="alert">Refresh failed: {error}</p>
+      {/if}
 
-    {#key displayVersion}
-      <div class="insights-results" in:fade={{ duration: motionMs(MOTION_MS.base) }}>
-        <HeroStats {data} {rangeLabel} />
+      <div class="insights-results">
+        <HeroStats {data} rangeLabel={dataRangeLabel} />
 
-        <DailyChart daily={data.daily} {rangeLabel} />
+        <DailyChart daily={data.daily} rangeLabel={dataRangeLabel} />
         <StreakHeatmap daily={data.streak_daily} streak={data.streak} historyStartedOn={data.history_started_on} />
         <HourStrip hourly={data.hourly} />
         <WordStats words={data.words} cleanup={data.cleanup} totals={data.totals} />
-        <CostBreakdown providers={data.providers} {rangeLabel} />
+        <CostBreakdown providers={data.providers} rangeLabel={dataRangeLabel} />
       </div>
-    {/key}
+    </div>
   {/if}
 </div>
 
@@ -221,7 +223,35 @@
   }
 
   .fetch-status { margin: 0 0 10px; font-size: 12px; color: var(--ink-mute); }
-  .fetch-status-error { color: var(--danger); }
+  .fetch-status-error {
+    position: absolute;
+    top: -22px;
+    inset-inline: 0;
+    margin: 0;
+    color: var(--danger);
+  }
+
+  .insights-results-shell {
+    position: relative;
+    min-width: 0;
+  }
+
+  .insights-results-shell.refreshing .insights-results {
+    visibility: hidden;
+  }
+
+  .refresh-status {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 24px;
+    margin: 0;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    pointer-events: none;
+  }
 
   /* Section shell for every child component. Owned here rather than repeated
      in each of them, so the page's visual weight has a single lever. These are

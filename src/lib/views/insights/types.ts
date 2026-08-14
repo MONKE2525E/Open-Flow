@@ -9,7 +9,7 @@
 export type InsightsRange = 7 | 30 | 90 | 0; // 0 = all time
 
 export interface InsightsTotals {
-  /** Lifetime, from the lifetime_stats table — never shrinks with retention pruning. */
+  /** Total words in the selected Insights range. */
   total_words: number;
   total_transcriptions: number;
   total_speaking_ms: number;
