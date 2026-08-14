@@ -655,8 +655,6 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             captured_at: retry_captured_at,
             event_only,
             caps_lock_on,
-            context: Some(&resolved_context),
-            browser_domain,
         },
     )
     .await
