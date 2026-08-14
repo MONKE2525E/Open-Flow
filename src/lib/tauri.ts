@@ -943,6 +943,8 @@ function devInsights(days: number): unknown {
       active_days: daily.filter((d) => d.words > 0).length + 96,
     },
     daily,
+    streak_daily: streakDaily,
+    history_started_on: streakDaily[0]?.day ?? null,
     hourly,
     providers: [
       {

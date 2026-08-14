@@ -227,7 +227,11 @@
   // dialog is always one key away from dismissal (Settings' Escape guard
   // yields while [role="dialog"] is present).
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') handleClose();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      handleClose();
+    }
   }
 
   const failedLiveResults = $derived(
@@ -255,6 +259,10 @@
     class="prompt-modal-backdrop"
     aria-hidden="true"
     onclick={onBackdropClick}
+    onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onBackdropClick(); } }}
+    role="button"
+    tabindex="0"
+    aria-label="Close dialog"
     in:modalBackdrop={{ duration: 180 }}
     out:modalBackdrop={{ duration: 160 }}
   ></div>
