@@ -208,8 +208,8 @@
     }
     initialLanguageLoaded = true;
 
-    microphones = val<string[]>(8, []);
-    selectedMic = val<string | null>(9, null) ?? '';
+    microphones = val<string[]>(9, []);
+    selectedMic = val<string | null>(10, null) ?? '';
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
