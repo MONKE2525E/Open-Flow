@@ -423,6 +423,23 @@ pub(crate) fn clear_repair(state: &SharedState) {
     clear(state);
 }
 
+fn finish_current_proposal(state: &SharedState, snapshot_id: u64, proposal_id: u64) -> bool {
+    let Ok(mut locked) = state.lock() else {
+        return false;
+    };
+    let is_current = locked.repair.as_ref().is_some_and(|session| {
+        session.snapshot.id == snapshot_id
+            && session
+                .proposal
+                .as_ref()
+                .is_some_and(|proposal| proposal.id == proposal_id)
+    });
+    if is_current {
+        locked.repair = None;
+    }
+    is_current
+}
+
 pub(crate) fn emit_error(app: &AppHandle, message: &str) {
     app.emit("repair-error", message).ok();
     super::show_pill(app, "repair_error");
@@ -623,6 +640,7 @@ pub(crate) async fn apply(app: AppHandle, state: SharedState, proposal_id: u64) 
     if proposal.id != proposal_id {
         anyhow::bail!("Repair proposal is stale")
     }
+    let snapshot_id = session.snapshot.id;
     let result = match proposal.action {
         RepairAction::Dictionary { operation, dictionary_id, term, mistake, scope, expected_term, expected_mistake } => {
             let scope_context_id = resolve_scope_id(&session.snapshot, scope);
@@ -653,9 +671,13 @@ pub(crate) async fn apply(app: AppHandle, state: SharedState, proposal_id: u64) 
             format!("{} updated", setting_label(&key).unwrap_or("Setting"))
         }
     };
-    clear(&state);
-    super::show_pill(&app, "repair_done");
-    app.emit("repair-applied", &result).ok();
+    // The mutation above can yield while a new dictation starts and replaces
+    // the repair session. Never clear or update the pill belonging to that
+    // newer session when this older apply finishes.
+    if finish_current_proposal(&state, snapshot_id, proposal_id) {
+        super::show_pill(&app, "repair_done");
+        app.emit("repair-applied", &result).ok();
+    }
     Ok(result)
 }
 
