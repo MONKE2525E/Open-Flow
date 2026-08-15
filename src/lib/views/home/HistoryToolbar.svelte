@@ -27,7 +27,6 @@
   let appDropdownOpen = $state(false);
   let uiExpanded = $state(false);
   let preserveExpanded = $state(false);
-  let expandLockUntil = 0;
   let groupEl = $state<HTMLElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
   let appTriggerEl = $state<HTMLButtonElement | null>(null);
@@ -40,10 +39,6 @@
     // the new input can receive focus. Keep the group open through that one
     // DOM transition so keyboard and automation users can type immediately.
     preserveExpanded = true;
-    // The icon is replaced during the click/focus transition. Keep the
-    // expanded control alive long enough for the replacement input to receive
-    // focus, even when the browser reports the intermediate focusout late.
-    expandLockUntil = Date.now() + 5000;
     uiExpanded = true;
     await tick();
     inputEl?.focus();
@@ -63,36 +58,29 @@
     });
   }
 
-  function handleGroupFocusOut(event: FocusEvent) {
-    // Replacing the collapsed icon with the input can emit a transient
-    // focusout whose relatedTarget is null. There is no real focus-away in
-    // that case, so leave the search control expanded for the replacement.
-    if (!event.relatedTarget) return;
-    requestAnimationFrame(() => {
-      if (preserveExpanded) {
-        // Some browsers finish the pointer transition after the replacement
-        // frame, briefly leaving body as the active element. Give the input a
-        // short settling window before deciding the group was really exited.
-        setTimeout(collapseIfFocusLeft, 300);
-        return;
-      }
-      collapseIfFocusLeft();
-    });
-  }
-
   function collapseIfFocusLeft() {
-    if (Date.now() < expandLockUntil) {
-      setTimeout(collapseIfFocusLeft, expandLockUntil - Date.now());
-      return;
-    }
     if (filtersActive) return;
     if (groupEl && document.activeElement && groupEl.contains(document.activeElement)) return;
     uiExpanded = false;
   }
+
+  $effect(() => {
+    const handleAway = (event: Event) => {
+      if (!uiExpanded || filtersActive || !groupEl) return;
+      const target = event.target;
+      if (target instanceof Node && !groupEl.contains(target)) uiExpanded = false;
+    };
+    document.addEventListener('pointerdown', handleAway);
+    document.addEventListener('focusin', handleAway);
+    return () => {
+      document.removeEventListener('pointerdown', handleAway);
+      document.removeEventListener('focusin', handleAway);
+    };
+  });
 </script>
 
 <div class="history-toolbar">
-  <div class="history-search-group" class:expanded bind:this={groupEl} onfocusout={handleGroupFocusOut}>
+  <div class="history-search-group" class:expanded bind:this={groupEl}>
     {#if !expanded}
       <button class="search-icon-btn ui-focus-ring" onclick={expandSearch} aria-label="Search history">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.35-4.35" /></svg>
@@ -106,10 +94,6 @@
           type="text"
           placeholder="Search history or app..."
           value={search}
-          onfocus={() => {
-            expandLockUntil = 0;
-            preserveExpanded = false;
-          }}
           oninput={(event) => onSearchChange(event.currentTarget.value)}
           aria-label="Search history"
         />
