@@ -224,8 +224,8 @@
     const wasActive = hoveredId !== null;
     const nowActive = id !== null;
     if (wasActive !== nowActive) {
-      dimFromAlpha = currentDimAlpha();
       dimming = nowActive;
+      dimFromAlpha = currentDimAlpha();
       dimStart = performance.now();
     }
     const now = performance.now();
@@ -347,8 +347,7 @@
     const dist = Math.hypot(dx, dy);
     const radius = size * RADIUS_FRACTION;
     const stroke = size * STROKE_FRACTION;
-    const outerHitRadius = radius + stroke * 0.7 + HOVER_POP + HOVER_WIDEN / 2;
-    if (dist < radius - stroke * 0.7 || dist > outerHitRadius) return null;
+    if (Math.abs(dist - radius) > stroke * 0.7) return null;
 
     const total = segments.reduce((a, b) => a + b.value, 0);
     if (total <= 0) return null;

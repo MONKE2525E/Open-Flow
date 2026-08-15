@@ -29,14 +29,14 @@
   });
 
   function usageLabel(row: InsightsProviderUsage): string {
-    if (row.task === 'transcription') return fmtDuration(row.audio_ms);
+    if (row.audio_ms > 0) return fmtDuration(row.audio_ms);
     const tokens = (row.input_chars + row.output_chars) / 4;
     return `~${fmtNumber(tokens)} tokens`;
   }
 
   function averageUsageLabel(row: InsightsProviderUsage): string {
     if (row.calls <= 0) return '—';
-    if (row.task === 'transcription') return `${fmtDuration(row.audio_ms / row.calls)} / transcription`;
+    if (row.audio_ms > 0) return `${fmtDuration(row.audio_ms / row.calls)} / transcription`;
     const tokens = (row.input_chars + row.output_chars) / 4;
     return `~${fmtNumber(tokens / row.calls)} tokens / cleanup`;
   }
