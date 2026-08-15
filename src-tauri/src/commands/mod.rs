@@ -110,7 +110,7 @@ mod tests {
         let value = json!({
             "groq": ["whisper-large-v3-turbo"],
             "openai": ["gpt-4o-transcribe"],
-            "google": ["gemini-3.5-flash"]
+            "google": ["gemini-3.7-flash"]
         });
         assert!(
             validate_setting(crate::data::store::TRANSCRIPTION_MODELS_BY_PROVIDER, &value).is_ok()
@@ -137,6 +137,52 @@ mod tests {
         let err = validate_setting(crate::data::store::HOTKEY, &json!(["ControlLeft"]))
             .expect_err("single hotkey part should fail");
         assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_hotkey_rejects_unknown_key_codes() {
+        // An imported/edited settings.json must not be able to store a hotkey
+        // no backend can register — that would silently disable dictation at
+        // startup (both codes map to VK 0).
+        let err = validate_setting(crate::data::store::HOTKEY, &json!(["Foo", "Bar"]))
+            .expect_err("unknown hotkey codes should fail");
+        assert!(err.contains("Invalid or unsupported setting"));
+    }
+
+    #[test]
+    fn validate_setting_hotkey_accepts_registrable_codes() {
+        assert!(validate_setting(
+            crate::data::store::HOTKEY,
+            &json!(["ControlLeft", "MetaLeft"])
+        )
+        .is_ok());
+        // macOS single-key hotkeys store an empty second slot.
+        assert!(validate_setting(crate::data::store::HOTKEY, &json!(["F5", ""])).is_ok());
+        assert!(validate_setting(crate::data::store::HOTKEY, &json!(["AltLeft", "Space"])).is_ok());
+    }
+
+    #[test]
+    fn validate_setting_mic_gain_enforces_slider_range() {
+        assert!(validate_setting(crate::data::store::MIC_GAIN, &json!(1.0)).is_ok());
+        assert!(validate_setting(crate::data::store::MIC_GAIN, &json!(8.0)).is_ok());
+        assert!(validate_setting(crate::data::store::MIC_GAIN, &json!(0.9)).is_err());
+        assert!(validate_setting(crate::data::store::MIC_GAIN, &json!(8.1)).is_err());
+    }
+
+    #[test]
+    fn validate_setting_rejects_non_boolean_bools() {
+        for key in [
+            crate::data::store::CLEANUP_ENABLED,
+            crate::data::store::NOISE_REDUCTION,
+            crate::data::store::AUTO_SPACING,
+            crate::data::store::DUAL_TRANSCRIPTION_ENABLED,
+        ] {
+            assert!(
+                validate_setting(key, &json!("yes")).is_err(),
+                "{key} should reject non-boolean values"
+            );
+            assert!(validate_setting(key, &json!(true)).is_ok());
+        }
     }
 
     #[test]
