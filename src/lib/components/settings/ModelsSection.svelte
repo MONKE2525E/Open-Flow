@@ -613,8 +613,8 @@
 
     const preTranscriptionDefault = transcriptionDefaultModel;
     const preCleanupDefault = cleanupDefaultModel;
-    const preTranscriptionFallbackCount = transcriptionFallbackModels.length;
-    const preCleanupFallbackCount = cleanupFallbackModels.length;
+    const preTranscriptionFallbacks = [...transcriptionFallbackModels];
+    const preCleanupFallbacks = [...cleanupFallbackModels];
     const needsMigration =
       !all.transcription_default_model
       || !splitModelId(all.transcription_default_model)
@@ -627,8 +627,8 @@
       needsMigration
       || transcriptionDefaultModel !== preTranscriptionDefault
       || cleanupDefaultModel !== preCleanupDefault
-      || transcriptionFallbackModels.length !== preTranscriptionFallbackCount
-      || cleanupFallbackModels.length !== preCleanupFallbackCount
+      || JSON.stringify(transcriptionFallbackModels) !== JSON.stringify(preTranscriptionFallbacks)
+      || JSON.stringify(cleanupFallbackModels) !== JSON.stringify(preCleanupFallbacks)
       || cleanupModelMapChanged
       || cleanupPromptOverridesChanged;
 
