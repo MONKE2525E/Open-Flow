@@ -72,7 +72,10 @@ fn normalize_executable(executable: &str) -> Result<String> {
 /// interchangeably.
 fn normalize_domain(domain: &str) -> Result<String> {
     let trimmed = require_nonempty_trimmed("Website", domain)?.to_lowercase();
-    let without_scheme = trimmed.split("://").next_back().unwrap_or(&trimmed);
+    let without_scheme = trimmed
+        .rsplit_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(&trimmed);
     let host = without_scheme
         .split(['/', '?', '#'])
         .next()
