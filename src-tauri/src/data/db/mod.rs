@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 mod cleanup_cache;
+mod contexts;
 mod dictionary;
 mod insights;
 mod schema;
@@ -21,6 +22,7 @@ mod transcriptions;
 mod validation;
 
 pub use cleanup_cache::*;
+pub use contexts::*;
 pub use dictionary::*;
 pub use insights::*;
 pub use schema::*;

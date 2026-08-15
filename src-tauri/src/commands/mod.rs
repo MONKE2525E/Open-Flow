@@ -18,6 +18,7 @@ pub(crate) use crate::DbHandle;
 pub(crate) const LOCAL_MODELS_UNAVAILABLE_ON_MACOS_INTEL: &str =
     "Local on-device models aren't available on Intel Macs yet — this hasn't been tested on Intel hardware. Use a cloud provider (Groq, OpenAI, or Google) for now.";
 
+mod contexts;
 mod history;
 mod library;
 mod local_llm;
@@ -43,6 +44,7 @@ fn db_state(app: &AppHandle) -> DbHandle {
     app.state::<DbHandle>().inner().clone()
 }
 
+pub use contexts::*;
 pub use history::*;
 pub use library::*;
 pub use local_llm::*;
