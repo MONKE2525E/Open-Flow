@@ -25,6 +25,7 @@ export const PRICING: Record<string, Rate> = {
 
   // Cleanup — billed on tokens
   'llama-3.3-70b-versatile': { kind: 'token', usd_per_m_in: 0.59, usd_per_m_out: 0.79 },
+  'qwen3.6-27b': { kind: 'token', usd_per_m_in: 0.60, usd_per_m_out: 3.00 },
   'gpt-4o-mini': { kind: 'token', usd_per_m_in: 0.15, usd_per_m_out: 0.6 },
   'gemini-3.5-flash': { kind: 'token', usd_per_m_in: 0.3, usd_per_m_out: 2.5 },
 };

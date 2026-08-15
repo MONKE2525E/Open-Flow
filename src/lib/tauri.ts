@@ -172,7 +172,7 @@ const defaultProviderModels = {
 };
 
 const defaultCleanupModels = {
-  groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+  groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
   openai: ['gpt-4o-mini', 'gpt-4o'],
   google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
   local: [],
@@ -186,9 +186,9 @@ const defaultSettings: Record<string, unknown> = {
   transcription_language: 'en',
   cleanup_provider: 'groq',
   transcription_model: 'groq/whisper-large-v3-turbo',
-  cleanup_model: 'groq/llama-3.3-70b-versatile',
+  cleanup_model: 'groq/qwen/qwen3.6-27b',
   transcription_default_model: 'groq/whisper-large-v3-turbo',
-  cleanup_default_model: 'groq/llama-3.3-70b-versatile',
+  cleanup_default_model: 'groq/qwen/qwen3.6-27b',
   transcription_models_by_provider: defaultProviderModels,
   cleanup_models_by_provider: defaultCleanupModels,
   transcription_fallback_models: [],
@@ -955,7 +955,7 @@ function devInsights(days: number): unknown {
         output_chars: 0,
       },
       {
-        model: 'llama-3.3-70b-versatile',
+        model: 'qwen/qwen3.6-27b',
         provider: 'groq',
         task: 'cleanup',
         calls: Math.round(transcriptions * 0.86),
