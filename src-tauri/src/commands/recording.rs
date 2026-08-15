@@ -84,16 +84,9 @@ pub async fn start_input_recording(
     match start_result {
         Ok(()) => Ok(()),
         Err(e) => {
-            // The returned error is the only surface the caller shows (inline
-            // mic-button message / setup TryIt step). Emitting verenu:error
-            // here too would show the same failure twice — a toast on top of
-            // the inline message. The hotkey path that has no caller-facing
-            // surface emits its own event in pipeline::session instead.
-            let msg = format!(
-                "Failed to start recording: {}",
-                crate::api::user_facing_message(&e)
-            );
+            let msg = format!("Failed to start recording: {e}");
             crate::pipeline::hide_pill(&app);
+            app.emit("verenu:error", msg.clone()).ok();
             Err(msg)
         }
     }
@@ -152,13 +145,9 @@ pub async fn start_setup_try_recording(
     match start_result {
         Ok(()) => Ok(()),
         Err(e) => {
-            // Single-surface rule: the caller (setup TryIt step) shows the
-            // returned error inline; no duplicate verenu:error toast here.
-            let msg = format!(
-                "Failed to start recording: {}",
-                crate::api::user_facing_message(&e)
-            );
+            let msg = format!("Failed to start recording: {e}");
             crate::pipeline::hide_pill(&app);
+            app.emit("verenu:error", msg.clone()).ok();
             Err(msg)
         }
     }
@@ -322,10 +311,7 @@ pub async fn stop_and_transcribe_input(
 ) -> Result<String, String> {
     pipeline::transcribe_input_only(app, state.inner().clone())
         .await
-        // Sanitize before crossing IPC: the raw error can embed provider
-        // response bodies or the AUTH_401 wire format, which must not reach
-        // the inline mic-button message.
-        .map_err(|e| crate::api::user_facing_error(&e))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -334,18 +320,8 @@ pub async fn start_repair_complaint_recording(
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
     pipeline::reserve_starting(state.inner())?;
-    pipeline::start_recording_session_ex(
-        &app,
-        state.inner(),
-        "repair_recording",
-        false,
-        None,
-        pipeline::RecordingStartOptions {
-            show_recording_pill: true,
-            emit_globally: false,
-            start_cue_delay_ms: None,
-        },
-    )
+    pipeline::start_recording_session(&app, state.inner(), "repair_recording", false);
+    Ok(())
 }
 
 #[tauri::command]
@@ -353,9 +329,8 @@ pub async fn stop_repair_complaint_recording(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    crate::core::hotkey::set_handless_active(false);
     tauri::async_runtime::spawn(pipeline::finish_complaint_recording(
-        app.clone(),
+        app,
         state.inner().clone(),
     ));
     Ok(())
@@ -372,10 +347,7 @@ pub async fn repair_positive_feedback(
 }
 
 #[tauri::command]
-pub async fn repair_enter_input(
-    app: AppHandle,
-    _state: tauri::State<'_, SharedState>,
-) -> Result<(), String> {
+pub async fn repair_enter_input(app: AppHandle) -> Result<(), String> {
     pipeline::enter_repair_input(&app);
     Ok(())
 }
@@ -385,19 +357,8 @@ pub async fn repair_cancel(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<(), String> {
-    // A stale pill event must never stop a newer normal dictation. A repair
-    // session is cleared synchronously when a new dictation reserves its
-    // lifecycle, so only discard an active microphone session while repair
-    // still owns the transient state.
-    let owns_repair = state
-        .inner()
-        .lock()
-        .map(|locked| locked.repair.is_some())
-        .unwrap_or(false);
-    if owns_repair {
-        pipeline::clear_repair(state.inner());
-        pipeline::discard_recording(&app, state.inner()).await;
-    }
+    pipeline::clear_repair(state.inner());
+    pipeline::hide_pill(&app);
     Ok(())
 }
 
@@ -409,11 +370,7 @@ pub async fn repair_analyze(
 ) -> Result<(), String> {
     pipeline::diagnose_repair(app.clone(), state.inner().clone(), complaint)
         .await
-        .map_err(|error| {
-            let message = crate::api::user_facing_error(&error);
-            pipeline::emit_repair_error(&app, &message);
-            message
-        })
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -422,13 +379,9 @@ pub async fn repair_apply(
     state: tauri::State<'_, SharedState>,
     proposal_id: u64,
 ) -> Result<String, String> {
-    pipeline::apply_repair(app.clone(), state.inner().clone(), proposal_id)
+    pipeline::apply_repair(app, state.inner().clone(), proposal_id)
         .await
-        .map_err(|error| {
-            let message = crate::api::user_facing_error(&error);
-            pipeline::emit_repair_error(&app, &message);
-            message
-        })
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -578,16 +531,16 @@ pub fn set_pill_size(
 
     // Upper bounds are backstops against a bad frontend measurement, not the
     // expected size — they must clear the largest real layout, which is the
-    // repair error/proposal card: its message text is provider-supplied and
-    // effectively unbounded in length, so it needs far more vertical room
-    // than the single-line capsule every other state uses.
+    // error card: it wraps at a fixed column width and grows upward for up to
+    // seven lines, so it needs far more vertical room than the single-line
+    // capsule every other state uses.
     let width_points = if width.is_finite() {
         width.clamp(60.0, 440.0).round()
     } else {
         60.0
     };
     let height_points = if height.is_finite() {
-        height.clamp(44.0, 420.0).round()
+        height.clamp(44.0, 260.0).round()
     } else {
         44.0
     };

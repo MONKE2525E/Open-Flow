@@ -43,14 +43,8 @@ pub fn start_recording_session(
     ) {
         log::error!("start recording: {e}");
         hide_pill(app);
-        app.emit(
-            "verenu:error",
-            format!(
-                "Failed to start recording: {}",
-                crate::api::user_facing_message(&e)
-            ),
-        )
-        .ok();
+        app.emit("verenu:error", format!("Failed to start recording: {e}"))
+            .ok();
     }
 }
 
@@ -80,12 +74,11 @@ pub fn start_recording_session_ex(
     {
         // `AXIsProcessTrustedWithOptions` can return a stale cached `false` for the
         // life of the process. Check Accessibility strictly rather than using
-        // hotkey liveness as a proxy.
-        // The global hotkey is Carbon `RegisterEventHotKey`, which needs no
-        // permission at all — so a working hotkey does NOT prove Accessibility
-        // is granted. Without Accessibility, synthetic Cmd+V (posting events to
-        // the HID tap) silently fails. Using the real TCC check ensures we
-        // surface the error instead of recording and never pasting.
+        // is_tap_active() as a proxy.
+        // The CGEventTap can be active on Input Monitoring alone — so a running tap
+        // does NOT prove Accessibility is granted. Without Accessibility, synthetic
+        // Cmd+V (posting events to the HID tap) silently fails. Using the real TCC
+        // check ensures we surface the error instead of recording and never pasting.
         if !crate::system::mac_app::is_accessibility_verified()
             && !crate::commands::check_accessibility_permission(false)
         {
@@ -172,15 +165,6 @@ pub fn start_recording_session_ex(
                 manager.set_recording_active(true);
             }
             if options.show_recording_pill {
-                // Queued before show_pill (not after): show_pill's
-                // cross-monitor move animates and defers its own pill-state
-                // emission until the tween lands, well after this call
-                // returns — queuing here, before that reveal ever happens,
-                // is what makes the profile available in time regardless of
-                // which reveal path this particular call takes (see
-                // PENDING_PILL_PROFILE for the full ordering rationale).
-                let target_hwnd = lock_state(state).map(|st| st.target.id).unwrap_or(0);
-                emit_profile_for_window(app, target_hwnd);
                 show_pill(app, pill_state);
             }
             spawn_level_emitter(
@@ -256,7 +240,6 @@ pub async fn cancel_recording_with_resume(
     let gate_rms = effective_recording_rms(rms, raw_rms, active_gain);
 
     if captured_audio.duration_ms < MIN_RECORDING_MS || gate_rms < min_rms {
-        log::info!("recording: cancelled — capture discarded (duration/quiet gate)");
         if start_stop_sounds_enabled(app) {
             crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
         }
@@ -268,29 +251,7 @@ pub async fn cancel_recording_with_resume(
         return;
     }
 
-    log::info!("recording: cancelled — capture stashed for resume");
     stash_cancelled_capture(app, state, captured_audio);
-}
-
-/// Stops and discards a recording that belongs to a transient flow such as
-/// repair feedback. Unlike normal dictation cancellation, this never stashes
-/// audio for resume and never shows the cancelled-dictation affordance.
-pub async fn discard_recording(
-    app: &AppHandle,
-    state: &SharedState,
-) {
-    let Some((session, exclusive_mic_session_id)) = state::take_recording_plain(state) else {
-        if state_is_idle(state) {
-            hide_pill(app);
-        }
-        return;
-    };
-    crate::media::sound::coordinated_unmute();
-    crate::system::media_control::end_dictation_media_pause();
-    let _ = stop_and_capture_audio(app, session, exclusive_mic_session_id).await;
-    if state_is_idle(state) {
-        hide_pill(app);
-    }
 }
 
 /// True when the recording lifecycle is currently `Idle`.

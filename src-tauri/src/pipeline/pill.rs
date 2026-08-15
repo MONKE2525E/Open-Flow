@@ -55,12 +55,6 @@ static PENDING_PILL_PROFILE: Mutex<Option<String>> = Mutex::new(None);
 
 /// Queues a tone-profile label to ride along with whichever reveal happens
 /// next, instead of emitting it immediately (see `PENDING_PILL_PROFILE`).
-pub(crate) fn queue_pill_profile(profile: &str) {
-    if let Ok(mut slot) = PENDING_PILL_PROFILE.lock() {
-        *slot = Some(profile.to_string());
-    }
-}
-
 /// Whether the pill *should* currently hold real OS keyboard focus, per our
 /// own state machine — not whether Windows actually still reports it
 /// focused. `set_pill_focusable(false)` only flips `WS_EX_NOACTIVATE` back
@@ -640,16 +634,6 @@ pub(crate) fn emit_pill_stage(app: &AppHandle, stage: &str) {
 /// Emits the resolved tone profile (e.g. "casual") to the pill window so it
 /// can show which style will apply to the current dictation. Emitted from the
 /// pipeline itself — the frontend never re-resolves it.
-pub(crate) fn emit_pill_profile(app: &AppHandle, profile: &str) {
-    match app.get_webview_window("pill") {
-        Some(pill) => {
-            let sent = pill.emit("pill-profile", profile).is_ok();
-            log::debug!("pill: profile={profile} sent={sent}");
-        }
-        None => log::debug!("pill: profile={profile} sent=false (no pill window)"),
-    }
-}
-
 pub(super) async fn show_error_pill(app: &AppHandle, msg: &str) {
     log::error!("pipeline error: {msg}");
     app.emit("verenu:error", msg).ok();
@@ -664,10 +648,6 @@ pub(super) async fn show_error_pill(app: &AppHandle, msg: &str) {
 
 /// A delivered dictation can still have a clipboard-phrase warning. This is
 /// deliberately passive: the text already reached its destination.
-pub(crate) fn show_clipboard_warning_pill(app: &AppHandle, msg: &str) {
-    show_pill_msg(app, "clipboard_warning", Some(msg));
-}
-
 /// Shows the pill in error state for a quality-gate rejection without
 /// focusing the main window or blocking the pipeline task.
 pub(super) fn reject_with_pill(app: &AppHandle, msg: &str) {

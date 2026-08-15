@@ -25,6 +25,7 @@ const REPAIR_TIMEOUT_SECS: u64 = 45;
 const NO_SAFE_REPAIR_MESSAGE: &str = "I couldn't map this to a safe Verenu setting. Try speaking a little closer to the microphone and a little slower. If you want a reusable phrase, add a vocabulary item or snippet manually in Verenu.";
 
 static REPAIR_ID: AtomicU64 = AtomicU64::new(1);
+const EVERYWHERE_CONTEXT_ID: i64 = 0;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RepairSettings {
@@ -125,7 +126,7 @@ enum DictionaryScope {
 fn resolve_scope_id(snapshot: &RepairSnapshot, scope: DictionaryScope) -> i64 {
     match scope {
         DictionaryScope::Context => snapshot.context_id,
-        DictionaryScope::Everywhere => db::EVERYWHERE_CONTEXT_ID,
+        DictionaryScope::Everywhere => EVERYWHERE_CONTEXT_ID,
     }
 }
 
@@ -209,7 +210,7 @@ fn display_value(value: &Value) -> String {
 }
 
 fn scope_name(snapshot: &RepairSnapshot, context_id: i64) -> anyhow::Result<String> {
-    if context_id == db::EVERYWHERE_CONTEXT_ID {
+    if context_id == EVERYWHERE_CONTEXT_ID {
         Ok("Everywhere".into())
     } else if context_id == snapshot.context_id {
         Ok(snapshot.context_name.clone())
@@ -366,7 +367,8 @@ pub(crate) fn begin_feedback(
     delivered_private: &str,
     process_name: String,
     browser_domain: Option<String>,
-    context: &db::Context,
+    context_id: i64,
+    context_name: String,
     dictionary: &[db::DictionaryEntry],
     cfg: &store::PipelineConfig,
 ) {
@@ -377,8 +379,8 @@ pub(crate) fn begin_feedback(
         delivered_private: delivered_private.to_string(),
         process_name,
         browser_domain,
-        context_id: context.id,
-        context_name: context.name.clone(),
+        context_id,
+        context_name,
         dictionary: dictionary.to_vec(),
         settings: RepairSettings {
             cleanup_enabled: cfg.cleanup_enabled,
@@ -428,7 +430,7 @@ pub(crate) async fn finish_complaint_recording(app: AppHandle, state: SharedStat
             app.emit("repair-complaint-result", &text).ok();
             enter_repair_input(&app);
         }
-        Err(error) => emit_repair_error(&app, &crate::api::user_facing_error(&error)),
+        Err(error) => emit_repair_error(&app, &error.to_string()),
     }
 }
 
@@ -590,7 +592,7 @@ async fn diagnose_with_model(app: &AppHandle, cfg: &store::PipelineConfig, input
             let manager = app.state::<crate::local_llm::LocalLlmManager>().inner().clone();
             manager.cleanup_with_prompt(app, &model, input, REPAIR_SYSTEM_PROMPT, REPAIR_MAX_OUTPUT_TOKENS).await
         } else {
-            cleanup::structured_request(input, ProviderId::from_str(&provider), key, &model, REPAIR_SYSTEM_PROMPT, REPAIR_MAX_OUTPUT_TOKENS, 0).await
+            cleanup::cleanup(input, ProviderId::from_str(&provider), key, &model, "casual", "none", REPAIR_SYSTEM_PROMPT, None, None).await
         };
         match result {
             Ok(value) if !value.trim().is_empty() => return Ok(value),

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::api::{auto_learn, cleanup, prompts, transcription, ProviderId};
-use crate::core::{browser_probe, context, injection, window_context};
+use crate::core::{injection, window_context};
 use crate::data::{db, dictionary, snippets, store};
 use crate::media::audio;
 use crate::system::apps::AppMapping;
@@ -14,7 +14,6 @@ use chrono::{DateTime, Duration, NaiveDateTime, SecondsFormat, Utc};
 
 mod cache;
 mod chains;
-mod clipboard_phrase;
 mod finalize;
 #[cfg(any(test, debug_assertions))]
 mod fixture;
@@ -42,7 +41,8 @@ use gates::{
     MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
 pub(crate) use pill::{
-    emit_pill_profile, emit_pill_stage, hide_pill, pill_wants_repair_focus, show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
+    emit_pill_stage, hide_pill, pill_wants_repair_focus, show_copied_pill, show_pill,
+    update_pill_state,
 };
 use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_failed_pill};
 pub(crate) use pill_position::{
@@ -132,7 +132,6 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
             },
             &language,
             &model,
-            0,
         )
         .await
         {
@@ -144,7 +143,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
             Err(e) => {
                 let retryable = crate::api::is_retryable_provider_error(&e);
                 log::warn!(
-                    "pipeline: transcription provider failed gen=0 provider={} model={} retryable={} error={}",
+                    "pipeline: transcription provider failed provider={} model={} retryable={} error={}",
                     provider_id,
                     model,
                     retryable,
@@ -166,7 +165,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
     match transcribed {
         Some(text) => {
             let normalized = normalize_transcription_math_artifacts(&text);
-            let normalized = strip_trailing_hallucination(&strip_hallucinated_suffix(&normalized));
+            let normalized = strip_hallucinated_suffix(&normalized);
             let normalized = crate::system::text::collapse_degenerate_word_runs(&normalized);
             if !has_spoken_content(&normalized) || is_transcription_hallucination(&normalized) {
                 hide_pill(&app);
@@ -257,36 +256,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         .or_else(window_context::get_active_process_name)
         .unwrap_or_else(|| "unknown".into())
         .to_lowercase();
-    let db_handle = app.state::<DbHandle>().inner().clone();
-    // Only probe the address bar when the foreground app is actually a
-    // browser — the UIA tree walk is comparatively costly and meaningless
-    // for any other window. Best-effort: a probe failure just means the
-    // context resolves by exe alone, same as before this feature existed.
-    let browser_domain = if window_context::is_browser_exe(&process_name) {
-        browser_probe::read_active_browser_domain()
-    } else {
-        None
-    };
-    let resolved_context = match context::resolve_context(&db_handle, &process_name, browser_domain.as_deref())
-    {
-        Ok(resolved) => resolved,
-        Err(error) => {
-            log::warn!("pipeline: context resolution failed, using Everywhere error={error}");
-            db::Context {
-                id: db::EVERYWHERE_CONTEXT_ID,
-                name: "Everywhere".to_string(),
-                is_everywhere: true,
-                icon: None,
-                tone: None,
-                cleanup_intensity: None,
-                color: None,
-                created_at: String::new(),
-                updated_at: String::new(),
-            }
-        }
-    };
-    let context_id = resolved_context.id;
-    log::info!("pipeline: start gen={generation} target_id={}", target.id);
+    log::info!("pipeline: start target_id={}", target.id);
 
     // Mark the session inactive before unmuting or waiting on stop() so the
     // delayed mute helper cannot wake up and re-mute the system mid-shutdown.
@@ -387,8 +357,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     }
 
     let stage_config = std::time::Instant::now();
-    let Some((cfg, profile, app_context)) =
-        open_config_and_context(&app, &process_name, Some(&resolved_context)).await
+    let Some((cfg, profile, app_context)) = open_config_and_context(&app, &process_name).await
     else {
         // open_config_and_context already shows its own error/pill on
         // failure — no separate emit_pipeline_failed here (matches its
@@ -396,9 +365,6 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         state::leave_processing_if_owned(&state, generation);
         return;
     };
-    // The profile is now resolved — surface it so the pill can show which
-    // style applies to this dictation (same value emitted at record start).
-    emit_pill_profile(&app, &profile);
     log::debug!(
         "pipeline: config t_provider={} c_provider={} t_model={} c_model={} cleanup_enabled={} intensity={} app_context_hint={} profile={}",
         cfg.transcription_provider,
@@ -428,7 +394,6 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             captured_at: retry_captured_at,
             target,
             process_name: process_name.clone(),
-            context_id,
             profile: profile.clone(),
             app_context: app_context.clone(),
             caps_lock_on,
@@ -458,7 +423,6 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             }
         },
         _ = wait_for_cancel(&mut cancel_rx) => {
-            log::info!("pipeline: cancelled gen={generation} (awaiting VAD gate)");
             state::leave_processing_if_owned(&state, generation);
             return;
         }
@@ -475,15 +439,10 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         return;
     }
 
-    // Stage already emitted right after entering "processing" above (see
-    // comment there) — this Instant is purely for the timing log below.
     let stage_transcribe = std::time::Instant::now();
     let transcribe_race = tokio::select! {
-        r = run_transcription(&app, &captured_audio, &cfg, generation) => Some(r),
-        _ = wait_for_cancel(&mut cancel_rx) => {
-            log::info!("pipeline: cancelled gen={generation} (during transcription)");
-            None
-        }
+        r = run_transcription(&app, &captured_audio, &cfg) => Some(r),
+        _ = wait_for_cancel(&mut cancel_rx) => None,
     };
     let Some(transcribe_outcome) = transcribe_race else {
         state::leave_processing_if_owned(&state, generation);
@@ -572,31 +531,10 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         return;
     }
 
-    let (raw_for_cleanup, clipboard_plan, clipboard_warning) =
-        prepare_clipboard_phrase(&cfg, &raw).await;
-    let clipboard_instruction = clipboard_plan.as_ref().map(clipboard_phrase::cleanup_instruction);
-
     let stage_cleanup = std::time::Instant::now();
-    // Only advertise the cleaning stage when the cleanup LLM will actually run
-    // (cleanup enabled + intensity + a key in the chain). When cleanup is off
-    // the cleanup call resolves to local snippet/dictionary work that is
-    // effectively instant, so advertising it would just flash the label.
-    let cleanup_will_run_llm = should_run_cleanup_llm(
-        cfg.cleanup_enabled,
-        has_cleanup_key_in_chain(&cfg),
-        true,
-        &cfg.cleanup_intensity,
-        &profile,
-    );
-    if cleanup_will_run_llm {
-        emit_pill_stage(&app, "cleaning");
-    }
     let cleanup_race = tokio::select! {
-        r = run_cleanup_and_snippets(&app, &raw_for_cleanup, alternate.as_ref(), &cfg, &profile, app_context.as_deref(), context_id, clipboard_instruction.as_deref(), generation) => Some(r),
-        _ = wait_for_cancel(&mut cancel_rx) => {
-            log::info!("pipeline: cancelled gen={generation} (during cleanup)");
-            None
-        }
+        r = run_cleanup_and_snippets(&app, &raw, alternate.as_ref(), &cfg, &profile, app_context.as_deref()) => Some(r),
+        _ = wait_for_cancel(&mut cancel_rx) => None,
     };
     let Some(cleanup_outcome) = cleanup_race else {
         state::leave_processing_if_owned(&state, generation);
@@ -631,7 +569,6 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // finalize (see core/injection's serialized critical section). Failure
     // here means an interrupt/Escape branch already took ownership of this
     // generation; abandon without inserting anything.
-    emit_pill_stage(&app, "pasting");
     if !state::enter_finalizing(&state, generation) {
         return;
     }
@@ -643,21 +580,17 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         PipelineCompletionContext {
             raw: &raw,
             final_text_before_dict: &final_text,
-            clipboard_plan: clipboard_plan.as_ref(),
-            clipboard_warning,
             dict_entries: &dict_entries,
             duration_ms: captured_audio.duration_ms,
             api_used: &api_used,
             target_hwnd: target.id,
             cfg: &cfg,
             profile: &profile,
-            process_name,
+            process_name: process_name.clone(),
             cleanup_cache_key,
             captured_at: retry_captured_at,
             event_only,
             caps_lock_on,
-            context: Some(&resolved_context),
-            browser_domain,
         },
     )
     .await
@@ -666,48 +599,27 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         state::leave_finalizing(&state, generation);
         return;
     }
+    begin_feedback(
+        &app,
+        &state,
+        &raw,
+        &final_text,
+        &final_text,
+        process_name.clone(),
+        None,
+        0,
+        "Everywhere".to_string(),
+        &dict_entries,
+        &cfg,
+    );
     state::leave_finalizing(&state, generation);
 
     log::info!(
-        "pipeline: completed gen={generation} words={} duration_ms={} elapsed_ms={}",
+        "pipeline: completed words={} duration_ms={} elapsed_ms={}",
         words,
         captured_audio.duration_ms,
         started_at.elapsed().as_millis()
     );
-}
-
-async fn prepare_clipboard_phrase(
-    cfg: &store::PipelineConfig,
-    raw: &str,
-) -> (
-    String,
-    Option<clipboard_phrase::ClipboardPhrasePlan>,
-    Option<&'static str>,
-) {
-    if !cfg.clipboard_phrase_enabled
-        || clipboard_phrase::replace_phrase_with_marker(raw, &cfg.clipboard_phrase, String::new()).is_none()
-    {
-        return (raw.to_string(), None, None);
-    }
-
-    match injection::read_current_clipboard_text().await.filter(|text| !text.trim().is_empty()) {
-        Some(text) => match clipboard_phrase::replace_phrase_with_marker(
-            raw,
-            &cfg.clipboard_phrase,
-            text,
-        ) {
-            Some(plan) => (plan.pre_cleanup.clone(), Some(plan), None),
-            None => {
-                log::debug!("pipeline: clipboard phrase match disappeared before planning");
-                (raw.to_string(), None, None)
-            }
-        }
-        None => (
-            clipboard_phrase::remove_phrase(raw, &cfg.clipboard_phrase),
-            None,
-            Some("No text in clipboard"),
-        ),
-    }
 }
 
 #[cfg(test)]
@@ -766,14 +678,9 @@ pub async fn retry_transcription_impl(
     }
 
     let mapping = resolve_app_mapping(Some(&settings_store), &capture.process_name);
-    let db_handle = app.state::<DbHandle>().inner().clone();
-    let context = db::query_context(&db_handle, capture.context_id).ok();
-    capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref(), context.as_ref());
-    emit_pill_profile(app, &capture.profile);
+    capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
 
-    emit_pill_stage(app, "transcribing");
-    let Some((raw_unorm, api_used, alternate)) =
-        run_transcription(app, &capture.audio, &cfg, 0).await
+    let Some((raw_unorm, api_used, alternate)) = run_transcription(app, &capture.audio, &cfg).await
     else {
         hide_pill(app);
         anyhow::bail!("Retry transcription failed");
@@ -785,7 +692,7 @@ pub async fn retry_transcription_impl(
     {
         raw
     } else {
-        strip_trailing_hallucination(&strip_hallucinated_suffix(&raw))
+        strip_hallucinated_suffix(&raw)
     };
     let raw = crate::system::text::collapse_degenerate_word_runs(&raw);
     if !has_spoken_content(&raw) || is_transcription_hallucination(&raw) {
@@ -796,29 +703,14 @@ pub async fn retry_transcription_impl(
         hide_pill(app);
         anyhow::bail!("Recording was too quiet — nothing was transcribed");
     }
-    if should_run_cleanup_llm(
-        cfg.cleanup_enabled,
-        has_cleanup_key_in_chain(&cfg),
-        true,
-        &cfg.cleanup_intensity,
-        &capture.profile,
-    ) {
-        emit_pill_stage(app, "cleaning");
-    }
-    let (raw_for_cleanup, clipboard_plan, clipboard_warning) =
-        prepare_clipboard_phrase(&cfg, &raw).await;
-    let clipboard_instruction = clipboard_plan.as_ref().map(clipboard_phrase::cleanup_instruction);
     let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) =
         run_cleanup_and_snippets(
             app,
-            &raw_for_cleanup,
+            &raw,
             alternate.as_ref(),
             &cfg,
             &capture.profile,
             capture.app_context.as_deref(),
-            capture.context_id,
-            clipboard_instruction.as_deref(),
-            0,
         )
         .await
     else {
@@ -831,15 +723,12 @@ pub async fn retry_transcription_impl(
         format!("{api_used};cleanup={cleanup_api_used}")
     };
 
-    emit_pill_stage(app, "pasting");
     finalize_pipeline_completion(
         app,
         state,
         PipelineCompletionContext {
             raw: &raw,
             final_text_before_dict: &final_text,
-            clipboard_plan: clipboard_plan.as_ref(),
-            clipboard_warning,
             dict_entries: &dict_entries,
             duration_ms: capture.audio.duration_ms,
             api_used: &api_used,
@@ -851,8 +740,6 @@ pub async fn retry_transcription_impl(
             captured_at: capture.captured_at,
             event_only: false,
             caps_lock_on: capture.caps_lock_on,
-            context: None,
-            browser_domain: None,
         },
     )
     .await

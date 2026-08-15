@@ -265,6 +265,8 @@ fn main() {
         retry_capture: None,
         cancelled_capture: None,
         paste_failure: None,
+        repair: None,
+        hotkey_recording_repair_complaint: false,
     }));
 
     std::fs::create_dir_all(app_data_dir()).ok();
@@ -334,10 +336,11 @@ fn main() {
                             if let (Some(k1), Some(k2), Some(k3)) =
                                 (arr[0].as_str(), arr[1].as_str(), arr[2].as_str())
                             {
-                                let vk1 = crate::core::hotkey::map_code_to_vk(k1);
-                                let vk2 = crate::core::hotkey::map_code_to_vk(k2);
-                                let vk3 = crate::core::hotkey::map_code_to_vk(k3);
-                                crate::core::hotkey::update_repair_keys(vk1, vk2, vk3);
+                                crate::core::hotkey::update_repair_keys(
+                                    crate::core::hotkey::map_code_to_vk(k1),
+                                    crate::core::hotkey::map_code_to_vk(k2),
+                                    crate::core::hotkey::map_code_to_vk(k3),
+                                );
                             }
                         }
                     }
