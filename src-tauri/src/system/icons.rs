@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Native app-icon extraction, disk-cached as PNG data URIs. Best-effort
 //! throughout: any resolution/extraction failure returns `None` so callers
 //! (the Contexts UI) fall back to a colored-initial badge — this is a

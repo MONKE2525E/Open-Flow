@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Database schema definition, connection `open`, and versioned migrations.
 
 use anyhow::Result;
