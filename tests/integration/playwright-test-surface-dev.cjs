@@ -14,6 +14,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
       cleanup_intensity: 'medium',
       default_tone: 'casual',
       appearance_mode: 'system',
+      legacy_features_enabled: true,
       history_retention: '30 days',
       force_setup_on_launch: false,
     },

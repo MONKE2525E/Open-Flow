@@ -146,6 +146,8 @@ const SETTING_SPECS: &[SettingSpec] = &[
     setting_spec(store::PLAY_START_STOP_SOUNDS, SettingKind::Bool, true, true),
     setting_spec(store::SOUND_EFFECTS_VOLUME, SettingKind::SoundEffectsVolume, true, true),
     setting_spec(store::SETUP_COMPLETE, SettingKind::Bool, true, false),
+    setting_spec(store::CLIPBOARD_PHRASE, SettingKind::StringOrNull, true, true),
+    setting_spec(store::CLIPBOARD_PHRASE_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::LEGACY_FEATURES_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::APP_CONTEXT_HINT, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_ENABLED, SettingKind::Bool, true, true),
@@ -416,6 +418,9 @@ pub async fn get_setting(app: AppHandle, key: String) -> Result<Option<serde_jso
 
 #[derive(serde::Serialize)]
 pub struct AllSettings {
+    pub clipboard_phrase: Option<String>,
+    pub clipboard_phrase_enabled: Option<bool>,
+    pub legacy_features_enabled: Option<bool>,
     pub transcription_provider: Option<String>,
     pub transcription_model: Option<String>,
     pub transcription_language: Option<String>,
@@ -479,6 +484,9 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         })
     };
     Ok(AllSettings {
+        clipboard_phrase: str_val(store::CLIPBOARD_PHRASE),
+        clipboard_phrase_enabled: bool_val(store::CLIPBOARD_PHRASE_ENABLED),
+        legacy_features_enabled: bool_val(store::LEGACY_FEATURES_ENABLED),
         transcription_provider: str_val(store::TRANSCRIPTION_PROVIDER),
         transcription_model: str_val(store::TRANSCRIPTION_MODEL),
         transcription_language: str_val(store::TRANSCRIPTION_LANGUAGE),

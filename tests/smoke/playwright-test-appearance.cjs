@@ -11,6 +11,9 @@ const TIMEOUT = 8_000;
   const page = await browser.newPage();
   const errors = [];
 
+  await page.addInitScript(() => {
+    localStorage.setItem('__open_flow_tauri_mock_settings', JSON.stringify({ legacy_features_enabled: true }));
+  });
   await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
 
   page.on('pageerror', err => errors.push(`Page exception: ${err.message}`));
