@@ -129,8 +129,7 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
 /// combo isn't allowed here.
 #[tauri::command]
 pub async fn check_repair_hotkey(key1: String, key2: String, key3: String) -> Result<bool, String> {
-    let _ = &key2;
-    Ok(crate::core::hotkey::is_hotkey_available(&key1, &key3))
+    Ok(crate::core::hotkey::is_repair_hotkey_available(&key1, &key2, &key3))
 }
 
 /// Same shape as `save_hotkey`, but all three slots empty is a valid "unset"

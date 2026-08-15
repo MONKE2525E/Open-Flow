@@ -99,6 +99,9 @@ mod noop {
     pub fn is_hotkey_available(_key1: &str, _key2: &str) -> bool {
         true
     }
+    pub fn is_repair_hotkey_available(_key1: &str, _key2: &str, _key3: &str) -> bool {
+        true
+    }
     pub fn update_keys(_k1: u32, _k2: u32) {}
     pub fn update_repair_keys(_k1: u32, _k2: u32, _k3: u32) {}
     pub fn reset_chord_state() {}

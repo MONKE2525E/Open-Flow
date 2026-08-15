@@ -142,7 +142,7 @@ pub fn query_insights(db: &Db, days: i64) -> Result<Insights> {
 
     let totals = query_totals(&conn, &range_start, &range_end, days)?;
     let daily = query_daily(&conn, &range_start, &range_end)?;
-    let (streak_start, streak_end) = rolling_year_bounds(&conn)?;
+    let (streak_start, streak_end) = range_bounds(&conn, 0)?;
     let streak_daily = query_daily(&conn, &streak_start, &streak_end)?;
     let history_started_on = conn.query_row(
         "SELECT date(MIN(created_at), 'localtime') FROM transcriptions",
@@ -325,18 +325,6 @@ fn range_bounds(conn: &Connection, days: i64) -> Result<(String, String)> {
         )?
     };
     Ok((start, today))
-}
-
-/// One compact rolling year ending today. The frontend clips this to however
-/// many fixed-width weeks fit in the current window.
-fn rolling_year_bounds(conn: &Connection) -> Result<(String, String)> {
-    let end: String = conn.query_row("SELECT date('now', 'localtime')", [], |r| r.get(0))?;
-    let start: String = conn.query_row(
-        "SELECT date('now', 'localtime', '-364 days')",
-        [],
-        |r| r.get(0),
-    )?;
-    Ok((start, end))
 }
 
 fn query_totals(

@@ -507,7 +507,13 @@ pub async fn resume_cancelled_capture(
     pipeline::set_starting_prepend_audio(state.inner(), audio);
     let target = WindowTarget::capture_foreground();
     {
-        let mut st = lock_state(&state)?;
+        let mut st = match lock_state(&state) {
+            Ok(st) => st,
+            Err(err) => {
+                pipeline::cancel_starting_reservation(state.inner());
+                return Err(err);
+            }
+        };
         st.target = target;
         st.pill_placement_stale = true;
     }

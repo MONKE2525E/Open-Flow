@@ -807,12 +807,12 @@ pub fn delete_dictionary_entry(db: &Db, id: i64) -> Result<()> {
         )
         .ok();
 
-    let changed = tx.execute("DELETE FROM dictionary WHERE id=?1", params![id])?;
-    require_row_changed(changed, "Dictionary entry", id)?;
     tx.execute(
         "DELETE FROM dictionary_contexts WHERE dictionary_id = ?1",
         params![id],
     )?;
+    let changed = tx.execute("DELETE FROM dictionary WHERE id=?1", params![id])?;
+    require_row_changed(changed, "Dictionary entry", id)?;
 
     // If this was an auto-learned entry, remove its pending corrections and
     // candidates so the auto-learn system cannot immediately re-promote it.
