@@ -11,7 +11,7 @@ permissions:
 jobs:
   live-profile:
     name: Live profile
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -70,7 +70,7 @@ jobs:
 
   native-profile:
     name: Native profile
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6

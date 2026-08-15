@@ -12,7 +12,7 @@ permissions:
 jobs:
   frontend:
     name: Frontend checks
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -34,7 +34,7 @@ jobs:
 
   dependency-audits:
     name: Dependency audits
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -73,7 +73,7 @@ jobs:
         # gets auto-cancelled after 24h, never running — so there's currently
         # no GitHub-hosted way to test real Intel Mac silicon; the release
         # pipeline's "Intel" DMG remains cross-compiled on arm64, untested.
-        os: [windows-latest, macos-latest]
+        os: [blacksmith-4vcpu-windows-2025, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
@@ -91,7 +91,7 @@ jobs:
   all-in-one-fast:
     name: All-in-one fast profile
     needs: [frontend, dependency-audits, rust]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
