@@ -41,13 +41,13 @@ export const recommendedModels: Record<TaskType, Partial<Record<UiProviderId, { 
   transcription: {
     groq: { premium: 'whisper-large-v3', standard: 'whisper-large-v3-turbo' },
     openai: { premium: 'gpt-4o-transcribe', standard: 'gpt-4o-mini-transcribe' },
-    google: { premium: 'gemini-3.5-flash', standard: 'gemini-2.5-flash' },
+    google: { premium: 'gemini-3.7-flash', standard: 'gemini-2.5-flash' },
     assemblyai: { premium: 'universal-3-5-pro', standard: 'universal-2' },
   },
   cleanup: {
     groq: { premium: GROQ_QWEN_3_6_27B_MODEL, standard: GROQ_GPT_OSS_20B_MODEL },
     openai: { premium: 'gpt-4o', standard: 'gpt-4o-mini' },
-    google: { premium: 'gemini-3.5-flash', standard: 'gemini-2.5-flash' },
+    google: { premium: 'gemini-3.7-flash', standard: 'gemini-2.5-flash' },
   },
 };
 
@@ -56,6 +56,12 @@ export function migrateDeprecatedGroqCleanupModel(model: string): string {
   if (normalized === DEPRECATED_GROQ_LLAMA_8B_MODEL) return GROQ_GPT_OSS_20B_MODEL;
   if (normalized === DEPRECATED_GROQ_LLAMA_70B_MODEL) return GROQ_QWEN_3_6_27B_MODEL;
   return normalized;
+}
+
+export function migrateDeprecatedGoogleModel(model: string): string {
+  return model.trim() === 'gemini-3.5-flash'
+    ? 'gemini-3.7-flash'
+    : model.trim();
 }
 
 export const emptyProviderModelMap = (): ProviderModelMap => ({
@@ -88,7 +94,11 @@ export function mergeProviderModelMap(raw: unknown): ProviderModelMap {
   for (const provider of ['groq', 'openai', 'google', 'assemblyai', 'local'] as ProviderId[]) {
     const values = (raw as Record<string, unknown>)[provider];
     if (Array.isArray(values)) {
-      base[provider] = values.map((value) => String(value).trim()).filter(Boolean);
+      base[provider] = values
+        .map((value) => String(value).trim())
+        .filter(Boolean)
+        .map((value) => provider === 'google' ? migrateDeprecatedGoogleModel(value) : value)
+        .filter((value, index, models) => models.indexOf(value) === index);
     }
   }
 
