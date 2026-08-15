@@ -187,6 +187,30 @@ pub fn is_hotkey_available(key1: &str, key2: &str) -> bool {
     }
 }
 
+pub fn is_repair_hotkey_available(key1: &str, key2: &str, key3: &str) -> bool {
+    let modifier_flags = [key1, key2].iter().try_fold(0u32, |flags, key| {
+        let flag = match *key {
+            "ShiftLeft" | "ShiftRight" => MOD_SHIFT.0,
+            "ControlLeft" | "ControlRight" => MOD_CONTROL.0,
+            "AltLeft" | "AltRight" => MOD_ALT.0,
+            "MetaLeft" | "MetaRight" => MOD_WIN.0,
+            _ => return None,
+        };
+        Some(flags | flag)
+    });
+    let Some(modifier_flags) = modifier_flags else { return true };
+    let vk = map_code_to_vk(key3);
+    if vk == 0 { return true; }
+    unsafe {
+        if RegisterHotKey(None, 0x5A8F, HOT_KEY_MODIFIERS(modifier_flags), vk).is_ok() {
+            let _ = UnregisterHotKey(None, 0x5A8F);
+            true
+        } else {
+            false
+        }
+    }
+}
+
 static KEY1: AtomicU32 = AtomicU32::new(162); // VK_LCONTROL / Ctrl
 static KEY2: AtomicU32 = AtomicU32::new(91); // VK_LWIN / Windows
 

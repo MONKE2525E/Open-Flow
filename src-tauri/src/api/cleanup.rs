@@ -202,6 +202,7 @@ async fn openai_compat(
     prompt: &str,
     max_tokens: u32,
     alternate_transcript: Option<&str>,
+    gen: u64,
 ) -> Result<String> {
     let body = build_openai_compat_request_with_alternate(
         text,
