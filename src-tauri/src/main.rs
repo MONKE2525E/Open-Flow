@@ -239,6 +239,14 @@ pub(crate) fn app_db_path() -> std::path::PathBuf {
 }
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    {
+        cleanup_update_helper_if_requested();
+        if crate::commands::run_update_helper_if_requested() {
+            return;
+        }
+    }
+
     #[cfg(target_os = "macos")]
     {
         let _ = crate::system::mac_app::set_process_name("Verenu");
@@ -252,7 +260,13 @@ fn main() {
         target: WindowTarget::default(),
         pill_placement: None,
         pill_placement_stale: false,
+        pill_width_points: pipeline::DEFAULT_PILL_WIDTH_POINTS,
+        pill_height_points: pipeline::DEFAULT_PILL_HEIGHT_POINTS,
         retry_capture: None,
+        cancelled_capture: None,
+        paste_failure: None,
+        repair: None,
+        hotkey_recording_repair_complaint: false,
     }));
 
     std::fs::create_dir_all(app_data_dir()).ok();
@@ -278,6 +292,7 @@ fn main() {
         .manage(frontend_readiness.clone())
         .setup(move |app| {
             crate::system::logger::init(app.handle())?;
+            crate::system::notify::prepare_windows_notification_identity();
             let settings = crate::data::store::SettingsHandle::open(app.handle())
                 .map_err(std::io::Error::other)?;
             crate::data::credentials::migrate_from_store(app.handle(), &settings);
@@ -311,6 +326,21 @@ fn main() {
                                 let vk1 = crate::core::hotkey::map_code_to_vk(k1);
                                 let vk2 = crate::core::hotkey::map_code_to_vk(k2);
                                 crate::core::hotkey::update_keys(vk1, vk2);
+                            }
+                        }
+                    }
+                }
+                if let Some(val) = settings.get(crate::data::store::REPAIR_HOTKEY) {
+                    if let Some(arr) = val.as_array() {
+                        if arr.len() == 3 {
+                            if let (Some(k1), Some(k2), Some(k3)) =
+                                (arr[0].as_str(), arr[1].as_str(), arr[2].as_str())
+                            {
+                                crate::core::hotkey::update_repair_keys(
+                                    crate::core::hotkey::map_code_to_vk(k1),
+                                    crate::core::hotkey::map_code_to_vk(k2),
+                                    crate::core::hotkey::map_code_to_vk(k3),
+                                );
                             }
                         }
                     }
@@ -462,6 +492,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::save_hotkey,
             commands::check_hotkey,
+            commands::save_repair_hotkey,
+            commands::check_repair_hotkey,
             commands::save_api_key,
             commands::delete_api_key,
             commands::get_api_key_status,
@@ -504,6 +536,7 @@ fn main() {
             commands::hide_main,
             commands::get_recent,
             commands::get_stats,
+            commands::get_insights,
             commands::count_old_transcriptions,
             commands::get_cleanup_cache_status,
             commands::clear_cleanup_cache,
@@ -522,9 +555,37 @@ fn main() {
             commands::stop_setup_try_recording,
             commands::stop_recording,
             commands::stop_handless_mode,
+            commands::resume_cancelled_capture,
+            commands::dismiss_cancelled_capture,
+            commands::copy_paste_failure_to_clipboard,
+            commands::start_repair_complaint_recording,
+            commands::stop_repair_complaint_recording,
+            commands::repair_positive_feedback,
+            commands::repair_enter_input,
+            commands::repair_cancel,
+            commands::repair_analyze,
+            commands::repair_apply,
+            commands::set_pill_size,
             commands::get_installed_apps,
             commands::get_app_mappings,
             commands::save_app_mappings,
+            commands::get_contexts,
+            commands::create_context,
+            commands::update_context,
+            commands::update_context_settings,
+            commands::update_context_color,
+            commands::delete_context,
+            commands::get_context_targets,
+            commands::assign_context_target,
+            commands::remove_context_target,
+            commands::get_context_websites,
+            commands::check_domain_exists,
+            commands::assign_context_website,
+            commands::remove_context_website,
+            commands::get_context_dictionary,
+            commands::get_context_snippets,
+            commands::set_dictionary_context_assignment,
+            commands::set_snippet_context_assignment,
             commands::get_snippets,
             commands::create_snippet,
             commands::edit_snippet,
@@ -537,6 +598,7 @@ fn main() {
             commands::get_recent_auto_learn_activity,
             commands::retry_transcription,
             commands::check_for_update,
+            commands::reinstall_latest_update,
             commands::install_update,
             commands::check_provider_status,
             commands::check_provider_status_raw,
@@ -547,6 +609,9 @@ fn main() {
             commands::download_logs,
             commands::set_dev_logging_enabled,
             commands::get_dev_logging_enabled,
+            commands::notify_update_available,
+            commands::notify_provider_and_global_message,
+            commands::test_notifications,
             commands::export_data,
             commands::import_data,
             commands::log_frontend,
@@ -569,6 +634,27 @@ fn main() {
                     .unload(_app);
             }
         });
+}
+
+#[cfg(target_os = "windows")]
+fn cleanup_update_helper_if_requested() {
+    let Some(helper) = std::env::args_os().find_map(|arg| {
+        let text = arg.to_string_lossy();
+        text.strip_prefix("--cleanup-update-helper=")
+            .map(std::path::PathBuf::from)
+    }) else {
+        return;
+    };
+
+    // The helper has just spawned this process and is exiting. Retry briefly so
+    // Windows has released the helper image before removing its temp copy.
+    for _ in 0..20 {
+        match std::fs::remove_file(&helper) {
+            Ok(()) => return,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]

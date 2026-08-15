@@ -26,6 +26,7 @@
   } from '../../localLlmStore.svelte';
   import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import Toggle from '../Toggle.svelte';
+  import Dropdown from '../Dropdown.svelte';
   import { appStore, cleanupPromptOverridesStore } from '../../stores.svelte';
   import {
     saveSetting,
@@ -51,6 +52,7 @@
     mergeProviderModelMap,
     modelId,
     recommendedModels,
+    migrateDeprecatedGroqCleanupModel,
     splitModelId,
     type AllSettingsPayload,
     type TaskType,
@@ -69,7 +71,7 @@
   let cleanupModelsByProvider = $state<ProviderModelMap>(emptyProviderModelMap());
 
   let transcriptionDefaultModel = $state('groq/whisper-large-v3-turbo');
-  let cleanupDefaultModel = $state('groq/llama-3.3-70b-versatile');
+  let cleanupDefaultModel = $state('groq/qwen/qwen3.6-27b');
   let transcriptionFallbackModels = $state<string[]>([]);
   let dualTranscriptionEnabled = $state(false);
   let cleanupFallbackModels = $state<string[]>([]);
@@ -544,7 +546,14 @@
       appStore.cleanupEnabled = cleanupRaw;
     }
     transcriptionModelsByProvider = mergeProviderModelMap(all.transcription_models_by_provider);
-    cleanupModelsByProvider = mergeProviderModelMap(all.cleanup_models_by_provider);
+    const rawCleanupModelsByProvider = mergeProviderModelMap(all.cleanup_models_by_provider);
+    cleanupModelsByProvider = {
+      ...rawCleanupModelsByProvider,
+      groq: rawCleanupModelsByProvider.groq
+        .map(migrateDeprecatedGroqCleanupModel)
+        .filter((model, index, models) => models.indexOf(model) === index),
+    };
+    const cleanupModelMapChanged = JSON.stringify(cleanupModelsByProvider) !== JSON.stringify(rawCleanupModelsByProvider);
 
     const rawLegacyTranscription = String(all.transcription_model ?? '');
     const rawLegacyCleanup = String(all.cleanup_model ?? '');
@@ -553,17 +562,28 @@
       : 'groq/whisper-large-v3-turbo';
     const legacyCleanup = rawLegacyCleanup
       ? (rawLegacyCleanup.includes('/') ? rawLegacyCleanup : `groq/${rawLegacyCleanup}`)
-      : 'groq/llama-3.3-70b-versatile';
+      : 'groq/qwen/qwen3.6-27b';
 
     transcriptionDefaultModel = all.transcription_default_model ?? legacyTranscription;
     cleanupDefaultModel = all.cleanup_default_model ?? legacyCleanup;
+    const parsedCleanupDefault = splitModelId(cleanupDefaultModel);
+    if (parsedCleanupDefault?.provider === 'groq') {
+      cleanupDefaultModel = modelId('groq', migrateDeprecatedGroqCleanupModel(parsedCleanupDefault.model));
+    }
 
     if (Array.isArray(all.transcription_fallback_models)) {
       transcriptionFallbackModels = all.transcription_fallback_models.filter((id) => !!splitModelId(id));
     }
     dualTranscriptionEnabled = all.dual_transcription_enabled === true;
     if (Array.isArray(all.cleanup_fallback_models)) {
-      cleanupFallbackModels = all.cleanup_fallback_models.filter((id) => !!splitModelId(id));
+      cleanupFallbackModels = all.cleanup_fallback_models
+        .filter((id) => !!splitModelId(id))
+        .map((id) => {
+          const parsed = splitModelId(id);
+          return parsed?.provider === 'groq'
+            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
+            : id;
+        });
     }
     if (typeof advancedRaw === 'boolean') {
       advancedModelUi = advancedRaw;
@@ -576,20 +596,36 @@
     ) {
       localModelMemoryPolicy = all.local_model_memory_policy;
     }
+    let cleanupPromptOverridesChanged = false;
     if (all.cleanup_prompt_overrides && typeof all.cleanup_prompt_overrides === 'object') {
       const overrides: Record<string, string> = {};
-      for (const [key, value] of Object.entries(all.cleanup_prompt_overrides as Record<string, unknown>)) {
+      const rawOverrides = all.cleanup_prompt_overrides as Record<string, unknown>;
+      for (const [key, value] of Object.entries(rawOverrides)) {
         if (typeof value === 'string') {
-          overrides[key] = value;
+          const parsed = splitModelId(key);
+          const normalizedKey = parsed?.provider === 'groq'
+            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
+            : key;
+          if (normalizedKey === key) overrides[normalizedKey] = value;
         }
       }
+      for (const [key, value] of Object.entries(rawOverrides)) {
+        if (typeof value === 'string') {
+          const parsed = splitModelId(key);
+          const normalizedKey = parsed?.provider === 'groq'
+            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
+            : key;
+          if (normalizedKey !== key && !(normalizedKey in overrides)) overrides[normalizedKey] = value;
+        }
+      }
+      cleanupPromptOverridesChanged = JSON.stringify(overrides) !== JSON.stringify(all.cleanup_prompt_overrides);
       cleanupPromptOverridesStore.overrides = overrides;
     }
 
     const preTranscriptionDefault = transcriptionDefaultModel;
     const preCleanupDefault = cleanupDefaultModel;
-    const preTranscriptionFallbackCount = transcriptionFallbackModels.length;
-    const preCleanupFallbackCount = cleanupFallbackModels.length;
+    const preTranscriptionFallbacks = [...transcriptionFallbackModels];
+    const preCleanupFallbacks = [...cleanupFallbackModels];
     const needsMigration =
       !all.transcription_default_model
       || !splitModelId(all.transcription_default_model)
@@ -602,11 +638,16 @@
       needsMigration
       || transcriptionDefaultModel !== preTranscriptionDefault
       || cleanupDefaultModel !== preCleanupDefault
-      || transcriptionFallbackModels.length !== preTranscriptionFallbackCount
-      || cleanupFallbackModels.length !== preCleanupFallbackCount;
+      || JSON.stringify(transcriptionFallbackModels) !== JSON.stringify(preTranscriptionFallbacks)
+      || JSON.stringify(cleanupFallbackModels) !== JSON.stringify(preCleanupFallbacks)
+      || cleanupModelMapChanged
+      || cleanupPromptOverridesChanged;
 
     if (changed) {
       await persistAll();
+      if (cleanupPromptOverridesChanged) {
+        await saveSetting('cleanup_prompt_overrides', cleanupPromptOverridesStore.overrides);
+      }
     }
 
     await Promise.all([
@@ -768,14 +809,6 @@
     }
   }
 
-  function handleWindowClick(event: MouseEvent) {
-    const target = event.target as HTMLElement;
-    if ((localModelMemoryDropdownOpen || transcriptionModeDropdownOpen) && !target.closest('.models-dropdown')) {
-      localModelMemoryDropdownOpen = false;
-      transcriptionModeDropdownOpen = false;
-    }
-  }
-
   async function scrollToAnchor(anchorId: string) {
     await tick();
     requestAnimationFrame(() => {
@@ -818,8 +851,6 @@
 
   migrateAndLoad().catch((err) => console.error('load models failed', err));
 </script>
-
-<svelte:window onclick={handleWindowClick} />
 
 <h2 class="settings-h">Models</h2>
 
@@ -934,65 +965,58 @@
     <div class="label">Transcription strategy</div>
     <div class="desc">Use one model, or compare two working models from the existing transcription fallback chain before cleanup.</div>
   </div>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="models-dropdown"
-    onkeydown={(event) => {
-      if (event.key === 'Escape' && transcriptionModeDropdownOpen) {
-        transcriptionModeDropdownOpen = false;
-        event.stopPropagation();
-      }
-    }}
-  >
-    <button
-      class="btn-ghost models-dropdown-btn"
-      type="button"
-      onclick={() => (transcriptionModeDropdownOpen = !transcriptionModeDropdownOpen)}
-      aria-haspopup="listbox"
-      aria-expanded={transcriptionModeDropdownOpen}
-      aria-controls="transcription-mode-menu"
-      aria-label="Transcription strategy"
-    >
-      <span>{dualTranscriptionEnabled ? 'Dual model' : 'Single model'}</span>
-      <svg class:open={transcriptionModeDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="m6 9 6 6 6-6"/>
-      </svg>
-    </button>
-    {#if transcriptionModeDropdownOpen}
-      <div
-        id="transcription-mode-menu"
-        class="models-dropdown-menu scroll-styled scroll-thumb-elev"
-        role="listbox"
-        tabindex="-1"
+  <Dropdown bind:open={transcriptionModeDropdownOpen} closeSelector=".models-dropdown">
+    <div class="ui-dropdown models-dropdown">
+      <button
+        class="btn-ghost ui-dropdown-trigger models-dropdown-btn"
+        type="button"
+        onclick={() => (transcriptionModeDropdownOpen = !transcriptionModeDropdownOpen)}
+        aria-haspopup="listbox"
+        aria-expanded={transcriptionModeDropdownOpen}
+        aria-controls="transcription-mode-menu"
         aria-label="Transcription strategy"
-        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
-        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
-        <button
-          class="models-dropdown-item"
-          class:is-active={!dualTranscriptionEnabled}
-          type="button"
-          onclick={() => handleDualTranscription(false)}
-          role="option"
-          aria-selected={!dualTranscriptionEnabled}
+        <span>{dualTranscriptionEnabled ? 'Dual model' : 'Single model'}</span>
+        <svg class:open={transcriptionModeDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m6 9 6 6 6-6"/>
+        </svg>
+      </button>
+      {#if transcriptionModeDropdownOpen}
+        <div
+          id="transcription-mode-menu"
+          class="ui-dropdown-menu models-dropdown-menu scroll-styled scroll-thumb-elev"
+          role="listbox"
+          tabindex="-1"
+          aria-label="Transcription strategy"
+          in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+          out:fade={{ duration: motionMs(MOTION_MS.fast) }}
         >
-          <span>Single model</span>
-          <small>Fastest, uses the primary model and fallbacks only on failure.</small>
-        </button>
-        <button
-          class="models-dropdown-item"
-          class:is-active={dualTranscriptionEnabled}
-          type="button"
-          onclick={() => handleDualTranscription(true)}
-          role="option"
-          aria-selected={dualTranscriptionEnabled}
-        >
-          <span>Dual model</span>
-          <small>Compares two successful fallback-chain models before cleanup.</small>
-        </button>
-      </div>
-    {/if}
-  </div>
+          <button
+            class="ui-dropdown-option models-dropdown-item"
+            class:is-active={!dualTranscriptionEnabled}
+            type="button"
+            onclick={() => handleDualTranscription(false)}
+            role="option"
+            aria-selected={!dualTranscriptionEnabled}
+          >
+            <span>Single model</span>
+            <small>Fastest, uses the primary model and fallbacks only on failure.</small>
+          </button>
+          <button
+            class="ui-dropdown-option models-dropdown-item"
+            class:is-active={dualTranscriptionEnabled}
+            type="button"
+            onclick={() => handleDualTranscription(true)}
+            role="option"
+            aria-selected={dualTranscriptionEnabled}
+          >
+            <span>Dual model</span>
+            <small>Compares two successful fallback-chain models before cleanup.</small>
+          </button>
+        </div>
+      {/if}
+    </div>
+  </Dropdown>
 </div>
 </div>
 {/if}
@@ -1002,58 +1026,49 @@
     <div class="label">Memory policy</div>
     <div class="desc">Controls when idle local models are unloaded.</div>
   </div>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="models-dropdown"
-    onkeydown={(event) => {
-      if (event.key === 'Escape' && localModelMemoryDropdownOpen) {
-        localModelMemoryDropdownOpen = false;
-        event.stopPropagation();
-      }
-    }}
-  >
-    <button
-      class="btn-ghost models-dropdown-btn"
-      type="button"
-      use:animateWidth={{ text: localMemoryPolicyLabel(localModelMemoryPolicy), max: 220 }}
-      onclick={() => (localModelMemoryDropdownOpen = !localModelMemoryDropdownOpen)}
-      aria-haspopup="listbox"
-      aria-expanded={localModelMemoryDropdownOpen}
-      aria-controls={LOCAL_MEMORY_POLICY_MENU_ID}
-      aria-label="Local model memory policy"
-    >
-      <span>{localMemoryPolicyLabel(localModelMemoryPolicy)}</span>
-      <svg class:open={localModelMemoryDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="m6 9 6 6 6-6"/>
-      </svg>
-    </button>
-    {#if localModelMemoryDropdownOpen}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div
-        id={LOCAL_MEMORY_POLICY_MENU_ID}
-        class="models-dropdown-menu scroll-styled scroll-thumb-elev"
-        role="listbox"
-        tabindex="-1"
-        aria-label="Local model memory policy options"
-        onclick={(event) => event.stopPropagation()}
-        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
-        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+  <Dropdown bind:open={localModelMemoryDropdownOpen} closeSelector=".models-dropdown">
+    <div class="ui-dropdown models-dropdown">
+      <button
+        class="btn-ghost ui-dropdown-trigger models-dropdown-btn"
+        type="button"
+        use:animateWidth={{ text: localMemoryPolicyLabel(localModelMemoryPolicy), max: 220 }}
+        onclick={() => (localModelMemoryDropdownOpen = !localModelMemoryDropdownOpen)}
+        aria-haspopup="listbox"
+        aria-expanded={localModelMemoryDropdownOpen}
+        aria-controls={LOCAL_MEMORY_POLICY_MENU_ID}
+        aria-label="Local model memory policy"
       >
-        {#each localMemoryPolicyOptions as option}
-          <button
-            class="models-dropdown-item"
-            class:is-active={localModelMemoryPolicy === option.value}
-            type="button"
-            onclick={() => updateLocalMemoryPolicy(option.value)}
-            role="option"
-            aria-selected={localModelMemoryPolicy === option.value}
-          >
-            {option.label}
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
+        <span>{localMemoryPolicyLabel(localModelMemoryPolicy)}</span>
+        <svg class:open={localModelMemoryDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m6 9 6 6 6-6"/>
+        </svg>
+      </button>
+      {#if localModelMemoryDropdownOpen}
+        <div
+          id={LOCAL_MEMORY_POLICY_MENU_ID}
+          class="ui-dropdown-menu models-dropdown-menu scroll-styled scroll-thumb-elev"
+          role="listbox"
+          tabindex="-1"
+          aria-label="Local model memory policy options"
+          in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+          out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+        >
+          {#each localMemoryPolicyOptions as option}
+            <button
+              class="ui-dropdown-option models-dropdown-item"
+              class:is-active={localModelMemoryPolicy === option.value}
+              type="button"
+              onclick={() => updateLocalMemoryPolicy(option.value)}
+              role="option"
+              aria-selected={localModelMemoryPolicy === option.value}
+            >
+              {option.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  </Dropdown>
 </div>
 
 <div class="setting-row">
@@ -1068,7 +1083,7 @@
   .local-models-unsupported {
     padding: 12px 14px;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--r-md);
     background: color-mix(in srgb, var(--paper) 55%, var(--bg-elev));
   }
 
@@ -1135,23 +1150,7 @@
     color: var(--ink-mute);
   }
 
-  .models-dropdown {
-    position: relative;
-    flex-shrink: 0;
-  }
-
   .models-dropdown-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: var(--r-md);
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    color: var(--ink);
-    font-size: 13px;
-    font-weight: 500;
     max-width: 220px;
   }
 
@@ -1161,56 +1160,9 @@
     white-space: nowrap;
   }
 
-  .models-dropdown-btn svg { transition: transform 150ms; }
-  .models-dropdown-btn svg.open { transform: rotate(180deg); }
-
   .models-dropdown-menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
     min-width: 220px;
     max-height: 220px;
-    overflow-y: auto;
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
-    z-index: 10;
-  }
-
-  .models-dropdown-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 8px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .models-dropdown-item:last-child {
-    border-bottom: none;
-  }
-
-  .models-dropdown-item:hover {
-    background: var(--paper);
-  }
-
-  .models-dropdown-item:focus-visible,
-  .models-dropdown-btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  .models-dropdown-item.is-active {
-    background: var(--accent-soft);
-    color: var(--ink);
-    font-weight: 500;
   }
 
   /* Keyed to the settings content column, not the window — this stacks when the

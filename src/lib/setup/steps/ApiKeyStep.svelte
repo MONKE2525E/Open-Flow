@@ -2,6 +2,16 @@
   import type { ProviderId } from '../../settings';
   import { providerGuides } from '../setupData';
   import { isMac } from '../../platform';
+  import { fade } from 'svelte/transition';
+  import { onMount } from 'svelte';
+  import { motionMs } from '../../motion';
+  import {
+    localSttStore,
+    refreshLocalModels,
+    refreshLocalState,
+    downloadLocalModel,
+    cancelLocalModelDownload,
+  } from '../../localSttStore.svelte';
 
   type KeyValidation = { status: 'idle' | 'checking' | 'valid' | 'invalid' | 'unknown'; message: string };
 
@@ -10,6 +20,7 @@
     providerName,
     apiKeyDraft = $bindable(),
     showKey = $bindable(),
+    mode = $bindable('fork'),
     keySaved,
     keySaving,
     keyError,
@@ -19,6 +30,8 @@
     providerName: string;
     apiKeyDraft: string;
     showKey: boolean;
+    /** 'fork' asks whether they have a key; 'tutorial' walks them through making one. */
+    mode?: 'fork' | 'tutorial' | 'paste';
     keySaved: boolean;
     keySaving: boolean;
     keyError: string;
@@ -27,45 +40,206 @@
 
   let guide = $derived(providerGuides[provider]);
 
-  function copyUrl(url: string) {
-    navigator.clipboard.writeText('https://' + url).catch(() => {});
+  // Screenshots are optional. Anything dropped into src/assets/setup/ gets
+  // picked up here by filename; a step with no matching file falls back to a
+  // placeholder frame, so an empty folder is a valid state.
+  // Root-absolute on purpose — a '../../../' glob does not resolve from inside
+  // a .svelte module and silently matched nothing.
+  const shotModules = import.meta.glob('/src/assets/setup/*.png', {
+    eager: true,
+    query: '?url',
+    import: 'default',
+  }) as Record<string, string>;
+
+  const shotsByKey = new Map<string, string>();
+  for (const [path, url] of Object.entries(shotModules)) {
+    const file = path.split('/').pop() ?? '';
+    const match = /^(.+)-(\d+)-/.exec(file);
+    if (match) shotsByKey.set(`${match[1]}-${match[2]}`, url);
   }
+
+  let slide = $state(0);
+  const slideCount = $derived(guide.steps.length);
+  const safeSlide = $derived(Math.min(slide, Math.max(0, slideCount - 1)));
+  const currentShot = $derived(shotsByKey.get(`${provider}-${safeSlide + 1}`));
+  const localModel = $derived(localSttStore.models.find((model) => model.id === 'parakeet-v3'));
+  const localDownloading = $derived(
+    localSttStore.state.downloading_model_id === 'parakeet-v3' || localModel?.is_downloading === true,
+  );
+  const localProgress = $derived(localSttStore.downloadProgress['parakeet-v3']?.progress ?? 0);
+  const localStage = $derived(localSttStore.downloadStage['parakeet-v3'] ?? 'downloading');
+
+  onMount(() => {
+    if (provider !== 'local') return;
+    void Promise.all([refreshLocalModels(), refreshLocalState()]);
+  });
+
+  function startLocalDownload() {
+    void downloadLocalModel('parakeet-v3');
+  }
+
+  function stopLocalDownload() {
+    void cancelLocalModelDownload('parakeet-v3');
+  }
+
+  // Reset the carousel when the provider changes underneath us.
+  $effect(() => {
+    void provider;
+    slide = 0;
+  });
+
+  function step(delta: number) {
+    if (slideCount <= 0) return;
+    slide = (safeSlide + delta + slideCount) % slideCount;
+  }
+
+  function onTutorialKeydown(event: KeyboardEvent) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    step(event.key === 'ArrowLeft' ? -1 : 1);
+  }
+
+  async function openExternal(url: string) {
+    const full = url.startsWith('http') ? url : `https://${url}`;
+    try {
+      const { open } = await import('@tauri-apps/plugin-shell');
+      await open(full);
+    } catch {
+      window.open(full, '_blank');
+    }
+  }
+
 </script>
 
-<div class="step">
+<div class="step apikey-step">
   {#if provider === 'local'}
-    <div class="key-guide">
-      <p class="guide-label">Local setup</p>
-      <ol class="guide-steps">
-        {#each guide.steps as s}
-          <li>{s}</li>
-        {/each}
-      </ol>
-      <div class="local-note">
-        You can finish setup without any cloud credential. Local transcription still needs the model download before dictation works.
+    <div class="local-setup">
+      <div class="local-intro">
+        <span class="local-kicker">Private by design</span>
+        <h3>No account, subscription, or API key</h3>
+        <p>Your audio and transcript stay on this device. Download the speech model now, then choose how much local cleanup you want on the next page.</p>
       </div>
-    </div>
-  {:else}
-    <div class="key-guide">
-      <p class="guide-label">How to get your key</p>
-      <ol class="guide-steps">
-        {#each guide.steps as s}
-          <li>{s}</li>
-        {/each}
-      </ol>
-      <div class="url-row">
-        <span class="url-display">{guide.url}</span>
-        <button class="copy-btn" onclick={() => copyUrl(guide.url)}>Copy link</button>
+
+      <div class="local-model-card" class:is-ready={localModel?.is_downloaded}>
+        <div class="local-model-copy">
+          <div class="local-model-head">
+            <strong>Parakeet V3</strong>
+            <span>Recommended</span>
+          </div>
+          <p>Fast local transcription in 25 languages</p>
+          <span class="local-model-meta">About {localModel?.size_mb ?? 456} MB · runs offline after download</span>
+        </div>
+        {#if localModel?.is_downloaded}
+          <div class="local-ready" role="status">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+            Ready
+          </div>
+        {:else if localDownloading}
+          <button class="local-download cancel" type="button" onclick={stopLocalDownload}>Cancel</button>
+        {:else}
+          <button class="local-download" type="button" onclick={startLocalDownload}>Download model</button>
+        {/if}
+      </div>
+
+      {#if localDownloading}
+        <div class="local-progress" role="status" aria-live="polite">
+          <div class="local-progress-row">
+            <span>{localStage === 'verifying' ? 'Verifying' : localStage === 'extracting' ? 'Installing' : 'Downloading'}</span>
+            <span>{Math.round(localProgress * 100)}%</span>
+          </div>
+          <div class="local-progress-track"><span style={`width: ${Math.max(4, localProgress * 100)}%`}></span></div>
+        </div>
+      {/if}
+
+      <div class="local-path" aria-label="Local setup steps">
+        <div><span>1</span><strong>Download</strong><small>Get the speech model</small></div>
+        <div><span>2</span><strong>Choose</strong><small>Pick cleanup on the next page</small></div>
+        <div><span>3</span><strong>Dictate</strong><small>Work privately and offline</small></div>
       </div>
     </div>
 
-    <div class="key-input-wrap">
+  {:else if mode === 'fork'}
+    <!-- The old step dropped straight into a password field, which is a dead end
+         for anyone who has never made an account. Ask first. -->
+    <div class="fork" in:fade={{ duration: motionMs(180) }}>
+      <p class="fork-question">Do you already have a {providerName} API key?</p>
+      <div class="fork-options">
+        <button class="fork-card" onclick={() => { mode = 'paste'; }}>
+          <span class="fork-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          </span>
+          <span class="fork-title">Yes, I have one</span>
+          <span class="fork-sub">{keySaved ? 'A key is already saved — paste a new one to replace it' : "Paste it and you're done"}</span>
+        </button>
+        <button class="fork-card" onclick={() => { mode = 'tutorial'; slide = 0; }}>
+          <span class="fork-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </span>
+          <span class="fork-title">No, walk me through it</span>
+          <span class="fork-sub">Takes about a minute, and it's free</span>
+        </button>
+      </div>
+      <p class="fork-note">Keys are stored in your OS credential manager — never in a file, a log, or our servers.</p>
+    </div>
+
+  {:else if mode === 'tutorial'}
+    <div class="tutorial" aria-label="API key tutorial">
+      <div class="shot-frame">
+        {#key slide}
+          <div class="shot-inner" in:fade={{ duration: motionMs(150) }}>
+            {#if currentShot}
+              <img class="shot-img" src={currentShot} alt={guide.steps[safeSlide].alt} />
+            {:else}
+              <!-- No screenshot for this step yet (see src/assets/setup/README.md).
+                   The step number and caption are both already in the row below,
+                   so this says only what it needs to. -->
+              <div class="shot-placeholder">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m21 15-5-5L5 20"/></svg>
+                <span class="shot-placeholder-text">Screenshot coming soon</span>
+              </div>
+            {/if}
+          </div>
+        {/key}
+      </div>
+
+      <div class="shot-caption">
+        <button
+          class="shot-nav ui-focus-ring"
+          onclick={() => step(-1)}
+          onkeydown={onTutorialKeydown}
+          disabled={slideCount < 2}
+          aria-label="Previous step"
+        ><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <div class="shot-caption-text">
+          <span class="shot-step">Step {safeSlide + 1} of {slideCount}</span>
+          <span class="shot-text">{guide.steps[safeSlide].caption}</span>
+        </div>
+        <button
+          class="shot-nav ui-focus-ring"
+          onclick={() => step(1)}
+          onkeydown={onTutorialKeydown}
+          disabled={slideCount < 2}
+          aria-label="Next step"
+        ><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg></button>
+      </div>
+
+      <div class="tutorial-actions">
+        <button class="btn-open" onclick={() => openExternal(guide.url)}>
+          Open {guide.url}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"/></svg>
+        </button>
+        <button class="btn-ghost btn-got-key" onclick={() => { mode = 'paste'; }}>I've got my key →</button>
+      </div>
+    </div>
+
+  {:else}
+    <div class="key-input-wrap" in:fade={{ duration: motionMs(180) }}>
       <div class="key-input-row">
         <input
           class="key-input"
           type={showKey ? 'text' : 'password'}
           bind:value={apiKeyDraft}
-          placeholder="Paste your API key here…"
+          placeholder="Paste your {providerName} API key here…"
           aria-label="API key"
           spellcheck="false"
           autocomplete="off"
@@ -80,25 +254,25 @@
       </div>
 
       {#if keyError}
-        <p class="key-error">{keyError}</p>
+        <p class="key-error" role="alert">{keyError}</p>
       {/if}
 
       {#if keySaved && !apiKeyDraft}
-        <div class="key-status">
+        <div class="key-status" role="status" aria-live="polite" class:is-bad={keyValidation.status === 'invalid'} class:is-warn={keyValidation.status === 'unknown'}>
           {#if keyValidation.status === 'checking'}
             <span class="status-spinner" aria-hidden="true"></span>
             <span>Verifying key…</span>
-          {:else if keyValidation.status === 'valid'}
-            <span class="status-icon status-ok">✓</span>
-            <span>Key verified — {providerName} accepted it.</span>
           {:else if keyValidation.status === 'invalid'}
-            <span class="status-icon status-bad">!</span>
-            <span>{keyValidation.message || "This key was rejected. You can re-enter it or continue anyway."}</span>
+            <svg class="status-glyph" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16.5" x2="12.01" y2="16.5"/></svg>
+            <span>{keyValidation.message || 'This key was rejected. You can re-enter it or continue anyway.'}</span>
           {:else if keyValidation.status === 'unknown'}
-            <span class="status-icon status-warn">?</span>
+            <svg class="status-glyph" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 0 1 4.86.85c0 1.65-2.46 2.5-2.46 2.5"/><line x1="12" y1="16.5" x2="12.01" y2="16.5"/></svg>
             <span>{keyValidation.message || "Couldn't verify the key right now — saved anyway."}</span>
+          {:else if keyValidation.status === 'valid'}
+            <svg class="status-glyph" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            <span>Key verified — {providerName} accepted it.</span>
           {:else}
-            <span class="status-icon status-ok">✓</span>
+            <svg class="status-glyph" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             <span>Key saved for {providerName}.</span>
           {/if}
         </div>
@@ -109,6 +283,17 @@
           Dictation won't work until a key is added — you can also do this later in Settings → API Keys.
         </div>
       {/if}
+
+      <div class="paste-help">
+        <button class="help-btn" onclick={() => { mode = 'tutorial'; }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          Show me where to find it
+        </button>
+        <button class="help-btn" onclick={() => openExternal(guide.url)}>
+          Open {guide.url}
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"/></svg>
+        </button>
+      </div>
 
       {#if isMac}
         <div class="keychain-note">
@@ -122,66 +307,220 @@
 </div>
 
 <style>
-  .key-guide {
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    padding: 16px 18px;
+  .apikey-step { gap: 16px; }
+
+  /* ── Fork ─────────────────────────────────────────────────────────── */
+  .fork { display: flex; flex-direction: column; gap: 14px; }
+
+  .fork-question {
+    margin: 0;
+    font-size: 14px;
+    color: var(--ink-soft);
+    text-align: center;
+  }
+
+  .fork-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .fork-card {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 7px;
+    min-height: 156px;
+    background: var(--bg-elev);
+    border: 1.5px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 26px 22px;
+    cursor: pointer;
+    font-family: var(--sans);
+    transition: border-color 0.16s ease, background 0.16s ease, transform 0.12s ease;
   }
 
-  .guide-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+  .fork-card:hover { border-color: var(--accent); background: var(--paper-2); }
+  .fork-card:active { transform: scale(0.985); }
+  .fork-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .fork-icon { color: var(--ink-faint); margin-bottom: 4px; transition: color 0.16s ease; }
+  .fork-card:hover .fork-icon { color: var(--accent-ink); }
+
+  .fork-title { font-size: 15px; font-weight: 500; color: var(--ink-strong); }
+  .fork-sub { font-size: 12px; color: var(--ink-mute); line-height: 1.4; }
+
+  .fork-note { margin: 0; font-size: 11.5px; color: var(--ink-faint); text-align: center; line-height: 1.5; }
+
+  /* ── Tutorial carousel ────────────────────────────────────────────── */
+  .tutorial { display: flex; flex-direction: column; gap: 10px; }
+
+  .shot-frame {
+    position: relative;
+    /* Height drives width. `width:100% + max-height` let aspect-ratio compute a
+       316px box that max-height then clipped, cutting the bottom off every shot. */
+    height: clamp(220px, 38vh, 300px);
+    aspect-ratio: 16 / 9;
+    max-width: 100%;
+    margin: 0 auto;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--paper-2);
+    overflow: hidden;
+  }
+
+  /* Absolute, not grid-stacked: an auto-sized grid row took its height from the
+     image's own aspect ratio and overflowed the max-height'd frame by ~56px. */
+  .shot-inner { position: absolute; inset: 0; display: grid; place-items: center; }
+
+  .shot-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+  .tutorial:focus-within .shot-frame { border-color: color-mix(in srgb, var(--accent) 62%, var(--line)); }
+
+  .shot-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 20px 28px;
+    text-align: center;
     color: var(--ink-faint);
-    margin: 0;
   }
 
-  .guide-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 5px; }
-  .guide-steps li { font-size: 13px; color: var(--ink-soft); line-height: 1.45; }
+  .shot-placeholder-text { font-size: 12.5px; color: var(--ink-faint); line-height: 1.5; }
 
-  .local-note {
-    padding: 10px 12px;
-    border-radius: var(--r-sm);
-    border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
-    background: color-mix(in srgb, var(--accent-soft) 42%, var(--paper-2));
-    color: var(--ink-soft);
-    font-size: 12.5px;
-    line-height: 1.45;
-  }
-
-  .url-row {
+  .shot-caption {
     display: flex;
     align-items: center;
     gap: 10px;
-    background: var(--paper);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    padding: 8px 12px;
   }
 
-  .url-display { flex: 1; font-family: var(--mono); font-size: 12px; color: var(--accent-ink); word-break: break-all; }
-
-  .copy-btn {
-    background: transparent;
-    border: 1px solid var(--line-strong);
-    border-radius: 5px;
-    padding: 3px 10px;
-    font-family: var(--sans);
-    font-size: 11.5px;
-    color: var(--ink-mute);
-    cursor: pointer;
+  .shot-nav {
+    width: 28px;
+    height: 28px;
     flex-shrink: 0;
+    border-radius: 50%;
+    border: 1px solid var(--line-strong);
+    background: transparent;
+    color: var(--ink-mute);
+    /* SVG chevrons, not "‹"/"›" — the text glyphs have asymmetric side bearings
+       that no amount of centring fixes, so each arrow sat off-centre its own way. */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
     transition: color 0.15s, border-color 0.15s;
   }
 
-  .copy-btn:hover { color: var(--ink-soft); border-color: var(--accent); }
+  .shot-nav:hover:not(:disabled) { color: var(--ink-strong); border-color: var(--accent); }
+  .shot-nav:disabled { opacity: 0.35; cursor: not-allowed; }
 
-  .key-input-wrap { display: flex; flex-direction: column; gap: 8px; }
+  .shot-caption-text { flex: 1; display: flex; flex-direction: column; gap: 2px; text-align: center; min-width: 0; }
+
+  .shot-step {
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--ink-faint);
+  }
+
+  .shot-text { font-size: 13px; color: var(--ink-soft); line-height: 1.4; }
+
+  .tutorial-actions { display: flex; align-items: center; gap: 10px; }
+
+  .btn-open {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-radius: var(--r-sm);
+    color: var(--accent-ink);
+    font-family: var(--sans);
+    font-size: 12.5px;
+    font-weight: 500;
+    padding: 9px 14px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+
+  .btn-open:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--paper-2)); }
+
+  .btn-got-key {
+    border-radius: var(--r-sm);
+    padding: 9px 14px;
+    font-family: var(--sans);
+    font-size: 12.5px;
+    flex-shrink: 0;
+  }
+
+  /* ── Paste ────────────────────────────────────────────────────────── */
+  .local-setup { display: flex; flex-direction: column; gap: 12px; }
+  .local-intro { display: flex; flex-direction: column; gap: 5px; }
+  .local-kicker {
+    width: fit-content;
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: var(--success-bg);
+    color: var(--success);
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .local-intro h3 { margin: 0; font-family: var(--serif); font-size: 19px; font-weight: 500; color: var(--ink-strong); }
+  .local-intro p { margin: 0; color: var(--ink-mute); font-size: 12.5px; line-height: 1.5; max-width: 590px; }
+  .local-model-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 15px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--setup-card-radius);
+    background: var(--bg-elev);
+  }
+  .local-model-card.is-ready { border-color: var(--success-line); background: var(--success-bg); }
+  .local-model-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+  .local-model-head { display: flex; align-items: center; gap: 8px; }
+  .local-model-head strong { color: var(--ink-strong); font-family: var(--serif); font-size: 15px; font-weight: 500; }
+  .local-model-head span { color: var(--accent-ink); font-size: 10.5px; font-weight: 600; }
+  .local-model-copy p { margin: 0; color: var(--ink-soft); font-size: 12px; }
+  .local-model-meta { color: var(--ink-faint); font-size: 10.5px; }
+  .local-download {
+    flex-shrink: 0;
+    min-width: 126px;
+    padding: 8px 11px;
+    border: 1px solid var(--accent);
+    border-radius: var(--r-sm);
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font: 600 11.5px var(--sans);
+    cursor: pointer;
+  }
+  .local-download:hover { background: color-mix(in srgb, var(--accent) 18%, var(--paper-2)); }
+  .local-download:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .local-download.cancel { border-color: var(--line-strong); background: transparent; color: var(--ink-mute); }
+  .local-ready { display: inline-flex; align-items: center; gap: 5px; color: var(--success); font-size: 12px; font-weight: 650; }
+  .local-progress { display: flex; flex-direction: column; gap: 6px; }
+  .local-progress-row { display: flex; justify-content: space-between; color: var(--ink-mute); font-size: 10.5px; }
+  .local-progress-track { height: 5px; overflow: hidden; border-radius: 999px; background: var(--line); }
+  .local-progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 180ms ease; }
+  .local-path { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: var(--setup-card-radius); background: var(--paper-2); }
+  .local-path > div { display: grid; grid-template-columns: 22px 1fr; column-gap: 7px; row-gap: 1px; padding: 11px 12px; text-align: left; }
+  .local-path > div + div { border-left: 1px solid var(--line); }
+  .local-path span { grid-row: 1 / 3; align-self: center; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-ink); font-size: 10px; font-weight: 700; }
+  .local-path strong { color: var(--ink-strong); font-size: 11.5px; font-weight: 600; }
+  .local-path small { color: var(--ink-faint); font-size: 9.5px; line-height: 1.3; }
+
+  @media (max-height: 660px) {
+    .local-setup { gap: 9px; }
+    .local-model-card { padding: 11px 13px; }
+    .local-path > div { padding: 8px 10px; }
+  }
+
+  .key-input-wrap { display: flex; flex-direction: column; gap: 9px; }
 
   .key-input-row {
     display: flex;
@@ -203,25 +542,14 @@
     font-family: var(--mono);
     font-size: 12.5px;
     color: var(--ink);
-    padding: 10px 12px;
+    padding: 11px 13px;
     outline: none;
   }
 
-  .key-input::-ms-reveal {
-    display: none;
-  }
-
-  .key-input::-ms-clear {
-    display: none;
-  }
-
-  .key-input::-webkit-credentials-auto-fill-button {
-    display: none;
-  }
-
-  .key-input::-webkit-contacts-auto-fill-button {
-    display: none;
-  }
+  .key-input::-ms-reveal { display: none; }
+  .key-input::-ms-clear { display: none; }
+  .key-input::-webkit-credentials-auto-fill-button { display: none; }
+  .key-input::-webkit-contacts-auto-fill-button { display: none; }
 
   .key-input::placeholder { color: var(--ink-faint); font-family: var(--sans); font-size: 13px; }
 
@@ -230,7 +558,7 @@
     border: none;
     border-left: 1px solid var(--line);
     padding: 0 12px;
-    height: 100%;
+    align-self: stretch;
     color: var(--ink-faint);
     cursor: pointer;
     display: flex;
@@ -250,21 +578,11 @@
     color: var(--ink-soft);
   }
 
-  .status-icon {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10px;
-    font-weight: 700;
-    flex-shrink: 0;
-  }
-
-  .status-ok { background: var(--accent-soft); color: var(--accent-ink); }
-  .status-bad { background: var(--danger-bg); color: var(--danger); }
-  .status-warn { background: var(--warning-bg); color: var(--warning); }
+  /* An outlined glyph in the flow's accent, matching the pick-radio treatment —
+     the old solid disc with a text "✓" was the only filled badge in the wizard. */
+  .status-glyph { color: var(--accent); flex-shrink: 0; }
+  .key-status.is-bad .status-glyph { color: var(--danger); }
+  .key-status.is-warn .status-glyph { color: var(--warning); }
 
   .status-spinner {
     width: 12px;
@@ -288,6 +606,31 @@
     line-height: 1.45;
   }
 
+  /* These were 11.5px underlined links and read as fine print — the "where do I
+     get one?" escape hatch is the most-needed control on this screen. */
+  .paste-help { display: flex; align-items: stretch; gap: 8px; }
+
+  .help-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 10px 14px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  }
+
+  .help-btn:hover { border-color: var(--accent); color: var(--accent-ink); background: var(--paper-2); }
+  .help-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
   .keychain-note {
     padding: 11px 12px;
     border-radius: var(--r-sm);
@@ -300,4 +643,14 @@
 
   .keychain-note strong { color: var(--ink-strong); font-weight: 600; }
   .keychain-note span { color: var(--accent-ink); font-weight: 600; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fork-card { transition: none; }
+    .status-spinner { animation-duration: 1.4s; }
+  }
+
+  @media (max-height: 660px) {
+    .shot-frame { height: clamp(190px, 34vh, 230px); }
+    .fork-card { min-height: 126px; padding: 18px; }
+  }
 </style>

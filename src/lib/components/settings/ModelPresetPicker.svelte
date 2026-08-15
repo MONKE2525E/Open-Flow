@@ -14,7 +14,10 @@
     onOpenApiKeys,
     onCancelPreset,
     onDeletePreset,
+    /** The note points at the Advanced panel, which only exists in Settings. */
+    showCustomNote = true,
   }: {
+    showCustomNote?: boolean;
     apiKeyStatus: Record<ProviderId, boolean>;
     hardware: Hardware;
     localSupported: boolean;
@@ -33,7 +36,7 @@
   const activeId = $derived(matchActivePreset(presets, activeConfig));
   // Only surface "Custom" when there's a real, actionable preset list that the
   // current selection simply doesn't match (not the add-key placeholder state).
-  const showCustom = $derived(activeId === null && presets.some((preset) => preset.kind === 'preset'));
+  const showCustom = $derived(showCustomNote && activeId === null && presets.some((preset) => preset.kind === 'preset'));
 
   function downloadMbFor(preset: Preset): number {
     if (!preset.target) return 0;

@@ -1,11 +1,12 @@
 import { invoke } from './tauri';
+import { extractIpcErrorMessage } from './errors';
 import type { ProviderId } from './settings';
 import type { SettingsSectionId } from './settingsSections';
 
-export type PageId = 'home' | 'dictionary' | 'snippets' | 'style';
+type PageId = 'home' | 'insights' | 'contexts' | 'dictionary' | 'snippets' | 'style';
 export type AppearanceMode = 'system' | 'light' | 'dark';
 export type PillState = 'idle' | 'recording' | 'processing' | 'handsfree';
-export type FetchStatus = 'idle' | 'loading' | 'loaded' | 'error';
+type FetchStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
 export interface Snippet {
   id: number;
@@ -24,6 +25,32 @@ export interface DictionaryEntry {
   correction_count: number;
   confidence_tier?: 'manual' | 'low' | 'medium' | 'high';
   last_seen_at?: string | null;
+  created_at: string;
+}
+
+export interface Context {
+  id: number;
+  name: string;
+  is_everywhere: boolean;
+  icon: string | null;
+  tone: string | null;
+  cleanup_intensity: string | null;
+  color: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContextTarget {
+  id: number;
+  context_id: number;
+  executable: string;
+  created_at: string;
+}
+
+export interface ContextWebsiteTarget {
+  id: number;
+  context_id: number;
+  domain: string;
   created_at: string;
 }
 
@@ -66,6 +93,10 @@ export const appStore = $state({
   // profile/tone/per-app cleanup-intensity overrides only ever feed the
   // cleanup LLM call that this setting skips entirely.
   cleanupEnabled: true,
+  // Mirrors `legacy_features_enabled`. Gates App Mappings in Settings and the
+  // Dictionary/Snippets pages in the sidebar nav — both superseded by Contexts,
+  // kept reachable for anyone still relying on the old per-page workflow.
+  legacyFeaturesEnabled: false,
   pillState: 'idle' as PillState,
   setupComplete: null as boolean | null,
   snippets: [] as Snippet[],
@@ -97,28 +128,7 @@ export function cancelDictionaryFetch() {
 }
 
 export function formatIpcError(err: unknown): string {
-  if (typeof err === 'object' && err !== null) {
-    if ('message' in err) {
-      const message = (err as { message?: unknown }).message;
-      if (typeof message === 'string' && message.trim()) {
-        return message.trim();
-      }
-    }
-    if ('error' in err) {
-      const error = (err as { error?: unknown }).error;
-      if (typeof error === 'string' && error.trim()) {
-        return error.trim();
-      }
-    }
-  }
-  if (err instanceof Error && err.message?.trim()) {
-    return err.message.trim();
-  }
-  const raw = String(err ?? '').trim();
-  if (!raw || raw === '[object Object]') {
-    return 'The backend is unavailable.';
-  }
-  return raw;
+  return extractIpcErrorMessage(err);
 }
 
 export async function fetchSnippets(): Promise<void> {

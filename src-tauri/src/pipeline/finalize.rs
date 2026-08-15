@@ -73,15 +73,28 @@ pub(super) async fn finalize_pipeline_completion(
     let clean_for_insert = final_text_substituted.clone();
     let api_used_for_insert = ctx.api_used.to_string();
     let duration_for_insert = ctx.duration_ms as i64;
-    let entry = match tokio::task::spawn_blocking(move || {
-        db::insert_transcription_returning(
+    let dictionary_fixes_applied = applied_dict_ids.len() as i64;
+    let entry = match tokio::task::spawn_blocking(move || -> anyhow::Result<db::RecentEntry> {
+        let entry = db::insert_transcription_returning(
             &db_for_insert,
             &raw_for_insert,
             &clean_for_insert,
             words,
             duration_for_insert,
             &api_used_for_insert,
-        )
+        )?;
+        if dictionary_fixes_applied > 0 {
+            // Lifetime counter for the Insights "fixes made by Verenu" card;
+            // same never-recomputed pattern as total_words. Best-effort —
+            // a failed counter must not fail the dictation itself.
+            if let Err(e) = db::increment_lifetime_dictionary_fixes(
+                &db_for_insert,
+                dictionary_fixes_applied,
+            ) {
+                log::warn!("pipeline: failed to record dictionary fixes: {e}");
+            }
+        }
+        Ok(entry)
     })
     .await
     {
@@ -100,6 +113,29 @@ pub(super) async fn finalize_pipeline_completion(
         }
     };
 
+    // Per-call API usage records for the Insights cost card. Best-effort:
+    // a failed audit row must never fail the dictation that already
+    // inserted fine above. Only counts and model ids are ever logged.
+    let calls = db::build_api_calls(
+        entry.id,
+        &entry.created_at,
+        ctx.api_used,
+        ctx.duration_ms as i64,
+        ctx.raw,
+        ctx.final_text_before_dict,
+    );
+    if !calls.is_empty() {
+        let db_for_calls = db_handle.inner().clone();
+        match tokio::task::spawn_blocking(move || db::insert_api_calls(&db_for_calls, &calls)).await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                log::warn!("pipeline: failed to record api usage rows: {}", trim_err(&e.to_string()))
+            }
+            Err(e) => log::warn!("pipeline: api usage recording task panicked: {e}"),
+        }
+    }
+
     if let Ok(mut st) = lock_state(state) {
         if st.retry_capture.as_ref().map(|v| v.captured_at) == Some(ctx.captured_at) {
             st.retry_capture = None;
@@ -112,6 +148,12 @@ pub(super) async fn finalize_pipeline_completion(
     // land in our own WebView with no active text field and silently disappear.
     // Detect this by PID and fall back to clipboard-only so the user can paste manually.
     let self_inject = foreground_is_own_process() || hwnd_is_own_process(ctx.target_hwnd);
+    log::debug!(
+        "pipeline: injection decision target_hwnd={} event_only={} self_inject={}",
+        ctx.target_hwnd,
+        ctx.event_only,
+        self_inject
+    );
 
     let injected = if ctx.event_only {
         injection::InjectionOutcome {
@@ -152,7 +194,13 @@ pub(super) async fn finalize_pipeline_completion(
             Ok(outcome) => outcome,
             Err(e) => {
                 log::error!("inject: {e}");
-                show_error_pill(app, "Failed to paste - text saved to history").await;
+                if let Ok(mut st) = lock_state(state) {
+                    st.paste_failure = Some(PasteFailure {
+                        text: final_text_substituted.clone(),
+                        captured_at: std::time::Instant::now(),
+                    });
+                }
+                show_paste_failed_pill(app);
                 injection::InjectionOutcome {
                     text: final_text_substituted.clone(),
                     context_state: "unknown",
@@ -182,7 +230,15 @@ pub(super) async fn finalize_pipeline_completion(
         return Ok(entry);
     }
 
-    hide_pill(app);
+    // Don't stomp the "Paste failed" pill (with its Copy button) that
+    // show_paste_failed_pill just showed a few lines up — hide_pill would
+    // instantly revert it to idle before the button even has a chance to
+    // fade in, let alone be clicked.
+    if injected.case_decision != "inject_failed" {
+        hide_pill(app);
+    } else {
+        log::debug!("pipeline: skipping hide_pill — paste_failed pill stays up");
+    }
 
     if !ctx.cleanup_cache_key.is_empty() {
         auto_learn::start_cache_rejection_monitor(

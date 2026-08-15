@@ -24,6 +24,7 @@ const child = spawn(process.execPath, [tauriCli, ...args], {
   cwd: repoRoot,
   env: process.env,
   stdio: 'inherit',
+  windowsHide: true,
 });
 
 child.on('exit', (code, signal) => {

@@ -20,8 +20,9 @@ CREATE TABLE IF NOT EXISTS transcriptions (
 CREATE INDEX IF NOT EXISTS idx_transcriptions_created_at
   ON transcriptions(created_at);
 CREATE TABLE IF NOT EXISTS lifetime_stats (
-  id          INTEGER PRIMARY KEY CHECK (id = 1),
-  total_words INTEGER NOT NULL DEFAULT 0
+  id               INTEGER PRIMARY KEY CHECK (id = 1),
+  total_words      INTEGER NOT NULL DEFAULT 0,
+  dictionary_fixes INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS dictionary (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,6 +42,44 @@ CREATE TABLE IF NOT EXISTS snippets (
   use_count    INTEGER NOT NULL DEFAULT 0,
   created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS contexts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  is_everywhere INTEGER NOT NULL DEFAULT 0 CHECK (is_everywhere IN (0, 1)),
+  icon TEXT,
+  tone TEXT,
+  cleanup_intensity TEXT,
+  color TEXT,
+  created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+  updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_everywhere ON contexts(is_everywhere) WHERE is_everywhere = 1;
+CREATE TABLE IF NOT EXISTS context_targets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+  executable TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_context_targets_context_id ON context_targets(context_id);
+CREATE TABLE IF NOT EXISTS context_website_targets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_context_website_targets_context_id ON context_website_targets(context_id);
+CREATE TABLE IF NOT EXISTS dictionary_contexts (
+  context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+  dictionary_id INTEGER NOT NULL REFERENCES dictionary(id) ON DELETE CASCADE,
+  PRIMARY KEY (context_id, dictionary_id)
+);
+CREATE INDEX IF NOT EXISTS idx_dictionary_contexts_dictionary_id ON dictionary_contexts(dictionary_id);
+CREATE TABLE IF NOT EXISTS snippet_contexts (
+  context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+  snippet_id INTEGER NOT NULL REFERENCES snippets(id) ON DELETE CASCADE,
+  PRIMARY KEY (context_id, snippet_id)
+);
+CREATE INDEX IF NOT EXISTS idx_snippet_contexts_snippet_id ON snippet_contexts(snippet_id);
 CREATE TABLE IF NOT EXISTS pending_corrections (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   wrong_word   TEXT    NOT NULL,
@@ -94,6 +133,19 @@ CREATE INDEX IF NOT EXISTS idx_cleanup_cache_last_hit_at
 CREATE TABLE IF NOT EXISTS seeded_defaults (
   key TEXT PRIMARY KEY
 );
+CREATE TABLE IF NOT EXISTS api_calls (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  transcription_id  INTEGER NOT NULL,
+  model             TEXT    NOT NULL,
+  provider          TEXT    NOT NULL,
+  task              TEXT    NOT NULL,
+  audio_ms          INTEGER NOT NULL DEFAULT 0,
+  input_chars       INTEGER NOT NULL DEFAULT 0,
+  output_chars      INTEGER NOT NULL DEFAULT 0,
+  created_at        DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_api_calls_created_at
+  ON api_calls(created_at);
 ";
 
 pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
@@ -290,6 +342,98 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
             let _ = conn.execute_batch("ROLLBACK;");
             return Err(err.into());
         }
+    }
+    if user_version < 10 {
+        // Per-call API usage records for the Insights cost card. Written
+        // from the pipeline at finalize time; historical transcriptions
+        // predating this table simply have no cost data. Also declared in
+        // SCHEMA above so an interrupted migration can't leave a database
+        // without the table (the CREATE TABLE IF NOT EXISTS self-heals).
+        let res = conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS api_calls (
+               id                INTEGER PRIMARY KEY AUTOINCREMENT,
+               transcription_id  INTEGER NOT NULL,
+               model             TEXT    NOT NULL,
+               provider          TEXT    NOT NULL,
+               task              TEXT    NOT NULL,
+               audio_ms          INTEGER NOT NULL DEFAULT 0,
+               input_chars       INTEGER NOT NULL DEFAULT 0,
+               output_chars      INTEGER NOT NULL DEFAULT 0,
+               created_at        DATETIME NOT NULL DEFAULT (datetime('now'))
+             );
+             CREATE INDEX IF NOT EXISTS idx_api_calls_created_at
+               ON api_calls(created_at);
+             PRAGMA user_version = 10;
+             COMMIT;",
+        );
+        if let Err(err) = res {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err.into());
+        }
+    }
+    if user_version < 11 {
+        // Real lifetime counter for dictionary substitutions actually
+        // applied to dictations (incremented from the pipeline with the
+        // `applied_dict_ids` count). Mirrors `total_words`: never recomputed
+        // from history, so retention pruning can't shrink it. The column is
+        // declared in SCHEMA for fresh databases; ensure_table_column is
+        // idempotent for databases that already have it.
+        run_migration(&mut conn, |conn| {
+            ensure_table_column(
+                conn,
+                "lifetime_stats",
+                "dictionary_fixes",
+                "ALTER TABLE lifetime_stats ADD COLUMN dictionary_fixes INTEGER NOT NULL DEFAULT 0;",
+            )?;
+            conn.execute_batch("PRAGMA user_version = 11;")?;
+            Ok(())
+        })?;
+    }
+    if user_version < 12 {
+        run_migration(&mut conn, |conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS contexts (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                   is_everywhere INTEGER NOT NULL DEFAULT 0 CHECK (is_everywhere IN (0, 1)),
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+                   updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_everywhere ON contexts(is_everywhere) WHERE is_everywhere = 1;
+                 CREATE TABLE IF NOT EXISTS context_targets (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+                   executable TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_context_targets_context_id ON context_targets(context_id);
+                 CREATE TABLE IF NOT EXISTS context_website_targets (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+                   domain TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_context_website_targets_context_id ON context_website_targets(context_id);
+                 CREATE TABLE IF NOT EXISTS dictionary_contexts (
+                   context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+                   dictionary_id INTEGER NOT NULL REFERENCES dictionary(id) ON DELETE CASCADE,
+                   PRIMARY KEY (context_id, dictionary_id)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_dictionary_contexts_dictionary_id ON dictionary_contexts(dictionary_id);
+                 CREATE TABLE IF NOT EXISTS snippet_contexts (
+                   context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+                   snippet_id INTEGER NOT NULL REFERENCES snippets(id) ON DELETE CASCADE,
+                   PRIMARY KEY (context_id, snippet_id)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_snippet_contexts_snippet_id ON snippet_contexts(snippet_id);
+                 INSERT OR IGNORE INTO contexts (id, name, is_everywhere) VALUES (1, 'Everywhere', 1);
+                 INSERT OR IGNORE INTO dictionary_contexts (context_id, dictionary_id) SELECT 1, id FROM dictionary;
+                 INSERT OR IGNORE INTO snippet_contexts (context_id, snippet_id) SELECT 1, id FROM snippets;
+                 PRAGMA user_version = 12;",
+            )?;
+            Ok(())
+        })?;
     }
     ensure_cleanup_cache_schema(&conn)?;
 

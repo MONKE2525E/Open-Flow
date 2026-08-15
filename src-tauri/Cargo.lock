@@ -5404,6 +5404,7 @@ dependencies = [
  "libproc",
  "log",
  "nnnoiseless",
+ "notify-rust",
  "objc2 0.5.2",
  "objc2-foundation 0.2.2",
  "reqwest 0.12.28",

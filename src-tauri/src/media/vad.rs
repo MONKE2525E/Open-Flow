@@ -12,13 +12,13 @@
 
 use crate::data::store;
 
-/// Aggregate result of running VAD across an entire recording. Only
-/// `contains_speech` currently drives a decision (in
-/// `pipeline::passes_speech_gate`) — the rest exists for the `Debug`
-/// log line at that call site so a real rejection is diagnosable from logs
-/// without carrying dictated content.
+/// Aggregate result of running VAD across an entire recording.
+///
+/// `contains_speech` drives `pipeline::passes_speech_gate`; the remaining
+/// fields are surfaced to the setup wizard's mic calibration (via
+/// `commands::recording::CalibrationResult`) and logged at both call sites, so
+/// a rejection is diagnosable without carrying any dictated content.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct SpeechDetectionResult {
     pub contains_speech: bool,
     pub speech_ms: u64,
@@ -230,6 +230,14 @@ mod tests {
         // the valid gain range — assert the invariant instead of a specific
         // value baked in from an out-of-range input.
         assert!(gain_leniency_scale(store::MAX_MIC_GAIN) >= 0.4);
+    }
+
+    #[test]
+    fn calibration_gain_of_one_uses_unscaled_thresholds() {
+        // `stop_calibration_monitoring` passes 1.0 because calibration forces
+        // gain 1.0 at capture, so VAD must judge the raw signal on the full
+        // thresholds rather than the relaxed ones meant for boosted mics.
+        assert_eq!(gain_leniency_scale(1.0), 1.0);
     }
 
     #[test]

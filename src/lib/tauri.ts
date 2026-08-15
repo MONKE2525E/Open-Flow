@@ -31,9 +31,32 @@ type DevDictionaryEntry = {
   last_seen_at: string | null;
   created_at: string;
 };
+type DevContext = {
+  id: number;
+  name: string;
+  is_everywhere: boolean;
+  icon: string | null;
+  tone: string | null;
+  cleanup_intensity: string | null;
+  color: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type DevContextTarget = {
+  id: number;
+  context_id: number;
+  executable: string;
+  created_at: string;
+};
+type DevContextWebsiteTarget = {
+  id: number;
+  context_id: number;
+  domain: string;
+  created_at: string;
+};
 type DevPermissionStatus = 'authorized' | 'needs_permission' | 'not_determined' | 'denied' | 'restricted' | 'unknown';
 type DevKeychainStatus = 'authorized' | 'not_configured' | 'denied' | 'unknown';
-export type LocalSttEngineType =
+type LocalSttEngineType =
   | 'parakeet'
   | 'moonshine'
   | 'moonshine_streaming'
@@ -69,7 +92,7 @@ export type LocalTranscriptionState = {
   is_downloading: boolean;
   downloading_model_id: string | null;
 };
-export type LocalLlmPromptFamily =
+type LocalLlmPromptFamily =
   | 'gemma4'
   | 'qwen25'
   | 'phi3'
@@ -129,7 +152,7 @@ export type LocalLlmVerificationProgressPayload = {
   model_id: string;
   progress: number;
 };
-export type LlamaBackend = 'cuda' | 'vulkan' | 'metal' | 'cpu';
+type LlamaBackend = 'cuda' | 'vulkan' | 'metal' | 'cpu';
 export type LocalLlmRuntimeInfo = {
   installed: boolean;
   is_downloading: boolean;
@@ -149,6 +172,11 @@ export type LocalLlmRuntimeEventPayload = {
 const DEV_STORAGE_KEY = 'verenu:dev-settings';
 const DEV_SNIPPETS_KEY = 'verenu:dev-snippets';
 const DEV_DICTIONARY_KEY = 'verenu:dev-dictionary';
+const DEV_CONTEXTS_KEY = 'verenu:dev-contexts';
+const DEV_CONTEXT_TARGETS_KEY = 'verenu:dev-context-targets';
+const DEV_CONTEXT_WEBSITE_TARGETS_KEY = 'verenu:dev-context-website-targets';
+const DEV_CONTEXT_ASSIGNMENTS_KEY = 'verenu:dev-context-assignments';
+const DEV_EVERYWHERE_CONTEXT_ID = 1;
 const DEV_LOCAL_STT_MODELS_KEY = 'verenu:dev-local-stt-models';
 const DEV_LOCAL_STT_STATE_KEY = 'verenu:dev-local-stt-state';
 const DEV_LOCAL_LLM_MODELS_KEY = 'verenu:dev-local-llm-models';
@@ -172,7 +200,7 @@ const defaultProviderModels = {
 };
 
 const defaultCleanupModels = {
-  groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+  groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
   openai: ['gpt-4o-mini', 'gpt-4o'],
   google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
   local: [],
@@ -186,9 +214,9 @@ const defaultSettings: Record<string, unknown> = {
   transcription_language: 'en',
   cleanup_provider: 'groq',
   transcription_model: 'groq/whisper-large-v3-turbo',
-  cleanup_model: 'groq/llama-3.3-70b-versatile',
+  cleanup_model: 'groq/qwen/qwen3.6-27b',
   transcription_default_model: 'groq/whisper-large-v3-turbo',
-  cleanup_default_model: 'groq/llama-3.3-70b-versatile',
+  cleanup_default_model: 'groq/qwen/qwen3.6-27b',
   transcription_models_by_provider: defaultProviderModels,
   cleanup_models_by_provider: defaultCleanupModels,
   transcription_fallback_models: [],
@@ -214,6 +242,7 @@ const defaultSettings: Record<string, unknown> = {
   update_notified_version: null,
   beta_updates_enabled: false,
   advanced_model_ui: false,
+  legacy_features_enabled: false,
   cleanup_prompt_overrides: {},
   local_model_memory_policy: 'unload_after_5m',
   hotkey: defaultHotkey,
@@ -270,6 +299,78 @@ function writeDevList<T>(key: string, rows: T[]) {
   } catch {
     // Browser dev mode should keep working even when persistent storage is blocked.
   }
+}
+
+function devNow() {
+  return new Date().toISOString();
+}
+
+function readDevContexts(): DevContext[] {
+  const rows = readDevList<DevContext>(DEV_CONTEXTS_KEY);
+  if (rows.some((context) => context.id === DEV_EVERYWHERE_CONTEXT_ID)) return rows;
+  const now = devNow();
+  const everywhere: DevContext = {
+    id: DEV_EVERYWHERE_CONTEXT_ID,
+    name: 'Everywhere',
+    is_everywhere: true,
+    icon: null,
+    tone: null,
+    cleanup_intensity: null,
+    color: null,
+    created_at: now,
+    updated_at: now,
+  };
+  const next = [everywhere, ...rows];
+  writeDevList(DEV_CONTEXTS_KEY, next);
+  return next;
+}
+
+function readDevContextTargets() {
+  return readDevList<DevContextTarget>(DEV_CONTEXT_TARGETS_KEY);
+}
+
+function readDevContextWebsiteTargets() {
+  return readDevList<DevContextWebsiteTarget>(DEV_CONTEXT_WEBSITE_TARGETS_KEY);
+}
+
+type DevContextAssignments = {
+  dictionary: Record<string, number[]>;
+  snippets: Record<string, number[]>;
+};
+
+function readDevContextAssignments(): DevContextAssignments {
+  if (typeof localStorage === 'undefined') return { dictionary: {}, snippets: {} };
+  try {
+    const raw = localStorage.getItem(DEV_CONTEXT_ASSIGNMENTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return {
+      dictionary: parsed?.dictionary ?? {},
+      snippets: parsed?.snippets ?? {},
+    };
+  } catch {
+    return { dictionary: {}, snippets: {} };
+  }
+}
+
+function writeDevContextAssignments(assignments: DevContextAssignments) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(DEV_CONTEXT_ASSIGNMENTS_KEY, JSON.stringify(assignments));
+  } catch {
+    // Browser dev mode should keep working even when persistent storage is blocked.
+  }
+}
+
+function devContextRows<T extends { id: number }>(
+  contextId: number,
+  rows: T[],
+  key: keyof DevContextAssignments,
+): T[] {
+  const assignments = readDevContextAssignments();
+  const scopedIds = assignments[key][String(contextId)];
+  if (contextId === DEV_EVERYWHERE_CONTEXT_ID && scopedIds === undefined) return rows;
+  const ids = new Set(scopedIds ?? []);
+  return rows.filter((row) => ids.has(row.id));
 }
 
 function emitDevTauriEvent<T>(event: string, payload: T) {
@@ -843,6 +944,167 @@ function devPermissionSnapshot(provider?: unknown) {
   };
 }
 
+/*
+ * Browser-dev stand-in for `get_insights`. Deterministic (seeded off the day
+ * index, no Math.random) so the page doesn't flicker between renders and the
+ * smoke tests see stable numbers.
+ */
+function devInsights(days: number): unknown {
+  const span = days > 0 ? days : 120;
+  const noise = (n: number) => ((Math.sin(n * 12.9898) * 43758.5453) % 1 + 1) % 1;
+
+  const today = new Date();
+  const daily = Array.from({ length: span }, (_, i) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (span - 1 - i));
+    const weekend = date.getDay() === 0 || date.getDay() === 6;
+    const r = noise(i + 1);
+    const idle = r < (weekend ? 0.45 : 0.12);
+    const words = idle ? 0 : Math.round(400 + r * (weekend ? 1400 : 4200));
+    const transcriptions = words === 0 ? 0 : Math.max(1, Math.round(words / 95));
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return {
+      day: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+      words,
+      transcriptions,
+      speaking_ms: Math.round((words / 145) * 60_000),
+    };
+  });
+  const streakStart = new Date(today);
+  streakStart.setDate(today.getDate() - 364);
+  const streakSpan = 365;
+  const streakDaily = Array.from({ length: streakSpan }, (_, i) => {
+    const date = new Date(today);
+    date.setTime(streakStart.getTime());
+    date.setDate(streakStart.getDate() + i);
+    const weekend = date.getDay() === 0 || date.getDay() === 6;
+    const r = noise(i + 101);
+    const idle = r < (weekend ? 0.45 : 0.12);
+    const words = idle ? 0 : Math.round(400 + r * (weekend ? 1400 : 4200));
+    const transcriptions = words === 0 ? 0 : Math.max(1, Math.round(words / 95));
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return {
+      day: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+      words,
+      transcriptions,
+      speaking_ms: Math.round((words / 145) * 60_000),
+    };
+  });
+
+  const wordsInRange = daily.reduce((sum, d) => sum + d.words, 0);
+  const transcriptions = daily.reduce((sum, d) => sum + d.transcriptions, 0);
+  const speakingMs = daily.reduce((sum, d) => sum + d.speaking_ms, 0);
+
+  let current = 0;
+  for (let i = streakDaily.length - 1; i >= 0 && streakDaily[i].words > 0; i--) current++;
+  let longest = 0;
+  let run = 0;
+  let runStart: string | null = null;
+  let longestStartedOn: string | null = null;
+  let longestEndedOn: string | null = null;
+  for (const d of streakDaily) {
+    if (d.words > 0) {
+      if (run === 0) runStart = d.day;
+      run += 1;
+      if (run > longest) {
+        longest = run;
+        longestStartedOn = runStart;
+        longestEndedOn = d.day;
+      }
+    } else {
+      run = 0;
+      runStart = null;
+    }
+  }
+
+  const hourly = Array.from({ length: 24 }, (_, h) => {
+    const bell = Math.exp(-((h - 14) ** 2) / 24) + 0.35 * Math.exp(-((h - 9) ** 2) / 8);
+    return Math.round(bell * wordsInRange * 0.11);
+  });
+
+  return {
+    range_days: days,
+    generated_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+    totals: {
+      total_words: wordsInRange + 218_400,
+      total_transcriptions: transcriptions,
+      total_speaking_ms: speakingMs,
+      avg_words_per_transcription: transcriptions ? Math.round(wordsInRange / transcriptions) : 0,
+      avg_wpm: 148,
+      best_wpm: 197,
+      words_in_range: wordsInRange,
+      words_prev_range: Math.round(wordsInRange * 0.91),
+    },
+    streak: {
+      current_days: current,
+      longest_days: longest,
+      longest_started_on: longestStartedOn,
+      longest_ended_on: longestEndedOn,
+      longest_words: Math.round(wordsInRange * 0.62),
+      active_days: streakDaily.filter((d) => d.words > 0).length,
+    },
+    daily,
+    streak_daily: streakDaily,
+    history_started_on: streakDaily[Math.max(0, streakDaily.length - 240)]?.day ?? null,
+    hourly,
+    providers: [
+      {
+        model: 'whisper-large-v3-turbo',
+        provider: 'groq',
+        task: 'transcription',
+        calls: transcriptions,
+        audio_ms: speakingMs,
+        input_chars: 0,
+        output_chars: 0,
+      },
+      {
+        model: 'llama-3.3-70b-versatile',
+        provider: 'groq',
+        task: 'cleanup',
+        calls: Math.round(transcriptions * 0.86),
+        audio_ms: 0,
+        input_chars: wordsInRange * 6,
+        output_chars: wordsInRange * 5,
+      },
+      {
+        model: 'gemini-3.5-flash',
+        provider: 'google',
+        task: 'cleanup',
+        calls: Math.round(transcriptions * 0.14),
+        audio_ms: 0,
+        input_chars: Math.round(wordsInRange * 0.9),
+        output_chars: Math.round(wordsInRange * 0.8),
+      },
+    ],
+    cleanup: {
+      raw_words: Math.round(wordsInRange * 1.08),
+      clean_words: wordsInRange,
+      edits_applied: Math.round(wordsInRange * 0.031),
+      dictionary_fixes: Math.round(wordsInRange * 0.009),
+      auto_learned_terms: 24,
+    },
+    words: {
+      top: [
+        { word: 'transcription', count: 412 },
+        { word: 'component', count: 388 },
+        { word: 'settings', count: 341 },
+        { word: 'basically', count: 297 },
+        { word: 'pipeline', count: 264 },
+        { word: 'window', count: 231 },
+        { word: 'actually', count: 210 },
+        { word: 'clipboard', count: 188 },
+        { word: 'dictation', count: 165 },
+        { word: 'backend', count: 142 },
+        { word: 'shortcut', count: 121 },
+        { word: 'accent', count: 104 },
+      ],
+      unique_words: 7_412,
+      longest_word: 'internationalisation',
+      avg_word_length: 4.7,
+    },
+  };
+}
+
 function assertDevText(value: unknown, field: string): string {
   if (typeof value !== 'string') {
     throw new Error(`${field} must be text.`);
@@ -866,18 +1128,222 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return { ...defaultSettings, ...readDevSettings() } as T;
     case 'get_app_mappings':
       return getDevSetting('app_mappings') as T;
+    case 'get_contexts':
+      return readDevContexts() as T;
+    case 'create_context': {
+      const name = assertDevText(args?.name, 'Context name').trim();
+      if (!name) throw new Error('Context name cannot be empty');
+      const rows = readDevContexts();
+      if (rows.some((row) => row.name.toLowerCase() === name.toLowerCase())) {
+        throw new Error('UNIQUE constraint failed: contexts.name');
+      }
+      if (rows.filter((row) => !row.is_everywhere).length >= 200) {
+        throw new Error("You've reached the limit of 200 context groups");
+      }
+      const now = devNow();
+      const context: DevContext = {
+        id: nextDevId(rows),
+        name,
+        is_everywhere: false,
+        icon: (args?.icon as string | null | undefined) ?? null,
+        tone: (args?.tone as string | null | undefined) ?? null,
+        cleanup_intensity: (args?.cleanup_intensity as string | null | undefined) ?? null,
+        color: null,
+        created_at: now,
+        updated_at: now,
+      };
+      writeDevList(DEV_CONTEXTS_KEY, [...rows, context]);
+      return context as T;
+    }
+    case 'update_context': {
+      const id = Number(args?.contextId ?? args?.context_id);
+      const name = assertDevText(args?.name, 'Context name').trim();
+      const rows = readDevContexts();
+      const index = rows.findIndex((row) => row.id === id);
+      if (index === -1) throw new Error(`Context ${id} was not found`);
+      if (rows[index].is_everywhere) throw new Error('The Everywhere context cannot be renamed');
+      if (rows.some((row) => row.id !== id && row.name.toLowerCase() === name.toLowerCase())) {
+        throw new Error('UNIQUE constraint failed: contexts.name');
+      }
+      rows[index] = { ...rows[index], name, updated_at: devNow() };
+      writeDevList(DEV_CONTEXTS_KEY, rows);
+      return undefined as T;
+    }
+    case 'update_context_settings': {
+      const id = Number(args?.contextId ?? args?.context_id);
+      const rows = readDevContexts();
+      const index = rows.findIndex((row) => row.id === id);
+      if (index === -1) throw new Error(`Context ${id} was not found`);
+      if (rows[index].is_everywhere) throw new Error('The Everywhere context cannot have a tone override');
+      rows[index] = {
+        ...rows[index],
+        icon: (args?.icon as string | null | undefined) ?? null,
+        tone: (args?.tone as string | null | undefined) ?? null,
+        cleanup_intensity: (args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined ?? null,
+        updated_at: devNow(),
+      };
+      writeDevList(DEV_CONTEXTS_KEY, rows);
+      return undefined as T;
+    }
+    case 'update_context_color': {
+      // Real Tauri IPC auto-converts camelCase JS args to the snake_case Rust
+      // param names; this browser-only mock doesn't, so accept whichever
+      // casing the caller actually used instead of assuming snake_case like
+      // the other cases below (a pre-existing mismatch — call sites in
+      // Contexts.svelte pass `contextId`, not `context_id`).
+      const id = Number(args?.contextId ?? args?.context_id);
+      const rows = readDevContexts();
+      const index = rows.findIndex((row) => row.id === id);
+      if (index === -1) throw new Error(`Context ${id} was not found`);
+      if (rows[index].is_everywhere) throw new Error('The Everywhere context cannot have a color override');
+      rows[index] = {
+        ...rows[index],
+        color: (args?.color as string | null | undefined) ?? null,
+        updated_at: devNow(),
+      };
+      writeDevList(DEV_CONTEXTS_KEY, rows);
+      return undefined as T;
+    }
+    case 'delete_context': {
+      const id = Number(args?.contextId ?? args?.context_id);
+      if (id === DEV_EVERYWHERE_CONTEXT_ID) throw new Error('The Everywhere context cannot be deleted');
+      const rows = readDevContexts();
+      if (!rows.some((row) => row.id === id)) throw new Error(`Context ${id} was not found`);
+      writeDevList(DEV_CONTEXTS_KEY, rows.filter((row) => row.id !== id));
+      writeDevList(DEV_CONTEXT_TARGETS_KEY, readDevContextTargets().filter((target) => target.context_id !== id));
+      const assignments = readDevContextAssignments();
+      const nextAssignments: DevContextAssignments = {
+        dictionary: { ...assignments.dictionary },
+        snippets: { ...assignments.snippets },
+      };
+      for (const key of ['dictionary', 'snippets'] as const) {
+        const moved = nextAssignments[key][String(id)] ?? [];
+        nextAssignments[key][String(DEV_EVERYWHERE_CONTEXT_ID)] = [
+          ...new Set([...(nextAssignments[key][String(DEV_EVERYWHERE_CONTEXT_ID)] ?? []), ...moved]),
+        ];
+        delete nextAssignments[key][String(id)];
+      }
+      writeDevContextAssignments(nextAssignments);
+      return undefined as T;
+    }
+    case 'get_context_targets': {
+      const rawContextId = args?.contextId ?? args?.context_id;
+      const contextId = rawContextId == null ? null : Number(rawContextId);
+      return readDevContextTargets().filter((target) => contextId == null || target.context_id === contextId) as T;
+    }
+    case 'assign_context_target': {
+      const contextId = Number(args?.contextId ?? args?.context_id);
+      const executable = assertDevText(args?.executable, 'Executable').trim().toLowerCase();
+      if (!executable) throw new Error('Executable cannot be empty');
+      if (contextId === DEV_EVERYWHERE_CONTEXT_ID) throw new Error('The Everywhere context cannot have executable targets');
+      if (!readDevContexts().some((context) => context.id === contextId)) throw new Error(`Context ${contextId} was not found`);
+      const now = devNow();
+      const rows = readDevContextTargets().filter((target) => target.executable !== executable);
+      const target: DevContextTarget = { id: nextDevId(rows), context_id: contextId, executable, created_at: now };
+      writeDevList(DEV_CONTEXT_TARGETS_KEY, [...rows, target]);
+      return target as T;
+    }
+    case 'remove_context_target': {
+      const contextId = Number(args?.contextId ?? args?.context_id);
+      const executable = assertDevText(args?.executable, 'Executable').trim().toLowerCase();
+      writeDevList(
+        DEV_CONTEXT_TARGETS_KEY,
+        readDevContextTargets().filter((target) => !(target.context_id === contextId && target.executable === executable)),
+      );
+      return undefined as T;
+    }
+    case 'get_context_websites': {
+      const rawContextId = args?.contextId ?? args?.context_id;
+      const contextId = rawContextId == null ? null : Number(rawContextId);
+      return readDevContextWebsiteTargets().filter((target) => contextId == null || target.context_id === contextId) as T;
+    }
+    case 'check_domain_exists': {
+      const domain = String(args?.domain ?? '').trim().toLowerCase();
+      if (!domain) return false as T;
+      try {
+        await fetch(`https://${domain}/`, { mode: 'no-cors', signal: AbortSignal.timeout(3000) });
+        return true as T;
+      } catch {
+        return false as T;
+      }
+    }
+    case 'assign_context_website': {
+      const contextId = Number(args?.contextId ?? args?.context_id);
+      const domain = assertDevText(args?.domain, 'Website').trim().toLowerCase();
+      if (!domain) throw new Error('Website cannot be empty');
+      if (contextId === DEV_EVERYWHERE_CONTEXT_ID) throw new Error('The Everywhere context cannot have website targets');
+      if (!readDevContexts().some((context) => context.id === contextId)) throw new Error(`Context ${contextId} was not found`);
+      const now = devNow();
+      const rows = readDevContextWebsiteTargets().filter((target) => target.domain !== domain);
+      const target: DevContextWebsiteTarget = { id: nextDevId(rows), context_id: contextId, domain, created_at: now };
+      writeDevList(DEV_CONTEXT_WEBSITE_TARGETS_KEY, [...rows, target]);
+      return target as T;
+    }
+    case 'remove_context_website': {
+      const contextId = Number(args?.contextId ?? args?.context_id);
+      const domain = assertDevText(args?.domain, 'Website').trim().toLowerCase();
+      writeDevList(
+        DEV_CONTEXT_WEBSITE_TARGETS_KEY,
+        readDevContextWebsiteTargets().filter((target) => !(target.context_id === contextId && target.domain === domain)),
+      );
+      return undefined as T;
+    }
+    case 'get_app_icon':
+      return null as T;
+    case 'get_context_dictionary': {
+      const contextId = Number(args?.contextId ?? args?.context_id);
+      return devContextRows(contextId, readDevList<DevDictionaryEntry>(DEV_DICTIONARY_KEY), 'dictionary') as T;
+    }
+    case 'get_context_snippets': {
+      const contextId = Number(args?.contextId ?? args?.context_id);
+      return devContextRows(contextId, readDevList<DevSnippet>(DEV_SNIPPETS_KEY), 'snippets') as T;
+    }
+    case 'set_dictionary_context_assignment':
+    case 'set_snippet_context_assignment': {
+      const contextId = Number(args?.contextId ?? args?.context_id);
+      const itemId = Number(command === 'set_dictionary_context_assignment'
+        ? (args?.dictionaryId ?? args?.dictionary_id)
+        : (args?.snippetId ?? args?.snippet_id));
+      const assigned = Boolean(args?.assigned);
+      if (!readDevContexts().some((context) => context.id === contextId)) throw new Error(`Context ${contextId} was not found`);
+      const key = command === 'set_dictionary_context_assignment' ? 'dictionary' : 'snippets';
+      const rows = key === 'dictionary'
+        ? readDevList<DevDictionaryEntry>(DEV_DICTIONARY_KEY)
+        : readDevList<DevSnippet>(DEV_SNIPPETS_KEY);
+      if (!rows.some((row) => row.id === itemId)) throw new Error(`Library item ${itemId} was not found`);
+      const assignments = readDevContextAssignments();
+      if (assignments[key][String(DEV_EVERYWHERE_CONTEXT_ID)] === undefined) {
+        assignments[key][String(DEV_EVERYWHERE_CONTEXT_ID)] = rows.map((row) => row.id);
+      }
+      const current = new Set(assignments[key][String(contextId)] ?? []);
+      if (assigned) current.add(itemId); else current.delete(itemId);
+      assignments[key][String(contextId)] = [...current];
+      writeDevContextAssignments(assignments);
+      return undefined as T;
+    }
     case 'get_snippets':
       return readDevList<DevSnippet>(DEV_SNIPPETS_KEY) as T;
     case 'get_dictionary':
       return readDevList<DevDictionaryEntry>(DEV_DICTIONARY_KEY) as T;
     case 'get_recent':
+      // Dev-mode history is empty; returning installed-app objects here
+      // (as the shared case below does) crashes the history list, which
+      // reads entry.created_at. See get_history_apps for the app filter list.
+      return [] as T;
     case 'get_recent_auto_learn_activity':
     case 'get_microphones':
     case 'get_recent_logs':
     case 'get_installed_apps':
-      return [] as T;
+      return [
+        { name: 'Google Chrome', exe: 'chrome.exe' },
+        { name: 'Visual Studio Code', exe: 'code.exe' },
+        { name: 'Discord', exe: 'discord.exe' },
+        { name: 'Windows Terminal', exe: 'wt.exe' },
+      ] as T;
     case 'get_stats':
       return { total_words: 0, avg_wpm: 0, day_streak: 0 } as T;
+    case 'get_insights':
+      return devInsights(Number(args?.days ?? 30)) as T;
     case 'get_memory_mb':
       return 0 as T;
     case 'local_models_supported_on_this_platform':
@@ -1190,7 +1656,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return undefined as T;
     }
     case 'open_local_stt_models_folder':
-    case 'open_local_models_folder':
       return undefined as T;
     case 'get_default_cleanup_prompt': {
       const provider = String(args?.provider ?? 'groq');
@@ -1241,10 +1706,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     }
     case 'validate_api_key':
       return { ok: true, status: 'valid', message: 'Key verified (dev mode).' } as T;
-    case 'get_accessibility_permission_status':
-      return String(getDevSetting('accessibility_permission_status') ?? 'authorized') as T;
-    case 'get_microphone_permission_status':
-      return String(getDevSetting('microphone_permission_status') ?? 'authorized') as T;
     case 'get_macos_permission_snapshot':
       return devPermissionSnapshot(args?.provider) as T;
     case 'request_accessibility_permission':
@@ -1257,8 +1718,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       writeDevSetting('microphone_permission_status', 'authorized');
       writeDevSetting('microphone_verified', true);
       return devPermissionSnapshot(args?.provider) as T;
-    case 'check_keychain_access':
-      return 'authorized' as T;
     case 'reset_macos_core_permissions':
       writeDevSetting('accessibility_permission_status', 'not_determined');
       return {
@@ -1269,6 +1728,10 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       } as T;
     case 'check_for_update':
       return null as T;
+    case 'notify_update_available':
+    case 'notify_provider_and_global_message':
+    case 'test_notifications':
+      return undefined as T;
     case 'check_provider_status':
       return [] as T;
     case 'check_provider_status_raw':
@@ -1314,15 +1777,16 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return undefined as T;
     case 'set_autostart':
     case 'save_hotkey':
-    case 'hide_main':
     case 'open_accessibility_settings':
     case 'open_microphone_settings':
-    case 'open_privacy_security_settings':
     case 'restart_app':
     case 'start_input_recording':
     case 'start_setup_try_recording':
     case 'stop_setup_try_recording':
     case 'retry_transcription':
+    case 'resume_cancelled_capture':
+    case 'dismiss_cancelled_capture':
+    case 'copy_paste_failure_to_clipboard':
     case 'install_update':
     case 'start_calibration_monitoring':
     case 'stop_calibration_monitoring':
@@ -1335,9 +1799,25 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       if (!expansion.trim()) throw new Error('Expansion cannot be empty');
       if ([...trigger].length > 300) throw new Error('Trigger must be 300 characters or fewer');
 
+      const contextIdArg = args?.contextId ?? args?.context_id;
+      const targetContext = Number.isFinite(Number(contextIdArg)) && Number(contextIdArg) !== DEV_EVERYWHERE_CONTEXT_ID
+        ? Number(contextIdArg)
+        : null;
       const rows = readDevList<DevSnippet>(DEV_SNIPPETS_KEY);
-      if (rows.some((row) => row.trigger === trigger)) {
-        throw new Error('UNIQUE constraint failed: snippets.trigger');
+      const existing = rows.find((row) => row.trigger === trigger);
+      const snippetAssignments = readDevContextAssignments();
+      if (existing) {
+        if (!targetContext) throw new Error('UNIQUE constraint failed: snippets.trigger');
+        const bucket = (snippetAssignments.snippets[String(targetContext)] ??= []);
+        if (bucket.includes(existing.id)) {
+          throw new Error(`"${trigger}" is already in this context`);
+        }
+        existing.expansion = expansion;
+        existing.instructions = instructions;
+        writeDevList(DEV_SNIPPETS_KEY, rows);
+        bucket.push(existing.id);
+        writeDevContextAssignments(snippetAssignments);
+        return devCreated(existing.id) as T;
       }
       const id = nextDevId(rows);
       const created = devCreated(id);
@@ -1350,6 +1830,11 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         created_at: created.created_at,
       });
       writeDevList(DEV_SNIPPETS_KEY, rows);
+      const assignContext = targetContext ?? DEV_EVERYWHERE_CONTEXT_ID;
+      if (snippetAssignments.snippets[String(assignContext)] !== undefined) {
+        snippetAssignments.snippets[String(assignContext)].push(id);
+        writeDevContextAssignments(snippetAssignments);
+      }
       return created as T;
     }
     case 'edit_snippet': {
@@ -1390,9 +1875,24 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         throw new Error('Often mistranscribed as must be 120 characters or fewer');
       }
 
+      const contextIdArg = args?.contextId ?? args?.context_id;
+      const targetContext = Number.isFinite(Number(contextIdArg)) && Number(contextIdArg) !== DEV_EVERYWHERE_CONTEXT_ID
+        ? Number(contextIdArg)
+        : null;
       const rows = readDevList<DevDictionaryEntry>(DEV_DICTIONARY_KEY);
-      if (rows.some((row) => row.term === term)) {
-        throw new Error('UNIQUE constraint failed: dictionary.term');
+      const existing = rows.find((row) => row.term === term);
+      const dictionaryAssignments = readDevContextAssignments();
+      if (existing) {
+        if (!targetContext) throw new Error('UNIQUE constraint failed: dictionary.term');
+        const bucket = (dictionaryAssignments.dictionary[String(targetContext)] ??= []);
+        if (bucket.includes(existing.id)) {
+          throw new Error(`"${term}" is already in this context`);
+        }
+        existing.mistake = mistake;
+        writeDevList(DEV_DICTIONARY_KEY, rows);
+        bucket.push(existing.id);
+        writeDevContextAssignments(dictionaryAssignments);
+        return devCreated(existing.id) as T;
       }
       const id = nextDevId(rows);
       const created = devCreated(id);
@@ -1407,6 +1907,11 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         created_at: created.created_at,
       });
       writeDevList(DEV_DICTIONARY_KEY, rows);
+      const assignContext = targetContext ?? DEV_EVERYWHERE_CONTEXT_ID;
+      if (dictionaryAssignments.dictionary[String(assignContext)] !== undefined) {
+        dictionaryAssignments.dictionary[String(assignContext)].push(id);
+        writeDevContextAssignments(dictionaryAssignments);
+      }
       return created as T;
     }
     case 'edit_dictionary_entry': {
@@ -1439,13 +1944,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       writeDevList(DEV_DICTIONARY_KEY, next);
       return undefined as T;
     }
-    case 'log_frontend':
-      return undefined as T;
-    case 'check_accessibility_permission':
-      if (args?.prompt) {
-        writeDevSetting('accessibility_permission_status', 'authorized');
-      }
-      return true as T;
     case 'save_app_mappings':
       writeDevSetting('app_mappings', args?.mappings ?? []);
       return undefined as T;
@@ -1495,10 +1993,6 @@ export function emit<T>(event: string, payload?: T): Promise<void> {
     window.dispatchEvent(new CustomEvent(`tauri:${event}`, { detail: payload }));
   }
   return Promise.resolve();
-}
-
-export function flog(level: 'info' | 'warn' | 'error', message: string): void {
-  invoke('log_frontend', { level, message }).catch(() => {});
 }
 
 export function getVersion(): Promise<string> {

@@ -35,6 +35,7 @@ type SettingsValueMap = {
   dual_transcription_enabled: boolean;
   cleanup_fallback_models: string[];
   cleanup_enabled: boolean;
+  repair_hotkey: string[];
   default_tone: ToneId;
   cleanup_intensity: CleanupIntensity;
   app_mappings: AppMapping[];
@@ -52,6 +53,8 @@ type SettingsValueMap = {
   contextual_caps_enabled: boolean;
   auto_spacing_enabled: boolean;
   caps_lock_uppercase_enabled: boolean;
+  clipboard_phrase_enabled: boolean;
+  clipboard_phrase: string;
   history_retention: HistoryRetention;
   local_model_memory_policy: LocalModelMemoryPolicy;
   microphone_device: string | null;
@@ -62,9 +65,10 @@ type SettingsValueMap = {
   appearance_mode: AppearanceMode;
   advanced_model_ui: boolean;
   cleanup_prompt_overrides: Record<string, string>;
+  legacy_features_enabled: boolean;
 };
 
-export type SettingKey = keyof SettingsValueMap;
+type SettingKey = keyof SettingsValueMap;
 
 export function saveSetting<K extends SettingKey>(key: K, value: SettingsValueMap[K]) {
   return invoke('save_setting', { key, value });

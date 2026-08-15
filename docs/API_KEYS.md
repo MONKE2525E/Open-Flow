@@ -6,7 +6,7 @@ Verenu doesn't have its own servers or subscription — it sends your audio and 
 
 | Provider | Transcription | Cleanup | Notes |
 | --- | --- | --- | --- |
-| **Groq** (recommended) | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` | Free tier with generous limits, and the fastest of the three (LPU inference) |
+| **Groq** (recommended) | `whisper-large-v3-turbo` | `qwen/qwen3.6-27b` | Free tier with generous limits, and the fastest of the three (LPU inference) |
 | **OpenAI** | `gpt-4o-transcribe` | `gpt-4o-mini` | Best cleanup quality |
 | **Google** | `gemini-3.5-flash` | `gemini-3.5-flash` | One model handles both transcription and cleanup |
 

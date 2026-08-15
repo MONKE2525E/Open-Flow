@@ -51,6 +51,11 @@
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
   let hotkeyState = $state<'idle' | 'armed' | 'first' | 'saving' | 'success' | 'error'>('idle');
+  const defaultRepairHotkey = ['ControlLeft', 'AltLeft', 'KeyZ'];
+  let repairHotkey = $state<string[]>(defaultRepairHotkey);
+  let recordingRepairHotkey = $state(false);
+  let capturedRepairKeys = $state<string[]>([]);
+  let repairHotkeyState = $state<'idle' | 'armed' | 'first' | 'saving' | 'success' | 'error'>('idle');
   const HOTKEY_SUCCESS_MS = 700;
   const HOTKEY_ERROR_MS   = 900;
   const LANGUAGE_MENU_ID = 'spoken-language-menu';
@@ -97,10 +102,9 @@
     return formatKeyLabel(code);
   }
 
-  // A macOS hotkey can be a single key (e.g. F5) — its second slot is empty.
+  // A macOS hotkey can be a single key (e.g. F5) — later slots are empty.
   function formatHotkeyDisplay(hk: string[]): string {
-    const first = formatHotkeyBadgeLabel(hk[0] ?? '');
-    return hk[1] ? `${first} + ${formatHotkeyBadgeLabel(hk[1])}` : first;
+    return hk.filter(Boolean).map(formatHotkeyBadgeLabel).join(' + ');
   }
 
   let buttonText = $derived(
@@ -111,6 +115,22 @@
           ? isMac ? 'Press a key (e.g. F5)…' : 'Press Alt/Ctrl/Shift/Win...'
           : 'Press 2nd key...'
       : formatHotkeyDisplay(hotkey)
+  );
+
+  // Two modifiers plus one regular key (default Ctrl+Alt+Z), any press order
+  // — a modifier-only combo isn't allowed (see core::hotkey::win's
+  // REPAIR_MOD1 doc comment for the bug that came from allowing it), but
+  // there's no need to walk the user through which slot is which: almost
+  // nobody changes this from the default, so one plain "still recording"
+  // message beats a running commentary on each keypress.
+  let repairButtonText = $derived(
+    recordingRepairHotkey
+      ? capturedRepairKeys[0] === '__bad__'
+        ? 'Needs 2 modifiers + 1 key'
+        : 'Press your combo...'
+      : repairHotkey[0]
+        ? formatHotkeyDisplay(repairHotkey)
+        : 'Not set'
   );
 
   $effect.pre(() => {
@@ -147,6 +167,7 @@
     const results = await Promise.allSettled([
       invoke<boolean | null>('get_setting', { key: 'autostart_enabled' }),
       invoke<string[] | null>('get_setting', { key: 'hotkey' }),
+      invoke<string[] | null>('get_setting', { key: 'repair_hotkey' }),
       invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
       invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
@@ -155,33 +176,42 @@
       invoke<boolean | null>('get_setting', { key: 'caps_lock_uppercase_enabled' }),
       invoke<string[]>('get_microphones'),
       invoke<string | null>('get_setting', { key: 'microphone_device' }),
+      invoke<boolean | null>('get_setting', { key: 'legacy_features_enabled' }),
     ]);
 
     const val = <T>(i: number, fallback: T): T =>
       results[i].status === 'fulfilled' ? (results[i] as PromiseFulfilledResult<T>).value ?? fallback : fallback;
 
     autostart = val<boolean | null>(0, null) ?? false;
-    appStore.cleanupEnabled = val<boolean | null>(4, null) ?? true;
-    contextualCaps = val<boolean | null>(5, null) ?? true;
-    autoSpacing = val<boolean | null>(6, null) ?? true;
-    capsLockUppercase = val<boolean | null>(7, null) ?? false;
+    appStore.cleanupEnabled = val<boolean | null>(5, null) ?? true;
+    contextualCaps = val<boolean | null>(6, null) ?? true;
+    autoSpacing = val<boolean | null>(7, null) ?? true;
+    capsLockUppercase = val<boolean | null>(8, null) ?? false;
 
     const hk = val<string[] | null>(1, null);
     if (hk && hk.length === 2) hotkey = hk;
 
-    const appearance = val<AppearanceMode | null>(2, null);
+    // Absent from settings entirely (never touched) keeps the built-in
+    // Ctrl+Alt+Z default (repairHotkey's own initial state) since that's
+    // genuinely what's active. An explicit ["","",""] means the user cleared
+    // it, which really does disable the feature — show that as "Not set".
+    const repairHk = val<string[] | null>(2, null);
+    if (repairHk && repairHk.length === 3) repairHotkey = repairHk;
+
+    const appearance = val<AppearanceMode | null>(3, null);
     if (appearance === 'system' || appearance === 'light' || appearance === 'dark') {
       appStore.appearanceMode = appearance;
     }
 
-    const language = val<TranscriptionLanguageCode | null>(3, null);
+    const language = val<TranscriptionLanguageCode | null>(4, null);
     if (!languageTouched && language && transcriptionLanguages.some((option) => option.code === language)) {
       selectedLanguage = language;
     }
     initialLanguageLoaded = true;
 
-    microphones = val<string[]>(8, []);
-    selectedMic = val<string | null>(9, null) ?? '';
+    microphones = val<string[]>(9, []);
+    selectedMic = val<string | null>(10, null) ?? '';
+    appStore.legacyFeaturesEnabled = val<boolean | null>(11, null) ?? false;
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
@@ -264,6 +294,32 @@
       autostart = !value;
       console.error('set_autostart failed:', err);
     }
+  }
+
+  async function applyLegacyFeatures(value: boolean) {
+    appStore.legacyFeaturesEnabled = value;
+    try {
+      await saveSetting('legacy_features_enabled', value);
+    } catch (err) {
+      appStore.legacyFeaturesEnabled = !value;
+      console.error('save legacy_features_enabled failed:', err);
+    }
+  }
+
+  let confirmLegacyOn = $state(false);
+  let legacyCancelButton: HTMLButtonElement | null = $state(null);
+
+  function handleLegacyFeatures(value: boolean) {
+    if (value) {
+      confirmLegacyOn = true;
+      return;
+    }
+    applyLegacyFeatures(false);
+  }
+
+  async function confirmLegacyOnAction() {
+    confirmLegacyOn = false;
+    await applyLegacyFeatures(true);
   }
 
   async function applyCleanup(value: boolean) {
@@ -430,9 +486,111 @@
     }
   }
 
+  function startRecordingRepairHotkey(e: MouseEvent | KeyboardEvent) {
+    e.stopPropagation();
+    if (recordingRepairHotkey) return;
+    recordingRepairHotkey = true;
+    repairHotkeyState = 'armed';
+    capturedRepairKeys = [];
+    window.addEventListener('keydown', handleRepairHotkeyKeydown, { capture: true });
+    window.addEventListener('keyup', handleRepairHotkeyKeyup, { capture: true });
+    window.addEventListener('mousedown', cancelRecordingRepairHotkey, { capture: true });
+  }
+
+  function removeRepairHotkeyCaptureListeners() {
+    window.removeEventListener('keydown', handleRepairHotkeyKeydown, { capture: true });
+    window.removeEventListener('keyup', handleRepairHotkeyKeyup, { capture: true });
+    window.removeEventListener('mousedown', cancelRecordingRepairHotkey, { capture: true });
+  }
+
+  function cancelRecordingRepairHotkey(e?: MouseEvent | KeyboardEvent) {
+    if (e && (e.target as HTMLElement).closest('.repair-keybind-btn')) return;
+    if (recordingRepairHotkey) {
+      removeRepairHotkeyCaptureListeners();
+      recordingRepairHotkey = false;
+      repairHotkeyState = 'idle';
+      capturedRepairKeys = [];
+    }
+  }
+
+  function handleRepairHotkeyKeydown(e: KeyboardEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.repeat) return;
+    if (e.code === 'Escape') { cancelRecordingRepairHotkey(); return; }
+    if (capturedRepairKeys.includes(e.code)) return;
+    if (capturedRepairKeys.length >= 3) return;
+
+    capturedRepairKeys = [...capturedRepairKeys, e.code];
+    if (capturedRepairKeys.length < 3) {
+      repairHotkeyState = 'first';
+      return;
+    }
+    // Any press order is fine — just needs to land on exactly 2 modifiers
+    // and 1 regular key once all 3 are in, then reorder into
+    // [modifier, modifier, trigger] for save_repair_hotkey.
+    const mods = capturedRepairKeys.filter((k) => MODIFIER_CODES.has(k));
+    const regular = capturedRepairKeys.filter((k) => !MODIFIER_CODES.has(k));
+    if (mods.length !== 2 || regular.length !== 1) {
+      capturedRepairKeys = ['__bad__'];
+      setTimeout(() => { capturedRepairKeys = []; }, 800);
+      return;
+    }
+    capturedRepairKeys = [...mods, ...regular];
+    repairHotkeyState = 'saving';
+    finishRecordingRepairHotkey();
+  }
+
+  function handleRepairHotkeyKeyup(e: KeyboardEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  async function finishRecordingRepairHotkey() {
+    removeRepairHotkeyCaptureListeners();
+    recordingRepairHotkey = false;
+    if (capturedRepairKeys.length === 3) {
+      try {
+        let available = true;
+        try {
+          available = await invoke<boolean>('check_repair_hotkey', { key1: capturedRepairKeys[0], key2: capturedRepairKeys[1], key3: capturedRepairKeys[2] });
+        } catch (e) {
+          console.warn('check_repair_hotkey failed (likely running in browser dev mode)', e);
+        }
+        if (!available) {
+          repairHotkeyState = 'error';
+          await emit('verenu:error', 'Hotkey may already be in use by another application');
+          setTimeout(() => { repairHotkeyState = 'idle'; }, HOTKEY_ERROR_MS);
+          return;
+        }
+        await invoke('save_repair_hotkey', { key1: capturedRepairKeys[0], key2: capturedRepairKeys[1], key3: capturedRepairKeys[2] });
+        repairHotkey = capturedRepairKeys;
+        repairHotkeyState = 'success';
+        setTimeout(() => { repairHotkeyState = 'idle'; }, HOTKEY_SUCCESS_MS);
+      } catch (e) {
+        console.error('Failed to save repair hotkey', e);
+        repairHotkeyState = 'error';
+        await emit('verenu:error', 'Failed to save hotkey - key may not be recognized');
+        setTimeout(() => { repairHotkeyState = 'idle'; }, HOTKEY_ERROR_MS);
+      }
+    }
+  }
+
+  async function clearRepairHotkey(e: MouseEvent) {
+    e.stopPropagation();
+    try {
+      await invoke('save_repair_hotkey', { key1: '', key2: '', key3: '' });
+      repairHotkey = ['', '', ''];
+    } catch (e) {
+      console.error('Failed to clear repair hotkey', e);
+    }
+  }
+
   onDestroy(() => {
     removeHotkeyCaptureListeners();
     recordingHotkey = false;
+    removeRepairHotkeyCaptureListeners();
+    recordingRepairHotkey = false;
   });
 
   loadSettings();
@@ -467,11 +625,33 @@
   </p>
 {/if}
 <div class="setting-row">
+  <div><div class="label">Copy last dictation</div><div class="desc">Always available — re-copies your last dictation to the clipboard, in case a paste didn't land</div></div>
+  <span class="badge key-badge">{isMac ? '⌥⌘C' : 'Ctrl+Alt+C'}</span>
+</div>
+<div class="setting-row">
+  <div><div class="label">Report a dictation issue</div><div class="desc">Opens the complaint box right after a dictation, while the option is still showing</div></div>
+  <div style="display:flex; align-items:center; gap:8px;">
+    <button class="badge" onclick={clearRepairHotkey} type="button" style="cursor:pointer;">Clear</button>
+    <button
+      class="badge repair-keybind-btn"
+      onclick={startRecordingRepairHotkey}
+      class:recording={recordingRepairHotkey}
+      class:armed={repairHotkeyState === 'armed'}
+      class:first={repairHotkeyState === 'first'}
+      class:saving={repairHotkeyState === 'saving'}
+      class:success={repairHotkeyState === 'success'}
+      class:error={repairHotkeyState === 'error'}
+    >
+      {repairButtonText}
+    </button>
+  </div>
+</div>
+<div class="setting-row">
   <div class="lang-setting-text"><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect{languageScopeNote}</div></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="language-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && languageDropdownOpen) { languageDropdownOpen = false; e.stopPropagation(); } }}>
+  <div class="ui-dropdown language-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && languageDropdownOpen) { languageDropdownOpen = false; e.stopPropagation(); } }}>
     <button
-      class="btn-ghost language-btn"
+      class="btn-ghost ui-dropdown-trigger language-btn"
       use:animateWidth={{ text: getTranscriptionLanguageLabel(selectedLanguage) }}
       onclick={() => (languageDropdownOpen = !languageDropdownOpen)}
       aria-haspopup="true"
@@ -489,7 +669,7 @@
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         id={LANGUAGE_MENU_ID}
-        class="language-menu scroll-styled scroll-thumb-elev"
+        class="ui-dropdown-menu language-menu scroll-styled scroll-thumb-elev"
         aria-label="Spoken language options"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
@@ -497,7 +677,7 @@
       >
         {#each visibleLanguages as language}
           <button
-            class="language-item"
+            class="ui-dropdown-option language-item"
             class:active={selectedLanguage === language.code}
             onclick={() => saveLanguage(language.code)}
           >
@@ -515,9 +695,9 @@
     <div class="desc">{microphoneCopy.inputDeviceDescription}</div>
   </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="mic-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && micDropdownOpen) { micDropdownOpen = false; e.stopPropagation(); } }}>
+  <div class="ui-dropdown mic-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && micDropdownOpen) { micDropdownOpen = false; e.stopPropagation(); } }}>
     <button
-      class="btn-ghost mic-btn"
+      class="btn-ghost ui-dropdown-trigger mic-btn"
       use:animateWidth={{ text: selectedMic || microphoneCopy.defaultDevice, max: 180 }}
       onclick={() => (micDropdownOpen = !micDropdownOpen)}
       aria-haspopup="true"
@@ -534,15 +714,15 @@
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         id={MIC_MENU_ID}
-        class="mic-menu scroll-styled scroll-thumb-elev"
+        class="ui-dropdown-menu ui-dropdown-menu--padded mic-menu scroll-styled scroll-thumb-elev"
         aria-label="Microphone device options"
         onclick={(e) => e.stopPropagation()}
         in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
         out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
-        <button class="mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{microphoneCopy.defaultDevice}</button>
+        <button class="ui-dropdown-option mic-item" class:active={!selectedMic} onclick={() => saveMic('')}>{microphoneCopy.defaultDevice}</button>
         {#each microphones as m}
-          <button class="mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>{m}</button>
+          <button class="ui-dropdown-option mic-item" class:active={selectedMic === m} onclick={() => saveMic(m)}>{m}</button>
         {/each}
         {#if microphones.length === 0}
           <div class="mic-empty">{microphoneCopy.noDevicesFound}</div>
@@ -590,6 +770,11 @@
   <div><div class="label">Automatic caps lock detection</div><div class="desc">When Caps Lock is on, output your dictation in ALL CAPS</div></div>
   <Toggle checked={capsLockUppercase} onchange={handleCapsLockUppercase} label="Automatic caps lock detection" />
 </div>
+<h3 class="settings-subhead">Legacy</h3>
+<div class="setting-row">
+  <div><div class="label">Legacy pages</div><div class="desc">Bring back the standalone App Mappings settings page and the Dictionary/Snippets pages, superseded by Contexts.</div></div>
+  <Toggle checked={appStore.legacyFeaturesEnabled} onchange={handleLegacyFeatures} label="Legacy pages" />
+</div>
 
 {#if confirmCleanupOff}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -622,6 +807,19 @@
         <button class="btn-primary" onclick={confirmCleanupOffAction}>Turn off</button>
       </div>
     </div>
+  </div>
+{/if}
+
+{#if confirmLegacyOn}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <button class="modal-backdrop" aria-label="Close dialog" onclick={() => (confirmLegacyOn = false)} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
+  <div class="modal-card" use:modalFocusTrap={{ active: confirmLegacyOn, initialFocus: () => legacyCancelButton }} role="dialog" aria-modal="true" aria-labelledby="legacy-on-confirm-title" tabindex="-1" in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel), scaleFrom: 0.97 }} out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}>
+    <div class="modal-header"><h2 id="legacy-on-confirm-title" class="modal-title">Turn on Legacy pages?</h2></div>
+    <div class="modal-body"><p class="confirm-copy">This brings back the standalone App Mappings settings page and the Dictionary/Snippets pages. They are no longer actively maintained now that Contexts covers the same ground. You can turn this back off anytime.</p></div>
+    <div class="modal-footer"><div class="footer-actions">
+      <button bind:this={legacyCancelButton} class="btn-ghost" onclick={() => (confirmLegacyOn = false)}>Cancel</button>
+      <button class="btn-primary" onclick={confirmLegacyOnAction}>Turn on</button>
+    </div></div>
   </div>
 {/if}
 
@@ -659,25 +857,9 @@
   .keybind-btn.success { background: color-mix(in srgb, var(--accent) 82%, white 18%); color: var(--on-accent); transform: scale(1.03); }
   .keybind-btn.error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); animation: none; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
-  .mic-dropdown { position: relative; flex-shrink: 0; }
   .mic-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: var(--r-md);
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    color: var(--ink);
-    font-size: 13px;
-    font-weight: 500;
     max-width: 180px;
   }
-  .mic-btn svg { transition: transform 0.2s; }
-  .mic-btn svg.open { transform: rotate(180deg); }
-  .language-btn svg { transition: transform 150ms; }
-  .language-btn svg.open { transform: rotate(180deg); }
   .mic-btn-label {
     min-width: 0;
     overflow: hidden;
@@ -687,44 +869,13 @@
     text-align: left;
   }
   .mic-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
     width: 220px;
-    max-height: 240px;
-    overflow-y: auto;
-    background: var(--bg-elev);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--r-md);
-    box-shadow: 0 4px 16px var(--shadow-md);
-    z-index: 10;
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
   }
-  .mic-item {
-    width: 100%;
-    text-align: left;
-    padding: 6px 10px;
-    border-radius: var(--r-sm);
-    font-size: 12.5px;
-    color: var(--ink-soft);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .mic-item:hover { background: var(--paper-2); color: var(--ink); }
-  .mic-item.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
   .mic-empty { padding: 8px 10px; font-size: 12px; color: var(--ink-mute); text-align: center; }
   /* Let the label+desc column take remaining width and wrap within itself,
      so the (sometimes long) language-scope note never runs under the
      fixed-width dropdown button to its right. */
   .lang-setting-text { min-width: 0; flex: 1; padding-right: 14px; }
-  .language-dropdown { position: relative; flex-shrink: 0; }
   .language-btn { max-width: 210px; }
   .language-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
   .language-code {
@@ -734,36 +885,14 @@
     text-transform: uppercase;
   }
   .language-menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-popover);
     min-width: 220px;
     max-width: 280px;
     max-height: 260px;
-    overflow-y: auto;
-    z-index: 10;
   }
   .language-item {
     display: flex;
-    justify-content: space-between;
     gap: 12px;
-    width: 100%;
-    text-align: left;
-    padding: 8px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    color: var(--ink-strong);
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    justify-content: space-between;
   }
   .language-item span:last-child {
     color: var(--ink-faint);
@@ -771,9 +900,6 @@
     font-size: 10.5px;
     text-transform: uppercase;
   }
-  .language-item:last-child { border-bottom: none; }
-  .language-item:hover { background: var(--paper); }
-  .language-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
   .appearance-segment {
     position: relative;
     display: inline-flex;
@@ -862,30 +988,4 @@
     justify-content: flex-end;
     gap: 8px;
   }
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 12.5px;
-    font-family: var(--sans);
-    color: var(--ink-soft);
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .btn-ghost:hover { background: var(--control-hover); color: var(--ink-strong); }
-  .btn-primary {
-    background: var(--ink);
-    color: var(--amber-50);
-    border: 0;
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 12.5px;
-    font-weight: 500;
-    font-family: var(--sans);
-    cursor: pointer;
-    white-space: nowrap;
-    transition: opacity 0.15s;
-  }
-  .btn-primary:hover { opacity: 0.82; }
 </style>

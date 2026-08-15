@@ -27,12 +27,13 @@
         <div class="progress">
           {#each Array.from({ length: totalSteps }) as _, i}
             <button
-              class="dot"
+              class="dot ui-focus-ring"
               class:active={i + 1 === step}
               class:done={i + 1 < step}
               disabled={i + 1 > step}
               onclick={() => onDotClick(i + 1)}
               aria-label="Step {i + 1}"
+              aria-current={i + 1 === step ? 'step' : null}
             ></button>
           {/each}
         </div>
@@ -56,6 +57,15 @@
 <style>
   /* ── Overlay / shell ───────────────────────────────────────────────── */
   .setup-overlay {
+    /* One column width for header, body and action bar so nothing steps out
+       of line. Individual steps widen it locally when they genuinely need to. */
+    --setup-col: 640px;
+    --setup-pad-x: 28px;
+    --setup-page-gap: 22px;
+    --setup-action-h: 80px;
+    --setup-card-radius: var(--r-md);
+    --setup-card-pad: 13px 15px;
+
     position: fixed;
     inset: 0;
     z-index: 100;
@@ -69,8 +79,8 @@
   /* ── Header: stepper + title, fixed spot — never moves between steps ── */
   .setup-header {
     width: 100%;
-    max-width: 560px;
-    padding: 0 28px;
+    max-width: var(--setup-col);
+    padding: 0 var(--setup-pad-x);
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -137,22 +147,29 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 24px;
-    padding: 32px 0 24px;
+    gap: var(--setup-page-gap);
+    padding: 30px 0 22px;
   }
 
   /* ── Step body — fills the space below the fixed header ─────────────
-     Steps with a header stretch (default) so content sits right under
-     the header with a small, consistent gap. Header-less steps (Intro,
-     Done) get margin:auto on .step instead, to read as a centered hero/
-     closing screen — see .setup-body.no-header below. */
+     Content sits directly under the header; the action bar stays pinned to
+     the bottom. A grid (rather than flex) so the outgoing and incoming steps
+     can occupy the same cell during a transition instead of briefly stacking
+     and shoving the layout down. Header-less steps (Intro, Done) get
+     margin:auto on .step to read as a centered hero — see .no-header below. */
   .setup-body {
     flex: 1;
     min-height: 0;
     width: 100%;
-    display: flex;
-    justify-content: center;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    justify-items: center;
   }
+
+  .setup-body > :global(*) { grid-column: 1; grid-row: 1; }
+
+  .setup-body.no-header { align-content: center; }
 
   .setup-body.no-header :global(.step) {
     margin: auto 0;
@@ -161,14 +178,14 @@
   /* ── Pinned action bar ────────────────────────────────────────────── */
   .setup-actionbar {
     width: 100%;
-    max-width: 560px;
-    min-height: 80px;
+    max-width: var(--setup-col);
+    min-height: var(--setup-action-h);
     flex-shrink: 0;
     box-sizing: border-box;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 28px 22px;
+    padding: 12px var(--setup-pad-x) 22px;
   }
 
   .actionbar-left, .actionbar-right { display: flex; align-items: center; gap: 12px; }
@@ -178,11 +195,88 @@
      since step components render these classes in their own templates. */
   :global(.setup-overlay .step) {
     width: 100%;
-    max-width: 560px;
-    padding: 0 28px;
+    max-width: var(--setup-col);
+    padding: 0 var(--setup-pad-x);
     display: flex;
     flex-direction: column;
     gap: 24px;
+  }
+
+  /* ── Shared selection card ──────────────────────────────────────────
+     One affordance for every choice in the wizard: providers, cleanup
+     intensity, tone, language, headphones. Previously each step invented
+     its own (outlined radio here, solid accent disc with a white tick
+     there), which is what made the tick read as out-of-theme. */
+  :global(.setup-overlay .pick-card) {
+    background: var(--bg-elev);
+    border: 1.5px solid var(--line);
+    border-radius: var(--setup-card-radius);
+    padding: 11px 13px;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-family: var(--sans);
+    transition: border-color 0.16s ease, background 0.16s ease, transform 0.12s ease;
+  }
+
+  :global(.setup-overlay .pick-card:hover:not(.selected)) {
+    border-color: var(--line-strong);
+    background: var(--paper-2);
+  }
+
+  :global(.setup-overlay .pick-card.selected) {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  :global(.setup-overlay .pick-card:active) { transform: scale(0.985); }
+
+  :global(.setup-overlay .pick-card:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  :global(.setup-overlay .pick-radio) {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--line-strong);
+    flex-shrink: 0;
+    position: relative;
+    transition: border-color 0.16s ease;
+  }
+
+  :global(.setup-overlay .pick-radio.checked) { border-color: var(--accent); }
+
+  :global(.setup-overlay .pick-radio.checked::after) {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pick-dot 0.16s ease-out;
+  }
+
+  @keyframes pick-dot {
+    from { transform: scale(0.3); opacity: 0; }
+    to   { transform: scale(1);   opacity: 1; }
+  }
+
+  /* Uppercase group label above a set of pick-cards. */
+  :global(.setup-overlay .group-label) {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    margin: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(.setup-overlay .pick-card) { transition: none; }
+    :global(.setup-overlay .pick-radio.checked::after) { animation: none; }
   }
 
   :global(.setup-overlay .btn-primary) {
@@ -198,8 +292,20 @@
     transition: opacity 0.15s, transform 0.1s;
   }
 
-  :global(.setup-overlay .btn-primary:hover) { opacity: 0.88; }
-  :global(.setup-overlay .btn-primary:active) { transform: scale(0.98); }
+  /* Match the global control selector's specificity so its dark hover cannot
+     win while the pointer stays over the pinned button during a step change. */
+  :global(.setup-overlay button.btn-primary:not(:disabled):hover) {
+    background: color-mix(in srgb, var(--accent) 88%, var(--ink));
+    border-color: color-mix(in srgb, var(--accent) 88%, var(--ink));
+    color: var(--on-accent);
+    opacity: 1;
+  }
+  :global(.setup-overlay button.btn-primary:not(:disabled):active) {
+    background: color-mix(in srgb, var(--accent) 82%, var(--ink));
+    border-color: color-mix(in srgb, var(--accent) 82%, var(--ink));
+    color: var(--on-accent);
+    transform: scale(0.98);
+  }
   :global(.setup-overlay .btn-primary:disabled) { opacity: 0.45; cursor: not-allowed; }
 
   :global(.setup-overlay .btn-primary.btn-lg) {
@@ -220,6 +326,24 @@
   }
 
   :global(.setup-overlay .btn-skip:hover) { color: var(--ink-mute); }
+  :global(.setup-overlay .btn-skip:disabled) { opacity: 0.4; cursor: not-allowed; }
+
+  :global(.setup-overlay .btn-back) {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: transparent;
+    border: none;
+    color: var(--ink-faint);
+    font-family: var(--sans);
+    font-size: 12.5px;
+    cursor: pointer;
+    padding: 4px 6px 4px 0;
+    transition: color 0.15s;
+  }
+
+  :global(.setup-overlay .btn-back:hover) { color: var(--ink-strong); }
+  :global(.setup-overlay .btn-back:disabled) { opacity: 0.4; cursor: not-allowed; }
 
   :global(.setup-overlay .btn-ghost) {
     background: transparent;
@@ -243,5 +367,22 @@
     0%   { box-shadow: 0 0 0 0   color-mix(in srgb, var(--accent) 45%, transparent); }
     55%  { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%,  transparent); }
     100% { box-shadow: 0 0 0 0   transparent; }
+  }
+
+  @media (max-height: 660px) {
+    .setup-overlay {
+      --setup-page-gap: 14px;
+      --setup-action-h: 64px;
+    }
+
+    .setup-content { padding: 18px 0 12px; }
+    .setup-header { gap: 4px; }
+    .setup-header h2 { margin-top: 2px; }
+    .setup-actionbar { padding-top: 8px; padding-bottom: 14px; }
+    :global(.setup-overlay .step) { gap: 16px; }
+  }
+
+  @media (max-width: 720px) {
+    .setup-overlay { --setup-pad-x: 22px; }
   }
 </style>

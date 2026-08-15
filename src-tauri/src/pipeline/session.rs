@@ -207,6 +207,112 @@ pub fn start_recording_session_ex(
     }
 }
 
+/// Stops a just-cancelled recording session, and — if the captured audio is
+/// long/loud enough to clear the normal recording quality gates — stashes it
+/// as a `CancelledCapture` and shows the pill's "Cancelled" state (Continue
+/// button resumes hands-free with this audio prepended, see
+/// `state::peek_cancelled_capture_if_fresh`). Otherwise behaves like a plain
+/// discard: unmute, end any media pause, hide the pill.
+///
+/// Mirrors `stages::stop_and_capture_audio`'s gating (same constants
+/// `run_pipeline`/`transcribe_input_only` use), applied here instead of to a
+/// pipeline that's actually about to transcribe.
+pub async fn cancel_recording_with_resume(
+    app: &AppHandle,
+    state: &SharedState,
+    session: audio::RecordingSession,
+    exclusive_mic_session_id: Option<u64>,
+) {
+    crate::media::sound::coordinated_unmute();
+    crate::system::media_control::end_dictation_media_pause();
+
+    let Some((captured_audio, rms, raw_rms)) =
+        stop_and_capture_audio(app, session, exclusive_mic_session_id).await
+    else {
+        // stop_and_capture_audio already hid the pill on failure.
+        return;
+    };
+
+    let active_gain = store::settings_snapshot(app)
+        .map(|s| store::load_audio_config(&s).mic_gain)
+        .unwrap_or(store::DEFAULT_MIC_GAIN);
+    let min_rms = recording_gate_rms(active_gain);
+    let gate_rms = effective_recording_rms(rms, raw_rms, active_gain);
+
+    if captured_audio.duration_ms < MIN_RECORDING_MS || gate_rms < min_rms {
+        if start_stop_sounds_enabled(app) {
+            crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
+        }
+        // A new dictation may have started while we were awaiting
+        // stop_and_capture_audio — don't hide that session's pill.
+        if state_is_idle(state) {
+            hide_pill(app);
+        }
+        return;
+    }
+
+    stash_cancelled_capture(app, state, captured_audio);
+}
+
+/// True when the recording lifecycle is currently `Idle`.
+fn state_is_idle(state: &SharedState) -> bool {
+    lock_state(state).is_ok_and(|st| st.lifecycle.is_idle())
+}
+
+/// Stores `audio` as the resumable `cancelled_capture`, plays the cancel
+/// cue, and shows the pill's "Cancelled" state. Callers are responsible for
+/// having already decided the audio is worth keeping
+/// (`cancel_recording_with_resume` applies the normal recording quality
+/// gates before calling this; a cancel mid-processing has already cleared
+/// the pipeline's own gate by the time it gets here).
+pub fn stash_cancelled_capture(app: &AppHandle, state: &SharedState, audio: CapturedAudio) {
+    enum StashOutcome {
+        Stashed,
+        LockPoisoned,
+        SessionActive,
+    }
+    let outcome = match lock_state(state) {
+        Ok(mut st) => {
+            // Only stash while the system is genuinely idle. Between
+            // `stop_and_capture_audio` (which released the Recording
+            // lifecycle) and this call the user may have already started a
+            // new dictation — overwriting the capture or forcing the pill
+            // into "Cancelled" would clobber that fresh session.
+            if !st.lifecycle.is_idle() {
+                StashOutcome::SessionActive
+            } else {
+                st.cancelled_capture = Some(CancelledCapture {
+                    audio,
+                    captured_at: std::time::Instant::now(),
+                });
+                StashOutcome::Stashed
+            }
+        }
+        Err(_) => StashOutcome::LockPoisoned,
+    };
+    match outcome {
+        StashOutcome::Stashed => {}
+        StashOutcome::SessionActive => {
+            // A newer dictation owns the pill now — don't touch it, and
+            // don't offer a resume that would fight the live session.
+            log::debug!("skipping cancelled-capture pill: a new session is active");
+            return;
+        }
+        StashOutcome::LockPoisoned => {
+            // Poisoned lock: the pill's Continue button would offer a resume
+            // that can't work since nothing was stashed. Hide the pill.
+            log::warn!("failed to stash cancelled capture (state lock poisoned)");
+            hide_pill(app);
+            return;
+        }
+    }
+    if start_stop_sounds_enabled(app) {
+        crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
+    }
+    emit_cancelled_capture(app);
+    show_cancelled_pill(app);
+}
+
 /// Releases a `Starting` reservation back to `Idle` when the mic failed to
 /// open — the carried prepend audio (if any) is simply dropped, not
 /// retained anywhere a later, unrelated dictation could inherit it.

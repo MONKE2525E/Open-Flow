@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { isMac } from '../../platform';
+  import { hotkeyLabels } from '../../hotkey.svelte';
   import LogoMark from '../../components/layout/LogoMark.svelte';
 
-  const hkKey1 = isMac ? 'fn' : 'Ctrl';
-  const hkKey2 = isMac ? 'Control' : 'Windows';
   const platformTagline = isMac ? 'macOS' : 'Windows';
+  const keyLabels = $derived(hotkeyLabels());
 
   let introReady = $state(false);
   onMount(() => {
@@ -33,7 +33,7 @@
       <div class="how-step">
         <div class="how-num">1</div>
         <div>
-          <strong>Hold <kbd>{hkKey1}</kbd> + <kbd>{hkKey2}</kbd></strong>
+          <strong>Hold {#each keyLabels as k, i}{#if i > 0}<span class="how-plus">+</span>{/if}<kbd>{k}</kbd>{/each}</strong>
           <p>Start recording. A floating pill shows your audio level.</p>
         </div>
       </div>
@@ -61,7 +61,8 @@
   .intro-step {
     align-items: center;
     text-align: center;
-    max-width: 480px;
+    max-width: 500px;
+    gap: 22px;
   }
 
   .intro-brand {
@@ -123,26 +124,36 @@
     margin: 0 0 14px;
   }
 
-  .how-steps { display: flex; flex-direction: column; gap: 14px; }
+  .how-steps { display: grid; gap: 14px; }
 
-  .how-step { display: flex; gap: 14px; align-items: flex-start; }
+  .how-step { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; align-items: start; }
 
+  /* Bare numeral on the title's baseline — no disc behind it. */
   .how-num {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: var(--accent-soft);
-    color: var(--accent-ink);
+    width: 14px;
+    color: var(--accent);
     font-size: 12px;
     font-weight: 600;
+    font-variant-numeric: tabular-nums;
     display: flex;
     align-items: center;
-    justify-content: center;
+    min-height: 24px;
     flex-shrink: 0;
-    margin-top: 1px;
   }
 
-  .how-step strong { display: block; font-size: 13px; color: var(--ink-soft); margin-bottom: 2px; }
+  .how-step strong {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    min-height: 24px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin-bottom: 2px;
+  }
+
+  .how-plus { color: var(--ink-faint); font-weight: 400; padding: 0 3px; }
+
   .how-step p { margin: 0; font-size: 12.5px; color: var(--ink-mute); line-height: 1.4; }
 
   .intro-note {
@@ -155,4 +166,19 @@
   }
 
   .intro-note.ready { opacity: 1; transform: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .intro-brand, .how-it-works, .intro-note {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+  }
+
+  @media (max-height: 660px) {
+    .intro-step { gap: 14px; }
+    .how-it-works { padding: 14px 18px; }
+    .how-label { margin-bottom: 10px; }
+    .how-steps { gap: 10px; }
+  }
 </style>

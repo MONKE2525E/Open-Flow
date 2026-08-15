@@ -64,7 +64,7 @@ Change cleanup intensity in [Cleanup Levels](CLEANUP_LEVELS.md):
 - **Medium** for normal cleanup.
 - **Direct** for aggressive shortening.
 
-For app-specific behavior, configure [App Mappings](APP_MAPPINGS.md) so code editors, chat apps, and email clients can use different cleanup settings.
+For app-specific behavior, configure [Contexts](CONTEXTS.md) (or the legacy [App Mappings](APP_MAPPINGS.md) page) so code editors, chat apps, and email clients can use different cleanup settings.
 
 ## Development Server Problems
 

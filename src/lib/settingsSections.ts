@@ -11,7 +11,7 @@ export type SettingsSectionId =
   | 'developer'
   | 'about';
 
-export interface SettingsSection {
+interface SettingsSection {
   id: SettingsSectionId;
   /** Rail label. Smoke tests match sections by this exact string. */
   label: string;
@@ -21,6 +21,8 @@ export interface SettingsSection {
   macOnly?: boolean;
   /** Only render once Developer mode is unlocked. */
   devOnly?: boolean;
+  /** Only render when Legacy features are enabled. */
+  legacyOnly?: boolean;
 }
 
 /**
@@ -31,9 +33,9 @@ export interface SettingsSection {
  * Note `advanced` is labelled "Microphone" — the id predates the rename and is
  * persisted in the deep-link event payload, so the mismatch is intentional.
  */
-export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
+const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'general',     label: 'General',      icon: 'sliders', group: 'Settings' },
-  { id: 'apps',        label: 'App Mappings', icon: 'apps',    group: 'Settings' },
+  { id: 'apps',        label: 'App Mappings', icon: 'apps',    group: 'Settings', legacyOnly: true },
   { id: 'keys',        label: 'API Keys',     icon: 'key',     group: 'Settings' },
   { id: 'models',      label: 'Models',       icon: 'command', group: 'Settings' },
   { id: 'privacy',     label: 'Privacy',      icon: 'lock',    group: 'Settings' },
@@ -51,7 +53,7 @@ export function isSettingsSectionId(value: string): value is SettingsSectionId {
   return (SETTINGS_SECTION_ORDER as readonly string[]).includes(value);
 }
 
-export interface SettingsSectionGroup {
+interface SettingsSectionGroup {
   group: string;
   items: SettingsSection[];
 }
@@ -63,11 +65,13 @@ export interface SettingsSectionGroup {
 export function visibleSettingsSections(opts: {
   isMac: boolean;
   devMode: boolean;
+  legacyMode?: boolean;
 }): SettingsSectionGroup[] {
   const groups: SettingsSectionGroup[] = [];
   for (const section of SETTINGS_SECTIONS) {
     if (section.macOnly && !opts.isMac) continue;
     if (section.devOnly && !opts.devMode) continue;
+    if (section.legacyOnly && !opts.legacyMode) continue;
     const last = groups[groups.length - 1];
     if (last && last.group === section.group) last.items.push(section);
     else groups.push({ group: section.group, items: [section] });

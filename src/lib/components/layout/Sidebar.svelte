@@ -3,10 +3,10 @@
   import { invoke } from '../../tauri';
   import { appStore } from '../../stores';
   import { icons } from '../../icons';
-  import { isMac } from '../../platform';
+  import { isMac, isWindows } from '../../platform';
   import { MOTION_MS, SETTINGS_SECTION_ORDER, directionFromOrder, motionMs, motionPx } from '../../motion';
   import { visibleSettingsSections, type SettingsSectionId } from '../../settingsSections';
-  import LogoMark from './LogoMark.svelte';
+  import Brand from './Brand.svelte';
   import LocalDownloadProgress from '../settings/LocalDownloadProgress.svelte';
   import {
     getActiveDownloads,
@@ -20,7 +20,7 @@
 
   let rawMemoryMb = $state(0);
   let memoryDir = $state(1);
-  let memoryMb = tweened(0, { duration: 800, easing: expoOut });
+  let memoryMb = tweened(0, { duration: motionMs(800), easing: expoOut });
 
   onMount(() => {
     const refresh = async () => {
@@ -38,17 +38,40 @@
     return () => clearInterval(id);
   });
 
-  const navItems = [
-    { id: 'home',       label: 'Home',       icon: 'home',     locked: false },
+  const HOME_NAV_ITEMS = [
+    { id: 'home',       label: 'Home',       icon: 'home',  locked: false },
+    { id: 'insights',   label: 'Insights',   icon: 'chart', locked: false },
+  ] as const;
+
+  const CONTEXTS_NAV_ITEMS = [
+    { id: 'contexts',   label: 'Contexts',   icon: 'book',  locked: false },
+  ] as const;
+
+  const STYLE_NAV_ITEMS = [
+    { id: 'style',      label: 'Style',      icon: 'type',  locked: false },
+  ] as const;
+
+  // Dictionary and Snippets are no longer primary nav — Contexts (Everywhere)
+  // is the primary vocabulary/snippet surface now. The old pages still exist
+  // as routes, surfaced here only once Settings > General > Legacy is on —
+  // which also hides Contexts, since Legacy mode means "manage app tones,
+  // vocabulary, and snippets the old way" and running both surfaces at once
+  // would just mean two conflicting places to edit the same data.
+  const LEGACY_NAV_ITEMS = [
     { id: 'dictionary', label: 'Dictionary', icon: 'book',     locked: false },
     { id: 'snippets',   label: 'Snippets',   icon: 'scissors', locked: false },
-    { id: 'style',      label: 'Style',      icon: 'type',     locked: false },
   ] as const;
+
+  const navItems = $derived(
+    appStore.legacyFeaturesEnabled
+      ? [...HOME_NAV_ITEMS, ...LEGACY_NAV_ITEMS, ...STYLE_NAV_ITEMS]
+      : [...HOME_NAV_ITEMS, ...CONTEXTS_NAV_ITEMS, ...STYLE_NAV_ITEMS]
+  );
 
   // The rail is shared: it shows app navigation normally and swaps to the
   // settings sections while settings is open, so the sidebar never unmounts.
   const settingsGroups = $derived(
-    visibleSettingsSections({ isMac, devMode: appStore.devModeEnabled })
+    visibleSettingsSections({ isMac, devMode: appStore.devModeEnabled, legacyMode: appStore.legacyFeaturesEnabled })
   );
 
   type RailEntry =
@@ -175,23 +198,8 @@
   });
 </script>
 
-<aside class="sidebar" class:rail-settings={appStore.settingsOpen} bind:this={sidebarEl}>
-  <div class="brand">
-    <div class="brand-mark">
-      <LogoMark />
-    </div>
-    <div class="brand-name">
-      <span>Verenu</span>
-      {#if appStore.betaUpdatesEnabled}
-        <span
-          class="beta-marker"
-          aria-label="Beta updates enabled"
-          in:fly|global={{ y: -4, duration: motionMs(180), easing: cubicOut }}
-          out:fly|global={{ y: -5, duration: motionMs(220), easing: cubicOut }}
-        >BETA</span>
-      {/if}
-    </div>
-  </div>
+<aside class="sidebar" class:rail-settings={appStore.settingsOpen} class:sidebar-windows={isWindows} bind:this={sidebarEl}>
+  <Brand />
 
   <div class="rail-pill" class:rail-pill-snap={pillSnap} style="top:{pillTop}px; height:{pillHeight}px"></div>
 
@@ -235,7 +243,7 @@
             in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: railDelay(i, RAIL_IN_DELAY_MS), easing: cubicOut }}
             out:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_OUT_MS), delay: railDelay(i, 0, RAIL_OUT_STAGGER_MS), easing: cubicOut }}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.currentPage === entry.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[entry.icon]}</svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.currentPage === entry.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[entry.icon]}</svg>
             <span>{entry.label}</span>
             {#if entry.locked}
               <span class="lock-tag">Soon</span>
@@ -297,10 +305,10 @@
       onclick={appStore.settingsOpen ? backToApp : openSettings}
     >
       {#if appStore.settingsOpen}
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
         <span>Back to app</span>
       {:else}
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons.settings}</svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons.settings}</svg>
         <span>Settings</span>
       {/if}
     </button>
@@ -319,8 +327,8 @@
               {#key digit}
                 <span
                   class="digit-char"
-                  in:fly={{ y: memoryDir * 10, duration: 400, easing: expoOut }}
-                  out:fly={{ y: -memoryDir * 10, duration: 400, easing: expoOut }}
+                  in:fly={{ y: memoryDir * 10, duration: motionMs(400), easing: expoOut }}
+                  out:fly={{ y: -memoryDir * 10, duration: motionMs(400), easing: expoOut }}
                 >{digit}</span>
               {/key}
             </span>
@@ -328,7 +336,7 @@
         </span>
       </div>
     </div>
-    <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 200 * 100, 100)}%; background:{$memoryMb >= 150 ? 'var(--accent)' : 'var(--arm-300, #9caa8e)'}"></span></div>
+    <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 200 * 100, 100)}%; background:{$memoryMb >= 150 ? 'var(--accent)' : 'var(--line-strong)'}"></span></div>
   </div>
 </aside>
 
@@ -336,51 +344,15 @@
   .sidebar {
     width: var(--sidebar-w);
     background: var(--bg-elev);
-    border-radius: var(--r-md);
-    border: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    /* .body keeps its bottom gutter for the content column; pull the sidebar
+       through it so it runs flush into the bottom-left window corner. */
+    margin-bottom: calc(-1 * var(--app-gutter));
     position: relative;
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
     overflow: hidden;
-  }
-
-  .brand {
-    padding: 16px 18px 14px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .brand-mark {
-    width: 24px;
-    height: 20px;
-    color: var(--accent);
-  }
-
-  .brand-mark :global(svg) { display: block; }
-
-  .brand-name {
-    font-family: var(--serif);
-    font-size: 17px;
-    letter-spacing: -0.015em;
-    font-weight: 500;
-    color: var(--ink);
-    white-space: nowrap;
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-  }
-
-  .beta-marker {
-    font-family: var(--sans);
-    font-size: 8.5px;
-    font-weight: 750;
-    letter-spacing: 0.08em;
-    line-height: 1;
-    color: var(--accent);
-    position: relative;
-    top: -5px;
   }
 
   /*
@@ -400,9 +372,19 @@
    * so the footer never moves.
    */
   .nav-section {
-    padding: 4px 8px;
+    /* The settings rail sits 12px below the brand block; the app nav starts
+       a bit lower (24px) so the clickable list reads as stepped down from the
+       brand without floating. The rail's grid cell absorbs the taller list
+       during the settings morph. */
+    padding: 12px 8px 4px;
     display: grid;
   }
+
+  .sidebar:not(.rail-settings) .nav-section { padding-top: 24px; }
+
+  /* No Windows-specific nav offset: the brand block owns the rail header on
+     every platform, and its min-height matches the native titlebar height, so
+     the first nav target always starts below the caption. */
 
   .rail-list {
     grid-area: 1 / 1;
@@ -452,12 +434,13 @@
     background: transparent;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 7px 10px;
+    gap: 9px;
+    min-height: 30px;
+    padding: 6px;
     border-radius: 7px;
     color: var(--ink-soft);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 450;
     user-select: none;
     position: relative;
@@ -468,6 +451,13 @@
   .nav-item :global(svg),
   .settings-nav-item :global(svg),
   .settings-back :global(svg) { opacity: 0.75; flex-shrink: 0; }
+
+  .sidebar-windows .nav-item :global(svg),
+  .sidebar-windows .settings-nav-item :global(svg),
+  .sidebar-windows .settings-back :global(svg) {
+    width: 15px;
+    height: 15px;
+  }
 
   .nav-item:hover,
   .settings-nav-item:hover,
@@ -700,5 +690,29 @@
     height: 100%;
     border-radius: 999px;
     transition: background 0.4s ease;
+  }
+
+  @media (max-width: 720px) {
+    .sidebar { width: 58px; }
+    .sidebar :global(.brand) { padding-inline: 0; justify-content: center; }
+    .sidebar :global(.brand-name) { display: none; }
+    .nav-section { padding-inline: 7px; }
+    .sidebar:not(.rail-settings) .nav-section { padding-top: 24px; }
+    .nav-item,
+    .settings-nav-item,
+    .settings-back { justify-content: center; gap: 0; padding-inline: 0; }
+    .nav-item > span,
+    .settings-nav-item > span,
+    .settings-back > span,
+    .settings-section-label { display: none; }
+    .sidebar-foot { margin-inline: 7px; padding-inline: 0; }
+    .local-bar { margin-inline: 7px; padding-inline: 0; align-items: center; }
+    .local-bar-row { justify-content: center; }
+    .local-bar-row > span:not(.local-dot),
+    .meta-wrapper,
+    .local-meter-thin { display: none; }
+    .dl-panel { margin-inline: 7px; padding-inline: 6px; }
+    .dl-item-name,
+    .dl-done-name { display: none; }
   }
 </style>

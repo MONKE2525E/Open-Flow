@@ -46,6 +46,7 @@ zip         = { version = "2", default-features = false, features = ["deflate"] 
 transcribe-rs = { version = "0.3.11", features = ["onnx", "vad-silero"] }
 
 [target.'cfg(windows)'.dependencies]
+notify-rust = "4.18.0"
 windows = { version = "0.61", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_System_DataExchange",
@@ -61,8 +62,13 @@ windows = { version = "0.61", features = [
   "Win32_Media_Audio_Endpoints",
   "Media_Control",
   "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
   "Win32_UI_Accessibility",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_PropertiesSystem",
   "Win32_Storage_FileSystem",
+  "Win32_Storage_EnhancedStorage",
   "Win32_Security_Credentials",
   "Win32_Networking_NetworkListManager",
   "Win32_Graphics_Dwm",

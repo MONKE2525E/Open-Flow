@@ -6,28 +6,24 @@
   let { provider = $bindable() }: { provider: ProviderId } = $props();
 </script>
 
-<div class="step">
+<div class="step provider-step">
   <div class="provider-cards">
     {#each providers as p}
       <button
-        class="provider-card"
+        class="pick-card provider-card"
         class:selected={provider === p.id}
+        aria-pressed={provider === p.id}
         onclick={() => { provider = p.id; }}
       >
-        <div class="provider-top">
-          <div class="provider-icon">{@html getProviderLogo(p.id)}</div>
-          <div class="provider-info">
-            <div class="provider-name-row">
-              <span class="provider-name">{p.name}</span>
-              {#if p.badge}
-                <span class="badge">{p.badge}</span>
-              {/if}
-            </div>
-            <span class="provider-tagline">{p.tagline}</span>
+        <div class="provider-icon">{@html getProviderLogo(p.id)}</div>
+        <div class="provider-info">
+          <div class="provider-name-row">
+            <span class="provider-name">{p.name}</span>
+            {#if p.badge}<span class="badge">{p.badge}</span>{/if}
           </div>
-          <div class="provider-radio" class:checked={provider === p.id}></div>
+          <p class="provider-desc">{p.desc}</p>
         </div>
-        <p class="provider-desc">{p.desc}</p>
+        <div class="pick-radio" class:checked={provider === p.id}></div>
       </button>
     {/each}
   </div>
@@ -38,81 +34,62 @@
 </div>
 
 <style>
-  .trademark-note {
-    font-size: 11px;
-    color: var(--ink-faint);
-    line-height: 1.5;
-    margin: 4px 0 0;
-  }
+  .provider-step { gap: 14px; }
 
-  .provider-cards { display: flex; flex-direction: column; gap: 10px; }
+  .provider-cards { display: flex; flex-direction: column; gap: 8px; }
 
+  /* Icon, text column, radio on one row, all vertically centred against the
+     card — the description used to sit in its own row under a 40px indent and
+     the radio hung off the first line, so neither edge lined up. */
   .provider-card {
-    background: var(--bg-elev);
-    border: 1.5px solid var(--line);
+    flex-direction: row;
+    align-items: center;
+    gap: 13px;
     border-radius: var(--r-md);
-    padding: 14px 16px;
-    text-align: left;
-    cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    padding: 13px 15px;
+    min-height: 66px;
   }
 
-  .provider-card:hover { border-color: var(--line-strong); }
+  .provider-icon {
+    width: 26px;
+    height: 26px;
+    color: var(--ink-mute);
+    flex-shrink: 0;
+    transition: color 0.16s ease;
+  }
 
-  .provider-card.selected { border-color: var(--accent); background: var(--accent-soft); }
-
-  .provider-top { display: flex; align-items: center; gap: 12px; }
-
-  .provider-icon { width: 28px; height: 28px; color: var(--ink-mute); flex-shrink: 0; }
   .provider-icon :global(svg) { width: 100%; height: 100%; }
 
   .provider-card.selected .provider-icon { color: var(--accent-ink); }
 
-  .provider-info { flex: 1; }
+  .provider-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 
-  .provider-name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+  .provider-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
   .provider-name { font-size: 14px; font-weight: 500; color: var(--ink-strong); }
 
   .badge {
-    font-size: 10.5px;
+    font-size: 10px;
     font-weight: 600;
     background: var(--accent);
     color: var(--on-accent);
     border-radius: 20px;
-    padding: 1px 8px;
+    padding: 1px 7px;
     letter-spacing: 0.02em;
   }
-
-  .provider-tagline { font-size: 12px; color: var(--ink-mute); }
 
   .provider-desc {
     font-size: 12.5px;
     color: var(--ink-mute);
     margin: 0;
     line-height: 1.45;
-    padding-left: 40px;
   }
 
-  .provider-radio {
-    width: 17px;
-    height: 17px;
-    border-radius: 50%;
-    border: 2px solid var(--line-strong);
-    flex-shrink: 0;
-    transition: border-color 0.15s;
-    position: relative;
-  }
-
-  .provider-radio.checked { border-color: var(--accent); }
-  .provider-radio.checked::after {
-    content: '';
-    position: absolute;
-    inset: 3px;
-    border-radius: 50%;
-    background: var(--accent);
+  .trademark-note {
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    line-height: 1.5;
+    margin: 0;
+    opacity: 0.82;
   }
 </style>

@@ -5,6 +5,12 @@ use super::gemini_types::{GeminiGenerateReq, GeminiReqContent, GeminiReqPart};
 use super::prompts::{cleanup_max_output_tokens, gemini_generation_config};
 use super::ProviderId;
 
+// Cleanup should be fast enough to run inline with dictation delivery. Keep
+// this shorter than the shared client timeout so a stalled provider can fall
+// through to the configured cleanup fallback instead of leaving the pill in
+// processing for two minutes.
+const CLEANUP_REQUEST_TIMEOUT_SECS: u64 = 45;
+
 #[allow(clippy::too_many_arguments)]
 pub async fn cleanup(
     text: &str,
@@ -86,20 +92,46 @@ pub async fn cleanup_with_alternate(
             snippet_instructions.chars().count()
         );
     }
-    if let Some(url) = provider.cleanup_url() {
-        openai_compat(
-            text,
-            api_key,
-            url,
-            provider.label(),
-            model,
-            &prompt,
-            max_output_tokens,
-            alternate_transcript,
-        )
-        .await
-    } else {
-        google_cleanup(text, api_key, &prompt, model, max_output_tokens, alternate_transcript).await
+    let request = async {
+        if let Some(url) = provider.cleanup_url() {
+            openai_compat(
+                text,
+                api_key,
+                url,
+                provider.label(),
+                model,
+                &prompt,
+                max_output_tokens,
+                alternate_transcript,
+            )
+            .await
+        } else {
+            google_cleanup(text, api_key, &prompt, model, max_output_tokens, alternate_transcript)
+                .await
+        }
+    };
+
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(CLEANUP_REQUEST_TIMEOUT_SECS),
+        request,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            log::warn!(
+                "cleanup: request timeout provider={} model={} timeout_secs={}",
+                provider.label(),
+                model,
+                CLEANUP_REQUEST_TIMEOUT_SECS
+            );
+            Err(anyhow::anyhow!(
+                "Cleanup API timeout provider={} model={} timeout_secs={}",
+                provider.label(),
+                model,
+                CLEANUP_REQUEST_TIMEOUT_SECS
+            ))
+        }
     }
 }
 
@@ -109,6 +141,10 @@ struct ChatReq {
     messages: Vec<Msg>,
     max_tokens: u32,
     temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    include_reasoning: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -318,6 +354,18 @@ async fn google_cleanup(
     };
 
     let data: GeminiResp = resp.json().await?;
+    if let Some(candidate) = data.candidates.as_ref().and_then(|c| c.first()) {
+        if let Some(reason) = candidate.finish_reason.as_deref() {
+            if reason != "STOP" && reason != "MAX_TOKENS" {
+                anyhow::bail!("Gemini cleanup finish_reason: {reason}");
+            }
+            if reason == "MAX_TOKENS" {
+                anyhow::bail!(
+                    "Gemini cleanup output reached max_output_tokens={max_output_tokens}"
+                );
+            }
+        }
+    }
     let output = data
         .candidates
         .unwrap_or_default()
@@ -355,6 +403,8 @@ fn build_openai_compat_request_with_alternate(
             escape_transcript_xml(text)
         ),
     };
+    let is_gpt_oss = model.starts_with("openai/gpt-oss-");
+    let is_qwen_3_6 = model == "qwen/qwen3.6-27b";
     ChatReq {
         model: model.to_owned(),
         messages: vec![
@@ -369,6 +419,12 @@ fn build_openai_compat_request_with_alternate(
         ],
         max_tokens,
         temperature: 0.0,
+        reasoning_effort: if is_qwen_3_6 {
+            Some("none")
+        } else {
+            is_gpt_oss.then_some("low")
+        },
+        include_reasoning: is_gpt_oss.then_some(false),
     }
 }
 
@@ -430,7 +486,24 @@ mod tests {
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(json["max_tokens"], 128);
         assert_eq!(json["temperature"], 0.0);
+        assert!(json.get("reasoning_effort").is_none());
         assert_eq!(json["messages"][0]["content"], "prompt");
+    }
+
+    #[test]
+    fn gpt_oss_cleanup_disables_reasoning_output() {
+        let body = build_openai_compat_request("hello", "openai/gpt-oss-20b", "prompt", 128);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["reasoning_effort"], "low");
+        assert_eq!(json["include_reasoning"], false);
+    }
+
+    #[test]
+    fn qwen_cleanup_uses_non_thinking_mode() {
+        let body = build_openai_compat_request("hello", "qwen/qwen3.6-27b", "prompt", 128);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["reasoning_effort"], "none");
+        assert!(json.get("include_reasoning").is_none());
     }
 
     #[test]

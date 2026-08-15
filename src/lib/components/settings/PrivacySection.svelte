@@ -440,7 +440,7 @@
     <div class="modal-footer">
       <div class="footer-actions">
         <button bind:this={retentionCancelButton} class="btn-ghost" onclick={() => (confirmRetention = null)}>Cancel</button>
-        <button class="btn-danger" onclick={confirmHistoryRetention}>Delete history</button>
+        <button class="btn-danger btn-compact" onclick={confirmHistoryRetention}>Delete history</button>
       </div>
     </div>
   </div>
@@ -569,22 +569,5 @@
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-  }
-  .btn-danger {
-    background: var(--danger-bg);
-    color: var(--danger);
-    border: 1px solid var(--danger-line);
-    border-radius: 6px;
-    padding: 5px 12px;
-    font-size: 12px;
-    font-family: var(--sans);
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s, border-color 0.12s;
-  }
-  .btn-danger:hover {
-    background: var(--danger);
-    color: var(--on-accent);
-    border-color: var(--danger);
   }
 </style>

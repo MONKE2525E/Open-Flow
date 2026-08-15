@@ -27,6 +27,10 @@ const DICT_DATA = [
   let   passed  = 0;
   let   failed  = 0;
 
+  // This legacy-page test opts into the legacy navigation explicitly.
+  await page.addInitScript(() => {
+    localStorage.setItem('__open_flow_tauri_mock_settings', JSON.stringify({ legacy_features_enabled: true }));
+  });
   // Inject Tauri mock + dictionary data override
   await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
   await page.addInitScript((data) => {

@@ -22,6 +22,9 @@
   let failedEntry: { created_at: string } | null = null;
   let retrying = false;
   let failedTimer: ReturnType<typeof setTimeout> | null = null;
+  let cancelledEntry: { created_at: string } | null = null;
+  let resumingCancelled = false;
+  let cancelledTimer: ReturnType<typeof setTimeout> | null = null;
 
   const greeting = getGreeting();
 
@@ -43,6 +46,37 @@
     } finally {
       retrying = false;
     }
+  }
+
+  function clearCancelledEntry() {
+    cancelledEntry = null;
+    if (cancelledTimer) {
+      clearTimeout(cancelledTimer);
+      cancelledTimer = null;
+    }
+  }
+
+  async function continueCancelled() {
+    if (resumingCancelled) return;
+    resumingCancelled = true;
+    try {
+      await invoke('resume_cancelled_capture');
+      // Rust also emits verenu:cancelled-capture-cleared, but clear locally
+      // too so the banner drops immediately rather than waiting on the event.
+      clearCancelledEntry();
+    } catch (err) {
+      console.error('Resume cancelled capture failed:', err);
+      // keep cancelledEntry so the user can try again
+    } finally {
+      resumingCancelled = false;
+    }
+  }
+
+  async function dismissCancelled() {
+    clearCancelledEntry();
+    try {
+      await invoke('dismiss_cancelled_capture');
+    } catch { /* dev mode */ }
   }
 
   async function copyText(entry: Entry) {
@@ -132,6 +166,13 @@
       load(true);
     }));
 
+    trackListener(listen<Entry>('verenu:history-updated', (ev) => {
+      failedEntry = null;
+      if (failedTimer) { clearTimeout(failedTimer); failedTimer = null; }
+      recents = [ev.payload, ...recents.filter((entry) => entry.id !== ev.payload.id)];
+      invoke<Stats>('get_stats').then((nextStats) => { stats = nextStats; }).catch(() => {});
+    }));
+
     trackListener(listen('verenu:history-pruned', () => load(true)));
 
     trackListener(listen<string>('verenu:pipeline-failed', (ev) => {
@@ -143,6 +184,21 @@
       }, 10 * 60 * 1000);
     }));
 
+    trackListener(listen<string>('verenu:cancelled-capture', (ev) => {
+      cancelledEntry = { created_at: ev.payload };
+      if (cancelledTimer) clearTimeout(cancelledTimer);
+      cancelledTimer = setTimeout(() => {
+        cancelledEntry = null;
+        cancelledTimer = null;
+      }, 10 * 60 * 1000);
+    }));
+
+    // Fired when the capture is resumed or dismissed from elsewhere (the
+    // pill's own buttons) — drop the banner if it's still showing.
+    trackListener(listen('verenu:cancelled-capture-cleared', () => {
+      clearCancelledEntry();
+    }));
+
     return () => {
       mounted = false;
       while (unlisteners.length > 0) {
@@ -151,6 +207,10 @@
       if (failedTimer) {
         clearTimeout(failedTimer);
         failedTimer = null;
+      }
+      if (cancelledTimer) {
+        clearTimeout(cancelledTimer);
+        cancelledTimer = null;
       }
     };
   });
@@ -184,14 +244,18 @@
       <HistoryList
         {recents}
         {failedEntry}
+        {cancelledEntry}
         {loading}
         {hasMoreHistory}
         {loadingMore}
         {retrying}
+        {resumingCancelled}
         {copiedId}
         {hk1}
         {hk2}
         onRetry={retryTranscription}
+        onContinueCancelled={continueCancelled}
+        onDismissCancelled={dismissCancelled}
         onLoadOlder={loadOlder}
         onCopy={copyText}
       />
