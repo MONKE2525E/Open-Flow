@@ -24,6 +24,7 @@ enum HotkeyEvent {
     Cancel,
     EscapeCancel,
     CopyLast,
+    RepairOpen,
 }
 
 /// A hands-free stop is itself a quick tap, so the next click can still be
@@ -70,6 +71,7 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
     let tx_cancel = hotkey_tx.clone();
     let tx_escape = hotkey_tx.clone();
     let tx_copy_last = hotkey_tx.clone();
+    let tx_repair_open = hotkey_tx.clone();
     let tx_release = hotkey_tx;
 
     match crate::core::hotkey::start(
@@ -90,6 +92,9 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
         },
         move || {
             let _ = tx_copy_last.send(HotkeyEvent::CopyLast);
+        },
+        move || {
+            let _ = tx_repair_open.send(HotkeyEvent::RepairOpen);
         },
     ) {
         Ok(_handle) => { /* hook thread running */ }
@@ -123,6 +128,26 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
             match event {
                 HotkeyEvent::Press => {
                     pipeline::clear_handless_hold_marker(&state_hk);
+                    let repair_pill_focused = pipeline::pill_wants_repair_focus();
+                    let repair_waiting_for_complaint = repair_pill_focused
+                        && lock_app_state(&state_hk)
+                            .map(|st| {
+                                matches!(st.lifecycle, pipeline::DictationLifecycle::Idle)
+                                    && st.repair.as_ref().is_some_and(|r| r.proposal.is_none())
+                            })
+                            .unwrap_or(false);
+                    if repair_waiting_for_complaint {
+                        if pipeline::reserve_starting(&state_hk).is_ok() {
+                            if let Some(mut st) = lock_app_state(&state_hk) {
+                                st.hotkey_recording_repair_complaint = true;
+                            }
+                            start_recording_session(&app_hk, &state_hk, "repair_recording", false);
+                        }
+                        continue;
+                    }
+                    if lock_app_state(&state_hk).is_some_and(|st| st.repair.is_some()) {
+                        pipeline::clear_repair(&state_hk);
+                    }
                     enum PressAction {
                         None,
                         Fresh,
@@ -179,9 +204,28 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     }
                 }
 
+                HotkeyEvent::RepairOpen => {
+                    let waiting_for_complaint = lock_app_state(&state_hk)
+                        .is_some_and(|st| st.repair.as_ref().is_some_and(|r| r.proposal.is_none()));
+                    if waiting_for_complaint {
+                        pipeline::enter_repair_input(&app_hk);
+                    }
+                }
+
                 HotkeyEvent::Release => {
                     if pipeline::consume_handless_hold_stop(&state_hk) {
                         log::debug!("hotkey: ignored stale hold release after Space hands-free conversion");
+                        continue;
+                    }
+                    let recording_repair_complaint = lock_app_state(&state_hk)
+                        .map(|mut st| std::mem::take(&mut st.hotkey_recording_repair_complaint))
+                        .unwrap_or(false);
+                    if recording_repair_complaint {
+                        crate::core::hotkey::set_handless_active(false);
+                        tauri::async_runtime::spawn(pipeline::finish_complaint_recording(
+                            app_hk.clone(),
+                            state_hk.clone(),
+                        ));
                         continue;
                     }
                     tauri::async_runtime::spawn(pipeline::run_pipeline(

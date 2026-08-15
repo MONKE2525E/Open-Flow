@@ -730,8 +730,15 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 }
                 return LRESULT(1);
             }
-            if is_up && REPAIR_TRIGGER_DOWN.swap(false, Ordering::SeqCst) && mods_held {
-                return LRESULT(1);
+            if is_up {
+                // Always clear the latch, even if the user releases a
+                // modifier before releasing the trigger. Otherwise the next
+                // repair chord is silently ignored until the settings are
+                // reloaded.
+                let was_down = REPAIR_TRIGGER_DOWN.swap(false, Ordering::SeqCst);
+                if was_down && mods_held {
+                    return LRESULT(1);
+                }
             }
         }
 
