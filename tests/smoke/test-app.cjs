@@ -43,6 +43,17 @@ async function waitForMappingRowOpacity(page, exe, timeout = 1_000) {
     await page.locator('.settings-page').waitFor({ state: 'visible', timeout: 3_000 });
     console.log('Settings opened.');
 
+    // App Mappings is a legacy page — flip the Legacy toggle on General first
+    await page.locator('.settings-nav-item:has-text("General")').click();
+    await page.locator('h2.settings-h:has-text("General")').waitFor({ state: 'visible', timeout: 3_000 });
+    const legacyToggle = page.locator('.setting-row:has-text("Legacy pages") [role="switch"]');
+    await legacyToggle.waitFor({ state: 'visible', timeout: 3_000 });
+    if ((await legacyToggle.getAttribute('aria-checked')) !== 'true') {
+      await legacyToggle.click();
+      await page.locator('.modal-title:has-text("Turn on Legacy pages?")').waitFor({ state: 'visible', timeout: 3_000 });
+      await page.locator('.modal-footer button:has-text("Turn on")').click();
+    }
+
     // Navigate to App Mappings section
     const appsSection = page.locator('.settings-nav-item:has-text("App Mappings")');
     await appsSection.waitFor({ state: 'visible', timeout: 3_000 });
