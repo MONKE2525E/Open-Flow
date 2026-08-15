@@ -19,6 +19,21 @@ pub async fn get_installed_apps() -> Vec<InstalledApp> {
     }
 }
 
+/// Returns a `data:image/png;base64,...` URI for `exe`'s real icon, or
+/// `None` if it couldn't be resolved/extracted — the frontend falls back to
+/// a colored-initial badge in that case. Deliberately not bundled into
+/// `get_installed_apps`: extraction/caching is per-icon work and lazy
+/// per-row loading keeps that bulk list light.
+#[tauri::command]
+pub async fn get_app_icon(app: AppHandle, exe: String) -> Option<String> {
+    run_blocking("get_app_icon", move || {
+        Ok(crate::system::icons::get_icon_data_uri(&app, &exe))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 #[tauri::command]
 pub async fn get_app_mappings(app: AppHandle) -> Result<Vec<AppMapping>, String> {
     let settings = store::settings_handle(&app)?;
@@ -61,6 +76,7 @@ pub async fn create_snippet(
     trigger: String,
     expansion: String,
     instructions: String,
+    context_id: Option<i64>,
 ) -> Result<db::CreatedRecordMeta, String> {
     let db = db_state(&app);
     run_blocking("create_snippet", move || {
@@ -70,7 +86,7 @@ pub async fn create_snippet(
             expansion.chars().count(),
             instructions.chars().count()
         );
-        let created = db::insert_snippet_returning(&db, &trigger, &expansion, &instructions)
+        let created = db::insert_snippet_returning(&db, &trigger, &expansion, &instructions, context_id)
             .map_err(|e| {
                 log::warn!("snippets:create failed: {e}");
                 e.to_string()
@@ -121,6 +137,7 @@ pub async fn create_dictionary_entry(
     app: AppHandle,
     term: String,
     mistake: Option<String>,
+    context_id: Option<i64>,
 ) -> Result<db::CreatedRecordMeta, String> {
     let db = db_state(&app);
     run_blocking("create_dictionary_entry", move || {
@@ -129,7 +146,7 @@ pub async fn create_dictionary_entry(
             term.chars().count(),
             mistake.as_deref().map_or(0, |m| m.chars().count())
         );
-        db::insert_dictionary_entry_returning(&db, &term, mistake.as_deref()).map_err(|e| {
+        db::insert_dictionary_entry_returning(&db, &term, mistake.as_deref(), context_id).map_err(|e| {
             log::warn!("dictionary:create failed: {e}");
             e.to_string()
         })
