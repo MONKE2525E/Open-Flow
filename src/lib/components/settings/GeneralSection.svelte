@@ -605,7 +605,7 @@
   <div style="display:flex; align-items:center; gap:8px;">
     <button class="badge" onclick={clearRepairHotkey} type="button" style="cursor:pointer;">Clear</button>
     <button
-      class="badge key-badge repair-keybind-btn"
+      class="badge repair-keybind-btn"
       onclick={startRecordingRepairHotkey}
       class:recording={recordingRepairHotkey}
       class:armed={repairHotkeyState === 'armed'}

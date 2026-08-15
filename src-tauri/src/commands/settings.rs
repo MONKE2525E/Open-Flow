@@ -460,6 +460,7 @@ pub struct AllSettings {
     pub beta_updates_enabled: Option<bool>,
     pub verenu_service_checks_enabled: Option<bool>,
     pub hotkey: Option<Vec<String>>,
+    pub repair_hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
     pub cleanup_prompt_overrides: Option<serde_json::Value>,
 }
@@ -523,6 +524,13 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         beta_updates_enabled: bool_val(store::BETA_UPDATES_ENABLED),
         verenu_service_checks_enabled: bool_val(store::VERENU_SERVICE_CHECKS_ENABLED),
         hotkey: s.get(store::HOTKEY).and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+        }),
+        repair_hotkey: s.get(store::REPAIR_HOTKEY).and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
                     .filter_map(|x| x.as_str().map(String::from))
