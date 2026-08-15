@@ -609,11 +609,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         }
         return;
     };
-    let api_used = if alternate.is_none() || cleanup_api_used.is_empty() {
-        api_used
-    } else {
-        format!("{api_used};cleanup={cleanup_api_used}")
-    };
+    let api_used = append_cleanup_api_used(api_used, &cleanup_api_used);
     log::debug!(
         "pipeline: cleanup/snippets ok final_chars={} final_preview=\"{}\" dict_entries={}",
         final_text.chars().count(),
@@ -651,7 +647,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             target_hwnd: target.id,
             cfg: &cfg,
             profile: &profile,
-            process_name,
+            process_name: process_name.clone(),
             cleanup_cache_key,
             captured_at: retry_captured_at,
             event_only,
@@ -666,6 +662,19 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         state::leave_finalizing(&state, generation);
         return;
     }
+    begin_feedback(
+        &app,
+        &state,
+        &raw,
+        &final_text,
+        &final_text,
+        process_name.clone(),
+        None,
+        0,
+        "Everywhere".to_string(),
+        &dict_entries,
+        &cfg,
+    );
     state::leave_finalizing(&state, generation);
 
     log::info!(
@@ -712,6 +721,14 @@ async fn prepare_clipboard_phrase(
 
 #[cfg(test)]
 mod tests;
+
+fn append_cleanup_api_used(api_used: String, cleanup_api_used: &str) -> String {
+    if cleanup_api_used.is_empty() {
+        api_used
+    } else {
+        format!("{api_used};cleanup={cleanup_api_used}")
+    }
+}
 
 pub async fn retry_transcription_impl(
     app: &AppHandle,
@@ -825,11 +842,7 @@ pub async fn retry_transcription_impl(
         hide_pill(app);
         anyhow::bail!("Retry cleanup failed");
     };
-    let api_used = if alternate.is_none() || cleanup_api_used.is_empty() {
-        api_used
-    } else {
-        format!("{api_used};cleanup={cleanup_api_used}")
-    };
+    let api_used = append_cleanup_api_used(api_used, &cleanup_api_used);
 
     emit_pill_stage(app, "pasting");
     finalize_pipeline_completion(

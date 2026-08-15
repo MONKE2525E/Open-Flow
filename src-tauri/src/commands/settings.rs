@@ -154,6 +154,9 @@ const SETTING_SPECS: &[SettingSpec] = &[
         true,
     ),
     setting_spec(store::SETUP_COMPLETE, SettingKind::Bool, true, false),
+    setting_spec(store::CLIPBOARD_PHRASE, SettingKind::StringOrNull, true, true),
+    setting_spec(store::CLIPBOARD_PHRASE_ENABLED, SettingKind::Bool, true, true),
+    setting_spec(store::LEGACY_FEATURES_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::APP_CONTEXT_HINT, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_EVENT_MODE, SettingKind::Bool, true, true),
@@ -453,6 +456,9 @@ pub async fn get_setting(app: AppHandle, key: String) -> Result<Option<serde_jso
 
 #[derive(serde::Serialize)]
 pub struct AllSettings {
+    pub clipboard_phrase: Option<String>,
+    pub clipboard_phrase_enabled: Option<bool>,
+    pub legacy_features_enabled: Option<bool>,
     pub transcription_provider: Option<String>,
     pub transcription_model: Option<String>,
     pub transcription_language: Option<String>,
@@ -488,6 +494,7 @@ pub struct AllSettings {
     pub beta_updates_enabled: Option<bool>,
     pub verenu_service_checks_enabled: Option<bool>,
     pub hotkey: Option<Vec<String>>,
+    pub repair_hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
     pub cleanup_prompt_overrides: Option<serde_json::Value>,
 }
@@ -516,6 +523,9 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         })
     };
     Ok(AllSettings {
+        clipboard_phrase: str_val(store::CLIPBOARD_PHRASE),
+        clipboard_phrase_enabled: bool_val(store::CLIPBOARD_PHRASE_ENABLED),
+        legacy_features_enabled: bool_val(store::LEGACY_FEATURES_ENABLED),
         transcription_provider: str_val(store::TRANSCRIPTION_PROVIDER),
         transcription_model: str_val(store::TRANSCRIPTION_MODEL),
         transcription_language: str_val(store::TRANSCRIPTION_LANGUAGE),
@@ -551,6 +561,13 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         beta_updates_enabled: bool_val(store::BETA_UPDATES_ENABLED),
         verenu_service_checks_enabled: bool_val(store::VERENU_SERVICE_CHECKS_ENABLED),
         hotkey: s.get(store::HOTKEY).and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+        }),
+        repair_hotkey: s.get(store::REPAIR_HOTKEY).and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
                     .filter_map(|x| x.as_str().map(String::from))
