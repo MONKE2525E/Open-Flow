@@ -501,7 +501,7 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         |new_val: &str, legacy_val: &str, provider: &str, default_fn: fn(&str) -> &'static str| {
             parse_model_id(new_val)
                 .or_else(|| parse_model_id(legacy_val))
-                .map(|(p, m)| format!("{p}/{m}"))
+                .map(|(p, m)| migrate_deprecated_model_id(&format!("{p}/{m}")))
                 .unwrap_or_else(|| format!("{provider}/{}", default_fn(provider)))
         };
 
@@ -519,18 +519,27 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         default_cleanup_model_for,
     );
 
-    let transcription_fallback_models = parse_string_array(TRANSCRIPTION_FALLBACK_MODELS);
+    let transcription_fallback_models = parse_string_array(TRANSCRIPTION_FALLBACK_MODELS)
+        .into_iter()
+        .map(|id| migrate_deprecated_model_id(&id))
+        .collect();
     let dual_transcription_enabled = store
         .get(DUAL_TRANSCRIPTION_ENABLED)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let cleanup_fallback_models = parse_string_array(CLEANUP_FALLBACK_MODELS);
+    let cleanup_fallback_models = parse_string_array(CLEANUP_FALLBACK_MODELS)
+        .into_iter()
+        .map(|id| migrate_deprecated_model_id(&id))
+        .collect();
     let cleanup_prompt_overrides = store
         .get(CLEANUP_PROMPT_OVERRIDES)
         .and_then(|v| v.as_object().cloned())
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+        .filter_map(|(k, v)| {
+            v.as_str()
+                .map(|s| (migrate_deprecated_model_id(&k), s.to_string()))
+        })
         .collect();
 
     PipelineConfig {
