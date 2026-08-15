@@ -1487,7 +1487,6 @@
   <DictionaryModal
     mode={selectedDictionary ? 'edit' : 'add'}
     entry={selectedDictionary ?? undefined}
-    contextId={selectedContextId === EVERYWHERE_ID ? undefined : selectedContextId}
     onClose={() => modal = null}
     onSaved={handleDictionarySaved}
     onGoToSnippets={() => modal = 'snippet'}
@@ -1496,7 +1495,6 @@
   <SnippetModal
     mode={selectedSnippet ? 'edit' : 'add'}
     snippet={selectedSnippet ?? undefined}
-    contextId={selectedContextId === EVERYWHERE_ID ? undefined : selectedContextId}
     onClose={() => modal = null}
     onSaved={handleSnippetSaved}
   />
