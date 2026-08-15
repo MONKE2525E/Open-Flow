@@ -662,19 +662,6 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         state::leave_finalizing(&state, generation);
         return;
     }
-    begin_feedback(
-        &app,
-        &state,
-        &raw,
-        &final_text,
-        &final_text,
-        process_name.clone(),
-        None,
-        0,
-        "Everywhere".to_string(),
-        &dict_entries,
-        &cfg,
-    );
     state::leave_finalizing(&state, generation);
 
     log::info!(

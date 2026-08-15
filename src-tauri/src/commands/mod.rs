@@ -20,7 +20,6 @@ pub(crate) const LOCAL_MODELS_UNAVAILABLE_ON_MACOS_INTEL: &str =
 
 mod contexts;
 mod history;
-mod contexts;
 mod library;
 mod local_llm;
 mod local_stt;
@@ -47,7 +46,6 @@ fn db_state(app: &AppHandle) -> DbHandle {
 
 pub use contexts::*;
 pub use history::*;
-pub use contexts::*;
 pub use library::*;
 pub use local_llm::*;
 pub use local_stt::*;

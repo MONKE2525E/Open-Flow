@@ -221,7 +221,7 @@ fn is_user_facing_app(app: &InstalledApp) -> bool {
 }
 
 #[cfg(windows)]
-fn parse_exe_from_icon(icon: &str) -> Option<String> {
+pub(crate) fn parse_exe_from_icon(icon: &str) -> Option<String> {
     let s = icon.trim().trim_matches('"');
     let path_part = s.split(',').next()?.trim().trim_matches('"');
     if path_part.to_lowercase().ends_with(".exe") {
@@ -235,7 +235,7 @@ fn parse_exe_from_icon(icon: &str) -> Option<String> {
 }
 
 #[cfg(windows)]
-unsafe fn reg_read_string(
+pub(crate) unsafe fn reg_read_string(
     hkey: windows::Win32::System::Registry::HKEY,
     value: &str,
 ) -> Option<String> {

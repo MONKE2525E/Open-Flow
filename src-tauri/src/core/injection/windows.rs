@@ -202,7 +202,7 @@ unsafe fn write_clipboard_unicode(data: &[u16]) -> anyhow::Result<()> {
 // is present but empty, and `None` only when the clipboard can't be read. Async
 // so the OpenClipboard retry backoff yields to the runtime instead of blocking
 // the executor thread with a synchronous sleep.
-async fn read_clipboard_text() -> Option<String> {
+pub(crate) async fn read_clipboard_text() -> Option<String> {
     use ::windows::Win32::Foundation::HGLOBAL;
     use ::windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
     use ::windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};

@@ -224,9 +224,6 @@ pub const VERENU_SERVICE_CHECKS_ENABLED: &str = "verenu_service_checks_enabled";
 pub const HISTORY_RETENTION: &str = "history_retention";
 pub const AUTOSTART_ENABLED: &str = "autostart_enabled";
 pub const CAPS_LOCK_UPPERCASE: &str = "caps_lock_uppercase_enabled";
-pub const CLIPBOARD_PHRASE_ENABLED: &str = "clipboard_phrase_enabled";
-pub const CLIPBOARD_PHRASE: &str = "clipboard_phrase";
-pub const LEGACY_FEATURES_ENABLED: &str = "legacy_features_enabled";
 pub const DEFAULT_CLIPBOARD_PHRASE: &str = "paste clipboard here";
 pub const LOCAL_MODEL_MEMORY_POLICY: &str = "local_model_memory_policy";
 
