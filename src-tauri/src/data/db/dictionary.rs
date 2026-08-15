@@ -63,6 +63,33 @@ pub fn query_dictionary(db: &Db) -> Result<Vec<DictionaryEntry>> {
     Ok(rows)
 }
 
+pub fn query_dictionary_for_context(db: &Db, context_id: i64) -> Result<Vec<DictionaryEntry>> {
+    let conn = lock_conn(db)?;
+    let mut stmt = conn.prepare(
+        "SELECT d.id, d.term, d.mistake, d.auto_learned, d.correction_count,
+                d.confidence_tier, d.last_seen_at, d.created_at
+         FROM dictionary d
+         LEFT JOIN dictionary_contexts dc ON dc.dictionary_id = d.id AND dc.context_id = ?1
+         WHERE dc.context_id IS NOT NULL OR ?1 = 1
+         ORDER BY d.created_at DESC",
+    )?;
+    let rows = stmt
+        .query_map(params![context_id], |r| {
+            Ok(DictionaryEntry {
+                id: r.get(0)?,
+                term: r.get(1)?,
+                mistake: r.get(2)?,
+                auto_learned: r.get::<_, i64>(3)? != 0,
+                correction_count: r.get(4)?,
+                confidence_tier: r.get(5)?,
+                last_seen_at: r.get(6)?,
+                created_at: r.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 /// Applies an approved repair against the legacy global dictionary schema.
 /// The context argument is accepted for compatibility with the repair model;
 /// `dev` has no context tables, so dictionary repairs remain global here.
