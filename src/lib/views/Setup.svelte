@@ -40,6 +40,7 @@
   let step = $state(0);
   let direction = $state<'forward' | 'back'>('forward');
   let animating = $state(false);
+  let stepWrapEl = $state<HTMLDivElement | null>(null);
 
   let provider = $state<ProviderId>('groq');
   let apiKeyDraft = $state('');
@@ -71,6 +72,7 @@
   let providerDisplayName = $derived(providers.find((p) => p.id === provider)?.name ?? '');
   const setupCalibrationCopy = getSetupCalibrationCopy();
   let cleanupName = $derived(cleanupCards.find((c) => c.id === cleanupIntensity)?.name ?? '');
+  let effectiveCleanupName = $derived(modelPreset?.target && !modelPreset.target.cleanupEnabled ? 'Off' : cleanupName);
   let toneName = $derived(toneCards.find((t) => t.id === tone)?.name ?? '');
   let languageLabel = $derived(getTranscriptionLanguageLabel(language));
 
@@ -322,7 +324,7 @@
     if (s === providerStep) return { name: 'Provider', title: 'Choose your AI provider', subtitle: 'This powers both transcription and text cleanup. You can switch anytime in Settings.' };
     if (s === apiKeyStep) {
       if (provider === 'local') {
-        return { name: 'Local', title: 'No API key needed for local transcription', subtitle: 'Download Parakeet V3 later in Settings → Models. Cleanup Off keeps the transcript local too.' };
+        return { name: 'Local', title: 'Set up private, on-device dictation', subtitle: 'Download the speech model here. Nothing is sent to a cloud provider.' };
       }
       if (apiKeyMode === 'tutorial') {
         return { name: 'API Key', title: `Creating a ${providerDisplayName} API key`, subtitle: 'Follow along in your browser, then come back and paste the key.' };
@@ -388,6 +390,14 @@
         onRight: goNext,
       });
     }
+    if (step === modelsStep) {
+      const localNeedsChoice = provider === 'local' && modelPreset === null;
+      return bar({
+        rightLabel: localNeedsChoice ? 'Choose a setup' : 'Next',
+        rightDisabled: localNeedsChoice,
+        onRight: goNext,
+      });
+    }
     if (step === calibrationStep) {
       const calibrated = $calibratedGain !== null;
       return bar({
@@ -405,6 +415,43 @@
   });
 
   const canGoBack = $derived(step > 0 && step <= TOTAL_STEPS);
+
+  // Landing focus for keyboard users: on wizard open and on every step change,
+  // move focus to the new step's heading (falling back to its first focusable
+  // control). Steps that manage their own focus — the language listbox focuses
+  // the selected option on load — already own the focus and are left alone.
+  // The wizard is a page, not a dialog, so Tab still reaches the header and
+  // action bar; this is context, not a trap.
+  $effect(() => {
+    step;
+    if (typeof document === 'undefined') return;
+    requestAnimationFrame(() => {
+      const content = stepWrapEl;
+      if (!content?.isConnected) return;
+      if (content.contains(document.activeElement)) return;
+      // h1 covers the header-less steps (Intro, Done), which center a hero
+      // lockup instead of a settings-style heading.
+      const heading = content.querySelector<HTMLElement>('.settings-h, .settings-subhead, h1, h2');
+      const target = heading ?? firstFocusableInStep(content);
+      if (heading && !heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+      if (target instanceof HTMLElement && content.contains(target)) {
+        target.focus({ preventScroll: true });
+      }
+    });
+  });
+
+  function firstFocusableInStep(container: HTMLElement): HTMLElement | null {
+    const selector = [
+      'button:not([disabled])',
+      'input:not([disabled])',
+      'select:not([disabled])',
+      'textarea:not([disabled])',
+      'a[href]',
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(',');
+    return Array.from(container.querySelectorAll<HTMLElement>(selector))
+      .find((el) => !el.hasAttribute('inert') && el.offsetParent !== null) ?? null;
+  }
 </script>
 
 <SetupShell
@@ -415,13 +462,13 @@
 >
   {#snippet left()}
     {#if canGoBack}
-      <button class="btn-back" onclick={goBack} disabled={animating || $isCalibrating}>
+      <button class="btn-back ui-focus-ring" onclick={goBack} disabled={animating || $isCalibrating}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
         Back
       </button>
     {/if}
     {#if actionBar.leftLabel}
-      <button class="btn-skip" onclick={actionBar.onLeft} disabled={actionBar.leftDisabled || animating}>{actionBar.leftLabel}</button>
+      <button class="btn-skip ui-focus-ring" onclick={actionBar.onLeft} disabled={actionBar.leftDisabled || animating}>{actionBar.leftLabel}</button>
     {/if}
   {/snippet}
 
@@ -430,7 +477,7 @@
       <span class="setup-save-error" role="alert">{saveError}</span>
     {/if}
     <button
-      class="btn-primary"
+      class="btn-primary ui-focus-ring"
       class:btn-lg={actionBar.rightLg}
       class:btn-primary--glow={actionBar.rightGlow}
       onclick={actionBar.onRight}
@@ -439,7 +486,7 @@
   {/snippet}
 
   {#key step}
-  <div class="step-wrap" in:pageSwap={stepInParams} out:pageSwap={stepOutParams}>
+  <div class="step-wrap" bind:this={stepWrapEl} in:pageSwap={stepInParams} out:pageSwap={stepOutParams}>
     {#if step === 0}
       <IntroStep />
     {:else if step === providerStep}
@@ -473,7 +520,7 @@
     {:else if step === doneStep}
       <DoneStep
         providerName={providerDisplayName}
-        {cleanupName}
+        cleanupName={effectiveCleanupName}
         {toneName}
         {languageLabel}
         {usesHeadphones}

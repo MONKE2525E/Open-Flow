@@ -66,6 +66,21 @@
     });
   });
 
+  // The wizard is the first thing in the app and unmounts when it finishes;
+  // without this, focus drops to <body> and a keyboard user lands nowhere.
+  // Land on the first rail entry (Home) only on a real completion transition
+  // (wizard → app), so a normal app start never gets an unexpected focus ring.
+  let prevSetupComplete = appStore.setupComplete;
+  $effect(() => {
+    const complete = appStore.setupComplete;
+    if (!prevSetupComplete && complete) {
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>('.sidebar .nav-item')?.focus();
+      });
+    }
+    prevSetupComplete = complete;
+  });
+
   async function pingConnectivity() {
     try {
       const online = await invoke<boolean>('check_connectivity');

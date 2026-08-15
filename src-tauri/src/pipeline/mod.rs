@@ -36,10 +36,16 @@ pub use fixture::{
 use gates::{
     effective_recording_rms, has_spoken_content, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
-    silence_floor_gate_rms, strip_hallucinated_suffix, MIN_RECORDING_MS, MIN_RECORDING_RMS,
+    silence_floor_gate_rms, strip_hallucinated_suffix,
+    MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
-pub(crate) use pill::{hide_pill, show_copied_pill, show_pill, update_pill_state};
+pub(crate) use pill::{
+    emit_pill_stage, hide_pill, show_copied_pill, show_pill, update_pill_state,
+};
 use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_failed_pill};
+pub(crate) use pill_position::{
+    apply_pill_placement, placement_for_current_monitor, PillPlacement,
+};
 pub use session::*;
 use stages::*;
 pub use state::*;
@@ -106,6 +112,7 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
         anyhow::bail!(message);
     }
 
+    emit_pill_stage(&app, "transcribing");
     let mut transcribed: Option<String> = None;
     let mut last_err: Option<anyhow::Error> = None;
     for (provider_id, model) in transcription_model_chain(&cfg) {
@@ -254,6 +261,15 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     crate::media::sound::cancel_pending_start();
     crate::media::sound::coordinated_unmute();
     show_pill(&app, "processing");
+    // Label the pill "Transcribing…" from the moment processing starts, not
+    // once the transcription call actually begins. Audio encoding and the
+    // local Silero VAD gate both run first and both scale with recording
+    // length — the VAD gate alone reprocesses the *entire* buffer frame by
+    // frame, so on a multi-minute hands-free dictation this stretch can run
+    // several seconds. Until this moved, the pill had no stage mounted for
+    // that whole span and simply went blank, then jumped straight to
+    // "Transcribing…" once the real network call started.
+    emit_pill_stage(&app, "transcribing");
 
     // Keep the quiet-audio gate permissive at high gain. Whisper recordings can
     // still have low post-denoise RMS, even after amplification.

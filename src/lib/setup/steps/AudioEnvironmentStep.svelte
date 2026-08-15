@@ -66,9 +66,10 @@
     padding: 16px;
     gap: 10px;
     height: 100%;
+    min-height: 144px;
   }
 
-  .env-head { display: flex; align-items: flex-start; gap: 11px; }
+  .env-head { display: flex; align-items: center; gap: 11px; }
 
   .env-icon { color: var(--ink-faint); flex-shrink: 0; transition: color 0.16s ease; }
   .env-card.selected .env-icon { color: var(--accent-ink); }

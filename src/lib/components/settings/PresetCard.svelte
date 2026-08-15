@@ -1,6 +1,8 @@
 <script lang="ts">
   import EfficiencyBar from './EfficiencyBar.svelte';
   import type { Preset } from './modelPresets';
+  import { modalFocusTrap } from '../../modalFocus';
+  import { modalBackdrop, modalCard, MOTION_PX, motionPx } from '../../motion';
 
   let {
     preset,
@@ -45,17 +47,33 @@
   );
   const hoverLabel = $derived(cancelable ? 'Cancel download' : manageable ? 'Delete models' : '');
 
+  // Deleting downloaded models is destructive and irreversible, so it gets the
+  // same in-app confirm dialog as the other destructive settings actions
+  // instead of a blocking native browser confirm.
+  let confirmDelete = $state(false);
+  let confirmCancelButton = $state<HTMLButtonElement | null>(null);
+
   function handleAction(event: MouseEvent) {
     event.stopPropagation();
     if (cancelable) onCancelDownload?.();
-    else if (manageable) {
-      if (globalThis.confirm(`Delete downloaded models for ${preset.name}?`)) {
-        onDeleteModels?.();
-      }
-    }
+    else if (manageable) confirmDelete = true;
     else onSelect();
   }
+
+  function confirmDeleteModels() {
+    confirmDelete = false;
+    onDeleteModels?.();
+  }
+
+  // Same Escape contract as the other settings confirm dialogs: dismiss the
+  // dialog, never the page beneath it (Settings' own Escape guard yields
+  // while [role="dialog"] is present).
+  function handleDeleteModalKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && confirmDelete) confirmDelete = false;
+  }
 </script>
+
+<svelte:window onkeydown={handleDeleteModalKeydown} />
 
 {#if isAddKey}
   <div class="preset-card preset-info">
@@ -112,6 +130,42 @@
             {defaultLabel}
           {/if}
         </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if confirmDelete}
+  <!-- Renders above every surface it can open from: settings (z-60), the
+       cleanup-prompt modal (z-70), and the setup wizard overlay (z-100). -->
+  <div class="preset-confirm-wrap">
+    <button type="button" class="ui-modal-backdrop" aria-label="Close dialog" onclick={() => (confirmDelete = false)} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
+    <div
+      class="modal-card ui-modal-card"
+      use:modalFocusTrap={{
+        active: confirmDelete,
+        initialFocus: () => confirmCancelButton,
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="preset-delete-confirm-title"
+      tabindex="-1"
+      in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel), scaleFrom: 0.97 }}
+      out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}
+    >
+      <div class="ui-modal-head">
+        <h2 id="preset-delete-confirm-title" class="ui-modal-title">Delete downloaded models?</h2>
+      </div>
+      <div class="ui-modal-body">
+        <p class="ui-modal-copy">
+          This removes the downloaded model files for {preset.name} from this machine. Your settings and dictation history are untouched.
+        </p>
+      </div>
+      <div class="ui-modal-foot">
+        <div class="ui-modal-actions">
+          <button bind:this={confirmCancelButton} class="btn-ghost" onclick={() => (confirmDelete = false)}>Cancel</button>
+          <button class="btn-danger btn-compact" onclick={confirmDeleteModels}>Delete models</button>
+        </div>
       </div>
     </div>
   </div>
@@ -349,6 +403,12 @@
     .hover-mode:focus-visible .pa-hover {
       transform: none;
     }
+  }
+
+  .preset-confirm-wrap {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
   }
 
   /* Narrow settings column: fold the right rail under the text. */

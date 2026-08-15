@@ -13,6 +13,7 @@
   } from '../../appMappings';
   import { customExeFromSearch, matchesAppSearch } from './helpers';
   import { focusListboxOption, handleListboxOptionKeydown } from './listbox';
+  import Dropdown from '../Dropdown.svelte';
 
   let {
     installedApps,
@@ -42,11 +43,10 @@
   let addProfile = $state('casual');
   let addCleanupIntensity = $state('');
   let appSearch = $state('');
+  let appSearchInput = $state<HTMLInputElement | null>(null);
   let appPickerOpen = $state(false);
   let profileDropdownOpen = $state(false);
   let cleanupDropdownOpen = $state(false);
-  let profileDropdownButton = $state<HTMLButtonElement | null>(null);
-  let cleanupDropdownButton = $state<HTMLButtonElement | null>(null);
 
   const pendingExe = $derived(addExe || (appSearch.trim() ? customExeFromSearch(appSearch) : ''));
   const pendingName = $derived(cleanAppName(addName || appSearch || pendingExe));
@@ -68,21 +68,37 @@
     cleanupDropdownOpen = false;
   }
 
-  function pickApp(app: InstalledApp) {
+  function pickApp(app: InstalledApp, event?: MouseEvent) {
     addExe = app.exe;
     addName = cleanAppName(app.name || app.exe);
     appSearch = addName;
     appPickerOpen = false;
+    // Keyboard-activated option clicks carry detail 0; return focus to the
+    // search box so the flow continues there (typing more or pressing Enter
+    // to add) instead of stranding focus on a now-hidden menu.
+    if (event?.detail === 0) appSearchInput?.focus();
   }
 
-  async function openProfileDropdown(preferLast = false) {
+  function openProfileDropdown(preferLast = false) {
     profileDropdownOpen = true;
-    await focusListboxOption(ADD_PROFILE_MENU_ID, preferLast);
+    if (preferLast) {
+      // The shared Dropdown focuses the selected-or-first option on open;
+      // ArrowUp opens to the last option instead, so move focus after the
+      // open effect has landed.
+      requestAnimationFrame(() => focusListboxOption(ADD_PROFILE_MENU_ID, true));
+    }
   }
 
-  async function openCleanupDropdown(preferLast = false) {
+  function openCleanupDropdown(preferLast = false) {
     cleanupDropdownOpen = true;
-    await focusListboxOption(ADD_CLEANUP_MENU_ID, preferLast);
+    if (preferLast) {
+      requestAnimationFrame(() => focusListboxOption(ADD_CLEANUP_MENU_ID, true));
+    }
+  }
+
+  async function openAppPicker(preferLast = false) {
+    appPickerOpen = true;
+    await focusListboxOption(APP_PICKER_MENU_ID, preferLast);
   }
 
   async function submit() {
@@ -108,63 +124,37 @@
     }
   }
 
-  function closeProfileDropdown(event: MouseEvent | PointerEvent) {
-    const target = event.target;
-    if (target instanceof Element && !target.closest('.profile-drop-wrap')) {
-      profileDropdownOpen = false;
-    }
-  }
-
-  function closeCleanupDropdown(event: MouseEvent | PointerEvent) {
-    const target = event.target;
-    if (target instanceof Element && !target.closest('.cleanup-drop-wrap')) {
-      cleanupDropdownOpen = false;
-    }
-  }
-
   function handleProfileButtonKeydown(event: KeyboardEvent) {
     if ((event.key === 'Enter' || event.key === ' ') && !profileDropdownOpen) {
       event.preventDefault();
-      void openProfileDropdown();
+      openProfileDropdown();
       return;
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      void openProfileDropdown();
+      openProfileDropdown();
       return;
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      void openProfileDropdown(true);
-      return;
-    }
-    if (event.key === 'Escape' && profileDropdownOpen) {
-      profileDropdownOpen = false;
-      profileDropdownButton?.focus();
-      event.stopPropagation();
+      openProfileDropdown(true);
     }
   }
 
   function handleCleanupButtonKeydown(event: KeyboardEvent) {
     if ((event.key === 'Enter' || event.key === ' ') && !cleanupDropdownOpen) {
       event.preventDefault();
-      void openCleanupDropdown();
+      openCleanupDropdown();
       return;
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      void openCleanupDropdown();
+      openCleanupDropdown();
       return;
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      void openCleanupDropdown(true);
-      return;
-    }
-    if (event.key === 'Escape' && cleanupDropdownOpen) {
-      cleanupDropdownOpen = false;
-      cleanupDropdownButton?.focus();
-      event.stopPropagation();
+      openCleanupDropdown(true);
     }
   }
 
@@ -178,32 +168,6 @@
     return () => {
       window.clearTimeout(timeout);
       window.removeEventListener('pointerdown', closeAppPicker);
-    };
-  });
-
-  $effect(() => {
-    if (!profileDropdownOpen) return;
-
-    const timeout = window.setTimeout(() => {
-      window.addEventListener('pointerdown', closeProfileDropdown);
-    });
-
-    return () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener('pointerdown', closeProfileDropdown);
-    };
-  });
-
-  $effect(() => {
-    if (!cleanupDropdownOpen) return;
-
-    const timeout = window.setTimeout(() => {
-      window.addEventListener('pointerdown', closeCleanupDropdown);
-    });
-
-    return () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener('pointerdown', closeCleanupDropdown);
     };
   });
 </script>
@@ -244,9 +208,15 @@
             <button
               type="button"
               class="app-picker-item"
-              onclick={() => pickApp(app)}
+              onclick={(event) => pickApp(app, event)}
+              onkeydown={(event) =>
+                handleListboxOptionKeydown(event, APP_PICKER_MENU_ID, () => {
+                  appPickerOpen = false;
+                  appSearchInput?.focus();
+                })}
               role="option"
               aria-selected={false}
+              tabindex="-1"
             >
               <span class="app-picker-name">{cleanAppName(app.name || app.exe)}</span>
               <span class="app-picker-exe-pill" aria-hidden="true">{app.exe}</span>
@@ -268,123 +238,111 @@
       {/if}
     </div>
 
-    <div class="ui-dropdown profile-drop-wrap" role="presentation" onclick={(event) => event.stopPropagation()}>
-      <select class="profile-select profile-select-hidden" bind:value={addProfile} tabindex="-1" aria-hidden="true">
-        {#each profileOptions as profile}
-          <option value={profile.id}>{profile.label}</option>
-        {/each}
-      </select>
-      <button
-        bind:this={profileDropdownButton}
-        type="button"
-        class="ui-dropdown-trigger profile-drop-btn"
-        use:animateWidth={{ text: getProfileLabel(addProfile) }}
-        onclick={() => (profileDropdownOpen ? profileDropdownOpen = false : openProfileDropdown())}
-        onkeydown={handleProfileButtonKeydown}
-        aria-haspopup="listbox"
-        aria-expanded={profileDropdownOpen}
-        aria-controls={ADD_PROFILE_MENU_ID}
-      >
-        <span>{getProfileLabel(addProfile)}</span>
-        <svg class:open={profileDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m6 9 6 6 6-6"/>
-        </svg>
-      </button>
-      {#if profileDropdownOpen}
-        <div
-          id={ADD_PROFILE_MENU_ID}
-          class="ui-dropdown-menu profile-drop-menu scroll-styled"
-          role="listbox"
-          tabindex="-1"
-          aria-label="Tone options"
-          onpointerdown={(event) => event.stopPropagation()}
-          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
-          out:fade={{ duration: motionMs(100) }}
-        >
+    <Dropdown bind:open={profileDropdownOpen} closeSelector=".profile-drop-wrap">
+      <div class="ui-dropdown profile-drop-wrap" role="presentation">
+        <select class="profile-select profile-select-hidden" bind:value={addProfile} tabindex="-1" aria-hidden="true">
           {#each profileOptions as profile}
-            <button
-              type="button"
-              class="ui-dropdown-option profile-drop-item"
-              class:active={addProfile === profile.id}
-              onclick={() => {
-                addProfile = profile.id;
-                profileDropdownOpen = false;
-                profileDropdownButton?.focus();
-              }}
-              onkeydown={(event) =>
-                handleListboxOptionKeydown(event, ADD_PROFILE_MENU_ID, () => {
-                  profileDropdownOpen = false;
-                  profileDropdownButton?.focus();
-                })}
-              role="option"
-              aria-selected={addProfile === profile.id}
-              tabindex="-1"
-            >
-              {profile.label}
-            </button>
+            <option value={profile.id}>{profile.label}</option>
           {/each}
-        </div>
-      {/if}
-    </div>
-
-    <div class="ui-dropdown cleanup-drop-wrap" role="presentation" onclick={(event) => event.stopPropagation()}>
-      <select class="cleanup-select cleanup-select-hidden" bind:value={addCleanupIntensity} tabindex="-1" aria-hidden="true">
-        {#each cleanupIntensityChoices as choice}
-          <option value={choice.id}>{choice.label}</option>
-        {/each}
-      </select>
-      <button
-        bind:this={cleanupDropdownButton}
-        type="button"
-        class="ui-dropdown-trigger cleanup-drop-btn"
-        use:animateWidth={{ text: getCleanupIntensityLabel(addCleanupIntensity) }}
-        onclick={() => (cleanupDropdownOpen ? cleanupDropdownOpen = false : openCleanupDropdown())}
-        onkeydown={handleCleanupButtonKeydown}
-        aria-haspopup="listbox"
-        aria-expanded={cleanupDropdownOpen}
-        aria-controls={ADD_CLEANUP_MENU_ID}
-      >
-        <span>{getCleanupIntensityLabel(addCleanupIntensity)}</span>
-        <svg class:open={cleanupDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m6 9 6 6 6-6"/>
-        </svg>
-      </button>
-      {#if cleanupDropdownOpen}
-        <div
-          id={ADD_CLEANUP_MENU_ID}
-          class="ui-dropdown-menu cleanup-drop-menu scroll-styled"
-          role="listbox"
-          tabindex="-1"
-          aria-label="Cleanup intensity options"
-          onpointerdown={(event) => event.stopPropagation()}
-          in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
-          out:fade={{ duration: motionMs(100) }}
+        </select>
+        <button
+          type="button"
+          class="ui-dropdown-trigger ui-dropdown-trigger--compact profile-drop-btn"
+          use:animateWidth={{ text: getProfileLabel(addProfile) }}
+          onclick={() => (profileDropdownOpen = !profileDropdownOpen)}
+          onkeydown={handleProfileButtonKeydown}
+          aria-haspopup="listbox"
+          aria-expanded={profileDropdownOpen}
+          aria-controls={ADD_PROFILE_MENU_ID}
         >
+          <span>{getProfileLabel(addProfile)}</span>
+          <svg class:open={profileDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </button>
+        {#if profileDropdownOpen}
+          <div
+            id={ADD_PROFILE_MENU_ID}
+            class="ui-dropdown-menu profile-drop-menu scroll-styled"
+            role="listbox"
+            tabindex="-1"
+            aria-label="Tone options"
+            onpointerdown={(event) => event.stopPropagation()}
+            in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
+            out:fade={{ duration: motionMs(100) }}
+          >
+            {#each profileOptions as profile}
+              <button
+                type="button"
+                class="ui-dropdown-option profile-drop-item"
+                class:active={addProfile === profile.id}
+                onclick={() => {
+                  addProfile = profile.id;
+                  profileDropdownOpen = false;
+                }}
+                role="option"
+                aria-selected={addProfile === profile.id}
+              >
+                {profile.label}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </Dropdown>
+
+    <Dropdown bind:open={cleanupDropdownOpen} closeSelector=".cleanup-drop-wrap">
+      <div class="ui-dropdown cleanup-drop-wrap" role="presentation">
+        <select class="cleanup-select cleanup-select-hidden" bind:value={addCleanupIntensity} tabindex="-1" aria-hidden="true">
           {#each cleanupIntensityChoices as choice}
-            <button
-              type="button"
-              class="ui-dropdown-option cleanup-drop-item"
-              class:active={addCleanupIntensity === choice.id}
-              onclick={() => {
-                addCleanupIntensity = choice.id;
-                cleanupDropdownOpen = false;
-                cleanupDropdownButton?.focus();
-              }}
-              onkeydown={(event) =>
-                handleListboxOptionKeydown(event, ADD_CLEANUP_MENU_ID, () => {
-                  cleanupDropdownOpen = false;
-                  cleanupDropdownButton?.focus();
-                })}
-              role="option"
-              aria-selected={addCleanupIntensity === choice.id}
-              tabindex="-1"
-            >
-              {choice.label}
-            </button>
+            <option value={choice.id}>{choice.label}</option>
           {/each}
-        </div>
-      {/if}
-    </div>
+        </select>
+        <button
+          type="button"
+          class="ui-dropdown-trigger ui-dropdown-trigger--compact cleanup-drop-btn"
+          use:animateWidth={{ text: getCleanupIntensityLabel(addCleanupIntensity) }}
+          onclick={() => (cleanupDropdownOpen = !cleanupDropdownOpen)}
+          onkeydown={handleCleanupButtonKeydown}
+          aria-haspopup="listbox"
+          aria-expanded={cleanupDropdownOpen}
+          aria-controls={ADD_CLEANUP_MENU_ID}
+        >
+          <span>{getCleanupIntensityLabel(addCleanupIntensity)}</span>
+          <svg class:open={cleanupDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </button>
+        {#if cleanupDropdownOpen}
+          <div
+            id={ADD_CLEANUP_MENU_ID}
+            class="ui-dropdown-menu cleanup-drop-menu scroll-styled"
+            role="listbox"
+            tabindex="-1"
+            aria-label="Cleanup intensity options"
+            onpointerdown={(event) => event.stopPropagation()}
+            in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast), easing: expoOut }}
+            out:fade={{ duration: motionMs(100) }}
+          >
+            {#each cleanupIntensityChoices as choice}
+              <button
+                type="button"
+                class="ui-dropdown-option cleanup-drop-item"
+                class:active={addCleanupIntensity === choice.id}
+                onclick={() => {
+                  addCleanupIntensity = choice.id;
+                  cleanupDropdownOpen = false;
+                }}
+                role="option"
+                aria-selected={addCleanupIntensity === choice.id}
+              >
+                {choice.label}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </Dropdown>
 
     <button type="button" class="btn-primary btn-compact add-btn" onclick={submit} disabled={!addExe && !appSearch.trim()}>Add</button>
   </div>
@@ -485,6 +443,12 @@
   }
 
   .app-picker-item:hover {
+    background: var(--control-hover);
+  }
+
+  .app-picker-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
     background: var(--control-hover);
   }
 
