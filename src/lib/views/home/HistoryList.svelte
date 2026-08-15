@@ -20,12 +20,12 @@
   export let copiedId: number | null;
   export let hk1: string;
   export let hk2: string;
-  export let search: string;
-  export let apps: string[];
-  export let appFilter: string | null;
-  export let onSearchChange: (value: string) => void;
-  export let onAppFilterChange: (app: string | null) => void;
-  export let onClearFilters: () => void;
+  export let search = '';
+  export let apps: string[] = [];
+  export let appFilter: string | null = null;
+  export let onSearchChange: (value: string) => void = () => {};
+  export let onAppFilterChange: (app: string | null) => void = () => {};
+  export let onClearFilters: () => void = () => {};
   export let onRetry: () => void;
   export let onContinueCancelled: () => void;
   export let onDismissCancelled: () => void;
