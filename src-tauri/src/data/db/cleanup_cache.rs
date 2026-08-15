@@ -101,24 +101,47 @@ pub fn cleanup_cache_insert_new(
     Ok(())
 }
 
+/// Applies a cache hit's touch, but only if the row still matches what the
+/// caller read (`expected_created_at` / `expected_hit_count`). The rejection
+/// monitor deletes a cache key when the user deletes that dictation's output;
+/// a hit/touch and a delete run on different threads with no shared
+/// transaction, so a stale touch could otherwise land AFTER a rejection delete
+/// and a cache-miss re-insert of the same key, overwriting the freshly
+/// regenerated row's `hit_count` / `expires_at` with values derived from the
+/// rejected entry. Matching on the row's identity makes a stale touch a no-op
+/// instead of a data-clobbering update.
 pub fn cleanup_cache_touch_hit(
     db: &Db,
     key: &str,
+    expected_created_at: &str,
+    expected_hit_count: i64,
     new_hit_count: i64,
     last_hit_at: &str,
     expires_at: &str,
 ) -> Result<()> {
     let conn = lock_conn(db)?;
-    conn.execute(
+    let changed = conn.execute(
         "UPDATE cleanup_cache
-         SET hit_count = ?2,
-             last_hit_at = ?3,
-             expires_at = ?4,
-             last_hit_at_epoch = CAST(strftime('%s', ?3 || 'Z') AS INTEGER),
-             expires_at_epoch = CAST(strftime('%s', ?4 || 'Z') AS INTEGER)
-         WHERE key = ?1",
-        params![key, new_hit_count, last_hit_at, expires_at],
+         SET hit_count = ?3,
+             last_hit_at = ?4,
+             expires_at = ?5,
+             last_hit_at_epoch = CAST(strftime('%s', ?4 || 'Z') AS INTEGER),
+             expires_at_epoch = CAST(strftime('%s', ?5 || 'Z') AS INTEGER)
+         WHERE key = ?1
+           AND created_at = ?2
+           AND hit_count = ?6",
+        params![
+            key,
+            expected_created_at,
+            new_hit_count,
+            last_hit_at,
+            expires_at,
+            expected_hit_count
+        ],
     )?;
+    if changed == 0 {
+        log::warn!("cleanup cache touch skipped: row for key changed since read (stale touch)");
+    }
     Ok(())
 }
 
