@@ -117,7 +117,8 @@
   // button while the panel swaps underneath them. Settings is a page, so Tab
   // still reaches the rail — this is context, not a trap.
   $effect(() => {
-    if (!appStore.settingsOpen || !settingsPanelEl) return;
+    const currentSection = section;
+    if (!appStore.settingsOpen || !settingsPanelEl || !currentSection) return;
     const panel = settingsPanelEl;
     requestAnimationFrame(() => {
       if (!panel.isConnected) return;
@@ -126,7 +127,14 @@
       const active = document.activeElement;
       if (active instanceof HTMLElement && panel.contains(active)) return;
       const heading = panel.querySelector<HTMLElement>('.settings-h, .settings-subhead, h2');
-      const target = heading ?? firstFocusableInShell();
+      const target = heading ?? panel.querySelector<HTMLElement>([
+        'button:not([disabled])',
+        'input:not([disabled])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        'a[href]',
+        '[tabindex]:not([tabindex="-1"])',
+      ].join(','));
       if (heading && !heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
       if (target instanceof HTMLElement && panel.contains(target)) {
         target.focus({ preventScroll: true });

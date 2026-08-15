@@ -224,8 +224,8 @@
     const wasActive = hoveredId !== null;
     const nowActive = id !== null;
     if (wasActive !== nowActive) {
-      dimming = nowActive;
       dimFromAlpha = currentDimAlpha();
+      dimming = nowActive;
       dimStart = performance.now();
     }
     const now = performance.now();

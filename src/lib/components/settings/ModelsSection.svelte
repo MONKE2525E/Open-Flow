@@ -26,6 +26,7 @@
   } from '../../localLlmStore.svelte';
   import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import Toggle from '../Toggle.svelte';
+  import Dropdown from '../Dropdown.svelte';
   import { appStore, cleanupPromptOverridesStore } from '../../stores.svelte';
   import {
     saveSetting,
@@ -615,6 +616,7 @@
     const preCleanupDefault = cleanupDefaultModel;
     const preTranscriptionFallbackCount = transcriptionFallbackModels.length;
     const preCleanupFallbackCount = cleanupFallbackModels.length;
+    const preCleanupFallbackModels = [...cleanupFallbackModels];
     const needsMigration =
       !all.transcription_default_model
       || !splitModelId(all.transcription_default_model)
@@ -629,6 +631,7 @@
       || cleanupDefaultModel !== preCleanupDefault
       || transcriptionFallbackModels.length !== preTranscriptionFallbackCount
       || cleanupFallbackModels.length !== preCleanupFallbackCount
+      || JSON.stringify(cleanupFallbackModels) !== JSON.stringify(preCleanupFallbackModels)
       || cleanupModelMapChanged
       || cleanupPromptOverridesChanged;
 
@@ -798,14 +801,6 @@
     }
   }
 
-  function handleWindowClick(event: MouseEvent) {
-    const target = event.target as HTMLElement;
-    if ((localModelMemoryDropdownOpen || transcriptionModeDropdownOpen) && !target.closest('.models-dropdown')) {
-      localModelMemoryDropdownOpen = false;
-      transcriptionModeDropdownOpen = false;
-    }
-  }
-
   async function scrollToAnchor(anchorId: string) {
     await tick();
     requestAnimationFrame(() => {
@@ -848,8 +843,6 @@
 
   migrateAndLoad().catch((err) => console.error('load models failed', err));
 </script>
-
-<svelte:window onclick={handleWindowClick} />
 
 <h2 class="settings-h">Models</h2>
 
@@ -964,65 +957,58 @@
     <div class="label">Transcription strategy</div>
     <div class="desc">Use one model, or compare two working models from the existing transcription fallback chain before cleanup.</div>
   </div>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="ui-dropdown models-dropdown"
-    onkeydown={(event) => {
-      if (event.key === 'Escape' && transcriptionModeDropdownOpen) {
-        transcriptionModeDropdownOpen = false;
-        event.stopPropagation();
-      }
-    }}
-  >
-    <button
-      class="btn-ghost ui-dropdown-trigger models-dropdown-btn"
-      type="button"
-      onclick={() => (transcriptionModeDropdownOpen = !transcriptionModeDropdownOpen)}
-      aria-haspopup="listbox"
-      aria-expanded={transcriptionModeDropdownOpen}
-      aria-controls="transcription-mode-menu"
-      aria-label="Transcription strategy"
-    >
-      <span>{dualTranscriptionEnabled ? 'Dual model' : 'Single model'}</span>
-      <svg class:open={transcriptionModeDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="m6 9 6 6 6-6"/>
-      </svg>
-    </button>
-    {#if transcriptionModeDropdownOpen}
-      <div
-        id="transcription-mode-menu"
-        class="ui-dropdown-menu models-dropdown-menu scroll-styled scroll-thumb-elev"
-        role="listbox"
-        tabindex="-1"
+  <Dropdown bind:open={transcriptionModeDropdownOpen} closeSelector=".models-dropdown">
+    <div class="ui-dropdown models-dropdown">
+      <button
+        class="btn-ghost ui-dropdown-trigger models-dropdown-btn"
+        type="button"
+        onclick={() => (transcriptionModeDropdownOpen = !transcriptionModeDropdownOpen)}
+        aria-haspopup="listbox"
+        aria-expanded={transcriptionModeDropdownOpen}
+        aria-controls="transcription-mode-menu"
         aria-label="Transcription strategy"
-        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
-        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
       >
-        <button
-          class="ui-dropdown-option models-dropdown-item"
-          class:is-active={!dualTranscriptionEnabled}
-          type="button"
-          onclick={() => handleDualTranscription(false)}
-          role="option"
-          aria-selected={!dualTranscriptionEnabled}
+        <span>{dualTranscriptionEnabled ? 'Dual model' : 'Single model'}</span>
+        <svg class:open={transcriptionModeDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m6 9 6 6 6-6"/>
+        </svg>
+      </button>
+      {#if transcriptionModeDropdownOpen}
+        <div
+          id="transcription-mode-menu"
+          class="ui-dropdown-menu models-dropdown-menu scroll-styled scroll-thumb-elev"
+          role="listbox"
+          tabindex="-1"
+          aria-label="Transcription strategy"
+          in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+          out:fade={{ duration: motionMs(MOTION_MS.fast) }}
         >
-          <span>Single model</span>
-          <small>Fastest, uses the primary model and fallbacks only on failure.</small>
-        </button>
-        <button
-          class="ui-dropdown-option models-dropdown-item"
-          class:is-active={dualTranscriptionEnabled}
-          type="button"
-          onclick={() => handleDualTranscription(true)}
-          role="option"
-          aria-selected={dualTranscriptionEnabled}
-        >
-          <span>Dual model</span>
-          <small>Compares two successful fallback-chain models before cleanup.</small>
-        </button>
-      </div>
-    {/if}
-  </div>
+          <button
+            class="ui-dropdown-option models-dropdown-item"
+            class:is-active={!dualTranscriptionEnabled}
+            type="button"
+            onclick={() => handleDualTranscription(false)}
+            role="option"
+            aria-selected={!dualTranscriptionEnabled}
+          >
+            <span>Single model</span>
+            <small>Fastest, uses the primary model and fallbacks only on failure.</small>
+          </button>
+          <button
+            class="ui-dropdown-option models-dropdown-item"
+            class:is-active={dualTranscriptionEnabled}
+            type="button"
+            onclick={() => handleDualTranscription(true)}
+            role="option"
+            aria-selected={dualTranscriptionEnabled}
+          >
+            <span>Dual model</span>
+            <small>Compares two successful fallback-chain models before cleanup.</small>
+          </button>
+        </div>
+      {/if}
+    </div>
+  </Dropdown>
 </div>
 </div>
 {/if}
@@ -1032,58 +1018,49 @@
     <div class="label">Memory policy</div>
     <div class="desc">Controls when idle local models are unloaded.</div>
   </div>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="ui-dropdown models-dropdown"
-    onkeydown={(event) => {
-      if (event.key === 'Escape' && localModelMemoryDropdownOpen) {
-        localModelMemoryDropdownOpen = false;
-        event.stopPropagation();
-      }
-    }}
-  >
-    <button
-      class="btn-ghost ui-dropdown-trigger models-dropdown-btn"
-      type="button"
-      use:animateWidth={{ text: localMemoryPolicyLabel(localModelMemoryPolicy), max: 220 }}
-      onclick={() => (localModelMemoryDropdownOpen = !localModelMemoryDropdownOpen)}
-      aria-haspopup="listbox"
-      aria-expanded={localModelMemoryDropdownOpen}
-      aria-controls={LOCAL_MEMORY_POLICY_MENU_ID}
-      aria-label="Local model memory policy"
-    >
-      <span>{localMemoryPolicyLabel(localModelMemoryPolicy)}</span>
-      <svg class:open={localModelMemoryDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="m6 9 6 6 6-6"/>
-      </svg>
-    </button>
-    {#if localModelMemoryDropdownOpen}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div
-        id={LOCAL_MEMORY_POLICY_MENU_ID}
-        class="ui-dropdown-menu models-dropdown-menu scroll-styled scroll-thumb-elev"
-        role="listbox"
-        tabindex="-1"
-        aria-label="Local model memory policy options"
-        onclick={(event) => event.stopPropagation()}
-        in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
-        out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+  <Dropdown bind:open={localModelMemoryDropdownOpen} closeSelector=".models-dropdown">
+    <div class="ui-dropdown models-dropdown">
+      <button
+        class="btn-ghost ui-dropdown-trigger models-dropdown-btn"
+        type="button"
+        use:animateWidth={{ text: localMemoryPolicyLabel(localModelMemoryPolicy), max: 220 }}
+        onclick={() => (localModelMemoryDropdownOpen = !localModelMemoryDropdownOpen)}
+        aria-haspopup="listbox"
+        aria-expanded={localModelMemoryDropdownOpen}
+        aria-controls={LOCAL_MEMORY_POLICY_MENU_ID}
+        aria-label="Local model memory policy"
       >
-        {#each localMemoryPolicyOptions as option}
-          <button
-            class="ui-dropdown-option models-dropdown-item"
-            class:is-active={localModelMemoryPolicy === option.value}
-            type="button"
-            onclick={() => updateLocalMemoryPolicy(option.value)}
-            role="option"
-            aria-selected={localModelMemoryPolicy === option.value}
-          >
-            {option.label}
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
+        <span>{localMemoryPolicyLabel(localModelMemoryPolicy)}</span>
+        <svg class:open={localModelMemoryDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m6 9 6 6 6-6"/>
+        </svg>
+      </button>
+      {#if localModelMemoryDropdownOpen}
+        <div
+          id={LOCAL_MEMORY_POLICY_MENU_ID}
+          class="ui-dropdown-menu models-dropdown-menu scroll-styled scroll-thumb-elev"
+          role="listbox"
+          tabindex="-1"
+          aria-label="Local model memory policy options"
+          in:fly={{ y: -motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+          out:fade={{ duration: motionMs(MOTION_MS.fast) }}
+        >
+          {#each localMemoryPolicyOptions as option}
+            <button
+              class="ui-dropdown-option models-dropdown-item"
+              class:is-active={localModelMemoryPolicy === option.value}
+              type="button"
+              onclick={() => updateLocalMemoryPolicy(option.value)}
+              role="option"
+              aria-selected={localModelMemoryPolicy === option.value}
+            >
+              {option.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  </Dropdown>
 </div>
 
 <div class="setting-row">
@@ -1098,7 +1075,7 @@
   .local-models-unsupported {
     padding: 12px 14px;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--r-md);
     background: color-mix(in srgb, var(--paper) 55%, var(--bg-elev));
   }
 

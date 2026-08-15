@@ -39,8 +39,7 @@
 
 :where(button).btn-primary,
 :where(button).btn-ghost,
-:where(button).btn-danger,
-:where(button).btn-accent {
+:where(button).btn-danger {
   align-items: center;
   border-radius: var(--r-sm);
   cursor: pointer;
@@ -97,6 +96,22 @@
   color: var(--on-accent);
 }
 
+/* Accent-filled action for settings and status surfaces that need the accent
+   to carry the action (prompt save, update now, permission repair). It is the
+   accent equivalent of btn-primary — not a replacement for the setup wizard's
+   intentional accent-primary re-skin. */
+:where(button).btn-accent {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--on-accent);
+  font-weight: 500;
+}
+
+:where(button).btn-accent:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 86%, var(--ink));
+  border-color: color-mix(in srgb, var(--accent) 86%, var(--ink));
+}
+
 :where(button).btn-compact {
   border-radius: 6px;
   font-size: 12px;
@@ -106,16 +121,19 @@
 
 :where(button).btn-primary:disabled,
 :where(button).btn-ghost:disabled,
-:where(button).btn-danger:disabled {
+:where(button).btn-danger:disabled,
+:where(button).btn-accent:disabled {
   cursor: default;
-  opacity: 0.45;
+  opacity: var(--ui-disabled-opacity);
 }
 
 :where(button).btn-primary:focus-visible,
 :where(button).btn-ghost:focus-visible,
 :where(button).btn-danger:focus-visible,
+:where(button).btn-accent:focus-visible,
 .ui-dropdown-trigger:focus-visible,
-.ui-dropdown-option:focus-visible {
+.ui-dropdown-option:focus-visible,
+.icon-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   box-shadow: var(--ui-focus-ring);
@@ -298,9 +316,12 @@
   color: var(--ink-faint);
 }
 
+/* Text inputs intentionally get no glow/ring on focus — a box-shadow here
+   reads as an alert/highlight on every click into a plain search or text
+   field. A quiet border darken is enough of a cue for a field that's
+   already visually a text box. */
 :where(input, textarea).ui-input:focus-visible {
-  border-color: var(--accent);
-  box-shadow: var(--ui-focus-ring);
+  border-color: var(--line-strong);
   outline: none;
 }
 

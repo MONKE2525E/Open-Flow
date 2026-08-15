@@ -177,16 +177,22 @@
   <div class="add-mapping-row">
     <div class="app-picker-wrap">
       <input
+        bind:this={appSearchInput}
         class="app-search-input"
         placeholder={areAppsLoaded ? 'Search apps...' : 'Loading apps...'}
         bind:value={appSearch}
         onfocus={() => { appPickerOpen = true; }}
         oninput={() => { addExe = ''; addName = ''; appPickerOpen = true; }}
+        role="combobox"
+        aria-label="Search installed apps"
         aria-expanded={appPickerOpen}
         aria-controls={APP_PICKER_MENU_ID}
         onkeydown={(event) => {
           if (event.key === 'Enter') {
             submit();
+          } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            void openAppPicker(event.key === 'ArrowUp');
           } else if (event.key === 'Escape' && appPickerOpen) {
             appPickerOpen = false;
             event.stopPropagation();
@@ -208,7 +214,7 @@
             <button
               type="button"
               class="app-picker-item"
-              onclick={(event) => pickApp(app, event)}
+              onclick={() => pickApp(app)}
               onkeydown={(event) =>
                 handleListboxOptionKeydown(event, APP_PICKER_MENU_ID, () => {
                   appPickerOpen = false;
@@ -488,14 +494,6 @@
     margin: 0;
     overflow: hidden;
     pointer-events: none;
-  }
-
-  .profile-drop-btn,
-  .cleanup-drop-btn {
-    --ui-dropdown-trigger-bg: transparent;
-    border-color: var(--line-strong);
-    border-radius: 6px;
-    font-size: 12px;
   }
 
   .profile-drop-btn span,
