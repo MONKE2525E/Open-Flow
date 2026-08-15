@@ -628,10 +628,15 @@
       || transcriptionDefaultModel !== preTranscriptionDefault
       || cleanupDefaultModel !== preCleanupDefault
       || transcriptionFallbackModels.length !== preTranscriptionFallbackCount
-      || cleanupFallbackModels.length !== preCleanupFallbackCount;
+      || cleanupFallbackModels.length !== preCleanupFallbackCount
+      || cleanupModelMapChanged
+      || cleanupPromptOverridesChanged;
 
     if (changed) {
       await persistAll();
+      if (cleanupPromptOverridesChanged) {
+        await saveSetting('cleanup_prompt_overrides', cleanupPromptOverridesStore.overrides);
+      }
     }
 
     await Promise.all([
