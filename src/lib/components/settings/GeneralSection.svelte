@@ -51,6 +51,11 @@
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
   let hotkeyState = $state<'idle' | 'armed' | 'first' | 'saving' | 'success' | 'error'>('idle');
+  const defaultRepairHotkey = ['ControlLeft', 'AltLeft', 'KeyZ'];
+  let repairHotkey = $state<string[]>(defaultRepairHotkey);
+  let recordingRepairHotkey = $state(false);
+  let capturedRepairKeys = $state<string[]>([]);
+  let repairHotkeyState = $state<'idle' | 'armed' | 'first' | 'saving' | 'success' | 'error'>('idle');
   const HOTKEY_SUCCESS_MS = 700;
   const HOTKEY_ERROR_MS   = 900;
   const LANGUAGE_MENU_ID = 'spoken-language-menu';
@@ -97,10 +102,9 @@
     return formatKeyLabel(code);
   }
 
-  // A macOS hotkey can be a single key (e.g. F5) — its second slot is empty.
+  // A macOS hotkey can be a single key (e.g. F5) — later slots are empty.
   function formatHotkeyDisplay(hk: string[]): string {
-    const first = formatHotkeyBadgeLabel(hk[0] ?? '');
-    return hk[1] ? `${first} + ${formatHotkeyBadgeLabel(hk[1])}` : first;
+    return hk.filter(Boolean).map(formatHotkeyBadgeLabel).join(' + ');
   }
 
   let buttonText = $derived(
@@ -111,6 +115,22 @@
           ? isMac ? 'Press a key (e.g. F5)…' : 'Press Alt/Ctrl/Shift/Win...'
           : 'Press 2nd key...'
       : formatHotkeyDisplay(hotkey)
+  );
+
+  // Two modifiers plus one regular key (default Ctrl+Alt+Z), any press order
+  // — a modifier-only combo isn't allowed (see core::hotkey::win's
+  // REPAIR_MOD1 doc comment for the bug that came from allowing it), but
+  // there's no need to walk the user through which slot is which: almost
+  // nobody changes this from the default, so one plain "still recording"
+  // message beats a running commentary on each keypress.
+  let repairButtonText = $derived(
+    recordingRepairHotkey
+      ? capturedRepairKeys[0] === '__bad__'
+        ? 'Needs 2 modifiers + 1 key'
+        : 'Press your combo...'
+      : repairHotkey[0]
+        ? formatHotkeyDisplay(repairHotkey)
+        : 'Not set'
   );
 
   $effect.pre(() => {
@@ -147,6 +167,7 @@
     const results = await Promise.allSettled([
       invoke<boolean | null>('get_setting', { key: 'autostart_enabled' }),
       invoke<string[] | null>('get_setting', { key: 'hotkey' }),
+      invoke<string[] | null>('get_setting', { key: 'repair_hotkey' }),
       invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
       invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
@@ -161,20 +182,27 @@
       results[i].status === 'fulfilled' ? (results[i] as PromiseFulfilledResult<T>).value ?? fallback : fallback;
 
     autostart = val<boolean | null>(0, null) ?? false;
-    appStore.cleanupEnabled = val<boolean | null>(4, null) ?? true;
-    contextualCaps = val<boolean | null>(5, null) ?? true;
-    autoSpacing = val<boolean | null>(6, null) ?? true;
-    capsLockUppercase = val<boolean | null>(7, null) ?? false;
+    appStore.cleanupEnabled = val<boolean | null>(5, null) ?? true;
+    contextualCaps = val<boolean | null>(6, null) ?? true;
+    autoSpacing = val<boolean | null>(7, null) ?? true;
+    capsLockUppercase = val<boolean | null>(8, null) ?? false;
 
     const hk = val<string[] | null>(1, null);
     if (hk && hk.length === 2) hotkey = hk;
 
-    const appearance = val<AppearanceMode | null>(2, null);
+    // Absent from settings entirely (never touched) keeps the built-in
+    // Ctrl+Alt+Z default (repairHotkey's own initial state) since that's
+    // genuinely what's active. An explicit ["","",""] means the user cleared
+    // it, which really does disable the feature — show that as "Not set".
+    const repairHk = val<string[] | null>(2, null);
+    if (repairHk && repairHk.length === 3) repairHotkey = repairHk;
+
+    const appearance = val<AppearanceMode | null>(3, null);
     if (appearance === 'system' || appearance === 'light' || appearance === 'dark') {
       appStore.appearanceMode = appearance;
     }
 
-    const language = val<TranscriptionLanguageCode | null>(3, null);
+    const language = val<TranscriptionLanguageCode | null>(4, null);
     if (!languageTouched && language && transcriptionLanguages.some((option) => option.code === language)) {
       selectedLanguage = language;
     }
@@ -182,6 +210,7 @@
 
     microphones = val<string[]>(8, []);
     selectedMic = val<string | null>(9, null) ?? '';
+    appStore.legacyFeaturesEnabled = val<boolean | null>(11, null) ?? false;
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
@@ -430,9 +459,111 @@
     }
   }
 
+  function startRecordingRepairHotkey(e: MouseEvent | KeyboardEvent) {
+    e.stopPropagation();
+    if (recordingRepairHotkey) return;
+    recordingRepairHotkey = true;
+    repairHotkeyState = 'armed';
+    capturedRepairKeys = [];
+    window.addEventListener('keydown', handleRepairHotkeyKeydown, { capture: true });
+    window.addEventListener('keyup', handleRepairHotkeyKeyup, { capture: true });
+    window.addEventListener('mousedown', cancelRecordingRepairHotkey, { capture: true });
+  }
+
+  function removeRepairHotkeyCaptureListeners() {
+    window.removeEventListener('keydown', handleRepairHotkeyKeydown, { capture: true });
+    window.removeEventListener('keyup', handleRepairHotkeyKeyup, { capture: true });
+    window.removeEventListener('mousedown', cancelRecordingRepairHotkey, { capture: true });
+  }
+
+  function cancelRecordingRepairHotkey(e?: MouseEvent | KeyboardEvent) {
+    if (e && (e.target as HTMLElement).closest('.repair-keybind-btn')) return;
+    if (recordingRepairHotkey) {
+      removeRepairHotkeyCaptureListeners();
+      recordingRepairHotkey = false;
+      repairHotkeyState = 'idle';
+      capturedRepairKeys = [];
+    }
+  }
+
+  function handleRepairHotkeyKeydown(e: KeyboardEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.repeat) return;
+    if (e.code === 'Escape') { cancelRecordingRepairHotkey(); return; }
+    if (capturedRepairKeys.includes(e.code)) return;
+    if (capturedRepairKeys.length >= 3) return;
+
+    capturedRepairKeys = [...capturedRepairKeys, e.code];
+    if (capturedRepairKeys.length < 3) {
+      repairHotkeyState = 'first';
+      return;
+    }
+    // Any press order is fine — just needs to land on exactly 2 modifiers
+    // and 1 regular key once all 3 are in, then reorder into
+    // [modifier, modifier, trigger] for save_repair_hotkey.
+    const mods = capturedRepairKeys.filter((k) => MODIFIER_CODES.has(k));
+    const regular = capturedRepairKeys.filter((k) => !MODIFIER_CODES.has(k));
+    if (mods.length !== 2 || regular.length !== 1) {
+      capturedRepairKeys = ['__bad__'];
+      setTimeout(() => { capturedRepairKeys = []; }, 800);
+      return;
+    }
+    capturedRepairKeys = [...mods, ...regular];
+    repairHotkeyState = 'saving';
+    finishRecordingRepairHotkey();
+  }
+
+  function handleRepairHotkeyKeyup(e: KeyboardEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  async function finishRecordingRepairHotkey() {
+    removeRepairHotkeyCaptureListeners();
+    recordingRepairHotkey = false;
+    if (capturedRepairKeys.length === 3) {
+      try {
+        let available = true;
+        try {
+          available = await invoke<boolean>('check_repair_hotkey', { key1: capturedRepairKeys[0], key2: capturedRepairKeys[1], key3: capturedRepairKeys[2] });
+        } catch (e) {
+          console.warn('check_repair_hotkey failed (likely running in browser dev mode)', e);
+        }
+        if (!available) {
+          repairHotkeyState = 'error';
+          await emit('verenu:error', 'Hotkey may already be in use by another application');
+          setTimeout(() => { repairHotkeyState = 'idle'; }, HOTKEY_ERROR_MS);
+          return;
+        }
+        await invoke('save_repair_hotkey', { key1: capturedRepairKeys[0], key2: capturedRepairKeys[1], key3: capturedRepairKeys[2] });
+        repairHotkey = capturedRepairKeys;
+        repairHotkeyState = 'success';
+        setTimeout(() => { repairHotkeyState = 'idle'; }, HOTKEY_SUCCESS_MS);
+      } catch (e) {
+        console.error('Failed to save repair hotkey', e);
+        repairHotkeyState = 'error';
+        await emit('verenu:error', 'Failed to save hotkey - key may not be recognized');
+        setTimeout(() => { repairHotkeyState = 'idle'; }, HOTKEY_ERROR_MS);
+      }
+    }
+  }
+
+  async function clearRepairHotkey(e: MouseEvent) {
+    e.stopPropagation();
+    try {
+      await invoke('save_repair_hotkey', { key1: '', key2: '', key3: '' });
+      repairHotkey = ['', '', ''];
+    } catch (e) {
+      console.error('Failed to clear repair hotkey', e);
+    }
+  }
+
   onDestroy(() => {
     removeHotkeyCaptureListeners();
     recordingHotkey = false;
+    removeRepairHotkeyCaptureListeners();
+    recordingRepairHotkey = false;
   });
 
   loadSettings();
@@ -469,6 +600,24 @@
 <div class="setting-row">
   <div><div class="label">Copy last dictation</div><div class="desc">Always available — re-copies your last dictation to the clipboard, in case a paste didn't land</div></div>
   <span class="badge key-badge">{isMac ? '⌥⌘C' : 'Ctrl+Alt+C'}</span>
+</div>
+<div class="setting-row">
+  <div><div class="label">Report a dictation issue</div><div class="desc">Opens the complaint box right after a dictation, while the option is still showing</div></div>
+  <div style="display:flex; align-items:center; gap:8px;">
+    <button class="badge" onclick={clearRepairHotkey} type="button" style="cursor:pointer;">Clear</button>
+    <button
+      class="badge key-badge repair-keybind-btn"
+      onclick={startRecordingRepairHotkey}
+      class:recording={recordingRepairHotkey}
+      class:armed={repairHotkeyState === 'armed'}
+      class:first={repairHotkeyState === 'first'}
+      class:saving={repairHotkeyState === 'saving'}
+      class:success={repairHotkeyState === 'success'}
+      class:error={repairHotkeyState === 'error'}
+    >
+      {repairButtonText}
+    </button>
+  </div>
 </div>
 <div class="setting-row">
   <div class="lang-setting-text"><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect{languageScopeNote}</div></div>

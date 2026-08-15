@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { getProfileLabel } from './lib/appMappings';
+  import { formatKeyLabel } from './lib/platform';
 
-  type PillState = 'idle' | 'recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'paste_failed' | 'copied';
+  type PillState = 'idle' | 'recording' | 'repair_recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'paste_failed' | 'copied' | 'clipboard_warning' | 'feedback_prompt' | 'repair_input' | 'repair_processing' | 'repair_proposal' | 'repair_applying' | 'repair_done' | 'repair_error';
+  type RepairProposal = { id: number; summary: string; scope: string };
   let state: PillState = 'idle';
   let errorMsg = '';
   let errOpen = false;
@@ -28,6 +30,13 @@
   let prevState: PillState = 'idle';
   let dying = false;
   let dyingTimer: ReturnType<typeof setTimeout> | null = null;
+  let repairComplaint = '';
+  let repairError = '';
+  let repairProposal: RepairProposal | null = null;
+  let repairDoneTimer: ReturnType<typeof setTimeout> | null = null;
+  let repairFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+  let repairIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  let repairHotkeyLabel: string | null = null;
 
   // Resolved tone profile for the current dictation (label form, e.g. "Casual"),
   // emitted by the backend from the pipeline's own resolution.
@@ -468,6 +477,9 @@
       dyingTimer = null;
       prevState = state;
       state = 'idle';
+      repairComplaint = '';
+      repairError = '';
+      repairProposal = null;
       clearStage();
       profileLabel = null;
       smoothed = 0;
@@ -615,6 +627,22 @@
     // refreshDpr can re-arm it as the pill moves between displays).
     armDprWatch();
 
+    import('@tauri-apps/api/core').then(({ invoke }) =>
+      invoke<string[] | null>('get_setting', { key: 'repair_hotkey' })
+    ).then((hk) => {
+      if (!mounted) return;
+      // Nothing saved, or a malformed/stale value (e.g. a 2-slot array from
+      // before the hotkey required 2 modifiers + 1 trigger key) means the
+      // built-in Ctrl+Alt+Z default is active — only a genuine 3-slot save
+      // overrides it, and only an explicit ["","",""] within that shape
+      // means the user cleared it (disabled).
+      const keys = hk && hk.length === 3 ? hk : ['ControlLeft', 'AltLeft', 'KeyZ'];
+      // '' (distinct from the not-yet-loaded null default) means explicitly
+      // cleared/disabled — checked in the pill-state handler below to skip
+      // the feedback toast entirely rather than nagging about no keybind.
+      repairHotkeyLabel = keys[0] ? keys.filter(Boolean).map(formatKeyLabel).join(' + ') : '';
+    }).catch(() => {});
+
     // Track the rendered content size so the native window stays snug around
     // it. Fires on every width transition/animation frame of the pill, on
     // label/stage text appearing, and on the initial idle mount (which
@@ -636,11 +664,12 @@
         // they clear too (idle is handled by goIdle).
         if (
           incoming !== 'processing' &&
+          incoming !== 'repair_processing' &&
           incoming !== 'loading_local_model'
         ) {
           clearStage();
         }
-        if (incoming === 'recording') {
+        if (incoming === 'recording' || incoming === 'repair_recording') {
           profileLabel = null;
         } else if (
           incoming === 'error' ||
@@ -658,6 +687,44 @@
           return;
         }
 
+        // The repair-open hotkey being cleared means the user doesn't want
+        // this feature at all — behave as if it doesn't exist rather than
+        // nagging them to go bind one.
+        if (incoming === 'feedback_prompt' && repairHotkeyLabel === '') {
+          stopRaf();
+          goIdle();
+          return;
+        }
+
+        if (incoming === 'feedback_prompt') {
+          repairComplaint = '';
+          repairError = '';
+          repairProposal = null;
+          if (repairFeedbackTimer) clearTimeout(repairFeedbackTimer);
+          repairFeedbackTimer = setTimeout(() => {
+            repairFeedbackTimer = null;
+            if (state === 'feedback_prompt') goIdle();
+          }, 3000);
+        } else if (repairFeedbackTimer) {
+          clearTimeout(repairFeedbackTimer);
+          repairFeedbackTimer = null;
+        }
+
+        // Repair states that wait on the user (typing, dictating, or
+        // reviewing a proposal/error) with no timer of their own would
+        // otherwise sit open forever if the user walks away mid-flow.
+        if (repairIdleTimer) { clearTimeout(repairIdleTimer); repairIdleTimer = null; }
+        if (
+          incoming === 'repair_input' ||
+          incoming === 'repair_proposal' ||
+          incoming === 'repair_error'
+        ) {
+          repairIdleTimer = setTimeout(() => {
+            repairIdleTimer = null;
+            void cancelRepair();
+          }, 120_000);
+        }
+
         if (dyingTimer !== null) { clearTimeout(dyingTimer); dyingTimer = null; dying = false; }
 
         if (incoming === 'handsfree') {
@@ -666,13 +733,42 @@
         }
         prevState = state;
         state = incoming;
-        if (state === 'recording' || state === 'handsfree') {
+        if (state === 'repair_proposal' || state === 'repair_error') {
+          // The window now has real OS keyboard focus (see set_pill_focusable
+          // in pill.rs), but nothing has DOM focus yet — without this, Escape
+          // never reaches handleRepairKeydown because keydown fires on
+          // document.body, which isn't an ancestor of the dialog.
+          tick().then(() => {
+            if (state === 'repair_proposal' || state === 'repair_error') {
+              document.querySelector<HTMLElement>('.repair-proposal[role="dialog"]')?.focus();
+            }
+          });
+        }
+        if (state === 'repair_input') {
+          // Entering repair_input is now backend-driven only (the dedicated
+          // repair-open hotkey, see app_hotkey.rs) — there is no button click
+          // handler left to do this locally, so the generic state-change path
+          // owns focusing the textarea. Only clear stale fields on a genuinely
+          // fresh open (from the toast) — a retry or a just-finished dictation
+          // of the complaint both also land here with content that must survive.
+          if (prevState === 'feedback_prompt') {
+            repairComplaint = '';
+            repairError = '';
+            repairProposal = null;
+          }
+          tick().then(() => {
+            if (state === 'repair_input') {
+              document.querySelector<HTMLTextAreaElement>('.repair-input')?.focus();
+            }
+          });
+        }
+        if (state === 'recording' || state === 'repair_recording' || state === 'handsfree') {
           refreshDpr(); // align snapping to the current monitor before first paint
           startRaf();
         } else {
           stopRaf();
         }
-        if (state !== 'recording' && state !== 'handsfree') smoothed = 0;
+        if (state !== 'recording' && state !== 'repair_recording' && state !== 'handsfree') smoothed = 0;
         if (state === 'error') {
           openError();
           if (errorTimer) clearTimeout(errorTimer);
@@ -680,7 +776,7 @@
             errorTimer = null;
             if (state === 'error') goIdle();
           }, 10000);
-        } else if (state !== 'copied') {
+        } else if (state !== 'copied' && state !== 'clipboard_warning') {
           // Don't clear errorMsg on 'copied' — show_copied_pill carries its
           // confirmation text through the pill-error event, which fires just
           // before this pill-state one.
@@ -767,11 +863,11 @@
           showCopyBtn = false;
         }
 
-        if (state === 'copied') {
+        if (state === 'copied' || state === 'clipboard_warning') {
           if (copiedPillTimer) clearTimeout(copiedPillTimer);
           copiedPillTimer = setTimeout(() => {
             copiedPillTimer = null;
-            if (state === 'copied') goIdle();
+            if (state === 'copied' || state === 'clipboard_warning') goIdle();
           }, 5000);
         } else if (copiedPillTimer) {
           clearTimeout(copiedPillTimer);
@@ -817,6 +913,39 @@
       });
       if (!mounted) { l4(); return; }
       unlisteners.push(l4);
+
+      const l7 = await listen<RepairProposal>('repair-proposal', (ev) => {
+        repairProposal = ev.payload;
+        repairError = '';
+      });
+      if (!mounted) { l7(); return; }
+      unlisteners.push(l7);
+
+      const l8 = await listen<string>('repair-complaint-result', (ev) => {
+        // maxlength on the textarea only caps typing — a dictated complaint
+        // arrives here as a plain value assignment and bypassed it entirely.
+        repairComplaint = (ev.payload || '').slice(0, 200);
+        repairError = '';
+      });
+      if (!mounted) { l8(); return; }
+      unlisteners.push(l8);
+
+      const l9 = await listen<string>('repair-error', (ev) => {
+        repairError = ev.payload || 'Repair could not be prepared';
+        repairProposal = null;
+      });
+      if (!mounted) { l9(); return; }
+      unlisteners.push(l9);
+
+      const l10 = await listen<string>('repair-applied', () => {
+        if (repairDoneTimer) clearTimeout(repairDoneTimer);
+        repairDoneTimer = setTimeout(() => {
+          repairDoneTimer = null;
+          if (state === 'repair_done') goIdle();
+        }, 1200);
+      });
+      if (!mounted) { l10(); return; }
+      unlisteners.push(l10);
     })();
 
     return () => {
@@ -839,6 +968,9 @@
       if (pasteFailedDismissTimer) clearTimeout(pasteFailedDismissTimer);
       if (copiedTimer) clearTimeout(copiedTimer);
       if (copiedPillTimer) clearTimeout(copiedPillTimer);
+      if (repairDoneTimer) clearTimeout(repairDoneTimer);
+      if (repairFeedbackTimer) clearTimeout(repairFeedbackTimer);
+      if (repairIdleTimer) clearTimeout(repairIdleTimer);
       unlisteners.forEach(u => u());
     };
   });
@@ -922,16 +1054,97 @@
     if (copiedPillTimer) { clearTimeout(copiedPillTimer); copiedPillTimer = null; }
     goIdle();
   }
+
+  async function repairPositive() {
+    // Same ordering fix as cancelRepair(): animate first, invoke after —
+    // repair_positive_feedback also hides the native window synchronously.
+    goIdle();
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('repair_positive_feedback').catch(() => {});
+  }
+
+  async function analyzeRepair() {
+    if (!repairComplaint.trim()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    repairError = '';
+    state = 'repair_processing';
+    await invoke('repair_analyze', { complaint: repairComplaint }).catch(() => {});
+  }
+
+  async function stopRepairRecording() {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('stop_repair_complaint_recording').catch((e) => { repairError = String(e); });
+  }
+
+  async function cancelRepair() {
+    // Animate out locally first — awaiting the backend invoke before calling
+    // goIdle() meant repair_cancel's synchronous native hide_pill() call (see
+    // pill.rs) hid the window before the dying/pillOut CSS animation ever had
+    // a frame to play, so every dismiss (X button, click-away, Escape) just
+    // snapped away instead of animating.
+    goIdle();
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('repair_cancel').catch(() => {});
+  }
+
+  async function retryRepair() {
+    repairError = '';
+    state = 'repair_input';
+    await tick();
+    document.querySelector<HTMLTextAreaElement>('.repair-input')?.focus();
+  }
+
+  function handleRepairKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      void cancelRepair();
+    } else if (
+      event.key === 'Enter' &&
+      !event.shiftKey &&
+      !event.isComposing &&
+      state === 'repair_input'
+    ) {
+      event.preventDefault();
+      void analyzeRepair();
+    }
+  }
+
+  function handleWrapClick(event: MouseEvent) {
+    // Only fires for a click that lands directly on the transparent margin
+    // around the card (not one that bubbled up from a real control inside
+    // it), and only for repair states the user can freely walk away from —
+    // recording/processing/applying should not be cancelable by a stray
+    // click outside the capsule.
+    if (event.target !== event.currentTarget) return;
+    if (
+      state === 'feedback_prompt' ||
+      state === 'repair_input' ||
+      state === 'repair_proposal' ||
+      state === 'repair_error'
+    ) {
+      void cancelRepair();
+    }
+  }
+
+  async function applyRepair() {
+    if (!repairProposal) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    state = 'repair_applying';
+    await invoke('repair_apply', { proposalId: repairProposal.id }).catch(() => {});
+  }
 </script>
 
 <!-- --bar-w/--bar-gap live on .wrap so every pill state (incl. processing, which
      has no bars of its own) inherits the DPI-snapped values for its width calc. -->
-<div class="wrap" style="--bar-w:{barW}px; --bar-gap:{barGap}px; --stage-w:{stageW}px; --processing-steady-w:{processingSteadyW}px; --hf-expanded-w:{hfExpandedW}px">
+<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+<!-- Dismiss-on-click-outside backdrop: this is a floating overlay, not a page —
+     Escape/keyboard dismissal is already handled per-card (handleRepairKeydown). -->
+<div class="wrap" style="--bar-w:{barW}px; --bar-gap:{barGap}px; --stage-w:{stageW}px; --processing-steady-w:{processingSteadyW}px; --hf-expanded-w:{hfExpandedW}px" onclick={handleWrapClick}>
   <div class="pill-cluster"
        class:steady-width={state === 'processing'}
        class:steady-width-hf={state === 'handsfree'}
        bind:this={clusterEl}>
-    {#if profileLabel && (state === 'recording' || state === 'processing' || state === 'handsfree' || state === 'loading_local_model')}
+  {#if profileLabel && (state === 'recording' || state === 'repair_recording' || state === 'processing' || state === 'handsfree' || state === 'loading_local_model')}
       <span class="pill-profile">{profileLabel}</span>
     {/if}
 
@@ -940,6 +1153,115 @@
       {#each barHeights as h, i (i)}
         <div class="bar" style="height: {snap(h, dpr)}px"></div>
       {/each}
+    </div>
+
+  {:else if state === 'repair_recording'}
+    <!-- Recording the complaint stacks a small capsule above the still-visible
+         input card (instead of replacing it) so the user keeps context on
+         what they're re-dictating over, per the repair-flow redesign. -->
+    <div class="pill recording repair-recording" class:dying={dying}>
+      <button class="hf-btn cancel" onclick={cancelRepair} aria-label="Cancel complaint recording">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <path d="M6 6l12 12M6 18 18 6"/>
+        </svg>
+      </button>
+      <div class="bars-hf">
+        {#each barHeights as h, i (i)}
+          <div class="bar" style="height: {snap(h, dpr)}px"></div>
+        {/each}
+      </div>
+      <button class="hf-btn confirm" onclick={stopRepairRecording} aria-label="Use this complaint">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 6L9 17l-5-5"/>
+        </svg>
+      </button>
+    </div>
+    <div class="pill repair-card repair-form" class:dying={dying}>
+      <div class="repair-form-head">
+        <span class="repair-label">What went wrong?</span>
+      </div>
+      <textarea class="repair-input" rows="2" value={repairComplaint} disabled placeholder="e.g. “pull request” became “pool request”"></textarea>
+    </div>
+
+  {:else if state === 'feedback_prompt'}
+    <!-- Passive, buttonless toast — replaces the old Not-good/Good prompt.
+         Reporting an issue is now a dedicated hotkey (configured in Settings,
+         see app_hotkey.rs's RepairOpen handling) rather than a click target,
+         since the whole point is the AI does the classifying, not a canned
+         button flow. -->
+    <div class="pill repair-card feedback-card" class:dying={dying}>
+      {#if repairHotkeyLabel}
+        <span class="repair-question">Press {repairHotkeyLabel} to report an issue</span>
+      {:else}
+        <span class="repair-question">Set a hotkey in Settings to report dictation issues</span>
+      {/if}
+    </div>
+
+  {:else if state === 'repair_input' || state === 'repair_processing' || state === 'repair_applying'}
+    <div class="pill repair-card repair-form" class:dying={dying} role="dialog" tabindex="-1" onkeydown={handleRepairKeydown}>
+      <div class="repair-form-head">
+        <label for="repair-complaint" class="repair-label">What went wrong?</label>
+        {#if state !== 'repair_applying'}
+          <button class="hf-btn repair-close" onclick={cancelRepair} aria-label="Cancel">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+              <path d="M6 6l12 12M6 18 18 6"/>
+            </svg>
+          </button>
+        {/if}
+      </div>
+      <textarea id="repair-complaint" class="repair-input" rows="2" bind:value={repairComplaint} maxlength="200" disabled={state !== 'repair_input'} placeholder="e.g. “pull request” became “pool request”" spellcheck="false" autocomplete="off"></textarea>
+      {#if repairError}<span class="repair-inline-error">{repairError}</span>{/if}
+      <div class="repair-actions">
+        {#if state === 'repair_input'}
+          <button class="repair-primary" onclick={analyzeRepair} disabled={!repairComplaint.trim()}>Analyze</button>
+        {:else if state === 'repair_processing'}
+          <span class="repair-status"><span class="loading-spinner"></span>Diagnosing…</span>
+        {:else}
+          <span class="repair-status"><span class="loading-spinner"></span>Applying…</span>
+        {/if}
+      </div>
+    </div>
+
+  {:else if state === 'repair_proposal'}
+    <div class="pill repair-card repair-proposal" class:dying={dying} role="dialog" tabindex="-1" onkeydown={handleRepairKeydown}>
+      <div class="repair-form-head">
+        <span class="repair-label">Proposed repair</span>
+        <button class="hf-btn repair-close" onclick={cancelRepair} aria-label="Cancel">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+            <path d="M6 6l12 12M6 18 18 6"/>
+          </svg>
+        </button>
+      </div>
+      <strong>{repairProposal?.summary}</strong>
+      <span class="repair-scope">{repairProposal?.scope}</span>
+      {#if repairError}<span class="repair-inline-error">{repairError}</span>{/if}
+      <div class="repair-actions">
+        <button class="repair-primary" onclick={applyRepair}>Apply</button>
+      </div>
+    </div>
+
+  {:else if state === 'repair_error'}
+    <div class="pill repair-card repair-proposal" class:dying={dying} role="dialog" tabindex="-1" onkeydown={handleRepairKeydown}>
+      <div class="repair-form-head">
+        <span class="repair-label">Can't apply a fix</span>
+        <button class="hf-btn repair-close" onclick={cancelRepair} aria-label="Cancel">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+            <path d="M6 6l12 12M6 18 18 6"/>
+          </svg>
+        </button>
+      </div>
+      <span class="repair-error-text">{repairError || 'Repair could not be prepared'}</span>
+      <div class="repair-actions">
+        <button class="repair-primary" onclick={retryRepair} disabled={!repairComplaint.trim()}>Retry</button>
+      </div>
+    </div>
+
+  {:else if state === 'repair_done'}
+    <div class="pill copied" class:dying={dying}>
+      <svg class="copied-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+      <span class="copied-text">Repair applied</span>
     </div>
 
   {:else if state === 'processing'}
@@ -1061,6 +1383,17 @@
       </button>
     </div>
 
+  {:else if state === 'clipboard_warning'}
+    <div class="pill copied clipboard-warning" class:dying={dying}>
+      <svg class="copied-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M12 8v4"/>
+        <circle cx="12" cy="16" r="1" fill="currentColor" stroke="none"/>
+      </svg>
+      <span class="copied-text">{errorMsg || 'Clipboard phrase skipped'}</span>
+      <button class="hf-btn copied-dismiss" onclick={dismissCopied} aria-label="Dismiss"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 6l12 12M6 18 18 6"/></svg></button>
+    </div>
+
   {:else if state === 'handsfree'}
     <div class="pill handsfree" class:dying={dying} class:hf-expanded={showHfButtons && !dying} class:no-anim={prevState === 'recording'}>
       {#if showHfButtons}
@@ -1085,6 +1418,7 @@
     </div>
   {/if}
   </div>
+
 </div>
 
 <style>
@@ -1105,7 +1439,8 @@
 
   :global(html, body, #pill-root) {
     margin: 0; padding: 0;
-    background: transparent;
+    background: transparent !important;
+    background-color: rgba(0, 0, 0, 0) !important;
     overflow: hidden;
     width: 100vw; height: 100vh;
     font-family: var(--sans);
@@ -1211,6 +1546,80 @@
     animation: pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
 
+  /* Repair flow — built from the pill's own primitives (hf-btn icon
+     buttons, the copied/error capsule shells, loading-spinner) instead of
+     boxed generic-dialog buttons, so it reads as part of the same app
+     instead of a bolted-on modal. */
+  .repair-card {
+    width: 300px;
+    box-sizing: border-box;
+    height: auto;
+    min-height: 34px;
+    border-radius: 20px;
+    padding: 12px 14px;
+    gap: 8px;
+    background: var(--pill-bg);
+    color: var(--pill-fg);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.08) inset, 0 10px 28px rgba(0,0,0,0.38);
+  }
+  .feedback-card {
+    width: auto;
+    max-width: 260px;
+    justify-content: center;
+    padding: 10px 16px;
+    border-radius: 999px;
+  }
+  .feedback-card .repair-question {
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 15px;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .repair-form, .repair-proposal { flex-direction: column; align-items: stretch; border-radius: 18px; padding: 13px 14px 11px; gap: 9px; }
+  .repair-form-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .repair-label {
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--pill-muted);
+  }
+  .hf-btn.repair-close { color: var(--pill-muted); }
+  .hf-btn.repair-close:hover { color: var(--pill-muted-strong); background: rgba(255,255,255,0.1); }
+
+  .repair-input {
+    width: 100%; box-sizing: border-box; min-height: 46px; max-height: 112px; resize: none;
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; background: rgba(255,255,255,0.04);
+    color: inherit; padding: 8px 10px; font: inherit; font-size: 12px; line-height: 1.4;
+    outline: none; user-select: text; -webkit-user-select: text;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .repair-input:focus { border-color: rgba(255,255,255,0.26); background: rgba(255,255,255,0.06); }
+  .repair-input:disabled { opacity: 0.55; }
+  .repair-input::placeholder { color: var(--pill-muted); opacity: 0.8; }
+
+  .repair-actions { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .repair-primary {
+    border: 0; border-radius: 999px; padding: 6px 14px; color: var(--pill-bg); background: var(--accent);
+    font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; transition: opacity 0.15s ease;
+  }
+  .repair-primary:disabled { opacity: 0.4; cursor: default; }
+  .repair-primary:hover:not(:disabled) { opacity: 0.88; }
+
+  .repair-status { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--pill-muted); }
+  .repair-scope, .repair-inline-error { font-size: 10.5px; color: var(--pill-muted); }
+  .repair-inline-error { color: var(--pill-error-fg); white-space: normal; }
+  .repair-proposal strong { font-size: 12.5px; font-weight: 600; line-height: 17px; white-space: normal; }
+  .repair-error-text { font-size: 11.5px; font-weight: 400; line-height: 16px; color: var(--pill-fg); opacity: 0.85; white-space: normal; }
+
+  .pill.recording.repair-recording {
+    width: calc(12 * var(--bar-w, 3px) + 11 * var(--bar-gap, 2px) + 64px);
+    gap: 4px;
+    padding: 0 6px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .repair-input, .repair-primary { transition: none; }
+  }
+
   /* Translate distances stay inside the window's vertical padding (PILL_PAD_H
      / 2 per side). At the old 8px/6px against a 5px pad the pill's bottom edge
      was clipped by the window for the whole entrance and exit. */
@@ -1231,7 +1640,8 @@
   .pill.paste-failed.dying,
   .pill.copied.dying,
   .pill.processing.dying,
-  .pill.loading-local.dying {
+  .pill.loading-local.dying,
+  .repair-card.dying {
     animation: pillOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
     pointer-events: none;
   }

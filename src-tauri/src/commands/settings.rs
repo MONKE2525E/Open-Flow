@@ -30,6 +30,8 @@ enum SettingKind {
     SoundEffectsVolume,
     AppMappings,
     Hotkey,
+    RepairHotkey,
+    ClipboardPhrase,
 }
 
 #[derive(Clone, Copy)]
@@ -119,6 +121,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::CLEANUP_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::HOTKEY, SettingKind::Hotkey, true, true),
+    setting_spec(store::REPAIR_HOTKEY, SettingKind::RepairHotkey, true, true),
     setting_spec(
         store::MICROPHONE_DEVICE,
         SettingKind::StringOrNull,
@@ -290,6 +293,10 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
             .as_str()
             .is_some_and(store::is_supported_local_model_memory_policy),
         SettingKind::ModelMap => is_model_map(value),
+        SettingKind::ClipboardPhrase => value
+            .as_str()
+            .map(store::normalize_clipboard_phrase)
+            .is_some_and(|v| store::is_valid_clipboard_phrase(&v)),
         SettingKind::StringArray => is_non_empty_string_array(value),
         SettingKind::CleanupPromptOverrides => is_cleanup_prompt_override_map(value),
         SettingKind::AppearanceMode => value
@@ -302,6 +309,14 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
         SettingKind::Hotkey => value
             .as_array()
             .is_some_and(|keys| keys.len() == 2 && keys.iter().all(serde_json::Value::is_string)),
+        SettingKind::RepairHotkey => value.as_array().is_some_and(|keys| {
+            keys.len() == 3
+                && keys.iter().all(serde_json::Value::is_string)
+                && (keys.iter().all(|k| k.as_str() == Some(""))
+                    || keys.iter().all(|k| {
+                        k.as_str().is_some_and(crate::core::hotkey::is_known_key_code)
+                    }))
+        }),
     };
 
     if valid {
