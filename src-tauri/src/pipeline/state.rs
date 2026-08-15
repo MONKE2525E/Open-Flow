@@ -13,6 +13,14 @@ pub(super) const CANCEL_RESUME_WINDOW: std::time::Duration = std::time::Duration
 /// How long a failed paste's text stays available for the pill's Copy
 /// button to pull back onto the clipboard.
 pub(super) const PASTE_FAILURE_WINDOW: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn paste_failure_is_fresh(
+    captured_at: std::time::Instant,
+    now: std::time::Instant,
+) -> bool {
+    now.checked_duration_since(captured_at)
+        .is_some_and(|age| age < PASTE_FAILURE_WINDOW)
+}
 // ---------- shared state ----------
 
 /// Default pill window width (logical points) before the frontend reports the
@@ -286,9 +294,16 @@ pub fn take_cancelled_capture_if_fresh(state: &SharedState) -> Option<CapturedAu
 /// `PASTE_FAILURE_WINDOW`. Always clears the slot.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn take_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
+    take_paste_failure_if_fresh_at(state, std::time::Instant::now())
+}
+
+fn take_paste_failure_if_fresh_at(
+    state: &SharedState,
+    now: std::time::Instant,
+) -> Option<String> {
     let mut st = lock_state(state).ok()?;
     st.paste_failure.take().and_then(|f| {
-        if f.captured_at.elapsed() < PASTE_FAILURE_WINDOW {
+        if paste_failure_is_fresh(f.captured_at, now) {
             Some(f.text)
         } else {
             None
@@ -302,7 +317,7 @@ pub fn take_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
 pub fn peek_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
     let st = lock_state(state).ok()?;
     st.paste_failure.as_ref().and_then(|f| {
-        if f.captured_at.elapsed() < PASTE_FAILURE_WINDOW {
+        if paste_failure_is_fresh(f.captured_at, std::time::Instant::now()) {
             Some(f.text.clone())
         } else {
             None
@@ -787,16 +802,16 @@ mod tests {
     #[test]
     fn take_paste_failure_if_fresh_expires_after_window() {
         let state = fresh_state();
+        let captured_at = std::time::Instant::now();
+        let now = captured_at + PASTE_FAILURE_WINDOW + std::time::Duration::from_secs(1);
         {
             let mut st = lock_state(&state).unwrap();
             st.paste_failure = Some(PasteFailure {
                 text: "stale".to_string(),
-                captured_at: std::time::Instant::now()
-                    - PASTE_FAILURE_WINDOW
-                    - std::time::Duration::from_secs(1),
+                captured_at,
             });
         }
-        assert_eq!(take_paste_failure_if_fresh(&state), None);
+        assert_eq!(take_paste_failure_if_fresh_at(&state, now), None);
     }
 
     #[test]
