@@ -72,7 +72,7 @@ fn normalize_executable(executable: &str) -> Result<String> {
 /// interchangeably.
 fn normalize_domain(domain: &str) -> Result<String> {
     let trimmed = require_nonempty_trimmed("Website", domain)?.to_lowercase();
-    let without_scheme = trimmed.split("://").last().unwrap_or(&trimmed);
+    let without_scheme = trimmed.split("://").next_back().unwrap_or(&trimmed);
     let host = without_scheme
         .split(['/', '?', '#'])
         .next()
@@ -97,6 +97,7 @@ pub(crate) fn ensure_everywhere_context_conn(conn: &rusqlite::Connection) -> Res
     .map_err(Into::into)
 }
 
+#[allow(dead_code)]
 pub fn everywhere_context_id(db: &Db) -> Result<i64> {
     let conn = lock_conn(db)?;
     ensure_everywhere_context_conn(&conn)
@@ -396,6 +397,7 @@ pub fn remove_context_website(db: &Db, context_id: i64, domain: &str) -> Result<
 /// multiple contexts; domain match takes priority over the exe match (it's
 /// the more specific signal), and an unmatched/empty executable resolves to
 /// the stable Everywhere context.
+#[allow(dead_code)]
 pub fn resolve_context_for_target(
     db: &Db,
     executable: &str,
