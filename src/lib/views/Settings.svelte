@@ -81,6 +81,12 @@
   });
 
   $effect(() => {
+    if (!appStore.legacyFeaturesEnabled && appStore.settingsSection === 'apps') {
+      appStore.settingsSection = 'general';
+    }
+  });
+
+  $effect(() => {
     if (typeof document === 'undefined') return;
 
     if (!appStore.settingsOpen) {
@@ -97,7 +103,42 @@
     }
 
     requestAnimationFrame(() => {
+      // Don't steal focus if the user already moved inside the shell while it
+      // was opening (keyboard flows race the entrance transition).
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && settingsPageEl?.contains(active)) return;
       (firstFocusableInShell() ?? settingsPageEl)?.focus();
+    });
+  });
+
+  // Announce the section that just loaded: move focus to the panel heading
+  // (falling back to the first focusable control) so keyboard and screen-reader
+  // users land on the content they switched to instead of staying on the rail
+  // button while the panel swaps underneath them. Settings is a page, so Tab
+  // still reaches the rail — this is context, not a trap.
+  $effect(() => {
+    const currentSection = section;
+    if (!appStore.settingsOpen || !settingsPanelEl || !currentSection) return;
+    const panel = settingsPanelEl;
+    requestAnimationFrame(() => {
+      if (!panel.isConnected) return;
+      // Never fight the user: if focus is already inside the panel (keyboard
+      // flow racing the section swap), leave it alone.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && panel.contains(active)) return;
+      const heading = panel.querySelector<HTMLElement>('.settings-h, .settings-subhead, h2');
+      const target = heading ?? panel.querySelector<HTMLElement>([
+        'button:not([disabled])',
+        'input:not([disabled])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        'a[href]',
+        '[tabindex]:not([tabindex="-1"])',
+      ].join(','));
+      if (heading && !heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+      if (target instanceof HTMLElement && panel.contains(target)) {
+        target.focus({ preventScroll: true });
+      }
     });
   });
 
@@ -248,7 +289,7 @@
     position: absolute;
     top: 0;
     bottom: var(--app-gutter);
-    left: calc(var(--sidebar-w) + var(--app-gutter) * 2);
+    left: calc(var(--sidebar-w) + var(--app-gutter));
     right: 0;
     z-index: 1;
     background: transparent;
@@ -257,6 +298,10 @@
     flex-direction: column;
     overflow: hidden;
   }
+
+  /* Settings is rooted directly in .app, unlike the regular views inside
+     .body. Reserve the custom Windows caption row so its shared page padding
+     starts at the same visual height as Home, Insights, and the libraries. */
 
   /*
    * Reserves the same gutter .panel does via `scrollbar-gutter: stable`, so the
@@ -446,7 +491,7 @@
   }
 
   .settings-body :global(.btn-ghost:hover) { background: var(--control-hover); }
-  .settings-body :global(.btn-ghost:disabled) { opacity: 0.4; cursor: default; }
+  .settings-body :global(.btn-ghost:disabled) { opacity: var(--ui-disabled-opacity); cursor: default; }
 
   .settings-body :global(.badge) {
     background: transparent;

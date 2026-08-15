@@ -60,7 +60,7 @@ async function gotoSection(page, label) {
   });
 
   await seedDevState(page, {
-    settings: { setup_complete: true, force_setup_on_launch: false },
+    settings: { setup_complete: true, force_setup_on_launch: false, legacy_features_enabled: true },
   });
 
   try {

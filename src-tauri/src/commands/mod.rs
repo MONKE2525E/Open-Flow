@@ -19,6 +19,7 @@ pub(crate) const LOCAL_MODELS_UNAVAILABLE_ON_MACOS_INTEL: &str =
     "Local on-device models aren't available on Intel Macs yet — this hasn't been tested on Intel hardware. Use a cloud provider (Groq, OpenAI, or Google) for now.";
 
 mod history;
+mod contexts;
 mod library;
 mod local_llm;
 mod local_stt;
@@ -44,6 +45,7 @@ fn db_state(app: &AppHandle) -> DbHandle {
 }
 
 pub use history::*;
+pub use contexts::*;
 pub use library::*;
 pub use local_llm::*;
 pub use local_stt::*;

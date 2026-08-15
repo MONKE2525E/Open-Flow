@@ -1,5 +1,7 @@
 # Dictionary
 
+> **Legacy page.** The standalone Dictionary page is hidden by default — the same vocabulary can be managed per context group from the [Contexts](CONTEXTS.md) page's Vocabulary tab. Turn on **Settings → General → Legacy pages** to bring this page back if you prefer managing vocabulary separately.
+
 Your Dictionary is your personal vocabulary list. Add words or phrases the AI should know — names, brands, jargon, anything niche — and they get used in every transcription so Verenu recognizes them and spells them the way you want.
 
 ## Adding entries manually
@@ -31,6 +33,7 @@ Set up [Snippets](SNIPPETS.md) for phrases you say often, or [App Mappings & Pro
 ## Related Docs
 
 <p align="center">
+  <a href="CONTEXTS.md"><img alt="Contexts" src="https://img.shields.io/badge/Contexts-Guide-a3352b"></a>
   <a href="CLEANUP_LEVELS.md"><img alt="Cleanup Levels" src="https://img.shields.io/badge/Back-Cleanup%20Levels-7e7266"></a>
   <a href="SNIPPETS.md"><img alt="Snippets" src="https://img.shields.io/badge/Next-Snippets-c44632"></a>
   <a href="APP_MAPPINGS.md"><img alt="App Mappings" src="https://img.shields.io/badge/App-Mappings-5b554a"></a>
