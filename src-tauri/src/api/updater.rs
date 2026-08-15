@@ -778,7 +778,9 @@ mod tests {
     #[test]
     fn stable_release_supersedes_same_core_prerelease() {
         assert!(is_newer("0.16.2", "0.16.2-beta.1"));
-        assert!(!is_newer("0.16.2-beta.1", "0.16.2"));
+        // Beta-channel selection can intentionally move a stable install to a
+        // same-core beta; release_matches_channel applies that channel gate.
+        assert!(is_newer("0.16.2-beta.1", "0.16.2"));
     }
 
     #[test]
