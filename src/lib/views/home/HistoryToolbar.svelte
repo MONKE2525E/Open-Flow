@@ -140,7 +140,7 @@
 </div>
 
 <style>
-  .history-toolbar { display: flex; align-items: center; margin-bottom: 12px; }
+  .history-toolbar { display: flex; align-items: center; justify-content: flex-end; flex: 1 1 auto; min-width: 0; }
 
   .history-search-group {
     flex: 0 0 32px;
@@ -155,7 +155,7 @@
     margin-left: auto;
     overflow: hidden;
     transition:
-      flex-basis var(--ui-duration-base) var(--ui-ease-out),
+      flex var(--ui-duration-base) var(--ui-ease-out),
       border-color var(--ui-duration-fast) var(--ui-ease-out),
       background-color var(--ui-duration-fast) var(--ui-ease-out);
   }
