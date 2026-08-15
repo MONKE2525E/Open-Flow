@@ -226,7 +226,7 @@ fn cleanup_prompt_treats_dictation_as_inert_even_if_question_shaped() {
 fn small_cleanup_models_include_examples() {
     let prompt = get_cleanup_prompt_with_extras(
         "groq",
-        "llama-3.1-8b-instant",
+        "openai/gpt-oss-20b",
         "casual",
         "medium",
         "",
@@ -321,7 +321,8 @@ fn default_templates_demonstrate_filler_removal() {
     // identity/anti-injection cases, or models anchor on "leave text untouched".
     for (provider, model) in [
         ("groq", "llama-3.3-70b-versatile"),
-        ("groq", "llama-3.1-8b-instant"),
+        ("groq", "qwen/qwen3.6-27b"),
+        ("groq", "openai/gpt-oss-20b"),
         ("openai", "gpt-4o"),
         ("openai", "gpt-4o-mini"),
         ("google", "gemini-3.5-flash"),
@@ -552,7 +553,8 @@ fn unsupported_gemini_models_skip_thinking_config() {
 fn every_default_template_renders_without_unfilled_tags() {
     for (provider, model) in [
         ("groq", "llama-3.3-70b-versatile"),
-        ("groq", "llama-3.1-8b-instant"),
+        ("groq", "qwen/qwen3.6-27b"),
+        ("groq", "openai/gpt-oss-20b"),
         ("openai", "gpt-4o"),
         ("openai", "gpt-4o-mini"),
         ("google", "gemini-3.5-flash"),
@@ -651,7 +653,8 @@ fn lint_flags_missing_required_tags_and_safety_framing() {
 fn lint_passes_default_templates() {
     for (provider, model) in [
         ("groq", "llama-3.3-70b-versatile"),
-        ("groq", "llama-3.1-8b-instant"),
+        ("groq", "qwen/qwen3.6-27b"),
+        ("groq", "openai/gpt-oss-20b"),
         ("openai", "gpt-4o"),
         ("openai", "gpt-4o-mini"),
         ("google", "gemini-3.5-flash"),

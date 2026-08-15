@@ -138,13 +138,14 @@ function buildSystemPrompt(profile) {
 
 async function cleanupGroq(apiKey, rawText, profile) {
   const body = JSON.stringify({
-    model: 'llama-3.3-70b-versatile',
+    model: 'qwen/qwen3.6-27b',
     messages: [
       { role: 'system', content: buildSystemPrompt(profile) },
       { role: 'user', content: `<transcription>${rawText}</transcription>` },
     ],
     max_tokens: 1024,
     temperature: 0.2,
+    reasoning_effort: 'none',
   });
   const raw = await httpPost(
     'https://api.groq.com/openai/v1/chat/completions',
