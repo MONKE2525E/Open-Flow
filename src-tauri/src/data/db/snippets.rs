@@ -176,8 +176,8 @@ pub fn query_snippets_for_context(db: &Db, context_id: i64) -> Result<Vec<Snippe
     let mut stmt = conn.prepare(
         "SELECT s.id, s.trigger, s.expansion, s.instructions, s.use_count, s.created_at
          FROM snippets s
-         INNER JOIN snippet_contexts sc ON sc.snippet_id = s.id
-         WHERE sc.context_id = ?1
+         LEFT JOIN snippet_contexts sc ON sc.snippet_id = s.id AND sc.context_id = ?1
+         WHERE sc.context_id IS NOT NULL OR ?1 = 1
          ORDER BY s.created_at DESC",
     )?;
     let rows = stmt
