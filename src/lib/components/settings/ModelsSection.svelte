@@ -573,6 +573,8 @@
     const parsedCleanupDefault = splitModelId(cleanupDefaultModel);
     if (parsedCleanupDefault?.provider === 'groq') {
       cleanupDefaultModel = modelId('groq', migrateDeprecatedGroqCleanupModel(parsedCleanupDefault.model));
+    } else if (parsedCleanupDefault?.provider === 'google') {
+      cleanupDefaultModel = modelId('google', migrateDeprecatedGoogleModel(parsedCleanupDefault.model));
     }
 
     if (Array.isArray(all.transcription_fallback_models)) {
@@ -591,8 +593,11 @@
         .filter((id) => !!splitModelId(id))
         .map((id) => {
           const parsed = splitModelId(id);
-          return parsed?.provider === 'groq'
-            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
+          if (parsed?.provider === 'groq') {
+            return modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model));
+          }
+          return parsed?.provider === 'google'
+            ? modelId('google', migrateDeprecatedGoogleModel(parsed.model))
             : id;
         });
     }
