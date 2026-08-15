@@ -963,13 +963,11 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             {
                 // Keyboard shortcut (Ctrl+Z, Ctrl+A, etc.) - context unknown.
                 crate::core::injection::reset_injection_history();
+            } else if let Some(ch) = vk_to_char(vk) {
+                let hwnd = unsafe { GetForegroundWindow().0 as usize };
+                crate::core::injection::append_or_reset_injection_history(hwnd, ch);
             } else {
-                if let Some(ch) = vk_to_char(vk) {
-                    let hwnd = unsafe { GetForegroundWindow().0 as usize };
-                    crate::core::injection::append_or_reset_injection_history(hwnd, ch);
-                } else {
-                    crate::core::injection::reset_injection_history();
-                }
+                crate::core::injection::reset_injection_history();
             }
         }
     }
