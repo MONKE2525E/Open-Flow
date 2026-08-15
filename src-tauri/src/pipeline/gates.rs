@@ -270,7 +270,13 @@ pub(super) fn strip_trailing_hallucination(text: &str) -> String {
         if !hard_boundary {
             continue;
         }
-        let tail = lower[idx + pattern.len()..].trim();
+        // A transcription may preserve the prompt's final punctuation, so
+        // punctuation-only tails are still an exact trailing prompt echo.
+        // Keep real words meaningful for the glossary corroboration check.
+        let tail = lower[idx + pattern.len()..]
+            .trim()
+            .trim_matches(|ch: char| ch.is_ascii_punctuation())
+            .trim();
         let corroborated = tail.is_empty()
             || GLOSSARY_TERMS.iter().any(|term| tail.contains(term))
             || TRAILING_PATTERNS.iter().any(|p| tail.contains(p));
