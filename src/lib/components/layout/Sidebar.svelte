@@ -48,7 +48,7 @@
   ] as const;
 
   const STYLE_NAV_ITEMS = [
-    { id: 'style',      label: 'Style',      icon: 'type',  locked: false },
+    { id: 'style',      label: 'Style',      icon: 'pencil', locked: false },
   ] as const;
 
   // Dictionary and Snippets are no longer primary nav — Contexts (Everywhere)
