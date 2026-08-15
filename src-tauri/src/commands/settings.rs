@@ -30,7 +30,6 @@ enum SettingKind {
     SoundEffectsVolume,
     AppMappings,
     Hotkey,
-    ClipboardPhrase,
 }
 
 #[derive(Clone, Copy)]
@@ -145,17 +144,12 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::MIC_GAIN, SettingKind::MicGain, true, false),
     setting_spec(store::PLAY_START_STOP_SOUNDS, SettingKind::Bool, true, true),
-    setting_spec(
-        store::SOUND_EFFECTS_VOLUME,
-        SettingKind::SoundEffectsVolume,
-        true,
-        true,
-    ),
+    setting_spec(store::SOUND_EFFECTS_VOLUME, SettingKind::SoundEffectsVolume, true, true),
     setting_spec(store::SETUP_COMPLETE, SettingKind::Bool, true, false),
+    setting_spec(store::LEGACY_FEATURES_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::APP_CONTEXT_HINT, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_EVENT_MODE, SettingKind::Bool, true, true),
-    setting_spec(store::MACOS_CLIPBOARD_SNIFF, SettingKind::Bool, true, true),
     setting_spec(store::CONTEXTUAL_CAPS, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_SPACING, SettingKind::Bool, true, true),
     setting_spec(
@@ -205,9 +199,6 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::AUTOSTART_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::CAPS_LOCK_UPPERCASE, SettingKind::Bool, true, true),
-    setting_spec(store::CLIPBOARD_PHRASE_ENABLED, SettingKind::Bool, true, true),
-    setting_spec(store::CLIPBOARD_PHRASE, SettingKind::ClipboardPhrase, true, true),
-    setting_spec(store::LEGACY_FEATURES_ENABLED, SettingKind::Bool, true, true),
 ];
 
 fn spec_for(key: &str) -> Option<&'static SettingSpec> {
@@ -300,10 +291,6 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
             .as_str()
             .is_some_and(store::is_supported_local_model_memory_policy),
         SettingKind::ModelMap => is_model_map(value),
-        SettingKind::ClipboardPhrase => value
-            .as_str()
-            .map(store::normalize_clipboard_phrase)
-            .is_some_and(|v| store::is_valid_clipboard_phrase(&v)),
         SettingKind::StringArray => is_non_empty_string_array(value),
         SettingKind::CleanupPromptOverrides => is_cleanup_prompt_override_map(value),
         SettingKind::AppearanceMode => value
@@ -311,20 +298,11 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
             .is_some_and(|v| matches!(v, "system" | "light" | "dark")),
         SettingKind::Bool => value.is_boolean(),
         SettingKind::MicGain => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
-        SettingKind::SoundEffectsVolume => {
-            value.as_f64().is_some_and(|v| (0.0..=100.0).contains(&v))
-        }
+        SettingKind::SoundEffectsVolume => value.as_f64().is_some_and(|v| (0.0..=100.0).contains(&v)),
         SettingKind::AppMappings => is_valid_app_mappings(value),
-        SettingKind::Hotkey => value.as_array().is_some_and(|keys| {
-            keys.len() == 2
-                && keys.iter().all(serde_json::Value::is_string)
-                && keys[0]
-                    .as_str()
-                    .is_some_and(crate::core::hotkey::is_known_key_code)
-                && keys[1].as_str().is_none_or(|second| {
-                    second.is_empty() || crate::core::hotkey::is_known_key_code(second)
-                })
-        }),
+        SettingKind::Hotkey => value
+            .as_array()
+            .is_some_and(|keys| keys.len() == 2 && keys.iter().all(serde_json::Value::is_string)),
     };
 
     if valid {
