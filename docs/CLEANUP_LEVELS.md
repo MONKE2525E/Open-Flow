@@ -19,16 +19,17 @@ This is separate from **tone** (Casual, Formal, or Very Casual), which controls 
 
 - **During setup**: you pick a default cleanup level as part of first-run setup.
 - **Later**: change the default anytime in Settings.
-- **Per app**: you can override the cleanup level for specific apps — for example, Verbatim in your code editor but Medium everywhere else. See [App Mappings & Profiles](APP_MAPPINGS.md).
+- **Per app or website**: you can override the cleanup level for a group of apps and sites — for example, Verbatim in your code editor but Medium everywhere else. See [Contexts](CONTEXTS.md) (or the legacy [App Mappings & Profiles](APP_MAPPINGS.md) page).
 
 ## Next step
 
-Explore the [Dictionary](DICTIONARY.md) and [Snippets](SNIPPETS.md) features to make Verenu recognize your vocabulary and shortcuts.
+Explore [Contexts](CONTEXTS.md) to scope vocabulary and snippets to specific apps and sites.
 
 ## Related Docs
 
 <p align="center">
   <a href="FIRST_DICTATION.md"><img alt="First Dictation" src="https://img.shields.io/badge/Back-First%20Dictation-7e7266"></a>
+  <a href="CONTEXTS.md"><img alt="Contexts" src="https://img.shields.io/badge/Contexts-Guide-a3352b"></a>
   <a href="APP_MAPPINGS.md"><img alt="App Mappings" src="https://img.shields.io/badge/App-Mappings-c44632"></a>
   <a href="DICTIONARY.md"><img alt="Dictionary" src="https://img.shields.io/badge/Dictionary-Guide-5b554a"></a>
   <a href="SNIPPETS.md"><img alt="Snippets" src="https://img.shields.io/badge/Snippets-Guide-a3352b"></a>

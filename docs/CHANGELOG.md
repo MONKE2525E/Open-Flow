@@ -4,6 +4,15 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 
 ## Unreleased
 
+- Added a **Legacy pages** toggle (Settings → General) that hides the standalone App Mappings, Dictionary, and Snippets pages by default in favor of Contexts, and brings them back — along with a heads-up that they're no longer actively maintained — when turned on.
+- Contexts is now hidden from the primary nav while Legacy pages is on, so there's only one place to manage app tones, vocabulary, and snippets at a time.
+- Fixed the App Mappings list playing an entrance animation for every existing row on first load; rows now only animate on actual reorder, matching the Dictionary list.
+- Reduced the context group name limit from 120 to 30 characters and added a live character counter, and enforced it client-side with an input `maxlength` (previously unenforced, allowing names that overflowed the page).
+- Fixed the context icon color picker rendering as a full-width bar instead of a compact popup near the click point.
+- Context group websites are now checked for DNS existence before being saved, so a typo can't silently create a website target that will never match anything.
+- Added a subtle pop-in animation when adding an app or website to a context group, without replaying it for the rest of the list when switching between context groups.
+- Added `docs/CONTEXTS.md` and marked App Mappings, Dictionary, and Snippets as legacy pages across the docs.
+
 ## 0.15.1 beta - Audio & Polish
 
 - Added configurable dictation sound cues for start, stop, cancel, and error transitions.
