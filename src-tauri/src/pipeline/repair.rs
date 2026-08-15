@@ -253,9 +253,23 @@ fn supports_complaint(snapshot: &RepairSnapshot, complaint: &str, action: &Repai
         // required one of those exact words in the complaint, which rejected
         // completely ordinary phrasing like "X became Y" or "X should be
         // Y" — including the app's own placeholder example — so it's gone.
-        RepairAction::Dictionary { term, mistake, .. } => {
-            term.as_deref().is_some_and(|v| !v.trim().is_empty() && evidence.contains(&v.to_lowercase()))
-                && mistake.as_deref().is_some_and(|v| !v.trim().is_empty() && evidence.contains(&v.to_lowercase()))
+        RepairAction::Dictionary {
+            operation,
+            term,
+            mistake,
+            expected_term,
+            ..
+        } => match operation {
+            DictionaryOperation::Remove => expected_term.as_deref().is_some_and(|v| {
+                !v.trim().is_empty() && evidence.contains(&v.to_lowercase())
+            }),
+            DictionaryOperation::Add | DictionaryOperation::Update => {
+                term.as_deref().is_some_and(|v| {
+                    !v.trim().is_empty() && evidence.contains(&v.to_lowercase())
+                }) && mistake.as_deref().is_some_and(|v| {
+                    !v.trim().is_empty() && evidence.contains(&v.to_lowercase())
+                })
+            }
         }
         RepairAction::Setting { key, .. } => match key.as_str() {
             store::AUTO_SPACING => complaint_lower.contains("spacing") || complaint_lower.contains("space before"),
@@ -324,6 +338,9 @@ fn validate_action(snapshot: &RepairSnapshot, complaint: &str, action: RepairAct
         RepairAction::Setting { key, value, expected_value } => {
             if setting_label(key).is_none() || current_setting(snapshot, key).as_ref() != Some(expected_value) {
                 anyhow::bail!("setting is not allowlisted or changed")
+            }
+            if value == expected_value {
+                anyhow::bail!("setting repair is a no-op")
             }
             if matches!(key.as_str(), store::CLEANUP_INTENSITY) && !value.as_str().is_some_and(store::is_supported_cleanup_intensity) {
                 anyhow::bail!("invalid cleanup intensity")
@@ -804,5 +821,28 @@ mod tests {
         )
         .unwrap();
         assert!(validate_action(&snapshot(), "I said pull request and it wrote pool request", action).is_err());
+    }
+
+    #[test]
+    fn dictionary_remove_uses_expected_term_as_evidence() {
+        let action: RepairAction = serde_json::from_str(
+            r#"{"kind":"dictionary","operation":"remove","dictionary_id":3,"term":null,"mistake":null,"scope":"context","expected_term":"pull request","expected_mistake":"pool request"}"#,
+        )
+        .unwrap();
+        assert!(validate_action(
+            &snapshot(),
+            "remove the pull request vocabulary item",
+            action
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn no_op_setting_repairs_are_rejected() {
+        let action: RepairAction = serde_json::from_str(
+            r#"{"kind":"setting","key":"cleanup_enabled","value":true,"expected_value":true}"#,
+        )
+        .unwrap();
+        assert!(validate_action(&snapshot(), "cleanup is already enabled", action).is_err());
     }
 }
