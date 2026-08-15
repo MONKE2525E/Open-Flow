@@ -18,6 +18,7 @@ pub async fn create_context(
     icon: Option<String>,
     tone: Option<String>,
     cleanup_intensity: Option<String>,
+    custom_instructions: Option<String>,
 ) -> Result<db::Context, String> {
     let db = db_state(&app);
     run_blocking("create_context", move || {
@@ -27,6 +28,7 @@ pub async fn create_context(
             icon.as_deref(),
             tone.as_deref(),
             cleanup_intensity.as_deref(),
+            custom_instructions.as_deref(),
         )
         .map_err(|e| e.to_string())
     })
@@ -49,6 +51,7 @@ pub async fn update_context_settings(
     icon: Option<String>,
     tone: Option<String>,
     cleanup_intensity: Option<String>,
+    custom_instructions: Option<String>,
 ) -> Result<(), String> {
     let db = db_state(&app);
     run_blocking("update_context_settings", move || {
@@ -58,6 +61,7 @@ pub async fn update_context_settings(
             icon.as_deref(),
             tone.as_deref(),
             cleanup_intensity.as_deref(),
+            custom_instructions.as_deref(),
         )
         .map_err(|e| e.to_string())
     })
