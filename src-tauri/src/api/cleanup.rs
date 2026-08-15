@@ -498,6 +498,14 @@ fn build_google_cleanup_request_with_alternate(
     }
 }
 
+/// Escapes dictation text for embedding inside the `<raw_dictation>` XML tag
+/// of prompts. Shared with the pipeline's local-cleanup path.
+pub fn escape_transcript_xml(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -594,8 +602,3 @@ mod tests {
     }
 }
 
-fn escape_transcript_xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
