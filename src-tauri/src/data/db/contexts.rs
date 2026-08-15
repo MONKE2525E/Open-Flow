@@ -247,6 +247,10 @@ pub fn delete_context(db: &Db, context_id: i64) -> Result<()> {
         params![context_id],
     )?;
     tx.execute(
+        "DELETE FROM context_website_targets WHERE context_id = ?1",
+        params![context_id],
+    )?;
+    tx.execute(
         "DELETE FROM dictionary_contexts WHERE context_id = ?1",
         params![context_id],
     )?;
@@ -708,11 +712,16 @@ mod tests {
 
         set_dictionary_context_assignment(&db, context.id, dictionary_id, true).unwrap();
         set_snippet_context_assignment(&db, context.id, snippet_id, true).unwrap();
+        assign_context_website(&db, context.id, "mail.google.com").unwrap();
         set_dictionary_context_assignment(&db, EVERYWHERE_CONTEXT_ID, dictionary_id, false)
             .unwrap();
         set_snippet_context_assignment(&db, EVERYWHERE_CONTEXT_ID, snippet_id, false).unwrap();
 
         delete_context(&db, context.id).expect("delete context");
+
+        assert!(query_context_website_targets(&db, None)
+            .unwrap()
+            .is_empty());
 
         assert_eq!(
             query_dictionary_for_context(&db, EVERYWHERE_CONTEXT_ID)
