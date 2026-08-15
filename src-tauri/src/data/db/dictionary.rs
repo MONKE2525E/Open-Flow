@@ -63,6 +63,67 @@ pub fn query_dictionary(db: &Db) -> Result<Vec<DictionaryEntry>> {
     Ok(rows)
 }
 
+/// Applies an approved repair against the legacy global dictionary schema.
+/// The context argument is accepted for compatibility with the repair model;
+/// `dev` has no context tables, so dictionary repairs remain global here.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_dictionary_repair(
+    db: &Db,
+    operation: &str,
+    dictionary_id: Option<i64>,
+    term: Option<&str>,
+    mistake: Option<&str>,
+    _context_id: i64,
+    expected_term: Option<&str>,
+    expected_mistake: Option<&str>,
+) -> Result<i64> {
+    let conn = lock_conn(db)?;
+    match operation {
+        "add" => {
+            let term = require_nonempty_trimmed("Term", term.unwrap_or_default())?;
+            let mistake = require_nonempty_trimmed("Often mistranscribed as", mistake.unwrap_or_default())?;
+            let normalized = normalize_optional_trimmed(Some(&mistake));
+            conn.execute(
+                "INSERT INTO dictionary (term, mistake, confidence_tier, last_seen_at) VALUES (?1, ?2, 'manual', datetime('now'))",
+                params![term, normalized],
+            )?;
+            Ok(conn.last_insert_rowid())
+        }
+        "update" => {
+            let id = dictionary_id.ok_or_else(|| anyhow::anyhow!("Missing dictionary target"))?;
+            let current: (String, Option<String>) = conn.query_row(
+                "SELECT term, mistake FROM dictionary WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            if Some(current.0.as_str()) != expected_term || current.1.as_deref() != expected_mistake {
+                anyhow::bail!("Dictionary entry changed while you were reviewing it")
+            }
+            let term = require_nonempty_trimmed("Term", term.unwrap_or_default())?;
+            let mistake = normalize_optional_trimmed(mistake);
+            conn.execute(
+                "UPDATE dictionary SET term = ?1, mistake = ?2 WHERE id = ?3",
+                params![term, mistake, id],
+            )?;
+            Ok(id)
+        }
+        "remove" => {
+            let id = dictionary_id.ok_or_else(|| anyhow::anyhow!("Missing dictionary target"))?;
+            let current: (String, Option<String>) = conn.query_row(
+                "SELECT term, mistake FROM dictionary WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            if Some(current.0.as_str()) != expected_term || current.1.as_deref() != expected_mistake {
+                anyhow::bail!("Dictionary entry changed while you were reviewing it")
+            }
+            conn.execute("DELETE FROM dictionary WHERE id = ?1", params![id])?;
+            Ok(id)
+        }
+        _ => anyhow::bail!("Unsupported dictionary repair operation"),
+    }
+}
+
 #[cfg(test)]
 pub fn insert_dictionary_entry(db: &Db, term: &str, mistake: Option<&str>) -> Result<()> {
     let normalized_term = require_nonempty_trimmed("Term", term)?;

@@ -315,6 +315,76 @@ pub async fn stop_and_transcribe_input(
 }
 
 #[tauri::command]
+pub async fn start_repair_complaint_recording(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    pipeline::reserve_starting(state.inner())?;
+    pipeline::start_recording_session(&app, state.inner(), "repair_recording", false);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_repair_complaint_recording(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn(pipeline::finish_complaint_recording(
+        app,
+        state.inner().clone(),
+    ));
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn repair_positive_feedback(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    pipeline::clear_repair(state.inner());
+    pipeline::hide_pill(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn repair_enter_input(app: AppHandle) -> Result<(), String> {
+    pipeline::enter_repair_input(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn repair_cancel(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    pipeline::clear_repair(state.inner());
+    pipeline::hide_pill(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn repair_analyze(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+    complaint: String,
+) -> Result<(), String> {
+    pipeline::diagnose_repair(app.clone(), state.inner().clone(), complaint)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn repair_apply(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+    proposal_id: u64,
+) -> Result<String, String> {
+    pipeline::apply_repair(app, state.inner().clone(), proposal_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn stop_recording(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,

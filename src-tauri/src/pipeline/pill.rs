@@ -6,6 +6,7 @@
 use super::SharedState;
 use crate::pipeline::pill_position::PillPlacement;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 /// Initial window size at creation. Kept in step with the state defaults so
@@ -40,6 +41,35 @@ static PILL_VISUALLY_ACTIVE: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static PILL_PLACED_ONCE: AtomicBool = AtomicBool::new(false);
 
+/// Holds a resolved tone-profile label until the reveal that should carry it
+/// actually runs. `show_pill`'s cross-monitor move animates the window into
+/// place and only calls `reveal_pill` (which emits `pill-state`) once that
+/// tween lands, deferred well past the moment the caller finishes its own
+/// synchronous call — a profile emitted directly at the call site could land
+/// either before or after that deferred `pill-state`, and the frontend
+/// unconditionally clears `profileLabel` on `pill-state: recording`, so a
+/// profile that beat it there got silently wiped. Queuing it here and only
+/// emitting it from inside `reveal_pill`, right after `pill-state`, makes the
+/// ordering correct regardless of which path a given reveal takes.
+static PENDING_PILL_PROFILE: Mutex<Option<String>> = Mutex::new(None);
+
+/// Queues a tone-profile label to ride along with whichever reveal happens
+/// next, instead of emitting it immediately (see `PENDING_PILL_PROFILE`).
+/// Whether the pill *should* currently hold real OS keyboard focus, per our
+/// own state machine — not whether Windows actually still reports it
+/// focused. `set_pill_focusable(false)` only flips `WS_EX_NOACTIVATE` back
+/// on to block *future* activation; Windows does not auto-return focus to
+/// whatever was focused before we took it, so `pill.is_focused()` can keep
+/// reading true long after the repair UI that needed it has closed. The
+/// hotkey's "is the repair pill the thing I'm dictating into right now"
+/// check (app_hotkey.rs) needs this deterministic flag instead, or a stale
+/// true reading there routes an unrelated dictation into the repair pill.
+static PILL_WANTS_REPAIR_FOCUS: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn pill_wants_repair_focus() -> bool {
+    PILL_WANTS_REPAIR_FOCUS.load(Ordering::SeqCst)
+}
+
 fn create_pill_if_needed(app: &AppHandle) {
     if app.get_webview_window("pill").is_some() {
         return;
@@ -57,7 +87,64 @@ fn create_pill_if_needed(app: &AppHandle) {
         .focused(false)
         .build()
     {
-        Ok(pill) => harden_pill_window(&pill),
+        Ok(pill) => {
+            // Keep the WebView client area transparent even when Windows
+            // switches the window from click-through to interactive. Without
+            // an explicit native colour, WebView2 can briefly repaint the
+            // newly interactive surface as an opaque rectangle around the
+            // capsule.
+            pill.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0))).ok();
+            harden_pill_window(&pill);
+
+            // The repair pill actively steals OS keyboard focus while
+            // waiting on typed input (see set_pill_focusable), but never had
+            // any way to notice the user giving up on it by simply clicking
+            // into a different app's text box — Windows doesn't return focus
+            // on its own, so the pill kept it, and a normal dictation
+            // afterward silently pasted into the still-focused repair
+            // textarea instead of wherever the user actually clicked. React
+            // to losing OS focus the same way the X button/click-away/Escape
+            // already do: abandon the repair session outright.
+            //
+            // Debounced, not immediate: growing the textarea's content
+            // resizes the native window (see measureAndResize/set_pill_size),
+            // and that resize was itself observed to raise a transient
+            // Focused(false)/(true) blip with no real user action behind it —
+            // acting on it immediately cancelled an in-progress complaint out
+            // from under the user while they were still typing. Waiting a
+            // beat and rechecking real focus catches only a genuine
+            // click-away; a resize-induced blip has already resolved by then.
+            let app_for_blur = app.clone();
+            pill.on_window_event(move |event| {
+                if !matches!(event, tauri::WindowEvent::Focused(false)) {
+                    return;
+                }
+                if !pill_wants_repair_focus() {
+                    return;
+                }
+                let app_for_check = app_for_blur.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    if !pill_wants_repair_focus() {
+                        return; // resolved (applied/cancelled/expired) in the meantime
+                    }
+                    let Some(pill) = app_for_check.get_webview_window("pill") else {
+                        return;
+                    };
+                    if pill.is_focused().unwrap_or(true) {
+                        return; // focus came back — the blur was transient
+                    }
+                    let Some(state) = app_for_check.try_state::<SharedState>() else {
+                        return;
+                    };
+                    let has_repair_session = state.inner().lock().is_ok_and(|st| st.repair.is_some());
+                    if has_repair_session {
+                        super::clear_repair(state.inner());
+                        hide_pill(&app_for_check);
+                    }
+                });
+            });
+        }
         Err(err) => log::warn!("Failed to create dictation pill window: {err}"),
     }
 }
@@ -66,6 +153,10 @@ fn create_pill_if_needed(app: &AppHandle) {
 fn harden_pill_window<R: Runtime>(pill: &WebviewWindow<R>) {
     use windows::Win32::{
         Foundation::{GetLastError, SetLastError, WIN32_ERROR},
+        Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
+            DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+        },
         UI::WindowsAndMessaging::{
             GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
             SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_APPWINDOW,
@@ -78,6 +169,24 @@ fn harden_pill_window<R: Runtime>(pill: &WebviewWindow<R>) {
     };
 
     unsafe {
+        // Windows 11 draws its own accent-colored active-window border and
+        // rounded-corner frame around any top-level window once it becomes
+        // focused — which the repair-input state does deliberately for text
+        // entry. Left alone, that native frame shows up as a pale rounded
+        // outline larger than (and misaligned with) the custom-drawn card,
+        // since it sits outside the transparent WebView content entirely.
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            &DWMWA_COLOR_NONE as *const _ as *const _,
+            std::mem::size_of_val(&DWMWA_COLOR_NONE) as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &DWMWCP_DONOTROUND as *const _ as *const _,
+            std::mem::size_of_val(&DWMWCP_DONOTROUND) as u32,
+        );
         SetLastError(WIN32_ERROR(0));
         let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         if current == 0 {
@@ -228,9 +337,30 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     // Click-through for passive states so nothing behind the pill is blocked.
     // Handsfree, error (Retry), and cancelled (Undo/Dismiss) all have real
     // buttons that need real cursor events.
-    let has_clickable_buttons =
-        matches!(state, "handsfree" | "error" | "cancelled" | "paste_failed" | "copied");
+    let has_clickable_buttons = matches!(
+        state,
+        "handsfree"
+            | "error"
+            | "cancelled"
+            | "paste_failed"
+            | "copied"
+            | "feedback_prompt"
+            | "repair_input"
+            | "repair_recording"
+            | "repair_processing"
+            | "repair_proposal"
+            | "repair_applying"
+            | "repair_error"
+            | "repair_done"
+    );
     pill.set_ignore_cursor_events(!has_clickable_buttons).ok();
+    // Re-assert every reveal, not just once at window creation: WebView2 has
+    // been observed repainting its surface opaque again when the window
+    // flips between click-through and interactive (exactly what toggling
+    // set_ignore_cursor_events above does for every repair-flow state), which
+    // showed up as whatever sits behind the pill flashing through for a
+    // frame — e.g. clicking "Not good"/"Good" on the feedback card.
+    pill.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0))).ok();
 
     // Show the window before emitting state so WebView2 is active when it
     // receives the event. WebView2 suspends event processing while hidden;
@@ -262,6 +392,15 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     #[cfg(not(target_os = "windows"))]
     pill.show().ok();
 
+    // Must run after the SW_SHOWNOACTIVATE show above, not before: that call
+    // explicitly leaves the current foreground window untouched, which was
+    // silently undoing the focus grab below when this ran first — repair_input
+    // needs real keyboard focus so typed/pasted text lands in the textarea
+    // instead of whatever app last had it.
+    let wants_focus = matches!(state, "repair_input" | "repair_proposal" | "repair_error");
+    PILL_WANTS_REPAIR_FOCUS.store(wants_focus, Ordering::SeqCst);
+    set_pill_focusable(pill, wants_focus);
+
     // macOS: `show()` (orderFront:) is ignored for a background app, so the
     // pill only appeared when Verenu was frontmost. Force it above the
     // active app's windows without stealing focus. AppKit window calls must
@@ -284,6 +423,102 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
         pill.emit("pill-error", msg).ok();
     }
     pill.emit("pill-state", state).ok();
+
+    // Must fire after pill-state (see PENDING_PILL_PROFILE) — this is the
+    // one place every reveal path (immediate or animated) actually
+    // converges, so it's the only point where the ordering is guaranteed.
+    if let Some(profile) = PENDING_PILL_PROFILE.lock().ok().and_then(|mut slot| slot.take()) {
+        pill.emit("pill-profile", profile).ok();
+    }
+}
+
+fn set_pill_focusable<R: Runtime>(pill: &WebviewWindow<R>, focusable: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
+            DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED,
+            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_NOACTIVATE,
+        };
+        if let Ok(hwnd) = pill.hwnd() {
+            unsafe {
+                let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                let desired = if focusable {
+                    current & !(WS_EX_NOACTIVATE.0 as isize)
+                } else {
+                    current | WS_EX_NOACTIVATE.0 as isize
+                };
+                if desired != current {
+                    let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, desired);
+                    let _ = SetWindowPos(
+                        hwnd,
+                        None,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                    );
+                    // SWP_FRAMECHANGED makes DWM recompute the non-client frame,
+                    // which has been observed to redraw the native active-window
+                    // border even though harden_pill_window() already suppressed
+                    // it once at window creation — re-assert it here so becoming
+                    // focusable (the repair-input path) never brings it back.
+                    let _ = DwmSetWindowAttribute(
+                        hwnd,
+                        DWMWA_BORDER_COLOR,
+                        &DWMWA_COLOR_NONE as *const _ as *const _,
+                        std::mem::size_of_val(&DWMWA_COLOR_NONE) as u32,
+                    );
+                    let _ = DwmSetWindowAttribute(
+                        hwnd,
+                        DWMWA_WINDOW_CORNER_PREFERENCE,
+                        &DWMWCP_DONOTROUND as *const _ as *const _,
+                        std::mem::size_of_val(&DWMWCP_DONOTROUND) as u32,
+                    );
+                }
+            }
+        }
+    }
+    if focusable {
+        // `WebviewWindow::set_focus()` alone was not reliably stealing OS
+        // keyboard focus from whatever app was previously foreground — plain
+        // SetFocus() only works within the calling thread's own input queue,
+        // and Windows blocks a background process from calling
+        // SetForegroundWindow() on its own. Attaching this thread's input
+        // queue to the current foreground thread first is the standard
+        // workaround, so typed/pasted text actually lands in the repair
+        // textarea instead of whatever window last had focus.
+        #[cfg(target_os = "windows")]
+        {
+            use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+            use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+            use windows::Win32::UI::WindowsAndMessaging::{
+                BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId,
+                SetForegroundWindow,
+            };
+            if let Ok(hwnd) = pill.hwnd() {
+                unsafe {
+                    let foreground = GetForegroundWindow();
+                    let current_thread = GetCurrentThreadId();
+                    let foreground_thread = GetWindowThreadProcessId(foreground, None);
+                    let attached = foreground_thread != 0
+                        && foreground_thread != current_thread
+                        && AttachThreadInput(current_thread, foreground_thread, true).as_bool();
+                    let _ = SetForegroundWindow(hwnd);
+                    let _ = BringWindowToTop(hwnd);
+                    let _ = SetFocus(Some(hwnd));
+                    if attached {
+                        let _ = AttachThreadInput(current_thread, foreground_thread, false);
+                    }
+                }
+            }
+        }
+        pill.set_focus().ok();
+    }
 }
 
 fn next_pill_placement<R: Runtime>(
@@ -396,6 +631,9 @@ pub(crate) fn emit_pill_stage(app: &AppHandle, stage: &str) {
     }
 }
 
+/// Emits the resolved tone profile (e.g. "casual") to the pill window so it
+/// can show which style will apply to the current dictation. Emitted from the
+/// pipeline itself — the frontend never re-resolves it.
 pub(super) async fn show_error_pill(app: &AppHandle, msg: &str) {
     log::error!("pipeline error: {msg}");
     app.emit("verenu:error", msg).ok();
@@ -408,6 +646,8 @@ pub(super) async fn show_error_pill(app: &AppHandle, msg: &str) {
     show_pill_msg(app, "error", Some(msg));
 }
 
+/// A delivered dictation can still have a clipboard-phrase warning. This is
+/// deliberately passive: the text already reached its destination.
 /// Shows the pill in error state for a quality-gate rejection without
 /// focusing the main window or blocking the pipeline task.
 pub(super) fn reject_with_pill(app: &AppHandle, msg: &str) {

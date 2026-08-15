@@ -146,6 +146,34 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
     .await
 }
 
+#[tauri::command]
+pub async fn check_repair_hotkey(key1: String, key2: String, key3: String) -> Result<bool, String> {
+    let _ = key2;
+    Ok(crate::core::hotkey::is_hotkey_available(&key1, &key3))
+}
+
+#[tauri::command]
+pub async fn save_repair_hotkey(
+    app: AppHandle,
+    key1: String,
+    key2: String,
+    key3: String,
+) -> Result<(), String> {
+    let unset = key1.is_empty() && key2.is_empty() && key3.is_empty();
+    let vk1 = crate::core::hotkey::map_code_to_vk(&key1);
+    let vk2 = crate::core::hotkey::map_code_to_vk(&key2);
+    let vk3 = crate::core::hotkey::map_code_to_vk(&key3);
+    if !unset && [vk1, vk2, vk3].contains(&0) {
+        return Err("Unrecognized repair hotkey key".into());
+    }
+    crate::core::hotkey::update_repair_keys(vk1, vk2, vk3);
+    let settings = store::settings_handle(&app)?;
+    run_blocking("save_repair_hotkey", move || {
+        settings.save_value(store::REPAIR_HOTKEY, serde_json::json!([key1, key2, key3]))
+    })
+    .await
+}
+
 // ---------- autostart ----------
 
 #[tauri::command]
