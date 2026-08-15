@@ -34,6 +34,56 @@
   let loadingMore = false;
   let hasMoreHistory = false;
 
+  // History filters are session-only. Keep the debounce/load sequence here so
+  // pagination and filter changes cannot overwrite each other with stale
+  // responses.
+  let search = '';
+  let debouncedSearch = '';
+  let appFilter: string | null = null;
+  let apps: string[] = [];
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  let loadSeq = 0;
+
+  function handleSearchChange(value: string) {
+    search = value;
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      searchTimer = null;
+      if (debouncedSearch !== value) {
+        debouncedSearch = value;
+        load(true);
+      }
+    }, 120);
+  }
+
+  function handleAppFilterChange(app: string | null) {
+    if (appFilter === app) return;
+    if (searchTimer) {
+      clearTimeout(searchTimer);
+      searchTimer = null;
+      debouncedSearch = search;
+    }
+    appFilter = app;
+    load(true);
+  }
+
+  function resetHistoryFilters(): boolean {
+    const had = search !== '' || debouncedSearch !== '' || appFilter !== null;
+    if (!had) return false;
+    search = '';
+    debouncedSearch = '';
+    appFilter = null;
+    if (searchTimer) {
+      clearTimeout(searchTimer);
+      searchTimer = null;
+    }
+    return true;
+  }
+
+  function clearHistoryFilters() {
+    if (resetHistoryFilters()) load(true);
+  }
+
   async function retryTranscription() {
     if (retrying) return;
     retrying = true;
@@ -88,16 +138,24 @@
   }
 
   async function load(reset = true) {
+    const seq = ++loadSeq;
     const nextOffset = reset ? 0 : recents.length;
     try {
       const [r, s] = await Promise.all([
-        invoke<Entry[]>('get_recent', { limit: HISTORY_PAGE_SIZE, offset: nextOffset }),
+        invoke<Entry[]>('get_recent', {
+          limit: HISTORY_PAGE_SIZE,
+          offset: nextOffset,
+          search: debouncedSearch.trim() || undefined,
+          appName: appFilter ?? undefined,
+        }),
         reset ? invoke<Stats>('get_stats') : Promise.resolve(stats),
       ]);
+      if (seq !== loadSeq) return;
       recents = reset ? (r ?? []) : [...recents, ...(r ?? [])];
       stats = s;
       hasMoreHistory = (r?.length ?? 0) === HISTORY_PAGE_SIZE;
     } catch (err) {
+      if (seq !== loadSeq) return;
       console.error('Home load failed:', err);
       if (reset) {
         recents = [];
@@ -140,6 +198,9 @@
 
   onMount(() => {
     getVersion().then(v => currentVersion = v);
+    invoke<string[] | null>('get_history_apps')
+      .then(list => { apps = list ?? []; })
+      .catch(() => { apps = []; });
     invoke<string[] | null>('get_setting', { key: 'hotkey' })
       .then(hk => { if (hk?.length === 2) hotkey = hk; })
       .catch(() => { /* use platform default if setting unavailable */ });
@@ -212,8 +273,17 @@
         clearTimeout(cancelledTimer);
         cancelledTimer = null;
       }
+      if (searchTimer) {
+        clearTimeout(searchTimer);
+        searchTimer = null;
+      }
     };
   });
+
+  // Settings is an overlay over Home; do not leave filters active behind it.
+  $: if (appStore.settingsOpen) {
+    if (resetHistoryFilters()) load(true);
+  }
 </script>
 
 <div class="content-inner">
@@ -253,6 +323,12 @@
         {copiedId}
         {hk1}
         {hk2}
+        {search}
+        {apps}
+        {appFilter}
+        onSearchChange={handleSearchChange}
+        onAppFilterChange={handleAppFilterChange}
+        onClearFilters={clearHistoryFilters}
         onRetry={retryTranscription}
         onContinueCancelled={continueCancelled}
         onDismissCancelled={dismissCancelled}
