@@ -15,7 +15,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
       cleanup_intensity: 'medium',
       default_tone: 'casual',
       appearance_mode: 'system',
-      legacy_features_enabled: false,
+      legacy_features_enabled: true,
       history_retention: '30 days',
       force_setup_on_launch: false,
     },
@@ -86,6 +86,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
     await page.locator('.nav-item:has-text("Style")').click();
     await page.locator('h1.page-h:has-text("Style")').waitFor({ state: 'visible', timeout: TIMEOUT });
     await page.locator('.style-card:has-text("Strong")').click();
+    await page.locator('.tab:has-text("Personal Tone")').click();
     await page.locator('.style-card:has-text("Formal")').click();
 
     await openSettings(page);
