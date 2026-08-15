@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS contexts (
   tone              TEXT,
   cleanup_intensity TEXT,
   color             TEXT,
+  custom_instructions TEXT,
   created_at        DATETIME NOT NULL DEFAULT (datetime('now')),
   updated_at        DATETIME NOT NULL DEFAULT (datetime('now'))
 );
@@ -555,6 +556,23 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
         run_migration(&mut conn, |conn| {
             ensure_table_column(conn, "contexts", "color", "ALTER TABLE contexts ADD COLUMN color TEXT;")?;
             conn.execute_batch("PRAGMA user_version = 15;")?;
+            Ok(())
+        })?;
+    }
+    if user_version < 16 {
+        log::info!("db: migrating schema {user_version} -> 16");
+        // Per-context free-text instructions sent directly to the cleanup LLM
+        // alongside the tone/cleanup overrides. Column declared in SCHEMA for
+        // fresh databases; ensure_table_column is idempotent for databases
+        // that already have it.
+        run_migration(&mut conn, |conn| {
+            ensure_table_column(
+                conn,
+                "contexts",
+                "custom_instructions",
+                "ALTER TABLE contexts ADD COLUMN custom_instructions TEXT;",
+            )?;
+            conn.execute_batch("PRAGMA user_version = 16;")?;
             Ok(())
         })?;
     }

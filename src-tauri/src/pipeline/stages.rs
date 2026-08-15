@@ -1305,7 +1305,15 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
     );
 
     let dict_instructions = dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
-    let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str(), protected_instruction.unwrap_or("")]
+    let context_custom_instructions = db::query_context(db_handle, context_id)
+        .ok()
+        .and_then(|c| c.custom_instructions);
+    let extra_rules = [
+        snippet_instructions.as_str(),
+        dict_instructions.as_str(),
+        context_custom_instructions.as_deref().unwrap_or(""),
+        protected_instruction.unwrap_or(""),
+    ]
         .iter()
         .filter(|s| !s.is_empty())
         .copied()

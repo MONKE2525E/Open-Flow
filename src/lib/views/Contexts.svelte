@@ -36,6 +36,7 @@
 
   const EVERYWHERE_ID = 1;
   const CONTEXT_NAME_MAX_LENGTH = 30;
+  const CONTEXT_CUSTOM_INSTRUCTIONS_MAX_LENGTH = 300;
   const CONTEXT_TABS = [
     { id: 'vocabulary', label: 'Vocabulary' },
     { id: 'snippets', label: 'Snippets' },
@@ -112,6 +113,7 @@
   let modalColorPickerPos = $state<{ top: number; left: number } | null>(null);
   let modalTone = $state<string | null>(null);
   let modalCleanupIntensity = $state<string | null>(null);
+  let modalCustomInstructions = $state('');
   // Tone/cleanup dropdown menus render fixed-position at the top level (not
   // nested in the modal card) because the modal card and body both clip
   // overflow — an absolutely-positioned menu inside them gets cut off.
@@ -489,6 +491,7 @@
     closeModalColorPicker();
     modalTone = editing?.tone ?? null;
     modalCleanupIntensity = editing?.cleanup_intensity ?? null;
+    modalCustomInstructions = editing?.custom_instructions ?? '';
     modalApps = [];
     modalAppQuery = '';
     modalWebsites = [];
@@ -657,12 +660,13 @@
           icon: modalIcon,
           tone: modalTone,
           cleanupIntensity: modalCleanupIntensity,
+          customInstructions: modalCustomInstructions.trim() || null,
         });
         if (modalColor !== selectedContext.color) {
           await invoke('update_context_color', { contextId: selectedContext.id, color: modalColor });
         }
         contexts = contexts.map((context) => context.id === selectedContext.id
-          ? { ...context, name, icon: modalIcon, tone: modalTone, cleanup_intensity: modalCleanupIntensity, color: modalColor, updated_at: new Date().toISOString() }
+          ? { ...context, name, icon: modalIcon, tone: modalTone, cleanup_intensity: modalCleanupIntensity, custom_instructions: modalCustomInstructions.trim() || null, color: modalColor, updated_at: new Date().toISOString() }
           : context);
       } else {
         const created = await invoke<Context>('create_context', {
@@ -670,6 +674,7 @@
           icon: modalIcon,
           tone: modalTone,
           cleanupIntensity: modalCleanupIntensity,
+          customInstructions: modalCustomInstructions.trim() || null,
         });
         createdContextId = created.id;
         if (modalColor) {
@@ -1229,7 +1234,6 @@
               id="context-panel-{tab}"
               aria-labelledby="context-tab-{tab}"
               in:pageSwap={{ axis: 'x', distance: tabDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.base) }}
-              out:pageSwap={{ axis: 'x', distance: -tabDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.base) }}
             >
               {#if tab === 'vocabulary'}
                 {#if filteredDictionary.length === 0}
@@ -1583,6 +1587,21 @@
         </div>
       </div>
 
+      <div class="field-label-row">
+        <label class="field-label" for="context-custom-instructions">Custom instructions</label>
+        <span class="char-counter" class:is-limit={modalCustomInstructions.length >= CONTEXT_CUSTOM_INSTRUCTIONS_MAX_LENGTH}>{modalCustomInstructions.length}/{CONTEXT_CUSTOM_INSTRUCTIONS_MAX_LENGTH}</span>
+      </div>
+      <textarea
+        id="context-custom-instructions"
+        class="ui-input custom-instructions-input scrollbar-standard"
+        placeholder="e.g. Always write dates as DD/MM/YYYY."
+        bind:value={modalCustomInstructions}
+        maxlength={CONTEXT_CUSTOM_INSTRUCTIONS_MAX_LENGTH}
+        rows="3"
+        spellcheck="false"
+      ></textarea>
+      <p class="field-hint">Sent directly to the cleanup model whenever this context group is active.</p>
+
       {#if contextModalMode === 'create'}
         <label class="field-label" for="context-app">Attach apps (optional)</label>
         {#if modalApps.length > 0}
@@ -1934,6 +1953,7 @@
   .field-label-row .field-label { margin-top: 0; }
   .char-counter { font-size: 10.5px; color: var(--ink-faint); font-variant-numeric: tabular-nums; flex-shrink: 0; }
   .char-counter.is-limit { color: var(--danger); }
+  .custom-instructions-input { resize: vertical; font-size: 12.5px; max-height: 160px; }
   .field-hint { color: var(--ink-mute); font-size: 11px; margin: 3px 0 0; }
   .domain-preview { display: flex; align-items: center; gap: 5px; color: var(--ink-faint); font-size: 11px; margin: 5px 0 0; }
   .domain-preview.is-valid { color: var(--ink-mute); }
