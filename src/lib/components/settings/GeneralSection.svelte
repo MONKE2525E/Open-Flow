@@ -176,6 +176,7 @@
       invoke<boolean | null>('get_setting', { key: 'caps_lock_uppercase_enabled' }),
       invoke<string[]>('get_microphones'),
       invoke<string | null>('get_setting', { key: 'microphone_device' }),
+      invoke<boolean | null>('get_setting', { key: 'legacy_features_enabled' }),
     ]);
 
     const val = <T>(i: number, fallback: T): T =>
@@ -210,6 +211,7 @@
 
     microphones = val<string[]>(9, []);
     selectedMic = val<string | null>(10, null) ?? '';
+    appStore.legacyFeaturesEnabled = val<boolean | null>(11, null) ?? false;
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
@@ -292,6 +294,32 @@
       autostart = !value;
       console.error('set_autostart failed:', err);
     }
+  }
+
+  async function applyLegacyFeatures(value: boolean) {
+    appStore.legacyFeaturesEnabled = value;
+    try {
+      await saveSetting('legacy_features_enabled', value);
+    } catch (err) {
+      appStore.legacyFeaturesEnabled = !value;
+      console.error('save legacy_features_enabled failed:', err);
+    }
+  }
+
+  let confirmLegacyOn = $state(false);
+  let legacyCancelButton: HTMLButtonElement | null = $state(null);
+
+  function handleLegacyFeatures(value: boolean) {
+    if (value) {
+      confirmLegacyOn = true;
+      return;
+    }
+    applyLegacyFeatures(false);
+  }
+
+  async function confirmLegacyOnAction() {
+    confirmLegacyOn = false;
+    await applyLegacyFeatures(true);
   }
 
   async function applyCleanup(value: boolean) {
@@ -742,6 +770,11 @@
   <div><div class="label">Automatic caps lock detection</div><div class="desc">When Caps Lock is on, output your dictation in ALL CAPS</div></div>
   <Toggle checked={capsLockUppercase} onchange={handleCapsLockUppercase} label="Automatic caps lock detection" />
 </div>
+<h3 class="settings-subhead">Legacy</h3>
+<div class="setting-row">
+  <div><div class="label">Legacy pages</div><div class="desc">Bring back the standalone App Mappings settings page and the Dictionary/Snippets pages, superseded by Contexts.</div></div>
+  <Toggle checked={appStore.legacyFeaturesEnabled} onchange={handleLegacyFeatures} label="Legacy pages" />
+</div>
 
 {#if confirmCleanupOff}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -774,6 +807,19 @@
         <button class="btn-primary" onclick={confirmCleanupOffAction}>Turn off</button>
       </div>
     </div>
+  </div>
+{/if}
+
+{#if confirmLegacyOn}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <button class="modal-backdrop" aria-label="Close dialog" onclick={() => (confirmLegacyOn = false)} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
+  <div class="modal-card" use:modalFocusTrap={{ active: confirmLegacyOn, initialFocus: () => legacyCancelButton }} role="dialog" aria-modal="true" aria-labelledby="legacy-on-confirm-title" tabindex="-1" in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel), scaleFrom: 0.97 }} out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}>
+    <div class="modal-header"><h2 id="legacy-on-confirm-title" class="modal-title">Turn on Legacy pages?</h2></div>
+    <div class="modal-body"><p class="confirm-copy">This brings back the standalone App Mappings settings page and the Dictionary/Snippets pages. They are no longer actively maintained now that Contexts covers the same ground. You can turn this back off anytime.</p></div>
+    <div class="modal-footer"><div class="footer-actions">
+      <button bind:this={legacyCancelButton} class="btn-ghost" onclick={() => (confirmLegacyOn = false)}>Cancel</button>
+      <button class="btn-primary" onclick={confirmLegacyOnAction}>Turn on</button>
+    </div></div>
   </div>
 {/if}
 
