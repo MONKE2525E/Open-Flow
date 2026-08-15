@@ -40,10 +40,10 @@ function tauriMock({ appVersion } = {}) {
     transcription_fallback_models: [],
     transcription_language:  'en',
     cleanup_provider:        'groq',
-    cleanup_model:           'groq/llama-3.3-70b-versatile',
-    cleanup_default_model:   'groq/llama-3.3-70b-versatile',
+    cleanup_model:           'groq/qwen/qwen3.6-27b',
+    cleanup_default_model:   'groq/qwen/qwen3.6-27b',
     cleanup_models_by_provider: {
-      groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+      groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
       openai: ['gpt-4o-mini', 'gpt-4o'],
       google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
       local: [],
