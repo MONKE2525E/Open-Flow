@@ -30,6 +30,7 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     {
       const page = await newPage({
         setup_complete: true,
+        cleanup_enabled: true,
         cleanup_intensity: 'medium',
         default_tone: 'casual',
         legacy_features_enabled: false,
@@ -56,6 +57,7 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     {
       const page = await newPage({
         setup_complete: true,
+        cleanup_enabled: true,
         cleanup_intensity: 'medium',
         default_tone: 'casual',
         legacy_features_enabled: true,
@@ -80,7 +82,7 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
 
     // ── Sidebar Style icon uses the pencil glyph, not the old text glyph ──
     {
-      const page = await newPage({ setup_complete: true });
+      const page = await newPage({ setup_complete: true, cleanup_enabled: true });
       const navSvgPaths = await page.locator('.nav-item:has-text("Style") svg path').evaluateAll((els) => els.map((el) => el.getAttribute('d')));
       if (!navSvgPaths.some((d) => d?.includes('16.5 3.5'))) {
         errors.push(`Style nav icon does not look like the pencil glyph (paths=${JSON.stringify(navSvgPaths)})`);
