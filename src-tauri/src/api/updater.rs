@@ -750,33 +750,43 @@ mod tests {
     }
 
     #[test]
-    fn beta_channel_can_replace_a_same_core_stable_release() {
-        assert!(should_offer_release_for_channel(
-            "0.16.2-nightly.20260804",
-            "0.16.2",
-            UpdateChannel::Beta,
-            true,
+    fn dated_nightly_versions_compare_by_date() {
+        assert!(!is_newer(
+            "0.16.0-nightly.20260814",
+            "0.16.0-nightly.20260814"
         ));
-        assert!(!should_offer_release_for_channel(
-            "0.16.2-nightly.20260804",
-            "0.16.2",
-            UpdateChannel::Stable,
-            true,
+        assert!(is_newer(
+            "0.16.0-nightly.20260815",
+            "0.16.0-nightly.20260814"
         ));
-        assert!(!should_offer_release_for_channel(
-            "0.16.2-nightly.20260803",
-            "0.16.2-nightly.20260804",
-            UpdateChannel::Beta,
-            true,
+        assert!(!is_newer(
+            "0.16.0-nightly.20260814",
+            "0.16.0-nightly.20260815"
+        ));
+        assert!(is_newer("0.16.0-nightly.20260814", "0.16.0"));
+        assert!(should_offer_release(
+            "0.16.0-nightly.20260814",
+            "0.16.0",
+            true
+        ));
+        assert!(is_newer(
+            "0.16.1-nightly.20260814",
+            "0.16.0-nightly.20260815"
         ));
     }
 
     #[test]
-    fn prerelease_versions_compare_without_losing_build_order() {
-        assert!(is_newer("0.15.1-beta.2", "0.15.1-beta.1"));
-        assert!(!is_newer("0.15.1-beta.1", "0.15.1-beta.2"));
-        assert!(!is_newer("0.15.1-beta.2", "0.15.1"));
-        assert!(is_newer("0.15.2-beta.1", "0.15.1"));
+    fn stable_release_supersedes_same_core_prerelease() {
+        assert!(is_newer("0.16.2", "0.16.2-beta.1"));
+        assert!(!is_newer("0.16.2-beta.1", "0.16.2"));
+    }
+
+    #[test]
+    fn beta_version_detection_covers_current_release_names() {
+        assert!(is_beta_version("0.16.0-nightly.20260814"));
+        assert!(is_beta_version("0.16.0-beta"));
+        assert!(is_beta_version("Verenu-0.16.0-dev"));
+        assert!(!is_beta_version("0.16.0"));
     }
 
     #[test]
