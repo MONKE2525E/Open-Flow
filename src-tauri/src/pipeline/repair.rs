@@ -306,8 +306,15 @@ fn validate_action(snapshot: &RepairSnapshot, complaint: &str, action: RepairAct
                     if term.as_deref().unwrap_or("").trim().is_empty() {
                         anyhow::bail!("invalid dictionary update")
                     }
+                    // snapshot.dictionary is always the current context's entries
+                    // (see query_dictionary_for_context in run_cleanup_and_snippets_for_db),
+                    // so resolve_scope_id(scope) == snapshot.context_id means the
+                    // proposed scope matches where this entry already lives — a
+                    // real no-op only when term, mistake, AND scope are unchanged,
+                    // since an update can also exist purely to move an entry's scope.
                     if same_word(term.as_deref().unwrap_or(""), current.term.as_str())
                         && mistake.as_deref().is_none_or(|value| current.mistake.as_deref().is_some_and(|old| same_word(value, old)))
+                        && resolve_scope_id(snapshot, *scope) == snapshot.context_id
                     {
                         anyhow::bail!("dictionary update is a no-op")
                     }
@@ -782,5 +789,18 @@ mod tests {
         )
         .unwrap();
         assert!(validate_action(&snapshot(), "I said pull request and it wrote pool request", action).is_err());
+    }
+
+    #[test]
+    fn scope_only_dictionary_update_is_not_a_no_op() {
+        // Same term/mistake as the existing entry, but a different target
+        // scope (everywhere vs. the snapshot's context 7) is a real change —
+        // apply_dictionary_repair reassigns the entry's context on every
+        // update, so this must not be rejected as a no-op.
+        let action: RepairAction = serde_json::from_str(
+            r#"{"kind":"dictionary","operation":"update","dictionary_id":3,"term":"pull request","mistake":"pool request","scope":"everywhere","expected_term":"pull request","expected_mistake":"pool request"}"#,
+        )
+        .unwrap();
+        assert!(validate_action(&snapshot(), "I said pull request and it wrote pool request", action).is_ok());
     }
 }
