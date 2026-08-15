@@ -606,9 +606,7 @@
       || cleanupDefaultModel !== preCleanupDefault
       || transcriptionFallbackModels.length !== preTranscriptionFallbackCount
       || cleanupFallbackModels.length !== preCleanupFallbackCount
-      || JSON.stringify(cleanupFallbackModels) !== JSON.stringify(preCleanupFallbackModels)
-      || cleanupModelMapChanged
-      || cleanupPromptOverridesChanged;
+      || JSON.stringify(cleanupFallbackModels) !== JSON.stringify(preCleanupFallbackModels);
 
     if (changed) {
       await persistAll();
