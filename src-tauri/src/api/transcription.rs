@@ -594,9 +594,9 @@ mod tests {
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(
             json["generationConfig"]["thinkingConfig"]["thinkingLevel"],
-            "low"
+            "minimal"
         );
         assert_eq!(json["generationConfig"]["maxOutputTokens"], 2048);
-        assert!(json["generationConfig"].get("temperature").is_none());
+        assert_eq!(json["generationConfig"]["temperature"], 0.0);
     }
 }

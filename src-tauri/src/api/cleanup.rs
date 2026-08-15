@@ -585,9 +585,9 @@ mod tests {
     fn google_cleanup_request_includes_gemini_config() {
         let body = build_google_cleanup_request("hello", "prompt", "gemini-3.7-flash", 256);
         let json = serde_json::to_value(&body).unwrap();
-        assert_eq!(json["generationConfig"]["thinkingConfig"]["thinkingLevel"], "low");
+        assert_eq!(json["generationConfig"]["thinkingConfig"]["thinkingLevel"], "minimal");
         assert_eq!(json["generationConfig"]["maxOutputTokens"], 256);
-        assert!(json["generationConfig"].get("temperature").is_none());
+        assert_eq!(json["generationConfig"]["temperature"], 0.0);
     }
 
     #[test]

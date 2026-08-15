@@ -303,6 +303,12 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
         let _ = conn.execute_batch("ROLLBACK;");
         conn.execute_batch("PRAGMA user_version = 2;")?;
     }
+    if user_version == 2 {
+        // Older v2 databases can have the legacy dictionary shape and a
+        // snippets table that predates the instructions column. Re-run the
+        // idempotent v2 repair before advancing through later migrations.
+        run_migration(&mut conn, apply_v2_migration)?;
+    }
     if user_version < 3 {
         let res = conn.execute_batch(
             "BEGIN;
