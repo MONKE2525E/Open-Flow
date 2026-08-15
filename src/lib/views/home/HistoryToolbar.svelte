@@ -27,6 +27,7 @@
   let appDropdownOpen = $state(false);
   let uiExpanded = $state(false);
   let preserveExpanded = $state(false);
+  let expandLockUntil = 0;
   let groupEl = $state<HTMLElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
   let appTriggerEl = $state<HTMLButtonElement | null>(null);
@@ -39,6 +40,10 @@
     // the new input can receive focus. Keep the group open through that one
     // DOM transition so keyboard and automation users can type immediately.
     preserveExpanded = true;
+    // The icon is replaced during the click/focus transition. Keep the
+    // expanded control alive long enough for the replacement input to receive
+    // focus, even when the browser reports the intermediate focusout late.
+    expandLockUntil = Date.now() + 1000;
     uiExpanded = true;
     await tick();
     inputEl?.focus();
@@ -72,6 +77,10 @@
   }
 
   function collapseIfFocusLeft() {
+    if (Date.now() < expandLockUntil) {
+      setTimeout(collapseIfFocusLeft, expandLockUntil - Date.now());
+      return;
+    }
     if (filtersActive) return;
     if (groupEl && document.activeElement && groupEl.contains(document.activeElement)) return;
     uiExpanded = false;
