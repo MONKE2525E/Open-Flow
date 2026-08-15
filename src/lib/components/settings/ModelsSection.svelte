@@ -52,6 +52,7 @@
     modelId,
     recommendedModels,
     migrateDeprecatedGroqCleanupModel,
+    migrateDeprecatedGoogleModel,
     splitModelId,
     type AllSettingsPayload,
     type TaskType,
@@ -563,15 +564,26 @@
       ? (rawLegacyCleanup.includes('/') ? rawLegacyCleanup : `groq/${rawLegacyCleanup}`)
       : 'groq/qwen/qwen3.6-27b';
 
-    transcriptionDefaultModel = all.transcription_default_model ?? legacyTranscription;
-    cleanupDefaultModel = all.cleanup_default_model ?? legacyCleanup;
+    transcriptionDefaultModel = migrateDeprecatedGoogleModel(all.transcription_default_model ?? legacyTranscription);
+    cleanupDefaultModel = migrateDeprecatedGoogleModel(all.cleanup_default_model ?? legacyCleanup);
+    const parsedTranscriptionDefault = splitModelId(transcriptionDefaultModel);
+    if (parsedTranscriptionDefault?.provider === 'google') {
+      transcriptionDefaultModel = modelId('google', migrateDeprecatedGoogleModel(parsedTranscriptionDefault.model));
+    }
     const parsedCleanupDefault = splitModelId(cleanupDefaultModel);
     if (parsedCleanupDefault?.provider === 'groq') {
       cleanupDefaultModel = modelId('groq', migrateDeprecatedGroqCleanupModel(parsedCleanupDefault.model));
     }
 
     if (Array.isArray(all.transcription_fallback_models)) {
-      transcriptionFallbackModels = all.transcription_fallback_models.filter((id) => !!splitModelId(id));
+      transcriptionFallbackModels = all.transcription_fallback_models
+        .filter((id) => !!splitModelId(id))
+        .map((id) => {
+          const parsed = splitModelId(id);
+          return parsed?.provider === 'google'
+            ? modelId('google', migrateDeprecatedGoogleModel(parsed.model))
+            : id;
+        });
     }
     dualTranscriptionEnabled = all.dual_transcription_enabled === true;
     if (Array.isArray(all.cleanup_fallback_models)) {
