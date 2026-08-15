@@ -33,6 +33,7 @@
 
   $: hasBanner = !!failedEntry || !!cancelledEntry;
   $: filtersActive = (search ?? '').trim().length > 0 || appFilter !== null;
+  $: firstLabel = recents.length > 0 ? fmtDate(recents[0].created_at) : '';
 
   function rowMeta(entry: Entry): string {
     const parts: string[] = [];
@@ -60,7 +61,8 @@
       }
       if (!seenHeaders.has(dayKey)) {
         seenHeaders.add(dayKey);
-        if (!(hasBanner && label === 'Today')) {
+        const isFirstHeader = acc.length === 0;
+        if (!(hasBanner ? label === 'Today' : isFirstHeader)) {
           acc.push({ type: 'header', label, key: `header-${dayKey}` });
         }
       }
@@ -333,14 +335,17 @@
     </div>
   {/if}
 
-  <HistoryToolbar
-    {search}
-    {apps}
-    {appFilter}
-    {onSearchChange}
-    {onAppFilterChange}
-    {onClearFilters}
-  />
+  <div class="day-head day-head-row">
+    <span>{hasBanner ? 'Today' : firstLabel}</span>
+    <HistoryToolbar
+      {search}
+      {apps}
+      {appFilter}
+      {onSearchChange}
+      {onAppFilterChange}
+      {onClearFilters}
+    />
+  </div>
 
   {#if recents.length === 0 && !hasBanner}
     {#if filtersActive}
@@ -415,6 +420,8 @@
     margin: 4px 4px 10px;
   }
   .day-head.muted { margin-top: 22px; color: var(--ink-mute); }
+  .day-head-row { display: flex; align-items: center; gap: 12px; }
+  .day-head-row > span { flex: 0 0 auto; }
 
   .day-table { border-top: 1px solid var(--line); }
 
