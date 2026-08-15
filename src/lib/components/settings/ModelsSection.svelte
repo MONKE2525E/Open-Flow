@@ -598,13 +598,23 @@
     let cleanupPromptOverridesChanged = false;
     if (all.cleanup_prompt_overrides && typeof all.cleanup_prompt_overrides === 'object') {
       const overrides: Record<string, string> = {};
-      for (const [key, value] of Object.entries(all.cleanup_prompt_overrides as Record<string, unknown>)) {
+      const rawOverrides = all.cleanup_prompt_overrides as Record<string, unknown>;
+      for (const [key, value] of Object.entries(rawOverrides)) {
         if (typeof value === 'string') {
           const parsed = splitModelId(key);
           const normalizedKey = parsed?.provider === 'groq'
             ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
             : key;
-          overrides[normalizedKey] = value;
+          if (normalizedKey === key) overrides[normalizedKey] = value;
+        }
+      }
+      for (const [key, value] of Object.entries(rawOverrides)) {
+        if (typeof value === 'string') {
+          const parsed = splitModelId(key);
+          const normalizedKey = parsed?.provider === 'groq'
+            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
+            : key;
+          if (normalizedKey !== key && !(normalizedKey in overrides)) overrides[normalizedKey] = value;
         }
       }
       cleanupPromptOverridesChanged = JSON.stringify(overrides) !== JSON.stringify(all.cleanup_prompt_overrides);

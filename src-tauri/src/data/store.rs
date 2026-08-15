@@ -531,16 +531,27 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         .into_iter()
         .map(|id| migrate_deprecated_model_id(&id))
         .collect();
-    let cleanup_prompt_overrides = store
+    let raw_cleanup_prompt_overrides = store
         .get(CLEANUP_PROMPT_OVERRIDES)
         .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(k, v)| {
-            v.as_str()
-                .map(|s| (migrate_deprecated_model_id(&k), s.to_string()))
-        })
-        .collect();
+        .unwrap_or_default();
+    let mut cleanup_prompt_overrides = std::collections::HashMap::new();
+    for (key, value) in &raw_cleanup_prompt_overrides {
+        if let Some(text) = value.as_str() {
+            let migrated_key = migrate_deprecated_model_id(key);
+            if migrated_key == *key {
+                cleanup_prompt_overrides.insert(migrated_key, text.to_string());
+            }
+        }
+    }
+    for (key, value) in raw_cleanup_prompt_overrides {
+        if let Some(text) = value.as_str() {
+            let migrated_key = migrate_deprecated_model_id(&key);
+            if migrated_key != key && !cleanup_prompt_overrides.contains_key(&migrated_key) {
+                cleanup_prompt_overrides.insert(migrated_key, text.to_string());
+            }
+        }
+    }
 
     PipelineConfig {
         transcription_provider,
@@ -907,6 +918,22 @@ mod tests {
                 format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}"),
                 "openai/gpt-4o-mini".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn migrated_cleanup_override_prefers_existing_current_model_key() {
+        let store = SettingsSnapshot::from_pairs([(
+            CLEANUP_PROMPT_OVERRIDES.to_string(),
+            json!({
+                "groq/llama-3.3-70b-versatile": "legacy",
+                "groq/qwen/qwen3.6-27b": "current"
+            }),
+        )]);
+        let cfg = load_pipeline_config(&store);
+        assert_eq!(
+            cfg.cleanup_prompt_overrides.get("groq/qwen/qwen3.6-27b"),
+            Some(&"current".to_string())
         );
     }
 
