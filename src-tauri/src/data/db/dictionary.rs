@@ -144,10 +144,16 @@ pub fn insert_dictionary_entry_returning(
             if already_in_context {
                 anyhow::bail!("\"{normalized_term}\" is already in this context");
             }
-            tx.execute(
-                "UPDATE dictionary SET mistake = ?2 WHERE id = ?1",
-                params![id, normalized_mistake],
+            let existing_mistake: Option<String> = tx.query_row(
+                "SELECT mistake FROM dictionary WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
             )?;
+            if existing_mistake != normalized_mistake {
+                anyhow::bail!(
+                    "\"{normalized_term}\" already exists with a different correction"
+                );
+            }
             tx.execute(
                 "INSERT OR IGNORE INTO dictionary_contexts (context_id, dictionary_id) VALUES (?1, ?2)",
                 params![target_context, id],

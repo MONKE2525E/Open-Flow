@@ -90,10 +90,16 @@ pub fn insert_snippet_returning_conn(
             if already_in_context {
                 anyhow::bail!("\"{normalized_trigger}\" is already in this context");
             }
-            conn.execute(
-                "UPDATE snippets SET expansion = ?2, instructions = ?3 WHERE id = ?1",
-                params![id, normalized_expansion, normalized_instructions],
+            let existing_payload: (String, String) = conn.query_row(
+                "SELECT expansion, instructions FROM snippets WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
+            if existing_payload != (normalized_expansion.clone(), normalized_instructions.clone()) {
+                anyhow::bail!(
+                    "\"{normalized_trigger}\" already exists with different content"
+                );
+            }
             conn.execute(
                 "INSERT OR IGNORE INTO snippet_contexts (context_id, snippet_id) VALUES (?1, ?2)",
                 params![target_context, id],

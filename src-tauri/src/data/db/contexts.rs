@@ -775,4 +775,22 @@ mod tests {
             1
         );
     }
+
+    #[test]
+    fn adding_existing_content_to_a_context_does_not_overwrite_everywhere() {
+        let db = open(":memory:").expect("db");
+        let context = insert_context_returning(&db, "Writing", None, None, None, None).expect("context");
+        insert_dictionary_entry_returning(&db, "Verenu", Some("Vernu"), None).expect("dictionary");
+        insert_snippet_returning(&db, "sig", "signature", "", None).expect("snippet");
+
+        assert!(insert_dictionary_entry_returning(&db, "Verenu", Some("Verano"), Some(context.id)).is_err());
+        assert!(insert_snippet_returning(&db, "sig", "different", "", Some(context.id)).is_err());
+
+        let dictionary = query_dictionary(&db).expect("dictionary");
+        assert_eq!(dictionary[0].mistake.as_deref(), Some("Vernu"));
+        let snippets = query_snippets(&db).expect("snippets");
+        assert_eq!(snippets[0].expansion, "signature");
+        assert!(query_dictionary_for_context(&db, context.id).unwrap().is_empty());
+        assert!(query_snippets_for_context(&db, context.id).unwrap().is_empty());
+    }
 }
