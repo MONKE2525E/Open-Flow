@@ -597,6 +597,7 @@
   let modalWebsiteError = $state('');
 
   async function addModalWebsite() {
+    if (checkingDomain) return;
     const domain = normalizeDomainInput(modalWebsiteInput);
     if (!domain || !isLikelyValidDomain(domain)) return;
     if (modalWebsites.includes(domain)) {
@@ -918,6 +919,7 @@
   }
 
   async function assignWebsite() {
+    if (checkingDomain) return;
     if (!selectedContext || selectedContext.is_everywhere) return;
     const domain = normalizeDomainInput(websiteInput);
     if (!domain || !isLikelyValidDomain(domain)) {
@@ -1128,6 +1130,7 @@
                     placeholder="mail.google.com"
                     bind:value={websiteInput}
                     bind:this={websiteInputEl}
+                    disabled={checkingDomain}
                     oninput={() => websiteError = ''}
                     onkeydown={handleWebsiteInputKeydown}
                     autocomplete="off"
@@ -1634,7 +1637,7 @@
           </div>
         {/if}
         <div class="website-input-row">
-          <input id="context-website" class="ui-input" type="text" placeholder="mail.google.com" bind:value={modalWebsiteInput} autocomplete="off" oninput={() => modalWebsiteError = ''} onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void addModalWebsite(); } }} />
+          <input id="context-website" class="ui-input" type="text" placeholder="mail.google.com" bind:value={modalWebsiteInput} autocomplete="off" disabled={checkingDomain} oninput={() => modalWebsiteError = ''} onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void addModalWebsite(); } }} />
           <button class="btn-ghost btn-compact website-add-btn" class:is-visible={modalWebsiteValid} type="button" onclick={() => void addModalWebsite()} disabled={!modalWebsiteValid || checkingDomain} tabindex={modalWebsiteValid ? 0 : -1}>{checkingDomain ? 'Checking…' : 'Add'}</button>
         </div>
         {#if modalWebsiteError}
