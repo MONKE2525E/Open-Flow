@@ -171,6 +171,30 @@ pub fn query_snippets(db: &Db) -> Result<Vec<Snippet>> {
     Ok(rows)
 }
 
+pub fn query_snippets_for_context(db: &Db, context_id: i64) -> Result<Vec<Snippet>> {
+    let conn = lock_conn(db)?;
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.trigger, s.expansion, s.instructions, s.use_count, s.created_at
+         FROM snippets s
+         INNER JOIN snippet_contexts sc ON sc.snippet_id = s.id
+         WHERE sc.context_id = ?1
+         ORDER BY s.created_at DESC",
+    )?;
+    let rows = stmt
+        .query_map(params![context_id], |r| {
+            Ok(Snippet {
+                id: r.get(0)?,
+                trigger: r.get(1)?,
+                expansion: r.get(2)?,
+                instructions: r.get(3)?,
+                use_count: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 pub fn increment_snippet_use(db: &Db, id: i64) -> Result<()> {
     let conn = lock_conn(db)?;
     conn.execute(
