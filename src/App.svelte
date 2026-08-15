@@ -100,7 +100,7 @@
   let prevSetupComplete = appStore.setupComplete;
   $effect(() => {
     const complete = appStore.setupComplete;
-    if (!prevSetupComplete && complete) {
+    if (prevSetupComplete === false && complete === true) {
       requestAnimationFrame(() => {
         document.querySelector<HTMLElement>('.sidebar .nav-item')?.focus();
       });
