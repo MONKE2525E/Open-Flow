@@ -544,11 +544,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         }
         return;
     };
-    let api_used = if alternate.is_none() || cleanup_api_used.is_empty() {
-        api_used
-    } else {
-        format!("{api_used};cleanup={cleanup_api_used}")
-    };
+    let api_used = append_cleanup_api_used(api_used, &cleanup_api_used);
     log::debug!(
         "pipeline: cleanup/snippets ok final_chars={} final_preview=\"{}\" dict_entries={}",
         final_text.chars().count(),
@@ -608,6 +604,14 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
 
 #[cfg(test)]
 mod tests;
+
+fn append_cleanup_api_used(api_used: String, cleanup_api_used: &str) -> String {
+    if cleanup_api_used.is_empty() {
+        api_used
+    } else {
+        format!("{api_used};cleanup={cleanup_api_used}")
+    }
+}
 
 pub async fn retry_transcription_impl(
     app: &AppHandle,
@@ -701,11 +705,7 @@ pub async fn retry_transcription_impl(
         hide_pill(app);
         anyhow::bail!("Retry cleanup failed");
     };
-    let api_used = if alternate.is_none() || cleanup_api_used.is_empty() {
-        api_used
-    } else {
-        format!("{api_used};cleanup={cleanup_api_used}")
-    };
+    let api_used = append_cleanup_api_used(api_used, &cleanup_api_used);
 
     finalize_pipeline_completion(
         app,

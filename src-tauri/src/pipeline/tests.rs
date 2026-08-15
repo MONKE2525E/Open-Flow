@@ -3,12 +3,28 @@ use super::stages::{cleanup_cache_plan, dual_cleanup_context_fingerprint, speech
 use super::{
     apply_app_style_overrides, effective_recording_rms, ensure_terminal_punctuation,
     has_spoken_content, is_transcription_hallucination, normalize_transcription_math_artifacts,
-    preview_text, recording_gate_rms, resolve_app_mapping, run_pipeline_fixture,
+    append_cleanup_api_used, preview_text, recording_gate_rms, resolve_app_mapping,
+    run_pipeline_fixture,
     should_run_cleanup_llm, should_use_cleanup_cache, strip_hallucinated_suffix,
     style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
     PipelineTestSnippet,
 };
 use crate::system::apps::AppMapping;
+
+#[test]
+fn cleanup_api_metadata_is_kept_for_normal_transcriptions() {
+    assert_eq!(
+        append_cleanup_api_used(
+            "groq/whisper-large-v3-turbo/transcription".to_string(),
+            "openai/gpt-4o-mini",
+        ),
+        "groq/whisper-large-v3-turbo/transcription;cleanup=openai/gpt-4o-mini"
+    );
+    assert_eq!(
+        append_cleanup_api_used("groq/whisper-large-v3-turbo/transcription".to_string(), ""),
+        "groq/whisper-large-v3-turbo/transcription"
+    );
+}
 
 #[test]
 fn preview_text_redacts_dictation_content_when_not_verbose() {
