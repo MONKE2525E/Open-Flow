@@ -80,7 +80,7 @@ fn normalize_domain(domain: &str) -> Result<String> {
         .split(['/', '?', '#'])
         .next()
         .unwrap_or(without_scheme);
-    let host = host.split('@').last().unwrap_or(host); // strip user@ prefix
+    let host = host.rsplit_once('@').map(|(_, rest)| rest).unwrap_or(host); // strip user@ prefix
     let host = host.split(':').next().unwrap_or(host); // strip :port
     let normalized = require_nonempty_trimmed("Website", host)?;
     validate_char_limit("Website", &normalized, CONTEXT_DOMAIN_CHAR_LIMIT)?;
