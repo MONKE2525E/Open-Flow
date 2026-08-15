@@ -83,6 +83,7 @@ async function waitForSingleSettingsPanel(page) {
     // ── Navigation: each click must actually change the visible view ──────────
     const navMap = [
       { label: 'Home',     heading: 'Welcome back' },
+      { label: 'Insights', heading: 'Insights'      },
       { label: 'Contexts', heading: 'Contexts'     },
       { label: 'Style',    heading: 'Style'        },
     ];

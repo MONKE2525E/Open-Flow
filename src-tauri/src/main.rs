@@ -673,8 +673,6 @@ fn main() {
              commands::get_context_snippets,
              commands::set_dictionary_context_assignment,
              commands::set_snippet_context_assignment,
-            commands::get_app_mappings,
-            commands::save_app_mappings,
             commands::get_snippets,
             commands::create_snippet,
             commands::edit_snippet,
