@@ -43,7 +43,7 @@
     // The icon is replaced during the click/focus transition. Keep the
     // expanded control alive long enough for the replacement input to receive
     // focus, even when the browser reports the intermediate focusout late.
-    expandLockUntil = Date.now() + 1000;
+    expandLockUntil = Date.now() + 5000;
     uiExpanded = true;
     await tick();
     inputEl?.focus();
@@ -102,6 +102,10 @@
           type="text"
           placeholder="Search history or app..."
           value={search}
+          onfocus={() => {
+            expandLockUntil = 0;
+            preserveExpanded = false;
+          }}
           oninput={(event) => onSearchChange(event.currentTarget.value)}
           aria-label="Search history"
         />
