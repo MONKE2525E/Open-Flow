@@ -647,6 +647,7 @@
     }
     savingContext = true;
     contextError = '';
+    let createdContextId: number | null = null;
     try {
       if (contextModalMode === 'edit' && selectedContext && !selectedContext.is_everywhere) {
         await invoke('update_context', { contextId: selectedContext.id, name });
@@ -669,6 +670,7 @@
           tone: modalTone,
           cleanupIntensity: modalCleanupIntensity,
         });
+        createdContextId = created.id;
         if (modalColor) {
           await invoke('update_context_color', { contextId: created.id, color: modalColor });
           created.color = modalColor;
@@ -692,6 +694,10 @@
       }
       modal = null;
     } catch (error) {
+      if (createdContextId !== null) {
+        selectedContextId = createdContextId;
+        contextModalMode = 'edit';
+      }
       contextError = classifyIpcError(error).message;
     } finally {
       savingContext = false;
