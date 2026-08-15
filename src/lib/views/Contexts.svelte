@@ -1543,7 +1543,7 @@
             onclick={() => modalIcon = modalIcon === iconKey ? null : iconKey}
             oncontextmenu={openModalColorPicker}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons[iconKey]}</svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html (icons as Record<string, string>)[iconKey]}</svg>
           </button>
         {/each}
       </div>
