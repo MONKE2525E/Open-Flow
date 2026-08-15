@@ -108,7 +108,89 @@ CREATE TABLE IF NOT EXISTS api_calls (
 );
 CREATE INDEX IF NOT EXISTS idx_api_calls_created_at
   ON api_calls(created_at);
+CREATE INDEX IF NOT EXISTS idx_api_calls_transcription_id
+  ON api_calls(transcription_id);
 ";
+
+/// Opens the database, and if it (or its WAL sidecar) is corrupt, quarantines
+/// the corrupt files and retries with a fresh database instead of failing the
+/// whole app. Used at startup: a `db::open` panic there would otherwise put
+/// Verenu in a crash loop (the startup-recovery relaunch re-panics on the
+/// same corrupt file), with no way for the user to recover besides manually
+/// deleting their database. Only a truly unwritable directory (fresh open also
+/// failing) is allowed to bubble up as a hard startup error.
+pub fn open_with_recovery(path: impl AsRef<std::path::Path>) -> Result<Db> {
+    match open(path.as_ref()) {
+        Ok(db) => Ok(db),
+        Err(first_err) => {
+            // Quarantine only genuine corruption. A transient failure (file
+            // locked or busy, an unwritable directory, an I/O error) is not
+            // corruption: moving a healthy database aside would silently
+            // discard the user's history in favor of a fresh empty file.
+            if !open_error_is_corruption(&first_err) || !quarantine_corrupt_db_files(path.as_ref())
+            {
+                return Err(first_err);
+            }
+            log::error!(
+                "database failed to open and was moved aside for diagnosis; starting with a fresh database: {first_err}"
+            );
+            open(path.as_ref()).map_err(|second_err| {
+                anyhow::anyhow!(
+                    "database failed to open ({first_err}); quarantined and fresh reopen also failed: {second_err}"
+                )
+            })
+        }
+    }
+}
+
+/// Whether a failed [`open`] is caused by an actually corrupt database rather
+/// than a transient or environmental error. `SQLITE_NOTADB` covers a main file
+/// that is not a SQLite database and a wedged WAL; `SQLITE_CORRUPT` covers a
+/// malformed database image or schema. Everything else (busy/locked, cannot
+/// open, I/O) is left untouched so the user's data is never moved aside for a
+/// problem that is not corruption.
+fn open_error_is_corruption(err: &anyhow::Error) -> bool {
+    matches!(
+        err.downcast_ref::<rusqlite::Error>(),
+        Some(rusqlite::Error::SqliteFailure(code, _))
+            if code.code == rusqlite::ErrorCode::NotADatabase
+                || code.code == rusqlite::ErrorCode::DatabaseCorrupt
+    )
+}
+
+/// Renames the database file plus its WAL/SHM sidecars to
+/// `.corrupt-<nanos>` names so they are preserved for diagnosis but can never
+/// block a fresh open. Returns `false` (and leaves the files in place) if any
+/// rename fails, so the caller keeps the original error instead of masking it
+/// with a worse one. A database whose WAL file is wedged is just as
+/// un-openable as a bad main file, so all three are quarantined together.
+pub(crate) fn quarantine_corrupt_db_files(db_path: &std::path::Path) -> bool {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+
+    let mut all_moved = true;
+    for extension in ["db", "db-wal", "db-shm"] {
+        let mut candidate = db_path.to_path_buf();
+        candidate.set_extension(extension);
+        if !candidate.exists() {
+            continue;
+        }
+        let mut quarantined = candidate.clone();
+        quarantined.set_extension(format!("{extension}.corrupt-{nanos}"));
+        if let Err(err) = std::fs::rename(&candidate, &quarantined) {
+            // File name only — the full path is a user-local file location
+            // that must not appear in logs.
+            log::warn!(
+                "failed to quarantine corrupt database file {:?}: {err}",
+                candidate.file_name()
+            );
+            all_moved = false;
+        }
+    }
+    all_moved
+}
 
 pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
     let db_path = path.as_ref();

@@ -570,6 +570,7 @@ fn next_pill_placement<R: Runtime>(
 }
 
 pub(crate) fn hide_pill(app: &AppHandle) {
+    PILL_WANTS_REPAIR_FOCUS.store(false, Ordering::SeqCst);
     if let Some(pill) = app.get_webview_window("pill") {
         // Invalidate any in-flight animated move's deferred reveal - without
         // this, a tween started by an earlier show_pill_msg call could land
@@ -577,6 +578,7 @@ pub(crate) fn hide_pill(app: &AppHandle) {
         // the pill right back to looking like it's recording/processing.
         // Also stop the tween itself from continuing to move the window.
         PILL_VISUALLY_ACTIVE.store(false, Ordering::SeqCst);
+        set_pill_focusable(&pill, false);
         REVEAL_GEN.fetch_add(1, Ordering::SeqCst);
         super::pill_animation::cancel_pending_pill_tween();
 
