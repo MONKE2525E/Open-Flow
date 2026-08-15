@@ -30,6 +30,7 @@ enum SettingKind {
     SoundEffectsVolume,
     AppMappings,
     Hotkey,
+    RepairHotkey,
 }
 
 #[derive(Clone, Copy)]
@@ -119,6 +120,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::CLEANUP_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::HOTKEY, SettingKind::Hotkey, true, true),
+    setting_spec(store::REPAIR_HOTKEY, SettingKind::RepairHotkey, true, true),
     setting_spec(
         store::MICROPHONE_DEVICE,
         SettingKind::StringOrNull,
@@ -305,6 +307,14 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
         SettingKind::Hotkey => value
             .as_array()
             .is_some_and(|keys| keys.len() == 2 && keys.iter().all(serde_json::Value::is_string)),
+        SettingKind::RepairHotkey => value.as_array().is_some_and(|keys| {
+            keys.len() == 3
+                && keys.iter().all(serde_json::Value::is_string)
+                && (keys.iter().all(|k| k.as_str() == Some(""))
+                    || keys.iter().all(|k| {
+                        k.as_str().is_some_and(crate::core::hotkey::is_known_key_code)
+                    }))
+        }),
     };
 
     if valid {
@@ -456,6 +466,7 @@ pub struct AllSettings {
     pub beta_updates_enabled: Option<bool>,
     pub verenu_service_checks_enabled: Option<bool>,
     pub hotkey: Option<Vec<String>>,
+    pub repair_hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
     pub cleanup_prompt_overrides: Option<serde_json::Value>,
 }
@@ -522,6 +533,13 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         beta_updates_enabled: bool_val(store::BETA_UPDATES_ENABLED),
         verenu_service_checks_enabled: bool_val(store::VERENU_SERVICE_CHECKS_ENABLED),
         hotkey: s.get(store::HOTKEY).and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+        }),
+        repair_hotkey: s.get(store::REPAIR_HOTKEY).and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
                     .filter_map(|x| x.as_str().map(String::from))

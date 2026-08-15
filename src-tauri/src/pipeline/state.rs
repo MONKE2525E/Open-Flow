@@ -49,6 +49,8 @@ pub struct AppState {
     pub retry_capture: Option<RetryCapture>,
     pub cancelled_capture: Option<CancelledCapture>,
     pub paste_failure: Option<PasteFailure>,
+    pub repair: Option<super::repair::RepairSession>,
+    pub hotkey_recording_repair_complaint: bool,
 }
 
 /// Single source of truth for what the app is currently doing with the
@@ -171,6 +173,7 @@ pub fn reserve_starting(state: &SharedState) -> Result<(), String> {
     if !st.lifecycle.is_idle() {
         return Err("Already recording".to_string());
     }
+    st.repair = None;
     st.lifecycle = DictationLifecycle::Starting {
         prepend_audio: None,
     };
@@ -303,6 +306,7 @@ pub fn take_active_pipeline_for_escape(state: &SharedState) -> Option<ActivePipe
 /// Escape while still actively recording (pre-`Release`).
 pub fn take_recording_plain(state: &SharedState) -> Option<(audio::RecordingSession, Option<u64>)> {
     let mut st = lock_state(state).ok()?;
+    st.hotkey_recording_repair_complaint = false;
     match std::mem::replace(&mut st.lifecycle, DictationLifecycle::Idle) {
         DictationLifecycle::Recording {
             session,
@@ -633,6 +637,8 @@ mod tests {
             retry_capture: None,
             cancelled_capture: None,
             paste_failure: None,
+            repair: None,
+            hotkey_recording_repair_complaint: false,
         }))
     }
 

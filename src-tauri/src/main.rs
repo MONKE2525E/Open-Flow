@@ -265,6 +265,8 @@ fn main() {
         retry_capture: None,
         cancelled_capture: None,
         paste_failure: None,
+        repair: None,
+        hotkey_recording_repair_complaint: false,
     }));
 
     std::fs::create_dir_all(app_data_dir()).ok();
@@ -324,6 +326,21 @@ fn main() {
                                 let vk1 = crate::core::hotkey::map_code_to_vk(k1);
                                 let vk2 = crate::core::hotkey::map_code_to_vk(k2);
                                 crate::core::hotkey::update_keys(vk1, vk2);
+                            }
+                        }
+                    }
+                }
+                if let Some(val) = settings.get(crate::data::store::REPAIR_HOTKEY) {
+                    if let Some(arr) = val.as_array() {
+                        if arr.len() == 3 {
+                            if let (Some(k1), Some(k2), Some(k3)) =
+                                (arr[0].as_str(), arr[1].as_str(), arr[2].as_str())
+                            {
+                                crate::core::hotkey::update_repair_keys(
+                                    crate::core::hotkey::map_code_to_vk(k1),
+                                    crate::core::hotkey::map_code_to_vk(k2),
+                                    crate::core::hotkey::map_code_to_vk(k3),
+                                );
                             }
                         }
                     }
@@ -475,6 +492,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::save_hotkey,
             commands::check_hotkey,
+            commands::save_repair_hotkey,
+            commands::check_repair_hotkey,
             commands::save_api_key,
             commands::delete_api_key,
             commands::get_api_key_status,
@@ -539,6 +558,13 @@ fn main() {
             commands::resume_cancelled_capture,
             commands::dismiss_cancelled_capture,
             commands::copy_paste_failure_to_clipboard,
+            commands::start_repair_complaint_recording,
+            commands::stop_repair_complaint_recording,
+            commands::repair_positive_feedback,
+            commands::repair_enter_input,
+            commands::repair_cancel,
+            commands::repair_analyze,
+            commands::repair_apply,
             commands::set_pill_size,
             commands::get_installed_apps,
             commands::get_app_mappings,

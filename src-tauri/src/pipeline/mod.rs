@@ -21,6 +21,7 @@ mod gates;
 mod pill;
 mod pill_animation;
 mod pill_position;
+mod repair;
 mod session;
 mod stages;
 mod state;
@@ -36,17 +37,19 @@ pub use fixture::{
 use gates::{
     effective_recording_rms, has_spoken_content, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
-    silence_floor_gate_rms, strip_hallucinated_suffix,
+    silence_floor_gate_rms, strip_hallucinated_suffix, strip_trailing_hallucination,
     MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
 pub(crate) use pill::{
-    emit_pill_stage, hide_pill, show_copied_pill, show_pill, update_pill_state,
+    emit_pill_stage, hide_pill, pill_wants_repair_focus, show_copied_pill, show_pill,
+    update_pill_state,
 };
 use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_failed_pill};
 pub(crate) use pill_position::{
     apply_pill_placement, placement_for_current_monitor, PillPlacement,
 };
 pub use session::*;
+pub(crate) use repair::*;
 use stages::*;
 pub use state::*;
 
@@ -460,7 +463,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     {
         raw
     } else {
-        strip_hallucinated_suffix(&raw)
+        strip_trailing_hallucination(&strip_hallucinated_suffix(&raw))
     };
     if raw.chars().count() != raw_chars_before_strip {
         log::warn!(
@@ -579,7 +582,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             target_hwnd: target.id,
             cfg: &cfg,
             profile: &profile,
-            process_name,
+            process_name: process_name.clone(),
             cleanup_cache_key,
             captured_at: retry_captured_at,
             event_only,
@@ -592,6 +595,19 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         state::leave_finalizing(&state, generation);
         return;
     }
+    begin_feedback(
+        &app,
+        &state,
+        &raw,
+        &final_text,
+        &final_text,
+        process_name.clone(),
+        None,
+        0,
+        "Everywhere".to_string(),
+        &dict_entries,
+        &cfg,
+    );
     state::leave_finalizing(&state, generation);
 
     log::info!(

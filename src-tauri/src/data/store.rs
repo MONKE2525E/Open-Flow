@@ -190,6 +190,7 @@ pub const DUAL_TRANSCRIPTION_ENABLED: &str = "dual_transcription_enabled";
 pub const CLEANUP_FALLBACK_MODELS: &str = "cleanup_fallback_models";
 pub const CLEANUP_ENABLED: &str = "cleanup_enabled";
 pub const HOTKEY: &str = "hotkey";
+pub const REPAIR_HOTKEY: &str = "repair_hotkey";
 pub const MICROPHONE_DEVICE: &str = "microphone_device";
 pub const DEFAULT_TONE: &str = "default_tone";
 pub const CLEANUP_INTENSITY: &str = "cleanup_intensity";
