@@ -3,6 +3,11 @@ import type { ProviderId, ProviderModelMap } from '../../settings';
 export type TaskType = 'transcription' | 'cleanup';
 export type UiProviderId = 'groq' | 'openai' | 'google' | 'assemblyai';
 
+export const GROQ_GPT_OSS_20B_MODEL = 'openai/gpt-oss-20b';
+export const GROQ_QWEN_3_6_27B_MODEL = 'qwen/qwen3.6-27b';
+const DEPRECATED_GROQ_LLAMA_8B_MODEL = 'llama-3.1-8b-instant';
+const DEPRECATED_GROQ_LLAMA_70B_MODEL = 'llama-3.3-70b-versatile';
+
 export type ProviderSection = {
   id: UiProviderId;
   label: string;
@@ -40,11 +45,18 @@ export const recommendedModels: Record<TaskType, Partial<Record<UiProviderId, { 
     assemblyai: { premium: 'universal-3-5-pro', standard: 'universal-2' },
   },
   cleanup: {
-    groq: { premium: 'llama-3.3-70b-versatile', standard: 'llama-3.1-8b-instant' },
+    groq: { premium: GROQ_QWEN_3_6_27B_MODEL, standard: GROQ_GPT_OSS_20B_MODEL },
     openai: { premium: 'gpt-4o', standard: 'gpt-4o-mini' },
     google: { premium: 'gemini-3.5-flash', standard: 'gemini-2.5-flash' },
   },
 };
+
+export function migrateDeprecatedGroqCleanupModel(model: string): string {
+  const normalized = model.trim();
+  if (normalized === DEPRECATED_GROQ_LLAMA_8B_MODEL) return GROQ_GPT_OSS_20B_MODEL;
+  if (normalized === DEPRECATED_GROQ_LLAMA_70B_MODEL) return GROQ_QWEN_3_6_27B_MODEL;
+  return normalized;
+}
 
 export const emptyProviderModelMap = (): ProviderModelMap => ({
   groq: [],
@@ -103,6 +115,12 @@ export function providerDisplayLabel(provider: ProviderId): string {
 }
 
 export function modelDisplayLabel(provider: ProviderId, model: string): string {
+  if (provider === 'groq' && model === GROQ_GPT_OSS_20B_MODEL) {
+    return 'GPT OSS 20B';
+  }
+  if (provider === 'groq' && model === GROQ_QWEN_3_6_27B_MODEL) {
+    return 'Qwen3.6 27B';
+  }
   if (provider === 'assemblyai') {
     switch (model) {
       case 'universal-3-5-pro':

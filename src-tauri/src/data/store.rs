@@ -295,6 +295,10 @@ pub const OPENAI: &str = "openai";
 pub const GOOGLE: &str = "google";
 pub const ASSEMBLYAI: &str = "assemblyai";
 pub(crate) const LOCAL: &str = "local";
+pub(crate) const GROQ_GPT_OSS_20B_MODEL: &str = "openai/gpt-oss-20b";
+pub(crate) const GROQ_QWEN_3_6_27B_MODEL: &str = "qwen/qwen3.6-27b";
+pub(crate) const DEPRECATED_GROQ_LLAMA_8B_MODEL: &str = "llama-3.1-8b-instant";
+pub(crate) const DEPRECATED_GROQ_LLAMA_70B_MODEL: &str = "llama-3.3-70b-versatile";
 pub const PROVIDERS: [&str; 5] = [GROQ, OPENAI, GOOGLE, ASSEMBLYAI, LOCAL];
 
 pub fn default_transcription_model_for(provider: &str) -> &'static str {
@@ -312,7 +316,20 @@ pub fn default_cleanup_model_for(provider: &str) -> &'static str {
         LOCAL => "gemma-4-e2b",
         OPENAI => "gpt-4o-mini",
         GOOGLE => "gemini-3.5-flash",
-        _ => "llama-3.3-70b-versatile",
+        _ => GROQ_QWEN_3_6_27B_MODEL,
+    }
+}
+
+pub fn migrate_deprecated_model_id(id: &str) -> String {
+    let Some((provider, model)) = parse_model_id(id) else {
+        return id.trim().to_string();
+    };
+    if provider == GROQ && model == DEPRECATED_GROQ_LLAMA_8B_MODEL {
+        format!("{GROQ}/{GROQ_GPT_OSS_20B_MODEL}")
+    } else if provider == GROQ && model == DEPRECATED_GROQ_LLAMA_70B_MODEL {
+        format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
+    } else {
+        format!("{provider}/{model}")
     }
 }
 
@@ -484,7 +501,7 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         |new_val: &str, legacy_val: &str, provider: &str, default_fn: fn(&str) -> &'static str| {
             parse_model_id(new_val)
                 .or_else(|| parse_model_id(legacy_val))
-                .map(|(p, m)| format!("{p}/{m}"))
+                .map(|(p, m)| migrate_deprecated_model_id(&format!("{p}/{m}")))
                 .unwrap_or_else(|| format!("{provider}/{}", default_fn(provider)))
         };
 
@@ -502,19 +519,39 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         default_cleanup_model_for,
     );
 
-    let transcription_fallback_models = parse_string_array(TRANSCRIPTION_FALLBACK_MODELS);
+    let transcription_fallback_models = parse_string_array(TRANSCRIPTION_FALLBACK_MODELS)
+        .into_iter()
+        .map(|id| migrate_deprecated_model_id(&id))
+        .collect();
     let dual_transcription_enabled = store
         .get(DUAL_TRANSCRIPTION_ENABLED)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let cleanup_fallback_models = parse_string_array(CLEANUP_FALLBACK_MODELS);
-    let cleanup_prompt_overrides = store
+    let cleanup_fallback_models = parse_string_array(CLEANUP_FALLBACK_MODELS)
+        .into_iter()
+        .map(|id| migrate_deprecated_model_id(&id))
+        .collect();
+    let raw_cleanup_prompt_overrides = store
         .get(CLEANUP_PROMPT_OVERRIDES)
         .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
-        .collect();
+        .unwrap_or_default();
+    let mut cleanup_prompt_overrides = std::collections::HashMap::new();
+    for (key, value) in &raw_cleanup_prompt_overrides {
+        if let Some(text) = value.as_str() {
+            let migrated_key = migrate_deprecated_model_id(key);
+            if migrated_key == *key {
+                cleanup_prompt_overrides.insert(migrated_key, text.to_string());
+            }
+        }
+    }
+    for (key, value) in raw_cleanup_prompt_overrides {
+        if let Some(text) = value.as_str() {
+            let migrated_key = migrate_deprecated_model_id(&key);
+            if migrated_key != key && !cleanup_prompt_overrides.contains_key(&migrated_key) {
+                cleanup_prompt_overrides.insert(migrated_key, text.to_string());
+            }
+        }
+    }
 
     PipelineConfig {
         transcription_provider,
@@ -744,4 +781,213 @@ mod tests {
             "explicit true must be honored"
         );
     }
+
+    // ── setting_audit_* regression tests (targeted by the OnePyFone harness) ──
+
+    /// Fresh install (empty settings.json) must resolve to the documented
+    /// product defaults, not empty strings or false positives.
+    #[test]
+    fn setting_audit_empty_store_resolves_to_documented_defaults() {
+        let empty = SettingsSnapshot::from_pairs([]);
+        let cfg = load_pipeline_config(&empty);
+        let audio = load_audio_config(&empty);
+
+        assert_eq!(cfg.transcription_provider, GROQ);
+        assert_eq!(cfg.cleanup_provider, GROQ);
+        assert_eq!(cfg.transcription_language, "en");
+        assert_eq!(
+            cfg.transcription_default_model,
+            format!("{GROQ}/whisper-large-v3-turbo")
+        );
+        assert_eq!(
+            cfg.cleanup_default_model,
+            format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
+        );
+        assert!(cfg.transcription_fallback_models.is_empty());
+        assert!(cfg.cleanup_fallback_models.is_empty());
+        assert!(!cfg.dual_transcription_enabled);
+        assert!(cfg.cleanup_enabled, "cleanup should default to on");
+        assert_eq!(cfg.default_tone, "casual");
+        assert_eq!(cfg.cleanup_intensity, "medium");
+        assert!(!cfg.app_context_hint);
+        assert!(!cfg.auto_learn_enabled);
+        assert!(cfg.contextual_caps_enabled, "contextual caps default on");
+        assert!(cfg.auto_spacing_enabled, "auto spacing default on");
+        assert!(!cfg.caps_lock_uppercase_enabled);
+        assert!(!cfg.advanced_model_ui);
+        assert_eq!(cfg.local_model_memory_policy, "unload_after_5m");
+
+        assert!(audio.noise_reduction, "noise reduction default on");
+        assert_eq!(audio.mic_gain, DEFAULT_MIC_GAIN);
+        assert_eq!(audio.sound_effects_volume, 1.0);
+        assert!(!audio.mute_audio);
+        assert!(!audio.exclusive_mic);
+        assert!(!audio.pause_media_during_dictation);
+        assert!(audio.device.is_none());
+    }
+
+    /// A legacy `transcription_model`/`cleanup_model` (provider-prefixed) must
+    /// migrate into the new `*_default_model` resolution even when the new key
+    /// is absent. Older builds always wrote the full `provider/model` id.
+    #[test]
+    fn setting_audit_legacy_model_keys_migrate_to_default() {
+        let store = SettingsSnapshot::from_pairs([
+            (
+                TRANSCRIPTION_MODEL.to_string(),
+                json!("openai/gpt-4o-transcribe"),
+            ),
+            (CLEANUP_MODEL.to_string(), json!("openai/gpt-4o-mini")),
+        ]);
+        let cfg = load_pipeline_config(&store);
+        assert_eq!(cfg.transcription_default_model, "openai/gpt-4o-transcribe");
+        assert_eq!(cfg.cleanup_default_model, "openai/gpt-4o-mini");
+    }
+
+    /// An unparseable model id must not panic or pass through. Resolution
+    /// prefers new key → legacy key → provider default; a legacy key that is
+    /// absent resolves to the groq default (the legacy default), so an invalid
+    /// new key with no legacy value also lands on the groq default.
+    #[test]
+    fn setting_audit_malformed_model_id_resolves_to_safe_default() {
+        let store = SettingsSnapshot::from_pairs([
+            (
+                TRANSCRIPTION_DEFAULT_MODEL.to_string(),
+                json!("not-a-model-id"),
+            ),
+            (CLEANUP_DEFAULT_MODEL.to_string(), json!("")),
+            (TRANSCRIPTION_PROVIDER.to_string(), json!(OPENAI)),
+        ]);
+        let cfg = load_pipeline_config(&store);
+        assert_eq!(
+            cfg.transcription_default_model,
+            format!("{GROQ}/whisper-large-v3-turbo"),
+            "malformed new key + absent legacy key must fall back to the legacy groq default"
+        );
+        assert_eq!(
+            cfg.cleanup_default_model,
+            format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
+        );
+    }
+
+    #[test]
+    fn deprecated_groq_cleanup_models_migrate_to_gpt_oss() {
+        let store = SettingsSnapshot::from_pairs([
+            (
+                CLEANUP_DEFAULT_MODEL.to_string(),
+                json!("groq/llama-3.1-8b-instant"),
+            ),
+            (
+                CLEANUP_FALLBACK_MODELS.to_string(),
+                json!(["groq/llama-3.1-8b-instant", "openai/gpt-4o-mini"]),
+            ),
+        ]);
+        let cfg = load_pipeline_config(&store);
+        assert_eq!(
+            cfg.cleanup_default_model,
+            format!("{GROQ}/{GROQ_GPT_OSS_20B_MODEL}")
+        );
+        assert_eq!(
+            cfg.cleanup_fallback_models,
+            vec![
+                format!("{GROQ}/{GROQ_GPT_OSS_20B_MODEL}"),
+                "openai/gpt-4o-mini".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn deprecated_groq_llama_70b_migrates_to_qwen() {
+        let store = SettingsSnapshot::from_pairs([
+            (
+                CLEANUP_DEFAULT_MODEL.to_string(),
+                json!("groq/llama-3.3-70b-versatile"),
+            ),
+            (
+                CLEANUP_FALLBACK_MODELS.to_string(),
+                json!(["groq/llama-3.3-70b-versatile", "openai/gpt-4o-mini"]),
+            ),
+        ]);
+        let cfg = load_pipeline_config(&store);
+        assert_eq!(
+            cfg.cleanup_default_model,
+            format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
+        );
+        assert_eq!(
+            cfg.cleanup_fallback_models,
+            vec![
+                format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}"),
+                "openai/gpt-4o-mini".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn migrated_cleanup_override_prefers_existing_current_model_key() {
+        let store = SettingsSnapshot::from_pairs([(
+            CLEANUP_PROMPT_OVERRIDES.to_string(),
+            json!({
+                "groq/llama-3.3-70b-versatile": "legacy",
+                "groq/qwen/qwen3.6-27b": "current"
+            }),
+        )]);
+        let cfg = load_pipeline_config(&store);
+        assert_eq!(
+            cfg.cleanup_prompt_overrides.get("groq/qwen/qwen3.6-27b"),
+            Some(&"current".to_string())
+        );
+    }
+
+    /// Unknown enum values must be coerced back to the backend default rather
+    /// than passed through to the pipeline.
+    #[test]
+    fn setting_audit_unknown_enum_values_fall_back_to_default() {
+        let store = SettingsSnapshot::from_pairs([
+            (DEFAULT_TONE.to_string(), json!("business")),
+            (CLEANUP_INTENSITY.to_string(), json!("extreme")),
+            (
+                LOCAL_MODEL_MEMORY_POLICY.to_string(),
+                json!("always_loaded"),
+            ),
+            (TRANSCRIPTION_LANGUAGE.to_string(), json!("xx")),
+        ]);
+        let cfg = load_pipeline_config(&store);
+        assert_eq!(cfg.default_tone, "casual");
+        assert_eq!(cfg.cleanup_intensity, "medium");
+        assert_eq!(cfg.local_model_memory_policy, "unload_after_5m");
+        assert_eq!(cfg.transcription_language, "en");
+    }
+
+    /// `mic_gain` stored outside the valid range must be clamped at load time,
+    /// matching the slider's 1.0..=8.0 contract.
+    #[test]
+    fn setting_audit_mic_gain_clamped_at_load() {
+        let below = SettingsSnapshot::from_pairs([(MIC_GAIN.to_string(), json!(0.2))]);
+        assert_eq!(load_audio_config(&below).mic_gain, MIN_MIC_GAIN);
+
+        let above = SettingsSnapshot::from_pairs([(MIC_GAIN.to_string(), json!(99.0))]);
+        assert_eq!(load_audio_config(&above).mic_gain, MAX_MIC_GAIN);
+
+        let in_range = SettingsSnapshot::from_pairs([(MIC_GAIN.to_string(), json!(4.5))]);
+        assert_eq!(load_audio_config(&in_range).mic_gain, 4.5);
+    }
+
+    /// A corrupt `mic_gain` type (string) must fall back to the default, not panic.
+    #[test]
+    fn setting_audit_mic_gain_wrong_type_falls_back_to_default() {
+        let store = SettingsSnapshot::from_pairs([(MIC_GAIN.to_string(), json!("loud"))]);
+        assert_eq!(load_audio_config(&store).mic_gain, DEFAULT_MIC_GAIN);
+    }
+
+    /// history_retention_days must map every supported label and return None
+    /// (never prune) for "Forever" and anything unrecognized.
+    #[test]
+    fn setting_audit_history_retention_days_mapping() {
+        assert_eq!(history_retention_days("7 days"), Some(7));
+        assert_eq!(history_retention_days("30 days"), Some(30));
+        assert_eq!(history_retention_days("90 days"), Some(90));
+        assert_eq!(history_retention_days("Forever"), None);
+        assert_eq!(history_retention_days("365 days"), None);
+        assert_eq!(history_retention_days(""), None);
+    }
+
 }
