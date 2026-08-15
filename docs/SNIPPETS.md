@@ -1,5 +1,7 @@
 # Snippets
 
+> **Legacy page.** The standalone Snippets page is hidden by default — snippets can be managed per context group from the [Contexts](CONTEXTS.md) page's Snippets tab. Turn on **Settings → General → Legacy pages** to bring this page back if you prefer managing snippets separately.
+
 Snippets let you say a short trigger phrase and have Verenu expand it into something longer — a signature, a boilerplate response, a piece of code, anything you type often.
 
 ## Creating a snippet
@@ -34,6 +36,7 @@ See [Dictionary](DICTIONARY.md) for vocabulary corrections, or [App Mappings & P
 ## Related Docs
 
 <p align="center">
+  <a href="CONTEXTS.md"><img alt="Contexts" src="https://img.shields.io/badge/Contexts-Guide-a3352b"></a>
   <a href="DICTIONARY.md"><img alt="Dictionary" src="https://img.shields.io/badge/Dictionary-Guide-5b554a"></a>
   <a href="APP_MAPPINGS.md"><img alt="App Mappings" src="https://img.shields.io/badge/App-Mappings-c44632"></a>
   <a href="CLEANUP_LEVELS.md"><img alt="Cleanup Levels" src="https://img.shields.io/badge/Cleanup-Levels-7e7266"></a>
