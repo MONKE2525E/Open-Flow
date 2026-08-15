@@ -84,7 +84,7 @@
     Math.max(MIN_WEEKS, Math.min(53, Math.floor((availableWidth - RIGHT_GUTTER + GAP) / STEP)))
   );
   const cells = $derived(allCells.slice(-visibleWeekCount * 7));
-  const longestVisibleScale = $derived(Math.max(1, allCells.reduce((max, cell) => Math.max(max, cell.streakDays), 0)));
+  const longestVisibleScale = $derived(Math.max(1, cells.reduce((max, cell) => Math.max(max, cell.streakDays), 0)));
   const legendDays = $derived(Array.from(new Set([
     1,
     Math.max(1, Math.ceil(longestVisibleScale / 3)),
