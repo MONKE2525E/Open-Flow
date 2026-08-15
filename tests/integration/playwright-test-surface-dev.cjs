@@ -11,10 +11,11 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
   await seedDevState(page, {
     settings: {
       setup_complete: true,
+      cleanup_enabled: true,
       cleanup_intensity: 'medium',
       default_tone: 'casual',
       appearance_mode: 'system',
-      legacy_features_enabled: true,
+      legacy_features_enabled: false,
       history_retention: '30 days',
       force_setup_on_launch: false,
     },
