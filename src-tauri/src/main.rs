@@ -18,12 +18,9 @@ use crate::core::window_geometry::WindowTarget;
 use crate::data::db;
 use crate::pipeline::{AppState, SharedState};
 
-use std::sync::{
-    atomic::AtomicBool,
-    Arc, Mutex,
-};
 #[cfg(target_os = "windows")]
 use std::sync::atomic::Ordering;
+use std::sync::{atomic::AtomicBool, Arc, Mutex};
 #[cfg(target_os = "windows")]
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -238,6 +235,37 @@ pub(crate) fn app_db_path() -> std::path::PathBuf {
     app_data_dir().join("verenu.db")
 }
 
+/// Reports a fatal startup error where a packaged user can see it before
+/// aborting. Debug builds reach stderr via the panic; Windows release builds
+/// have no console (`windows_subsystem = "windows"`), so the error also goes
+/// to a message box — otherwise an unwritable data directory or a
+/// non-quarantinable database fails the app with no visible reason. Only the
+/// message is shown, never full user-local paths.
+fn fatal_startup_error(message: &str) -> ! {
+    log::error!("{message}");
+    #[cfg(target_os = "windows")]
+    {
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+
+        let mut text: Vec<u16> = format!("{message}\n\nVerenu must close.")
+            .encode_utf16()
+            .collect();
+        text.push(0);
+        let mut title: Vec<u16> = "Verenu — startup failed".encode_utf16().collect();
+        title.push(0);
+        unsafe {
+            MessageBoxW(
+                None,
+                PCWSTR(text.as_ptr()),
+                PCWSTR(title.as_ptr()),
+                MB_OK | MB_ICONERROR,
+            );
+        }
+    }
+    panic!("{message}");
+}
+
 fn main() {
     #[cfg(target_os = "windows")]
     {
@@ -265,11 +293,23 @@ fn main() {
         retry_capture: None,
         cancelled_capture: None,
         paste_failure: None,
+        repair: None,
+        hotkey_recording_repair_complaint: false,
     }));
 
     std::fs::create_dir_all(app_data_dir()).ok();
-    let db_handle: DbHandle = db::open(app_db_path()).expect("failed to open database");
+    // The logger must be live before the database opens: a corrupt DB,
+    // failed migration, or quarantine decision happens before Tauri's setup
+    // callback, where the AppHandle (and thus `verenu:log` emission) first
+    // exists. init_early captures those records in the ring buffer;
+    // attach_app in setup enables frontend forwarding.
+    crate::system::logger::init_early();
+    let db_handle: DbHandle = match db::open_with_recovery(app_db_path()) {
+        Ok(db) => db,
+        Err(err) => fatal_startup_error(&format!("failed to open database: {err}")),
+    };
     let _ = db::cleanup_cache_prune_expired(&db_handle);
+    let _ = db::prune_auto_learn_retention(&db_handle);
     if let Err(e) = db::seed_default_dictionary_entries(&db_handle) {
         log::warn!("failed to seed default dictionary entries: {e}");
     }
@@ -289,7 +329,24 @@ fn main() {
         .manage(local_transcription_manager.clone())
         .manage(frontend_readiness.clone())
         .setup(move |app| {
-            crate::system::logger::init(app.handle())?;
+            crate::system::logger::attach_app(app.handle());
+            let build_mode = if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            };
+            log::info!(
+                "verenu {} starting — {} {}, {} build — verbose logging {}",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                build_mode,
+                if crate::system::logger::is_verbose() {
+                    "on"
+                } else {
+                    "off"
+                }
+            );
             crate::system::notify::prepare_windows_notification_identity();
             let settings = crate::data::store::SettingsHandle::open(app.handle())
                 .map_err(std::io::Error::other)?;
@@ -359,9 +416,18 @@ fn main() {
             };
 
             app_tray::setup_tray(app)?;
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                let theme = window.theme().ok();
+                crate::system::windows_titlebar::enable(&window, theme)
+                    .map_err(|error| {
+                        let source: Box<dyn std::error::Error> = Box::new(std::io::Error::other(error));
+                        tauri::Error::Setup(source.into())
+                    })?;
+            }
             app_hotkey::setup_hotkey(app, shared.clone());
-            // setup_tray() already applies native window chrome (both platforms) via
-            // apply_runtime_icons() — no need to call apply_native_main_window_chrome again here.
+            // setup_tray() already applies runtime icons (both platforms) via
+            // apply_runtime_icons() — no need to call it again here.
             #[cfg(target_os = "macos")]
             {
                 crate::system::mac_app::set_accessory_activation_policy_on_main_thread(
@@ -369,6 +435,31 @@ fn main() {
                 );
             }
             start_frontend_watchdog(app.handle(), frontend_readiness.clone());
+            // macOS logout sends SIGTERM to the app. Tauri delivers
+            // RunEvent::Exit only for its own quit paths, so without this
+            // hook a SIGTERM would kill the process without unloading the
+            // local cleanup model, orphaning llama-server. Routing it through
+            // app.exit(0) runs the normal Exit cleanup (see the `run` closure
+            // below). Unix-only: console signals do not reach Windows GUI
+            // apps, and Windows logoff is handled separately in
+            // on_window_event.
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{signal, SignalKind};
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut sigterm = match signal(SignalKind::terminate()) {
+                        Ok(sigterm) => sigterm,
+                        Err(err) => {
+                            log::warn!("could not register SIGTERM handler: {err}");
+                            return;
+                        }
+                    };
+                    sigterm.recv().await;
+                    log::info!("received SIGTERM; exiting cleanly");
+                    app_handle.exit(0);
+                });
+            }
             let local_stt_manager = local_transcription_manager.clone();
             let local_llm_manager = local_cleanup_manager.clone();
             let app_handle = app.handle().clone();
@@ -432,6 +523,16 @@ fn main() {
             if window.label() == "main" {
                 match event {
                     tauri::WindowEvent::CloseRequested { api, .. } => {
+                        // The OS is tearing the session down (Windows logoff or
+                        // shutdown): let the window actually close instead of
+                        // hiding to tray, or the process outlives the session
+                        // (Windows waits ~5s then force-kills it, which also
+                        // skips RunEvent::Exit and can orphan llama-server.exe).
+                        // On other platforms the session helper reports false
+                        // and the normal hide-to-tray path below runs.
+                        if crate::system::session::system_is_shutting_down() {
+                            return;
+                        }
                         api.prevent_close();
                         #[cfg(target_os = "macos")]
                         {
@@ -463,9 +564,19 @@ fn main() {
                             .unwrap_or("system")
                             == "system"
                         {
-                            // apply_runtime_icons() already applies native window chrome
-                            // (both platforms) internally — no separate call needed here.
+                            // apply_runtime_icons() already applies runtime icons
+                            // internally — no separate call needed here.
                             apply_runtime_icons(app, Some(*theme));
+                        }
+                        #[cfg(target_os = "windows")]
+                        if let Some(webview) = window.app_handle().get_webview_window("main") {
+                            crate::system::windows_titlebar::refresh(&webview, Some(*theme));
+                        }
+                    }
+                    #[cfg(target_os = "windows")]
+                    tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                        if let Some(webview) = window.app_handle().get_webview_window("main") {
+                            crate::system::windows_titlebar::refresh(&webview, window.theme().ok());
                         }
                     }
                     _ => {}
@@ -473,6 +584,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            system::windows_titlebar::get_native_titlebar_metrics,
             commands::save_hotkey,
             commands::check_hotkey,
             commands::save_api_key,
@@ -491,7 +603,6 @@ fn main() {
             commands::delete_local_stt_model,
             commands::delete_local_llm_model,
             commands::open_local_stt_models_folder,
-            commands::open_local_models_folder,
             commands::get_local_transcription_state,
             commands::get_local_llm_state,
             commands::get_local_llm_runtime_info,
@@ -499,23 +610,17 @@ fn main() {
             commands::cancel_local_llm_runtime_download,
             commands::delete_local_llm_runtime,
             commands::set_autostart,
-            commands::check_accessibility_permission,
             commands::get_macos_permission_snapshot,
             commands::request_accessibility_permission,
             commands::open_accessibility_settings,
-            commands::get_accessibility_permission_status,
-            commands::get_microphone_permission_status,
             commands::request_microphone_permission,
             commands::request_microphone_permission_snapshot,
             commands::open_microphone_settings,
             commands::restart_app,
             commands::frontend_ready,
-            commands::open_privacy_security_settings,
             commands::reset_macos_core_permissions,
-            commands::check_keychain_access,
-            commands::show_main,
-            commands::hide_main,
             commands::get_recent,
+            commands::get_history_apps,
             commands::get_stats,
             commands::get_insights,
             commands::count_old_transcriptions,
@@ -533,6 +638,13 @@ fn main() {
             commands::start_calibration_monitoring,
             commands::stop_calibration_monitoring,
             commands::stop_and_transcribe_input,
+            commands::start_repair_complaint_recording,
+            commands::stop_repair_complaint_recording,
+            commands::repair_positive_feedback,
+            commands::repair_enter_input,
+            commands::repair_cancel,
+            commands::repair_analyze,
+            commands::repair_apply,
             commands::stop_setup_try_recording,
             commands::stop_recording,
             commands::stop_handless_mode,
@@ -541,6 +653,26 @@ fn main() {
             commands::copy_paste_failure_to_clipboard,
             commands::set_pill_size,
             commands::get_installed_apps,
+            commands::get_app_icon,
+             commands::get_app_mappings,
+             commands::save_app_mappings,
+             commands::get_contexts,
+             commands::create_context,
+             commands::update_context,
+             commands::update_context_settings,
+             commands::update_context_color,
+             commands::delete_context,
+             commands::get_context_targets,
+             commands::assign_context_target,
+             commands::remove_context_target,
+             commands::get_context_websites,
+             commands::check_domain_exists,
+             commands::assign_context_website,
+             commands::remove_context_website,
+             commands::get_context_dictionary,
+             commands::get_context_snippets,
+             commands::set_dictionary_context_assignment,
+             commands::set_snippet_context_assignment,
             commands::get_app_mappings,
             commands::save_app_mappings,
             commands::get_snippets,
@@ -571,7 +703,6 @@ fn main() {
             commands::test_notifications,
             commands::export_data,
             commands::import_data,
-            commands::log_frontend,
         ])
         .build(tauri::generate_context!())
         .expect("error building Verenu")
@@ -580,6 +711,9 @@ fn main() {
             if let tauri::RunEvent::Reopen { .. } = _event {
                 show_main_window(_app);
             }
+            if let tauri::RunEvent::ExitRequested { .. } = _event {
+                log::info!("app exit requested");
+            }
             // Local cleanup runs llama-server.exe as a real child OS process
             // (unlike local_stt, which is in-process). Child processes are
             // not automatically killed when their parent exits on Windows —
@@ -587,8 +721,9 @@ fn main() {
             // loaded would orphan llama-server.exe, leaving it running
             // indefinitely and holding the loaded model's RAM/VRAM.
             if let tauri::RunEvent::Exit = _event {
-                _app.state::<crate::local_llm::LocalLlmManager>()
-                    .unload(_app);
+                log::info!("app exiting; unloading local models");
+                crate::system::shutdown_local_models(_app);
+                log::info!("app shutdown complete");
             }
         });
 }
@@ -616,7 +751,9 @@ fn cleanup_update_helper_if_requested() {
 
 #[cfg(target_os = "windows")]
 fn wait_for_relaunch_parent_exit() {
-    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+    use windows::Win32::Foundation::{
+        CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    };
     use windows::Win32::System::Threading::{
         OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
     };
@@ -638,7 +775,22 @@ fn wait_for_relaunch_parent_exit() {
             }
         };
 
-        let wait_result = WaitForSingleObject(handle, 5_000);
+        // The old instance may take longer than 5 s to exit (slow model
+        // unload during RunEvent::Exit). Waiting on the same handle in slices
+        // up to a 15 s total budget keeps this bounded while still refusing to
+        // open the database while the parent holds it: two live connections to
+        // the same SQLite file would let the single-instance plugin hand off
+        // to the dying parent and leave the user with no running app.
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let wait_result = loop {
+            let result = WaitForSingleObject(handle, 5_000);
+            // WAIT_TIMEOUT means the parent is still alive: keep waiting up to
+            // the deadline. Any other result is terminal (signaled, or a
+            // WAIT_FAILED that would otherwise busy-spin), so leave the loop.
+            if result != WAIT_TIMEOUT || std::time::Instant::now() >= deadline {
+                break result;
+            }
+        };
         if wait_result != WAIT_OBJECT_0 {
             early_startup_warn(&format!(
                 "Relaunch waited for parent process {parent_pid} but got result {}",

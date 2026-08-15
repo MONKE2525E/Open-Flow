@@ -172,7 +172,6 @@
         <div
           class="mapping-row"
           animate:flip={{ duration: motionMs(300), easing: expoOut }}
-          in:fly={{ y: motionPx(10), duration: motionMs(300), easing: expoOut }}
           out:listItemCollapse={{ duration: 200 }}
         >
           <div class="mapping-app-info">
@@ -192,7 +191,7 @@
               title="Tone for {getAppDisplayName(mapping, installedApps)}"
             >
               {getProfileLabel(mapping.profile)}
-              <svg class:open={openRowDropdown === `${mapping.exe}:profile`} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <svg class="ui-chevron" class:open={openRowDropdown === `${mapping.exe}:profile`} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="m6 9 6 6 6-6"/>
               </svg>
             </button>
@@ -211,7 +210,7 @@
               title="Cleanup style for {getAppDisplayName(mapping, installedApps)}"
             >
               {getCleanupIntensityLabel(mapping.cleanup_intensity)}
-              <svg class:open={openRowDropdown === `${mapping.exe}:cleanup`} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <svg class="ui-chevron" class:open={openRowDropdown === `${mapping.exe}:cleanup`} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="m6 9 6 6 6-6"/>
               </svg>
             </button>
@@ -339,6 +338,12 @@
   }
 
   .mapping-badge-btn:hover { background: color-mix(in oklab, var(--accent-soft) 80%, var(--accent) 20%); }
+  .mapping-badge-btn:focus-visible,
+  .mapping-delete-btn:focus-visible,
+  .row-drop-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 
   .mapping-badge-btn.is-default {
     color: var(--ink-mute);
@@ -348,8 +353,7 @@
 
   .mapping-badge-btn.is-default:hover { background: var(--control-hover); }
 
-  .mapping-badge-btn svg { transition: transform 150ms; flex-shrink: 0; }
-  .mapping-badge-btn svg.open { transform: rotate(180deg); }
+  .mapping-badge-btn svg { flex-shrink: 0; }
 
   .row-drop-wrap {
     position: relative;
@@ -420,7 +424,7 @@
 
   .mapping-delete-btn:hover {
     color: var(--ink-strong);
-    background: var(--control-hover);
+    background: var(--control-active);
   }
 
   .mapping-empty {
