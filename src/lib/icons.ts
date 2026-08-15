@@ -1,4 +1,8 @@
-// SVG path data for all icons — 24x24 viewBox, stroke-based
+// SVG path data for all icons — 24x24 viewBox, stroke-based.
+// WARNING: several icons are looked up DYNAMICALLY via `icons[entry.icon]`
+// (Sidebar nav entries, settingsSections.ts) — a static grep for `icons.foo`
+// does NOT prove an icon is unused. Keep this set in sync with the literal
+// `icon:` keys in Sidebar.svelte and settingsSections.ts.
 export const icons = {
   home:     `<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>`,
   book:     `<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h8M8 11h6"/>`,
@@ -19,4 +23,8 @@ export const icons = {
   check:    `<polyline points="20 6 9 17 4 12"/>`,
   mic:      `<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/>`,
   shield:   `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>`,
+  code:     `<polyline points="9 8 4 12.5 9 17"/><polyline points="15 8 20 12.5 15 17"/>`,
+  browser:  `<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><circle cx="6.5" cy="6.5" r="0.6" fill="currentColor" stroke="none"/><circle cx="9" cy="6.5" r="0.6" fill="currentColor" stroke="none"/>`,
+  chat:     `<path d="M4 4h16v12H8l-4 4V4z"/>`,
+  pencil:   `<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>`,
 };

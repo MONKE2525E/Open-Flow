@@ -390,7 +390,10 @@ mod tests {
         // empty injected text trivially passes
         assert!(full_text_confirms_paste("", "anything at all"));
         // unrelated text fails
-        assert!(!full_text_confirms_paste("didn't paste", "totally unrelated text"));
+        assert!(!full_text_confirms_paste(
+            "didn't paste",
+            "totally unrelated text"
+        ));
     }
 }
 #[derive(Clone, Copy, Debug)]
@@ -894,6 +897,19 @@ pub async fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
     {
         let _ = text;
         anyhow::bail!("copy_to_clipboard: unsupported platform")
+    }
+}
+
+/// Snapshot current plain text before the pipeline writes its injection payload.
+/// Clipboard phrase insertion is deliberately Windows-only for now.
+pub async fn read_current_clipboard_text() -> Option<String> {
+    #[cfg(windows)]
+    {
+        windows::read_clipboard_text().await
+    }
+    #[cfg(not(windows))]
+    {
+        None
     }
 }
 
