@@ -55,9 +55,7 @@ pub async fn test_cleanup_prompt(
             .unwrap_or(false);
 
         if !is_downloaded {
-            live_warnings.push(
-                "Model not installed. Saved after static lint only.".to_string(),
-            );
+            live_warnings.push("Model not installed. Saved after static lint only.".to_string());
             return Ok(PromptTestReport {
                 passed: static_warnings.is_empty(),
                 static_warnings,
@@ -132,6 +130,7 @@ pub async fn test_cleanup_prompt(
             "",
             None,
             Some(template.as_str()),
+            0,
         )
         .await;
 
