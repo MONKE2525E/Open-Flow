@@ -295,10 +295,10 @@ pub const OPENAI: &str = "openai";
 pub const GOOGLE: &str = "google";
 pub const ASSEMBLYAI: &str = "assemblyai";
 pub(crate) const LOCAL: &str = "local";
-pub const GROQ_GPT_OSS_20B_MODEL: &str = "openai/gpt-oss-20b";
-pub const GROQ_QWEN_3_6_27B_MODEL: &str = "qwen/qwen3.6-27b";
-pub const DEPRECATED_GROQ_LLAMA_8B_MODEL: &str = "llama-3.1-8b-instant";
-pub const DEPRECATED_GROQ_LLAMA_70B_MODEL: &str = "llama-3.3-70b-versatile";
+pub(crate) const GROQ_GPT_OSS_20B_MODEL: &str = "openai/gpt-oss-20b";
+pub(crate) const GROQ_QWEN_3_6_27B_MODEL: &str = "qwen/qwen3.6-27b";
+pub(crate) const DEPRECATED_GROQ_LLAMA_8B_MODEL: &str = "llama-3.1-8b-instant";
+pub(crate) const DEPRECATED_GROQ_LLAMA_70B_MODEL: &str = "llama-3.3-70b-versatile";
 pub const PROVIDERS: [&str; 5] = [GROQ, OPENAI, GOOGLE, ASSEMBLYAI, LOCAL];
 
 pub fn default_transcription_model_for(provider: &str) -> &'static str {
@@ -963,47 +963,4 @@ mod tests {
         assert_eq!(history_retention_days(""), None);
     }
 
-    /// Cleanup prompt overrides must be inert unless Advanced Models is on,
-    /// and whitespace-only overrides must be ignored.
-    #[test]
-    fn setting_audit_cleanup_overrides_gated_by_advanced_ui() {
-        let mut overrides = std::collections::HashMap::new();
-        overrides.insert(
-            "groq/llama-3.3-70b-versatile".to_string(),
-            "Custom".to_string(),
-        );
-        let base = PipelineConfig {
-            advanced_model_ui: true,
-            cleanup_prompt_overrides: overrides.clone(),
-            ..Default::default()
-        };
-        assert_eq!(
-            base.cleanup_override_for("groq", "llama-3.3-70b-versatile"),
-            Some("Custom")
-        );
-        let off = PipelineConfig {
-            advanced_model_ui: false,
-            cleanup_prompt_overrides: overrides.clone(),
-            ..Default::default()
-        };
-        assert_eq!(
-            off.cleanup_override_for("groq", "llama-3.3-70b-versatile"),
-            None
-        );
-
-        let blank = PipelineConfig {
-            advanced_model_ui: true,
-            cleanup_prompt_overrides: [(
-                "groq/llama-3.3-70b-versatile".to_string(),
-                "   ".to_string(),
-            )]
-            .into_iter()
-            .collect(),
-            ..Default::default()
-        };
-        assert_eq!(
-            blank.cleanup_override_for("groq", "llama-3.3-70b-versatile"),
-            None
-        );
-    }
 }

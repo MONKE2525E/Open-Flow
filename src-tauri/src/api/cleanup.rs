@@ -135,30 +135,6 @@ pub async fn cleanup_with_alternate(
     }
 }
 
-/// Structured request transport shared by repair diagnosis. It deliberately
-/// bypasses cleanup prompt construction and the cleanup-enabled setting while
-/// reusing the existing authenticated provider clients and redacted errors.
-pub async fn structured_request(
-    text: &str,
-    provider: ProviderId,
-    api_key: &str,
-    model: &str,
-    prompt: &str,
-    max_output_tokens: u32,
-    gen: u64,
-) -> Result<String> {
-    let request = async {
-        if let Some(url) = provider.cleanup_url() {
-            openai_compat(text, api_key, url, provider.label(), model, prompt, max_output_tokens, None, gen).await
-        } else {
-            google_cleanup(text, api_key, prompt, model, max_output_tokens, None, gen).await
-        }
-    };
-    tokio::time::timeout(std::time::Duration::from_secs(CLEANUP_REQUEST_TIMEOUT_SECS), request)
-        .await
-        .map_err(|_| anyhow::anyhow!("Repair provider request timed out"))?
-}
-
 #[derive(Serialize)]
 struct ChatReq {
     model: String,
