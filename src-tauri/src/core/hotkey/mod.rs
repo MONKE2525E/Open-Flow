@@ -103,6 +103,7 @@ mod noop {
     pub fn update_repair_keys(_k1: u32, _k2: u32, _k3: u32) {}
     pub fn reset_chord_state() {}
     pub fn set_handless_active(_v: bool) {}
+    pub fn begin_synthetic_paste_suppression(_duration_ms: u64) {}
     pub fn set_processing_generation(_generation: u64) {}
     pub fn clear_processing_generation(_expected_generation: u64) {}
     pub fn is_win_key_down() -> bool {
