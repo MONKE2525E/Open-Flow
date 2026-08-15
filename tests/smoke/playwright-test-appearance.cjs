@@ -14,7 +14,7 @@ const TIMEOUT = 8_000;
   await page.addInitScript(() => {
     const key = '__open_flow_tauri_mock_settings';
     const current = JSON.parse(localStorage.getItem(key) || '{}');
-    localStorage.setItem(key, JSON.stringify({ ...current, legacy_features_enabled: true }));
+    localStorage.setItem(key, JSON.stringify({ ...current, legacy_features_enabled: false }));
   });
   await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
 

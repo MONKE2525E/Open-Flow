@@ -61,12 +61,12 @@ async function assert(label, locator, errors) {
     // Hotkey is button.badge.key-badge showing "Ctrl + Windows"
     await assert(
       'button.badge.key-badge containing "Ctrl"',
-      page.locator('button.badge.key-badge:has-text("Ctrl")'),
+      page.locator('button.badge.keybind-btn:has-text("Ctrl")'),
       errors,
     );
 
     // Verify the exact text includes the separator
-    const hotkeyBtn = page.locator('button.badge.key-badge');
+    const hotkeyBtn = page.locator('button.badge.keybind-btn');
     await hotkeyBtn.waitFor({ state: 'visible', timeout: 2_000 });
     const hotkeyText = await hotkeyBtn.textContent();
     if (!hotkeyText?.includes('+')) {
