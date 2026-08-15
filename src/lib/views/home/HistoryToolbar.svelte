@@ -58,12 +58,6 @@
     });
   }
 
-  function collapseIfFocusLeft() {
-    if (filtersActive) return;
-    if (groupEl && document.activeElement && groupEl.contains(document.activeElement)) return;
-    uiExpanded = false;
-  }
-
   $effect(() => {
     const handleAway = (event: Event) => {
       if (!uiExpanded || filtersActive || !groupEl) return;
@@ -77,6 +71,7 @@
       document.removeEventListener('focusin', handleAway);
     };
   });
+
 </script>
 
 <div class="history-toolbar">
