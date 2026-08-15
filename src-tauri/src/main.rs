@@ -385,6 +385,22 @@ fn main() {
                         }
                     }
                 }
+                if let Some(val) = settings.get(crate::data::store::REPAIR_HOTKEY) {
+                    if let Some(arr) = val.as_array() {
+                        if arr.len() == 3 {
+                            if let (Some(k1), Some(k2), Some(k3)) =
+                                (arr[0].as_str(), arr[1].as_str(), arr[2].as_str())
+                            {
+                                if !k1.is_empty() || !k2.is_empty() || !k3.is_empty() {
+                                    let vk1 = crate::core::hotkey::map_code_to_vk(k1);
+                                    let vk2 = crate::core::hotkey::map_code_to_vk(k2);
+                                    let vk3 = crate::core::hotkey::map_code_to_vk(k3);
+                                    crate::core::hotkey::update_repair_keys(vk1, vk2, vk3);
+                                }
+                            }
+                        }
+                    }
+                }
                 let retention_value = settings.get(crate::data::store::HISTORY_RETENTION);
                 let retention = retention_value
                     .as_ref()
@@ -587,6 +603,8 @@ fn main() {
             system::windows_titlebar::get_native_titlebar_metrics,
             commands::save_hotkey,
             commands::check_hotkey,
+            commands::save_repair_hotkey,
+            commands::check_repair_hotkey,
             commands::save_api_key,
             commands::delete_api_key,
             commands::get_api_key_status,
