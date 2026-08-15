@@ -1227,7 +1227,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return undefined as T;
     }
     case 'get_context_targets': {
-      const contextId = args?.context_id == null ? null : Number(args.context_id);
+      const rawContextId = args?.contextId ?? args?.context_id;
+      const contextId = rawContextId == null ? null : Number(rawContextId);
       return readDevContextTargets().filter((target) => contextId == null || target.context_id === contextId) as T;
     }
     case 'assign_context_target': {
@@ -1252,7 +1253,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return undefined as T;
     }
     case 'get_context_websites': {
-      const contextId = args?.context_id == null ? null : Number(args.context_id);
+      const rawContextId = args?.contextId ?? args?.context_id;
+      const contextId = rawContextId == null ? null : Number(rawContextId);
       return readDevContextWebsiteTargets().filter((target) => contextId == null || target.context_id === contextId) as T;
     }
     case 'check_domain_exists': {
@@ -1289,17 +1291,19 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'get_app_icon':
       return null as T;
     case 'get_context_dictionary': {
-      const contextId = Number(args?.context_id);
+      const contextId = Number(args?.contextId ?? args?.context_id);
       return devContextRows(contextId, readDevList<DevDictionaryEntry>(DEV_DICTIONARY_KEY), 'dictionary') as T;
     }
     case 'get_context_snippets': {
-      const contextId = Number(args?.context_id);
+      const contextId = Number(args?.contextId ?? args?.context_id);
       return devContextRows(contextId, readDevList<DevSnippet>(DEV_SNIPPETS_KEY), 'snippets') as T;
     }
     case 'set_dictionary_context_assignment':
     case 'set_snippet_context_assignment': {
-      const contextId = Number(args?.context_id);
-      const itemId = Number(command === 'set_dictionary_context_assignment' ? args?.dictionary_id : args?.snippet_id);
+      const contextId = Number(args?.contextId ?? args?.context_id);
+      const itemId = Number(command === 'set_dictionary_context_assignment'
+        ? (args?.dictionaryId ?? args?.dictionary_id)
+        : (args?.snippetId ?? args?.snippet_id));
       const assigned = Boolean(args?.assigned);
       if (!readDevContexts().some((context) => context.id === contextId)) throw new Error(`Context ${contextId} was not found`);
       const key = command === 'set_dictionary_context_assignment' ? 'dictionary' : 'snippets';

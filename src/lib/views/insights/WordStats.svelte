@@ -85,6 +85,7 @@
               class="word-toggle"
               class:open={wordExpanded}
               aria-expanded={wordExpanded}
+              aria-controls={wordExpanded ? 'insights-longest-word-full' : undefined}
               onclick={() => (wordExpanded = !wordExpanded)}
               onkeydown={(event) => {
                 if (event.key === 'Escape' && wordExpanded) {
@@ -100,7 +101,7 @@
               </svg>
             </button>
             {#if wordExpanded}
-              <div class="word-full scroll-styled" transition:slide={{ duration: motionMs(220), easing: cubicOut }}>
+              <div id="insights-longest-word-full" class="word-full scroll-styled" transition:slide={{ duration: motionMs(220), easing: cubicOut }}>
                 {rawWord}
               </div>
             {/if}

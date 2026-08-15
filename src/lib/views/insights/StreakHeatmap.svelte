@@ -45,10 +45,11 @@
     const toKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    today.setHours(12, 0, 0, 0);
     const lastDate = daily.length > 0 ? parseLocalDay(daily[daily.length - 1].day) : today;
 
     const endDate = new Date(lastDate);
+    endDate.setHours(12, 0, 0, 0);
     endDate.setDate(endDate.getDate() + (6 - endDate.getDay())); // extend to that week's Saturday
 
     const firstRealDate = daily.length > 0 ? parseLocalDay(daily[0].day) : lastDate;
@@ -61,6 +62,7 @@
     const byDay = new Map(daily.map((d) => [d.day, d]));
     const list: GridCell[] = [];
     const cursor = new Date(startDate);
+    cursor.setHours(12, 0, 0, 0);
     let run = 0;
     for (let i = 0; i < totalWeeks * 7; i++) {
       const key = toKey(cursor);
