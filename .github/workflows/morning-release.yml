@@ -20,7 +20,7 @@ concurrency:
 jobs:
   prepare:
     name: Prepare changed dev snapshot
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       should_release: ${{ steps.changes.outputs.should_release }}
       release_tag: ${{ steps.changes.outputs.release_tag }}
@@ -325,7 +325,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: windows-latest
+          - platform: blacksmith-4vcpu-windows-2025
             os-name: windows
           - platform: macos-latest
             os-name: macos
@@ -576,7 +576,7 @@ jobs:
     name: Publish nightly release
     needs: [prepare, build]
     if: needs.prepare.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Download generated release notes
         uses: actions/download-artifact@v4
