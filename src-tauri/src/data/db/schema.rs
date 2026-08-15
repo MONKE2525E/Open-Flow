@@ -42,6 +42,44 @@ CREATE TABLE IF NOT EXISTS snippets (
   use_count    INTEGER NOT NULL DEFAULT 0,
   created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS contexts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  is_everywhere INTEGER NOT NULL DEFAULT 0 CHECK (is_everywhere IN (0, 1)),
+  icon TEXT,
+  tone TEXT,
+  cleanup_intensity TEXT,
+  color TEXT,
+  created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+  updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_everywhere ON contexts(is_everywhere) WHERE is_everywhere = 1;
+CREATE TABLE IF NOT EXISTS context_targets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+  executable TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_context_targets_context_id ON context_targets(context_id);
+CREATE TABLE IF NOT EXISTS context_website_targets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_context_website_targets_context_id ON context_website_targets(context_id);
+CREATE TABLE IF NOT EXISTS dictionary_contexts (
+  context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+  dictionary_id INTEGER NOT NULL REFERENCES dictionary(id) ON DELETE CASCADE,
+  PRIMARY KEY (context_id, dictionary_id)
+);
+CREATE INDEX IF NOT EXISTS idx_dictionary_contexts_dictionary_id ON dictionary_contexts(dictionary_id);
+CREATE TABLE IF NOT EXISTS snippet_contexts (
+  context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+  snippet_id INTEGER NOT NULL REFERENCES snippets(id) ON DELETE CASCADE,
+  PRIMARY KEY (context_id, snippet_id)
+);
+CREATE INDEX IF NOT EXISTS idx_snippet_contexts_snippet_id ON snippet_contexts(snippet_id);
 CREATE TABLE IF NOT EXISTS pending_corrections (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   wrong_word   TEXT    NOT NULL,
@@ -349,6 +387,51 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
                 "ALTER TABLE lifetime_stats ADD COLUMN dictionary_fixes INTEGER NOT NULL DEFAULT 0;",
             )?;
             conn.execute_batch("PRAGMA user_version = 11;")?;
+            Ok(())
+        })?;
+    }
+    if user_version < 12 {
+        run_migration(&mut conn, |conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS contexts (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                   is_everywhere INTEGER NOT NULL DEFAULT 0 CHECK (is_everywhere IN (0, 1)),
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+                   updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_everywhere ON contexts(is_everywhere) WHERE is_everywhere = 1;
+                 CREATE TABLE IF NOT EXISTS context_targets (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+                   executable TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_context_targets_context_id ON context_targets(context_id);
+                 CREATE TABLE IF NOT EXISTS context_website_targets (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+                   domain TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_context_website_targets_context_id ON context_website_targets(context_id);
+                 CREATE TABLE IF NOT EXISTS dictionary_contexts (
+                   context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+                   dictionary_id INTEGER NOT NULL REFERENCES dictionary(id) ON DELETE CASCADE,
+                   PRIMARY KEY (context_id, dictionary_id)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_dictionary_contexts_dictionary_id ON dictionary_contexts(dictionary_id);
+                 CREATE TABLE IF NOT EXISTS snippet_contexts (
+                   context_id INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
+                   snippet_id INTEGER NOT NULL REFERENCES snippets(id) ON DELETE CASCADE,
+                   PRIMARY KEY (context_id, snippet_id)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_snippet_contexts_snippet_id ON snippet_contexts(snippet_id);
+                 INSERT OR IGNORE INTO contexts (id, name, is_everywhere) VALUES (1, 'Everywhere', 1);
+                 INSERT OR IGNORE INTO dictionary_contexts (context_id, dictionary_id) SELECT 1, id FROM dictionary;
+                 INSERT OR IGNORE INTO snippet_contexts (context_id, snippet_id) SELECT 1, id FROM snippets;
+                 PRAGMA user_version = 12;",
+            )?;
             Ok(())
         })?;
     }
