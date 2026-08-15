@@ -42,11 +42,14 @@ fn selected_update_channel(app: &AppHandle) -> Result<crate::api::updater::Updat
         .get(store::BETA_UPDATES_ENABLED)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    Ok(if beta_enabled {
-        crate::api::updater::UpdateChannel::Beta
-    } else {
-        crate::api::updater::UpdateChannel::Stable
-    })
+    let installed_version = crate::api::updater::current_package_version();
+    Ok(
+        if beta_enabled || crate::api::updater::is_beta_version(&installed_version) {
+            crate::api::updater::UpdateChannel::Beta
+        } else {
+            crate::api::updater::UpdateChannel::Stable
+        },
+    )
 }
 
 #[tauri::command]
