@@ -97,7 +97,7 @@ You choose the providers. Verenu does not lock you into one stack.
 | Provider | Transcription | Cleanup |
 | --- | --- | --- |
 | Local | `parakeet-v3` | none |
-| Groq | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` |
+| Groq | `whisper-large-v3-turbo` | `qwen/qwen3.6-27b` |
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
 | Google | `gemini-3.5-flash` | `gemini-3.5-flash` |
 

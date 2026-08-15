@@ -77,7 +77,10 @@ fn is_openai_large_cleanup_model(model: &str) -> bool {
 
 fn is_groq_large_cleanup_model(model: &str) -> bool {
     let model = normalized_model(model);
-    model.contains("70b") || model.contains("3.3") || model.contains("versatile")
+    model.contains("70b")
+        || model.contains("3.3")
+        || model.contains("versatile")
+        || model.contains("qwen3.6-27b")
 }
 
 #[allow(clippy::too_many_arguments)]

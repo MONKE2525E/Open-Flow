@@ -52,6 +52,7 @@
     mergeProviderModelMap,
     modelId,
     recommendedModels,
+    migrateDeprecatedGroqCleanupModel,
     splitModelId,
     type AllSettingsPayload,
     type TaskType,
@@ -70,7 +71,7 @@
   let cleanupModelsByProvider = $state<ProviderModelMap>(emptyProviderModelMap());
 
   let transcriptionDefaultModel = $state('groq/whisper-large-v3-turbo');
-  let cleanupDefaultModel = $state('groq/llama-3.3-70b-versatile');
+  let cleanupDefaultModel = $state('groq/qwen/qwen3.6-27b');
   let transcriptionFallbackModels = $state<string[]>([]);
   let dualTranscriptionEnabled = $state(false);
   let cleanupFallbackModels = $state<string[]>([]);
@@ -545,7 +546,14 @@
       appStore.cleanupEnabled = cleanupRaw;
     }
     transcriptionModelsByProvider = mergeProviderModelMap(all.transcription_models_by_provider);
-    cleanupModelsByProvider = mergeProviderModelMap(all.cleanup_models_by_provider);
+    const rawCleanupModelsByProvider = mergeProviderModelMap(all.cleanup_models_by_provider);
+    cleanupModelsByProvider = {
+      ...rawCleanupModelsByProvider,
+      groq: rawCleanupModelsByProvider.groq
+        .map(migrateDeprecatedGroqCleanupModel)
+        .filter((model, index, models) => models.indexOf(model) === index),
+    };
+    const cleanupModelMapChanged = JSON.stringify(cleanupModelsByProvider) !== JSON.stringify(rawCleanupModelsByProvider);
 
     const rawLegacyTranscription = String(all.transcription_model ?? '');
     const rawLegacyCleanup = String(all.cleanup_model ?? '');
@@ -554,17 +562,28 @@
       : 'groq/whisper-large-v3-turbo';
     const legacyCleanup = rawLegacyCleanup
       ? (rawLegacyCleanup.includes('/') ? rawLegacyCleanup : `groq/${rawLegacyCleanup}`)
-      : 'groq/llama-3.3-70b-versatile';
+      : 'groq/qwen/qwen3.6-27b';
 
     transcriptionDefaultModel = all.transcription_default_model ?? legacyTranscription;
     cleanupDefaultModel = all.cleanup_default_model ?? legacyCleanup;
+    const parsedCleanupDefault = splitModelId(cleanupDefaultModel);
+    if (parsedCleanupDefault?.provider === 'groq') {
+      cleanupDefaultModel = modelId('groq', migrateDeprecatedGroqCleanupModel(parsedCleanupDefault.model));
+    }
 
     if (Array.isArray(all.transcription_fallback_models)) {
       transcriptionFallbackModels = all.transcription_fallback_models.filter((id) => !!splitModelId(id));
     }
     dualTranscriptionEnabled = all.dual_transcription_enabled === true;
     if (Array.isArray(all.cleanup_fallback_models)) {
-      cleanupFallbackModels = all.cleanup_fallback_models.filter((id) => !!splitModelId(id));
+      cleanupFallbackModels = all.cleanup_fallback_models
+        .filter((id) => !!splitModelId(id))
+        .map((id) => {
+          const parsed = splitModelId(id);
+          return parsed?.provider === 'groq'
+            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
+            : id;
+        });
     }
     if (typeof advancedRaw === 'boolean') {
       advancedModelUi = advancedRaw;
@@ -577,21 +596,36 @@
     ) {
       localModelMemoryPolicy = all.local_model_memory_policy;
     }
+    let cleanupPromptOverridesChanged = false;
     if (all.cleanup_prompt_overrides && typeof all.cleanup_prompt_overrides === 'object') {
       const overrides: Record<string, string> = {};
-      for (const [key, value] of Object.entries(all.cleanup_prompt_overrides as Record<string, unknown>)) {
+      const rawOverrides = all.cleanup_prompt_overrides as Record<string, unknown>;
+      for (const [key, value] of Object.entries(rawOverrides)) {
         if (typeof value === 'string') {
-          overrides[key] = value;
+          const parsed = splitModelId(key);
+          const normalizedKey = parsed?.provider === 'groq'
+            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
+            : key;
+          if (normalizedKey === key) overrides[normalizedKey] = value;
         }
       }
+      for (const [key, value] of Object.entries(rawOverrides)) {
+        if (typeof value === 'string') {
+          const parsed = splitModelId(key);
+          const normalizedKey = parsed?.provider === 'groq'
+            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
+            : key;
+          if (normalizedKey !== key && !(normalizedKey in overrides)) overrides[normalizedKey] = value;
+        }
+      }
+      cleanupPromptOverridesChanged = JSON.stringify(overrides) !== JSON.stringify(all.cleanup_prompt_overrides);
       cleanupPromptOverridesStore.overrides = overrides;
     }
 
     const preTranscriptionDefault = transcriptionDefaultModel;
     const preCleanupDefault = cleanupDefaultModel;
-    const preTranscriptionFallbackCount = transcriptionFallbackModels.length;
-    const preCleanupFallbackCount = cleanupFallbackModels.length;
-    const preCleanupFallbackModels = [...cleanupFallbackModels];
+    const preTranscriptionFallbacks = [...transcriptionFallbackModels];
+    const preCleanupFallbacks = [...cleanupFallbackModels];
     const needsMigration =
       !all.transcription_default_model
       || !splitModelId(all.transcription_default_model)
@@ -604,12 +638,16 @@
       needsMigration
       || transcriptionDefaultModel !== preTranscriptionDefault
       || cleanupDefaultModel !== preCleanupDefault
-      || transcriptionFallbackModels.length !== preTranscriptionFallbackCount
-      || cleanupFallbackModels.length !== preCleanupFallbackCount
-      || JSON.stringify(cleanupFallbackModels) !== JSON.stringify(preCleanupFallbackModels);
+      || JSON.stringify(transcriptionFallbackModels) !== JSON.stringify(preTranscriptionFallbacks)
+      || JSON.stringify(cleanupFallbackModels) !== JSON.stringify(preCleanupFallbacks)
+      || cleanupModelMapChanged
+      || cleanupPromptOverridesChanged;
 
     if (changed) {
       await persistAll();
+      if (cleanupPromptOverridesChanged) {
+        await saveSetting('cleanup_prompt_overrides', cleanupPromptOverridesStore.overrides);
+      }
     }
 
     await Promise.all([
