@@ -7,6 +7,8 @@ import {
   failureCategory,
   fallbackReason,
   formatProgressSummary,
+  normalizeReviewModel,
+  reviewOutcome,
   selectReviewModels,
   shouldFallback,
 } from "./verenu-ai-review-logic.mjs";
@@ -21,6 +23,16 @@ test("selectReviewModels returns Gemini then Claude defaults", () => {
       changedLines: 0,
     },
   );
+});
+
+test("legacy configured model names migrate to the current review models", () => {
+  assert.equal(normalizeReviewModel("gemini-3.6-flash-high", DEFAULT_MODEL), DEFAULT_MODEL);
+  assert.equal(normalizeReviewModel("claude-sonnet-4.6", DEFAULT_FALLBACK_MODEL), DEFAULT_FALLBACK_MODEL);
+  assert.deepEqual(selectReviewModels({
+    apiKey: "present",
+    primaryModel: "gemini-3.6-flash-high",
+    fallbackModel: "claude-sonnet-4.6",
+  }).models, [DEFAULT_MODEL, DEFAULT_FALLBACK_MODEL]);
 });
 
 test("selectReviewModels preserves configured ordering and removes duplicates", () => {
@@ -53,10 +65,15 @@ test("selectReviewModels rejects blank API keys", () => {
 test("quota, rate-limit, and model-unavailable failures are fallback eligible", () => {
   const cases = [
     [{ code: 1, stderr: "RESOURCE_EXHAUSTED: quota exceeded" }, "quota"],
+    [{ code: 1, stderr: "status=RESOURCE_EXHAUSTED" }, "quota"],
+    [{ code: 1, stderr: "reason=QUOTA_EXHAUSTED" }, "quota"],
+    [{ code: 1, stderr: "insufficient_quota: daily limit reached" }, "quota"],
+    [{ code: 1, stderr: "model_cooldown: all credentials are cooling down" }, "quota"],
     [{ code: 1, stderr: "HTTP 429 too many requests" }, "rate_limit"],
-    [{ code: 1, stderr: "model gemini-3.6-flash-high not found" }, "model_unavailable"],
+    [{ code: 1, stderr: "model gemini-3.7-flash-high not found" }, "model_unavailable"],
     [{ code: 1, stderr: "no available model for this request" }, "model_unavailable"],
-    [{ code: 1, stderr: "model gemini-3.6-flash-high\nnot found" }, "model_unavailable"],
+    [{ code: 1, stderr: "model gemini-3.7-flash-high\nnot found" }, "model_unavailable"],
+    [{ code: 1, stderr: "MODEL_NOT_FOUND: gemini-3.7-flash-high" }, "model_unavailable"],
   ];
 
   for (const [result, reason] of cases) {
@@ -75,6 +92,11 @@ test("unrelated failures, preview failures, and successful reviews do not fallba
   assert.equal(failureCategory({ code: 0, stderr: "success" }), null);
 });
 
+test("clean reviews pass and reviews with findings fail", () => {
+  assert.deepEqual(reviewOutcome([]), { count: 0, hasFindings: false, exitCode: 0 });
+  assert.deepEqual(reviewOutcome([{ message: "bug" }]), { count: 1, hasFindings: true, exitCode: 1 });
+});
+
 test("progress summaries expose the expected review stages without provider details", () => {
   assert.match(formatProgressSummary({ stage: "preparing", mode: "normal" }), /^👀 Preparing/);
   assert.match(formatProgressSummary({ stage: "reviewing", model: DEFAULT_MODEL, headSha: "1234567890abcdef" }), /🔍 Reviewing `1234567`/);
@@ -83,6 +105,8 @@ test("progress summaries expose the expected review stages without provider deta
   assert.ok(quotaSwitch.includes(`\`${DEFAULT_MODEL}\` quota unavailable`));
   assert.ok(quotaSwitch.includes(`switching to \`${DEFAULT_FALLBACK_MODEL}\``));
   assert.match(formatProgressSummary({ stage: "switching", model: "custom-primary", fallbackModel: "custom-fallback", reason: "model_unavailable" }), /`custom-primary` unavailable, switching to `custom-fallback`/);
+  assert.match(formatProgressSummary({ stage: "complete", model: DEFAULT_MODEL, findings: 0, headSha: "1234567890abcdef" }), /0 findings/);
+  assert.match(formatProgressSummary({ stage: "findings", model: DEFAULT_MODEL, findings: 2, headSha: "1234567890abcdef" }), /found 2 findings/);
   assert.match(formatProgressSummary({ stage: "complete", model: DEFAULT_FALLBACK_MODEL, findings: 2, headSha: "1234567890abcdef" }), /✅ .*2 findings/);
   assert.equal(formatProgressSummary({ stage: "failed", reason: "quota exceeded for secret-token" }), "❌ Verenu AI review failed (review_failed).");
 });
