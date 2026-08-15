@@ -415,6 +415,8 @@ fn is_newer(latest: &str, current: &str) -> bool {
             // enabled. The channel filter prevents this rule from affecting
             // stable-only checks.
             (Some(_), None) => true,
+            // A stable release supersedes a pre-release of the same version.
+            (None, Some(_)) => true,
             (Some(latest), Some(current)) => {
                 compare_prerelease_parts(latest, current) == std::cmp::Ordering::Greater
             }
