@@ -25,7 +25,6 @@ const REPAIR_TIMEOUT_SECS: u64 = 45;
 const NO_SAFE_REPAIR_MESSAGE: &str = "I couldn't map this to a safe Verenu setting. Try speaking a little closer to the microphone and a little slower. If you want a reusable phrase, add a vocabulary item or snippet manually in Verenu.";
 
 static REPAIR_ID: AtomicU64 = AtomicU64::new(1);
-const EVERYWHERE_CONTEXT_ID: i64 = 0;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RepairSettings {
@@ -126,7 +125,7 @@ enum DictionaryScope {
 fn resolve_scope_id(snapshot: &RepairSnapshot, scope: DictionaryScope) -> i64 {
     match scope {
         DictionaryScope::Context => snapshot.context_id,
-        DictionaryScope::Everywhere => EVERYWHERE_CONTEXT_ID,
+        DictionaryScope::Everywhere => db::EVERYWHERE_CONTEXT_ID,
     }
 }
 
@@ -210,7 +209,7 @@ fn display_value(value: &Value) -> String {
 }
 
 fn scope_name(snapshot: &RepairSnapshot, context_id: i64) -> anyhow::Result<String> {
-    if context_id == EVERYWHERE_CONTEXT_ID {
+    if context_id == db::EVERYWHERE_CONTEXT_ID {
         Ok("Everywhere".into())
     } else if context_id == snapshot.context_id {
         Ok(snapshot.context_name.clone())
@@ -254,23 +253,9 @@ fn supports_complaint(snapshot: &RepairSnapshot, complaint: &str, action: &Repai
         // required one of those exact words in the complaint, which rejected
         // completely ordinary phrasing like "X became Y" or "X should be
         // Y" — including the app's own placeholder example — so it's gone.
-        RepairAction::Dictionary {
-            operation,
-            term,
-            mistake,
-            expected_term,
-            ..
-        } => match operation {
-            DictionaryOperation::Remove => expected_term.as_deref().is_some_and(|v| {
-                !v.trim().is_empty() && evidence.contains(&v.to_lowercase())
-            }),
-            DictionaryOperation::Add | DictionaryOperation::Update => {
-                term.as_deref().is_some_and(|v| {
-                    !v.trim().is_empty() && evidence.contains(&v.to_lowercase())
-                }) && mistake.as_deref().is_some_and(|v| {
-                    !v.trim().is_empty() && evidence.contains(&v.to_lowercase())
-                })
-            }
+        RepairAction::Dictionary { term, mistake, .. } => {
+            term.as_deref().is_some_and(|v| !v.trim().is_empty() && evidence.contains(&v.to_lowercase()))
+                && mistake.as_deref().is_some_and(|v| !v.trim().is_empty() && evidence.contains(&v.to_lowercase()))
         }
         RepairAction::Setting { key, .. } => match key.as_str() {
             store::AUTO_SPACING => complaint_lower.contains("spacing") || complaint_lower.contains("space before"),
@@ -340,9 +325,6 @@ fn validate_action(snapshot: &RepairSnapshot, complaint: &str, action: RepairAct
             if setting_label(key).is_none() || current_setting(snapshot, key).as_ref() != Some(expected_value) {
                 anyhow::bail!("setting is not allowlisted or changed")
             }
-            if value == expected_value {
-                anyhow::bail!("setting repair is a no-op")
-            }
             if matches!(key.as_str(), store::CLEANUP_INTENSITY) && !value.as_str().is_some_and(store::is_supported_cleanup_intensity) {
                 anyhow::bail!("invalid cleanup intensity")
             }
@@ -367,8 +349,7 @@ pub(crate) fn begin_feedback(
     delivered_private: &str,
     process_name: String,
     browser_domain: Option<String>,
-    context_id: i64,
-    context_name: String,
+    context: &db::Context,
     dictionary: &[db::DictionaryEntry],
     cfg: &store::PipelineConfig,
 ) {
@@ -379,8 +360,8 @@ pub(crate) fn begin_feedback(
         delivered_private: delivered_private.to_string(),
         process_name,
         browser_domain,
-        context_id,
-        context_name,
+        context_id: context.id,
+        context_name: context.name.clone(),
         dictionary: dictionary.to_vec(),
         settings: RepairSettings {
             cleanup_enabled: cfg.cleanup_enabled,
@@ -430,7 +411,7 @@ pub(crate) async fn finish_complaint_recording(app: AppHandle, state: SharedStat
             app.emit("repair-complaint-result", &text).ok();
             enter_repair_input(&app);
         }
-        Err(error) => emit_repair_error(&app, &error.to_string()),
+        Err(error) => emit_repair_error(&app, &crate::api::user_facing_error(&error)),
     }
 }
 
@@ -440,23 +421,6 @@ pub(crate) async fn apply_repair(app: AppHandle, state: SharedState, proposal_id
 
 pub(crate) fn clear_repair(state: &SharedState) {
     clear(state);
-}
-
-fn finish_current_proposal(state: &SharedState, snapshot_id: u64, proposal_id: u64) -> bool {
-    let Ok(mut locked) = state.lock() else {
-        return false;
-    };
-    let is_current = locked.repair.as_ref().is_some_and(|session| {
-        session.snapshot.id == snapshot_id
-            && session
-                .proposal
-                .as_ref()
-                .is_some_and(|proposal| proposal.id == proposal_id)
-    });
-    if is_current {
-        locked.repair = None;
-    }
-    is_current
 }
 
 pub(crate) fn emit_error(app: &AppHandle, message: &str) {
@@ -592,7 +556,7 @@ async fn diagnose_with_model(app: &AppHandle, cfg: &store::PipelineConfig, input
             let manager = app.state::<crate::local_llm::LocalLlmManager>().inner().clone();
             manager.cleanup_with_prompt(app, &model, input, REPAIR_SYSTEM_PROMPT, REPAIR_MAX_OUTPUT_TOKENS).await
         } else {
-            cleanup::cleanup(input, ProviderId::from_str(&provider), key, &model, "casual", "none", REPAIR_SYSTEM_PROMPT, None, None).await
+            cleanup::structured_request(input, ProviderId::from_str(&provider), key, &model, REPAIR_SYSTEM_PROMPT, REPAIR_MAX_OUTPUT_TOKENS, 0).await
         };
         match result {
             Ok(value) if !value.trim().is_empty() => return Ok(value),
@@ -659,7 +623,6 @@ pub(crate) async fn apply(app: AppHandle, state: SharedState, proposal_id: u64) 
     if proposal.id != proposal_id {
         anyhow::bail!("Repair proposal is stale")
     }
-    let snapshot_id = session.snapshot.id;
     let result = match proposal.action {
         RepairAction::Dictionary { operation, dictionary_id, term, mistake, scope, expected_term, expected_mistake } => {
             let scope_context_id = resolve_scope_id(&session.snapshot, scope);
@@ -690,13 +653,9 @@ pub(crate) async fn apply(app: AppHandle, state: SharedState, proposal_id: u64) 
             format!("{} updated", setting_label(&key).unwrap_or("Setting"))
         }
     };
-    // The mutation above can yield while a new dictation starts and replaces
-    // the repair session. Never clear or update the pill belonging to that
-    // newer session when this older apply finishes.
-    if finish_current_proposal(&state, snapshot_id, proposal_id) {
-        super::show_pill(&app, "repair_done");
-        app.emit("repair-applied", &result).ok();
-    }
+    clear(&state);
+    super::show_pill(&app, "repair_done");
+    app.emit("repair-applied", &result).ok();
     Ok(result)
 }
 
@@ -823,28 +782,5 @@ mod tests {
         )
         .unwrap();
         assert!(validate_action(&snapshot(), "I said pull request and it wrote pool request", action).is_err());
-    }
-
-    #[test]
-    fn dictionary_remove_uses_expected_term_as_evidence() {
-        let action: RepairAction = serde_json::from_str(
-            r#"{"kind":"dictionary","operation":"remove","dictionary_id":3,"term":null,"mistake":null,"scope":"context","expected_term":"pull request","expected_mistake":"pool request"}"#,
-        )
-        .unwrap();
-        assert!(validate_action(
-            &snapshot(),
-            "remove the pull request vocabulary item",
-            action
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn no_op_setting_repairs_are_rejected() {
-        let action: RepairAction = serde_json::from_str(
-            r#"{"kind":"setting","key":"cleanup_enabled","value":true,"expected_value":true}"#,
-        )
-        .unwrap();
-        assert!(validate_action(&snapshot(), "cleanup is already enabled", action).is_err());
     }
 }

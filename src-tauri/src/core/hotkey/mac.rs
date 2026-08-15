@@ -184,6 +184,15 @@ pub fn is_hotkey_available(key1: &str, key2: &str) -> bool {
     build_hotkey(map_code_to_vk(key1), map_code_to_vk(key2)).is_some()
 }
 
+pub fn is_repair_hotkey_available(key1: &str, key2: &str, key3: &str) -> bool {
+    build_hotkey_from(&[
+        map_code_to_vk(key1),
+        map_code_to_vk(key2),
+        map_code_to_vk(key3),
+    ])
+    .is_some()
+}
+
 /// Map a JS `KeyboardEvent.code` to this backend's private key id.
 pub fn map_code_to_vk(code: &str) -> u32 {
     match code {

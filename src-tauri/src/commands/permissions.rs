@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! macOS Accessibility / Microphone / Keychain permission commands.
 //!
 //! The global hotkey uses Carbon `RegisterEventHotKey` (see `core::hotkey::mac`),

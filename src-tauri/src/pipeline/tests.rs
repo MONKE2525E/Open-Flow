@@ -434,7 +434,7 @@ fn app_mapping_override_applies_for_matching_app() {
     // base_config(): default_tone = "casual", cleanup_intensity = "medium".
     let mut cfg = base_config();
     let m = mapping("appa.exe", "very_casual", Some("high"));
-    let profile = apply_app_style_overrides(&mut cfg, Some(&m));
+    let profile = apply_app_style_overrides(&mut cfg, Some(&m), None);
     assert_eq!(profile, "very_casual");
     assert_eq!(cfg.cleanup_intensity, "high");
 }
@@ -445,7 +445,7 @@ fn app_mapping_no_match_leaves_global_defaults_untouched() {
     // effective tone falls back to default_tone and the global cleanup
     // intensity must NOT be mutated by a different app's override.
     let mut cfg = base_config();
-    let profile = apply_app_style_overrides(&mut cfg, None);
+    let profile = apply_app_style_overrides(&mut cfg, None, None);
     assert_eq!(profile, "casual");
     assert_eq!(cfg.cleanup_intensity, "medium");
 }
@@ -454,7 +454,7 @@ fn app_mapping_no_match_leaves_global_defaults_untouched() {
 fn app_mapping_empty_override_fields_fall_back_to_globals() {
     let mut cfg = base_config();
     let m = mapping("appa.exe", "   ", Some("   "));
-    let profile = apply_app_style_overrides(&mut cfg, Some(&m));
+    let profile = apply_app_style_overrides(&mut cfg, Some(&m), None);
     assert_eq!(profile, "casual");
     assert_eq!(cfg.cleanup_intensity, "medium");
 }
@@ -491,6 +491,8 @@ fn base_config() -> store::PipelineConfig {
         key_assemblyai: "fixture-assemblyai-key".into(),
         default_tone: "casual".into(),
         cleanup_intensity: "medium".into(),
+        clipboard_phrase_enabled: false,
+        clipboard_phrase: "paste clipboard here".into(),
         app_context_hint: false,
         auto_learn_enabled: false,
         contextual_caps_enabled: true,

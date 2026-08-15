@@ -150,6 +150,7 @@ pub async fn import_data(
         let mut settings_applied = 0usize;
         let mut settings_skipped = 0usize;
         let mut appearance_mode_applied = false;
+        let mut history_prune_days: Option<i64> = None;
 
         if !payload.settings.is_object() {
             log::warn!("import_data: 'settings' field is not a JSON object — skipping settings restore");
@@ -166,6 +167,13 @@ pub async fn import_data(
                         if key == store::APPEARANCE_MODE {
                             appearance_mode_applied = true;
                         }
+                        // Mirror save_setting's side effect: a backup that
+                        // tightens history retention must prune immediately,
+                        // not silently wait for the next app restart.
+                        if key == store::HISTORY_RETENTION {
+                            history_prune_days =
+                                value.as_str().and_then(store::history_retention_days);
+                        }
                         settings_applied += 1;
                     }
                     Err(e) => {
@@ -180,6 +188,25 @@ pub async fn import_data(
         if appearance_mode_applied {
             crate::apply_runtime_icons(&app, None);
         }
+
+        if let Some(days) = history_prune_days {
+            match db::prune_transcriptions_older_than(&db, days) {
+                Ok(deleted) if deleted > 0 => {
+                    log::info!("import_data: pruned {deleted} transcriptions older than {days} days");
+                    let _ = app.emit("verenu:history-pruned", ());
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    log::warn!("import_data: history prune after import failed: {e}");
+                }
+            }
+        }
+
+        // The frontend keeps several settings mirrored in shared state
+        // (appearance, cleanup toggle, beta updates, setup flag, retention
+        // dropdown). It re-reads them on this event so a fresh import isn't
+        // visually undone by stale in-memory values until the next restart.
+        let _ = app.emit("verenu:settings-imported", ());
 
         let mut dictionary_inserted = 0usize;
         let mut dictionary_skipped = 0usize;
@@ -239,6 +266,7 @@ pub async fn import_data(
                     &snippet.trigger,
                     &snippet.expansion,
                     &snippet.instructions,
+                    None,
                 ) {
                     Ok(_) => snippets_inserted += 1,
                     Err(e) => {

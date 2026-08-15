@@ -72,15 +72,12 @@ fn normalize_executable(executable: &str) -> Result<String> {
 /// interchangeably.
 fn normalize_domain(domain: &str) -> Result<String> {
     let trimmed = require_nonempty_trimmed("Website", domain)?.to_lowercase();
-    let without_scheme = trimmed
-        .rsplit_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(&trimmed);
+    let without_scheme = trimmed.split("://").last().unwrap_or(&trimmed);
     let host = without_scheme
         .split(['/', '?', '#'])
         .next()
         .unwrap_or(without_scheme);
-    let host = host.rsplit_once('@').map(|(_, rest)| rest).unwrap_or(host); // strip user@ prefix
+    let host = host.split('@').next_back().unwrap_or(host); // strip user@ prefix
     let host = host.split(':').next().unwrap_or(host); // strip :port
     let normalized = require_nonempty_trimmed("Website", host)?;
     validate_char_limit("Website", &normalized, CONTEXT_DOMAIN_CHAR_LIMIT)?;
@@ -100,7 +97,6 @@ pub(crate) fn ensure_everywhere_context_conn(conn: &rusqlite::Connection) -> Res
     .map_err(Into::into)
 }
 
-#[allow(dead_code)]
 pub fn everywhere_context_id(db: &Db) -> Result<i64> {
     let conn = lock_conn(db)?;
     ensure_everywhere_context_conn(&conn)
@@ -248,6 +244,10 @@ pub fn delete_context(db: &Db, context_id: i64) -> Result<()> {
     )?;
     tx.execute(
         "DELETE FROM context_targets WHERE context_id = ?1",
+        params![context_id],
+    )?;
+    tx.execute(
+        "DELETE FROM context_website_targets WHERE context_id = ?1",
         params![context_id],
     )?;
     tx.execute(
@@ -400,7 +400,6 @@ pub fn remove_context_website(db: &Db, context_id: i64, domain: &str) -> Result<
 /// multiple contexts; domain match takes priority over the exe match (it's
 /// the more specific signal), and an unmatched/empty executable resolves to
 /// the stable Everywhere context.
-#[allow(dead_code)]
 pub fn resolve_context_for_target(
     db: &Db,
     executable: &str,
@@ -713,11 +712,16 @@ mod tests {
 
         set_dictionary_context_assignment(&db, context.id, dictionary_id, true).unwrap();
         set_snippet_context_assignment(&db, context.id, snippet_id, true).unwrap();
+        assign_context_website(&db, context.id, "mail.google.com").unwrap();
         set_dictionary_context_assignment(&db, EVERYWHERE_CONTEXT_ID, dictionary_id, false)
             .unwrap();
         set_snippet_context_assignment(&db, EVERYWHERE_CONTEXT_ID, snippet_id, false).unwrap();
 
         delete_context(&db, context.id).expect("delete context");
+
+        assert!(query_context_website_targets(&db, None)
+            .unwrap()
+            .is_empty());
 
         assert_eq!(
             query_dictionary_for_context(&db, EVERYWHERE_CONTEXT_ID)

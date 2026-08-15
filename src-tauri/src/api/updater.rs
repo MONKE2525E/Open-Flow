@@ -72,7 +72,7 @@ impl UpdateChannel {
 }
 
 /// Repo to check for releases.
-const RELEASE_REPO: &str = "MONKE2525E/Verenu";
+const RELEASE_REPO: &str = "Verenu/Verenu";
 
 /// Returns true only for URLs that point at an official release asset for
 /// [`RELEASE_REPO`]. GitHub serves release assets from
@@ -177,12 +177,7 @@ async fn check_repo(
         return Ok(None);
     };
 
-    if !should_offer_release_for_channel(
-        &display_version,
-        &current_package_version(),
-        channel,
-        require_newer,
-    ) {
+    if !should_offer_release(&display_version, &current_package_version(), require_newer) {
         return Ok(None);
     }
 
@@ -244,9 +239,13 @@ fn release_matches_channel(release: &GhRelease, channel: UpdateChannel) -> bool 
     }
 }
 
+pub fn is_beta_version(version: &str) -> bool {
+    let version = version.to_ascii_lowercase();
+    version.contains("-beta") || version.contains("-nightly") || version.contains("-dev")
+}
+
 fn is_beta_release_tag(tag: &str) -> bool {
-    let tag = tag.to_ascii_lowercase();
-    tag.contains("-beta") || tag.contains("-nightly") || tag.contains("-dev")
+    is_beta_version(tag)
 }
 
 fn is_commit_sha(value: &str) -> bool {
@@ -278,7 +277,7 @@ fn release_version(tag: &str) -> Option<String> {
     }
 }
 
-fn current_package_version() -> String {
+pub fn current_package_version() -> String {
     env!("CARGO_PKG_VERSION").to_owned()
 }
 
@@ -402,47 +401,32 @@ fn normalize_version(tag: &str) -> String {
 }
 
 fn is_newer(latest: &str, current: &str) -> bool {
-    compare_versions(latest, current) == std::cmp::Ordering::Greater
+    let latest = release_version(latest).unwrap_or_else(|| normalize_version(latest));
+    let current = release_version(current).unwrap_or_else(|| normalize_version(current));
+    let (Some(latest), Some(current)) = (parse_version(&latest), parse_version(&current)) else {
+        return false;
+    };
+
+    match latest.core.cmp(&current.core) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => match (&latest.prerelease, &current.prerelease) {
+            // A same-core beta is a valid update when beta updates are
+            // enabled. The channel filter prevents this rule from affecting
+            // stable-only checks.
+            (Some(_), None) => true,
+            // A stable release supersedes a pre-release of the same version.
+            (None, Some(_)) => true,
+            (Some(latest), Some(current)) => {
+                compare_prerelease_parts(latest, current) == std::cmp::Ordering::Greater
+            }
+            _ => false,
+        },
+    }
 }
 
 fn should_offer_release(latest: &str, current: &str, require_newer: bool) -> bool {
     !require_newer || is_newer(latest, current)
-}
-
-/// SemVer deliberately considers `0.16.2-nightly` older than the final
-/// `0.16.2` release. That rule is normally correct, but an opted-in beta user
-/// needs to be able to move from the stable build to that matching nightly.
-/// The channel gate has already verified that `latest` is a beta release.
-fn should_offer_release_for_channel(
-    latest: &str,
-    current: &str,
-    channel: UpdateChannel,
-    require_newer: bool,
-) -> bool {
-    if should_offer_release(latest, current, require_newer) {
-        return true;
-    }
-
-    if !require_newer || channel != UpdateChannel::Beta {
-        return false;
-    }
-
-    let latest = parse_version(latest);
-    let current = parse_version(current);
-
-    matches!(
-        (latest, current),
-        (
-            Some(ParsedVersion {
-                core: latest_core,
-                prerelease: Some(_),
-            }),
-            Some(ParsedVersion {
-                core: current_core,
-                prerelease: None,
-            }),
-        ) if latest_core == current_core
-    )
 }
 
 fn current_update_target() -> UpdateTarget {
@@ -549,10 +533,10 @@ fn find_asset_with_suffix_and_hints<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        current_package_version, find_asset_with_suffix, is_authorized_release_asset_url, is_newer,
-        normalize_version, parse_prerelease_parts, release_version, select_release,
-        select_release_asset_for_target, should_offer_release, should_offer_release_for_channel,
-        GhAsset, GhRelease, InstallMode, UpdateChannel, UpdateTarget, VersionPart,
+        current_package_version, find_asset_with_suffix, is_authorized_release_asset_url,
+        is_beta_version, is_newer, normalize_version, parse_prerelease_parts, release_version,
+        select_release, select_release_asset_for_target, should_offer_release, GhAsset, GhRelease,
+        InstallMode, UpdateChannel, UpdateTarget, VersionPart,
     };
 
     fn asset(name: &str) -> GhAsset {
@@ -766,33 +750,45 @@ mod tests {
     }
 
     #[test]
-    fn beta_channel_can_replace_a_same_core_stable_release() {
-        assert!(should_offer_release_for_channel(
-            "0.16.2-nightly.20260804",
-            "0.16.2",
-            UpdateChannel::Beta,
-            true,
+    fn dated_nightly_versions_compare_by_date() {
+        assert!(!is_newer(
+            "0.16.0-nightly.20260814",
+            "0.16.0-nightly.20260814"
         ));
-        assert!(!should_offer_release_for_channel(
-            "0.16.2-nightly.20260804",
-            "0.16.2",
-            UpdateChannel::Stable,
-            true,
+        assert!(is_newer(
+            "0.16.0-nightly.20260815",
+            "0.16.0-nightly.20260814"
         ));
-        assert!(!should_offer_release_for_channel(
-            "0.16.2-nightly.20260803",
-            "0.16.2-nightly.20260804",
-            UpdateChannel::Beta,
-            true,
+        assert!(!is_newer(
+            "0.16.0-nightly.20260814",
+            "0.16.0-nightly.20260815"
+        ));
+        assert!(is_newer("0.16.0-nightly.20260814", "0.16.0"));
+        assert!(should_offer_release(
+            "0.16.0-nightly.20260814",
+            "0.16.0",
+            true
+        ));
+        assert!(is_newer(
+            "0.16.1-nightly.20260814",
+            "0.16.0-nightly.20260815"
         ));
     }
 
     #[test]
-    fn prerelease_versions_compare_without_losing_build_order() {
-        assert!(is_newer("0.15.1-beta.2", "0.15.1-beta.1"));
-        assert!(!is_newer("0.15.1-beta.1", "0.15.1-beta.2"));
-        assert!(!is_newer("0.15.1-beta.2", "0.15.1"));
-        assert!(is_newer("0.15.2-beta.1", "0.15.1"));
+    fn stable_release_supersedes_same_core_prerelease() {
+        assert!(is_newer("0.16.2", "0.16.2-beta.1"));
+        // Beta-channel selection can intentionally move a stable install to a
+        // same-core beta; release_matches_channel applies that channel gate.
+        assert!(is_newer("0.16.2-beta.1", "0.16.2"));
+    }
+
+    #[test]
+    fn beta_version_detection_covers_current_release_names() {
+        assert!(is_beta_version("0.16.0-nightly.20260814"));
+        assert!(is_beta_version("0.16.0-beta"));
+        assert!(is_beta_version("Verenu-0.16.0-dev"));
+        assert!(!is_beta_version("0.16.0"));
     }
 
     #[test]
@@ -893,11 +889,11 @@ mod tests {
     #[test]
     fn authorized_url_accepts_official_release_assets() {
         assert!(is_authorized_release_asset_url(
-            "https://github.com/MONKE2525E/Verenu/releases/download/v0.15.0/Verenu_0.15.0_x64-setup.exe"
+            "https://github.com/Verenu/Verenu/releases/download/v0.15.0/Verenu_0.15.0_x64-setup.exe"
         ));
         // Owner/repo casing is insignificant on GitHub.
         assert!(is_authorized_release_asset_url(
-            "https://github.com/monke2525e/verenu/releases/download/v0.15.0/Verenu_0.15.0_Apple_Silicon.dmg"
+            "https://github.com/verenu/verenu/releases/download/v0.15.0/Verenu_0.15.0_Apple_Silicon.dmg"
         ));
     }
 
@@ -905,20 +901,20 @@ mod tests {
     fn authorized_url_rejects_bypasses_and_foreign_hosts() {
         let bad = [
             // Wrong host / scheme.
-            "http://github.com/MONKE2525E/Verenu/releases/download/v1/a.exe",
-            "https://evil.com/MONKE2525E/Verenu/releases/download/v1/a.exe",
+            "http://github.com/Verenu/Verenu/releases/download/v1/a.exe",
+            "https://evil.com/Verenu/Verenu/releases/download/v1/a.exe",
             // Different repo.
             "https://github.com/attacker/repo/releases/download/v1/a.exe",
             // Literal dot-segment traversal.
-            "https://github.com/MONKE2525E/Verenu/releases/download/../../attacker/repo/releases/download/v1/a.exe",
+            "https://github.com/Verenu/Verenu/releases/download/../../attacker/repo/releases/download/v1/a.exe",
             // Percent-encoded dot / slash / backslash traversal.
-            "https://github.com/MONKE2525E/Verenu/releases/download/%2e%2e/a.exe",
-            "https://github.com/MONKE2525E/Verenu/releases/download/v1/%2fa.exe",
-            "https://github.com/MONKE2525E/Verenu/releases/download/..%2f..%2fattacker/a.exe",
-            "https://github.com/MONKE2525E/Verenu/releases/download/..%5c..%5cattacker%5crepo/a.exe",
+            "https://github.com/Verenu/Verenu/releases/download/%2e%2e/a.exe",
+            "https://github.com/Verenu/Verenu/releases/download/v1/%2fa.exe",
+            "https://github.com/Verenu/Verenu/releases/download/..%2f..%2fattacker/a.exe",
+            "https://github.com/Verenu/Verenu/releases/download/..%5c..%5cattacker%5crepo/a.exe",
             // Wrong structure (too few / too many segments).
-            "https://github.com/MONKE2525E/Verenu/releases/download/v1",
-            "https://github.com/MONKE2525E/Verenu/blob/main/releases/download/v1/a.exe",
+            "https://github.com/Verenu/Verenu/releases/download/v1",
+            "https://github.com/Verenu/Verenu/blob/main/releases/download/v1/a.exe",
         ];
         for url in bad {
             assert!(

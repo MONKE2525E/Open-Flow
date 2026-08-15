@@ -1,7 +1,7 @@
 //! Snippet CRUD and use-count tracking.
 
 use anyhow::Result;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -18,33 +18,7 @@ pub struct Snippet {
 
 #[cfg(test)]
 pub fn insert_snippet(db: &Db, trigger: &str, expansion: &str, instructions: &str) -> Result<()> {
-    let normalized_trigger = require_nonempty_trimmed("Trigger", trigger)?;
-    validate_char_limit("Trigger", &normalized_trigger, SNIPPET_TRIGGER_CHAR_LIMIT)?;
-    let normalized_expansion = normalize_multiline(expansion);
-    if normalized_expansion.is_empty() {
-        return Err(anyhow::anyhow!("Expansion cannot be empty"));
-    }
-    validate_char_limit(
-        "Expansion",
-        &normalized_expansion,
-        SNIPPET_EXPANSION_CHAR_LIMIT,
-    )?;
-    let normalized_instructions = normalize_multiline(instructions);
-    validate_char_limit(
-        "Cleanup instructions",
-        &normalized_instructions,
-        SNIPPET_INSTRUCTIONS_CHAR_LIMIT,
-    )?;
-
-    let conn = lock_conn(db)?;
-    conn.execute(
-        "INSERT INTO snippets (trigger, expansion, instructions) VALUES (?1, ?2, ?3)",
-        params![
-            normalized_trigger,
-            normalized_expansion,
-            normalized_instructions
-        ],
-    )?;
+    insert_snippet_returning(db, trigger, expansion, instructions, None)?;
     Ok(())
 }
 
@@ -53,21 +27,30 @@ pub fn insert_snippet_returning(
     trigger: &str,
     expansion: &str,
     instructions: &str,
+    context_id: Option<i64>,
 ) -> Result<CreatedRecordMeta> {
     // Insert and read last_insert_rowid under a single lock to prevent another
     // thread's insert racing between the two acquisitions and returning the wrong id.
     let conn = lock_conn(db)?;
-    insert_snippet_returning_conn(&conn, trigger, expansion, instructions)
+    insert_snippet_returning_conn(&conn, trigger, expansion, instructions, context_id)
 }
 
 /// Same as `insert_snippet_returning` but takes an already-locked connection,
 /// so a caller doing many inserts (e.g. bulk import) can wrap them all in one
 /// transaction instead of locking per row.
+///
+/// `context_id: None` (bulk import, legacy standalone Snippets page) keeps
+/// the original strict behavior: a duplicate trigger always fails, and new
+/// snippets land in Everywhere. When `context_id` names a specific context
+/// and the trigger already exists elsewhere, the existing snippet is linked
+/// into that context instead of failing — see the matching dictionary
+/// version of this logic for the reasoning.
 pub fn insert_snippet_returning_conn(
     conn: &rusqlite::Connection,
     trigger: &str,
     expansion: &str,
     instructions: &str,
+    context_id: Option<i64>,
 ) -> Result<CreatedRecordMeta> {
     let normalized_trigger = require_nonempty_trimmed("Trigger", trigger)?;
     validate_char_limit("Trigger", &normalized_trigger, SNIPPET_TRIGGER_CHAR_LIMIT)?;
@@ -86,6 +69,43 @@ pub fn insert_snippet_returning_conn(
         &normalized_instructions,
         SNIPPET_INSTRUCTIONS_CHAR_LIMIT,
     )?;
+
+    let everywhere_id = ensure_everywhere_context_conn(conn)?;
+    let target_context = context_id.filter(|id| *id != everywhere_id);
+
+    if let Some(target_context) = target_context {
+        let existing: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM snippets WHERE trigger = ?1",
+                params![normalized_trigger],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(id) = existing {
+            let already_in_context: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM snippet_contexts WHERE context_id = ?1 AND snippet_id = ?2)",
+                params![target_context, id],
+                |row| row.get(0),
+            )?;
+            if already_in_context {
+                anyhow::bail!("\"{normalized_trigger}\" is already in this context");
+            }
+            conn.execute(
+                "UPDATE snippets SET expansion = ?2, instructions = ?3 WHERE id = ?1",
+                params![id, normalized_expansion, normalized_instructions],
+            )?;
+            conn.execute(
+                "INSERT OR IGNORE INTO snippet_contexts (context_id, snippet_id) VALUES (?1, ?2)",
+                params![target_context, id],
+            )?;
+            let created_at = conn.query_row(
+                "SELECT created_at FROM snippets WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )?;
+            return Ok(CreatedRecordMeta { id, created_at });
+        }
+    }
 
     conn.execute(
         "INSERT INTO snippets (trigger, expansion, instructions) VALUES (?1, ?2, ?3)",
@@ -96,6 +116,10 @@ pub fn insert_snippet_returning_conn(
         ],
     )?;
     let id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT OR IGNORE INTO snippet_contexts (context_id, snippet_id) VALUES (?1, ?2)",
+        params![target_context.unwrap_or(everywhere_id), id],
+    )?;
     let created_at = conn.query_row(
         "SELECT created_at FROM snippets WHERE id=?1",
         params![id],
@@ -144,9 +168,15 @@ pub fn update_snippet(
 }
 
 pub fn delete_snippet(db: &Db, id: i64) -> Result<()> {
-    let conn = lock_conn(db)?;
-    let changed = conn.execute("DELETE FROM snippets WHERE id=?1", params![id])?;
+    let mut conn = lock_conn(db)?;
+    let tx = conn.transaction()?;
+    let changed = tx.execute("DELETE FROM snippets WHERE id=?1", params![id])?;
     require_row_changed(changed, "Snippet", id)?;
+    tx.execute(
+        "DELETE FROM snippet_contexts WHERE snippet_id = ?1",
+        params![id],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -176,8 +206,8 @@ pub fn query_snippets_for_context(db: &Db, context_id: i64) -> Result<Vec<Snippe
     let mut stmt = conn.prepare(
         "SELECT s.id, s.trigger, s.expansion, s.instructions, s.use_count, s.created_at
          FROM snippets s
-         LEFT JOIN snippet_contexts sc ON sc.snippet_id = s.id AND sc.context_id = ?1
-         WHERE sc.context_id IS NOT NULL OR ?1 = 1
+         INNER JOIN snippet_contexts sc ON sc.snippet_id = s.id
+         WHERE sc.context_id = ?1
          ORDER BY s.created_at DESC",
     )?;
     let rows = stmt

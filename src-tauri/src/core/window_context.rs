@@ -57,6 +57,18 @@ pub fn get_foreground_hwnd() -> usize {
     0
 }
 
+/// Whether `process_name` (as returned by `get_process_name_for_hwnd`) is a
+/// known browser — used to gate the address-bar domain probe so it's never
+/// attempted against a non-browser foreground window.
+#[cfg(any(windows, target_os = "macos"))]
+pub fn is_browser_exe(process_name: &str) -> bool {
+    BROWSER_EXES.iter().any(|(exe, _)| *exe == process_name)
+}
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn is_browser_exe(_process_name: &str) -> bool {
+    false
+}
+
 pub fn get_active_process_name() -> Option<String> {
     get_process_name_for_hwnd(get_foreground_hwnd())
 }

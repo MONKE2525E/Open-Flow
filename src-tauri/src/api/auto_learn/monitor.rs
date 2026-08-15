@@ -87,43 +87,6 @@ pub(super) fn record_candidate(
             }
         };
 
-    if let Err(e) = db::insert_pending_correction(db, &mistake, &correction) {
-        log::warn!("auto-learn pending insert failed: {e}");
-        let _ = db::log_auto_learn_event(
-            db,
-            "candidate",
-            "pending_insert_failed",
-            app_context,
-            &mistake_hash,
-            &correction_hash,
-            confidence,
-        );
-        return false;
-    }
-
-    let count =
-        db::count_pending_corrections_recent(db, &mistake, &correction, PENDING_RETENTION_DAYS)
-            .unwrap_or(0);
-
-    let threshold = if confidence_avg >= FAST_PROMOTION_CONFIDENCE {
-        PROMOTION_THRESHOLD_FAST
-    } else {
-        PROMOTION_THRESHOLD_DEFAULT
-    };
-
-    if count < threshold {
-        let _ = db::log_auto_learn_event(
-            db,
-            "candidate",
-            "below_threshold",
-            app_context,
-            &mistake_hash,
-            &correction_hash,
-            confidence,
-        );
-        return false;
-    }
-
     let tier = if confidence_avg >= HIGH_CONFIDENCE_TIER {
         "high"
     } else if confidence_avg >= MEDIUM_CONFIDENCE_TIER {
@@ -131,10 +94,27 @@ pub(super) fn record_candidate(
     } else {
         "low"
     };
+    let threshold = if confidence_avg >= FAST_PROMOTION_CONFIDENCE {
+        PROMOTION_THRESHOLD_FAST
+    } else {
+        PROMOTION_THRESHOLD_DEFAULT
+    };
 
-    match db::insert_dictionary_entry_auto_learned(db, &correction, Some(&mistake), tier) {
-        Ok(true) => {
-            let _ = db::mark_auto_learn_candidate_promoted(db, &mistake, &correction);
+    // The pending insert, threshold count, `promoted_at` claim, and dictionary
+    // upsert happen in ONE transaction inside the DB layer. Concurrent monitors
+    // observing the same pair can no longer both pass the threshold and both
+    // "promote" it (double events / inflated correction_count), and a rejection
+    // that purges the candidate mid-flight can no longer be undone by an
+    // in-flight promotion recreating the rejected row.
+    match db::auto_learn_promote(
+        db,
+        &mistake,
+        &correction,
+        tier,
+        PENDING_RETENTION_DAYS,
+        threshold,
+    ) {
+        Ok(db::AutoLearnPromoteResult::Promoted) => {
             let _ = db::log_auto_learn_event(
                 db,
                 "promotion",
@@ -146,9 +126,34 @@ pub(super) fn record_candidate(
             );
             true
         }
-        Ok(false) => {
+        Ok(db::AutoLearnPromoteResult::BelowThreshold { .. }) => {
+            let _ = db::log_auto_learn_event(
+                db,
+                "candidate",
+                "below_threshold",
+                app_context,
+                &mistake_hash,
+                &correction_hash,
+                confidence,
+            );
+            false
+        }
+        Ok(db::AutoLearnPromoteResult::Blocked) => {
+            log::debug!("auto-learn: promotion skipped because a manual dictionary entry exists");
+            let _ = db::log_auto_learn_event(
+                db,
+                "promotion",
+                "promotion_skipped",
+                app_context,
+                &mistake_hash,
+                &correction_hash,
+                confidence,
+            );
+            false
+        }
+        Ok(db::AutoLearnPromoteResult::AlreadyPromoted) => {
             log::debug!(
-                "auto-learn: promotion skipped because dictionary entry is manual or mismatched"
+                "auto-learn: promotion skipped — a concurrent monitor or rejection already claimed this pair"
             );
             let _ = db::log_auto_learn_event(
                 db,

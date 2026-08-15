@@ -20,6 +20,7 @@ pub async fn transcribe(
     api_key: &str,
     language: &str,
     model: &str,
+    gen: u64,
 ) -> Result<String> {
     #[cfg(any(test, debug_assertions))]
     if let Some(result) =
@@ -29,14 +30,15 @@ pub async fn transcribe(
     }
 
     log::debug!(
-        "transcription: start provider={:?} language={} wav_bytes={}",
+        "transcription: start gen={} provider={:?} language={} wav_bytes={}",
+        gen,
         provider,
         language,
         wav.len()
     );
     match provider {
-        ProviderId::Google => transcribe_gemini(wav, api_key, language, model).await,
-        ProviderId::AssemblyAi => transcribe_assemblyai(wav, api_key, language, model).await,
+        ProviderId::Google => transcribe_gemini(wav, api_key, language, model, gen).await,
+        ProviderId::AssemblyAi => transcribe_assemblyai(wav, api_key, language, model, gen).await,
         ProviderId::Local => {
             anyhow::bail!("Local provider must not reach api::transcription::transcribe")
         }
@@ -52,12 +54,14 @@ pub async fn transcribe(
                 provider.as_str(),
                 model,
                 language,
+                gen,
             )
             .await
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn transcribe_whisper(
     wav: Bytes,
     api_key: &str,
@@ -66,6 +70,7 @@ async fn transcribe_whisper(
     provider_id: &str,
     model: &str,
     language: &str,
+    gen: u64,
 ) -> Result<String> {
     #[derive(serde::Deserialize)]
     struct WhisperResponse {
@@ -76,7 +81,8 @@ async fn transcribe_whisper(
     let prompt = get_transcription_prompt(provider_id, model, language_label);
     let fields = build_whisper_form_fields(model, language, &prompt);
     log::debug!(
-        "transcription: whisper request provider={} model={} url={} language={} wav_bytes={} prompt_chars={}",
+        "transcription: whisper request gen={} provider={} model={} url={} language={} wav_bytes={} prompt_chars={}",
+        gen,
         provider_label,
         model,
         url,
@@ -96,7 +102,8 @@ async fn transcribe_whisper(
     let status = resp.status();
     let request_id = super::response_request_id(&resp);
     log::debug!(
-        "transcription: whisper response provider={} status={} request_id={} latency_ms={}",
+        "transcription: whisper response gen={} provider={} status={} request_id={} latency_ms={}",
+        gen,
         provider_label,
         status,
         request_id,
@@ -115,7 +122,8 @@ async fn transcribe_whisper(
             preview,
         }) => {
             log::warn!(
-                "transcription: whisper unauthorized provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                "transcription: whisper unauthorized gen={} provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                gen,
                 provider_label,
                 model,
                 status,
@@ -131,7 +139,8 @@ async fn transcribe_whisper(
             preview,
         }) => {
             log::warn!(
-                "transcription: whisper non_success provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                "transcription: whisper non_success gen={} provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                gen,
                 provider_label,
                 model,
                 status,
@@ -147,7 +156,8 @@ async fn transcribe_whisper(
 
     let body: WhisperResponse = resp.json().await?;
     log::debug!(
-        "transcription: whisper parsed chars={}",
+        "transcription: whisper parsed gen={} chars={}",
+        gen,
         body.text.trim().chars().count()
     );
     Ok(body.text.trim().to_owned())
@@ -158,10 +168,11 @@ async fn transcribe_gemini(
     api_key: &str,
     language: &str,
     model: &str,
+    gen: u64,
 ) -> Result<String> {
     let language_label = crate::data::store::transcription_language_label(language);
     let prompt = get_transcription_prompt("google", model, language_label);
-    transcribe_gemini_with_prompt(wav, api_key, &prompt, model).await
+    transcribe_gemini_with_prompt(wav, api_key, &prompt, model, gen).await
 }
 
 async fn transcribe_gemini_with_prompt(
@@ -169,9 +180,11 @@ async fn transcribe_gemini_with_prompt(
     api_key: &str,
     prompt: &str,
     model: &str,
+    gen: u64,
 ) -> Result<String> {
     log::debug!(
-        "transcription: gemini request wav_bytes={} prompt_chars={}",
+        "transcription: gemini request gen={} wav_bytes={} prompt_chars={}",
+        gen,
         wav.len(),
         prompt.chars().count()
     );
@@ -196,13 +209,13 @@ async fn transcribe_gemini_with_prompt(
     let status = resp.status();
     let request_id = super::response_request_id(&resp);
     log::debug!(
-        "transcription: gemini response status={} request_id={} latency_ms={}",
+        "transcription: gemini response gen={} status={} request_id={} latency_ms={}",
+        gen,
         status,
         request_id,
         request_started.elapsed().as_millis()
     );
-    let resp = match super::ensure_provider_success(resp, "Google", Some(("Google", model))).await
-    {
+    let resp = match super::ensure_provider_success(resp, "Google", Some(("Google", model))).await {
         Ok(resp) => resp,
         Err(super::ProviderHttpError::Quota(e)) => return Err(e),
         Err(super::ProviderHttpError::Auth {
@@ -212,7 +225,8 @@ async fn transcribe_gemini_with_prompt(
             preview,
         }) => {
             log::warn!(
-                "transcription: gemini unauthorized model={} status={} request_id={} body_preview=\"{}\"",
+                "transcription: gemini unauthorized gen={} model={} status={} request_id={} body_preview=\"{}\"",
+                gen,
                 model,
                 status,
                 request_id,
@@ -227,7 +241,8 @@ async fn transcribe_gemini_with_prompt(
             preview,
         }) => {
             log::warn!(
-                "transcription: gemini non_success model={} status={} request_id={} body_preview=\"{}\"",
+                "transcription: gemini non_success gen={} model={} status={} request_id={} body_preview=\"{}\"",
+                gen,
                 model,
                 status,
                 request_id,
@@ -270,7 +285,8 @@ async fn transcribe_gemini_with_prompt(
         .trim()
         .to_owned();
     log::debug!(
-        "transcription: gemini parsed chars={}",
+        "transcription: gemini parsed gen={} chars={}",
+        gen,
         text.chars().count()
     );
 
@@ -313,6 +329,7 @@ async fn transcribe_assemblyai(
     api_key: &str,
     language: &str,
     model: &str,
+    gen: u64,
 ) -> Result<String> {
     #[derive(serde::Deserialize)]
     struct UploadResponse {
@@ -330,6 +347,7 @@ async fn transcribe_assemblyai(
     }
 
     async fn handle_provider_error(
+        gen: u64,
         result: Result<reqwest::Response, super::ProviderHttpError>,
         stage: &str,
     ) -> Result<reqwest::Response> {
@@ -343,7 +361,8 @@ async fn transcribe_assemblyai(
                 preview,
             }) => {
                 log::warn!(
-                    "transcription: assemblyai {stage} unauthorized status={} request_id={} body_preview=\"{}\"",
+                    "transcription: assemblyai {stage} unauthorized gen={} status={} request_id={} body_preview=\"{}\"",
+                    gen,
                     status,
                     request_id,
                     preview
@@ -357,7 +376,8 @@ async fn transcribe_assemblyai(
                 preview,
             }) => {
                 log::warn!(
-                    "transcription: assemblyai {stage} non_success status={} request_id={} body_preview=\"{}\"",
+                    "transcription: assemblyai {stage} non_success gen={} status={} request_id={} body_preview=\"{}\"",
+                    gen,
                     status,
                     request_id,
                     preview
@@ -372,7 +392,11 @@ async fn transcribe_assemblyai(
 
     let language_label = crate::data::store::transcription_language_label(language);
     let prompt = get_transcription_prompt("assemblyai", model, language_label);
-    log::debug!("transcription: assemblyai upload wav_bytes={}", wav.len());
+    log::debug!(
+        "transcription: assemblyai upload gen={} wav_bytes={}",
+        gen,
+        wav.len()
+    );
 
     let request_started = std::time::Instant::now();
     let upload_resp = super::client::get()
@@ -383,11 +407,13 @@ async fn transcribe_assemblyai(
         .send()
         .await?;
     log::debug!(
-        "transcription: assemblyai upload response status={} latency_ms={}",
+        "transcription: assemblyai upload response gen={} status={} latency_ms={}",
+        gen,
         upload_resp.status(),
         request_started.elapsed().as_millis()
     );
     let upload_resp = handle_provider_error(
+        gen,
         super::ensure_provider_success(upload_resp, model, Some(("AssemblyAI", model))).await,
         "upload",
     )
@@ -403,17 +429,23 @@ async fn transcribe_assemblyai(
         .send()
         .await?;
     log::debug!(
-        "transcription: assemblyai submit response status={} latency_ms={}",
+        "transcription: assemblyai submit response gen={} status={} latency_ms={}",
+        gen,
         submit_resp.status(),
         submit_started.elapsed().as_millis()
     );
     let submit_resp = handle_provider_error(
+        gen,
         super::ensure_provider_success(submit_resp, model, Some(("AssemblyAI", model))).await,
         "submit",
     )
     .await?;
     let submitted: SubmitResponse = submit_resp.json().await?;
-    log::debug!("transcription: assemblyai submitted job_id={}", submitted.id);
+    log::debug!(
+        "transcription: assemblyai submitted gen={} job_id={}",
+        gen,
+        submitted.id
+    );
 
     let poll_url = format!("https://api.assemblyai.com/v2/transcript/{}", submitted.id);
     let deadline = request_started + std::time::Duration::from_secs(ASSEMBLYAI_POLL_TIMEOUT_SECS);
@@ -421,7 +453,8 @@ async fn transcribe_assemblyai(
     loop {
         if std::time::Instant::now() >= deadline {
             log::warn!(
-                "transcription: assemblyai poll timed out job_id={} poll_count={} elapsed_ms={}",
+                "transcription: assemblyai poll timed out gen={} job_id={} poll_count={} elapsed_ms={}",
+                gen,
                 submitted.id,
                 poll_count,
                 request_started.elapsed().as_millis()
@@ -434,6 +467,7 @@ async fn transcribe_assemblyai(
             .send()
             .await?;
         let poll_resp = handle_provider_error(
+            gen,
             super::ensure_provider_success(poll_resp, model, Some(("AssemblyAI", model))).await,
             "poll",
         )
@@ -441,7 +475,8 @@ async fn transcribe_assemblyai(
         let poll: PollResponse = poll_resp.json().await?;
         poll_count += 1;
         log::debug!(
-            "transcription: assemblyai poll job_id={} poll_count={} status={} elapsed_ms={}",
+            "transcription: assemblyai poll gen={} job_id={} poll_count={} status={} elapsed_ms={}",
+            gen,
             submitted.id,
             poll_count,
             poll.status,
@@ -554,7 +589,7 @@ mod tests {
         let body = build_gemini_transcription_request(
             "ZmFrZQ==".to_string(),
             "prompt text",
-            "gemini-3.5-flash",
+            "gemini-3.7-flash",
         );
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(

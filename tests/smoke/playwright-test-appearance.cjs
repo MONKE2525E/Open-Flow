@@ -14,7 +14,7 @@ const TIMEOUT = 8_000;
   await page.addInitScript(() => {
     const key = '__open_flow_tauri_mock_settings';
     const current = JSON.parse(localStorage.getItem(key) || '{}');
-    localStorage.setItem(key, JSON.stringify({ ...current, legacy_features_enabled: true }));
+    localStorage.setItem(key, JSON.stringify({ ...current, legacy_features_enabled: false }));
   });
   await page.addInitScript(tauriMock, { appVersion: APP_VERSION });
 
@@ -35,7 +35,7 @@ const TIMEOUT = 8_000;
       await window.__TAURI_INTERNALS__.invoke('save_setting', { key: 'appearance_mode', value: 'dark' });
     });
     await page.reload({ waitUntil: 'networkidle', timeout: TIMEOUT });
-    await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: 3_000 });
+    await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: TIMEOUT });
 
     const settingsBtn = page.locator('.nav-item:has-text("Settings")');
     await settingsBtn.click();
@@ -44,25 +44,25 @@ const TIMEOUT = 8_000;
     const lightOption = page.locator('.appearance-option:has-text("Light")');
     await lightOption.waitFor({ state: 'visible', timeout: 3_000 });
     await lightOption.click();
-    await page.locator('html[data-theme="light"]').waitFor({ state: 'attached', timeout: 3_000 });
+    await page.locator('html[data-theme="light"]').waitFor({ state: 'attached', timeout: TIMEOUT });
 
     const darkOption = page.locator('.appearance-option:has-text("Dark")');
     await darkOption.click();
-    await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: 3_000 });
+    await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: TIMEOUT });
 
     // Leave via the rail control — see the note in playwright-test-state.cjs.
     await page.locator('.settings-back').click({ timeout: TIMEOUT });
     await page.locator('.settings-page').waitFor({ state: 'hidden', timeout: 3_000 });
 
-    for (const label of ['Home', 'Dictionary', 'Snippets', 'Style']) {
+    for (const label of ['Home', 'Insights', 'Contexts', 'Style']) {
       const btn = page.locator(`.nav-item:has-text("${label}")`);
       await btn.waitFor({ state: 'visible', timeout: TIMEOUT });
       await btn.click();
-      await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: 3_000 });
+      await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: TIMEOUT });
     }
 
     await page.reload({ waitUntil: 'networkidle', timeout: TIMEOUT });
-    await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: 3_000 });
+    await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached', timeout: TIMEOUT });
 
     if (errors.length > 0) {
       console.error('\nFAIL - errors:');

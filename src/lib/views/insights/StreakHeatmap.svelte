@@ -45,10 +45,11 @@
     const toKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    today.setHours(12, 0, 0, 0);
     const lastDate = daily.length > 0 ? parseLocalDay(daily[daily.length - 1].day) : today;
 
     const endDate = new Date(lastDate);
+    endDate.setHours(12, 0, 0, 0);
     endDate.setDate(endDate.getDate() + (6 - endDate.getDay())); // extend to that week's Saturday
 
     const firstRealDate = daily.length > 0 ? parseLocalDay(daily[0].day) : lastDate;
@@ -61,6 +62,7 @@
     const byDay = new Map(daily.map((d) => [d.day, d]));
     const list: GridCell[] = [];
     const cursor = new Date(startDate);
+    cursor.setHours(12, 0, 0, 0);
     let run = 0;
     for (let i = 0; i < totalWeeks * 7; i++) {
       const key = toKey(cursor);
@@ -84,7 +86,7 @@
     Math.max(MIN_WEEKS, Math.min(53, Math.floor((availableWidth - RIGHT_GUTTER + GAP) / STEP)))
   );
   const cells = $derived(allCells.slice(-visibleWeekCount * 7));
-  const longestVisibleScale = $derived(Math.max(1, allCells.reduce((max, cell) => Math.max(max, cell.streakDays), 0)));
+  const longestVisibleScale = $derived(Math.max(1, cells.reduce((max, cell) => Math.max(max, cell.streakDays), 0)));
   const legendDays = $derived(Array.from(new Set([
     1,
     Math.max(1, Math.ceil(longestVisibleScale / 3)),

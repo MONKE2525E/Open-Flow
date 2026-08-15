@@ -1058,7 +1058,7 @@ function devInsights(days: number): unknown {
         output_chars: 0,
       },
       {
-        model: 'llama-3.3-70b-versatile',
+        model: 'qwen/qwen3.6-27b',
         provider: 'groq',
         task: 'cleanup',
         calls: Math.round(transcriptions * 0.86),

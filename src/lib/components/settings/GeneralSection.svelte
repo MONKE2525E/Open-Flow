@@ -306,6 +306,9 @@
     }
   }
 
+  // Turning Legacy on surfaces unmaintained pages (App Mappings, Dictionary,
+  // Snippets), so it gets a heads-up first. Turning it back off needs no
+  // confirmation — that's just restoring the default.
   let confirmLegacyOn = $state(false);
   let legacyCancelButton: HTMLButtonElement | null = $state(null);
 
@@ -320,6 +323,10 @@
   async function confirmLegacyOnAction() {
     confirmLegacyOn = false;
     await applyLegacyFeatures(true);
+  }
+
+  function handleLegacyModalKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && confirmLegacyOn) confirmLegacyOn = false;
   }
 
   async function applyCleanup(value: boolean) {
@@ -595,7 +602,7 @@
 
   loadSettings();
 </script>
-<svelte:window onclick={handleWindowClick} onkeydown={handleCleanupModalKeydown} />
+<svelte:window onclick={handleWindowClick} onkeydown={(e) => { handleCleanupModalKeydown(e); handleLegacyModalKeydown(e); }} />
 
 <h2 class="settings-h">General</h2>
 <h3 class="settings-subhead first">Dictation</h3>
@@ -633,7 +640,7 @@
   <div style="display:flex; align-items:center; gap:8px;">
     <button class="badge" onclick={clearRepairHotkey} type="button" style="cursor:pointer;">Clear</button>
     <button
-      class="badge repair-keybind-btn"
+      class="badge key-badge repair-keybind-btn"
       onclick={startRecordingRepairHotkey}
       class:recording={recordingRepairHotkey}
       class:armed={repairHotkeyState === 'armed'}
@@ -813,13 +820,35 @@
 {#if confirmLegacyOn}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <button class="modal-backdrop" aria-label="Close dialog" onclick={() => (confirmLegacyOn = false)} in:modalBackdrop={{ duration: 180 }} out:modalBackdrop={{ duration: 160 }}></button>
-  <div class="modal-card" use:modalFocusTrap={{ active: confirmLegacyOn, initialFocus: () => legacyCancelButton }} role="dialog" aria-modal="true" aria-labelledby="legacy-on-confirm-title" tabindex="-1" in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel), scaleFrom: 0.97 }} out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}>
-    <div class="modal-header"><h2 id="legacy-on-confirm-title" class="modal-title">Turn on Legacy pages?</h2></div>
-    <div class="modal-body"><p class="confirm-copy">This brings back the standalone App Mappings settings page and the Dictionary/Snippets pages. They are no longer actively maintained now that Contexts covers the same ground. You can turn this back off anytime.</p></div>
-    <div class="modal-footer"><div class="footer-actions">
-      <button bind:this={legacyCancelButton} class="btn-ghost" onclick={() => (confirmLegacyOn = false)}>Cancel</button>
-      <button class="btn-primary" onclick={confirmLegacyOnAction}>Turn on</button>
-    </div></div>
+  <div
+    class="modal-card"
+    use:modalFocusTrap={{
+      active: confirmLegacyOn,
+      initialFocus: () => legacyCancelButton,
+    }}
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="legacy-on-confirm-title"
+    tabindex="-1"
+    in:modalCard={{ duration: 220, distance: motionPx(MOTION_PX.panel), scaleFrom: 0.97 }}
+    out:modalCard={{ duration: 160, distance: motionPx(MOTION_PX.nudge), scaleFrom: 0.985 }}
+  >
+    <div class="modal-header">
+      <h2 id="legacy-on-confirm-title" class="modal-title">Turn on Legacy pages?</h2>
+    </div>
+    <div class="modal-body">
+      <p class="confirm-copy">
+        This brings back the standalone App Mappings settings page and the Dictionary/Snippets
+        pages. They're no longer actively maintained now that Contexts covers the same ground, so
+        expect rough edges. You can turn this back off anytime.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <div class="footer-actions">
+        <button bind:this={legacyCancelButton} class="btn-ghost" onclick={() => (confirmLegacyOn = false)}>Cancel</button>
+        <button class="btn-primary" onclick={confirmLegacyOnAction}>Turn on</button>
+      </div>
+    </div>
   </div>
 {/if}
 

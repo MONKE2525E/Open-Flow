@@ -53,6 +53,7 @@
     modelId,
     recommendedModels,
     migrateDeprecatedGroqCleanupModel,
+    migrateDeprecatedGoogleModel,
     splitModelId,
     type AllSettingsPayload,
     type TaskType,
@@ -564,15 +565,28 @@
       ? (rawLegacyCleanup.includes('/') ? rawLegacyCleanup : `groq/${rawLegacyCleanup}`)
       : 'groq/qwen/qwen3.6-27b';
 
-    transcriptionDefaultModel = all.transcription_default_model ?? legacyTranscription;
-    cleanupDefaultModel = all.cleanup_default_model ?? legacyCleanup;
+    transcriptionDefaultModel = migrateDeprecatedGoogleModel(all.transcription_default_model ?? legacyTranscription);
+    cleanupDefaultModel = migrateDeprecatedGoogleModel(all.cleanup_default_model ?? legacyCleanup);
+    const parsedTranscriptionDefault = splitModelId(transcriptionDefaultModel);
+    if (parsedTranscriptionDefault?.provider === 'google') {
+      transcriptionDefaultModel = modelId('google', migrateDeprecatedGoogleModel(parsedTranscriptionDefault.model));
+    }
     const parsedCleanupDefault = splitModelId(cleanupDefaultModel);
     if (parsedCleanupDefault?.provider === 'groq') {
       cleanupDefaultModel = modelId('groq', migrateDeprecatedGroqCleanupModel(parsedCleanupDefault.model));
+    } else if (parsedCleanupDefault?.provider === 'google') {
+      cleanupDefaultModel = modelId('google', migrateDeprecatedGoogleModel(parsedCleanupDefault.model));
     }
 
     if (Array.isArray(all.transcription_fallback_models)) {
-      transcriptionFallbackModels = all.transcription_fallback_models.filter((id) => !!splitModelId(id));
+      transcriptionFallbackModels = all.transcription_fallback_models
+        .filter((id) => !!splitModelId(id))
+        .map((id) => {
+          const parsed = splitModelId(id);
+          return parsed?.provider === 'google'
+            ? modelId('google', migrateDeprecatedGoogleModel(parsed.model))
+            : id;
+        });
     }
     dualTranscriptionEnabled = all.dual_transcription_enabled === true;
     if (Array.isArray(all.cleanup_fallback_models)) {
@@ -580,8 +594,11 @@
         .filter((id) => !!splitModelId(id))
         .map((id) => {
           const parsed = splitModelId(id);
-          return parsed?.provider === 'groq'
-            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
+          if (parsed?.provider === 'groq') {
+            return modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model));
+          }
+          return parsed?.provider === 'google'
+            ? modelId('google', migrateDeprecatedGoogleModel(parsed.model))
             : id;
         });
     }
@@ -606,16 +623,7 @@
           const normalizedKey = parsed?.provider === 'groq'
             ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
             : key;
-          if (normalizedKey === key) overrides[normalizedKey] = value;
-        }
-      }
-      for (const [key, value] of Object.entries(rawOverrides)) {
-        if (typeof value === 'string') {
-          const parsed = splitModelId(key);
-          const normalizedKey = parsed?.provider === 'groq'
-            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
-            : key;
-          if (normalizedKey !== key && !(normalizedKey in overrides)) overrides[normalizedKey] = value;
+          overrides[normalizedKey] = value;
         }
       }
       cleanupPromptOverridesChanged = JSON.stringify(overrides) !== JSON.stringify(all.cleanup_prompt_overrides);
@@ -624,8 +632,9 @@
 
     const preTranscriptionDefault = transcriptionDefaultModel;
     const preCleanupDefault = cleanupDefaultModel;
-    const preTranscriptionFallbacks = [...transcriptionFallbackModels];
-    const preCleanupFallbacks = [...cleanupFallbackModels];
+    const preTranscriptionFallbackCount = transcriptionFallbackModels.length;
+    const preCleanupFallbackCount = cleanupFallbackModels.length;
+    const preCleanupFallbackModels = [...cleanupFallbackModels];
     const needsMigration =
       !all.transcription_default_model
       || !splitModelId(all.transcription_default_model)
@@ -638,8 +647,9 @@
       needsMigration
       || transcriptionDefaultModel !== preTranscriptionDefault
       || cleanupDefaultModel !== preCleanupDefault
-      || JSON.stringify(transcriptionFallbackModels) !== JSON.stringify(preTranscriptionFallbacks)
-      || JSON.stringify(cleanupFallbackModels) !== JSON.stringify(preCleanupFallbacks)
+      || transcriptionFallbackModels.length !== preTranscriptionFallbackCount
+      || cleanupFallbackModels.length !== preCleanupFallbackCount
+      || JSON.stringify(cleanupFallbackModels) !== JSON.stringify(preCleanupFallbackModels)
       || cleanupModelMapChanged
       || cleanupPromptOverridesChanged;
 

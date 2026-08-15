@@ -224,6 +224,7 @@ pub const VERENU_SERVICE_CHECKS_ENABLED: &str = "verenu_service_checks_enabled";
 pub const HISTORY_RETENTION: &str = "history_retention";
 pub const AUTOSTART_ENABLED: &str = "autostart_enabled";
 pub const CAPS_LOCK_UPPERCASE: &str = "caps_lock_uppercase_enabled";
+pub const DEFAULT_CLIPBOARD_PHRASE: &str = "paste clipboard here";
 pub const LOCAL_MODEL_MEMORY_POLICY: &str = "local_model_memory_policy";
 
 pub const DEFAULT_TONES: &[&str] = &["casual", "formal", "very_casual"];
@@ -266,7 +267,7 @@ pub fn history_retention_days(value: &str) -> Option<i64> {
 // ---------- pipeline config ----------
 
 /// All settings values needed by run_pipeline, loaded in one place.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PipelineConfig {
     pub transcription_provider: String,
     pub transcription_language: String,
@@ -288,6 +289,8 @@ pub struct PipelineConfig {
     pub contextual_caps_enabled: bool,
     pub auto_spacing_enabled: bool,
     pub caps_lock_uppercase_enabled: bool,
+    pub clipboard_phrase_enabled: bool,
+    pub clipboard_phrase: String,
     pub macos_clipboard_sniff_enabled: bool,
     pub advanced_model_ui: bool,
     pub local_model_memory_policy: String,
@@ -299,10 +302,10 @@ pub const OPENAI: &str = "openai";
 pub const GOOGLE: &str = "google";
 pub const ASSEMBLYAI: &str = "assemblyai";
 pub(crate) const LOCAL: &str = "local";
-pub(crate) const GROQ_GPT_OSS_20B_MODEL: &str = "openai/gpt-oss-20b";
-pub(crate) const GROQ_QWEN_3_6_27B_MODEL: &str = "qwen/qwen3.6-27b";
-pub(crate) const DEPRECATED_GROQ_LLAMA_8B_MODEL: &str = "llama-3.1-8b-instant";
-pub(crate) const DEPRECATED_GROQ_LLAMA_70B_MODEL: &str = "llama-3.3-70b-versatile";
+pub const GROQ_GPT_OSS_20B_MODEL: &str = "openai/gpt-oss-20b";
+pub const GROQ_QWEN_3_6_27B_MODEL: &str = "qwen/qwen3.6-27b";
+pub const DEPRECATED_GROQ_LLAMA_8B_MODEL: &str = "llama-3.1-8b-instant";
+pub const DEPRECATED_GROQ_LLAMA_70B_MODEL: &str = "llama-3.3-70b-versatile";
 pub const PROVIDERS: [&str; 5] = [GROQ, OPENAI, GOOGLE, ASSEMBLYAI, LOCAL];
 
 pub fn default_transcription_model_for(provider: &str) -> &'static str {
@@ -535,27 +538,16 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         .into_iter()
         .map(|id| migrate_deprecated_model_id(&id))
         .collect();
-    let raw_cleanup_prompt_overrides = store
+    let cleanup_prompt_overrides = store
         .get(CLEANUP_PROMPT_OVERRIDES)
         .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-    let mut cleanup_prompt_overrides = std::collections::HashMap::new();
-    for (key, value) in &raw_cleanup_prompt_overrides {
-        if let Some(text) = value.as_str() {
-            let migrated_key = migrate_deprecated_model_id(key);
-            if migrated_key == *key {
-                cleanup_prompt_overrides.insert(migrated_key, text.to_string());
-            }
-        }
-    }
-    for (key, value) in raw_cleanup_prompt_overrides {
-        if let Some(text) = value.as_str() {
-            let migrated_key = migrate_deprecated_model_id(&key);
-            if migrated_key != key && !cleanup_prompt_overrides.contains_key(&migrated_key) {
-                cleanup_prompt_overrides.insert(migrated_key, text.to_string());
-            }
-        }
-    }
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(k, v)| {
+            v.as_str()
+                .map(|s| (migrate_deprecated_model_id(&k), s.to_string()))
+        })
+        .collect();
 
     PipelineConfig {
         transcription_provider,
@@ -600,6 +592,16 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
             .get(CAPS_LOCK_UPPERCASE)
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        clipboard_phrase_enabled: store
+            .get(CLIPBOARD_PHRASE_ENABLED)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        clipboard_phrase: store
+            .get(CLIPBOARD_PHRASE)
+            .and_then(|v| v.as_str())
+            .map(normalize_clipboard_phrase)
+            .filter(|v| is_valid_clipboard_phrase(v))
+            .unwrap_or_else(|| DEFAULT_CLIPBOARD_PHRASE.to_string()),
         macos_clipboard_sniff_enabled: store
             .get(MACOS_CLIPBOARD_SNIFF)
             .and_then(|v| v.as_bool())
@@ -615,6 +617,15 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
             is_supported_local_model_memory_policy,
         ),
     }
+}
+
+pub fn normalize_clipboard_phrase(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub fn is_valid_clipboard_phrase(value: &str) -> bool {
+    let count = value.chars().count();
+    (5..=80).contains(&count) && value.chars().any(char::is_alphanumeric)
 }
 
 pub const DEFAULT_MIC_GAIN: f32 = 3.5;
@@ -754,10 +765,8 @@ mod tests {
         let empty = SettingsSnapshot::from_pairs([]);
         assert_eq!(load_audio_config(&empty).sound_effects_volume, 1.0);
 
-        let disabled = SettingsSnapshot::from_pairs([(
-            PLAY_START_STOP_SOUNDS.to_string(),
-            json!(false),
-        )]);
+        let disabled =
+            SettingsSnapshot::from_pairs([(PLAY_START_STOP_SOUNDS.to_string(), json!(false))]);
         assert_eq!(load_audio_config(&disabled).sound_effects_volume, 0.0);
 
         let explicit_volume = SettingsSnapshot::from_pairs([
@@ -925,22 +934,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn migrated_cleanup_override_prefers_existing_current_model_key() {
-        let store = SettingsSnapshot::from_pairs([(
-            CLEANUP_PROMPT_OVERRIDES.to_string(),
-            json!({
-                "groq/llama-3.3-70b-versatile": "legacy",
-                "groq/qwen/qwen3.6-27b": "current"
-            }),
-        )]);
-        let cfg = load_pipeline_config(&store);
-        assert_eq!(
-            cfg.cleanup_prompt_overrides.get("groq/qwen/qwen3.6-27b"),
-            Some(&"current".to_string())
-        );
-    }
-
     /// Unknown enum values must be coerced back to the backend default rather
     /// than passed through to the pipeline.
     #[test]
@@ -994,4 +987,47 @@ mod tests {
         assert_eq!(history_retention_days(""), None);
     }
 
+    /// Cleanup prompt overrides must be inert unless Advanced Models is on,
+    /// and whitespace-only overrides must be ignored.
+    #[test]
+    fn setting_audit_cleanup_overrides_gated_by_advanced_ui() {
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert(
+            "groq/llama-3.3-70b-versatile".to_string(),
+            "Custom".to_string(),
+        );
+        let base = PipelineConfig {
+            advanced_model_ui: true,
+            cleanup_prompt_overrides: overrides.clone(),
+            ..Default::default()
+        };
+        assert_eq!(
+            base.cleanup_override_for("groq", "llama-3.3-70b-versatile"),
+            Some("Custom")
+        );
+        let off = PipelineConfig {
+            advanced_model_ui: false,
+            cleanup_prompt_overrides: overrides.clone(),
+            ..Default::default()
+        };
+        assert_eq!(
+            off.cleanup_override_for("groq", "llama-3.3-70b-versatile"),
+            None
+        );
+
+        let blank = PipelineConfig {
+            advanced_model_ui: true,
+            cleanup_prompt_overrides: [(
+                "groq/llama-3.3-70b-versatile".to_string(),
+                "   ".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        assert_eq!(
+            blank.cleanup_override_for("groq", "llama-3.3-70b-versatile"),
+            None
+        );
+    }
 }

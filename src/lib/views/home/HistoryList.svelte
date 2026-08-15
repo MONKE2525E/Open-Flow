@@ -4,7 +4,10 @@
   import { expoOut } from 'svelte/easing';
   import { icons } from '../../icons';
   import { appStore } from '../../stores';
-  import { fmtDate, fmtTime, type Entry, type RenderItem } from './helpers';
+  import { motionMs } from '../../motion';
+  import { fmtDuration } from '../insights/helpers';
+  import HistoryToolbar from './HistoryToolbar.svelte';
+  import { fmtDate, fmtTime, formatAppLabel, type Entry, type RenderItem } from './helpers';
 
   export let recents: Entry[];
   export let failedEntry: { created_at: string } | null;
@@ -17,6 +20,12 @@
   export let copiedId: number | null;
   export let hk1: string;
   export let hk2: string;
+  export let search = '';
+  export let apps: string[] = [];
+  export let appFilter: string | null = null;
+  export let onSearchChange: (value: string) => void = () => {};
+  export let onAppFilterChange: (app: string | null) => void = () => {};
+  export let onClearFilters: () => void = () => {};
   export let onRetry: () => void;
   export let onContinueCancelled: () => void;
   export let onDismissCancelled: () => void;
@@ -24,6 +33,21 @@
   export let onCopy: (entry: Entry) => void;
 
   $: hasBanner = !!failedEntry || !!cancelledEntry;
+  $: filtersActive = search.trim().length > 0 || appFilter !== null;
+  $: firstLabel = recents.length > 0 ? fmtDate(recents[0].created_at) : '';
+
+  function rowMeta(entry: Entry): string {
+    const parts: string[] = [];
+    if (entry.app_name) parts.push(formatAppLabel(entry.app_name));
+    if (
+      typeof entry.duration_ms === 'number' &&
+      Number.isFinite(entry.duration_ms) &&
+      entry.duration_ms >= 0
+    ) {
+      parts.push(fmtDuration(entry.duration_ms));
+    }
+    return parts.join(' · ');
+  }
 
   let flatItems: RenderItem[] = [];
   $: {
@@ -38,7 +62,11 @@
       }
       if (!seenHeaders.has(dayKey)) {
         seenHeaders.add(dayKey);
-        if (!(hasBanner && label === 'Today')) {
+        // The very first header is rendered outside the virtualized list,
+        // paired with the search toolbar, so it isn't left to a
+        // ResizeObserver-measured item (that fought the expand animation).
+        const isFirstHeader = acc.length === 0;
+        if (!(hasBanner ? label === 'Today' : isFirstHeader)) {
           acc.push({ type: 'header', label, key: `header-${dayKey}` });
         }
       }
@@ -56,7 +84,7 @@
   }
 
   const DEFAULT_HEADER_HEIGHT = 38;
-  const DEFAULT_ROW_HEIGHT = 58;
+  const DEFAULT_ROW_HEIGHT = 74;
 
   let container: HTMLElement | null = null;
   let listContainer: HTMLElement | null = null;
@@ -168,6 +196,10 @@
     container;
     listContainer;
     appStore.updateInfo;
+    // The toolbar's "Clear filters" button appears/disappears with filter
+    // state, which changes the list's vertical offset — recompute when it
+    // toggles, not just when history rows change.
+    filtersActive;
     // Depend on the entries directly, not the derived `hasBanner` boolean —
     // swapping one banner for the other keeps the boolean true, so the block
     // would otherwise not re-run and `listOffset` would go stale.
@@ -254,15 +286,21 @@
 </script>
 
 {#if loading}
-  <div class="empty-state">Loading history…</div>
+  <div class="empty-state" role="status" aria-live="polite">
+    <p class="empty-h">Loading history…</p>
+    <p class="empty-sub">Fetching your recent dictations.</p>
+  </div>
 {:else}
   {#if hasBanner}
-    <div class="day-head">Today</div>
+    <div class="day-head day-head-row">
+      <span>Today</span>
+      <HistoryToolbar {search} {apps} {appFilter} {onSearchChange} {onAppFilterChange} {onClearFilters} />
+    </div>
     <div class="day-table">
       {#if cancelledEntry}
         <div
           class="day-row"
-          transition:fly={{ y: -10, duration: 400, easing: expoOut }}
+          transition:fly={{ y: -10, duration: motionMs(400), easing: expoOut }}
         >
           <div class="day-time">{fmtTime(cancelledEntry.created_at)}</div>
           <div class="day-text error-msg">You cancelled a recording — pick it back up?</div>
@@ -291,7 +329,7 @@
       {#if failedEntry}
         <div
           class="day-row"
-          transition:fly={{ y: -10, duration: 400, easing: expoOut }}
+          transition:fly={{ y: -10, duration: motionMs(400), easing: expoOut }}
         >
           <div class="day-time">{fmtTime(failedEntry.created_at)}</div>
           <div class="day-text error-msg">Looks like your last transcription failed.</div>
@@ -308,21 +346,45 @@
   {/if}
 
   {#if recents.length === 0 && !hasBanner}
-    <div class="empty-state">
-      No dictations yet. Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to get started.
+    <div class="day-head day-head-row">
+      <span></span>
+      <HistoryToolbar {search} {apps} {appFilter} {onSearchChange} {onAppFilterChange} {onClearFilters} />
     </div>
+    {#if filtersActive}
+      <div class="empty-state">
+        <p class="empty-h">No matches</p>
+        <p class="empty-sub">Nothing matches your current search and filters.</p>
+        <button class="btn-ghost" onclick={onClearFilters}>Clear filters</button>
+      </div>
+    {:else}
+      <div class="empty-state">
+        <p class="empty-h">No dictations yet</p>
+        <p class="empty-sub">Hold <kbd>{hk1}</kbd> <kbd>{hk2}</kbd> to start your first dictation.</p>
+      </div>
+    {/if}
   {:else}
+    {#if !hasBanner}
+      <div class="day-head day-head-row">
+        <span>{firstLabel}</span>
+        <HistoryToolbar {search} {apps} {appFilter} {onSearchChange} {onAppFilterChange} {onClearFilters} />
+      </div>
+    {/if}
     <div bind:this={listContainer}>
       <div style="height: {topSpacerHeight}px;"></div>
       {#each visibleItems as { item, index } (item.key)}
         {#if item.type === 'header'}
-          <div use:measureItem={item.key} class="day-head" class:muted={index > 0 || hasBanner}>
+          <div use:measureItem={item.key} class="day-head muted">
             {item.label}
           </div>
         {:else if item.type === 'row'}
           <div use:measureItem={item.key} class="day-row" class:first-in-table={(index === 0 && !hasBanner) || flatItems[index - 1]?.type === 'header'}>
             <div class="day-time">{fmtTime(item.entry.created_at)}</div>
-            <div class="day-text">{item.entry.clean_text}</div>
+            <div class="day-main">
+              <div class="day-text">{item.entry.clean_text}</div>
+              {#if rowMeta(item.entry)}
+                <div class="day-meta">{rowMeta(item.entry)}</div>
+              {/if}
+            </div>
             <button
               class="copy-btn"
               class:copied={copiedId === item.entry.id}
@@ -368,6 +430,8 @@
     margin: 4px 4px 10px;
   }
   .day-head.muted { margin-top: 22px; color: var(--ink-mute); }
+  .day-head-row { display: flex; align-items: center; gap: 12px; }
+  .day-head-row > span { flex: 0 0 auto; }
 
   .day-table { border-top: 1px solid var(--line); }
 
@@ -380,7 +444,7 @@
     gap: 14px;
     cursor: default;
   }
-  .day-row:hover { background: var(--control-active); }
+  .day-row:hover { background: var(--control-hover); }
   .day-row:not(:hover) .copy-btn:not(:focus-visible) { opacity: 0.25; }
   .day-row:hover .copy-btn { opacity: 0.9; }
 
@@ -405,7 +469,7 @@
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
-  .copy-btn.copied { color: var(--jap-500, #d97757); opacity: 1; }
+  .copy-btn.copied { color: var(--accent); opacity: 1; }
   .copy-btn svg { width: 10px; height: 10px; }
 
   .day-time {
@@ -423,6 +487,36 @@
     color: var(--ink-strong);
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+
+  .day-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .day-meta {
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    letter-spacing: 0.01em;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0;
+    max-height: 0;
+    transform: translateY(-2px);
+    transition:
+      opacity var(--ui-duration-fast) var(--ui-ease-out),
+      transform var(--ui-duration-fast) var(--ui-ease-out),
+      max-height var(--ui-duration-fast) var(--ui-ease-out);
+  }
+  .day-row:hover .day-meta,
+  .day-row:focus-within .day-meta {
+    opacity: 1;
+    max-height: 16px;
+    transform: translateY(0);
   }
 
   .error-msg {
@@ -446,10 +540,14 @@
   }
   .retry-btn:hover:not(:disabled) {
     background: var(--accent);
-    color: var(--on-accent, #fff);
+    color: var(--on-accent);
+  }
+  .retry-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
   .retry-btn:disabled {
-    opacity: 0.5;
+    opacity: var(--ui-disabled-opacity);
     cursor: not-allowed;
   }
 
@@ -473,24 +571,36 @@
     transition: color 0.12s, background 0.12s;
   }
   .dismiss-btn:hover { color: var(--ink-strong); background: var(--control-active); }
+  .dismiss-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .dismiss-btn svg { width: 11px; height: 11px; }
 
   .empty-state {
-    padding: 32px 4px;
-    font-size: 13px;
-    color: var(--ink-mute);
-    font-style: italic;
+    padding: 52px 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 6px;
   }
 
-  .empty-state :global(kbd) {
-    font-style: normal;
-    background: var(--paper-2);
-    border: 1px solid var(--line-strong);
-    border-radius: 4px;
-    font-family: var(--mono);
-    font-size: 11px;
-    padding: 1px 5px;
-    color: var(--ink);
+  .empty-h {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 17px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  .empty-sub {
+    font-size: 12.5px;
+    color: var(--ink-mute);
+    line-height: 1.5;
+    margin: 0;
+    max-width: 360px;
   }
 
   @media (max-width: 720px) {

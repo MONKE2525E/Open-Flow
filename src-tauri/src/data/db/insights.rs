@@ -144,6 +144,9 @@ pub fn query_insights(db: &Db, days: i64) -> Result<Insights> {
     let daily = query_daily(&conn, &range_start, &range_end)?;
     let (streak_start, streak_end) = rolling_year_bounds(&conn)?;
     let streak_daily = query_daily(&conn, &streak_start, &streak_end)?;
+    let (lifetime_streak_start, lifetime_streak_end) = range_bounds(&conn, 0)?;
+    let lifetime_streak_daily =
+        query_daily(&conn, &lifetime_streak_start, &lifetime_streak_end)?;
     let history_started_on = conn.query_row(
         "SELECT date(MIN(created_at), 'localtime') FROM transcriptions",
         [],
@@ -153,7 +156,7 @@ pub fn query_insights(db: &Db, days: i64) -> Result<Insights> {
     let providers = query_providers(&conn, &range_start, &range_end)?;
     let cleanup = query_cleanup(&conn, &range_start, &range_end)?;
     let words = query_words(&conn, &range_start, &range_end)?;
-    let streak = compute_streak(&streak_daily);
+    let streak = compute_streak(&lifetime_streak_daily);
 
     Ok(Insights {
         range_days: days,
@@ -331,11 +334,10 @@ fn range_bounds(conn: &Connection, days: i64) -> Result<(String, String)> {
 /// many fixed-width weeks fit in the current window.
 fn rolling_year_bounds(conn: &Connection) -> Result<(String, String)> {
     let end: String = conn.query_row("SELECT date('now', 'localtime')", [], |r| r.get(0))?;
-    let start: String = conn.query_row(
-        "SELECT date('now', 'localtime', '-364 days')",
-        [],
-        |r| r.get(0),
-    )?;
+    let start: String =
+        conn.query_row("SELECT date('now', 'localtime', '-364 days')", [], |r| {
+            r.get(0)
+        })?;
     Ok((start, end))
 }
 
@@ -741,7 +743,7 @@ mod tests {
     }
 
     fn insert_on_day(db: &Db, days_ago: i64, text: &str, words: i64, duration_ms: i64) -> i64 {
-        let entry = insert_transcription_returning(db, text, text, words, duration_ms, "groq/whisper-large-v3-turbo")
+        let entry = insert_transcription_returning(db, text, text, words, duration_ms, "groq/whisper-large-v3-turbo", None)
             .expect("insert transcription");
         {
             let conn = lock_conn(db).expect("lock");
@@ -919,6 +921,7 @@ mod tests {
             3,
             1000,
             "groq/whisper-large-v3-turbo",
+            None,
         )
         .expect("insert transcription");
         let created_at = utc_for_local_day(2, 23, 50);
@@ -957,7 +960,7 @@ mod tests {
     fn top_words_exclude_stopwords_and_sort_descending() {
         let db = test_db();
         let text = "the the the and and and apple banana banana cherry the";
-        insert_transcription_returning(&db, text, text, 11, 1000, "groq/whisper-large-v3-turbo")
+        insert_transcription_returning(&db, text, text, 11, 1000, "groq/whisper-large-v3-turbo", None)
             .expect("insert transcription");
 
         let insights = query_insights(&db, 7).expect("insights");
@@ -983,7 +986,7 @@ mod tests {
     fn top_words_strip_punctuation_and_drop_short_tokens() {
         let db = test_db();
         let text = "React, Vue! React? Vue. Svelte. i a um go";
-        insert_transcription_returning(&db, text, text, 10, 1000, "groq/whisper-large-v3-turbo")
+        insert_transcription_returning(&db, text, text, 10, 1000, "groq/whisper-large-v3-turbo", None)
             .expect("insert transcription");
 
         let insights = query_insights(&db, 7).expect("insights");

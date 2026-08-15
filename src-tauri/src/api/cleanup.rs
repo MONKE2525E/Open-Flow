@@ -22,6 +22,7 @@ pub async fn cleanup(
     snippet_instructions: &str,
     app_context: Option<&str>,
     custom_template: Option<&str>,
+    gen: u64,
 ) -> Result<String> {
     cleanup_with_alternate(
         text,
@@ -34,6 +35,7 @@ pub async fn cleanup(
         app_context,
         custom_template,
         None,
+        gen,
     )
     .await
 }
@@ -50,6 +52,7 @@ pub async fn cleanup_with_alternate(
     app_context: Option<&str>,
     custom_template: Option<&str>,
     alternate_transcript: Option<&str>,
+    gen: u64,
 ) -> Result<String> {
     let provider_id = provider.as_str();
     #[cfg(any(test, debug_assertions))]
@@ -70,7 +73,8 @@ pub async fn cleanup_with_alternate(
     );
     let max_output_tokens = cleanup_max_output_tokens(intensity, text);
     log::debug!(
-        "cleanup: start provider={:?} model={} profile={} intensity={} input_chars={} prompt_chars={} max_output_tokens={} snippet_rule_lines={} app_context={} custom_template={}",
+        "cleanup: start gen={} provider={:?} model={} profile={} intensity={} input_chars={} prompt_chars={} max_output_tokens={} snippet_rule_lines={} app_context={} custom_template={}",
+        gen,
         provider,
         model,
         profile,
@@ -103,11 +107,20 @@ pub async fn cleanup_with_alternate(
                 &prompt,
                 max_output_tokens,
                 alternate_transcript,
+                gen,
             )
             .await
         } else {
-            google_cleanup(text, api_key, &prompt, model, max_output_tokens, alternate_transcript)
-                .await
+            google_cleanup(
+                text,
+                api_key,
+                &prompt,
+                model,
+                max_output_tokens,
+                alternate_transcript,
+                gen,
+            )
+            .await
         }
     };
 
@@ -120,7 +133,8 @@ pub async fn cleanup_with_alternate(
         Ok(result) => result,
         Err(_) => {
             log::warn!(
-                "cleanup: request timeout provider={} model={} timeout_secs={}",
+                "cleanup: request timeout gen={} provider={} model={} timeout_secs={}",
+                gen,
                 provider.label(),
                 model,
                 CLEANUP_REQUEST_TIMEOUT_SECS
@@ -133,6 +147,31 @@ pub async fn cleanup_with_alternate(
             ))
         }
     }
+}
+
+/// Structured request transport shared by repair diagnosis. It deliberately
+/// bypasses cleanup prompt construction and the cleanup-enabled setting while
+/// reusing the existing authenticated provider clients and redacted errors.
+pub async fn structured_request(
+    text: &str,
+    provider: ProviderId,
+    api_key: &str,
+    model: &str,
+    prompt: &str,
+    max_output_tokens: u32,
+    gen: u64,
+) -> Result<String> {
+    let _ = gen;
+    let request = async {
+        if let Some(url) = provider.cleanup_url() {
+            openai_compat(text, api_key, url, provider.label(), model, prompt, max_output_tokens, None, gen).await
+        } else {
+            google_cleanup(text, api_key, prompt, model, max_output_tokens, None, gen).await
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(CLEANUP_REQUEST_TIMEOUT_SECS), request)
+        .await
+        .map_err(|_| anyhow::anyhow!("Repair provider request timed out"))?
 }
 
 #[derive(Serialize)]
@@ -178,6 +217,7 @@ async fn openai_compat(
     prompt: &str,
     max_tokens: u32,
     alternate_transcript: Option<&str>,
+    gen: u64,
 ) -> Result<String> {
     let body = build_openai_compat_request_with_alternate(
         text,
@@ -188,7 +228,8 @@ async fn openai_compat(
     );
 
     log::debug!(
-        "cleanup: openai_compat request provider={} model={} url={} input_chars={} prompt_chars={}",
+        "cleanup: openai_compat request gen={} provider={} model={} url={} input_chars={} prompt_chars={}",
+        gen,
         provider_label,
         model,
         url,
@@ -205,15 +246,20 @@ async fn openai_compat(
     let status = resp.status();
     let request_id = super::response_request_id(&resp);
     log::debug!(
-        "cleanup: openai_compat response provider={} status={} request_id={} latency_ms={}",
+        "cleanup: openai_compat response gen={} provider={} status={} request_id={} latency_ms={}",
+        gen,
         provider_label,
         status,
         request_id,
         request_started.elapsed().as_millis()
     );
 
-    let resp = match super::ensure_provider_success(resp, provider_label, Some((provider_label, model)))
-        .await
+    let resp = match super::ensure_provider_success(
+        resp,
+        provider_label,
+        Some((provider_label, model)),
+    )
+    .await
     {
         Ok(resp) => resp,
         Err(super::ProviderHttpError::Quota(e)) => return Err(e),
@@ -224,7 +270,8 @@ async fn openai_compat(
             preview,
         }) => {
             log::warn!(
-                "cleanup: openai_compat unauthorized provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                "cleanup: openai_compat unauthorized gen={} provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                gen,
                 provider_label,
                 model,
                 status,
@@ -240,7 +287,8 @@ async fn openai_compat(
             preview,
         }) => {
             log::warn!(
-                "cleanup: openai_compat non_success provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                "cleanup: openai_compat non_success gen={} provider={} model={} status={} request_id={} body_preview=\"{}\"",
+                gen,
                 provider_label,
                 model,
                 status,
@@ -261,7 +309,8 @@ async fn openai_compat(
         .map(|c| c.message.content.trim().to_owned())
         .ok_or_else(|| anyhow::anyhow!("No choices in OpenAI response"))?;
     log::debug!(
-        "cleanup: openai_compat parsed chars={}",
+        "cleanup: openai_compat parsed gen={} chars={}",
+        gen,
         output.chars().count()
     );
     Ok(output)
@@ -274,11 +323,13 @@ async fn google_cleanup(
     model: &str,
     max_output_tokens: u32,
     alternate_transcript: Option<&str>,
+    gen: u64,
 ) -> Result<String> {
     use super::gemini_types::GeminiResp;
 
     log::debug!(
-        "cleanup: google request input_chars={} prompt_chars={} max_output_tokens={}",
+        "cleanup: google request gen={} input_chars={} prompt_chars={} max_output_tokens={}",
+        gen,
         text.chars().count(),
         prompt.chars().count(),
         max_output_tokens
@@ -308,14 +359,14 @@ async fn google_cleanup(
     let status = resp.status();
     let request_id = super::response_request_id(&resp);
     log::debug!(
-        "cleanup: google response status={} request_id={} latency_ms={}",
+        "cleanup: google response gen={} status={} request_id={} latency_ms={}",
+        gen,
         status,
         request_id,
         request_started.elapsed().as_millis()
     );
 
-    let resp = match super::ensure_provider_success(resp, "Google", Some(("Google", model))).await
-    {
+    let resp = match super::ensure_provider_success(resp, "Google", Some(("Google", model))).await {
         Ok(resp) => resp,
         Err(super::ProviderHttpError::Quota(e)) => return Err(e),
         Err(super::ProviderHttpError::Auth {
@@ -325,7 +376,8 @@ async fn google_cleanup(
             preview,
         }) => {
             log::warn!(
-                "cleanup: google unauthorized model={} status={} request_id={} body_preview=\"{}\"",
+                "cleanup: google unauthorized gen={} model={} status={} request_id={} body_preview=\"{}\"",
+                gen,
                 model,
                 status,
                 request_id,
@@ -340,7 +392,8 @@ async fn google_cleanup(
             preview,
         }) => {
             log::warn!(
-                "cleanup: google non_success model={} status={} request_id={} body_preview=\"{}\"",
+                "cleanup: google non_success gen={} model={} status={} request_id={} body_preview=\"{}\"",
+                gen,
                 model,
                 status,
                 request_id,
@@ -376,7 +429,11 @@ async fn google_cleanup(
         .and_then(|p| p.text)
         .map(|t| t.trim().to_owned())
         .ok_or_else(|| anyhow::anyhow!("No candidates or parts in Google response"))?;
-    log::debug!("cleanup: google parsed chars={}", output.chars().count());
+    log::debug!(
+        "cleanup: google parsed gen={} chars={}",
+        gen,
+        output.chars().count()
+    );
     Ok(output)
 }
 
@@ -473,6 +530,14 @@ fn build_google_cleanup_request_with_alternate(
     }
 }
 
+/// Escapes dictation text for embedding inside the `<raw_dictation>` XML tag
+/// of prompts. Shared with the pipeline's local-cleanup path.
+pub fn escape_transcript_xml(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -518,12 +583,9 @@ mod tests {
 
     #[test]
     fn google_cleanup_request_includes_gemini_config() {
-        let body = build_google_cleanup_request("hello", "prompt", "gemini-2.5-flash", 256);
+        let body = build_google_cleanup_request("hello", "prompt", "gemini-3.7-flash", 256);
         let json = serde_json::to_value(&body).unwrap();
-        assert_eq!(
-            json["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            0
-        );
+        assert_eq!(json["generationConfig"]["thinkingConfig"]["thinkingLevel"], "minimal");
         assert_eq!(json["generationConfig"]["maxOutputTokens"], 256);
         assert_eq!(json["generationConfig"]["temperature"], 0.0);
     }
@@ -569,8 +631,3 @@ mod tests {
     }
 }
 
-fn escape_transcript_xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
