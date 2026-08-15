@@ -39,6 +39,7 @@ type DevContext = {
   tone: string | null;
   cleanup_intensity: string | null;
   color: string | null;
+  custom_instructions: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -317,6 +318,7 @@ function readDevContexts(): DevContext[] {
     tone: null,
     cleanup_intensity: null,
     color: null,
+    custom_instructions: null,
     created_at: now,
     updated_at: now,
   };
@@ -1149,6 +1151,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         tone: (args?.tone as string | null | undefined) ?? null,
         cleanup_intensity: (args?.cleanup_intensity as string | null | undefined) ?? null,
         color: null,
+        custom_instructions: ((args?.customInstructions ?? args?.custom_instructions) as string | null | undefined) ?? null,
         created_at: now,
         updated_at: now,
       };
@@ -1180,6 +1183,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         icon: (args?.icon as string | null | undefined) ?? null,
         tone: (args?.tone as string | null | undefined) ?? null,
         cleanup_intensity: (args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined ?? null,
+        custom_instructions: (args?.customInstructions ?? args?.custom_instructions) as string | null | undefined ?? null,
         updated_at: devNow(),
       };
       writeDevList(DEV_CONTEXTS_KEY, rows);

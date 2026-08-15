@@ -280,6 +280,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
                 tone: None,
                 cleanup_intensity: None,
                 color: None,
+                custom_instructions: None,
                 created_at: String::new(),
                 updated_at: String::new(),
             }

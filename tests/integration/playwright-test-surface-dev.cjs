@@ -11,6 +11,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings, closeSettings } = requi
   await seedDevState(page, {
     settings: {
       setup_complete: true,
+      cleanup_enabled: true,
       cleanup_intensity: 'medium',
       default_tone: 'casual',
       appearance_mode: 'system',

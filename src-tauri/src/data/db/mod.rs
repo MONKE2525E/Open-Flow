@@ -293,7 +293,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .expect("version");
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
         drop(conn);
         drop(db);
         let _ = std::fs::remove_file(&path);

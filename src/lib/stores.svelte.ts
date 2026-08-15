@@ -36,6 +36,7 @@ export interface Context {
   tone: string | null;
   cleanup_intensity: string | null;
   color: string | null;
+  custom_instructions: string | null;
   created_at: string;
   updated_at: string;
 }
