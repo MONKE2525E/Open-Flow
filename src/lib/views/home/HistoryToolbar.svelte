@@ -63,7 +63,11 @@
     });
   }
 
-  function handleGroupFocusOut() {
+  function handleGroupFocusOut(event: FocusEvent) {
+    // Replacing the collapsed icon with the input can emit a transient
+    // focusout whose relatedTarget is null. There is no real focus-away in
+    // that case, so leave the search control expanded for the replacement.
+    if (!event.relatedTarget) return;
     requestAnimationFrame(() => {
       if (preserveExpanded) {
         // Some browsers finish the pointer transition after the replacement
