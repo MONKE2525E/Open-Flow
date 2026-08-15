@@ -49,6 +49,15 @@ pub struct AppState {
     pub retry_capture: Option<RetryCapture>,
     pub cancelled_capture: Option<CancelledCapture>,
     pub paste_failure: Option<PasteFailure>,
+    pub repair: Option<super::repair::RepairSession>,
+    /// Set only by the hotkey path when a Press was routed into the repair
+    /// pill's complaint recording (see app_hotkey.rs) — checked and cleared
+    /// on the matching Release so that release routes to the same place the
+    /// press did, rather than re-deriving it from ambient repair-session
+    /// state, which stays around in the background long after the repair
+    /// pill has lost focus and would otherwise hijack an unrelated,
+    /// currently-focused-elsewhere dictation's Release too.
+    pub hotkey_recording_repair_complaint: bool,
 }
 
 /// Single source of truth for what the app is currently doing with the
@@ -103,6 +112,20 @@ impl DictationLifecycle {
     }
 }
 
+/// Compact, stable name for the lifecycle variant — used by transition logs
+/// so a session is reconstructable from the ring buffer alone.
+pub(super) fn describe_lifecycle(lifecycle: &DictationLifecycle) -> &'static str {
+    match lifecycle {
+        DictationLifecycle::Idle => "idle",
+        DictationLifecycle::Starting { .. } => "starting",
+        DictationLifecycle::Recording { handless, .. } if *handless => "recording_handsfree",
+        DictationLifecycle::Recording { .. } => "recording",
+        DictationLifecycle::Stopping { .. } => "stopping",
+        DictationLifecycle::Processing(_) => "processing",
+        DictationLifecycle::Finalizing { .. } => "finalizing",
+    }
+}
+
 pub struct ActivePipeline {
     pub generation: u64,
     pub cancel_tx: tokio::sync::watch::Sender<bool>,
@@ -122,6 +145,7 @@ pub struct RetryCapture {
     pub captured_at: std::time::Instant,
     pub target: WindowTarget,
     pub process_name: String,
+    pub context_id: i64,
     pub profile: String,
     pub app_context: Option<String>,
     pub caps_lock_on: bool,
@@ -171,6 +195,14 @@ pub fn reserve_starting(state: &SharedState) -> Result<(), String> {
     if !st.lifecycle.is_idle() {
         return Err("Already recording".to_string());
     }
+    log::debug!(
+        "lifecycle: {} -> starting",
+        describe_lifecycle(&st.lifecycle)
+    );
+    // A new dictation owns the pill immediately. Drop any pending repair
+    // snapshot/proposal so a late provider response cannot repaint the new
+    // recording with stale repair UI.
+    st.repair = None;
     st.lifecycle = DictationLifecycle::Starting {
         prepend_audio: None,
     };
@@ -217,10 +249,15 @@ pub fn set_starting_prepend_audio(state: &SharedState, audio: CapturedAudio) {
 /// returns `None`.
 pub fn take_active_pipeline_for_interrupt(state: &SharedState) -> Option<ActivePipeline> {
     let mut st = lock_state(state).ok()?;
+    st.repair = None;
     match std::mem::replace(&mut st.lifecycle, DictationLifecycle::Idle) {
         DictationLifecycle::Processing(active) => {
             crate::core::hotkey::clear_processing_generation(active.generation);
             let prepend_audio = Some(active.captured_audio.clone());
+            log::debug!(
+                "lifecycle: processing -> starting gen={} (interrupt, audio prepended)",
+                active.generation
+            );
             st.lifecycle = DictationLifecycle::Starting { prepend_audio };
             Some(active)
         }
@@ -288,6 +325,10 @@ pub fn take_active_pipeline_for_escape(state: &SharedState) -> Option<ActivePipe
     match std::mem::replace(&mut st.lifecycle, DictationLifecycle::Idle) {
         DictationLifecycle::Processing(active) => {
             crate::core::hotkey::clear_processing_generation(active.generation);
+            log::debug!(
+                "lifecycle: processing -> idle gen={} (escape, audio discarded)",
+                active.generation
+            );
             Some(active)
         }
         other => {
@@ -303,12 +344,19 @@ pub fn take_active_pipeline_for_escape(state: &SharedState) -> Option<ActivePipe
 /// Escape while still actively recording (pre-`Release`).
 pub fn take_recording_plain(state: &SharedState) -> Option<(audio::RecordingSession, Option<u64>)> {
     let mut st = lock_state(state).ok()?;
+    // A discarded/cancelled recording never reaches app_hotkey's Release
+    // branch that would otherwise clear this — reset it here so a later,
+    // unrelated Release can't misroute into finish_complaint_recording.
+    st.hotkey_recording_repair_complaint = false;
     match std::mem::replace(&mut st.lifecycle, DictationLifecycle::Idle) {
         DictationLifecycle::Recording {
             session,
             exclusive_mic_session_id,
             ..
-        } => Some((session, exclusive_mic_session_id)),
+        } => {
+            log::info!("lifecycle: recording -> idle (plain cancel/discard)");
+            Some((session, exclusive_mic_session_id))
+        }
         DictationLifecycle::Starting { .. } => {
             // Cancelling a start must consume the reservation atomically. If
             // the microphone task has not installed Recording yet, it will
@@ -330,6 +378,7 @@ pub fn cancel_starting_reservation(state: &SharedState) -> bool {
         return false;
     };
     if matches!(st.lifecycle, DictationLifecycle::Starting { .. }) {
+        log::info!("lifecycle: starting -> idle (start reservation cancelled)");
         st.lifecycle = DictationLifecycle::Idle;
         true
     } else {
@@ -351,6 +400,7 @@ pub fn promote_recording_to_handless(state: &SharedState) -> bool {
     } = &mut st.lifecycle
     {
         if !*handless {
+            log::info!("lifecycle: recording -> recording_handsfree (Space conversion)");
             *handless = true;
             *handless_from_hold = true;
             return true;
@@ -427,6 +477,7 @@ pub(super) fn take_recording_for_stopping(state: &SharedState) -> Option<Stoppin
             ..
         } => {
             let generation = next_pipeline_generation();
+            log::info!("lifecycle: recording -> stopping gen={generation}");
             st.lifecycle = DictationLifecycle::Stopping {
                 generation,
                 prepend_audio: prepend_audio.clone(),
@@ -464,6 +515,7 @@ pub(super) fn leave_stopping_if_owned(state: &SharedState, generation: u64) -> b
         DictationLifecycle::Stopping { generation: g, .. } if *g == generation
     );
     if owns {
+        log::info!("lifecycle: stopping -> idle gen={generation} (rejected/discarded)");
         st.lifecycle = DictationLifecycle::Idle;
     }
     owns
@@ -484,6 +536,7 @@ pub(super) fn install_processing(
         DictationLifecycle::Stopping { generation: g, .. } if *g == generation
     );
     if owns {
+        log::info!("lifecycle: stopping -> processing gen={generation}");
         st.lifecycle = DictationLifecycle::Processing(active);
         crate::core::hotkey::set_processing_generation(generation);
     }
@@ -501,6 +554,7 @@ pub(super) fn enter_finalizing(state: &SharedState, generation: u64) -> bool {
     let owns =
         matches!(&st.lifecycle, DictationLifecycle::Processing(a) if a.generation == generation);
     if owns {
+        log::info!("lifecycle: processing -> finalizing gen={generation}");
         st.lifecycle = DictationLifecycle::Finalizing { generation };
         crate::core::hotkey::clear_processing_generation(generation);
     }
@@ -518,6 +572,7 @@ pub(super) fn leave_processing_if_owned(state: &SharedState, generation: u64) ->
     let owns =
         matches!(&st.lifecycle, DictationLifecycle::Processing(a) if a.generation == generation);
     if owns {
+        log::info!("lifecycle: processing -> idle gen={generation} (failed/cancelled)");
         st.lifecycle = DictationLifecycle::Idle;
         crate::core::hotkey::clear_processing_generation(generation);
     }
@@ -532,6 +587,7 @@ pub(super) fn leave_finalizing(state: &SharedState, generation: u64) {
     };
     if matches!(&st.lifecycle, DictationLifecycle::Finalizing { generation: g } if *g == generation)
     {
+        log::info!("lifecycle: finalizing -> idle gen={generation}");
         st.lifecycle = DictationLifecycle::Idle;
     }
 }
@@ -633,6 +689,8 @@ mod tests {
             retry_capture: None,
             cancelled_capture: None,
             paste_failure: None,
+            repair: None,
+            hotkey_recording_repair_complaint: false,
         }))
     }
 

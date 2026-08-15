@@ -30,6 +30,7 @@ enum SettingKind {
     SoundEffectsVolume,
     AppMappings,
     Hotkey,
+    RepairHotkey,
     ClipboardPhrase,
 }
 
@@ -120,6 +121,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::CLEANUP_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::HOTKEY, SettingKind::Hotkey, true, true),
+    setting_spec(store::REPAIR_HOTKEY, SettingKind::RepairHotkey, true, true),
     setting_spec(
         store::MICROPHONE_DEVICE,
         SettingKind::StringOrNull,
@@ -324,6 +326,19 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
                 && keys[1].as_str().is_none_or(|second| {
                     second.is_empty() || crate::core::hotkey::is_known_key_code(second)
                 })
+        }),
+        // Two modifiers + one regular trigger key (default Ctrl+Alt+Z) — see
+        // core::hotkey::win's REPAIR_MOD1 doc comment for why a modifier-only
+        // combo isn't allowed. Unlike the main hotkey, all three slots empty
+        // is also valid: it disables the feature rather than requiring one
+        // be bound (the built-in Ctrl+Alt+Z default needs no setting saved).
+        SettingKind::RepairHotkey => value.as_array().is_some_and(|keys| {
+            keys.len() == 3
+                && keys.iter().all(serde_json::Value::is_string)
+                && (keys.iter().all(|k| k.as_str() == Some(""))
+                    || keys.iter().all(|k| {
+                        k.as_str().is_some_and(crate::core::hotkey::is_known_key_code)
+                    }))
         }),
     };
 
