@@ -210,7 +210,6 @@
 
     microphones = val<string[]>(8, []);
     selectedMic = val<string | null>(9, null) ?? '';
-    appStore.legacyFeaturesEnabled = val<boolean | null>(11, null) ?? false;
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
