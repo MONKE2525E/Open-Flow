@@ -78,8 +78,8 @@ async fn run_local_cleanup_request(
         .map(|alternate| {
             format!(
                 "<primary_transcript>\n{}\n</primary_transcript>\n<alternate_transcript>\n{}\n</alternate_transcript>",
-                escape_transcript_xml(expanded),
-                escape_transcript_xml(alternate),
+                crate::api::cleanup::escape_transcript_xml(expanded),
+                crate::api::cleanup::escape_transcript_xml(alternate),
             )
         })
         .unwrap_or_else(|| expanded.to_owned());
@@ -154,6 +154,7 @@ pub(super) async fn guard_cleanup_refusal(
     app_context: Option<&str>,
     app: Option<&AppHandle>,
     alternate_transcript: Option<&str>,
+    gen: u64,
 ) -> Option<String> {
     if !cleanup_output_is_unusable_against_candidates(
         intensity,
@@ -195,6 +196,7 @@ pub(super) async fn guard_cleanup_refusal(
             app_context,
             Some(prompts::hardened_retry_template()),
             alternate_transcript,
+            gen,
         )
         .await
     };
@@ -243,23 +245,39 @@ pub(super) fn resolve_app_mapping(
     })
 }
 
-/// Resolves the effective tone profile for `mapping`, falling back to the
-/// global `default_tone` when the app has no override, and applies the
-/// app's `cleanup_intensity` override (if any) onto `cfg` in place.
+/// Resolves the effective tone profile, in priority order: the active
+/// Context's tone override, then the app-mapping's profile, then the global
+/// `default_tone`. Cleanup intensity follows the same priority and is
+/// applied onto `cfg` in place. The Context override is the most specific
+/// signal (it can be a per-website match), so it wins over the exe-keyed
+/// AppMapping when both are set.
 pub(super) fn apply_app_style_overrides(
     cfg: &mut store::PipelineConfig,
     mapping: Option<&AppMapping>,
+    context: Option<&db::Context>,
 ) -> String {
-    if let Some(intensity) = mapping
+    let context_intensity = context
+        .and_then(|c| c.cleanup_intensity.as_deref())
+        .map(str::trim)
+        .filter(|i| !i.is_empty());
+    let mapping_intensity = mapping
         .and_then(|m| m.cleanup_intensity.as_deref())
         .map(str::trim)
-        .filter(|i| !i.is_empty())
-    {
+        .filter(|i| !i.is_empty());
+    if let Some(intensity) = context_intensity.or(mapping_intensity) {
         cfg.cleanup_intensity = intensity.to_owned();
     }
-    mapping
-        .map(|m| m.profile.trim().to_owned())
-        .filter(|p| !p.is_empty())
+
+    let context_tone = context
+        .and_then(|c| c.tone.as_deref())
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+    let mapping_profile = mapping
+        .map(|m| m.profile.trim())
+        .filter(|p| !p.is_empty());
+    context_tone
+        .or(mapping_profile)
+        .map(str::to_owned)
         .unwrap_or_else(|| cfg.default_tone.clone())
 }
 
@@ -269,21 +287,35 @@ pub(super) fn apply_app_style_overrides(
 /// `open_config_and_context` (chain validation + error pills) is too heavy and
 /// would double-resolve; the pipeline re-emits the same value at processing
 /// time so the shown profile always matches what actually runs.
+///
+/// Deliberately never fails silently: the hwnd→process-name read can come up
+/// empty (elevated target processes, race between capture and start), so the
+/// process name falls back to the live foreground window and then to no
+/// mapping at all — `apply_app_style_overrides` falls back to the default
+/// tone, so the recording pill always shows *some* mode label. Without this
+/// fallback the label only ever appeared once processing began (where the
+/// pipeline resolves the name through a different path), which made the
+/// mode display useless right when it matters.
 pub(super) fn emit_profile_for_window(app: &AppHandle, hwnd: usize) {
-    if hwnd == 0 {
-        return;
+    let process_name = if hwnd != 0 {
+        window_context::get_process_name_for_hwnd(hwnd)
+    } else {
+        None
     }
-    let process_name = window_context::get_process_name_for_hwnd(hwnd).unwrap_or_default();
-    if process_name.is_empty() {
-        return;
-    }
+    .or_else(window_context::get_active_process_name)
+    .unwrap_or_default();
     let Ok(settings) = store::settings_snapshot(app) else {
         return;
     };
     let mapping = resolve_app_mapping(Some(&settings), &process_name);
     let mut cfg = store::load_pipeline_config(&settings);
-    let profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
-    crate::pipeline::pill::emit_pill_profile(app, &profile);
+    // Exe-only context lookup (no address-bar probe here — this runs on the
+    // recording-start path and must stay fast; the real pipeline resolves
+    // the domain-refined context and re-emits the true profile).
+    let db_handle = app.state::<crate::DbHandle>().inner().clone();
+    let context = crate::core::context::resolve_context(&db_handle, &process_name, None).ok();
+    let profile = apply_app_style_overrides(&mut cfg, mapping.as_ref(), context.as_ref());
+    crate::pipeline::pill::queue_pill_profile(&profile);
 }
 
 /// Casual/formal cleanup sometimes omits a closing period on short utterances.
@@ -475,6 +507,7 @@ pub(super) fn speech_gate_accepts(
 pub(super) async fn open_config_and_context(
     app: &AppHandle,
     process_name: &str,
+    context: Option<&db::Context>,
 ) -> Option<(store::PipelineConfig, String, Option<String>)> {
     let settings_store = match store::settings_snapshot(app) {
         Ok(s) => s,
@@ -490,7 +523,7 @@ pub(super) async fn open_config_and_context(
         return None;
     }
     let mapping = resolve_app_mapping(Some(&settings_store), process_name);
-    let profile = apply_app_style_overrides(&mut cfg, mapping.as_ref());
+    let profile = apply_app_style_overrides(&mut cfg, mapping.as_ref(), context);
     log::debug!(
         "pipeline: app mapping resolved process={process_name} matched={} profile={profile} cleanup_intensity={} default_tone={}",
         mapping.as_ref().map(|m| m.exe.as_str()).unwrap_or("none"),
@@ -512,6 +545,7 @@ pub(super) async fn transcribe_any(
     api_key: Option<&str>,
     language: &str,
     model: &str,
+    gen: u64,
 ) -> anyhow::Result<String> {
     if provider_id == store::LOCAL {
         let manager = app
@@ -554,6 +588,7 @@ pub(super) async fn transcribe_any(
         key,
         language,
         model,
+        gen,
     )
     .await
 }
@@ -562,9 +597,11 @@ pub(super) async fn run_transcription(
     app: &AppHandle,
     audio: &CapturedAudio,
     cfg: &store::PipelineConfig,
+    gen: u64,
 ) -> Option<(String, String, Option<TranscriptCandidate>)> {
     log::debug!(
-        "pipeline: transcription stage start provider={} model={} language={} wav_bytes={} pcm_samples={}",
+        "pipeline: transcription stage start gen={} provider={} model={} language={} wav_bytes={} pcm_samples={}",
+        gen,
         cfg.transcription_provider,
         cfg.transcription_default_model,
         cfg.transcription_language,
@@ -578,20 +615,21 @@ pub(super) async fn run_transcription(
         && has_cleanup_key_in_chain(cfg)
         && transcription_model_chain(cfg).len() > 1;
     let (raw, provider_id, model, alternate_result) = match if dual_enabled {
-        run_dual_transcription_candidates(app, audio, cfg).await
+        run_dual_transcription_candidates(app, audio, cfg, gen).await
     } else {
-        run_primary_transcription_chain(app, audio, cfg)
+        run_primary_transcription_chain(app, audio, cfg, gen)
             .await
             .map(|(raw, provider, model)| (raw, provider, model, None))
     } {
         Ok((raw, provider_id, model, alternate)) => (raw, provider_id, model, alternate),
         Err(error) => {
-            let mut user_msg = trim_err(&error.to_string());
-            if let Some(parsed) = crate::api::parse_auth_401_error(&error.to_string()) {
-                user_msg = crate::api::auth_401_display_message(&parsed);
-            }
+            // Never surface the raw provider context string (body previews,
+            // request ids) — user_facing_error() strips it and keeps the
+            // detail in the log line below.
+            let user_msg = crate::api::user_facing_error(&error);
             log::error!(
-                "pipeline: transcription failed error={}",
+                "pipeline: transcription failed gen={} error={}",
+                gen,
                 trim_err(&error.to_string())
             );
             if crate::api::is_retryable_provider_error(&error) {
@@ -643,6 +681,7 @@ async fn run_dual_transcription_candidates(
     app: &AppHandle,
     audio: &CapturedAudio,
     cfg: &store::PipelineConfig,
+    gen: u64,
 ) -> anyhow::Result<(String, String, String, Option<(String, String, String)>)> {
     let chain = transcription_model_chain(cfg);
     let mut next_index = 0usize;
@@ -658,6 +697,7 @@ async fn run_dual_transcription_candidates(
             next_index,
             chain[next_index].clone(),
             next_index > 0,
+            gen,
         );
         next_index += 1;
     }
@@ -709,6 +749,7 @@ async fn run_dual_transcription_candidates(
                 next_index,
                 chain[next_index].clone(),
                 true,
+                gen,
             );
             next_index += 1;
         }
@@ -725,6 +766,7 @@ async fn run_dual_transcription_candidates(
     Ok((primary_text, primary_provider, primary_model, alternate))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_transcription_candidate(
     in_flight: &mut tokio::task::JoinSet<CandidateOutcome>,
     app: &AppHandle,
@@ -733,6 +775,7 @@ fn spawn_transcription_candidate(
     index: usize,
     candidate: (String, String),
     bounded: bool,
+    gen: u64,
 ) {
     let app = app.clone();
     let audio = audio.clone();
@@ -752,6 +795,7 @@ fn spawn_transcription_candidate(
             },
             &language,
             &model,
+            gen,
         );
         let result = if bounded {
             match tokio::time::timeout(
@@ -773,12 +817,6 @@ fn spawn_transcription_candidate(
     });
 }
 
-fn escape_transcript_xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
 fn prepare_transcript_text(
     raw: &str,
     strip_provider_artifacts: bool,
@@ -788,7 +826,7 @@ fn prepare_transcript_text(
     let normalized = if preserve_corroborated_artifacts {
         normalized
     } else {
-        strip_hallucinated_suffix(&normalized)
+        strip_trailing_hallucination(&strip_hallucinated_suffix(&normalized))
     };
     let normalized = crate::system::text::collapse_degenerate_word_runs(&normalized);
     if strip_provider_artifacts && !preserve_corroborated_artifacts {
@@ -802,6 +840,7 @@ async fn run_primary_transcription_chain(
     app: &AppHandle,
     audio: &CapturedAudio,
     cfg: &store::PipelineConfig,
+    gen: u64,
 ) -> anyhow::Result<(String, String, String)> {
     let mut last_err: Option<anyhow::Error> = None;
     for (provider_id, model) in transcription_model_chain(cfg) {
@@ -818,12 +857,14 @@ async fn run_primary_transcription_chain(
             },
             &language,
             &model,
+            gen,
         )
         .await
         {
             Ok(raw) if !raw.is_empty() => {
                 log::debug!(
-                    "pipeline: transcription provider success={} model={} chars={}",
+                    "pipeline: transcription provider success gen={} provider={} model={} chars={}",
+                    gen,
                     provider_id,
                     model,
                     raw.chars().count()
@@ -844,7 +885,8 @@ async fn run_primary_transcription_chain(
                 // every configured fallback and failed outright.
                 let retryable = crate::api::is_retryable_provider_error(&e);
                 log::warn!(
-                    "pipeline: transcription provider failed provider={} model={} retryable={} error={}",
+                    "pipeline: transcription provider failed gen={} provider={} model={} retryable={} error={}",
+                    gen,
                     provider_id,
                     model,
                     retryable,
@@ -873,6 +915,7 @@ struct CleanupSuccess {
     key: String,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn cleanup_cache_plan(
     expanded: &str,
     profile: &str,
@@ -880,6 +923,26 @@ pub(super) fn cleanup_cache_plan(
     snippet_instructions: &str,
     alternate_transcript: Option<&str>,
     dual_context_fingerprint: Option<u64>,
+) -> CleanupCachePlan {
+    cleanup_cache_plan_for_context(
+        expanded,
+        profile,
+        intensity,
+        snippet_instructions,
+        alternate_transcript,
+        dual_context_fingerprint,
+        None,
+    )
+}
+
+pub(super) fn cleanup_cache_plan_for_context(
+    expanded: &str,
+    profile: &str,
+    intensity: &str,
+    snippet_instructions: &str,
+    alternate_transcript: Option<&str>,
+    dual_context_fingerprint: Option<u64>,
+    context_id: Option<i64>,
 ) -> CleanupCachePlan {
     let has_snippets = !snippet_instructions.is_empty();
     let (cache_tokens, cache_separators) = number_parser::tokenize_cache_key_parts(expanded);
@@ -904,6 +967,11 @@ pub(super) fn cleanup_cache_plan(
         if !key.is_empty() {
             if let Some(fingerprint) = dual_context_fingerprint {
                 key = format!("{key}|dualctx:{fingerprint:x}");
+            }
+        }
+        if let Some(context_id) = context_id.filter(|id| *id != db::EVERYWHERE_CONTEXT_ID) {
+            if !key.is_empty() {
+                key = format!("{key}|ctx:{context_id}");
             }
         }
         key
@@ -956,6 +1024,8 @@ fn touch_cleanup_cache_hit(db_handle: &DbHandle, cache_key: &str, entry: &db::Cl
     match db::cleanup_cache_touch_hit(
         db_handle,
         cache_key,
+        &entry.created_at,
+        entry.hit_count,
         new_hit_count,
         &now_str,
         &new_expires_at,
@@ -1020,6 +1090,7 @@ async fn run_cleanup_provider_chain(
     extra_rules: &str,
     app_context: Option<&str>,
     app: Option<&AppHandle>,
+    gen: u64,
 ) -> (Option<CleanupSuccess>, Option<anyhow::Error>, bool) {
     let mut last_cleanup_err: Option<anyhow::Error> = None;
     let mut saw_soft_timeout = false;
@@ -1060,6 +1131,7 @@ async fn run_cleanup_provider_chain(
                         app_context,
                         custom_template,
                         alternate_transcript,
+                        gen,
                     ),
                 )
                 .await
@@ -1071,7 +1143,8 @@ async fn run_cleanup_provider_chain(
             match outcome {
                 Ok(cleaned) if !cleaned.is_empty() => {
                     log::debug!(
-                        "pipeline: cleanup provider success={} model={} attempt={} cleaned_chars={}",
+                        "pipeline: cleanup provider success gen={} provider={} model={} attempt={} cleaned_chars={}",
+                        gen,
                         provider_id,
                         model,
                         attempt,
@@ -1093,10 +1166,11 @@ async fn run_cleanup_provider_chain(
                     break;
                 }
                 Err(e) => {
-                    let retryable = crate::api::is_retryable_provider_error(&e)
-                        || is_cleanup_soft_timeout(&e);
+                    let retryable =
+                        crate::api::is_retryable_provider_error(&e) || is_cleanup_soft_timeout(&e);
                     log::warn!(
-                        "pipeline: cleanup provider failed provider={} model={} attempt={}/{} retryable={} error={}",
+                        "pipeline: cleanup provider failed gen={} provider={} model={} attempt={}/{} retryable={} error={}",
+                        gen,
                         provider_id,
                         model,
                         attempt,
@@ -1126,6 +1200,7 @@ async fn run_cleanup_provider_chain(
 // Handles snippet fast-path, snippet instruction collection, LLM cleanup, and
 // instruction override application. Returns (final_text_before_dict,
 // dictionary entries, cache key, cleanup provider/model metadata).
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_cleanup_and_snippets(
     app: &AppHandle,
     raw: &str,
@@ -1133,6 +1208,9 @@ pub(super) async fn run_cleanup_and_snippets(
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
+    context_id: i64,
+    protected_instruction: Option<&str>,
+    gen: u64,
 ) -> Option<(String, Vec<db::DictionaryEntry>, String, String)> {
     let db_handle = app.state::<DbHandle>();
     match run_cleanup_and_snippets_for_db(
@@ -1142,21 +1220,19 @@ pub(super) async fn run_cleanup_and_snippets(
         cfg,
         profile,
         app_context,
+        context_id,
+        protected_instruction,
         Some(app),
+        gen,
     )
     .await
     {
         Ok(result) => Some(result),
         Err(e) => {
-            let mut user_msg = format!("Cleanup failed: {}", trim_err(&e.to_string()));
-            if let Some(parsed) = crate::api::parse_auth_401_error(&e.to_string()) {
-                user_msg = format!(
-                    "Cleanup failed: {}",
-                    crate::api::auth_401_display_message(&parsed)
-                );
-            }
+            let user_msg = format!("Cleanup failed: {}", crate::api::user_facing_error(&e));
             log::error!(
-                "pipeline: cleanup failed error={}",
+                "pipeline: cleanup failed gen={} error={}",
+                gen,
                 trim_err(&e.to_string())
             );
             if crate::api::is_retryable_provider_error(&e) {
@@ -1168,6 +1244,7 @@ pub(super) async fn run_cleanup_and_snippets(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_cleanup_and_snippets_for_db(
     db_handle: &DbHandle,
     raw: &str,
@@ -1175,19 +1252,24 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
     cfg: &store::PipelineConfig,
     profile: &str,
     app_context: Option<&str>,
+    context_id: i64,
+    protected_instruction: Option<&str>,
     app: Option<&AppHandle>,
+    gen: u64,
 ) -> anyhow::Result<(String, Vec<db::DictionaryEntry>, String, String)> {
-    let mut db_snippets = db::query_snippets(db_handle).unwrap_or_default();
-    let dict_entries = db::query_dictionary(db_handle).unwrap_or_default();
+    let mut db_snippets = db::query_snippets_for_context(db_handle, context_id).unwrap_or_default();
+    let dict_entries = db::query_dictionary_for_context(db_handle, context_id).unwrap_or_default();
     log::debug!(
-        "pipeline: cleanup inputs snippets={} dict_entries={}",
+        "pipeline: cleanup inputs gen={} snippets={} dict_entries={}",
+        gen,
         db_snippets.len(),
         dict_entries.len()
     );
 
     let snippet_instructions = snippets::collect_snippet_instructions_from(raw, &db_snippets);
     log::debug!(
-        "pipeline: cleanup stage start raw_chars={} snippet_override_lines={} cleanup_enabled={}",
+        "pipeline: cleanup stage start gen={} raw_chars={} snippet_override_lines={} cleanup_enabled={}",
+        gen,
         raw.chars().count(),
         snippet_instructions
             .lines()
@@ -1223,7 +1305,15 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
     );
 
     let dict_instructions = dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
-    let extra_rules = [snippet_instructions.as_str(), dict_instructions.as_str()]
+    let context_custom_instructions = db::query_context(db_handle, context_id)
+        .ok()
+        .and_then(|c| c.custom_instructions);
+    let extra_rules = [
+        snippet_instructions.as_str(),
+        dict_instructions.as_str(),
+        context_custom_instructions.as_deref().unwrap_or(""),
+        protected_instruction.unwrap_or(""),
+    ]
         .iter()
         .filter(|s| !s.is_empty())
         .copied()
@@ -1244,7 +1334,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
         &cfg.cleanup_intensity,
         profile,
     ) {
-        let cache_plan = cleanup_cache_plan(
+        let cache_plan = cleanup_cache_plan_for_context(
             &expanded,
             profile,
             &cfg.cleanup_intensity,
@@ -1253,9 +1343,17 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             alternate
                 .as_ref()
                 .map(|_| dual_cleanup_context_fingerprint(cfg, &extra_rules, app_context)),
+            Some(context_id),
         );
-        let cache_key = cache_plan.key.clone();
-        if !cache_key.is_empty() {
+        // Protected clipboard payloads are unique per invocation and must not
+        // reuse or populate the cleanup cache, even though the marker itself
+        // is intentionally stable enough to be safe in the prompt.
+        let cache_key = if protected_instruction.is_some() {
+            String::new()
+        } else {
+            cache_plan.key.clone()
+        };
+        if protected_instruction.is_none() && !cache_key.is_empty() {
             used_cache_key = cache_key.clone();
             if let Some(overridden) = cleanup_cache_hit_text(
                 db_handle,
@@ -1289,6 +1387,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             &extra_rules,
             app_context,
             app,
+            gen,
         )
         .await;
         let provider_succeeded = cleanup_res.is_some();
@@ -1310,6 +1409,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                     app_context,
                     app,
                     alternate.map(|candidate| candidate.text.as_str()),
+                    gen,
                 )
                 .await
             }
@@ -1360,11 +1460,8 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                 }
                 overridden
             }
-            None if !provider_succeeded && saw_soft_timeout =>
-            {
-                log::warn!(
-                    "pipeline: cleanup stalled twice, delivering pre-cleanup transcription"
-                );
+            None if !provider_succeeded && saw_soft_timeout => {
+                log::warn!("pipeline: cleanup stalled twice, delivering pre-cleanup transcription");
                 cleanup_api_used.clear();
                 let text =
                     snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions);

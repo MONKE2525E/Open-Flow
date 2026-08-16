@@ -30,6 +30,8 @@ enum SettingKind {
     SoundEffectsVolume,
     AppMappings,
     Hotkey,
+    RepairHotkey,
+    ClipboardPhrase,
 }
 
 #[derive(Clone, Copy)]
@@ -119,6 +121,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::CLEANUP_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::HOTKEY, SettingKind::Hotkey, true, true),
+    setting_spec(store::REPAIR_HOTKEY, SettingKind::RepairHotkey, true, true),
     setting_spec(
         store::MICROPHONE_DEVICE,
         SettingKind::StringOrNull,
@@ -144,11 +147,20 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::MIC_GAIN, SettingKind::MicGain, true, false),
     setting_spec(store::PLAY_START_STOP_SOUNDS, SettingKind::Bool, true, true),
-    setting_spec(store::SOUND_EFFECTS_VOLUME, SettingKind::SoundEffectsVolume, true, true),
+    setting_spec(
+        store::SOUND_EFFECTS_VOLUME,
+        SettingKind::SoundEffectsVolume,
+        true,
+        true,
+    ),
     setting_spec(store::SETUP_COMPLETE, SettingKind::Bool, true, false),
+    setting_spec(store::CLIPBOARD_PHRASE, SettingKind::StringOrNull, true, true),
+    setting_spec(store::CLIPBOARD_PHRASE_ENABLED, SettingKind::Bool, true, true),
+    setting_spec(store::LEGACY_FEATURES_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::APP_CONTEXT_HINT, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_EVENT_MODE, SettingKind::Bool, true, true),
+    setting_spec(store::MACOS_CLIPBOARD_SNIFF, SettingKind::Bool, true, true),
     setting_spec(store::CONTEXTUAL_CAPS, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_SPACING, SettingKind::Bool, true, true),
     setting_spec(
@@ -198,6 +210,9 @@ const SETTING_SPECS: &[SettingSpec] = &[
     ),
     setting_spec(store::AUTOSTART_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::CAPS_LOCK_UPPERCASE, SettingKind::Bool, true, true),
+    setting_spec(store::CLIPBOARD_PHRASE_ENABLED, SettingKind::Bool, true, true),
+    setting_spec(store::CLIPBOARD_PHRASE, SettingKind::ClipboardPhrase, true, true),
+    setting_spec(store::LEGACY_FEATURES_ENABLED, SettingKind::Bool, true, true),
 ];
 
 fn spec_for(key: &str) -> Option<&'static SettingSpec> {
@@ -290,6 +305,10 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
             .as_str()
             .is_some_and(store::is_supported_local_model_memory_policy),
         SettingKind::ModelMap => is_model_map(value),
+        SettingKind::ClipboardPhrase => value
+            .as_str()
+            .map(store::normalize_clipboard_phrase)
+            .is_some_and(|v| store::is_valid_clipboard_phrase(&v)),
         SettingKind::StringArray => is_non_empty_string_array(value),
         SettingKind::CleanupPromptOverrides => is_cleanup_prompt_override_map(value),
         SettingKind::AppearanceMode => value
@@ -297,11 +316,33 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
             .is_some_and(|v| matches!(v, "system" | "light" | "dark")),
         SettingKind::Bool => value.is_boolean(),
         SettingKind::MicGain => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
-        SettingKind::SoundEffectsVolume => value.as_f64().is_some_and(|v| (0.0..=100.0).contains(&v)),
+        SettingKind::SoundEffectsVolume => {
+            value.as_f64().is_some_and(|v| (0.0..=100.0).contains(&v))
+        }
         SettingKind::AppMappings => is_valid_app_mappings(value),
-        SettingKind::Hotkey => value
-            .as_array()
-            .is_some_and(|keys| keys.len() == 2 && keys.iter().all(serde_json::Value::is_string)),
+        SettingKind::Hotkey => value.as_array().is_some_and(|keys| {
+            keys.len() == 2
+                && keys.iter().all(serde_json::Value::is_string)
+                && keys[0]
+                    .as_str()
+                    .is_some_and(crate::core::hotkey::is_known_key_code)
+                && keys[1].as_str().is_none_or(|second| {
+                    second.is_empty() || crate::core::hotkey::is_known_key_code(second)
+                })
+        }),
+        // Two modifiers + one regular trigger key (default Ctrl+Alt+Z) — see
+        // core::hotkey::win's REPAIR_MOD1 doc comment for why a modifier-only
+        // combo isn't allowed. Unlike the main hotkey, all three slots empty
+        // is also valid: it disables the feature rather than requiring one
+        // be bound (the built-in Ctrl+Alt+Z default needs no setting saved).
+        SettingKind::RepairHotkey => value.as_array().is_some_and(|keys| {
+            keys.len() == 3
+                && keys.iter().all(serde_json::Value::is_string)
+                && (keys.iter().all(|k| k.as_str() == Some(""))
+                    || keys.iter().all(|k| {
+                        k.as_str().is_some_and(crate::core::hotkey::is_known_key_code)
+                    }))
+        }),
     };
 
     if valid {
@@ -415,6 +456,9 @@ pub async fn get_setting(app: AppHandle, key: String) -> Result<Option<serde_jso
 
 #[derive(serde::Serialize)]
 pub struct AllSettings {
+    pub clipboard_phrase: Option<String>,
+    pub clipboard_phrase_enabled: Option<bool>,
+    pub legacy_features_enabled: Option<bool>,
     pub transcription_provider: Option<String>,
     pub transcription_model: Option<String>,
     pub transcription_language: Option<String>,
@@ -450,6 +494,7 @@ pub struct AllSettings {
     pub beta_updates_enabled: Option<bool>,
     pub verenu_service_checks_enabled: Option<bool>,
     pub hotkey: Option<Vec<String>>,
+    pub repair_hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
     pub cleanup_prompt_overrides: Option<serde_json::Value>,
 }
@@ -478,6 +523,9 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         })
     };
     Ok(AllSettings {
+        clipboard_phrase: str_val(store::CLIPBOARD_PHRASE),
+        clipboard_phrase_enabled: bool_val(store::CLIPBOARD_PHRASE_ENABLED),
+        legacy_features_enabled: bool_val(store::LEGACY_FEATURES_ENABLED),
         transcription_provider: str_val(store::TRANSCRIPTION_PROVIDER),
         transcription_model: str_val(store::TRANSCRIPTION_MODEL),
         transcription_language: str_val(store::TRANSCRIPTION_LANGUAGE),
@@ -513,6 +561,13 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         beta_updates_enabled: bool_val(store::BETA_UPDATES_ENABLED),
         verenu_service_checks_enabled: bool_val(store::VERENU_SERVICE_CHECKS_ENABLED),
         hotkey: s.get(store::HOTKEY).and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+        }),
+        repair_hotkey: s.get(store::REPAIR_HOTKEY).and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
                     .filter_map(|x| x.as_str().map(String::from))

@@ -1,3 +1,5 @@
+pub mod browser_probe;
+pub mod context;
 pub mod context_probe;
 pub mod hotkey;
 pub mod injection;

@@ -1,5 +1,7 @@
 # App Mappings & Profiles
 
+> **Legacy page.** App Mappings has been superseded by [Contexts](CONTEXTS.md), which covers the same per-app (and per-website) tone/cleanup overrides plus vocabulary and snippets in one place. The standalone App Mappings page is hidden by default; turn on **Settings → General → Legacy pages** to bring it back if you still rely on it directly.
+
 App Mappings let Verenu automatically switch its tone — and optionally its cleanup intensity — based on which app you're dictating into.
 
 ## Why use this
@@ -34,6 +36,7 @@ Revisit [Cleanup Levels](CLEANUP_LEVELS.md) to choose the right intensity for ea
 ## Related Docs
 
 <p align="center">
+  <a href="CONTEXTS.md"><img alt="Contexts" src="https://img.shields.io/badge/Contexts-Guide-a3352b"></a>
   <a href="CLEANUP_LEVELS.md"><img alt="Cleanup Levels" src="https://img.shields.io/badge/Cleanup-Levels-c44632"></a>
   <a href="DICTIONARY.md"><img alt="Dictionary" src="https://img.shields.io/badge/Dictionary-Guide-5b554a"></a>
   <a href="SNIPPETS.md"><img alt="Snippets" src="https://img.shields.io/badge/Snippets-Guide-7e7266"></a>

@@ -14,35 +14,13 @@ pub fn frontend_ready(
     readiness: tauri::State<'_, crate::FrontendReadiness>,
 ) -> Result<(), String> {
     match window.label() {
-        "main" => readiness.main.store(true, std::sync::atomic::Ordering::Release),
-        "pill" => readiness.pill.store(true, std::sync::atomic::Ordering::Release),
+        "main" => readiness
+            .main
+            .store(true, std::sync::atomic::Ordering::Release),
+        "pill" => readiness
+            .pill
+            .store(true, std::sync::atomic::Ordering::Release),
         label => return Err(format!("Unknown frontend window: {label}")),
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn show_main(app: AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("main") {
-        #[cfg(target_os = "macos")]
-        {
-            crate::system::mac_app::set_regular_activation_policy_on_main_thread(&app);
-            crate::system::mac_app::activate_current_app_on_main_thread(&app);
-        }
-        w.show().ok();
-        w.set_focus().ok();
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn hide_main(app: AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("main") {
-        #[cfg(target_os = "macos")]
-        {
-            crate::system::mac_app::set_accessory_activation_policy_on_main_thread(&app);
-        }
-        w.hide().ok();
     }
     Ok(())
 }
@@ -142,6 +120,42 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
     let settings = store::settings_handle(&app)?;
     run_blocking("save_hotkey", move || {
         settings.save_value(store::HOTKEY, serde_json::json!([key1, key2]))
+    })
+    .await
+}
+
+/// Two modifiers (key1, key2) plus one regular trigger key (key3) — see the
+/// doc comment on `REPAIR_MOD1` in core::hotkey::win for why a modifier-only
+/// combo isn't allowed here.
+#[tauri::command]
+pub async fn check_repair_hotkey(key1: String, key2: String, key3: String) -> Result<bool, String> {
+    Ok(crate::core::hotkey::is_repair_hotkey_available(&key1, &key2, &key3))
+}
+
+/// Same shape as `save_hotkey`, but all three slots empty is a valid "unset"
+/// state (disables the repair-open hotkey rather than requiring one be bound
+/// — Ctrl+Alt+Z remains the working default until the user changes it).
+#[tauri::command]
+pub async fn save_repair_hotkey(app: AppHandle, key1: String, key2: String, key3: String) -> Result<(), String> {
+    let unset = key1.is_empty() && key2.is_empty() && key3.is_empty();
+    let vk1 = crate::core::hotkey::map_code_to_vk(&key1);
+    let vk2 = crate::core::hotkey::map_code_to_vk(&key2);
+    let vk3 = crate::core::hotkey::map_code_to_vk(&key3);
+    if !unset {
+        if vk1 == 0 {
+            return Err(format!("Unrecognized key code: {key1}"));
+        }
+        if vk2 == 0 {
+            return Err(format!("Unrecognized key code: {key2}"));
+        }
+        if vk3 == 0 {
+            return Err(format!("Unrecognized key code: {key3}"));
+        }
+    }
+    crate::core::hotkey::update_repair_keys(vk1, vk2, vk3);
+    let settings = store::settings_handle(&app)?;
+    run_blocking("save_repair_hotkey", move || {
+        settings.save_value(store::REPAIR_HOTKEY, serde_json::json!([key1, key2, key3]))
     })
     .await
 }
@@ -342,7 +356,9 @@ fn run_launchctl(args: &[&str]) -> Result<(), String> {
         format!("exit status {}", output.status)
     };
 
-    Err(format!("launchctl {:?} failed: {detail}", args))
+    // Deliberately no `{:?}` of args: the service target embeds the local
+    // plist path. stderr/stdout keep the diagnostic value for the user.
+    Err(format!("launchctl failed: {detail}"))
 }
 
 // ---------- connectivity ----------
@@ -393,16 +409,6 @@ async fn native_connectivity_check() -> Option<bool> {
 // ---------- developer logs ----------
 
 #[tauri::command]
-pub fn log_frontend(level: String, message: String) {
-    let message = crate::system::logger::sanitize_frontend_log_message(&message);
-    match level.as_str() {
-        "warn" => log::warn!("fe: {message}"),
-        "error" => log::error!("fe: {message}"),
-        _ => log::info!("fe: {message}"),
-    }
-}
-
-#[tauri::command]
 pub fn get_recent_logs(limit: Option<usize>) -> Vec<String> {
     crate::system::logger::recent(limit)
 }
@@ -446,10 +452,7 @@ pub fn notify_provider_and_global_message(
 }
 
 #[tauri::command]
-pub fn test_notifications(
-    app: AppHandle,
-    notification_type: Option<String>,
-) -> Result<(), String> {
+pub fn test_notifications(app: AppHandle, notification_type: Option<String>) -> Result<(), String> {
     crate::system::notify::notify_test_notification(
         &app,
         notification_type.as_deref().unwrap_or("update"),

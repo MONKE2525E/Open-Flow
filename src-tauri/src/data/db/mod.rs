@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 mod cleanup_cache;
+mod contexts;
 mod dictionary;
 mod insights;
 mod schema;
@@ -21,6 +22,7 @@ mod transcriptions;
 mod validation;
 
 pub use cleanup_cache::*;
+pub use contexts::*;
 pub use dictionary::*;
 pub use insights::*;
 pub use schema::*;
@@ -55,11 +57,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "verenu_{name}_{}_{}.db",
-            std::process::id(),
-            nanos
-        ))
+        std::env::temp_dir().join(format!("verenu_{name}_{}_{}.db", std::process::id(), nanos))
     }
 
     #[test]
@@ -216,6 +214,243 @@ mod tests {
     }
 
     #[test]
+    fn open_self_heals_database_stuck_at_v2_with_legacy_dictionary() {
+        // Databases stranded at user_version = 2 by the legacy
+        // non-transactional v2 migration keep the old `wrong`/`correct`
+        // dictionary shape (and may also lack `snippets.instructions` and
+        // `pending_corrections`). Without the self-heal, every dictionary
+        // query fails with `no such column: term` — and v7's spoken-words
+        // backfill would fail on the missing `instructions` column.
+        let path = temp_db_path("v2_legacy_dictionary");
+        {
+            let conn = Connection::open(&path).expect("create stuck db");
+            conn.execute_batch(
+                "CREATE TABLE transcriptions (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   raw_text TEXT NOT NULL,
+                   clean_text TEXT NOT NULL,
+                   words INTEGER NOT NULL DEFAULT 0,
+                   duration_ms INTEGER NOT NULL DEFAULT 0,
+                   api_used TEXT NOT NULL DEFAULT '',
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE TABLE dictionary (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   wrong TEXT NOT NULL,
+                   correct TEXT NOT NULL,
+                   auto_learned INTEGER NOT NULL DEFAULT 0,
+                   correction_count INTEGER NOT NULL DEFAULT 0,
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 CREATE TABLE snippets (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   trigger TEXT NOT NULL UNIQUE,
+                   expansion TEXT NOT NULL,
+                   use_count INTEGER NOT NULL DEFAULT 0,
+                   created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                 );
+                 INSERT INTO dictionary (wrong, correct, auto_learned)
+                   VALUES ('Varinu', 'Verenu', 1);
+                 INSERT INTO transcriptions (raw_text, clean_text, words, duration_ms, api_used)
+                   VALUES ('hello sig world', 'clean', 3, 1000, 'test');
+                 INSERT INTO snippets (trigger, expansion) VALUES ('sig', 'signature');
+                 PRAGMA user_version = 2;",
+            )
+            .expect("seed stuck db");
+        }
+
+        let db = open(path.to_str().expect("path string")).expect("open self-heals stuck db");
+
+        // The dictionary must be queryable through the modern `term` column,
+        // with the legacy pair migrated into `term`/`mistake`.
+        let entries = query_dictionary(&db).expect("query dictionary");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].term, "Verenu");
+        assert_eq!(entries[0].mistake.as_deref(), Some("Varinu"));
+        // New entries must insert against the modern UNIQUE(term) constraint.
+        insert_dictionary_entry(&db, "Tauri", Some("Tari")).expect("insert modern entry");
+        // The v2 siblings must exist too.
+        assert!(
+            table_has_column(&lock_conn(&db).expect("lock"), "snippets", "instructions")
+                .expect("instructions column"),
+            "snippets.instructions must be self-healed"
+        );
+        assert!(
+            table_exists(&lock_conn(&db).expect("lock"), "pending_corrections").expect("table"),
+            "pending_corrections must be self-healed"
+        );
+        // Transcriptions with snippet triggers still backfill correctly.
+        let conn = lock_conn(&db).expect("lock");
+        let spoken_words: i64 = conn
+            .query_row(
+                "SELECT spoken_words FROM transcriptions WHERE raw_text = 'hello sig world'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("spoken words backfilled");
+        assert_eq!(spoken_words, 2);
+        // And the whole chain must have reached the current version.
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .expect("version");
+        assert_eq!(version, 16);
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn open_with_recovery_does_not_quarantine_non_corruption_errors() {
+        // A database path that cannot be opened (a directory is not a
+        // database) is NOT corruption: it must surface as an error without
+        // moving anything aside, so a transiently-locked healthy database can
+        // never be silently replaced with an empty fresh one.
+        let parent = std::env::temp_dir().join(format!(
+            "verenu_noncorrupt_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&parent).expect("create parent");
+        let path = parent.join("verenu.db");
+        std::fs::create_dir(&path).expect("create dir-as-db");
+
+        let err = open_with_recovery(&path).expect_err("a directory is not a database");
+        assert!(
+            err.to_string().to_lowercase().contains("unable to open"),
+            "unexpected error: {err}"
+        );
+
+        let quarantined = std::fs::read_dir(&parent)
+            .expect("list dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".corrupt-"))
+            .collect::<Vec<_>>();
+        assert!(
+            quarantined.is_empty(),
+            "no quarantine files may be created for a non-corruption error: {quarantined:?}"
+        );
+
+        let _ = std::fs::remove_dir(&path);
+        let _ = std::fs::remove_dir(&parent);
+    }
+
+    #[test]
+    fn open_with_recovery_quarantines_a_corrupt_database_and_opens_fresh() {
+        let path = temp_db_path("corrupt_db_recovery");
+        std::fs::write(&path, b"this is not a sqlite database at all").expect("write garbage");
+
+        // Plain open must fail (the corrupt file is a real error, not something
+        // to silently paper over)…
+        assert!(open(&path).is_err());
+
+        // …but the startup path must recover: quarantine + fresh database.
+        let db = open_with_recovery(&path).expect("recovery opens a fresh database");
+        insert_transcription_returning(&db, "fresh", "fresh", 1, 1000, "test", None)
+            .expect("fresh db is writable");
+
+        // The corrupt file must be preserved for diagnosis, not deleted.
+        let quarantine = std::fs::read_dir(path.parent().expect("parent"))
+            .expect("list dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| {
+                let stem = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default();
+                name.starts_with(stem) && name.contains(".db.corrupt-")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            quarantine.len(),
+            1,
+            "exactly one quarantine file for this database: {quarantine:?}"
+        );
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+        let _ = std::fs::remove_file(quarantine[0].clone());
+    }
+
+    #[test]
+    fn open_with_recovery_leaves_a_healthy_database_untouched() {
+        let path = temp_db_path("healthy_db_recovery");
+        {
+            let db = open(&path).expect("healthy open");
+            insert_transcription_returning(&db, "keep me", "keep me", 2, 1000, "test", None)
+                .expect("insert");
+        }
+        let db = open_with_recovery(&path).expect("recovery keeps healthy db");
+        let entries = query_recent_page(&db, 10, 0, None, None).expect("query");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].clean_text, "keep me");
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn open_with_recovery_quarantines_db_and_sidecars_together() {
+        // Real-world corruption is a bad main file while the -wal/-shm
+        // sidecars from a healthy session are still present (torn disk
+        // write, failed update, partial restore). SQLite deletes stale
+        // sidecars itself during a failed open, so the quarantine helper's
+        // "move the whole set" contract is tested directly.
+        let path = temp_db_path("sidecar_recovery");
+        {
+            let db = open(&path).expect("create db");
+            insert_transcription_returning(&db, "first", "first", 1, 1000, "test", None)
+                .expect("insert");
+            drop(db);
+        }
+        let wal_path = path.with_extension("db-wal");
+        let shm_path = path.with_extension("db-shm");
+        std::fs::write(&wal_path, b"stale wal").expect("create stale wal sidecar");
+        std::fs::write(&shm_path, b"stale shm").expect("create stale shm sidecar");
+
+        assert!(
+            super::quarantine_corrupt_db_files(&path),
+            "all three files must be moved aside"
+        );
+
+        assert!(!path.exists(), "main file moved aside");
+        assert!(!wal_path.exists(), "wal sidecar moved aside");
+        assert!(!shm_path.exists(), "shm sidecar moved aside");
+
+        let stem = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        let quarantined: Vec<_> = std::fs::read_dir(path.parent().expect("parent"))
+            .expect("dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(stem) && name.contains(".corrupt-"))
+            .collect();
+        assert_eq!(
+            quarantined.len(),
+            3,
+            "main + wal + shm all quarantined: {quarantined:?}"
+        );
+
+        for name in quarantined {
+            let _ = std::fs::remove_file(path.parent().expect("parent").join(name));
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(wal_path);
+        let _ = std::fs::remove_file(shm_path);
+    }
+
+    #[test]
     fn seed_default_dictionary_entries_adds_a_verenu_entry_with_every_known_variant() {
         let db = test_db();
         seed_default_dictionary_entries(&db).expect("seed");
@@ -224,7 +459,10 @@ mod tests {
             .iter()
             .find(|e| e.term == "Verenu")
             .expect("default Verenu entry seeded");
-        assert!(!verenu.auto_learned, "seeded entry must be manual, not gated by distinctiveness");
+        assert!(
+            !verenu.auto_learned,
+            "seeded entry must be manual, not gated by distinctiveness"
+        );
         let mistake = verenu.mistake.as_deref().unwrap_or_default();
         for variant in [
             "Varinu", "Verena", "Virinu", "Varino", "Varinew", "Varina", "Verminu", "Varinian",
@@ -365,6 +603,180 @@ mod tests {
     }
 
     #[test]
+    fn auto_learn_promote_promotes_when_pending_reaches_threshold() {
+        let db = test_db();
+
+        // Session 1: pending count reaches 1, below the default threshold of 2.
+        upsert_auto_learn_candidate(&db, "Koobernetes", "Kubernetes", 0.6).expect("candidate");
+        let first = auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2)
+            .expect("first promote call");
+        assert_eq!(
+            first,
+            AutoLearnPromoteResult::BelowThreshold { pending_count: 1 }
+        );
+        assert!(query_dictionary(&db).expect("dictionary").is_empty());
+
+        // Session 2: pending count reaches 2 — the pair promotes.
+        let second = auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2)
+            .expect("second promote call");
+        assert_eq!(second, AutoLearnPromoteResult::Promoted);
+
+        let entries = query_dictionary(&db).expect("dictionary");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].term, "Kubernetes");
+        assert_eq!(entries[0].mistake.as_deref(), Some("Koobernetes"));
+        assert!(entries[0].auto_learned);
+    }
+
+    #[test]
+    fn auto_learn_promote_is_atomic_against_double_promotion() {
+        // Two concurrent monitors both observe the pair and both believe the
+        // pending count has crossed the threshold (two prior sessions already
+        // recorded pending rows). Only ONE may actually promote — the second
+        // caller's atomic `promoted_at` claim must be refused.
+        let db = test_db();
+        upsert_auto_learn_candidate(&db, "Koobernetes", "Kubernetes", 0.6).expect("candidate");
+        insert_pending_correction(&db, "Koobernetes", "Kubernetes").expect("prior pending 1");
+        insert_pending_correction(&db, "Koobernetes", "Kubernetes").expect("prior pending 2");
+
+        let first =
+            auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2).expect("first");
+        assert_eq!(first, AutoLearnPromoteResult::Promoted);
+
+        let second =
+            auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2).expect("second");
+        assert_eq!(
+            second,
+            AutoLearnPromoteResult::AlreadyPromoted,
+            "second concurrent promotion must be refused"
+        );
+
+        let entries = query_dictionary(&db).expect("dictionary");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].correction_count, 1,
+            "correction_count must not be inflated by the concurrent duplicate"
+        );
+    }
+
+    #[test]
+    fn auto_learn_promote_does_not_resurrect_a_rejected_candidate() {
+        // A rejection deletes the auto-learned entry AND purges its candidate
+        // rows. An in-flight promotion for that pair must not re-create it: the
+        // `promoted_at` claim no-ops against a purged candidate.
+        let db = test_db();
+        upsert_auto_learn_candidate(&db, "Koobernetes", "Kubernetes", 0.6).expect("candidate");
+        insert_pending_correction(&db, "Koobernetes", "Kubernetes").expect("prior pending");
+        assert_eq!(
+            auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2).expect("promote"),
+            AutoLearnPromoteResult::Promoted
+        );
+        let id = query_dictionary(&db)
+            .expect("dictionary")
+            .into_iter()
+            .next()
+            .expect("entry")
+            .id;
+
+        // Rejection fires: entry + candidate + pending rows purged together.
+        delete_auto_learned_entries_by_ids(&db, &[id]).expect("reject");
+        assert!(query_dictionary(&db).expect("dictionary after").is_empty());
+
+        // A stale monitor that already passed its count read tries to promote.
+        // Its count is re-evaluated inside the SAME transaction as the claim
+        // and dict insert, against post-rejection state: the pending rows are
+        // gone, so it lands BelowThreshold and must NOT re-create the entry.
+        let stale =
+            auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2).expect("stale");
+        assert_ne!(
+            stale,
+            AutoLearnPromoteResult::Promoted,
+            "rejected pair must not be resurrected by an in-flight monitor"
+        );
+        assert!(
+            query_dictionary(&db)
+                .expect("dictionary after stale")
+                .is_empty(),
+            "rejected pair must not be resurrected"
+        );
+    }
+
+    #[test]
+    fn auto_learn_promote_can_relearn_after_rejection() {
+        // After a rejection fully purges the candidate, a genuinely new learning
+        // window (a fresh candidate row with promoted_at IS NULL) can promote.
+        let db = test_db();
+        upsert_auto_learn_candidate(&db, "Koobernetes", "Kubernetes", 0.6).expect("candidate");
+        insert_pending_correction(&db, "Koobernetes", "Kubernetes").expect("prior pending");
+        assert_eq!(
+            auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2).expect("promote"),
+            AutoLearnPromoteResult::Promoted
+        );
+        let id = query_dictionary(&db)
+            .expect("dictionary")
+            .into_iter()
+            .next()
+            .expect("entry")
+            .id;
+        delete_auto_learned_entries_by_ids(&db, &[id]).expect("reject");
+
+        // New learning episode: fresh candidate (promoted_at NULL), two sessions.
+        upsert_auto_learn_candidate(&db, "Koobernetes", "Kubernetes", 0.6)
+            .expect("candidate again");
+        assert_eq!(
+            auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2).expect("s1"),
+            AutoLearnPromoteResult::BelowThreshold { pending_count: 1 }
+        );
+        assert_eq!(
+            auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2).expect("s2"),
+            AutoLearnPromoteResult::Promoted
+        );
+        let entries = query_dictionary(&db).expect("dictionary");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].correction_count, 1);
+    }
+
+    #[test]
+    fn auto_learn_promote_manual_entry_blocks_without_claiming() {
+        let db = test_db();
+        insert_dictionary_entry(&db, "Kubernetes", Some("user typo")).expect("manual");
+        upsert_auto_learn_candidate(&db, "Koobernetes", "Kubernetes", 0.6).expect("candidate");
+        insert_pending_correction(&db, "Koobernetes", "Kubernetes").expect("pending 1");
+        insert_pending_correction(&db, "Koobernetes", "Kubernetes").expect("pending 2");
+
+        // Threshold is satisfied, but the manual entry blocks promotion on
+        // every attempt (and records the pending rows for later sessions).
+        for _ in 0..2 {
+            assert_eq!(
+                auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2)
+                    .expect("promote"),
+                AutoLearnPromoteResult::Blocked
+            );
+        }
+        let entries = query_dictionary(&db).expect("dictionary");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].term, "Kubernetes");
+        assert_eq!(entries[0].mistake.as_deref(), Some("user typo"));
+        assert!(!entries[0].auto_learned);
+
+        // The candidate was NOT claimed, so removing the manual entry later
+        // lets the pair be learned anew.
+        let conn = lock_conn(&db).expect("lock");
+        let promoted_at: Option<String> = conn
+            .query_row(
+                "SELECT promoted_at FROM auto_learn_candidates WHERE wrong_word='Koobernetes'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("promoted_at");
+        assert!(
+            promoted_at.is_none(),
+            "gate must not be claimed for a manual block"
+        );
+        drop(conn);
+    }
+
+    #[test]
     fn cleanup_cache_insert_get_and_clear() {
         let db = test_db();
         cleanup_cache_insert_new(&db, "abc", "hello", "2999-01-01 00:00:00", false)
@@ -449,18 +861,26 @@ mod tests {
             .expect("insert");
 
         let conn = lock_conn(&db).expect("lock");
-        let inserted_expiry_epoch: i64 = conn
+        let (inserted_expiry_epoch, created_at): (i64, String) = conn
             .query_row(
-                "SELECT expires_at_epoch FROM cleanup_cache WHERE key = 'utc'",
+                "SELECT expires_at_epoch, created_at FROM cleanup_cache WHERE key = 'utc'",
                 [],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .expect("select insert epoch");
         drop(conn);
         assert_eq!(inserted_expiry_epoch, 1_767_225_600);
 
-        cleanup_cache_touch_hit(&db, "utc", 2, "2026-01-02 03:04:05", "2026-02-03 04:05:06")
-            .expect("touch");
+        cleanup_cache_touch_hit(
+            &db,
+            "utc",
+            &created_at,
+            1,
+            2,
+            "2026-01-02 03:04:05",
+            "2026-02-03 04:05:06",
+        )
+        .expect("touch");
         let conn = lock_conn(&db).expect("lock");
         let (last_hit_epoch, expires_epoch): (i64, i64) = conn
             .query_row(
@@ -523,8 +943,20 @@ mod tests {
             .expect("insert");
 
         // Simulate a cache hit (the phrase was served from cache once).
-        cleanup_cache_touch_hit(&db, "k", 2, "2026-01-01 00:00:00", "2999-01-01 00:00:00")
-            .expect("touch");
+        let created_at = cleanup_cache_get_active(&db, "k")
+            .expect("get")
+            .expect("exists")
+            .created_at;
+        cleanup_cache_touch_hit(
+            &db,
+            "k",
+            &created_at,
+            1,
+            2,
+            "2026-01-01 00:00:00",
+            "2999-01-01 00:00:00",
+        )
+        .expect("touch");
 
         let hit = cleanup_cache_get_active(&db, "k")
             .expect("get")
@@ -540,6 +972,158 @@ mod tests {
     }
 
     #[test]
+    fn pruning_history_removes_orphaned_api_cost_rows() {
+        let db = test_db();
+        let old = insert_transcription_returning(&db, "old", "old", 2, 1000, "test", None)
+            .expect("old transcription");
+        let recent = insert_transcription_returning(&db, "recent", "recent", 3, 1000, "test", None)
+            .expect("recent transcription");
+        let call = |transcription_id: i64| ApiCall {
+            transcription_id,
+            model: "test-model".into(),
+            provider: "groq".into(),
+            task: "transcribe".into(),
+            audio_ms: 100,
+            input_chars: 1,
+            output_chars: 2,
+            created_at: "2026-01-01 00:00:00".into(),
+        };
+        insert_api_calls(&db, &[call(old.id), call(recent.id)]).expect("insert api calls");
+        {
+            let conn = lock_conn(&db).expect("lock");
+            conn.execute(
+                "UPDATE transcriptions SET created_at = datetime('now', '-30 days') WHERE clean_text = 'old'",
+                [],
+            )
+            .expect("backdate old row");
+        }
+
+        assert_eq!(prune_transcriptions_older_than(&db, 7).expect("prune"), 1);
+
+        let conn = lock_conn(&db).expect("lock");
+        let remaining_calls: i64 = conn
+            .query_row("SELECT COUNT(*) FROM api_calls", [], |r| r.get(0))
+            .expect("remaining calls");
+        assert_eq!(
+            remaining_calls, 1,
+            "cost rows for pruned transcriptions must be removed"
+        );
+        let orphan: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM api_calls WHERE transcription_id = ?1",
+                [old.id],
+                |r| r.get(0),
+            )
+            .expect("orphan count");
+        assert_eq!(orphan, 0, "no cost rows may outlive their transcription");
+        drop(conn);
+    }
+
+    #[test]
+    fn auto_learn_retention_prunes_only_stale_rows() {
+        let db = test_db();
+        upsert_auto_learn_candidate(&db, "Koobernetes", "Kubernetes", 0.6).expect("candidate");
+        upsert_auto_learn_candidate(&db, "Tari", "Tauri", 0.6).expect("candidate");
+        log_auto_learn_event(&db, "monitor", "started", "", "", "", 0.0).expect("event");
+        {
+            let conn = lock_conn(&db).expect("lock");
+            conn.execute(
+                "UPDATE auto_learn_events SET created_at = datetime('now', '-40 days')",
+                [],
+            )
+            .expect("backdate events");
+            conn.execute(
+                "UPDATE auto_learn_candidates
+                 SET last_seen_at = datetime('now', '-100 days')
+                 WHERE wrong_word = 'Koobernetes'",
+                [],
+            )
+            .expect("backdate stale candidate");
+        }
+
+        let pruned = prune_auto_learn_retention(&db).expect("prune");
+        assert_eq!(pruned, 2, "one stale event + one stale candidate");
+
+        let conn = lock_conn(&db).expect("lock");
+        let events: i64 = conn
+            .query_row("SELECT COUNT(*) FROM auto_learn_events", [], |r| r.get(0))
+            .expect("events");
+        assert_eq!(events, 0, "all events were stale");
+        let mut stmt = conn
+            .prepare("SELECT wrong_word FROM auto_learn_candidates")
+            .expect("prepare");
+        let candidates: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .expect("candidates")
+            .collect::<rusqlite::Result<Vec<String>>>()
+            .expect("collect");
+        drop(stmt);
+        assert_eq!(
+            candidates,
+            vec!["Tari".to_string()],
+            "fresh candidate survives"
+        );
+        drop(conn);
+    }
+
+    #[test]
+    fn auto_learn_promote_different_mistake_releases_the_gate() {
+        let db = test_db();
+
+        // Promote a first pair for the term.
+        upsert_auto_learn_candidate(&db, "Koobernetes", "Kubernetes", 0.6).expect("candidate");
+        insert_pending_correction(&db, "Koobernetes", "Kubernetes").expect("pending");
+        insert_pending_correction(&db, "Koobernetes", "Kubernetes").expect("pending");
+        assert_eq!(
+            auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2).expect("promote"),
+            AutoLearnPromoteResult::Promoted
+        );
+
+        // A second pair for the same term with a different mistake is blocked
+        // by the existing auto-learned entry.
+        upsert_auto_learn_candidate(&db, "Kubernetz", "Kubernetes", 0.6).expect("candidate");
+        insert_pending_correction(&db, "Kubernetz", "Kubernetes").expect("pending");
+        insert_pending_correction(&db, "Kubernetz", "Kubernetes").expect("pending");
+        assert_eq!(
+            auto_learn_promote(&db, "Kubernetz", "Kubernetes", "medium", 2, 2).expect("blocked"),
+            AutoLearnPromoteResult::Blocked
+        );
+
+        // …but the gate must not be burned: the candidate is still claimable.
+        let conn = lock_conn(&db).expect("lock");
+        let promoted_at: Option<String> = conn
+            .query_row(
+                "SELECT promoted_at FROM auto_learn_candidates WHERE wrong_word = 'Kubernetz'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("gate");
+        assert!(
+            promoted_at.is_none(),
+            "different-mistake block must release the promoted_at claim"
+        );
+        drop(conn);
+
+        // Removing the conflicting entry lets the pair be learned after all.
+        let entries = query_dictionary(&db).expect("dictionary");
+        let id = entries
+            .iter()
+            .find(|e| e.term == "Kubernetes")
+            .expect("entry")
+            .id;
+        delete_dictionary_entry(&db, id).expect("delete conflicting entry");
+
+        assert_eq!(
+            auto_learn_promote(&db, "Kubernetz", "Kubernetes", "medium", 2, 2).expect("relearn"),
+            AutoLearnPromoteResult::Promoted
+        );
+        let entries = query_dictionary(&db).expect("dictionary");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].term, "Kubernetes");
+        assert_eq!(entries[0].mistake.as_deref(), Some("Kubernetz"));
+    }
+
+    #[test]
     fn stats_avg_wpm_ignores_snippet_triggers_even_when_stored_words_are_inflated() {
         let db = test_db();
         insert_snippet(
@@ -549,8 +1133,16 @@ mod tests {
             "",
         )
         .expect("snippet");
-        insert_transcription_returning(&db, "sig.", "A long email signature", 9, 2000, "test", None)
-            .expect("transcription");
+        insert_transcription_returning(
+            &db,
+            "sig.",
+            "A long email signature",
+            9,
+            2000,
+            "test",
+            None,
+        )
+        .expect("transcription");
 
         let stats = query_stats(&db).expect("stats");
 
@@ -584,8 +1176,16 @@ mod tests {
         insert_snippet(&db, "sig", "A long email signature", "").expect("snippet");
         insert_transcription_returning(&db, "hello world", "hello world", 2, 1000, "test", None)
             .expect("normal transcription");
-        insert_transcription_returning(&db, "sig.", "A long email signature", 4, 1000, "test", None)
-            .expect("snippet transcription");
+        insert_transcription_returning(
+            &db,
+            "sig.",
+            "A long email signature",
+            4,
+            1000,
+            "test",
+            None,
+        )
+        .expect("snippet transcription");
 
         let stats = query_stats(&db).expect("stats");
 
@@ -757,8 +1357,16 @@ mod tests {
             .expect("get")
             .expect("hit");
         assert_eq!(entry.clean_text, bad_answer);
-        cleanup_cache_touch_hit(&db, key, 2, "2026-01-01 00:00:00", "2999-01-01 00:00:00")
-            .expect("touch");
+        cleanup_cache_touch_hit(
+            &db,
+            key,
+            &entry.created_at,
+            1,
+            2,
+            "2026-01-01 00:00:00",
+            "2999-01-01 00:00:00",
+        )
+        .expect("touch");
 
         // User deletes output within 10s → monitor fires.
         cleanup_cache_delete_by_key(&db, key).expect("delete");

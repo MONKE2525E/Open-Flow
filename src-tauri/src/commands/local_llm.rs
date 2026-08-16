@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::*;
 use tauri_plugin_shell::ShellExt;
 

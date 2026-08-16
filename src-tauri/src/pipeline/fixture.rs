@@ -70,6 +70,7 @@ async fn transcribe_fixture_provider(
         config.key_for(provider_id),
         &config.transcription_language,
         model,
+        0,
     )
     .await
 }
@@ -93,22 +94,25 @@ pub async fn run_pipeline_fixture(
         Some(d) => d,
         None => db::open(":memory:")?,
     };
+    let context_id = db::everywhere_context_id(&db_handle)?;
     for snippet in &request.snippets {
         db::insert_snippet_returning(
             &db_handle,
             &snippet.trigger,
             &snippet.expansion,
             &snippet.instructions,
+            None,
         )?;
     }
     for entry in &request.dictionary {
-        db::insert_dictionary_entry_returning(&db_handle, &entry.term, entry.mistake.as_deref())?;
+        db::insert_dictionary_entry_returning(&db_handle, &entry.term, entry.mistake.as_deref(), None)?;
     }
 
     let mut transcribed: Option<(String, String)> = None;
     let mut last_err: Option<anyhow::Error> = None;
     for (provider_id, model) in transcription_model_chain(&request.config) {
-        match transcribe_fixture_provider(&request.audio, &request.config, &provider_id, &model).await
+        match transcribe_fixture_provider(&request.audio, &request.config, &provider_id, &model)
+            .await
         {
             Ok(raw) if !raw.is_empty() => {
                 transcribed = Some((
@@ -143,7 +147,10 @@ pub async fn run_pipeline_fixture(
             &request.config,
             &request.profile,
             request.app_context.as_deref(),
+            context_id,
             None,
+            None,
+            0,
         )
         .await?;
     let apply_caps_lock_upper = request.config.caps_lock_uppercase_enabled && request.caps_lock_on;

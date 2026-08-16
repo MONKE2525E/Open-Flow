@@ -61,7 +61,8 @@
   .intro-step {
     align-items: center;
     text-align: center;
-    max-width: 480px;
+    max-width: 500px;
+    gap: 22px;
   }
 
   .intro-brand {
@@ -123,9 +124,9 @@
     margin: 0 0 14px;
   }
 
-  .how-steps { display: flex; flex-direction: column; gap: 14px; }
+  .how-steps { display: grid; gap: 14px; }
 
-  .how-step { display: flex; gap: 14px; align-items: flex-start; }
+  .how-step { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; align-items: start; }
 
   /* Bare numeral on the title's baseline — no disc behind it. */
   .how-num {
@@ -151,18 +152,7 @@
     margin-bottom: 2px;
   }
 
-  .how-step kbd {
-    font-family: var(--mono);
-    font-size: 11px;
-    font-weight: 500;
-    background: var(--bg-elev);
-    border: 1px solid var(--line-strong);
-    border-radius: 5px;
-    padding: 2px 6px;
-    color: var(--ink-soft);
-  }
-
-  .how-plus { color: var(--ink-faint); font-weight: 400; }
+  .how-plus { color: var(--ink-faint); font-weight: 400; padding: 0 3px; }
 
   .how-step p { margin: 0; font-size: 12.5px; color: var(--ink-mute); line-height: 1.4; }
 
@@ -183,5 +173,12 @@
       transform: none;
       transition: none;
     }
+  }
+
+  @media (max-height: 660px) {
+    .intro-step { gap: 14px; }
+    .how-it-works { padding: 14px 18px; }
+    .how-label { margin-bottom: 10px; }
+    .how-steps { gap: 10px; }
   }
 </style>

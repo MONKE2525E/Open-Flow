@@ -58,28 +58,24 @@
     });
   }
 
-  function handleGroupFocusOut() {
-    requestAnimationFrame(() => {
-      if (preserveExpanded) {
-        // Some browsers finish the pointer transition after the replacement
-        // frame, briefly leaving body as the active element. Give the input a
-        // short settling window before deciding the group was really exited.
-        setTimeout(collapseIfFocusLeft, 300);
-        return;
-      }
-      collapseIfFocusLeft();
-    });
-  }
+  $effect(() => {
+    const handleAway = (event: Event) => {
+      if (!uiExpanded || filtersActive || !groupEl) return;
+      const target = event.target;
+      if (target instanceof Node && !groupEl.contains(target)) uiExpanded = false;
+    };
+    document.addEventListener('pointerdown', handleAway);
+    document.addEventListener('focusin', handleAway);
+    return () => {
+      document.removeEventListener('pointerdown', handleAway);
+      document.removeEventListener('focusin', handleAway);
+    };
+  });
 
-  function collapseIfFocusLeft() {
-    if (filtersActive) return;
-    if (groupEl && document.activeElement && groupEl.contains(document.activeElement)) return;
-    uiExpanded = false;
-  }
 </script>
 
 <div class="history-toolbar">
-  <div class="history-search-group" class:expanded bind:this={groupEl} onfocusout={handleGroupFocusOut}>
+  <div class="history-search-group" class:expanded bind:this={groupEl}>
     {#if !expanded}
       <button class="search-icon-btn ui-focus-ring" onclick={expandSearch} aria-label="Search history">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.35-4.35" /></svg>

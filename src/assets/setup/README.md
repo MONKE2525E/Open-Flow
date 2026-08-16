@@ -36,9 +36,10 @@ shown — that flow changes often and is outside what the wizard is teaching.
 
 ## Capturing and annotating
 
-Current set: 1200×675 (16:9 at 2x for the carousel frame), cropped tight on the
-action, with the target ringed and a short instruction in the margin joined by an
-arrow. Instruction pills sit *beside* the control, never over it.
+Current set: 1200×675 (16:9 at 2x for the carousel frame), cropped tightly around
+the relevant provider panel. The target uses a 3px coral outline and soft halo,
+with one short instruction label and an arrow that ends beside the control.
+Instruction labels never cover the control being explained.
 
 The crop is **not** expanded to 16:9 — it is scaled to fit and letterboxed onto a
 band sampled from the crop's own edge. Every provider's key list is mostly empty
@@ -47,8 +48,14 @@ stamp in a sea of blank page.
 
 - **Crop to the relevant panel**, not the whole desktop, and don't start a crop
   mid-sentence — cut-off text reads as a broken image.
-- **Redact every real key.** Blur or overwrite the secret before saving — these ship
-  inside the installer.
-- Also redact account emails, org names, and billing details.
+- **Redact every key-shaped value with an opaque block.** Blur is not sufficient;
+  these images ship inside the installer.
+- Use the same opaque treatment for account emails, organization names, project
+  names/numbers, billing details, and other account identifiers.
 - Either theme is fine; the frame has a neutral border and does not tint the image.
-- Keep them under ~200KB each. They are bundled into the app binary.
+- Export as an indexed PNG and keep each image under approximately 200KB. They are
+  bundled into the app binary.
+
+Before replacing an asset, compare it with the original at full size. Reject an
+edit if provider copy, controls, layout, or theme changed. The annotation and
+privacy redactions are the only pixels that may intentionally diverge.

@@ -20,7 +20,7 @@
 
   let rawMemoryMb = $state(0);
   let memoryDir = $state(1);
-  let memoryMb = tweened(0, { duration: 800, easing: expoOut });
+  let memoryMb = tweened(0, { duration: motionMs(800), easing: expoOut });
 
   onMount(() => {
     const refresh = async () => {
@@ -38,18 +38,40 @@
     return () => clearInterval(id);
   });
 
-  const navItems = [
-    { id: 'home',       label: 'Home',       icon: 'home',     locked: false },
-    { id: 'insights',   label: 'Insights',   icon: 'chart',    locked: false },
+  const HOME_NAV_ITEMS = [
+    { id: 'home',       label: 'Home',       icon: 'home',  locked: false },
+    { id: 'insights',   label: 'Insights',   icon: 'chart', locked: false },
+  ] as const;
+
+  const CONTEXTS_NAV_ITEMS = [
+    { id: 'contexts',   label: 'Contexts',   icon: 'book',  locked: false },
+  ] as const;
+
+  const STYLE_NAV_ITEMS = [
+    { id: 'style',      label: 'Style',      icon: 'pencil', locked: false },
+  ] as const;
+
+  // Dictionary and Snippets are no longer primary nav — Contexts (Everywhere)
+  // is the primary vocabulary/snippet surface now. The old pages still exist
+  // as routes, surfaced here only once Settings > General > Legacy is on —
+  // which also hides Contexts, since Legacy mode means "manage app tones,
+  // vocabulary, and snippets the old way" and running both surfaces at once
+  // would just mean two conflicting places to edit the same data.
+  const LEGACY_NAV_ITEMS = [
     { id: 'dictionary', label: 'Dictionary', icon: 'book',     locked: false },
     { id: 'snippets',   label: 'Snippets',   icon: 'scissors', locked: false },
-    { id: 'style',      label: 'Style',      icon: 'type',     locked: false },
   ] as const;
+
+  const navItems = $derived(
+    appStore.legacyFeaturesEnabled
+      ? [...HOME_NAV_ITEMS, ...LEGACY_NAV_ITEMS, ...STYLE_NAV_ITEMS]
+      : [...HOME_NAV_ITEMS, ...CONTEXTS_NAV_ITEMS, ...STYLE_NAV_ITEMS]
+  );
 
   // The rail is shared: it shows app navigation normally and swaps to the
   // settings sections while settings is open, so the sidebar never unmounts.
   const settingsGroups = $derived(
-    visibleSettingsSections({ isMac, devMode: appStore.devModeEnabled })
+    visibleSettingsSections({ isMac, devMode: appStore.devModeEnabled, legacyMode: appStore.legacyFeaturesEnabled })
   );
 
   type RailEntry =
@@ -305,8 +327,8 @@
               {#key digit}
                 <span
                   class="digit-char"
-                  in:fly={{ y: memoryDir * 10, duration: 400, easing: expoOut }}
-                  out:fly={{ y: -memoryDir * 10, duration: 400, easing: expoOut }}
+                  in:fly={{ y: memoryDir * 10, duration: motionMs(400), easing: expoOut }}
+                  out:fly={{ y: -memoryDir * 10, duration: motionMs(400), easing: expoOut }}
                 >{digit}</span>
               {/key}
             </span>
@@ -314,7 +336,7 @@
         </span>
       </div>
     </div>
-    <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 200 * 100, 100)}%; background:{$memoryMb >= 150 ? 'var(--accent)' : 'var(--arm-300, #9caa8e)'}"></span></div>
+    <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 200 * 100, 100)}%; background:{$memoryMb >= 150 ? 'var(--accent)' : 'var(--line-strong)'}"></span></div>
   </div>
 </aside>
 
@@ -668,5 +690,29 @@
     height: 100%;
     border-radius: 999px;
     transition: background 0.4s ease;
+  }
+
+  @media (max-width: 720px) {
+    .sidebar { width: 58px; }
+    .sidebar :global(.brand) { padding-inline: 0; justify-content: center; }
+    .sidebar :global(.brand-name) { display: none; }
+    .nav-section { padding-inline: 7px; }
+    .sidebar:not(.rail-settings) .nav-section { padding-top: 24px; }
+    .nav-item,
+    .settings-nav-item,
+    .settings-back { justify-content: center; gap: 0; padding-inline: 0; }
+    .nav-item > span,
+    .settings-nav-item > span,
+    .settings-back > span,
+    .settings-section-label { display: none; }
+    .sidebar-foot { margin-inline: 7px; padding-inline: 0; }
+    .local-bar { margin-inline: 7px; padding-inline: 0; align-items: center; }
+    .local-bar-row { justify-content: center; }
+    .local-bar-row > span:not(.local-dot),
+    .meta-wrapper,
+    .local-meter-thin { display: none; }
+    .dl-panel { margin-inline: 7px; padding-inline: 6px; }
+    .dl-item-name,
+    .dl-done-name { display: none; }
   }
 </style>

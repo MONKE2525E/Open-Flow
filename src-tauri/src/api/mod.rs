@@ -320,6 +320,66 @@ pub fn auth_401_display_message(parsed: &ParsedAuth401Error) -> String {
     auth_401_user_message(&parsed.provider, parsed.category)
 }
 
+/// Converts an error into a safe, actionable user-facing message. This is the
+/// single entry point for anything that will be shown on the pill or in a
+/// toast — callers must never put `e.to_string()` of a provider error straight
+/// into the UI.
+///
+/// Rules:
+/// - Structured `AUTH_401|...` errors become their category-specific guidance;
+///   the wire metadata (provider/model/request_id/status) never reaches the UI.
+/// - `QUOTA_EXCEEDED:` becomes quota guidance with the provider name.
+/// - Provider context strings that embed raw response bodies (`body_preview=`)
+///   and internal request ids lose that payload; the HTTP status decides
+///   whether the failure reads as temporary or as a configuration problem.
+/// - Anything else passes through, truncated. Pipeline-local messages are
+///   already user-crafted; unrecognized backend strings stay useful rather
+///   than being replaced with a generic placeholder.
+pub fn user_facing_error(e: &anyhow::Error) -> String {
+    user_facing_message(&e.to_string())
+}
+
+/// String-based sibling of [`user_facing_error`] for call sites that already
+/// hold a `String` (e.g. recording-session errors).
+pub fn user_facing_message(msg: &str) -> String {
+    if let Some(parsed) = parse_auth_401_error(msg) {
+        return auth_401_display_message(&parsed);
+    }
+    if msg.starts_with("QUOTA_EXCEEDED:") {
+        let provider = msg
+            .strip_prefix("QUOTA_EXCEEDED:")
+            .unwrap_or("")
+            .split_whitespace()
+            .next()
+            .unwrap_or("The provider");
+        return format!(
+            "{provider} quota reached. Wait for it to reset or add credits, then try again."
+        );
+    }
+    if msg.contains("body_preview=") || msg.contains("request_id=") {
+        return match extract_http_status_code(msg) {
+            Some(status @ (408 | 429 | 500..=599)) => format!(
+                "The provider is temporarily unavailable (HTTP {status}). Wait a moment, then try again."
+            ),
+            Some(status) => format!(
+                "The provider rejected the request (HTTP {status}). Check your API key and model settings, then try again."
+            ),
+            None => "The provider rejected the request. Check your API key and model settings, then try again."
+                .to_string(),
+        };
+    }
+    truncate_display(msg)
+}
+
+fn truncate_display(s: &str) -> String {
+    let s = s.trim();
+    if s.chars().count() > 120 {
+        format!("{}…", s.chars().take(117).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
 pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
     if is_quota_error(e) {
         return true;
@@ -421,7 +481,7 @@ mod tests {
     fn auth_error_can_encode_forbidden_status() {
         let err = super::auth_status_error(
             "Google",
-            "gemini-3.5-flash",
+            "gemini-3.7-flash",
             "req_403",
             403,
             AuthErrorCategory::ScopeOrAccountRestriction,
@@ -438,5 +498,65 @@ mod tests {
         assert!(!preview.contains('\n'));
         assert!(!preview.contains('\t'));
         assert!(preview.contains("line one line two line three"));
+    }
+
+    #[test]
+    fn user_message_strips_auth_wire_metadata() {
+        let msg = super::user_facing_message(
+            "AUTH_401|provider=Groq|category=invalid_or_revoked_key|model=whisper-large-v3-turbo|request_id=req_123|status=401: Groq API key looks invalid or revoked. Re-enter it in Settings.",
+        );
+        assert!(msg.contains("invalid or revoked"));
+        assert!(msg.contains("Settings"));
+        assert!(!msg.contains("AUTH_401"));
+        assert!(!msg.contains("request_id"));
+        assert!(!msg.contains("req_123"));
+        assert!(!msg.contains("whisper-large-v3-turbo"));
+    }
+
+    #[test]
+    fn user_message_explains_quota_with_provider() {
+        let msg = super::user_facing_message("QUOTA_EXCEEDED: Groq quota reached");
+        assert!(msg.contains("Groq"));
+        assert!(msg.contains("quota"));
+        assert!(msg.to_lowercase().contains("credits"));
+    }
+
+    #[test]
+    fn user_message_removes_provider_body_preview() {
+        let msg = super::user_facing_message(
+            r#"Transcription API error provider=Groq model=whisper-large-v3-turbo status=400 request_id=req_xyz body_preview={"error":{"message":"bad request"}}"#,
+        );
+        assert!(!msg.contains("body_preview"));
+        assert!(!msg.contains("req_xyz"));
+        assert!(!msg.contains("bad request"));
+        assert!(!msg.contains("{")); // no JSON remnants
+        assert!(msg.contains("HTTP 400"));
+        assert!(msg.contains("API key and model settings"));
+    }
+
+    #[test]
+    fn user_message_frames_temporary_status_as_temporary() {
+        let msg = super::user_facing_message(
+            "Cleanup API error provider=Groq model=llama-3.3-70b-versatile status=503 request_id=req_503 body_preview=overloaded",
+        );
+        assert!(msg.contains("temporarily unavailable"));
+        assert!(msg.contains("HTTP 503"));
+        assert!(!msg.contains("overloaded"));
+        assert!(!msg.contains("llama-3.3"));
+    }
+
+    #[test]
+    fn user_message_survives_malformed_auth_string() {
+        // Starts with the marker but cannot parse — must fall through, not panic.
+        let msg = super::user_facing_message("AUTH_401 garbage that does not parse");
+        assert!(msg.contains("AUTH_401"));
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn user_message_passes_through_plain_errors_truncated() {
+        let long = "x".repeat(300);
+        let msg = super::user_facing_message(&long);
+        assert!(msg.chars().count() <= 121);
     }
 }

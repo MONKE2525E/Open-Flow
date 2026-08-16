@@ -58,7 +58,7 @@ async function waitForSingleSettingsPanel(page) {
       { timeout: 3_000 },
     );
     console.log('  âœ“ Home history pagination loads the final page');
-    await page.locator('.nav-item:has-text("Dictionary")').click();
+    await page.locator('.nav-item:has-text("Contexts")').click();
     const wrapperCountHandle = await page.waitForFunction(
       () => document.querySelectorAll('.page-wrapper').length >= 2
         ? document.querySelectorAll('.page-wrapper').length
@@ -78,14 +78,14 @@ async function waitForSingleSettingsPanel(page) {
         console.log(`  ✓ Outgoing page wrapper is inert during transition; incoming opacity ${Number(incomingOpacity).toFixed(2)}`);
       }
     }
-    await page.locator('h1.page-h:has-text("Dictionary")').waitFor({ state: 'visible', timeout: 3_000 });
+    await page.locator('h1.page-h:has-text("Contexts")').waitFor({ state: 'visible', timeout: 3_000 });
 
     // ── Navigation: each click must actually change the visible view ──────────
     const navMap = [
-      { label: 'Home',       heading: 'Welcome back' },
-      { label: 'Dictionary', heading: 'Dictionary'   },
-      { label: 'Snippets',   heading: 'Snippets'     },
-      { label: 'Style',      heading: 'Style'        },
+      { label: 'Home',     heading: 'Welcome back' },
+      { label: 'Insights', heading: 'Insights'      },
+      { label: 'Contexts', heading: 'Contexts'     },
+      { label: 'Style',    heading: 'Style'        },
     ];
 
     for (const { label, heading } of navMap) {
@@ -99,6 +99,36 @@ async function waitForSingleSettingsPanel(page) {
       await h1.waitFor({ state: 'visible', timeout: 3_000 });
       console.log(`  ✓ ${label} view rendered heading "${heading}"`);
     }
+
+    // ── Legacy pages: Dictionary/Snippets/App Mappings are no longer primary
+    //    surfaces (Contexts replaces them), but Settings > General > Legacy
+    //    has a toggle that brings them back ─────────────────────────────────
+    const legacySettingsBtn = page.locator('.nav-item:has-text("Settings")');
+    await legacySettingsBtn.click();
+    await page.locator('.settings-nav-item:has-text("General")').click();
+    await page.locator('h2.settings-h:has-text("General")').waitFor({ state: 'visible', timeout: 3_000 });
+    const legacyToggle = page.locator('.setting-row:has-text("Legacy pages") [role="switch"]');
+    await legacyToggle.waitFor({ state: 'visible', timeout: TIMEOUT });
+    const legacyOn = (await legacyToggle.getAttribute('aria-checked')) === 'true';
+    if (!legacyOn) {
+      await legacyToggle.click();
+      await page.locator('.modal-title:has-text("Turn on Legacy pages?")').waitFor({ state: 'visible', timeout: 3_000 });
+      await page.locator('.modal-footer button:has-text("Turn on")').click();
+    }
+    await page.locator('.settings-nav-item:has-text("App Mappings")').waitFor({ state: 'visible', timeout: 3_000 });
+    console.log('  ✓ Legacy toggle reveals App Mappings settings section');
+    await page.locator('.settings-back').click(); // close Settings to get the app nav rail back
+    for (const label of ['Dictionary', 'Snippets']) {
+      console.log(`Checking legacy page reachable: ${label}`);
+      const navBtn = page.locator(`.nav-item:has-text("${label}")`);
+      await navBtn.waitFor({ state: 'visible', timeout: TIMEOUT });
+      await navBtn.click();
+      await page.locator(`h1.page-h:has-text("${label}")`).waitFor({ state: 'visible', timeout: 3_000 });
+      console.log(`  ✓ Legacy ${label} page reachable from primary nav`);
+    }
+    const contextsCount = await page.locator('.nav-item:has-text("Contexts")').count();
+    if (contextsCount !== 0) throw new Error('Contexts nav item should be hidden while Legacy pages is on');
+    console.log('  ✓ Contexts nav item hidden while Legacy pages is on');
 
     // ── Settings: open ────────────────────────────────────────────────────────
     console.log('Opening Settings...');

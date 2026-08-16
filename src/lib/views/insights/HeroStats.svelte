@@ -80,7 +80,7 @@
     </p>
   </section>
 
-  <section class="tile tile-relative" aria-label="Words dictated in selected range">
+  <section class="tile tile-relative" aria-label="Total words dictated">
     {#if delta !== null}
       <span class="delta" class:down={delta < 0}>
         <svg class="delta-arrow" class:flip={delta < 0} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -92,7 +92,7 @@
     <div class="tile-head">
       <span class="big">{words.value}{#if words.suffix}<small>{words.suffix}</small>{/if}</span>
     </div>
-    <p class="tile-label">words dictated</p>
+    <p class="tile-label">total words dictated</p>
     <p class="tile-note">
       {#if books >= 1}
         <!-- Pluralize off the displayed amount: "1" is singular, but "1.5"
@@ -113,11 +113,11 @@
     </p>
   </section>
 
-  <section class="tile" aria-label="All-time fixes made by Verenu">
+  <section class="tile" aria-label="Fixes made by Verenu">
     <div class="tile-head">
       <span class="big"><AnimatedNumber value={data.cleanup.edits_applied} /></span>
     </div>
-    <p class="tile-label">all-time fixes made by Verenu</p>
+    <p class="tile-label">fixes made by Verenu</p>
     <div class="sub-rows">
       <div class="stat-line">
         <span class="stat-num"><AnimatedNumber value={data.cleanup.dictionary_fixes} /></span>
@@ -234,10 +234,6 @@
     height: auto;
     display: block;
   }
-  .gauge-fill {
-    transition: stroke-dasharray var(--ui-duration-base) var(--ui-ease-out);
-  }
-
   .gauge-tick {
     font-family: var(--serif);
     font-size: 10px;

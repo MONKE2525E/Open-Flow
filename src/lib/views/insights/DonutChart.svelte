@@ -5,7 +5,7 @@
    * the hovered segment and dims the rest — both from the ring and from the
    * legend. No chart library; the ring is hand-drawn per frame.
    */
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { reducedMotionEnabled } from '../../motion';
 
   export interface DonutSegment {
@@ -209,12 +209,14 @@
     // A hovered segment may no longer exist after a data change (e.g. range
     // filter removed it) — a stale id would dim the whole chart and legend
     // until the next hover. Drop it and any dim state.
-    if (hoveredId !== null && !segments.some((s) => s.id === hoveredId)) {
-      hoveredId = null;
-      dimming = false;
-      dimFromAlpha = 1;
-    }
-    startValueTween();
+    untrack(() => {
+      if (hoveredId !== null && !segments.some((s) => s.id === hoveredId)) {
+        hoveredId = null;
+        dimming = false;
+        dimFromAlpha = 1;
+      }
+      startValueTween();
+    });
   });
 
   function setHover(id: string | null) {
@@ -222,8 +224,8 @@
     const wasActive = hoveredId !== null;
     const nowActive = id !== null;
     if (wasActive !== nowActive) {
-      dimming = nowActive;
       dimFromAlpha = currentDimAlpha();
+      dimming = nowActive;
       dimStart = performance.now();
     }
     const now = performance.now();
@@ -345,7 +347,8 @@
     const dist = Math.hypot(dx, dy);
     const radius = size * RADIUS_FRACTION;
     const stroke = size * STROKE_FRACTION;
-    if (Math.abs(dist - radius) > stroke * 0.7) return null;
+    const outerHitRadius = radius + stroke * 0.7 + HOVER_POP + HOVER_WIDEN / 2;
+    if (dist < radius - stroke * 0.7 || dist > outerHitRadius) return null;
 
     const total = segments.reduce((a, b) => a + b.value, 0);
     if (total <= 0) return null;

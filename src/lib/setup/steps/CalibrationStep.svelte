@@ -182,6 +182,7 @@
     width: 100%;
     box-sizing: border-box;
     overflow: hidden;
+    min-height: 178px;
   }
 
   .calibration-box > * { grid-column: 1; grid-row: 1; }
@@ -393,5 +394,10 @@
   @media (prefers-reduced-motion: reduce) {
     .cal-step-row, .cal-success-icon, .cal-warning-icon { animation: none; }
     .cal-timer-ring { animation: none; }
+  }
+
+  @media (max-height: 660px) {
+    .calibration-box { min-height: 156px; padding: 16px 20px; }
+    .cal-start-state, .cal-active-state, .cal-result-state { gap: 12px; }
   }
 </style>

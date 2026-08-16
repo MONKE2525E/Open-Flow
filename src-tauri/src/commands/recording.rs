@@ -84,9 +84,16 @@ pub async fn start_input_recording(
     match start_result {
         Ok(()) => Ok(()),
         Err(e) => {
-            let msg = format!("Failed to start recording: {e}");
+            // The returned error is the only surface the caller shows (inline
+            // mic-button message / setup TryIt step). Emitting verenu:error
+            // here too would show the same failure twice — a toast on top of
+            // the inline message. The hotkey path that has no caller-facing
+            // surface emits its own event in pipeline::session instead.
+            let msg = format!(
+                "Failed to start recording: {}",
+                crate::api::user_facing_message(&e)
+            );
             crate::pipeline::hide_pill(&app);
-            app.emit("verenu:error", msg.clone()).ok();
             Err(msg)
         }
     }
@@ -145,9 +152,13 @@ pub async fn start_setup_try_recording(
     match start_result {
         Ok(()) => Ok(()),
         Err(e) => {
-            let msg = format!("Failed to start recording: {e}");
+            // Single-surface rule: the caller (setup TryIt step) shows the
+            // returned error inline; no duplicate verenu:error toast here.
+            let msg = format!(
+                "Failed to start recording: {}",
+                crate::api::user_facing_message(&e)
+            );
             crate::pipeline::hide_pill(&app);
-            app.emit("verenu:error", msg.clone()).ok();
             Err(msg)
         }
     }
@@ -311,7 +322,113 @@ pub async fn stop_and_transcribe_input(
 ) -> Result<String, String> {
     pipeline::transcribe_input_only(app, state.inner().clone())
         .await
-        .map_err(|e| e.to_string())
+        // Sanitize before crossing IPC: the raw error can embed provider
+        // response bodies or the AUTH_401 wire format, which must not reach
+        // the inline mic-button message.
+        .map_err(|e| crate::api::user_facing_error(&e))
+}
+
+#[tauri::command]
+pub async fn start_repair_complaint_recording(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    pipeline::reserve_starting(state.inner())?;
+    pipeline::start_recording_session_ex(
+        &app,
+        state.inner(),
+        "repair_recording",
+        false,
+        None,
+        pipeline::RecordingStartOptions {
+            show_recording_pill: true,
+            emit_globally: false,
+            start_cue_delay_ms: None,
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn stop_repair_complaint_recording(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    crate::core::hotkey::set_handless_active(false);
+    tauri::async_runtime::spawn(pipeline::finish_complaint_recording(
+        app.clone(),
+        state.inner().clone(),
+    ));
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn repair_positive_feedback(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    pipeline::clear_repair(state.inner());
+    pipeline::hide_pill(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn repair_enter_input(
+    app: AppHandle,
+    _state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    pipeline::enter_repair_input(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn repair_cancel(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<(), String> {
+    // A stale pill event must never stop a newer normal dictation. A repair
+    // session is cleared synchronously when a new dictation reserves its
+    // lifecycle, so only discard an active microphone session while repair
+    // still owns the transient state.
+    let owns_repair = state
+        .inner()
+        .lock()
+        .map(|locked| locked.repair.is_some())
+        .unwrap_or(false);
+    if owns_repair {
+        pipeline::clear_repair(state.inner());
+        pipeline::discard_recording(&app, state.inner()).await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn repair_analyze(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+    complaint: String,
+) -> Result<(), String> {
+    pipeline::diagnose_repair(app.clone(), state.inner().clone(), complaint)
+        .await
+        .map_err(|error| {
+            let message = crate::api::user_facing_error(&error);
+            pipeline::emit_repair_error(&app, &message);
+            message
+        })
+}
+
+#[tauri::command]
+pub async fn repair_apply(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+    proposal_id: u64,
+) -> Result<String, String> {
+    pipeline::apply_repair(app.clone(), state.inner().clone(), proposal_id)
+        .await
+        .map_err(|error| {
+            let message = crate::api::user_facing_error(&error);
+            pipeline::emit_repair_error(&app, &message);
+            message
+        })
 }
 
 #[tauri::command]
@@ -390,7 +507,13 @@ pub async fn resume_cancelled_capture(
     pipeline::set_starting_prepend_audio(state.inner(), audio);
     let target = WindowTarget::capture_foreground();
     {
-        let mut st = lock_state(&state)?;
+        let mut st = match lock_state(&state) {
+            Ok(st) => st,
+            Err(err) => {
+                pipeline::cancel_starting_reservation(state.inner());
+                return Err(err);
+            }
+        };
         st.target = target;
         st.pill_placement_stale = true;
     }
@@ -436,5 +559,80 @@ pub async fn copy_paste_failure_to_clipboard(
         .await
         .map_err(|e| e.to_string())?;
     pipeline::clear_paste_failure(state.inner());
+    Ok(())
+}
+
+/// Resizes the pill window to fit its visible content. The frontend measures
+/// the actual rendered content (pill capsule + profile label above it + error
+/// text) and reports the size in CSS px (== logical points on the pill's
+/// monitor), so the transparent click-capture zone around the pill stays
+/// exactly as wide as the pill itself instead of a fixed 380px band that
+/// swallows or forwards stray clicks — the floating pill grows for wide
+/// content (long error messages, handsfree buttons) and shrinks back when
+/// it's just the bare recording capsule. Height changes grow the window
+/// upward so the pill itself stays visually pinned in place.
+#[tauri::command]
+pub fn set_pill_size(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let Some(pill) = app.get_webview_window("pill") else {
+        return Ok(());
+    };
+
+    // Upper bounds are backstops against a bad frontend measurement, not the
+    // expected size — they must clear the largest real layout, which is the
+    // repair error/proposal card: its message text is provider-supplied and
+    // effectively unbounded in length, so it needs far more vertical room
+    // than the single-line capsule every other state uses.
+    let width_points = if width.is_finite() {
+        width.clamp(60.0, 440.0).round()
+    } else {
+        60.0
+    };
+    let height_points = if height.is_finite() {
+        height.clamp(44.0, 420.0).round()
+    } else {
+        44.0
+    };
+
+    // Recompute the ideal centered placement from the monitor directly
+    // rather than offsetting from the window's current position — content-fit
+    // resizing fires many times per second during a width transition, and
+    // deriving each new position from the previous one let small rounding/race
+    // errors compound into a visible rightward drift. This recomputation is
+    // idempotent: every call lands on the same correct center.
+    //
+    // If no monitor resolves at all, still apply the *size* (anchored on the
+    // window's current center) rather than bailing. The frontend has already
+    // recorded this size as sent and won't re-send it, so dropping the resize
+    // here would strand the window too small for its content and clip the pill
+    // until something else happened to change its size.
+    let placement =
+        crate::pipeline::placement_for_current_monitor(&pill, width_points, height_points)
+            .unwrap_or_else(|| {
+                let scale = pill.scale_factor().unwrap_or(1.0).max(0.1);
+                let cur_pos = pill.outer_position().unwrap_or_default();
+                let w = (width_points * scale).round() as i32;
+                let h = (height_points * scale).round() as i32;
+                let (cur_w, cur_h) = pill
+                    .outer_size()
+                    .map(|size| (size.width as f64, size.height as f64))
+                    .unwrap_or((w as f64, h as f64));
+                crate::pipeline::PillPlacement {
+                    x: cur_pos.x + ((cur_w - w as f64) / 2.0).round() as i32,
+                    y: cur_pos.y + (cur_h - h as f64).round() as i32,
+                    width: w,
+                    height: h,
+                }
+            });
+    crate::pipeline::apply_pill_placement(&pill, placement);
+
+    let mut st = lock_state(&state)?;
+    st.pill_width_points = width_points;
+    st.pill_height_points = height_points;
+    st.pill_placement = Some(placement);
     Ok(())
 }

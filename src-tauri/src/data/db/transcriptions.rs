@@ -110,7 +110,9 @@ pub fn query_recent(db: &Db) -> Result<Vec<RecentEntry>> {
 /// Escapes `%`, `_`, and `\` so a user's search text is treated literally inside
 /// a `LIKE ... ESCAPE '\'` pattern instead of acting as wildcards.
 fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 /// Recent transcription history, newest-first. `search` (when present) matches
@@ -145,24 +147,16 @@ pub fn query_recent_page(
     // overhead in SQLite.
     let mut sql = String::from(
         "SELECT id, clean_text, words, duration_ms, app_name, created_at \
-         FROM transcriptions",
+         FROM transcriptions WHERE (?1 IS NULL OR app_name = ?1)",
     );
-    let mut values: Vec<rusqlite::types::Value> = Vec::new();
-    if let Some(app_name) = app_name {
-        sql.push_str(" WHERE app_name = ?");
-        values.push(rusqlite::types::Value::from(app_name.to_string()));
-    }
+    let mut values: Vec<rusqlite::types::Value> = vec![app_name
+        .map(|s| rusqlite::types::Value::from(s.to_string()))
+        .unwrap_or(rusqlite::types::Value::Null)];
     for term in &terms {
         sql.push_str(
-            if values.is_empty() && app_name.is_none() {
-                " WHERE (lower(clean_text) LIKE '%' || lower(?) || '%' ESCAPE '\\' \
+            " AND (lower(clean_text) LIKE '%' || lower(?) || '%' ESCAPE '\\' \
              OR lower(raw_text) LIKE '%' || lower(?) || '%' ESCAPE '\\' \
-             OR lower(app_name) LIKE '%' || lower(?) || '%' ESCAPE '\\')"
-            } else {
-                " AND (lower(clean_text) LIKE '%' || lower(?) || '%' ESCAPE '\\' \
-             OR lower(raw_text) LIKE '%' || lower(?) || '%' ESCAPE '\\' \
-             OR lower(app_name) LIKE '%' || lower(?) || '%' ESCAPE '\\')"
-            },
+             OR lower(app_name) LIKE '%' || lower(?) || '%' ESCAPE '\\')",
         );
         for _ in 0..3 {
             values.push(rusqlite::types::Value::from(term.clone()));
@@ -320,7 +314,8 @@ mod tests {
         assert_eq!(hits[0].clean_text, "Clean Apple Pie");
 
         // Lowercase query matches uppercase stored text.
-        let hits = query_recent_page(&db, 50, 0, Some("banana split"), None).expect("search banana");
+        let hits =
+            query_recent_page(&db, 50, 0, Some("banana split"), None).expect("search banana");
         assert_eq!(hits.len(), 1);
 
         // Case-insensitive on raw_text too.
@@ -349,7 +344,9 @@ mod tests {
 
         let outlook = query_recent_page(&db, 50, 0, None, Some("outlook.exe")).expect("outlook");
         assert_eq!(outlook.len(), 2);
-        assert!(outlook.iter().all(|e| e.app_name.as_deref() == Some("outlook.exe")));
+        assert!(outlook
+            .iter()
+            .all(|e| e.app_name.as_deref() == Some("outlook.exe")));
 
         // App + search combine: only Outlook rows matching the search text.
         let combined =
@@ -469,6 +466,9 @@ mod tests {
             .expect("insert no app");
 
         let apps = query_distinct_apps(&db).expect("distinct apps");
-        assert_eq!(apps, vec!["code.exe".to_string(), "outlook.exe".to_string()]);
+        assert_eq!(
+            apps,
+            vec!["code.exe".to_string(), "outlook.exe".to_string()]
+        );
     }
 }

@@ -18,12 +18,9 @@ use crate::core::window_geometry::WindowTarget;
 use crate::data::db;
 use crate::pipeline::{AppState, SharedState};
 
-use std::sync::{
-    atomic::AtomicBool,
-    Arc, Mutex,
-};
 #[cfg(target_os = "windows")]
 use std::sync::atomic::Ordering;
+use std::sync::{atomic::AtomicBool, Arc, Mutex};
 #[cfg(target_os = "windows")]
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -238,6 +235,37 @@ pub(crate) fn app_db_path() -> std::path::PathBuf {
     app_data_dir().join("verenu.db")
 }
 
+/// Reports a fatal startup error where a packaged user can see it before
+/// aborting. Debug builds reach stderr via the panic; Windows release builds
+/// have no console (`windows_subsystem = "windows"`), so the error also goes
+/// to a message box — otherwise an unwritable data directory or a
+/// non-quarantinable database fails the app with no visible reason. Only the
+/// message is shown, never full user-local paths.
+fn fatal_startup_error(message: &str) -> ! {
+    log::error!("{message}");
+    #[cfg(target_os = "windows")]
+    {
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+
+        let mut text: Vec<u16> = format!("{message}\n\nVerenu must close.")
+            .encode_utf16()
+            .collect();
+        text.push(0);
+        let mut title: Vec<u16> = "Verenu — startup failed".encode_utf16().collect();
+        title.push(0);
+        unsafe {
+            MessageBoxW(
+                None,
+                PCWSTR(text.as_ptr()),
+                PCWSTR(title.as_ptr()),
+                MB_OK | MB_ICONERROR,
+            );
+        }
+    }
+    panic!("{message}");
+}
+
 fn main() {
     #[cfg(target_os = "windows")]
     {
@@ -260,14 +288,28 @@ fn main() {
         target: WindowTarget::default(),
         pill_placement: None,
         pill_placement_stale: false,
+        pill_width_points: pipeline::DEFAULT_PILL_WIDTH_POINTS,
+        pill_height_points: pipeline::DEFAULT_PILL_HEIGHT_POINTS,
         retry_capture: None,
         cancelled_capture: None,
         paste_failure: None,
+        repair: None,
+        hotkey_recording_repair_complaint: false,
     }));
 
     std::fs::create_dir_all(app_data_dir()).ok();
-    let db_handle: DbHandle = db::open(app_db_path()).expect("failed to open database");
+    // The logger must be live before the database opens: a corrupt DB,
+    // failed migration, or quarantine decision happens before Tauri's setup
+    // callback, where the AppHandle (and thus `verenu:log` emission) first
+    // exists. init_early captures those records in the ring buffer;
+    // attach_app in setup enables frontend forwarding.
+    crate::system::logger::init_early();
+    let db_handle: DbHandle = match db::open_with_recovery(app_db_path()) {
+        Ok(db) => db,
+        Err(err) => fatal_startup_error(&format!("failed to open database: {err}")),
+    };
     let _ = db::cleanup_cache_prune_expired(&db_handle);
+    let _ = db::prune_auto_learn_retention(&db_handle);
     if let Err(e) = db::seed_default_dictionary_entries(&db_handle) {
         log::warn!("failed to seed default dictionary entries: {e}");
     }
@@ -287,7 +329,24 @@ fn main() {
         .manage(local_transcription_manager.clone())
         .manage(frontend_readiness.clone())
         .setup(move |app| {
-            crate::system::logger::init(app.handle())?;
+            crate::system::logger::attach_app(app.handle());
+            let build_mode = if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            };
+            log::info!(
+                "verenu {} starting — {} {}, {} build — verbose logging {}",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                build_mode,
+                if crate::system::logger::is_verbose() {
+                    "on"
+                } else {
+                    "off"
+                }
+            );
             crate::system::notify::prepare_windows_notification_identity();
             let settings = crate::data::store::SettingsHandle::open(app.handle())
                 .map_err(std::io::Error::other)?;
@@ -322,6 +381,22 @@ fn main() {
                                 let vk1 = crate::core::hotkey::map_code_to_vk(k1);
                                 let vk2 = crate::core::hotkey::map_code_to_vk(k2);
                                 crate::core::hotkey::update_keys(vk1, vk2);
+                            }
+                        }
+                    }
+                }
+                if let Some(val) = settings.get(crate::data::store::REPAIR_HOTKEY) {
+                    if let Some(arr) = val.as_array() {
+                        if arr.len() == 3 {
+                            if let (Some(k1), Some(k2), Some(k3)) =
+                                (arr[0].as_str(), arr[1].as_str(), arr[2].as_str())
+                            {
+                                if !k1.is_empty() || !k2.is_empty() || !k3.is_empty() {
+                                    let vk1 = crate::core::hotkey::map_code_to_vk(k1);
+                                    let vk2 = crate::core::hotkey::map_code_to_vk(k2);
+                                    let vk3 = crate::core::hotkey::map_code_to_vk(k3);
+                                    crate::core::hotkey::update_repair_keys(vk1, vk2, vk3);
+                                }
                             }
                         }
                     }
@@ -528,6 +603,8 @@ fn main() {
             system::windows_titlebar::get_native_titlebar_metrics,
             commands::save_hotkey,
             commands::check_hotkey,
+            commands::save_repair_hotkey,
+            commands::check_repair_hotkey,
             commands::save_api_key,
             commands::delete_api_key,
             commands::get_api_key_status,
@@ -544,7 +621,6 @@ fn main() {
             commands::delete_local_stt_model,
             commands::delete_local_llm_model,
             commands::open_local_stt_models_folder,
-            commands::open_local_models_folder,
             commands::get_local_transcription_state,
             commands::get_local_llm_state,
             commands::get_local_llm_runtime_info,
@@ -552,22 +628,15 @@ fn main() {
             commands::cancel_local_llm_runtime_download,
             commands::delete_local_llm_runtime,
             commands::set_autostart,
-            commands::check_accessibility_permission,
             commands::get_macos_permission_snapshot,
             commands::request_accessibility_permission,
             commands::open_accessibility_settings,
-            commands::get_accessibility_permission_status,
-            commands::get_microphone_permission_status,
             commands::request_microphone_permission,
             commands::request_microphone_permission_snapshot,
             commands::open_microphone_settings,
             commands::restart_app,
             commands::frontend_ready,
-            commands::open_privacy_security_settings,
             commands::reset_macos_core_permissions,
-            commands::check_keychain_access,
-            commands::show_main,
-            commands::hide_main,
             commands::get_recent,
             commands::get_history_apps,
             commands::get_stats,
@@ -587,15 +656,41 @@ fn main() {
             commands::start_calibration_monitoring,
             commands::stop_calibration_monitoring,
             commands::stop_and_transcribe_input,
+            commands::start_repair_complaint_recording,
+            commands::stop_repair_complaint_recording,
+            commands::repair_positive_feedback,
+            commands::repair_enter_input,
+            commands::repair_cancel,
+            commands::repair_analyze,
+            commands::repair_apply,
             commands::stop_setup_try_recording,
             commands::stop_recording,
             commands::stop_handless_mode,
             commands::resume_cancelled_capture,
             commands::dismiss_cancelled_capture,
             commands::copy_paste_failure_to_clipboard,
+            commands::set_pill_size,
             commands::get_installed_apps,
-            commands::get_app_mappings,
-            commands::save_app_mappings,
+            commands::get_app_icon,
+             commands::get_app_mappings,
+             commands::save_app_mappings,
+             commands::get_contexts,
+             commands::create_context,
+             commands::update_context,
+             commands::update_context_settings,
+             commands::update_context_color,
+             commands::delete_context,
+             commands::get_context_targets,
+             commands::assign_context_target,
+             commands::remove_context_target,
+             commands::get_context_websites,
+             commands::check_domain_exists,
+             commands::assign_context_website,
+             commands::remove_context_website,
+             commands::get_context_dictionary,
+             commands::get_context_snippets,
+             commands::set_dictionary_context_assignment,
+             commands::set_snippet_context_assignment,
             commands::get_snippets,
             commands::create_snippet,
             commands::edit_snippet,
@@ -624,7 +719,6 @@ fn main() {
             commands::test_notifications,
             commands::export_data,
             commands::import_data,
-            commands::log_frontend,
         ])
         .build(tauri::generate_context!())
         .expect("error building Verenu")
@@ -673,7 +767,9 @@ fn cleanup_update_helper_if_requested() {
 
 #[cfg(target_os = "windows")]
 fn wait_for_relaunch_parent_exit() {
-    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::Foundation::{
+        CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    };
     use windows::Win32::System::Threading::{
         OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
     };

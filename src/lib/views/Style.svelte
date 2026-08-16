@@ -5,7 +5,6 @@
   import { expoOut } from 'svelte/easing';
   import { saveSetting, type CleanupIntensity, type ToneId } from '../settings';
   import { appStore } from '../stores';
-  import AppMappingsEditor from '../components/AppMappingsEditor.svelte';
   import { MOTION_MS, MOTION_PX, STYLE_TAB_ORDER, directionFromOrder, motionMs, motionPx, pageSwap } from '../motion';
 
   const [send, receive] = crossfade({
@@ -22,7 +21,6 @@
   const tabs = [
     { id: 'cleanup', label: 'Cleanup', pill: '' },
     { id: 'personal', label: 'Personal Tone', pill: '' },
-    { id: 'apps', label: 'App Mappings', pill: 'New' },
   ];
 
   const cleanupCards = [
@@ -67,6 +65,34 @@
     tab = id;
   }
 
+  // The tabs declare role="tab", so they get the full APG pattern: only the
+  // selected tab is in the tab order, and Left/Right/Home/End move and select
+  // with automatic activation (the panels are lightweight).
+  let tablistEl = $state<HTMLDivElement | null>(null);
+
+  function handleTablistKeydown(event: KeyboardEvent) {
+    const tabButtons = tablistEl?.querySelectorAll<HTMLButtonElement>('.tab') ?? [];
+    if (tabButtons.length === 0) return;
+    const index = Array.from(tabButtons).indexOf(document.activeElement as HTMLButtonElement);
+    if (index === -1) return;
+
+    let next: number | null = null;
+    if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabButtons.length - 1;
+    else if (event.key === 'ArrowLeft') next = (index - 1 + tabButtons.length) % tabButtons.length;
+    else if (event.key === 'ArrowRight') next = (index + 1) % tabButtons.length;
+    if (next === null) return;
+
+    event.preventDefault();
+    const target = tabButtons[next];
+    target.focus();
+    const id = target.id.replace('style-tab-', '');
+    if (id !== tab) {
+      tabDir = directionFromOrder(tab, id, STYLE_TAB_ORDER);
+      tab = id;
+    }
+  }
+
   $effect(() => {
     if (!mountedTabs[tab]) {
       mountedTabs = { ...mountedTabs, [tab]: true };
@@ -85,80 +111,133 @@
         tone, intensity, and app-specific overrides only apply during the cleanup step. Your
         choices below are kept, just not used.
       </p>
-      <button type="button" class="cleanup-off-link" onclick={() => emit('open-flow:open-settings-section', 'general')}>
+      <button type="button" class="cleanup-off-link ui-focus-ring" onclick={() => emit('open-flow:open-settings-section', 'general')}>
         Turn Cleanup back on in Settings → General
       </button>
     </div>
   {/if}
 
-  <div class="tabs">
-    {#each tabs as t}
-      <button class="tab" class:active={tab === t.id} onclick={() => selectTab(t.id)}>
-        {t.label}
-        {#if t.pill}
-          <span class="pill">{t.pill}</span>
-        {/if}
-        {#if tab === t.id}
-          <div class="active-bar" in:receive={{key: 'tab'}} out:send={{key: 'tab'}}></div>
-        {/if}
-      </button>
-    {/each}
-  </div>
+  {#if appStore.legacyFeaturesEnabled}
+    <div class="tabs" role="tablist" tabindex="-1" bind:this={tablistEl} onkeydown={handleTablistKeydown}>
+      {#each tabs as t}
+        <button
+          class="tab ui-focus-ring"
+          class:active={tab === t.id}
+          role="tab"
+          id="style-tab-{t.id}"
+          tabindex={tab === t.id ? 0 : -1}
+          aria-selected={tab === t.id}
+          aria-controls="style-panel-{t.id}"
+          onclick={() => selectTab(t.id)}
+        >
+          {t.label}
+          {#if t.pill}
+            <span class="pill">{t.pill}</span>
+          {/if}
+          {#if tab === t.id}
+            <div class="active-bar" in:receive={{key: 'tab'}} out:send={{key: 'tab'}}></div>
+          {/if}
+        </button>
+      {/each}
+    </div>
 
-  <div class="tab-content-area" class:tab-content-disabled={!appStore.cleanupEnabled} aria-disabled={!appStore.cleanupEnabled} inert={!appStore.cleanupEnabled}>
-    {#key tab}
-      <div
-        class="tab-wrapper"
-        in:pageSwap={{ axis: 'x', distance: tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel) }}
-        out:pageSwap={{ axis: 'x', distance: -tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.base + 40) }}
-      >
-        {#if tab === 'cleanup'}
-          <p class="style-intro">Cleanup runs after transcription unless it is turned Off. <span>Choose how much rewriting Verenu does.</span></p>
-          <div class="style-grid four">
-            {#each cleanupCards as c}
-              <button
-                type="button"
-                class="style-card"
-                class:active={intensity === c.id}
-                aria-pressed={intensity === c.id}
-                onclick={() => selectIntensity(c.id)}
-                in:fly={!mountedTabs.cleanup ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
-              >
-                <span class="style-card-title">{c.name}</span>
-                <span class="desc">{c.desc}</span>
-                <span class="style-sample">"{c.sample}"</span>
-              </button>
-            {/each}
-          </div>
-        {:else if tab === 'personal'}
-          <p class="style-intro">Default tone. <span>Applies to any app not explicitly mapped.</span></p>
-          <div class="style-grid">
-            {#each personalCards as c}
-              <button
-                type="button"
-                class="style-card"
-                class:active={tone === c.id}
-                aria-pressed={tone === c.id}
-                onclick={() => selectTone(c.id)}
-                in:fly={!mountedTabs.personal ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
-              >
-                <span class="style-card-title">{c.name}</span>
-                <span class="desc">{c.desc}</span>
-                <span class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</span>
-              </button>
-            {/each}
-          </div>
-        {:else if tab === 'apps'}
-          <AppMappingsEditor
-            showHeading={false}
-            intro="Give specific apps their own tone. Verenu switches automatically while you type."
-            emptyText="No app tones yet."
-            addLabel="Add App Tone"
-          />
-        {/if}
-      </div>
-    {/key}
-  </div>
+    <div class="tab-content-area" class:tab-content-disabled={!appStore.cleanupEnabled} aria-disabled={!appStore.cleanupEnabled} inert={!appStore.cleanupEnabled}>
+      {#key tab}
+        <div
+          class="tab-wrapper"
+          role="tabpanel"
+          id="style-panel-{tab}"
+          aria-labelledby="style-tab-{tab}"
+          in:pageSwap={{ axis: 'x', distance: tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel) }}
+          out:pageSwap={{ axis: 'x', distance: -tabDir * motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.base + 40) }}
+        >
+          {#if tab === 'cleanup'}
+            <p class="style-intro">Cleanup runs after transcription unless it is turned Off. <span>Choose how much rewriting Verenu does.</span></p>
+            <div class="style-grid four">
+              {#each cleanupCards as c}
+                <button
+                  type="button"
+                  class="style-card"
+                  class:active={intensity === c.id}
+                  aria-pressed={intensity === c.id}
+                  onclick={() => selectIntensity(c.id)}
+                  in:fly={!mountedTabs.cleanup ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
+                >
+                  <span class="style-card-title">{c.name}</span>
+                  <span class="desc">{c.desc}</span>
+                  <span class="style-sample">"{c.sample}"</span>
+                </button>
+              {/each}
+            </div>
+          {:else if tab === 'personal'}
+            <p class="style-intro">Default tone. <span>Applies to any app not explicitly mapped.</span></p>
+            <div class="style-grid">
+              {#each personalCards as c}
+                <button
+                  type="button"
+                  class="style-card"
+                  class:active={tone === c.id}
+                  aria-pressed={tone === c.id}
+                  onclick={() => selectTone(c.id)}
+                  in:fly={!mountedTabs.personal ? { y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut } : undefined}
+                >
+                  <span class="style-card-title">{c.name}</span>
+                  <span class="desc">{c.desc}</span>
+                  <span class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/key}
+    </div>
+  {:else}
+    <div class="style-sections" class:tab-content-disabled={!appStore.cleanupEnabled} aria-disabled={!appStore.cleanupEnabled} inert={!appStore.cleanupEnabled}>
+      <section class="style-section">
+        <h2 class="style-section-h">Cleanup</h2>
+        <p class="style-intro">Cleanup runs after transcription unless it is turned Off. <span>Choose how much rewriting Verenu does.</span></p>
+        <div class="style-grid four">
+          {#each cleanupCards as c}
+            <button
+              type="button"
+              class="style-card"
+              class:active={intensity === c.id}
+              aria-pressed={intensity === c.id}
+              onclick={() => selectIntensity(c.id)}
+              in:fly={{ y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+            >
+              <span class="style-card-title">{c.name}</span>
+              <span class="desc">{c.desc}</span>
+              <span class="style-sample">"{c.sample}"</span>
+            </button>
+          {/each}
+        </div>
+      </section>
+
+      <hr class="style-divider" />
+
+      <section class="style-section">
+        <h2 class="style-section-h">Personal Tone</h2>
+        <p class="style-intro">Default tone. <span>Applies to any app not explicitly mapped.</span></p>
+        <div class="style-grid">
+          {#each personalCards as c}
+            <button
+              type="button"
+              class="style-card"
+              class:active={tone === c.id}
+              aria-pressed={tone === c.id}
+              onclick={() => selectTone(c.id)}
+              in:fly={{ y: motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.panel), easing: expoOut }}
+            >
+              <span class="style-card-title">{c.name}</span>
+              <span class="desc">{c.desc}</span>
+              <span class="style-sample" style="white-space: pre-wrap;">"{c.sample}"</span>
+            </button>
+          {/each}
+        </div>
+      </section>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -223,11 +302,32 @@
     grid-area: 1 / 1;
   }
 
+  .style-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .style-divider {
+    border: 0;
+    border-top: 1px solid var(--line);
+    margin: 0;
+  }
+
+  .style-section-h {
+    font-family: var(--serif);
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--ink-soft);
+    margin: 0 0 4px;
+  }
+
   .page-h {
     font-family: var(--serif);
     font-size: 26px;
     font-weight: 500;
-    letter-spacing: 0;
+    letter-spacing: -0.02em;
     margin: 0 0 4px;
     line-height: 1.1;
     color: var(--ink);
@@ -322,7 +422,7 @@
   .style-card:hover {
     background: var(--control-hover);
     transform: translateY(-2px);
-    box-shadow: var(--shadow-popover);
+    box-shadow: var(--shadow-card);
   }
   .style-card:focus-visible {
     outline: 2px solid var(--accent);

@@ -49,28 +49,42 @@ jobs:
           baseline_tag=""
           last_nightly=""
 
-          # A nightly tag points at a temporary version-bump commit whose
+          # A nightly tag points at a release-only metadata commit whose
           # parent is the dev snapshot it released. Find the newest such tag
           # whose parent is still reachable from the current dev branch.
+          last_nightly_date=""
           while IFS= read -r candidate; do
-            if [[ ! "$candidate" =~ ^Verenu-[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}$ ]]; then
+            if [[ ! "$candidate" =~ ^Verenu-[0-9]+\.[0-9]+\.[0-9]+-nightly\.([0-9]{8})$ ]]; then
               continue
             fi
+            candidate_date="${BASH_REMATCH[1]}"
             nightly_commit="$(git rev-parse "${candidate}^{commit}")"
             candidate_sha="$(git rev-parse "${nightly_commit}^")"
-            if git merge-base --is-ancestor "$candidate_sha" "$dev_sha"; then
+            if git merge-base --is-ancestor "$candidate_sha" "$dev_sha" && [[ -z "$last_nightly" || "$candidate_date" > "$last_nightly_date" ]]; then
               last_nightly="$candidate"
+              last_nightly_date="$candidate_date"
               baseline_sha="$candidate_sha"
               baseline_tag="$candidate"
-              break
             fi
-          done < <(git tag --list 'Verenu-*-nightly.*' | sort -Vr)
+          done < <(git tag --list 'Verenu-*-nightly.*')
+
+          # Nightlies keep the latest stable release as their numeric version
+          # base. The fallback is used only before the first reachable stable
+          # tag exists in the dev history.
+          nightly_base_version="$NIGHTLY_START_VERSION"
+          nightly_base_tag="$(git tag --merged "$dev_sha" --list 'Verenu-*' | grep -E '^Verenu-[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+          if [[ -n "$nightly_base_tag" ]]; then
+            nightly_base_version="${nightly_base_tag#Verenu-}"
+          fi
 
           # Before the first nightly, use the newest release tag reachable
           # from dev. Tags are branch-agnostic, so reachability is the branch
           # association we can verify safely.
           if [[ -z "$baseline_sha" ]]; then
-            baseline_tag="$(git tag --merged "$dev_sha" --list 'Verenu-*' | sort -V | tail -n 1 || true)"
+            baseline_tag="$nightly_base_tag"
+            if [[ -z "$baseline_tag" ]]; then
+              baseline_tag="$(git tag --merged "$dev_sha" --list 'Verenu-*' | sort -V | tail -n 1 || true)"
+            fi
             if [[ -z "$baseline_tag" ]]; then
               echo 'No release tag reachable from dev; refusing to guess a baseline.' >&2
               exit 1
@@ -83,8 +97,8 @@ jobs:
           release_date="$(TZ=America/Vancouver date +%Y%m%d)"
 
           # If a prior run created today's tag but failed while building or
-          # publishing, resume that exact release instead of incrementing the
-          # nightly number again.
+          # publishing, resume that exact dated release instead of creating a
+          # second release for the same dev snapshot.
           resume_existing=false
           if [[ -n "$last_nightly" && "$baseline_sha" == "$dev_sha" && "$last_nightly" =~ \.nightly\.${release_date}$ ]]; then
             resume_existing=true
@@ -92,6 +106,7 @@ jobs:
 
           echo "Baseline: $baseline_tag ($baseline_sha)"
           echo "Dev:      $dev_sha"
+          echo "Nightly base: $nightly_base_version"
           echo "Changed lines: $changed_lines"
           git diff --stat "$baseline_sha..$dev_sha" -- . ':(exclude)package-lock.json'
 
@@ -103,21 +118,12 @@ jobs:
           if [[ "$resume_existing" == true ]]; then
             release_tag="$last_nightly"
             release_version="${release_tag#Verenu-}"
-            app_version="${release_version%%-nightly.*}"
+            app_version="$release_version"
             release_sha="$(git rev-parse "${release_tag}^{commit}")"
             tag_exists=true
-          elif [[ -n "$last_nightly" ]]; then
-            last_version="${last_nightly#Verenu-}"
-            last_core="${last_version%%-nightly.*}"
-            IFS=. read -r major minor patch <<< "$last_core"
-            next_core="$major.$minor.$((patch + 1))"
-            app_version="$next_core"
-            release_version="${app_version}-nightly.${release_date}"
-            release_tag="Verenu-${release_version}"
-            tag_exists=false
           else
-            app_version="$NIGHTLY_START_VERSION"
-            release_version="${app_version}-nightly.${release_date}"
+            release_version="${nightly_base_version}-nightly.${release_date}"
+            app_version="$release_version"
             release_tag="Verenu-${release_version}"
             tag_exists=false
           fi
@@ -285,7 +291,6 @@ jobs:
           const version = process.argv[2];
           const replacements = [
             ['package.json', /(\"version\"\s*:\s*\")[^\"]+(\")/, `$1${version}$2`],
-            ['src-tauri/tauri.conf.json', /(\"version\"\s*:\s*\")[^\"]+(\")/, `$1${version}$2`],
             ['src-tauri/Cargo.toml', /^version\s*=\s*\"[^\"]+\"/m, `version = \"${version}\"`],
           ];
 
@@ -295,6 +300,23 @@ jobs:
             if (after === before) throw new Error(`Could not update version in ${file}`);
             fs.writeFileSync(file, after);
           }
+
+          // tauri.conf.json drives both the app version (frontend display,
+          // bundle metadata) and the installer bundlers. The MSI bundler
+          // rejects non-numeric prerelease versions such as
+          // "0.16.5-nightly.20260810", while NSIS and macOS accept them, so
+          // the MSI gets an explicit numeric `bundle.windows.wix.version`
+          // derived from the same core version (e.g. "0.16.0.0"). This keeps
+          // one semantic app version for Rust/frontend/updater comparison and
+          // a numeric-only one where Windows requires it.
+          const tauriConf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          tauriConf.version = version;
+          const wixVersion = version.split('-')[0].split('+')[0] + '.0';
+          tauriConf.bundle = tauriConf.bundle || {};
+          tauriConf.bundle.windows = tauriConf.bundle.windows || {};
+          tauriConf.bundle.windows.wix = tauriConf.bundle.windows.wix || {};
+          tauriConf.bundle.windows.wix.version = wixVersion;
+          fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(tauriConf, null, 2) + '\n');
           NODE
 
           git diff --check
@@ -489,12 +511,33 @@ jobs:
           EXPECTED_APP_VERSION: ${{ needs.prepare.outputs.app_version }}
         run: |
           set -euo pipefail
-          app_version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
-          if [[ "$app_version" != "$EXPECTED_APP_VERSION" ]]; then
-            echo "Expected app version $EXPECTED_APP_VERSION but found $app_version" >&2
-            exit 1
-          fi
-          echo "APP_VERSION=$app_version" >> "$GITHUB_ENV"
+          node - "$EXPECTED_APP_VERSION" <<'NODE'
+          const fs = require('node:fs');
+          const expected = process.argv[2];
+          const packageVersion = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+          const cargoMatch = fs.readFileSync('src-tauri/Cargo.toml', 'utf8').match(/^version\s*=\s*"([^"]+)"/m);
+          const tauriConf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          const wixVersion = expected.split('-')[0].split('+')[0] + '.0';
+          if (packageVersion !== expected) {
+            console.error(`Expected package.json version ${expected} but found ${packageVersion}`);
+            process.exit(1);
+          }
+          if (!cargoMatch || cargoMatch[1] !== expected) {
+            console.error(`Expected Cargo.toml version ${expected} but found ${cargoMatch ? cargoMatch[1] : 'missing'}`);
+            process.exit(1);
+          }
+          if (tauriConf.version !== expected) {
+            console.error(`Expected tauri.conf.json version ${expected} but found ${tauriConf.version}`);
+            process.exit(1);
+          }
+          const wix = tauriConf.bundle && tauriConf.bundle.windows && tauriConf.bundle.windows.wix;
+          if (!wix || !wix.version || wix.version !== wixVersion) {
+            console.error(`Expected numeric bundle.windows.wix.version ${wixVersion} but found ${wix ? wix.version : 'missing'}`);
+            process.exit(1);
+          }
+          console.log(`Verified app version ${expected} in package.json, Cargo.toml, tauri.conf.json (wix ${wix.version})`);
+          NODE
+          echo "APP_VERSION=$EXPECTED_APP_VERSION" >> "$GITHUB_ENV"
 
       - name: Build and name installers
         shell: bash

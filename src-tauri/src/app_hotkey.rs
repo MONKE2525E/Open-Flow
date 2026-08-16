@@ -1,4 +1,5 @@
 use std::sync::MutexGuard;
+use std::time::{Duration, Instant};
 
 use crate::core::window_geometry::WindowTarget;
 use crate::pipeline::{self, hide_pill, start_recording_session, AppState, SharedState};
@@ -15,25 +16,62 @@ fn lock_app_state(state: &SharedState) -> Option<MutexGuard<'_, AppState>> {
     }
 }
 
+#[derive(Clone, Copy)]
+enum HotkeyEvent {
+    Press,
+    Release,
+    HandlessToggle,
+    Cancel,
+    EscapeCancel,
+    CopyLast,
+    RepairOpen,
+}
+
+/// A hands-free stop is itself a quick tap, so the next click can still be
+/// part of the same physical double-click. Without this fence, resetting the
+/// hook's tap state makes that second click look like a fresh Press, which can
+/// interrupt the transcription that the first click just started.
+const HANDSFREE_STOP_GUARD: Duration = Duration::from_millis(350);
+
+#[derive(Default)]
+struct HandsfreeStopGuard {
+    until: Option<Instant>,
+}
+
+impl HandsfreeStopGuard {
+    fn arm(&mut self, now: Instant) {
+        self.until = Some(now + HANDSFREE_STOP_GUARD);
+    }
+
+    fn suppresses(&mut self, event: HotkeyEvent, now: Instant) -> bool {
+        let Some(until) = self.until else {
+            return false;
+        };
+        if now >= until {
+            self.until = None;
+            return false;
+        }
+        matches!(
+            event,
+            HotkeyEvent::Press
+                | HotkeyEvent::Release
+                | HotkeyEvent::HandlessToggle
+                | HotkeyEvent::Cancel
+        )
+    }
+}
+
 pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
     // The WH_KEYBOARD_LL hook callback must return within Windows' hook timeout
     // (~300ms) or the hook is silently removed. All real work happens in a Tokio
     // task below; callbacks only send a lightweight channel message.
-    enum HotkeyEvent {
-        Press,
-        Release,
-        HandlessToggle,
-        Cancel,
-        EscapeCancel,
-        CopyLast,
-    }
-
     let (hotkey_tx, mut hotkey_rx) = tokio::sync::mpsc::unbounded_channel::<HotkeyEvent>();
     let tx_press = hotkey_tx.clone();
     let tx_handless = hotkey_tx.clone();
     let tx_cancel = hotkey_tx.clone();
     let tx_escape = hotkey_tx.clone();
     let tx_copy_last = hotkey_tx.clone();
+    let tx_repair_open = hotkey_tx.clone();
     let tx_release = hotkey_tx;
 
     match crate::core::hotkey::start(
@@ -55,8 +93,11 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
         move || {
             let _ = tx_copy_last.send(HotkeyEvent::CopyLast);
         },
+        move || {
+            let _ = tx_repair_open.send(HotkeyEvent::RepairOpen);
+        },
     ) {
-        Ok(_handle) => { /* hook thread running */ }
+        Ok(_handle) => log::info!("hotkey: hook installed"),
         Err(e) => {
             log::error!("Hotkey hook failed to start: {e}");
             let app_h = app.handle().clone();
@@ -78,10 +119,55 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
     let state_hk = shared;
 
     tauri::async_runtime::spawn(async move {
+        let mut handsfree_stop_guard = HandsfreeStopGuard::default();
         while let Some(event) = hotkey_rx.recv().await {
+            if handsfree_stop_guard.suppresses(event, Instant::now()) {
+                log::debug!("hotkey: ignored follow-up input after hands-free stop");
+                continue;
+            }
             match event {
                 HotkeyEvent::Press => {
                     pipeline::clear_handless_hold_marker(&state_hk);
+
+                    // The repair-input pill waits on the user to describe
+                    // what went wrong, either typed or dictated. Dictating
+                    // that complaint reuses the normal hotkey instead of a
+                    // dedicated on-pill mic button — but a repair session
+                    // stays open in the background (e.g. the user alt-tabbed
+                    // away without resolving it), so checking only "a repair
+                    // session exists" hijacked ordinary dictation into
+                    // *different* apps into the repair textbox behind the
+                    // scenes. Only steal the hotkey when the repair pill is
+                    // the thing actually focused right now — otherwise this
+                    // is an unrelated normal dictation and must behave like
+                    // one, pasting into whatever the user actually selected.
+                    let repair_pill_focused = pipeline::pill_wants_repair_focus();
+                    let repair_waiting_for_complaint = repair_pill_focused
+                        && lock_app_state(&state_hk)
+                            .map(|st| {
+                                matches!(st.lifecycle, pipeline::DictationLifecycle::Idle)
+                                    && st.repair.as_ref().is_some_and(|r| r.proposal.is_none())
+                            })
+                            .unwrap_or(false);
+                    if repair_waiting_for_complaint {
+                        if pipeline::reserve_starting(&state_hk).is_ok() {
+                            if let Some(mut st) = lock_app_state(&state_hk) {
+                                st.hotkey_recording_repair_complaint = true;
+                            }
+                            start_recording_session(&app_hk, &state_hk, "repair_recording", false);
+                        }
+                        continue;
+                    }
+
+                    // A repair session left open when the user moves on to an
+                    // unrelated normal dictation (e.g. still showing "Can't
+                    // apply a fix" while they dictate into a different app) is
+                    // abandoned, not paused — otherwise it lingers indefinitely
+                    // and the repair card can resurface later out of context.
+                    if lock_app_state(&state_hk).is_some_and(|st| st.repair.is_some()) {
+                        pipeline::clear_repair(&state_hk);
+                    }
+
                     enum PressAction {
                         None,
                         Fresh,
@@ -138,11 +224,39 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     }
                 }
 
+                HotkeyEvent::RepairOpen => {
+                    // Only meaningful while a repair session is genuinely
+                    // waiting on the user's complaint (the toast that follows
+                    // a dictation, or the input card already open) — pressed
+                    // at any other time this is a no-op rather than a random
+                    // popup interrupting whatever the user is doing.
+                    let waiting_for_complaint = lock_app_state(&state_hk)
+                        .is_some_and(|st| st.repair.as_ref().is_some_and(|r| r.proposal.is_none()));
+                    if waiting_for_complaint {
+                        pipeline::enter_repair_input(&app_hk);
+                    }
+                }
+
                 HotkeyEvent::Release => {
                     if pipeline::consume_handless_hold_stop(&state_hk) {
-                        log::debug!("hotkey: ignored stale hold release after Space hands-free conversion");
+                        log::debug!(
+                            "hotkey: ignored stale hold release after Space hands-free conversion"
+                        );
                         continue;
                     }
+
+                    let recording_repair_complaint = lock_app_state(&state_hk)
+                        .map(|mut st| std::mem::take(&mut st.hotkey_recording_repair_complaint))
+                        .unwrap_or(false);
+                    if recording_repair_complaint {
+                        crate::core::hotkey::set_handless_active(false);
+                        tauri::async_runtime::spawn(pipeline::finish_complaint_recording(
+                            app_hk.clone(),
+                            state_hk.clone(),
+                        ));
+                        continue;
+                    }
+
                     tauri::async_runtime::spawn(pipeline::run_pipeline(
                         app_hk.clone(),
                         state_hk.clone(),
@@ -191,7 +305,9 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                     // let the pending start cue sound.
                     crate::media::sound::cancel_pending_start();
                     if pipeline::consume_handless_hold_stop(&state_hk) {
-                        log::debug!("hotkey: ignored stale hold cancel after Space hands-free conversion");
+                        log::debug!(
+                            "hotkey: ignored stale hold cancel after Space hands-free conversion"
+                        );
                         continue;
                     }
                     let is_handless = {
@@ -204,6 +320,7 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                         // Quick tap while in handsfree = stop. Clear chord state
                         // immediately so the still-open double-tap window can't
                         // re-trigger a fresh handsfree session.
+                        handsfree_stop_guard.arm(Instant::now());
                         crate::core::hotkey::set_handless_active(false);
                         crate::core::hotkey::reset_chord_state();
                         tauri::async_runtime::spawn(pipeline::run_pipeline(
@@ -312,6 +429,10 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
                                     log::warn!(
                                         "hotkey: copy-last-dictation clipboard write failed: {e}"
                                     );
+                                    pipeline::show_copied_pill(
+                                        &app_for_copy,
+                                        "Failed to copy last dictation",
+                                    );
                                     return;
                                 }
                                 pipeline::show_copied_pill(
@@ -328,4 +449,43 @@ pub(crate) fn setup_hotkey(app: &mut tauri::App, shared: SharedState) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handsfree_stop_guard_consumes_the_followup_click_but_not_escape() {
+        let now = Instant::now();
+        let mut guard = HandsfreeStopGuard::default();
+        guard.arm(now);
+
+        for event in [
+            HotkeyEvent::Press,
+            HotkeyEvent::Release,
+            HotkeyEvent::HandlessToggle,
+            HotkeyEvent::Cancel,
+        ] {
+            assert!(guard.suppresses(event, now + Duration::from_millis(1)));
+        }
+        assert!(!guard.suppresses(HotkeyEvent::EscapeCancel, now + Duration::from_millis(1)));
+        assert!(!guard.suppresses(HotkeyEvent::CopyLast, now + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn handsfree_stop_guard_expires_after_the_double_tap_window() {
+        let now = Instant::now();
+        let mut guard = HandsfreeStopGuard::default();
+        guard.arm(now);
+
+        assert!(!guard.suppresses(
+            HotkeyEvent::Press,
+            now + HANDSFREE_STOP_GUARD + Duration::from_millis(1),
+        ));
+        assert!(!guard.suppresses(
+            HotkeyEvent::Press,
+            now + HANDSFREE_STOP_GUARD + Duration::from_millis(2),
+        ));
+    }
 }

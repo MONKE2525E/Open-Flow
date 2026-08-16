@@ -13,16 +13,59 @@ pub(super) const CANCEL_RESUME_WINDOW: std::time::Duration = std::time::Duration
 /// How long a failed paste's text stays available for the pill's Copy
 /// button to pull back onto the clipboard.
 pub(super) const PASTE_FAILURE_WINDOW: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn paste_failure_is_fresh(
+    captured_at: std::time::Instant,
+    now: std::time::Instant,
+) -> bool {
+    now.checked_duration_since(captured_at)
+        .is_some_and(|age| age < PASTE_FAILURE_WINDOW)
+}
 // ---------- shared state ----------
+
+/// Default pill window width (logical points) before the frontend reports the
+/// real content width. Deliberately the *smallest* content width (the bare
+/// recording capsule, matching PillApp.svelte's MIN_PILL_WINDOW_W) rather than
+/// the historical fixed 380: the frontend widens the window within a frame of
+/// mounting whenever it needs more, so starting small means the very first
+/// reveal never flashes a 380px-wide transparent click-capture band around a
+/// 72px pill.
+pub const DEFAULT_PILL_WIDTH_POINTS: f64 = 96.0;
+
+/// Default pill window height (logical points) — the bare 34px capsule plus
+/// vertical shadow/entrance-transform margin (PillApp.svelte's
+/// MIN_PILL_WINDOW_H). Grows when the profile label floats above the pill
+/// (see `pill_height_points`).
+pub const DEFAULT_PILL_HEIGHT_POINTS: f64 = 54.0;
 
 pub struct AppState {
     pub lifecycle: DictationLifecycle,
     pub target: WindowTarget,
     pub pill_placement: Option<PillPlacement>,
     pub pill_placement_stale: bool,
+    /// Width (logical points / CSS px) the pill window should be sized to —
+    /// reported by the frontend from the measured visible content so the
+    /// transparent click-capture zone around the pill stays as small as the
+    /// pill itself (see `commands::recording::set_pill_size`). Used by the
+    /// placement math so reveals and cross-monitor moves size to the content
+    /// instead of snapping back to the old fixed 380px.
+    pub pill_width_points: f64,
+    /// Height (logical points) the pill window should be sized to. Tracks the
+    /// profile label floating above the capsule; the window grows upward so
+    /// the pill itself stays visually pinned.
+    pub pill_height_points: f64,
     pub retry_capture: Option<RetryCapture>,
     pub cancelled_capture: Option<CancelledCapture>,
     pub paste_failure: Option<PasteFailure>,
+    pub repair: Option<super::repair::RepairSession>,
+    /// Set only by the hotkey path when a Press was routed into the repair
+    /// pill's complaint recording (see app_hotkey.rs) — checked and cleared
+    /// on the matching Release so that release routes to the same place the
+    /// press did, rather than re-deriving it from ambient repair-session
+    /// state, which stays around in the background long after the repair
+    /// pill has lost focus and would otherwise hijack an unrelated,
+    /// currently-focused-elsewhere dictation's Release too.
+    pub hotkey_recording_repair_complaint: bool,
 }
 
 /// Single source of truth for what the app is currently doing with the
@@ -77,6 +120,20 @@ impl DictationLifecycle {
     }
 }
 
+/// Compact, stable name for the lifecycle variant — used by transition logs
+/// so a session is reconstructable from the ring buffer alone.
+pub(super) fn describe_lifecycle(lifecycle: &DictationLifecycle) -> &'static str {
+    match lifecycle {
+        DictationLifecycle::Idle => "idle",
+        DictationLifecycle::Starting { .. } => "starting",
+        DictationLifecycle::Recording { handless, .. } if *handless => "recording_handsfree",
+        DictationLifecycle::Recording { .. } => "recording",
+        DictationLifecycle::Stopping { .. } => "stopping",
+        DictationLifecycle::Processing(_) => "processing",
+        DictationLifecycle::Finalizing { .. } => "finalizing",
+    }
+}
+
 pub struct ActivePipeline {
     pub generation: u64,
     pub cancel_tx: tokio::sync::watch::Sender<bool>,
@@ -96,6 +153,7 @@ pub struct RetryCapture {
     pub captured_at: std::time::Instant,
     pub target: WindowTarget,
     pub process_name: String,
+    pub context_id: i64,
     pub profile: String,
     pub app_context: Option<String>,
     pub caps_lock_on: bool,
@@ -145,6 +203,14 @@ pub fn reserve_starting(state: &SharedState) -> Result<(), String> {
     if !st.lifecycle.is_idle() {
         return Err("Already recording".to_string());
     }
+    log::debug!(
+        "lifecycle: {} -> starting",
+        describe_lifecycle(&st.lifecycle)
+    );
+    // A new dictation owns the pill immediately. Drop any pending repair
+    // snapshot/proposal so a late provider response cannot repaint the new
+    // recording with stale repair UI.
+    st.repair = None;
     st.lifecycle = DictationLifecycle::Starting {
         prepend_audio: None,
     };
@@ -191,10 +257,15 @@ pub fn set_starting_prepend_audio(state: &SharedState, audio: CapturedAudio) {
 /// returns `None`.
 pub fn take_active_pipeline_for_interrupt(state: &SharedState) -> Option<ActivePipeline> {
     let mut st = lock_state(state).ok()?;
+    st.repair = None;
     match std::mem::replace(&mut st.lifecycle, DictationLifecycle::Idle) {
         DictationLifecycle::Processing(active) => {
             crate::core::hotkey::clear_processing_generation(active.generation);
             let prepend_audio = Some(active.captured_audio.clone());
+            log::debug!(
+                "lifecycle: processing -> starting gen={} (interrupt, audio prepended)",
+                active.generation
+            );
             st.lifecycle = DictationLifecycle::Starting { prepend_audio };
             Some(active)
         }
@@ -223,9 +294,16 @@ pub fn take_cancelled_capture_if_fresh(state: &SharedState) -> Option<CapturedAu
 /// `PASTE_FAILURE_WINDOW`. Always clears the slot.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn take_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
+    take_paste_failure_if_fresh_at(state, std::time::Instant::now())
+}
+
+fn take_paste_failure_if_fresh_at(
+    state: &SharedState,
+    now: std::time::Instant,
+) -> Option<String> {
     let mut st = lock_state(state).ok()?;
     st.paste_failure.take().and_then(|f| {
-        if f.captured_at.elapsed() < PASTE_FAILURE_WINDOW {
+        if paste_failure_is_fresh(f.captured_at, now) {
             Some(f.text)
         } else {
             None
@@ -239,7 +317,7 @@ pub fn take_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
 pub fn peek_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
     let st = lock_state(state).ok()?;
     st.paste_failure.as_ref().and_then(|f| {
-        if f.captured_at.elapsed() < PASTE_FAILURE_WINDOW {
+        if paste_failure_is_fresh(f.captured_at, std::time::Instant::now()) {
             Some(f.text.clone())
         } else {
             None
@@ -262,6 +340,10 @@ pub fn take_active_pipeline_for_escape(state: &SharedState) -> Option<ActivePipe
     match std::mem::replace(&mut st.lifecycle, DictationLifecycle::Idle) {
         DictationLifecycle::Processing(active) => {
             crate::core::hotkey::clear_processing_generation(active.generation);
+            log::debug!(
+                "lifecycle: processing -> idle gen={} (escape, audio discarded)",
+                active.generation
+            );
             Some(active)
         }
         other => {
@@ -277,12 +359,19 @@ pub fn take_active_pipeline_for_escape(state: &SharedState) -> Option<ActivePipe
 /// Escape while still actively recording (pre-`Release`).
 pub fn take_recording_plain(state: &SharedState) -> Option<(audio::RecordingSession, Option<u64>)> {
     let mut st = lock_state(state).ok()?;
+    // A discarded/cancelled recording never reaches app_hotkey's Release
+    // branch that would otherwise clear this — reset it here so a later,
+    // unrelated Release can't misroute into finish_complaint_recording.
+    st.hotkey_recording_repair_complaint = false;
     match std::mem::replace(&mut st.lifecycle, DictationLifecycle::Idle) {
         DictationLifecycle::Recording {
             session,
             exclusive_mic_session_id,
             ..
-        } => Some((session, exclusive_mic_session_id)),
+        } => {
+            log::info!("lifecycle: recording -> idle (plain cancel/discard)");
+            Some((session, exclusive_mic_session_id))
+        }
         DictationLifecycle::Starting { .. } => {
             // Cancelling a start must consume the reservation atomically. If
             // the microphone task has not installed Recording yet, it will
@@ -304,6 +393,7 @@ pub fn cancel_starting_reservation(state: &SharedState) -> bool {
         return false;
     };
     if matches!(st.lifecycle, DictationLifecycle::Starting { .. }) {
+        log::info!("lifecycle: starting -> idle (start reservation cancelled)");
         st.lifecycle = DictationLifecycle::Idle;
         true
     } else {
@@ -325,6 +415,7 @@ pub fn promote_recording_to_handless(state: &SharedState) -> bool {
     } = &mut st.lifecycle
     {
         if !*handless {
+            log::info!("lifecycle: recording -> recording_handsfree (Space conversion)");
             *handless = true;
             *handless_from_hold = true;
             return true;
@@ -401,6 +492,7 @@ pub(super) fn take_recording_for_stopping(state: &SharedState) -> Option<Stoppin
             ..
         } => {
             let generation = next_pipeline_generation();
+            log::info!("lifecycle: recording -> stopping gen={generation}");
             st.lifecycle = DictationLifecycle::Stopping {
                 generation,
                 prepend_audio: prepend_audio.clone(),
@@ -438,6 +530,7 @@ pub(super) fn leave_stopping_if_owned(state: &SharedState, generation: u64) -> b
         DictationLifecycle::Stopping { generation: g, .. } if *g == generation
     );
     if owns {
+        log::info!("lifecycle: stopping -> idle gen={generation} (rejected/discarded)");
         st.lifecycle = DictationLifecycle::Idle;
     }
     owns
@@ -458,6 +551,7 @@ pub(super) fn install_processing(
         DictationLifecycle::Stopping { generation: g, .. } if *g == generation
     );
     if owns {
+        log::info!("lifecycle: stopping -> processing gen={generation}");
         st.lifecycle = DictationLifecycle::Processing(active);
         crate::core::hotkey::set_processing_generation(generation);
     }
@@ -475,6 +569,7 @@ pub(super) fn enter_finalizing(state: &SharedState, generation: u64) -> bool {
     let owns =
         matches!(&st.lifecycle, DictationLifecycle::Processing(a) if a.generation == generation);
     if owns {
+        log::info!("lifecycle: processing -> finalizing gen={generation}");
         st.lifecycle = DictationLifecycle::Finalizing { generation };
         crate::core::hotkey::clear_processing_generation(generation);
     }
@@ -492,6 +587,7 @@ pub(super) fn leave_processing_if_owned(state: &SharedState, generation: u64) ->
     let owns =
         matches!(&st.lifecycle, DictationLifecycle::Processing(a) if a.generation == generation);
     if owns {
+        log::info!("lifecycle: processing -> idle gen={generation} (failed/cancelled)");
         st.lifecycle = DictationLifecycle::Idle;
         crate::core::hotkey::clear_processing_generation(generation);
     }
@@ -506,6 +602,7 @@ pub(super) fn leave_finalizing(state: &SharedState, generation: u64) {
     };
     if matches!(&st.lifecycle, DictationLifecycle::Finalizing { generation: g } if *g == generation)
     {
+        log::info!("lifecycle: finalizing -> idle gen={generation}");
         st.lifecycle = DictationLifecycle::Idle;
     }
 }
@@ -602,9 +699,13 @@ mod tests {
             target: WindowTarget::default(),
             pill_placement: None,
             pill_placement_stale: false,
+            pill_width_points: DEFAULT_PILL_WIDTH_POINTS,
+            pill_height_points: DEFAULT_PILL_HEIGHT_POINTS,
             retry_capture: None,
             cancelled_capture: None,
             paste_failure: None,
+            repair: None,
+            hotkey_recording_repair_complaint: false,
         }))
     }
 
@@ -701,16 +802,16 @@ mod tests {
     #[test]
     fn take_paste_failure_if_fresh_expires_after_window() {
         let state = fresh_state();
+        let captured_at = std::time::Instant::now();
+        let now = captured_at + PASTE_FAILURE_WINDOW + std::time::Duration::from_secs(1);
         {
             let mut st = lock_state(&state).unwrap();
             st.paste_failure = Some(PasteFailure {
                 text: "stale".to_string(),
-                captured_at: std::time::Instant::now()
-                    - PASTE_FAILURE_WINDOW
-                    - std::time::Duration::from_secs(1),
+                captured_at,
             });
         }
-        assert_eq!(take_paste_failure_if_fresh(&state), None);
+        assert_eq!(take_paste_failure_if_fresh_at(&state, now), None);
     }
 
     #[test]

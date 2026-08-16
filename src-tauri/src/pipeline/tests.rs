@@ -3,12 +3,28 @@ use super::stages::{cleanup_cache_plan, dual_cleanup_context_fingerprint, speech
 use super::{
     apply_app_style_overrides, effective_recording_rms, ensure_terminal_punctuation,
     has_spoken_content, is_transcription_hallucination, normalize_transcription_math_artifacts,
-    preview_text, recording_gate_rms, resolve_app_mapping, run_pipeline_fixture,
+    append_cleanup_api_used, preview_text, recording_gate_rms, resolve_app_mapping,
+    run_pipeline_fixture,
     should_run_cleanup_llm, should_use_cleanup_cache, strip_hallucinated_suffix,
     style_scoped_cleanup_cache_key, PipelineTestDictionaryEntry, PipelineTestRequest,
     PipelineTestSnippet,
 };
 use crate::system::apps::AppMapping;
+
+#[test]
+fn cleanup_api_metadata_is_kept_for_normal_transcriptions() {
+    assert_eq!(
+        append_cleanup_api_used(
+            "groq/whisper-large-v3-turbo/transcription".to_string(),
+            "openai/gpt-4o-mini",
+        ),
+        "groq/whisper-large-v3-turbo/transcription;cleanup=openai/gpt-4o-mini"
+    );
+    assert_eq!(
+        append_cleanup_api_used("groq/whisper-large-v3-turbo/transcription".to_string(), ""),
+        "groq/whisper-large-v3-turbo/transcription"
+    );
+}
 
 #[test]
 fn preview_text_redacts_dictation_content_when_not_verbose() {
@@ -418,7 +434,7 @@ fn app_mapping_override_applies_for_matching_app() {
     // base_config(): default_tone = "casual", cleanup_intensity = "medium".
     let mut cfg = base_config();
     let m = mapping("appa.exe", "very_casual", Some("high"));
-    let profile = apply_app_style_overrides(&mut cfg, Some(&m));
+    let profile = apply_app_style_overrides(&mut cfg, Some(&m), None);
     assert_eq!(profile, "very_casual");
     assert_eq!(cfg.cleanup_intensity, "high");
 }
@@ -429,7 +445,7 @@ fn app_mapping_no_match_leaves_global_defaults_untouched() {
     // effective tone falls back to default_tone and the global cleanup
     // intensity must NOT be mutated by a different app's override.
     let mut cfg = base_config();
-    let profile = apply_app_style_overrides(&mut cfg, None);
+    let profile = apply_app_style_overrides(&mut cfg, None, None);
     assert_eq!(profile, "casual");
     assert_eq!(cfg.cleanup_intensity, "medium");
 }
@@ -438,7 +454,7 @@ fn app_mapping_no_match_leaves_global_defaults_untouched() {
 fn app_mapping_empty_override_fields_fall_back_to_globals() {
     let mut cfg = base_config();
     let m = mapping("appa.exe", "   ", Some("   "));
-    let profile = apply_app_style_overrides(&mut cfg, Some(&m));
+    let profile = apply_app_style_overrides(&mut cfg, Some(&m), None);
     assert_eq!(profile, "casual");
     assert_eq!(cfg.cleanup_intensity, "medium");
 }
@@ -475,6 +491,8 @@ fn base_config() -> store::PipelineConfig {
         key_assemblyai: "fixture-assemblyai-key".into(),
         default_tone: "casual".into(),
         cleanup_intensity: "medium".into(),
+        clipboard_phrase_enabled: false,
+        clipboard_phrase: "paste clipboard here".into(),
         app_context_hint: false,
         auto_learn_enabled: false,
         contextual_caps_enabled: true,

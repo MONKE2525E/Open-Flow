@@ -74,7 +74,9 @@ pub async fn retry_transcription(
 ) -> Result<db::RecentEntry, String> {
     pipeline::retry_transcription_impl(&app, &state)
         .await
-        .map_err(|e| e.to_string())
+        // The pill shows its own sanitized message; the command return must
+        // not leak the raw provider context (AUTH_401 wire format, bodies).
+        .map_err(|e| crate::api::user_facing_error(&e))
 }
 use crate::system::memory::free_bytes_for_path;
 

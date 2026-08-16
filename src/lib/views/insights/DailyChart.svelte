@@ -16,10 +16,13 @@
   const PAD_TOP = 12;
   const PAD_BOTTOM = 22;
 
+  /* Below this many points a line reads as noise — discrete bars are clearer. */
+  const BAR_THRESHOLD = 14;
+
   // Reduce rather than Math.max(...spread) — an all-time range can exceed the
   // call-stack limit for spread arguments on a very long daily series.
   const max = $derived(niceCeiling(daily.reduce((m, d) => Math.max(m, d.words), 0)));
-  const asBars = $derived(rangeLabel === 'Last 7 days');
+  const asBars = $derived(daily.length <= BAR_THRESHOLD);
   const plotH = H - PAD_TOP - PAD_BOTTOM;
 
   function x(i: number): number {
@@ -60,31 +63,10 @@
   );
 
   const barWidth = $derived(daily.length > 0 ? Math.min(28, (W / daily.length) * 0.55) : 0);
-  const BAR_RADIUS = 3;
-
-  function barPath(day: InsightsDay, i: number): string {
-    const left = x(i) - barWidth / 2;
-    const top = day.words > 0 ? y(day.words) : H - PAD_BOTTOM - 1;
-    const height = day.words > 0 ? Math.max(1, H - PAD_BOTTOM - y(day.words)) : 1;
-    const right = left + barWidth;
-    const bottom = top + height;
-    const radius = Math.min(BAR_RADIUS, barWidth / 2, height / 2);
-
-    return [
-      `M ${left} ${bottom}`,
-      `V ${top + radius}`,
-      `Q ${left} ${top} ${left + radius} ${top}`,
-      `H ${right - radius}`,
-      `Q ${right} ${top} ${right} ${top + radius}`,
-      `V ${bottom}`,
-      'Z',
-    ].join(' ');
-  }
 
   let hover = $state<number | null>(null);
   let hoverPos = $state<{ x: number; y: number } | null>(null);
   const active = $derived(hover !== null ? daily[hover] : null);
-  const latest = $derived(daily.length > 0 ? daily[daily.length - 1] : null);
 
   function onMove(event: PointerEvent) {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -123,9 +105,9 @@
       {#if active}
         <span class="readout-num">{fmtNumber(active.words)}</span>
         <span class="readout-day">{fmtDayLong(active.day)}</span>
-      {:else if latest}
-        <span class="readout-num"><AnimatedNumber value={latest.words} /></span>
-        <span class="readout-day">{fmtDayLong(latest.day)}</span>
+      {:else}
+        <span class="readout-num"><AnimatedNumber value={total} /></span>
+        <span class="readout-day">total</span>
       {/if}
     </div>
   </header>
@@ -157,11 +139,13 @@
       />
       {#if asBars}
         {#each daily as d, i}
-          <path
-            d={barPath(d, i)}
-            class="bar-path"
+          <rect
+            x={x(i) - barWidth / 2}
+            y={d.words > 0 ? y(d.words) : H - PAD_BOTTOM - 1}
+            width={barWidth}
+            height={d.words > 0 ? Math.max(1, H - PAD_BOTTOM - y(d.words)) : 1}
             fill={hover === i ? 'var(--accent)' : 'color-mix(in srgb, var(--accent) 55%, transparent)'}
-          ><title>{fmtDayLong(d.day)} — {fmtNumber(d.words)} words</title></path>
+          ><title>{fmtDayLong(d.day)} — {fmtNumber(d.words)} words</title></rect>
         {/each}
       {:else}
         <path d={areaPath} fill="color-mix(in srgb, var(--accent) 18%, transparent)" mask="url(#{gradientId}-mask)" class="area-path" />
@@ -237,7 +221,7 @@
     margin-top: 2px;
   }
 
-  .bar-path { transition: fill var(--ui-duration-fast) var(--ui-ease-out), d var(--ui-duration-base) var(--ui-ease-out); }
+  rect { transition: fill var(--ui-duration-fast) var(--ui-ease-out), y var(--ui-duration-base) var(--ui-ease-out), height var(--ui-duration-base) var(--ui-ease-out); }
 
   /* Progressive enhancement: browsers that support animating `d` glide to a
      new shape when the range or a fresh dictation changes the data. */

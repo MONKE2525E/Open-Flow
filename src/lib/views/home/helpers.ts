@@ -6,7 +6,7 @@ export interface Entry {
   words: number;
   created_at: string;
   app_name?: string | null;
-  duration_ms?: number;
+  duration_ms?: number | null;
 }
 export interface Stats { total_words: number; avg_wpm: number; day_streak: number; }
 
@@ -16,17 +16,11 @@ export type RenderItem =
 
 export const HISTORY_PAGE_SIZE = 100;
 
-/** Prettifies a stored lowercase executable name (e.g. "outlook.exe" on
- * Windows or "slack.app" on macOS) for display ("Outlook" / "Slack"). Falls
- * back to the raw value for anything odd. */
-export function formatAppLabel(appName: string): string {
-  const base = appName.trim().toLowerCase().replace(/\.(exe|app)$/, '');
-  if (!base) return appName;
-  return base
-    .split(/[._\-\s+]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+export function formatAppLabel(value: string): string {
+  return value
+    .replace(/\.exe$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 export function getGreeting(): string {
