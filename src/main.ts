@@ -5,7 +5,7 @@ import { disableBrowserContextMenu } from './lib/disable-context-menu';
 import './theme.css';
 import './app.css';
 
-disableBrowserContextMenu();
+void disableBrowserContextMenu();
 
 const app = mount(App, {
   target: document.getElementById('app') as HTMLElement,

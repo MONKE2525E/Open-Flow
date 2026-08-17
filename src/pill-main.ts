@@ -4,7 +4,7 @@ import { invoke } from './lib/tauri';
 import { disableBrowserContextMenu } from './lib/disable-context-menu';
 import './theme.css';
 
-disableBrowserContextMenu();
+void disableBrowserContextMenu();
 
 type AppearanceMode = 'system' | 'light' | 'dark';
 type EffectiveTheme = 'light' | 'dark';
