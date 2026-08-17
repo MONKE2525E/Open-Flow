@@ -45,7 +45,7 @@ export function selectReviewModels({
 }
 
 export function fallbackReason(result) {
-  if (!result || result.previewFailed || result.code === 0) return null;
+  if (!result || result.code === 0) return null;
 
   const output = `${result.stderr || ""}\n${result.stdout || ""}`;
   // CLIProxy and the upstream Gemini API use underscore-delimited error
@@ -53,9 +53,15 @@ export function fallbackReason(result) {
   // separators before matching so a quota response without an explicit 429
   // still reaches the next configured model.
   const normalizedOutput = output.replace(/[_-]+/g, " ");
+  if (/\b(?:401|403|unauthorized|forbidden|invalid api key|authentication failed)\b/i.test(normalizedOutput)) return null;
   if (/\b(?:quota|resource exhausted|insufficient quota|daily limit|usage limit|out of extra usage|model cooldown|cooling down|capacity on this model)\b/i.test(normalizedOutput)) return "quota";
   if (/\b(?:rate\s*limit|too many requests|429)\b/i.test(normalizedOutput)) return "rate_limit";
   if (FALLBACK_ERROR_PATTERNS.some((pattern) => pattern.test(normalizedOutput))) return "model_unavailable";
+  // OCR does not guarantee a stable provider error code. Once the preview
+  // passed, an opaque review failure is still a model/provider failure worth
+  // retrying with the next configured model. Keep infrastructure-only preview
+  // failures out of the fallback path unless their output matched above.
+  if (!result.previewFailed) return "review_failed";
   return null;
 }
 
@@ -65,8 +71,10 @@ export function shouldFallback(result, currentModel, fallbackModel) {
 
 export function failureCategory(result) {
   if (!result || result.code === 0) return null;
+  const reason = fallbackReason(result);
+  if (reason) return reason;
   if (result?.previewFailed) return "preview_failed";
-  return fallbackReason(result) || "review_failed";
+  return "review_failed";
 }
 
 export function reviewOutcome(findings) {
@@ -89,7 +97,7 @@ export function formatProgressSummary({ stage, model, fallbackModel, reason, mod
     case "reviewing":
       return `🔍 Reviewing ${shaText}${modelText}...`;
     case "switching":
-      return `🔁 ${model ? `\`${model}\`` : "Primary model"} ${reason === "model_unavailable" ? "unavailable" : reason === "rate_limit" ? "rate-limited" : "quota unavailable"}, switching to ${fallbackModel ? `\`${fallbackModel}\`` : "the fallback model"}...`;
+      return `🔁 ${model ? `\`${model}\`` : "Primary model"} ${reason === "model_unavailable" ? "unavailable" : reason === "rate_limit" ? "rate-limited" : reason === "review_failed" ? "failed" : "quota unavailable"}, switching to ${fallbackModel ? `\`${fallbackModel}\`` : "the fallback model"}...`;
     case "complete":
       {
         const findingCount = Number.isFinite(Number(findings)) ? Number(findings) : 0;

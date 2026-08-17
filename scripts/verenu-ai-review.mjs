@@ -278,9 +278,8 @@ async function previewOk(cwd, pr, providerEnvVars, ocrHome) {
   const result = await runOcrAt(cwd, ["review", "--from", pr.base.sha, "--to", pr.head.sha, "--preview"], providerEnvVars, ocrHome);
   if (result.code !== 0) {
     console.log(`ocr preview check failed at ${cwd}: exit ${result.code}: ${result.stderr.slice(0, 300)}`);
-    return false;
   }
-  return true;
+  return result;
 }
 
 function ocrReviewArgs({ baseSha, headSha, model, background }) {
@@ -336,11 +335,10 @@ async function reviewWithQuarantinedWorktree(pr, args, providerEnvVars, ocrHome)
       writeFileSync(dest, content);
     }
 
-    if (!(await previewOk(quarantineDir, pr, providerEnvVars, ocrHome))) {
+    const previewResult = await previewOk(quarantineDir, pr, providerEnvVars, ocrHome);
+    if (previewResult.code !== 0) {
       return {
-        code: 1,
-        stdout: "",
-        stderr: "ocr preview check failed in the quarantined worktree; aborting before the billed review",
+        ...previewResult,
         previewFailed: true,
       };
     }
