@@ -82,12 +82,16 @@ test("quota, rate-limit, and model-unavailable failures are fallback eligible", 
   }
 });
 
-test("unrelated failures, preview failures, and successful reviews do not fallback", () => {
+test("opaque review failures fallback, while infrastructure preview failures do not", () => {
   assert.equal(fallbackReason({ code: 1, stderr: "401 unauthorized" }), null);
-  assert.equal(shouldFallback({ code: 1, stderr: "timeout" }, DEFAULT_MODEL, DEFAULT_FALLBACK_MODEL), false);
-  assert.equal(shouldFallback({ code: 1, previewFailed: true, stderr: "429" }, DEFAULT_MODEL, DEFAULT_FALLBACK_MODEL), false);
+  assert.equal(fallbackReason({ code: 1, stderr: "timeout" }), "review_failed");
+  assert.equal(shouldFallback({ code: 1, stderr: "timeout" }, DEFAULT_MODEL, DEFAULT_FALLBACK_MODEL), true);
+  assert.equal(shouldFallback({ code: 1, previewFailed: true, stderr: "429" }, DEFAULT_MODEL, DEFAULT_FALLBACK_MODEL), true);
+  assert.equal(shouldFallback({ code: 1, previewFailed: true, stderr: "model unavailable" }, DEFAULT_MODEL, DEFAULT_FALLBACK_MODEL), true);
+  assert.equal(shouldFallback({ code: 1, previewFailed: true, stderr: "fatal: bad object" }, DEFAULT_MODEL, DEFAULT_FALLBACK_MODEL), false);
   assert.equal(shouldFallback({ code: 0, stderr: "quota exceeded" }, DEFAULT_MODEL, DEFAULT_FALLBACK_MODEL), false);
   assert.equal(failureCategory({ code: 1, previewFailed: true }), "preview_failed");
+  assert.equal(failureCategory({ code: 1, previewFailed: true, stderr: "model unavailable" }), "model_unavailable");
   assert.equal(failureCategory({ code: 1, stderr: "401 unauthorized" }), "review_failed");
   assert.equal(failureCategory({ code: 0, stderr: "success" }), null);
 });
