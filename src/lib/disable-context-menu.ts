@@ -8,10 +8,21 @@
  * refusal. Contexts.svelte uses preventDefault() for its color picker, which
  * must remain available.
  */
-export function disableBrowserContextMenu() {
-  document.addEventListener('contextmenu', (event) => {
+let contextMenuHandler: ((event: MouseEvent) => void) | null = null;
+
+export function disableBrowserContextMenu(): () => void {
+  if (contextMenuHandler) return () => {};
+
+  contextMenuHandler = (event) => {
     if (!event.defaultPrevented) {
       event.preventDefault();
     }
-  });
+  };
+  document.addEventListener('contextmenu', contextMenuHandler);
+
+  return () => {
+    if (!contextMenuHandler) return;
+    document.removeEventListener('contextmenu', contextMenuHandler);
+    contextMenuHandler = null;
+  };
 }
