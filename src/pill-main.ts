@@ -1,7 +1,10 @@
 import { mount } from 'svelte';
 import PillApp from './PillApp.svelte';
 import { invoke } from './lib/tauri';
+import { disableBrowserContextMenu } from './lib/disable-context-menu';
 import './theme.css';
+
+disableBrowserContextMenu();
 
 type AppearanceMode = 'system' | 'light' | 'dark';
 type EffectiveTheme = 'light' | 'dark';
