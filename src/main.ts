@@ -5,7 +5,7 @@ import { disableBrowserContextMenu } from './lib/disable-context-menu';
 import './theme.css';
 import './app.css';
 
-void disableBrowserContextMenu();
+disableBrowserContextMenu(); // The app webview lives until the process exits.
 
 const app = mount(App, {
   target: document.getElementById('app') as HTMLElement,
