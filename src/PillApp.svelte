@@ -1526,7 +1526,6 @@
     padding: 2px 8px;
     white-space: nowrap;
     text-shadow: 0 1px 2px rgba(0,0,0,0.35);
-    box-shadow: 0 2px 6px rgba(0,0,0,0.18);
     animation: chipIn 0.18s ease-out both;
   }
   @keyframes chipIn {
@@ -1560,7 +1559,7 @@
     gap: 8px;
     background: var(--pill-bg);
     color: var(--pill-fg);
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.08) inset, 0 10px 28px rgba(0,0,0,0.38);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.08) inset;
   }
   .feedback-card {
     width: auto;
@@ -1918,8 +1917,7 @@
     background: var(--pill-error-bg);
     color: var(--pill-error-fg);
     border-radius: 17px;
-    box-shadow: 0 0 0 1px var(--pill-error-border),
-                0 2px 8px rgba(0,0,0,0.32);
+    box-shadow: 0 0 0 1px var(--pill-error-border);
     overflow: hidden;
     /* No overshoot here — a bouncy curve makes the measured content
        transiently exceed its target mid-transition, which chases the native
@@ -2054,8 +2052,7 @@
     background: var(--pill-error-bg);
     color: var(--pill-error-fg);
     border-radius: 999px;
-    box-shadow: 0 0 0 1px var(--pill-error-border),
-                0 2px 8px rgba(0,0,0,0.32);
+    box-shadow: 0 0 0 1px var(--pill-error-border);
     width: 128px;
     overflow: hidden;
     /* No overshoot — see .pill.error's transition comment. */
