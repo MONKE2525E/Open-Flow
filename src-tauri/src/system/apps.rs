@@ -215,9 +215,48 @@ fn is_user_facing_app(app: &InstalledApp) -> bool {
         "start menu experience host",
         "windows input experience",
         "windows security notification",
+        // Redistributables, runtimes, SDKs, drivers, updaters — installed
+        // dependencies, not apps a user would ever pick for a Context.
+        "redistributable",
+        "runtime library",
+        ".net runtime",
+        ".net sdk",
+        ".net desktop runtime",
+        ".net core",
+        "visual c++",
+        "visual studio installer",
+        "webview2",
+        "directx",
+        " driver",
+        " update",
+        " updater",
     ];
 
-    !CLUTTER_NAME_PARTS.iter().any(|part| name.contains(part))
+    if CLUTTER_NAME_PARTS.iter().any(|part| name.contains(part)) {
+        return false;
+    }
+
+    !looks_like_installer_junk(&name)
+}
+
+/// Some installers register an Uninstall entry whose DisplayName embeds a
+/// build hash (e.g. "Antigravitysetup Stable Ecfbad74d93962fc8ca485d93ab9..."),
+/// which is meaningless to search by and often duplicates the real app entry.
+/// Detected as any run of 16+ contiguous hex characters in the name.
+#[cfg(windows)]
+fn looks_like_installer_junk(name: &str) -> bool {
+    let mut run = 0usize;
+    for ch in name.chars() {
+        if ch.is_ascii_hexdigit() {
+            run += 1;
+            if run >= 16 {
+                return true;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    false
 }
 
 #[cfg(windows)]
