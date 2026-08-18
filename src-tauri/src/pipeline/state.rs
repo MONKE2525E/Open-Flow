@@ -629,6 +629,14 @@ pub(super) fn emit_provider_recheck(app: &AppHandle) {
     app.emit("verenu:recheck-provider-status", ()).ok();
 }
 
+/// Tells the frontend to re-check connectivity immediately because a pipeline
+/// call just failed with a connection error. The frontend re-runs its
+/// `check_connectivity` poll so the persistent "No internet connection" toast
+/// appears right away instead of on the next 60s interval.
+pub(super) fn emit_connectivity_recheck(app: &AppHandle) {
+    app.emit("verenu:recheck-connectivity", ()).ok();
+}
+
 /// Returns true if our own process currently owns the foreground window.
 /// Catches the case where the user opened the Verenu main window while
 /// transcribing — if we tried to Ctrl+V / Cmd+V in that state the paste would

@@ -150,6 +150,7 @@
     let mounted = true;
     let cleanupFn: (() => void) | undefined;
     let stopNotificationClickListener: (() => void) | undefined;
+    let stopConnectivityRecheckListener: (() => void) | undefined;
     let stopSettingsImportedListener: (() => void) | undefined;
     let stopAutomaticUpdateChecks: (() => void) | undefined;
     let stopLocalSttListeners: (() => void) | undefined;
@@ -231,6 +232,20 @@
       })
       .catch((error) => { console.warn('Failed to listen for notification clicks:', error); });
 
+    // The backend fires this after a transcription request fails with a
+    // connection error and it has actively confirmed the connection is down —
+    // re-ping immediately so the persistent offline toast shows up now instead
+    // of on the next 60s interval.
+    listen('verenu:recheck-connectivity', () => void pingConnectivity())
+      .then((unlisten) => {
+        if (!mounted) {
+          unlisten();
+          return;
+        }
+        stopConnectivityRecheckListener = unlisten;
+      })
+      .catch((error) => { console.warn('Failed to listen for connectivity rechecks:', error); });
+
     // Synchronous: startAutomaticUpdateChecks fires its first check in the
     // background and returns the cleanup immediately, so there's no unmount
     // race to guard and the interval is always registered before we return.
@@ -280,6 +295,7 @@
       mounted = false;
       if (cleanupFn) cleanupFn();
       if (stopNotificationClickListener) stopNotificationClickListener();
+      if (stopConnectivityRecheckListener) stopConnectivityRecheckListener();
       if (stopSettingsImportedListener) stopSettingsImportedListener();
       if (stopAutomaticUpdateChecks) stopAutomaticUpdateChecks();
       if (stopLocalSttListeners) stopLocalSttListeners();
