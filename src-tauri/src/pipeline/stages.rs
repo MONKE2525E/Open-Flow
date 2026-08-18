@@ -593,6 +593,22 @@ pub(super) async fn transcribe_any(
     .await
 }
 
+/// Active connectivity disambiguation: returns true when the user's own
+/// connection is down (not just one provider). Reads the Verenu service-check
+/// preference so the probe honors "don't contact Verenu" — falling back to
+/// google.com when Verenu checks are disabled, or when Verenu itself is the
+/// thing that's unreachable.
+async fn confirm_offline(app: &AppHandle) -> bool {
+    let checks_enabled = store::settings_snapshot(app)
+        .map(|s| {
+            s.get(store::VERENU_SERVICE_CHECKS_ENABLED)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true)
+        })
+        .unwrap_or(true);
+    crate::system::connectivity::confirm_offline(checks_enabled).await
+}
+
 pub(super) async fn run_transcription(
     app: &AppHandle,
     audio: &CapturedAudio,
@@ -632,6 +648,20 @@ pub(super) async fn run_transcription(
                 gen,
                 trim_err(&error.to_string())
             );
+            // Every provider in the chain just failed to be reached (a
+            // connect error, not an HTTP rejection). Before blaming the
+            // provider or showing a generic "nothing transcribed", actively
+            // probe whether the user's own connection is down so a dropped
+            // network reads as exactly that instead of a confusing error.
+            if crate::api::is_connectivity_error(&error) && confirm_offline(app).await {
+                emit_connectivity_recheck(app);
+                show_error_pill(
+                    app,
+                    "No internet connection — check your network and try again.",
+                )
+                .await;
+                return None;
+            }
             if crate::api::is_retryable_provider_error(&error) {
                 emit_provider_recheck(app);
             }
@@ -687,6 +717,7 @@ async fn run_dual_transcription_candidates(
     let mut next_index = 0usize;
     let mut in_flight = tokio::task::JoinSet::<CandidateOutcome>::new();
     let mut successes = Vec::<(usize, String, String, String)>::new();
+    let mut last_err: Option<anyhow::Error> = None;
 
     while next_index < chain.len() && in_flight.len() < 2 {
         spawn_transcription_candidate(
@@ -734,6 +765,7 @@ async fn run_dual_transcription_candidates(
                     model,
                     trim_err(&error.to_string())
                 );
+                last_err = Some(error);
             }
             Err(error) => {
                 log::warn!("pipeline: dual transcription task failed error={error}");
@@ -758,6 +790,12 @@ async fn run_dual_transcription_candidates(
     successes.sort_by_key(|(index, _, _, _)| *index);
     let Some((_, primary_text, primary_provider, primary_model)) = successes.first().cloned()
     else {
+        // Preserve the underlying provider error when one exists, so a
+        // connectivity outage can be detected upstream instead of being
+        // flattened into a generic "nothing transcribed".
+        if let Some(error) = last_err {
+            return Err(error);
+        }
         anyhow::bail!("Nothing transcribed - please try speaking more clearly");
     };
     let alternate = successes
