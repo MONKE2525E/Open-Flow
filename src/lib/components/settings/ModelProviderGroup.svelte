@@ -395,11 +395,7 @@
 
   .add-fallback-btn {
     appearance: none;
-    background: transparent;
-    border: 1px solid var(--line);
-    padding: 2px 7px;
-    font: inherit;
-    color: inherit;
+    line-height: 1.4;
     cursor: pointer;
   }
 
