@@ -289,11 +289,78 @@ fn cached_caption_icons(theme: IconTheme) -> (isize, isize) {
     let transparent = *TRANSPARENT.get_or_init(|| make_transparent_hicon(16));
     let real = match theme {
         IconTheme::Dark => *DARK_REAL
-            .get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Dark, 256).rgba(), 256)),
-        IconTheme::Light => *LIGHT_REAL
-            .get_or_init(|| make_hicon(runtime_icon_image(IconTheme::Light, 256).rgba(), 256)),
+            .get_or_init(|| make_hicon(windows_taskbar_icon_image(IconTheme::Dark, 256).rgba(), 256)),
+        IconTheme::Light => *LIGHT_REAL.get_or_init(|| {
+            make_hicon(windows_taskbar_icon_image(IconTheme::Light, 256).rgba(), 256)
+        }),
     };
     (transparent, real)
+}
+
+/// The taskbar/Alt+Tab logo, drawn separately from [`runtime_icon_image`] (which the
+/// tray uses) so the two can be scaled independently.
+///
+/// They were the same function, and that made the taskbar unfixable without breaking
+/// the tray: the tray's glyph is tuned for a dark tile that blends into the shell,
+/// where it reads as correctly inset, but the same proportions in the taskbar's cream
+/// tile look small, flat, and low. Verified by capturing the live taskbar: the shell
+/// renders THIS icon (via `WM_SETICON`/`ICON_BIG`), not the exe's embedded `icon.ico`,
+/// because `ICON_SMALL`/`ICON_SMALL2` are deliberately transparent here.
+///
+/// Geometry is kept in step with `icons/icon-source-windows.svg`, which generates that
+/// `icon.ico`, so Explorer and the taskbar show the same logo. What is locked to the tray
+/// is the bar *height ratios*, not the silhouette: the tray's glyph is 1.31:1, so merely
+/// scaling it up runs the short outer bars into the tile's side margins before the tall
+/// middle bar fills the height, and it still reads as a small mark on a white card. The
+/// gaps are tightened and the glyph grown vertically instead, yielding a near-square
+/// 71.9% x 69.7% glyph with centre-y at 47.3% (the bars share a baseline, so true
+/// bounding-box centring reads as low).
+#[cfg(target_os = "windows")]
+fn windows_taskbar_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'static> {
+    let mut rgba = vec![0_u8; (size * size * 4) as usize];
+    let background = match theme {
+        IconTheme::Light => [249, 247, 243, 255],
+        IconTheme::Dark => [20, 17, 14, 255],
+    };
+    let accent = [217, 119, 87, 255];
+
+    draw_rounded_rect(
+        &mut rgba,
+        size,
+        IconRect {
+            x: 0,
+            y: 0,
+            width: size,
+            height: size,
+            radius: scale(size, 96),
+        },
+        background,
+    );
+
+    // Mirrors the five <rect> bars in icons/icon-source-windows.svg on this 512 grid:
+    // bar 56, gap 22, tallest 357, shared baseline y = 421, glyph spans x 72..440, y 64..421.
+    for (x, y, width, height, radius) in [
+        (72, 301, 56, 120, 28),
+        (150, 181, 56, 240, 28),
+        (228, 64, 56, 357, 28),
+        (306, 215, 56, 206, 28),
+        (384, 315, 56, 106, 28),
+    ] {
+        draw_rounded_rect(
+            &mut rgba,
+            size,
+            IconRect {
+                x: scale(size, x),
+                y: scale(size, y),
+                width: scale(size, width),
+                height: scale(size, height),
+                radius: scale(size, radius),
+            },
+            accent,
+        );
+    }
+
+    tauri::image::Image::new_owned(rgba, size, size)
 }
 
 /// Builds a fully transparent square HICON (raw handle as `isize`, `0` on failure).
@@ -406,6 +473,240 @@ mod tests {
 #[cfg(not(target_os = "macos"))]
 fn runtime_tray_icon_image(theme: IconTheme, size: u32) -> tauri::image::Image<'static> {
     runtime_icon_image(theme, size)
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod windows_icon_tests {
+    #[cfg(target_os = "windows")]
+    use super::windows_taskbar_icon_image;
+    use super::{runtime_tray_icon_image, IconTheme};
+
+    /// Normalized accent-glyph bounds of an RGBA buffer, as fractions of the image:
+    /// `(width, height, centre_x, centre_y)`.
+    fn glyph_bounds(rgba: &[u8], size: u32) -> (f64, f64, f64, f64) {
+        let (mut l, mut t, mut r, mut b) = (size, size, 0_u32, 0_u32);
+        for y in 0..size {
+            for x in 0..size {
+                let i = ((y * size + x) * 4) as usize;
+                let (red, green, blue, alpha) = (
+                    rgba[i] as i32,
+                    rgba[i + 1] as i32,
+                    rgba[i + 2] as i32,
+                    rgba[i + 3],
+                );
+                // #d97757 is far redder than either tile colour; the tolerance
+                // lets antialiased edges in the .ico count too.
+                let _ = green;
+                if alpha > 128 && red > 140 && red - blue > 50 {
+                    l = l.min(x);
+                    t = t.min(y);
+                    r = r.max(x + 1);
+                    b = b.max(y + 1);
+                }
+            }
+        }
+        assert!(r > l && b > t, "no accent pixels found");
+        let s = f64::from(size);
+        (
+            f64::from(r - l) / s,
+            f64::from(b - t) / s,
+            (f64::from(l + r) / 2.0) / s,
+            (f64::from(t + b) / 2.0) / s,
+        )
+    }
+
+    /// Per-bar heights of the accent glyph, normalized so the tallest bar is 1.0.
+    ///
+    /// This — not the glyph's bounding-box aspect — is what makes the taskbar mark
+    /// read as the same logo as the tray. Bar width, gap and overall scale are
+    /// deliberately different between the two.
+    ///
+    /// Columns are grouped into contiguous runs of accent pixels; each run is one bar.
+    /// Only meaningful at 256px, where the bars are ~28px wide with ~11px gaps and so
+    /// cannot merge — at 32px a gap is one pixel and antialiasing bridges it.
+    fn bar_height_ratios(rgba: &[u8], size: u32) -> Vec<f64> {
+        let column_height = |x: u32| -> u32 {
+            let (mut top, mut bottom) = (size, 0_u32);
+            for y in 0..size {
+                let i = ((y * size + x) * 4) as usize;
+                let (red, blue, alpha) = (rgba[i] as i32, rgba[i + 2] as i32, rgba[i + 3]);
+                if alpha > 128 && red > 140 && red - blue > 50 {
+                    top = top.min(y);
+                    bottom = bottom.max(y + 1);
+                }
+            }
+            bottom.saturating_sub(top)
+        };
+
+        let mut bars = Vec::new();
+        let mut run: Option<u32> = None;
+        for x in 0..size {
+            match (column_height(x), run) {
+                (0, Some(max)) => {
+                    bars.push(max);
+                    run = None;
+                }
+                (0, None) => {}
+                (h, Some(max)) => run = Some(max.max(h)),
+                (h, None) => run = Some(h),
+            }
+        }
+        if let Some(max) = run {
+            bars.push(max);
+        }
+        let tallest = f64::from(*bars.iter().max().expect("no accent bars found"));
+        bars.into_iter().map(|h| f64::from(h) / tallest).collect()
+    }
+
+    /// Asserts a glyph's bar height ratios match the tray's, sampled at 256px so the
+    /// bars are resolvable. Everything else about the taskbar glyph — bar width, gap,
+    /// overall scale — is allowed to differ.
+    fn assert_matches_tray_ratios(label: &str, actual: &[f64]) {
+        let tray = bar_height_ratios(runtime_tray_icon_image(IconTheme::Dark, 256).rgba(), 256);
+        assert_eq!(
+            actual.len(),
+            tray.len(),
+            "{label}: expected {} bars, found {}",
+            tray.len(),
+            actual.len()
+        );
+        for (i, (a, t)) in actual.iter().zip(tray.iter()).enumerate() {
+            assert!(
+                (a - t).abs() <= 0.03,
+                "{label}: bar {i} height ratio {a:.3} drifted from the tray's {t:.3}"
+            );
+        }
+    }
+
+    /// Pulls one frame out of `icon.ico` by its pixel size. Frames are PNG-encoded
+    /// by `scripts/generate-icons.ps1`, so this also proves the file really holds
+    /// what we think it does rather than trusting the generator.
+    fn ico_frame(bytes: &[u8], want: u32) -> Vec<u8> {
+        let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+        for i in 0..count {
+            let e = 6 + 16 * i;
+            let size = if bytes[e] == 0 { 256 } else { u32::from(bytes[e]) };
+            if size != want {
+                continue;
+            }
+            let len = u32::from_le_bytes([bytes[e + 8], bytes[e + 9], bytes[e + 10], bytes[e + 11]])
+                as usize;
+            let off = u32::from_le_bytes([
+                bytes[e + 12],
+                bytes[e + 13],
+                bytes[e + 14],
+                bytes[e + 15],
+            ]) as usize;
+            let data = &bytes[off..off + len];
+            assert_eq!(
+                &data[0..4],
+                &[0x89, b'P', b'N', b'G'],
+                "ico frame {want} is not PNG-encoded"
+            );
+            return data.to_vec();
+        }
+        panic!("icon.ico has no {want}x{want} frame");
+    }
+
+    /// Windows draws two independently-produced logos for this app: the tray uses
+    /// [`runtime_tray_icon_image`], while Explorer and the pinned-but-not-running
+    /// taskbar button render the exe's embedded `icon.ico`. Nothing links them, and
+    /// they have drifted twice.
+    ///
+    /// This checks the FINAL raster, not source coordinates — so it also proves
+    /// `scripts/generate-icons.ps1` was actually re-run after the SVG changed.
+    ///
+    /// The taskbar glyph is deliberately NOT a scaled copy of the tray's. The tray sits
+    /// on a dark tile that blends into the shell; this cream tile reads as a hard edge,
+    /// and a tray-proportioned glyph looked stranded on a white card. Scaling the tray up
+    /// does not fix that either — its 1.31:1 silhouette runs the short outer bars into the
+    /// side margins before the tall middle bar fills the height. What must hold is that
+    /// the bar height RATIOS are unchanged and the glyph is optically centred.
+    #[test]
+    fn taskbar_ico_is_centered_and_keeps_tray_bar_ratios() {
+        let ico = include_bytes!("../icons/icon.ico");
+        let decode = |want: u32| {
+            let decoded =
+                image::load_from_memory_with_format(&ico_frame(ico, want), image::ImageFormat::Png)
+                    .expect("decode icon.ico frame")
+                    .to_rgba8();
+            assert_eq!((decoded.width(), decoded.height()), (want, want));
+            decoded
+        };
+
+        // Ratios are measured at 256px: at 32px a gap is one pixel and antialiasing
+        // bridges the bars into one blob.
+        let large = decode(256);
+        assert_matches_tray_ratios("icon.ico", &bar_height_ratios(large.as_raw(), 256));
+
+        // Size envelope and centring are checked on the 32px frame, the one the shell
+        // actually picks at normal DPI, so rounding there cannot hide a regression.
+        let small = decode(32);
+        let (w, h, cx, cy) = glyph_bounds(small.as_raw(), 32);
+        assert!(
+            (0.69..=0.76).contains(&w),
+            "taskbar glyph width {w:.3} outside 0.69..0.76"
+        );
+        assert!(
+            (0.66..=0.73).contains(&h),
+            "taskbar glyph height {h:.3} outside 0.66..0.73"
+        );
+        assert!(
+            (cx - 0.5).abs() <= 0.02,
+            "taskbar glyph is not horizontally centred: cx {cx:.3}"
+        );
+        // The bars share a baseline, so visual mass sits low; centre-or-slightly-high
+        // reads as balanced, centre-or-low does not.
+        assert!(
+            (0.44..=0.50).contains(&cy),
+            "taskbar glyph centre-y {cy:.3} should sit just above centre (0.44..0.50)"
+        );
+    }
+
+    /// The shell draws the taskbar button of a RUNNING window from `WM_SETICON`/`ICON_BIG`,
+    /// i.e. from [`windows_taskbar_icon_image`] — NOT from `icon.ico` (confirmed by capturing
+    /// the live taskbar and matching its centre-y against both candidates). So this is the
+    /// function whose geometry actually decides how the taskbar looks while Verenu is open,
+    /// and it must stay in step with the `.ico` above, or the icon visibly changes shape the
+    /// moment the app starts.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn taskbar_hicon_matches_the_ico_geometry() {
+        let size = 256_u32;
+        let taskbar = windows_taskbar_icon_image(IconTheme::Light, size);
+        let (w, h, cx, cy) = glyph_bounds(taskbar.rgba(), size);
+
+        assert_matches_tray_ratios("taskbar hicon", &bar_height_ratios(taskbar.rgba(), size));
+
+        // Deliberately taller and squarer than the tray, which is 65.6% x 50.0%.
+        assert!(
+            (0.70..=0.74).contains(&w),
+            "taskbar hicon width {w:.3} outside 0.70..0.74"
+        );
+        assert!(
+            (0.68..=0.72).contains(&h),
+            "taskbar hicon height {h:.3} outside 0.68..0.72"
+        );
+        assert!(
+            (cx - 0.5).abs() <= 0.02,
+            "taskbar hicon not horizontally centred: cx {cx:.3}"
+        );
+        assert!(
+            (0.44..=0.50).contains(&cy),
+            "taskbar hicon centre-y {cy:.3} sits too low (was 0.555 when shared with the tray)"
+        );
+    }
+
+    /// The tray is deliberately frozen; this pins its rendered geometry so a future
+    /// taskbar tweak cannot silently move it again.
+    #[test]
+    fn tray_geometry_is_unchanged() {
+        let (w, h, cx, cy) = glyph_bounds(runtime_tray_icon_image(IconTheme::Dark, 32).rgba(), 32);
+        assert!((w - 0.656).abs() < 0.02, "tray glyph width changed: {w:.3}");
+        assert!((h - 0.500).abs() < 0.02, "tray glyph height changed: {h:.3}");
+        assert!((cx - 0.484).abs() < 0.02, "tray centre-x changed: {cx:.3}");
+        assert!((cy - 0.531).abs() < 0.02, "tray centre-y changed: {cy:.3}");
+    }
 }
 
 fn resolve_icon_theme(app: &AppHandle, theme_hint: Option<Theme>) -> IconTheme {
