@@ -415,6 +415,28 @@ pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
         || msg.contains(" 504")
 }
 
+/// Whether an error indicates the request never reached a reachable server — a
+/// local connection/DNS failure rather than a provider returning an HTTP
+/// response. Used to decide when an active connectivity probe is warranted
+/// (distinguishing "your internet is down" from "a provider is down").
+pub fn is_connectivity_error(e: &anyhow::Error) -> bool {
+    for cause in e.chain() {
+        if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
+            if reqwest_err.is_connect() || reqwest_err.is_request() {
+                return true;
+            }
+        }
+    }
+
+    let msg = e.to_string().to_lowercase();
+    msg.contains("error sending request")
+        || msg.contains("dns error")
+        || msg.contains("connection reset")
+        || msg.contains("connection refused")
+        || msg.contains("network is unreachable")
+        || msg.contains("failed to resolve")
+}
+
 fn extract_http_status_code(msg: &str) -> Option<u16> {
     for marker in ["status=", "status:"] {
         if let Some(idx) = msg.find(marker) {
@@ -558,5 +580,25 @@ mod tests {
         let long = "x".repeat(300);
         let msg = super::user_facing_message(&long);
         assert!(msg.chars().count() <= 121);
+    }
+
+    #[test]
+    fn connectivity_error_detected_from_request_text() {
+        // The Display string reqwest produces for a failed `.send()` — no
+        // downcastable reqwest::Error in the chain here, only the message.
+        let err = anyhow::anyhow!(
+            "error sending request for url (https://api.groq.com/openai/v1/audio/transcriptions)"
+        );
+        assert!(super::is_connectivity_error(&err));
+    }
+
+    #[test]
+    fn connectivity_error_not_detected_for_http_rejection() {
+        // A provider that answered with an HTTP error is reachable — this is
+        // not a connectivity problem and must not trigger an offline probe.
+        let err = anyhow::anyhow!(
+            "Transcription API error provider=Groq status=400 request_id=req body_preview=bad request"
+        );
+        assert!(!super::is_connectivity_error(&err));
     }
 }

@@ -111,3 +111,35 @@ pub fn check_native() -> Option<bool> {
 pub fn check_native() -> Option<bool> {
     None
 }
+
+/// Active connectivity probe, used only after a real request has already
+/// failed, to distinguish "the user's internet is down" from "one provider is
+/// down". Unlike [`check_native`] this actually sends a request, so it costs a
+/// little traffic and is deliberately gated to the failure path.
+///
+/// Ordering follows the privacy preference: probe Verenu's own endpoint first
+/// when service checks are enabled, then google.com as an independent second
+/// opinion — covering both "Verenu is down but the user is fine" and the case
+/// where the user disabled Verenu checks entirely. Returns true only when
+/// every attempted probe failed (i.e. the connection itself is the problem).
+pub async fn confirm_offline(verenu_checks_enabled: bool) -> bool {
+    const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+
+    if verenu_checks_enabled && probe("https://api.verenu.com/v1/health", PROBE_TIMEOUT).await {
+        return false;
+    }
+    !probe("https://www.google.com", PROBE_TIMEOUT).await
+}
+
+/// A probe counts as "online" when any HTTP response arrives at all — even a
+/// 4xx/5xx proves the host was reachable, which is all a connectivity check
+/// needs. Only a failed send (DNS/connect error, timeout) reads as "offline".
+async fn probe(url: &str, timeout: std::time::Duration) -> bool {
+    crate::api::client::get()
+        .get(url)
+        .header("User-Agent", "verenu")
+        .timeout(timeout)
+        .send()
+        .await
+        .is_ok()
+}
