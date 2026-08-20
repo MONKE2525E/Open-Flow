@@ -37,12 +37,15 @@ typedef struct VerenuMacosContextProbeResult {
     int source;
     int selection_state;
     int pid;
+    int left_reliable;
+    int right_reliable;
     char control_type[64];
     char role[64];
     char subrole[64];
     char identifier[128];
     char title[160];
-    char tail[256];
+    char tail[512];
+    char head[512];
 } VerenuMacosContextProbeResult;
 
 static void of_zero_result(VerenuMacosContextProbeResult *out_result) {
@@ -221,14 +224,18 @@ static void of_set_control_type(
     }
 }
 
-static bool of_copy_value_slice(
+static bool of_copy_value_slices(
     AXUIElementRef element,
-    CFIndex caret_location,
-    int lookbehind_chars,
-    char *dest,
-    size_t capacity
+    CFIndex selection_start,
+    CFIndex selection_end,
+    int context_chars,
+    char *tail_dest,
+    size_t tail_capacity,
+    char *head_dest,
+    size_t head_capacity,
+    bool *out_field_empty
 ) {
-    if (caret_location < 0) {
+    if (selection_start < 0 || selection_end < selection_start) {
         return false;
     }
 
@@ -241,21 +248,41 @@ static bool of_copy_value_slice(
     if (CFGetTypeID(value) == CFStringGetTypeID()) {
         CFStringRef full_value = (CFStringRef)value;
         CFIndex full_length = CFStringGetLength(full_value);
+        if (out_field_empty != NULL) {
+            *out_field_empty = full_length == 0;
+        }
         if (full_length == 0) {
             ok = true;
-            dest[0] = '\0';
-        } else if (caret_location <= full_length) {
-            CFIndex start = caret_location - lookbehind_chars;
+            tail_dest[0] = '\0';
+            head_dest[0] = '\0';
+        } else if (selection_end <= full_length) {
+            CFIndex start = selection_start - context_chars;
             if (start < 0) {
                 start = 0;
             }
-            CFRange range = CFRangeMake(start, caret_location - start);
-            CFStringRef tail = CFStringCreateWithSubstring(kCFAllocatorDefault, full_value, range);
-            if (tail != NULL) {
-                of_write_cf_string(tail, dest, capacity);
-                CFRelease(tail);
-                ok = true;
+            CFIndex right_end = selection_end + context_chars;
+            if (right_end > full_length) {
+                right_end = full_length;
             }
+            CFStringRef tail = CFStringCreateWithSubstring(
+                kCFAllocatorDefault,
+                full_value,
+                CFRangeMake(start, selection_start - start)
+            );
+            CFStringRef head = CFStringCreateWithSubstring(
+                kCFAllocatorDefault,
+                full_value,
+                CFRangeMake(selection_end, right_end - selection_end)
+            );
+            if (tail != NULL) {
+                of_write_cf_string(tail, tail_dest, tail_capacity);
+                CFRelease(tail);
+            }
+            if (head != NULL) {
+                of_write_cf_string(head, head_dest, head_capacity);
+                CFRelease(head);
+            }
+            ok = tail != NULL && head != NULL;
         }
     }
 
@@ -276,13 +303,25 @@ static bool of_try_public_text_range(
     out_result->selection_state = (range.length > 0) ? OF_SELECTION_NON_COLLAPSED : OF_SELECTION_COLLAPSED;
     of_set_control_type(out_result, "cfrange");
 
-    if (range.length > 0) {
-        out_result->source = OF_SOURCE_AMBIGUOUS_SELECTION;
+    bool field_empty = false;
+    if (of_copy_value_slices(
+            element,
+            range.location,
+            range.location + range.length,
+            lookbehind_chars,
+            out_result->tail,
+            sizeof(out_result->tail),
+            out_result->head,
+            sizeof(out_result->head),
+            &field_empty)) {
+        out_result->left_reliable = 1;
+        out_result->right_reliable = 1;
+        out_result->source = field_empty ? OF_SOURCE_EMPTY_FIELD : OF_SOURCE_CARET_LOCAL;
         return true;
     }
 
-    if (range.location <= 0) {
-        out_result->source = OF_SOURCE_EMPTY_FIELD;
+    if (range.length > 0) {
+        out_result->source = OF_SOURCE_AMBIGUOUS_SELECTION;
         return true;
     }
 
@@ -304,6 +343,7 @@ static bool of_try_public_text_range(
             of_write_cf_string((CFStringRef)substring, out_result->tail, sizeof(out_result->tail));
             CFRelease(substring);
             if (out_result->tail[0] != '\0') {
+                out_result->left_reliable = 1;
                 out_result->source = OF_SOURCE_CARET_LOCAL;
                 return true;
             }
@@ -312,16 +352,82 @@ static bool of_try_public_text_range(
         }
     }
 
-    if (of_copy_value_slice(element, range.location, lookbehind_chars, out_result->tail, sizeof(out_result->tail))) {
-        if (out_result->tail[0] != '\0') {
-            out_result->source = OF_SOURCE_CARET_LOCAL;
-            return true;
-        }
-        out_result->source = OF_SOURCE_EMPTY_FIELD;
-        return true;
-    }
-
     return false;
+}
+
+static bool of_copy_marker_index(
+    AXUIElementRef element,
+    AXTextMarkerRef marker,
+    int64_t *out_index
+) {
+    if (marker == NULL || out_index == NULL) {
+        return false;
+    }
+    CFTypeRef value = of_copy_parameterized_attribute(
+        element,
+        kOFAXIndexForTextMarkerParameterizedAttribute,
+        marker
+    );
+    if (value == NULL || CFGetTypeID(value) != CFNumberGetTypeID()) {
+        if (value != NULL) {
+            CFRelease(value);
+        }
+        return false;
+    }
+    bool ok = CFNumberGetValue((CFNumberRef)value, kCFNumberSInt64Type, out_index);
+    CFRelease(value);
+    return ok;
+}
+
+static AXTextMarkerRef of_copy_marker_for_index(
+    AXUIElementRef element,
+    int64_t index
+) {
+    CFNumberRef number = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &index);
+    if (number == NULL) {
+        return NULL;
+    }
+    CFTypeRef value = of_copy_parameterized_attribute(
+        element,
+        kOFAXTextMarkerForIndexParameterizedAttribute,
+        number
+    );
+    CFRelease(number);
+    if (value == NULL || CFGetTypeID(value) != AXTextMarkerGetTypeID()) {
+        if (value != NULL) {
+            CFRelease(value);
+        }
+        return NULL;
+    }
+    return (AXTextMarkerRef)value;
+}
+
+static bool of_copy_marker_string(
+    AXUIElementRef element,
+    AXTextMarkerRef start,
+    AXTextMarkerRef end,
+    char *dest,
+    size_t capacity
+) {
+    AXTextMarkerRangeRef range = AXTextMarkerRangeCreate(kCFAllocatorDefault, start, end);
+    if (range == NULL) {
+        return false;
+    }
+    CFTypeRef value = of_copy_parameterized_attribute(
+        element,
+        kOFAXStringForTextMarkerRangeParameterizedAttribute,
+        range
+    );
+    CFRelease(range);
+    if (value == NULL || CFGetTypeID(value) != CFStringGetTypeID()) {
+        if (value != NULL) {
+            CFRelease(value);
+        }
+        return false;
+    }
+    of_write_cf_string((CFStringRef)value, dest, capacity);
+    CFRelease(value);
+    return true;
 }
 
 static bool of_try_text_marker_range(
@@ -346,133 +452,94 @@ static bool of_try_text_marker_range(
     out_result->selection_state = collapsed ? OF_SELECTION_COLLAPSED : OF_SELECTION_NON_COLLAPSED;
     of_set_control_type(out_result, "text_marker");
 
-    if (!collapsed) {
-        out_result->source = OF_SOURCE_AMBIGUOUS_SELECTION;
-        if (start_marker != NULL) {
-            CFRelease(start_marker);
-        }
-        if (end_marker != NULL) {
-            CFRelease(end_marker);
-        }
-        CFRelease(selected_range);
-        return true;
-    }
-
-    CFTypeRef index_value = of_copy_parameterized_attribute(
-        element,
-        kOFAXIndexForTextMarkerParameterizedAttribute,
-        start_marker
-    );
-    if (index_value == NULL || CFGetTypeID(index_value) != CFNumberGetTypeID()) {
-        if (index_value != NULL) {
-            CFRelease(index_value);
-        }
-        if (start_marker != NULL) {
-            CFRelease(start_marker);
-        }
-        if (end_marker != NULL) {
-            CFRelease(end_marker);
-        }
+    int64_t start_index = 0;
+    int64_t end_index = 0;
+    bool indices_ok = of_copy_marker_index(element, start_marker, &start_index)
+        && of_copy_marker_index(element, end_marker, &end_index);
+    if (!indices_ok || start_index < 0 || end_index < start_index) {
+        if (start_marker != NULL) CFRelease(start_marker);
+        if (end_marker != NULL) CFRelease(end_marker);
         CFRelease(selected_range);
         return false;
     }
 
-    int64_t caret_index = 0;
-    CFNumberGetValue((CFNumberRef)index_value, kCFNumberSInt64Type, &caret_index);
-    CFRelease(index_value);
-
-    if (caret_index <= 0) {
-        out_result->source = OF_SOURCE_EMPTY_FIELD;
-        if (start_marker != NULL) {
-            CFRelease(start_marker);
-        }
-        if (end_marker != NULL) {
-            CFRelease(end_marker);
-        }
+    bool field_empty = false;
+    if (of_copy_value_slices(
+            element,
+            (CFIndex)start_index,
+            (CFIndex)end_index,
+            lookbehind_chars,
+            out_result->tail,
+            sizeof(out_result->tail),
+            out_result->head,
+            sizeof(out_result->head),
+            &field_empty)) {
+        out_result->left_reliable = 1;
+        out_result->right_reliable = 1;
+        out_result->source = field_empty ? OF_SOURCE_EMPTY_FIELD : OF_SOURCE_CARET_LOCAL;
+        if (start_marker != NULL) CFRelease(start_marker);
+        if (end_marker != NULL) CFRelease(end_marker);
         CFRelease(selected_range);
         return true;
     }
 
-    int64_t lookbehind_index = caret_index - lookbehind_chars;
+    int64_t lookbehind_index = start_index - lookbehind_chars;
     if (lookbehind_index < 0) {
         lookbehind_index = 0;
     }
-
-    CFNumberRef lookbehind_number = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &lookbehind_index);
-    if (lookbehind_number == NULL) {
-        if (start_marker != NULL) {
-            CFRelease(start_marker);
-        }
-        if (end_marker != NULL) {
-            CFRelease(end_marker);
-        }
-        CFRelease(selected_range);
-        return false;
-    }
-
-    CFTypeRef lookbehind_marker_value = of_copy_parameterized_attribute(
-        element,
-        kOFAXTextMarkerForIndexParameterizedAttribute,
-        lookbehind_number
-    );
-    CFRelease(lookbehind_number);
-
-    if (lookbehind_marker_value == NULL || CFGetTypeID(lookbehind_marker_value) != AXTextMarkerGetTypeID()) {
-        if (lookbehind_marker_value != NULL) {
-            CFRelease(lookbehind_marker_value);
-        }
-        if (start_marker != NULL) {
-            CFRelease(start_marker);
-        }
-        if (end_marker != NULL) {
-            CFRelease(end_marker);
-        }
-        CFRelease(selected_range);
-        return false;
-    }
-
-    AXTextMarkerRangeRef lookbehind_range = AXTextMarkerRangeCreate(
-        kCFAllocatorDefault,
-        (AXTextMarkerRef)lookbehind_marker_value,
-        start_marker
-    );
-    CFRelease(lookbehind_marker_value);
-
-    if (lookbehind_range != NULL) {
-        CFTypeRef tail_value = of_copy_parameterized_attribute(
+    AXTextMarkerRef lookbehind_marker = start_index > 0
+        ? of_copy_marker_for_index(element, lookbehind_index)
+        : NULL;
+    bool tail_ok = start_index == 0;
+    if (lookbehind_marker != NULL) {
+        tail_ok = of_copy_marker_string(
             element,
-            kOFAXStringForTextMarkerRangeParameterizedAttribute,
-            lookbehind_range
-        );
-        CFRelease(lookbehind_range);
+            lookbehind_marker,
+            start_marker,
+            out_result->tail,
+            sizeof(out_result->tail)
+        ) && out_result->tail[0] != '\0';
+        CFRelease(lookbehind_marker);
+    }
+    out_result->left_reliable = tail_ok ? 1 : 0;
 
-        if (tail_value != NULL && CFGetTypeID(tail_value) == CFStringGetTypeID()) {
-            of_write_cf_string((CFStringRef)tail_value, out_result->tail, sizeof(out_result->tail));
-            CFRelease(tail_value);
-            if (out_result->tail[0] != '\0') {
-                out_result->source = OF_SOURCE_CARET_LOCAL;
-                if (start_marker != NULL) {
-                    CFRelease(start_marker);
-                }
-                if (end_marker != NULL) {
-                    CFRelease(end_marker);
-                }
-                CFRelease(selected_range);
-                return true;
-            }
-        } else if (tail_value != NULL) {
-            CFRelease(tail_value);
-        }
+    // One character is enough on the right: spacing depends on the immediate
+    // insertion edge, including whether it is whitespace or closing punctuation.
+    AXTextMarkerRef lookahead_marker = of_copy_marker_for_index(element, end_index + 1);
+    bool head_ok = true;
+    if (lookahead_marker != NULL) {
+        head_ok = of_copy_marker_string(
+            element,
+            end_marker,
+            lookahead_marker,
+            out_result->head,
+            sizeof(out_result->head)
+        ) && out_result->head[0] != '\0';
+        CFRelease(lookahead_marker);
+        out_result->right_reliable = head_ok ? 1 : 0;
+    } else {
+        out_result->head[0] = '\0';
+        out_result->right_reliable = 0;
     }
 
-    if (start_marker != NULL) {
-        CFRelease(start_marker);
+    // Index zero proves there is nothing before the caret only when the probe
+    // also proves the document continues on the right. With no AXValue and no
+    // readable lookahead, index zero may be a provider fallback rather than an
+    // empty field, so preserving the payload is safer than capitalizing it.
+    if (start_index == 0 && end_index == 0 && !out_result->right_reliable) {
+        out_result->left_reliable = 0;
     }
-    if (end_marker != NULL) {
-        CFRelease(end_marker);
+
+    if (out_result->left_reliable || out_result->right_reliable) {
+        out_result->source = OF_SOURCE_CARET_LOCAL;
+    } else {
+        out_result->source = collapsed ? OF_SOURCE_UNAVAILABLE : OF_SOURCE_AMBIGUOUS_SELECTION;
     }
+
+    if (start_marker != NULL) CFRelease(start_marker);
+    if (end_marker != NULL) CFRelease(end_marker);
     CFRelease(selected_range);
-    return false;
+    return true;
 }
 
 int verenu_macos_read_context_probe(

@@ -44,8 +44,7 @@
     noDevicesFound: 'No devices found',
   };
   let autostart = $state(false);
-  let contextualCaps = $state(true);
-  let autoSpacing = $state(true);
+  let contextualFormatting = $state(true);
   let capsLockUppercase = $state(false);
   let hotkey = $state(defaultHotkey);
   let recordingHotkey = $state(false);
@@ -171,8 +170,7 @@
       invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
       invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
-      invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
-      invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
+      invoke<boolean | null>('get_setting', { key: 'contextual_formatting_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'caps_lock_uppercase_enabled' }),
       invoke<string[]>('get_microphones'),
       invoke<string | null>('get_setting', { key: 'microphone_device' }),
@@ -184,9 +182,8 @@
 
     autostart = val<boolean | null>(0, null) ?? false;
     appStore.cleanupEnabled = val<boolean | null>(5, null) ?? true;
-    contextualCaps = val<boolean | null>(6, null) ?? true;
-    autoSpacing = val<boolean | null>(7, null) ?? true;
-    capsLockUppercase = val<boolean | null>(8, null) ?? false;
+    contextualFormatting = val<boolean | null>(6, null) ?? true;
+    capsLockUppercase = val<boolean | null>(7, null) ?? false;
 
     const hk = val<string[] | null>(1, null);
     if (hk && hk.length === 2) hotkey = hk;
@@ -209,9 +206,9 @@
     }
     initialLanguageLoaded = true;
 
-    microphones = val<string[]>(9, []);
-    selectedMic = val<string | null>(10, null) ?? '';
-    appStore.legacyFeaturesEnabled = val<boolean | null>(11, null) ?? false;
+    microphones = val<string[]>(8, []);
+    selectedMic = val<string | null>(9, null) ?? '';
+    appStore.legacyFeaturesEnabled = val<boolean | null>(10, null) ?? false;
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
@@ -363,23 +360,13 @@
     if (e.key === 'Escape' && confirmCleanupOff) confirmCleanupOff = false;
   }
 
-  async function handleContextualCaps(value: boolean) {
-    contextualCaps = value;
+  async function handleContextualFormatting(value: boolean) {
+    contextualFormatting = value;
     try {
-      await saveSetting('contextual_caps_enabled', value);
+      await saveSetting('contextual_formatting_enabled', value);
     } catch (err) {
-      contextualCaps = !value;
-      console.error('save contextual_caps_enabled failed:', err);
-    }
-  }
-
-  async function handleAutoSpacing(value: boolean) {
-    autoSpacing = value;
-    try {
-      await saveSetting('auto_spacing_enabled', value);
-    } catch (err) {
-      autoSpacing = !value;
-      console.error('save auto_spacing_enabled failed:', err);
+      contextualFormatting = !value;
+      console.error('save contextual_formatting_enabled failed:', err);
     }
   }
 
@@ -766,12 +753,8 @@
   <Toggle checked={appStore.cleanupEnabled} onchange={handleCleanup} label="Cleanup" />
 </div>
 <div class="setting-row">
-  <div><div class="label">Contextual capitalization</div><div class="desc">Lowercases the first word when injecting mid-sentence</div></div>
-  <Toggle checked={contextualCaps} onchange={handleContextualCaps} label="Contextual capitalization" />
-</div>
-<div class="setting-row">
-  <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
-  <Toggle checked={autoSpacing} onchange={handleAutoSpacing} label="Automatic spacing" />
+  <div><div class="label">Smart spacing &amp; capitalization</div><div class="desc">Adjusts capitalization and spacing around inserted text when the cursor context is clear.</div></div>
+  <Toggle checked={contextualFormatting} onchange={handleContextualFormatting} label="Smart spacing and capitalization" />
 </div>
 <div class="setting-row">
   <div><div class="label">Automatic caps lock detection</div><div class="desc">When Caps Lock is on, output your dictation in ALL CAPS</div></div>

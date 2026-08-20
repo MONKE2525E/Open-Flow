@@ -50,7 +50,10 @@ type SettingsValueMap = {
   force_setup_on_launch: boolean;
   app_context_hint: boolean;
   auto_learn_enabled: boolean;
+  contextual_formatting_enabled: boolean;
+  /** @deprecated Compatibility mirror for one downgrade cycle. */
   contextual_caps_enabled: boolean;
+  /** @deprecated Compatibility mirror for one downgrade cycle. */
   auto_spacing_enabled: boolean;
   caps_lock_uppercase_enabled: boolean;
   clipboard_phrase_enabled: boolean;

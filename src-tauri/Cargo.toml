@@ -22,8 +22,20 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 
 serde       = { version = "1", features = ["derive"] }
 serde_json  = "1"
-tokio       = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
+tokio       = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util"] }
 reqwest     = { version = "0.12", default-features = false, features = ["json", "multipart", "native-tls", "charset"] }
+# LAN device sync: mDNS discovery (pure Rust, no system daemon) + a TLS
+# transport with self-signed per-device certificates. rustls uses the ring
+# provider so Windows builds don't need aws-lc-rs's NASM/CMake toolchain.
+mdns-sd          = "0.21"
+rustls           = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+tokio-rustls     = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+rcgen            = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+spake2           = "0.4"
+hkdf             = "0.12"
+chacha20poly1305 = "0.10"
+rand             = "0.8"
+uuid             = { version = "1", features = ["v4"] }
 bytes       = "1"
 cpal        = "0.15"
 rodio       = { version = "0.20", default-features = false }

@@ -175,6 +175,7 @@ mod tests {
             crate::data::store::CLEANUP_ENABLED,
             crate::data::store::NOISE_REDUCTION,
             crate::data::store::AUTO_SPACING,
+            crate::data::store::CONTEXTUAL_FORMATTING,
             crate::data::store::DUAL_TRANSCRIPTION_ENABLED,
         ] {
             assert!(

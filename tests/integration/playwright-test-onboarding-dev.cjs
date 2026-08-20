@@ -150,8 +150,7 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     // Smart processing is no longer a page of toggles — it is all on by default.
     for (const key of [
       'noise_reduction',
-      'contextual_caps_enabled',
-      'auto_spacing_enabled',
+      'contextual_formatting_enabled',
       'caps_lock_uppercase_enabled',
       'app_context_hint',
       'auto_learn_enabled',

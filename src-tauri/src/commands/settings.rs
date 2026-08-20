@@ -154,15 +154,30 @@ const SETTING_SPECS: &[SettingSpec] = &[
         true,
     ),
     setting_spec(store::SETUP_COMPLETE, SettingKind::Bool, true, false),
-    setting_spec(store::CLIPBOARD_PHRASE, SettingKind::StringOrNull, true, true),
-    setting_spec(store::CLIPBOARD_PHRASE_ENABLED, SettingKind::Bool, true, true),
-    setting_spec(store::LEGACY_FEATURES_ENABLED, SettingKind::Bool, true, true),
+    setting_spec(
+        store::CLIPBOARD_PHRASE,
+        SettingKind::StringOrNull,
+        true,
+        true,
+    ),
+    setting_spec(
+        store::CLIPBOARD_PHRASE_ENABLED,
+        SettingKind::Bool,
+        true,
+        true,
+    ),
+    setting_spec(
+        store::LEGACY_FEATURES_ENABLED,
+        SettingKind::Bool,
+        true,
+        true,
+    ),
     setting_spec(store::APP_CONTEXT_HINT, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_ENABLED, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_LEARN_EVENT_MODE, SettingKind::Bool, true, true),
-    setting_spec(store::MACOS_CLIPBOARD_SNIFF, SettingKind::Bool, true, true),
     setting_spec(store::CONTEXTUAL_CAPS, SettingKind::Bool, true, true),
     setting_spec(store::AUTO_SPACING, SettingKind::Bool, true, true),
+    setting_spec(store::CONTEXTUAL_FORMATTING, SettingKind::Bool, true, true),
     setting_spec(
         store::APPEARANCE_MODE,
         SettingKind::AppearanceMode,
@@ -420,7 +435,14 @@ pub async fn save_setting(
     let settings = store::settings_handle(&app)?;
     let key_clone = key.clone();
     run_blocking("save_setting", move || {
-        settings.save_value(key_clone, value)
+        if key_clone == store::CONTEXTUAL_FORMATTING {
+            settings.set(store::CONTEXTUAL_FORMATTING, value.clone())?;
+            settings.set(store::CONTEXTUAL_CAPS, value.clone())?;
+            settings.set(store::AUTO_SPACING, value)?;
+            settings.save()
+        } else {
+            settings.save_value(key_clone, value)
+        }
     })
     .await?;
 
@@ -484,6 +506,7 @@ pub struct AllSettings {
     pub auto_learn_enabled: Option<bool>,
     pub contextual_caps_enabled: Option<bool>,
     pub auto_spacing_enabled: Option<bool>,
+    pub contextual_formatting_enabled: Option<bool>,
     pub caps_lock_uppercase_enabled: Option<bool>,
     pub mic_gain: Option<f64>,
     pub history_retention: Option<String>,
@@ -551,6 +574,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         auto_learn_enabled: bool_val(store::AUTO_LEARN_ENABLED),
         contextual_caps_enabled: bool_val(store::CONTEXTUAL_CAPS),
         auto_spacing_enabled: bool_val(store::AUTO_SPACING),
+        contextual_formatting_enabled: bool_val(store::CONTEXTUAL_FORMATTING),
         caps_lock_uppercase_enabled: bool_val(store::CAPS_LOCK_UPPERCASE),
         mic_gain: f64_val(store::MIC_GAIN),
         history_retention: str_val(store::HISTORY_RETENTION),

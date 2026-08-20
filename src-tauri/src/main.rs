@@ -351,6 +351,9 @@ fn main() {
             let settings = crate::data::store::SettingsHandle::open(app.handle())
                 .map_err(std::io::Error::other)?;
             crate::data::credentials::migrate_from_store(app.handle(), &settings);
+            if let Err(error) = crate::data::store::migrate_contextual_formatting(&settings) {
+                log::warn!("Failed to migrate contextual formatting setting: {error}");
+            }
             let _first_launch = {
                 if let Some(val) = settings.get(crate::data::store::HOTKEY) {
                     if let Some(arr) = val.as_array() {

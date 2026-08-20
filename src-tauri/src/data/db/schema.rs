@@ -619,6 +619,19 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
             Ok(())
         })?;
     }
+    if user_version < 19 {
+        log::info!("db: migrating schema {user_version} -> 19");
+        run_migration(&mut conn, |conn| {
+            ensure_table_column(
+                conn,
+                "contexts",
+                "contextual_formatting_disabled",
+                "ALTER TABLE contexts ADD COLUMN contextual_formatting_disabled INTEGER NOT NULL DEFAULT 0 CHECK (contextual_formatting_disabled IN (0, 1));",
+            )?;
+            conn.execute_batch("PRAGMA user_version = 19;")?;
+            Ok(())
+        })?;
+    }
     ensure_cleanup_cache_schema(&conn)?;
     // Index only needed by existing databases: the SCHEMA above declares it
     // for fresh installs, and the v10 migration block adds it for databases

@@ -22,6 +22,7 @@ pub struct Context {
     pub cleanup_intensity: Option<String>,
     pub color: Option<String>,
     pub custom_instructions: Option<String>,
+    pub contextual_formatting_disabled: bool,
     /// `NULL` when unpinned. Pinned contexts sort newest-pin-first in the
     /// sidebar; Everywhere is pinned implicitly by the UI and never sets this.
     pub pinned_at: Option<String>,
@@ -55,9 +56,10 @@ fn context_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Context> {
         cleanup_intensity: row.get(5)?,
         color: row.get(6)?,
         custom_instructions: row.get(7)?,
-        pinned_at: row.get(8)?,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
+        contextual_formatting_disabled: row.get::<_, i64>(8)? != 0,
+        pinned_at: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
 }
 
@@ -123,7 +125,7 @@ pub fn everywhere_context_id(db: &Db) -> Result<i64> {
 pub fn query_contexts(db: &Db) -> Result<Vec<Context>> {
     let conn = lock_conn(db)?;
     let mut stmt = conn.prepare(
-        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, pinned_at, created_at, updated_at
+        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, contextual_formatting_disabled, pinned_at, created_at, updated_at
          FROM contexts
          ORDER BY id ASC",
     )?;
@@ -140,7 +142,7 @@ pub fn query_context(db: &Db, context_id: i64) -> Result<Context> {
 
 fn query_context_conn(conn: &rusqlite::Connection, context_id: i64) -> Result<Context> {
     conn.query_row(
-        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, pinned_at, created_at, updated_at
+        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, contextual_formatting_disabled, pinned_at, created_at, updated_at
          FROM contexts WHERE id = ?1",
         params![context_id],
         context_from_row,
@@ -155,6 +157,7 @@ pub fn insert_context_returning(
     tone: Option<&str>,
     cleanup_intensity: Option<&str>,
     custom_instructions: Option<&str>,
+    contextual_formatting_disabled: bool,
 ) -> Result<Context> {
     let normalized_name = normalize_context_name(name)?;
     if normalized_name.eq_ignore_ascii_case("Everywhere") {
@@ -172,13 +175,14 @@ pub fn insert_context_returning(
         anyhow::bail!("You've reached the limit of {MAX_USER_CONTEXTS} context groups");
     }
     conn.execute(
-        "INSERT INTO contexts (name, is_everywhere, icon, tone, cleanup_intensity, custom_instructions) VALUES (?1, 0, ?2, ?3, ?4, ?5)",
+        "INSERT INTO contexts (name, is_everywhere, icon, tone, cleanup_intensity, custom_instructions, contextual_formatting_disabled) VALUES (?1, 0, ?2, ?3, ?4, ?5, ?6)",
         params![
             normalized_name,
             normalize_optional_trimmed(icon),
             normalize_optional_trimmed(tone),
             normalize_optional_trimmed(cleanup_intensity),
             normalized_custom_instructions,
+            contextual_formatting_disabled,
         ],
     )?;
     let id = conn.last_insert_rowid();
@@ -208,17 +212,19 @@ pub fn update_context_settings(
     tone: Option<&str>,
     cleanup_intensity: Option<&str>,
     custom_instructions: Option<&str>,
+    contextual_formatting_disabled: bool,
 ) -> Result<()> {
     let normalized_custom_instructions = normalize_custom_instructions(custom_instructions)?;
     let conn = lock_conn(db)?;
     let changed = conn.execute(
-        "UPDATE contexts SET icon = ?2, tone = ?3, cleanup_intensity = ?4, custom_instructions = ?5, updated_at = datetime('now') WHERE id = ?1",
+        "UPDATE contexts SET icon = ?2, tone = ?3, cleanup_intensity = ?4, custom_instructions = ?5, contextual_formatting_disabled = ?6, updated_at = datetime('now') WHERE id = ?1",
         params![
             context_id,
             normalize_optional_trimmed(icon),
             normalize_optional_trimmed(tone),
             normalize_optional_trimmed(cleanup_intensity),
             normalized_custom_instructions,
+            contextual_formatting_disabled,
         ],
     )?;
     require_row_changed(changed, "Context", context_id)
@@ -654,7 +660,7 @@ mod tests {
             Some("Keep it brief.")
         );
 
-        update_context_settings(&db, context.id, None, None, None, None).expect("clear");
+        update_context_settings(&db, context.id, None, None, None, None, false).expect("clear");
         assert_eq!(
             query_context(&db, context.id).unwrap().custom_instructions,
             None
@@ -662,15 +668,31 @@ mod tests {
 
         let too_long = "x".repeat(CONTEXT_CUSTOM_INSTRUCTIONS_CHAR_LIMIT + 1);
         assert!(
-            update_context_settings(&db, context.id, None, None, None, Some(&too_long))
+            update_context_settings(&db, context.id, None, None, None, Some(&too_long), false)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn contextual_formatting_override_defaults_off_and_round_trips() {
+        let db = open(":memory:").expect("db");
+        let context = insert_context_returning(&db, "Terminal", None, None, None, None, false)
+            .expect("context");
+        assert!(!context.contextual_formatting_disabled);
+
+        update_context_settings(&db, context.id, None, None, None, None, true)
+            .expect("disable formatting");
+        assert!(
+            query_context(&db, context.id)
+                .expect("updated context")
+                .contextual_formatting_disabled
         );
     }
 
     #[test]
     fn content_assignment_is_scoped_and_reversible() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Writing", None, None, None, None)
+        let context = insert_context_returning(&db, "Writing", None, None, None, None, false)
             .expect("context");
         insert_dictionary_entry(&db, "Verenu", Some("Varinu")).expect("dictionary");
         insert_snippet(&db, "sig", "signature", "").expect("snippet");
@@ -720,7 +742,7 @@ mod tests {
     #[test]
     fn target_resolution_returns_one_context_and_falls_back_to_everywhere() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Writing", None, None, None, None)
+        let context = insert_context_returning(&db, "Writing", None, None, None, None, false)
             .expect("context");
         assign_context_target(&db, context.id, "Code.EXE").expect("target");
 
@@ -741,10 +763,10 @@ mod tests {
     #[test]
     fn website_domain_match_takes_priority_over_executable_match() {
         let db = open(":memory:").expect("db");
-        let exe_context = insert_context_returning(&db, "Browsing", None, None, None, None)
+        let exe_context = insert_context_returning(&db, "Browsing", None, None, None, None, false)
             .expect("exe context");
         let site_context =
-            insert_context_returning(&db, "Work Email", None, None, None, None)
+            insert_context_returning(&db, "Work Email", None, None, None, None, false)
                 .expect("site context");
         assign_context_target(&db, exe_context.id, "chrome.exe").expect("exe target");
         assign_context_website(&db, site_context.id, "mail.google.com").expect("website target");
@@ -772,7 +794,7 @@ mod tests {
     #[test]
     fn website_domain_normalizes_pasted_urls() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Work Email", None, None, None, None)
+        let context = insert_context_returning(&db, "Work Email", None, None, None, None, false)
             .expect("context");
         let target =
             assign_context_website(&db, context.id, "https://Mail.Google.com/mail/u/0?tab=rm")
@@ -784,9 +806,9 @@ mod tests {
     fn assigning_a_target_replaces_its_previous_context() {
         let db = open(":memory:").expect("db");
         let first =
-            insert_context_returning(&db, "First", None, None, None, None).expect("first");
+            insert_context_returning(&db, "First", None, None, None, None, false).expect("first");
         let second =
-            insert_context_returning(&db, "Second", None, None, None, None).expect("second");
+            insert_context_returning(&db, "Second", None, None, None, None, false).expect("second");
         assign_context_target(&db, first.id, "editor.exe").expect("first target");
         assign_context_target(&db, second.id, "EDITOR.EXE").expect("replacement target");
 
@@ -798,7 +820,7 @@ mod tests {
     #[test]
     fn deleting_a_context_returns_items_to_everywhere() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Temporary", None, None, None, None)
+        let context = insert_context_returning(&db, "Temporary", None, None, None, None, false)
             .expect("context");
         insert_dictionary_entry(&db, "Tauri", Some("Tari")).expect("dictionary");
         insert_snippet(&db, "sig", "signature", "").expect("snippet");
@@ -833,7 +855,7 @@ mod tests {
     #[test]
     fn adding_existing_content_to_a_context_does_not_overwrite_everywhere() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Writing", None, None, None, None)
+        let context = insert_context_returning(&db, "Writing", None, None, None, None, false)
             .expect("context");
         insert_dictionary_entry_returning(&db, "Verenu", Some("Vernu"), None).expect("dictionary");
         insert_snippet_returning(&db, "sig", "signature", "", None).expect("snippet");
