@@ -304,7 +304,8 @@
     </ChartTooltip>
   {/if}
 
-  <table class="sr-only">
+  <div class="sr-only">
+  <table>
     <caption>Words dictated per day</caption>
     <thead><tr><th scope="col">Day</th><th scope="col">Words</th></tr></thead>
     <tbody>
@@ -313,6 +314,7 @@
       {/each}
     </tbody>
   </table>
+  </div>
 </section>
 
 <style>
@@ -497,6 +499,9 @@
     line-height: 1.35;
   }
 
+  /* Must wrap the table rather than be the table: width/height:1px are only a
+     *minimum* on a table box, so an .sr-only <table> keeps its full content
+     height (thousands of px here) and inflates the page's scroll height. */
   .sr-only {
     position: absolute;
     width: 1px;
