@@ -17,9 +17,6 @@ const EXCERPT_LIMIT: usize = 3_000;
 // width proposal card with no way to scroll. Trimming the ceiling makes that
 // structurally harder, on top of the display-side truncation in `summary()`.
 const REPAIR_MAX_OUTPUT_TOKENS: u32 = 120;
-/// Display-only cap on a proposal's interpolated term/mistake text (see
-/// `truncate_for_display`) — never applied to what's actually written to the
-/// dictionary, only to the summary shown in the fixed-width proposal card.
 const REPAIR_TIMEOUT_SECS: u64 = 45;
 const NO_SAFE_REPAIR_MESSAGE: &str = "I couldn't map this to a safe Verenu setting. Try speaking a little closer to the microphone and a little slower. If you want a reusable phrase, add a vocabulary item or snippet manually in Verenu.";
 

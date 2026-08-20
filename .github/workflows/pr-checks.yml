@@ -102,9 +102,12 @@ jobs:
         # land in git history again (target-test-codex/ alone added ~1.3 GB).
         # Installers under /installers are an intentional exception handled by
         # their own release process, but they stay under this limit per file.
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.sha }}
         run: |
-          base="${{ github.event.pull_request.base.sha }}"
-          head="${{ github.sha }}"
+          base="$PR_BASE_SHA"
+          head="$PR_HEAD_SHA"
           oversized=$(git diff --name-only "$base" "$head" -z |
             while IFS= read -r -d '' file; do
               if git cat-file -e "$head:$file" 2>/dev/null; then
