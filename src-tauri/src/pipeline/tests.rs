@@ -1,5 +1,6 @@
 use super::gates::strip_provider_artifacts;
-use super::stages::{cleanup_cache_plan, dual_cleanup_context_fingerprint, speech_gate_accepts};
+use super::stages_cleanup::{cleanup_cache_plan, dual_cleanup_context_fingerprint};
+use super::stages_transcription::speech_gate_accepts;
 use super::{
     apply_app_style_overrides, effective_recording_rms, ensure_terminal_punctuation,
     has_spoken_content, is_transcription_hallucination, normalize_transcription_math_artifacts,
