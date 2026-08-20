@@ -1,6 +1,6 @@
 # Roadmap: Verenu
 
-## In Progress - 0.15.0
+## In Progress - post-0.17.0 (see "Unreleased" in docs/CHANGELOG.md for the current line of work)
 
 ## 0. Local Transcription Beta
 - **Goal**: Ship local transcription as a first-class backend in the normal pipeline instead of as a separate workflow.

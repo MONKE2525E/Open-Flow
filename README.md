@@ -22,13 +22,13 @@ It records locally, sends audio and text only to the AI providers you choose, ke
 
 ## What It Does
 
-- Hold-to-record dictation with global hotkeys
-- Provider choice for transcription and cleanup, including local Parakeet V3 transcription
-- Snippets, personal dictionary, and app-specific formatting profiles
-- Local history, local settings, and local data export/import
+- Hold-to-record dictation with global hotkeys, plus a handsfree toggle mode
+- Context groups: tie apps and websites to a tone, cleanup intensity, custom instructions, and their own vocabulary and snippets
+- Provider choice for transcription and cleanup, including fully local Parakeet V3 transcription and local LLM cleanup
+- Local history, insights, local settings, and local data export/import
 - Optional auto-learn from repeated manual corrections
 
-For more details: [Cleanup Levels](docs/CLEANUP_LEVELS.md), [Local Transcription](docs/LOCAL_TRANSCRIPTION.md), [Dictionary](docs/DICTIONARY.md), [Snippets](docs/SNIPPETS.md), and [App Mappings & Profiles](docs/APP_MAPPINGS.md).
+For more details: [Contexts](docs/CONTEXTS.md), [Cleanup Levels](docs/CLEANUP_LEVELS.md), [Local Transcription](docs/LOCAL_TRANSCRIPTION.md), [Dictionary](docs/DICTIONARY.md), [Snippets](docs/SNIPPETS.md), and [App Mappings & Profiles](docs/APP_MAPPINGS.md) (legacy).
 
 ## Platform Support
 
@@ -75,7 +75,7 @@ Verenu's own server (`api.verenu.com`) serves only public app metadata — relea
 - Settings in local app storage
 - Transcription history in local SQLite
 - Dictionary entries, snippets, and auto-learn data in local SQLite
-- Update-dismiss state, model preferences, and app mappings
+- Update-dismiss state, model preferences, and context group targets
 - Local logs unless you explicitly export them
 
 ### Leaves your device
