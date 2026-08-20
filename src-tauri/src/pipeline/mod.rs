@@ -267,25 +267,26 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     } else {
         None
     };
-    let resolved_context = match context::resolve_context(&db_handle, &process_name, browser_domain.as_deref())
-    {
-        Ok(resolved) => resolved,
-        Err(error) => {
-            log::warn!("pipeline: context resolution failed, using Everywhere error={error}");
-            db::Context {
-                id: db::EVERYWHERE_CONTEXT_ID,
-                name: "Everywhere".to_string(),
-                is_everywhere: true,
-                icon: None,
-                tone: None,
-                cleanup_intensity: None,
-                color: None,
-                custom_instructions: None,
-                created_at: String::new(),
-                updated_at: String::new(),
+    let resolved_context =
+        match context::resolve_context(&db_handle, &process_name, browser_domain.as_deref()) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                log::warn!("pipeline: context resolution failed, using Everywhere error={error}");
+                db::Context {
+                    id: db::EVERYWHERE_CONTEXT_ID,
+                    name: "Everywhere".to_string(),
+                    is_everywhere: true,
+                    icon: None,
+                    tone: None,
+                    cleanup_intensity: None,
+                    color: None,
+                    custom_instructions: None,
+                    pinned_at: None,
+                    created_at: String::new(),
+                    updated_at: String::new(),
+                }
             }
-        }
-    };
+        };
     let context_id = resolved_context.id;
     log::info!("pipeline: start gen={generation} target_id={}", target.id);
 

@@ -507,6 +507,24 @@ function tauriMock({ appVersion } = {}) {
       case 'get_stats':          return { total_words: 315, avg_wpm: 152, day_streak: 6 };
       case 'count_old_transcriptions':
         return args?.retention === 'Forever' ? 0 : 3;
+      // Contexts live in the sidebar rail now, so the mock has to supply a
+      // list for those rows to exist at all.
+      case 'get_contexts':       return [
+        { id: 1, name: 'Everywhere', is_everywhere: true,  icon: null,   tone: null, cleanup_intensity: null, color: null, custom_instructions: null, pinned_at: null,                  created_at: '2026-05-01 10:00:00', updated_at: '2026-05-01 10:00:00' },
+        { id: 2, name: 'Work',       is_everywhere: false, icon: 'chart', tone: null, cleanup_intensity: null, color: null, custom_instructions: null, pinned_at: '2026-05-16 10:00:00', created_at: '2026-05-02 10:00:00', updated_at: '2026-05-02 10:00:00' },
+        { id: 3, name: 'Writing',    is_everywhere: false, icon: 'pencil', tone: null, cleanup_intensity: null, color: null, custom_instructions: null, pinned_at: null,                 created_at: '2026-05-03 10:00:00', updated_at: '2026-05-03 10:00:00' },
+      ];
+      case 'get_context_targets': return [
+        { id: 1, context_id: 2, executable: 'code.exe', created_at: '2026-05-02 10:00:00' },
+      ];
+      case 'get_context_websites': return [
+        { id: 1, context_id: 2, domain: 'github.com', created_at: '2026-05-02 10:00:00' },
+      ];
+      case 'get_context_dictionary':
+      case 'get_context_snippets': return [];
+      case 'get_context_stats':  return { dictations: 0, words: 0, last_used_at: null };
+      case 'get_app_icon':
+      case 'get_site_icon':      return null;
       case 'get_dictionary':     return [];
       case 'get_snippets':       return [];
       case 'get_memory_mb':      return 75;   // number required — tweened(0) crashes on null

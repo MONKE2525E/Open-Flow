@@ -218,10 +218,7 @@ mod win {
     /// Extracts the large icon from `full_path` (index 0) and encodes it as
     /// PNG bytes.
     pub fn extract_icon_png(full_path: &str) -> Option<Vec<u8>> {
-        let path_wide: Vec<u16> = full_path
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+        let path_wide: Vec<u16> = full_path.encode_utf16().chain(std::iter::once(0)).collect();
         unsafe {
             let mut large_icons = [windows::Win32::UI::WindowsAndMessaging::HICON::default(); 1];
             let extracted = ExtractIconExW(
@@ -310,5 +307,127 @@ mod win {
             let _ = DeleteObject(HGDIOBJ(info.hbmColor.0));
         }
         result
+    }
+}
+
+// ---------- website favicons ----------
+
+/// Fetched favicons are disk-cached alongside app icons. `None` is cached as a
+/// zero-byte marker so a site with no reachable icon is not re-fetched on every
+/// render — the frontend shows its globe fallback instead. Cache entries are
+/// keyed by normalized hostname, so `https://mail.google.com/u/0` and
+/// `mail.google.com` resolve to the same file.
+const FAVICON_MAX_BYTES: usize = 256 * 1024;
+
+/// Reduces a pasted URL, origin, or bare host to a lowercase hostname.
+/// Mirrors `normalize_domain` in `data/db/contexts.rs`, minus the length
+/// validation — this path is cosmetic and never rejects input.
+pub fn normalize_favicon_host(input: &str) -> Option<String> {
+    let trimmed = input.trim().to_lowercase();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let without_scheme = trimmed.split("://").last().unwrap_or(&trimmed);
+    let host = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(without_scheme);
+    let host = host.split('@').next_back().unwrap_or(host);
+    let host = host.split(':').next().unwrap_or(host);
+    let host = host.trim_matches('.');
+    if host.is_empty() || !host.contains('.') {
+        return None;
+    }
+    Some(host.to_string())
+}
+
+/// Returns a `data:image/...;base64,...` URI for `domain`'s favicon, or `None`
+/// when it can't be resolved. Never errors: this is decoration.
+pub async fn get_site_icon_data_uri(app: &tauri::AppHandle, domain: &str) -> Option<String> {
+    let host = normalize_favicon_host(domain)?;
+    let cache_path = favicon_cache_path(app, &host)?;
+    if let Ok(bytes) = std::fs::read(&cache_path) {
+        // Zero bytes is the "we tried, there is nothing" marker.
+        return if bytes.is_empty() {
+            None
+        } else {
+            Some(png_bytes_to_data_uri(&bytes))
+        };
+    }
+
+    let bytes = fetch_favicon(&host).await;
+    if let Some(parent) = cache_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&cache_path, bytes.as_deref().unwrap_or_default());
+    bytes.map(|b| png_bytes_to_data_uri(&b))
+}
+
+/// Google's favicon service is used rather than guessing `/favicon.ico`,
+/// because most sites declare their icon in HTML rather than serving it from a
+/// predictable path. Only the bare hostname leaves the machine, and only once
+/// per site — the result is cached on disk from then on.
+async fn fetch_favicon(host: &str) -> Option<Vec<u8>> {
+    let url = format!(
+        "https://www.google.com/s2/favicons?sz=64&domain={}",
+        urlencoding_host(host)
+    );
+    let response = crate::api::client::get()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let bytes = response.bytes().await.ok()?;
+    if bytes.is_empty() || bytes.len() > FAVICON_MAX_BYTES {
+        return None;
+    }
+    Some(bytes.to_vec())
+}
+
+/// Hostnames are already restricted to URL-safe characters by
+/// `normalize_favicon_host`; anything else is dropped rather than escaped.
+fn urlencoding_host(host: &str) -> String {
+    host.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+        .collect()
+}
+
+fn favicon_cache_path(app: &tauri::AppHandle, host: &str) -> Option<PathBuf> {
+    use tauri::Manager;
+    let dir = app.path().app_data_dir().ok()?.join("favicon-cache");
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in host.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    Some(dir.join(format!("{hash:016x}.img")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_favicon_host;
+
+    #[test]
+    fn normalizes_urls_and_hosts_to_one_identity() {
+        for input in [
+            "mail.google.com",
+            "MAIL.GOOGLE.COM",
+            "https://mail.google.com/mail/u/0#inbox",
+            "  http://user@mail.google.com:8080/x?y=1 ",
+            "mail.google.com.",
+        ] {
+            assert_eq!(
+                normalize_favicon_host(input).as_deref(),
+                Some("mail.google.com"),
+                "input: {input}"
+            );
+        }
+        for input in ["", "   ", "localhost", "://"] {
+            assert_eq!(normalize_favicon_host(input), None, "input: {input}");
+        }
     }
 }

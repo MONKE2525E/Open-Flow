@@ -37,6 +37,9 @@ export interface Context {
   cleanup_intensity: string | null;
   color: string | null;
   custom_instructions: string | null;
+  contextual_formatting_disabled: boolean;
+  /** ISO timestamp of when the user pinned this context, or null if unpinned. */
+  pinned_at: string | null;
   created_at: string;
   updated_at: string;
 }

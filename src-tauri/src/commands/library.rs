@@ -34,6 +34,15 @@ pub async fn get_app_icon(app: AppHandle, exe: String) -> Option<String> {
     .flatten()
 }
 
+/// Returns a `data:image/...;base64,...` URI for a website target's favicon,
+/// or `None` when it couldn't be resolved — the frontend falls back to a globe
+/// glyph. Results (including failures) are disk-cached per hostname, so the
+/// sidebar's icon stacks don't re-fetch on every render.
+#[tauri::command]
+pub async fn get_site_icon(app: AppHandle, domain: String) -> Option<String> {
+    crate::system::icons::get_site_icon_data_uri(&app, &domain).await
+}
+
 #[tauri::command]
 pub async fn get_app_mappings(app: AppHandle) -> Result<Vec<AppMapping>, String> {
     let settings = store::settings_handle(&app)?;
@@ -86,11 +95,12 @@ pub async fn create_snippet(
             expansion.chars().count(),
             instructions.chars().count()
         );
-        let created = db::insert_snippet_returning(&db, &trigger, &expansion, &instructions, context_id)
-            .map_err(|e| {
-                log::warn!("snippets:create failed: {e}");
-                e.to_string()
-            })?;
+        let created =
+            db::insert_snippet_returning(&db, &trigger, &expansion, &instructions, context_id)
+                .map_err(|e| {
+                    log::warn!("snippets:create failed: {e}");
+                    e.to_string()
+                })?;
         log::info!("snippets:create ok id={}", created.id);
         Ok(created)
     })
@@ -146,10 +156,12 @@ pub async fn create_dictionary_entry(
             term.chars().count(),
             mistake.as_deref().map_or(0, |m| m.chars().count())
         );
-        db::insert_dictionary_entry_returning(&db, &term, mistake.as_deref(), context_id).map_err(|e| {
-            log::warn!("dictionary:create failed: {e}");
-            e.to_string()
-        })
+        db::insert_dictionary_entry_returning(&db, &term, mistake.as_deref(), context_id).map_err(
+            |e| {
+                log::warn!("dictionary:create failed: {e}");
+                e.to_string()
+            },
+        )
     })
     .await
 }

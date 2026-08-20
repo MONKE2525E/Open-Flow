@@ -174,6 +174,7 @@ pub async fn run_pipeline_fixture(
         request.audio.duration_ms as i64,
         &api_used,
         None,
+        None,
     )?;
     let injected = injection::inject_text(
         &injected_text,

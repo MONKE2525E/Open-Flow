@@ -63,6 +63,13 @@ export interface InsightsWords {
 }
 
 export interface InsightsPayload {
+  /**
+   * Which context group the payload is scoped to, or null for all of them.
+   * Every per-dictation figure honours it; the lifetime counters on
+   * `InsightsCleanup` (dictionary_fixes, auto_learned_terms, and therefore
+   * edits_applied) have no context dimension and stay global.
+   */
+  context_id: number | null;
   range_days: number;
   generated_at: string; // "YYYY-MM-DD HH:MM:SS", UTC-naive like created_at
   totals: InsightsTotals;
@@ -81,6 +88,7 @@ export interface InsightsPayload {
 }
 
 export const EMPTY_INSIGHTS: InsightsPayload = {
+  context_id: null,
   range_days: 30,
   generated_at: '',
   totals: {

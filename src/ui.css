@@ -174,10 +174,20 @@
 
 .ui-dropdown-trigger svg {
   flex: 0 0 auto;
+}
+
+/*
+ * Only the chevron flips. This targets the trailing direct child rather than
+ * every descendant svg, so a trigger that also carries a leading icon (the
+ * Insights context picker shows the context's own glyph) doesn't turn that
+ * icon upside down along with the chevron. Every trigger in the app puts its
+ * chevron last, which is what makes :last-child the right anchor.
+ */
+.ui-dropdown-trigger > svg:last-child {
   transition: transform var(--ui-duration-fast) var(--ui-ease-out);
 }
 
-.ui-dropdown-trigger[aria-expanded='true'] svg {
+.ui-dropdown-trigger[aria-expanded='true'] > svg:last-child {
   transform: rotate(180deg);
 }
 

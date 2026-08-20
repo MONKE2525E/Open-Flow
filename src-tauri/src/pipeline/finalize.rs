@@ -119,6 +119,9 @@ pub(super) async fn finalize_pipeline_completion(
     let api_used_for_insert = ctx.api_used.to_string();
     let duration_for_insert = ctx.duration_ms as i64;
     let dictionary_fixes_applied = applied_dict_ids.len() as i64;
+    // Attributes the dictation to whichever context resolved for it, so the
+    // context page can show real totals. `None` when resolution failed.
+    let context_for_insert = ctx.context.map(|context| context.id);
     let entry = match tokio::task::spawn_blocking(move || -> anyhow::Result<db::RecentEntry> {
         let entry = db::insert_transcription_returning(
             &db_for_insert,
@@ -128,6 +131,7 @@ pub(super) async fn finalize_pipeline_completion(
             duration_for_insert,
             &api_used_for_insert,
             app_name_for_insert.as_deref(),
+            context_for_insert,
         )?;
         if dictionary_fixes_applied > 0 {
             // Lifetime counter for the Insights "fixes made by Verenu" card;

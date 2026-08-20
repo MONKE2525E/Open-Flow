@@ -22,6 +22,9 @@ pub struct Context {
     pub cleanup_intensity: Option<String>,
     pub color: Option<String>,
     pub custom_instructions: Option<String>,
+    /// `NULL` when unpinned. Pinned contexts sort newest-pin-first in the
+    /// sidebar; Everywhere is pinned implicitly by the UI and never sets this.
+    pub pinned_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -52,8 +55,9 @@ fn context_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Context> {
         cleanup_intensity: row.get(5)?,
         color: row.get(6)?,
         custom_instructions: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        pinned_at: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 
@@ -119,9 +123,9 @@ pub fn everywhere_context_id(db: &Db) -> Result<i64> {
 pub fn query_contexts(db: &Db) -> Result<Vec<Context>> {
     let conn = lock_conn(db)?;
     let mut stmt = conn.prepare(
-        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, created_at, updated_at
+        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, pinned_at, created_at, updated_at
          FROM contexts
-         ORDER BY is_everywhere DESC, name COLLATE NOCASE ASC",
+         ORDER BY id ASC",
     )?;
     let rows = stmt
         .query_map([], context_from_row)?
@@ -136,7 +140,7 @@ pub fn query_context(db: &Db, context_id: i64) -> Result<Context> {
 
 fn query_context_conn(conn: &rusqlite::Connection, context_id: i64) -> Result<Context> {
     conn.query_row(
-        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, created_at, updated_at
+        "SELECT id, name, is_everywhere, icon, tone, cleanup_intensity, color, custom_instructions, pinned_at, created_at, updated_at
          FROM contexts WHERE id = ?1",
         params![context_id],
         context_from_row,
@@ -181,13 +185,12 @@ pub fn insert_context_returning(
     query_context_conn(&conn, id)
 }
 
+/// Everywhere is editable like any other context — it is only undeletable.
+/// Renaming it does not change what it does: `is_everywhere` is the flag the
+/// pipeline resolves against, not the name.
 pub fn update_context(db: &Db, context_id: i64, name: &str) -> Result<()> {
     let normalized_name = normalize_context_name(name)?;
     let conn = lock_conn(db)?;
-    let context = query_context_conn(&conn, context_id)?;
-    if context.is_everywhere {
-        anyhow::bail!("The Everywhere context cannot be renamed");
-    }
     let changed = conn.execute(
         "UPDATE contexts SET name = ?2, updated_at = datetime('now') WHERE id = ?1",
         params![context_id, normalized_name],
@@ -208,10 +211,6 @@ pub fn update_context_settings(
 ) -> Result<()> {
     let normalized_custom_instructions = normalize_custom_instructions(custom_instructions)?;
     let conn = lock_conn(db)?;
-    let context = query_context_conn(&conn, context_id)?;
-    if context.is_everywhere {
-        anyhow::bail!("The Everywhere context cannot have a tone override");
-    }
     let changed = conn.execute(
         "UPDATE contexts SET icon = ?2, tone = ?3, cleanup_intensity = ?4, custom_instructions = ?5, updated_at = datetime('now') WHERE id = ?1",
         params![
@@ -231,10 +230,6 @@ pub fn update_context_settings(
 /// to change this one field.
 pub fn update_context_color(db: &Db, context_id: i64, color: Option<&str>) -> Result<()> {
     let conn = lock_conn(db)?;
-    let context = query_context_conn(&conn, context_id)?;
-    if context.is_everywhere {
-        anyhow::bail!("The Everywhere context cannot have a color override");
-    }
     let changed = conn.execute(
         "UPDATE contexts SET color = ?2, updated_at = datetime('now') WHERE id = ?1",
         params![context_id, normalize_optional_trimmed(color)],
@@ -242,14 +237,33 @@ pub fn update_context_color(db: &Db, context_id: i64, color: Option<&str>) -> Re
     require_row_changed(changed, "Context", context_id)
 }
 
+/// Pins or unpins a context. Pinning stamps `pinned_at` with the current time
+/// (re-pinning restamps, so the context becomes the newest pin); unpinning
+/// clears it and the context falls back into the creation-ordered list.
+/// Everywhere included — it is an ordinary row here.
+pub fn set_context_pinned(db: &Db, context_id: i64, pinned: bool) -> Result<()> {
+    let conn = lock_conn(db)?;
+    let changed = conn.execute(
+        "UPDATE contexts SET pinned_at = CASE WHEN ?2 THEN datetime('now') ELSE NULL END WHERE id = ?1",
+        params![context_id, pinned],
+    )?;
+    require_row_changed(changed, "Context", context_id)
+}
+
 pub fn delete_context(db: &Db, context_id: i64) -> Result<()> {
-    let mut conn = lock_conn(db)?;
+    let conn = lock_conn(db)?;
     let context = query_context_conn(&conn, context_id)?;
     if context.is_everywhere {
         anyhow::bail!("The Everywhere context cannot be deleted");
     }
+    delete_context_conn(&conn, context_id)
+}
 
-    let tx = conn.transaction()?;
+/// Connection-level delete used by both the command path and the LAN sync
+/// engine (which applies remote context deletions with identical semantics:
+/// scoped vocabulary moves to Everywhere so nothing is orphaned).
+pub fn delete_context_conn(conn: &Connection, context_id: i64) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
     let everywhere_id = ensure_everywhere_context_conn(&tx)?;
     tx.execute(
         "INSERT OR IGNORE INTO dictionary_contexts (context_id, dictionary_id)
@@ -427,7 +441,10 @@ pub fn resolve_context_for_target(
     let conn = lock_conn(db)?;
     let everywhere_id = ensure_everywhere_context_conn(&conn)?;
     let normalized_executable = executable.trim().to_lowercase();
-    let normalized_domain = domain.map(str::trim).filter(|d| !d.is_empty()).map(str::to_lowercase);
+    let normalized_domain = domain
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(str::to_lowercase);
 
     if let Some(domain) = &normalized_domain {
         let context_id: Option<i64> = conn
@@ -604,27 +621,57 @@ mod tests {
     #[test]
     fn custom_instructions_round_trip_and_enforce_char_limit() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Support", None, None, None, Some("  Reply in a friendly tone.  "))
-            .expect("context");
-        assert_eq!(context.custom_instructions.as_deref(), Some("Reply in a friendly tone."));
-
-        update_context_settings(&db, context.id, None, None, None, Some("Keep it brief.")).expect("update");
+        let context = insert_context_returning(
+            &db,
+            "Support",
+            None,
+            None,
+            None,
+            Some("  Reply in a friendly tone.  "),
+            false,
+        )
+        .expect("context");
         assert_eq!(
-            query_context(&db, context.id).unwrap().custom_instructions.as_deref(),
+            context.custom_instructions.as_deref(),
+            Some("Reply in a friendly tone.")
+        );
+
+        update_context_settings(
+            &db,
+            context.id,
+            None,
+            None,
+            None,
+            Some("Keep it brief."),
+            false,
+        )
+        .expect("update");
+        assert_eq!(
+            query_context(&db, context.id)
+                .unwrap()
+                .custom_instructions
+                .as_deref(),
             Some("Keep it brief.")
         );
 
         update_context_settings(&db, context.id, None, None, None, None).expect("clear");
-        assert_eq!(query_context(&db, context.id).unwrap().custom_instructions, None);
+        assert_eq!(
+            query_context(&db, context.id).unwrap().custom_instructions,
+            None
+        );
 
         let too_long = "x".repeat(CONTEXT_CUSTOM_INSTRUCTIONS_CHAR_LIMIT + 1);
-        assert!(update_context_settings(&db, context.id, None, None, None, Some(&too_long)).is_err());
+        assert!(
+            update_context_settings(&db, context.id, None, None, None, Some(&too_long))
+                .is_err()
+        );
     }
 
     #[test]
     fn content_assignment_is_scoped_and_reversible() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Writing", None, None, None, None).expect("context");
+        let context = insert_context_returning(&db, "Writing", None, None, None, None)
+            .expect("context");
         insert_dictionary_entry(&db, "Verenu", Some("Varinu")).expect("dictionary");
         insert_snippet(&db, "sig", "signature", "").expect("snippet");
         let dictionary_id = query_dictionary(&db).unwrap()[0].id;
@@ -673,7 +720,8 @@ mod tests {
     #[test]
     fn target_resolution_returns_one_context_and_falls_back_to_everywhere() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Writing", None, None, None, None).expect("context");
+        let context = insert_context_returning(&db, "Writing", None, None, None, None)
+            .expect("context");
         assign_context_target(&db, context.id, "Code.EXE").expect("target");
 
         assert_eq!(
@@ -693,8 +741,11 @@ mod tests {
     #[test]
     fn website_domain_match_takes_priority_over_executable_match() {
         let db = open(":memory:").expect("db");
-        let exe_context = insert_context_returning(&db, "Browsing", None, None, None, None).expect("exe context");
-        let site_context = insert_context_returning(&db, "Work Email", None, None, None, None).expect("site context");
+        let exe_context = insert_context_returning(&db, "Browsing", None, None, None, None)
+            .expect("exe context");
+        let site_context =
+            insert_context_returning(&db, "Work Email", None, None, None, None)
+                .expect("site context");
         assign_context_target(&db, exe_context.id, "chrome.exe").expect("exe target");
         assign_context_website(&db, site_context.id, "mail.google.com").expect("website target");
 
@@ -721,17 +772,21 @@ mod tests {
     #[test]
     fn website_domain_normalizes_pasted_urls() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Work Email", None, None, None, None).expect("context");
-        let target = assign_context_website(&db, context.id, "https://Mail.Google.com/mail/u/0?tab=rm")
-            .expect("assign");
+        let context = insert_context_returning(&db, "Work Email", None, None, None, None)
+            .expect("context");
+        let target =
+            assign_context_website(&db, context.id, "https://Mail.Google.com/mail/u/0?tab=rm")
+                .expect("assign");
         assert_eq!(target.domain, "mail.google.com");
     }
 
     #[test]
     fn assigning_a_target_replaces_its_previous_context() {
         let db = open(":memory:").expect("db");
-        let first = insert_context_returning(&db, "First", None, None, None, None).expect("first");
-        let second = insert_context_returning(&db, "Second", None, None, None, None).expect("second");
+        let first =
+            insert_context_returning(&db, "First", None, None, None, None).expect("first");
+        let second =
+            insert_context_returning(&db, "Second", None, None, None, None).expect("second");
         assign_context_target(&db, first.id, "editor.exe").expect("first target");
         assign_context_target(&db, second.id, "EDITOR.EXE").expect("replacement target");
 
@@ -743,7 +798,8 @@ mod tests {
     #[test]
     fn deleting_a_context_returns_items_to_everywhere() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Temporary", None, None, None, None).expect("context");
+        let context = insert_context_returning(&db, "Temporary", None, None, None, None)
+            .expect("context");
         insert_dictionary_entry(&db, "Tauri", Some("Tari")).expect("dictionary");
         insert_snippet(&db, "sig", "signature", "").expect("snippet");
         let dictionary_id = query_dictionary(&db).unwrap()[0].id;
@@ -758,9 +814,7 @@ mod tests {
 
         delete_context(&db, context.id).expect("delete context");
 
-        assert!(query_context_website_targets(&db, None)
-            .unwrap()
-            .is_empty());
+        assert!(query_context_website_targets(&db, None).unwrap().is_empty());
 
         assert_eq!(
             query_dictionary_for_context(&db, EVERYWHERE_CONTEXT_ID)
@@ -779,18 +833,54 @@ mod tests {
     #[test]
     fn adding_existing_content_to_a_context_does_not_overwrite_everywhere() {
         let db = open(":memory:").expect("db");
-        let context = insert_context_returning(&db, "Writing", None, None, None, None).expect("context");
+        let context = insert_context_returning(&db, "Writing", None, None, None, None)
+            .expect("context");
         insert_dictionary_entry_returning(&db, "Verenu", Some("Vernu"), None).expect("dictionary");
         insert_snippet_returning(&db, "sig", "signature", "", None).expect("snippet");
 
-        assert!(insert_dictionary_entry_returning(&db, "Verenu", Some("Verano"), Some(context.id)).is_err());
+        assert!(
+            insert_dictionary_entry_returning(&db, "Verenu", Some("Verano"), Some(context.id))
+                .is_err()
+        );
         assert!(insert_snippet_returning(&db, "sig", "different", "", Some(context.id)).is_err());
 
         let dictionary = query_dictionary(&db).expect("dictionary");
         assert_eq!(dictionary[0].mistake.as_deref(), Some("Vernu"));
         let snippets = query_snippets(&db).expect("snippets");
         assert_eq!(snippets[0].expansion, "signature");
-        assert!(query_dictionary_for_context(&db, context.id).unwrap().is_empty());
-        assert!(query_snippets_for_context(&db, context.id).unwrap().is_empty());
+        assert!(query_dictionary_for_context(&db, context.id)
+            .unwrap()
+            .is_empty());
+        assert!(query_snippets_for_context(&db, context.id)
+            .unwrap()
+            .is_empty());
     }
+}
+
+/// Compact per-context totals for the context page's stat strip. Counts only
+/// dictations recorded since schema v18 (when `transcriptions.context_id`
+/// arrived) — older history has no context and is simply not attributed.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ContextStats {
+    pub dictations: i64,
+    pub words: i64,
+    /// `None` until the context has been used at least once.
+    pub last_used_at: Option<String>,
+}
+
+pub fn query_context_stats(db: &Db, context_id: i64) -> Result<ContextStats> {
+    let conn = lock_conn(db)?;
+    conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(words), 0), MAX(created_at)
+         FROM transcriptions WHERE context_id = ?1",
+        params![context_id],
+        |row| {
+            Ok(ContextStats {
+                dictations: row.get(0)?,
+                words: row.get(1)?,
+                last_used_at: row.get(2)?,
+            })
+        },
+    )
+    .map_err(Into::into)
 }
