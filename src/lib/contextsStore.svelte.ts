@@ -111,7 +111,9 @@ export function loadContexts(force = false): Promise<void> {
  * marker, so normalize before parsing.
  */
 export function compactAge(iso: string): string {
-  const parsed = Date.parse(/[Z+]/.test(iso) ? iso : `${iso.replace(' ', 'T')}Z`);
+  // Only the time portion can carry a zone marker (`Z`, `+hh:mm`, `-hh:mm`);
+  // testing the whole string would misread the `-` in the date part.
+  const parsed = Date.parse(/(?:[Z+]|-\d{2}:?\d{2})$/.test(iso.slice(10)) ? iso : `${iso.replace(' ', 'T')}Z`);
   if (Number.isNaN(parsed)) return '';
   const seconds = Math.max(0, Math.floor((Date.now() - parsed) / 1000));
   if (seconds < 60) return `${seconds}s`;
