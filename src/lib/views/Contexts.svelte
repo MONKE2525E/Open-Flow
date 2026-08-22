@@ -672,12 +672,18 @@
       contextError = 'Give this context a name.';
       return;
     }
-    savingContext = true;
-    contextError = '';
     let createdContextId: number | null = null;
     const editing = contextModalMode === 'edit' && editingContextId !== null
       ? contexts.find((context) => context.id === editingContextId) ?? null
       : null;
+    if (contextModalMode === 'edit' && !editing) {
+      // The context was deleted (or never resolved) while the modal was
+      // open - refuse rather than silently falling through to create.
+      contextError = 'This context no longer exists.';
+      return;
+    }
+    savingContext = true;
+    contextError = '';
     try {
       if (editing) {
         await invoke('update_context', { contextId: editing.id, name });
