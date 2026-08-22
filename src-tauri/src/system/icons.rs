@@ -334,7 +334,12 @@ pub fn normalize_favicon_host(input: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    let without_scheme = trimmed.split("://").last().unwrap_or(&trimmed);
+    // Strip only the leading scheme. split("://").last() would latch onto a
+    // nested URL in the query (e.g. "...?redirect=https://other.com").
+    let without_scheme = match trimmed.split_once("://") {
+        Some((_, rest)) => rest,
+        None => &trimmed,
+    };
     let host = without_scheme
         .split(['/', '?', '#'])
         .next()
