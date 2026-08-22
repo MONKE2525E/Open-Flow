@@ -260,6 +260,11 @@ pub(super) fn supports_complaint(snapshot: &RepairSnapshot, complaint: &str, act
                 complaint_lower.contains("spacing")
                     || complaint_lower.contains("space before")
                     || complaint_lower.contains("capital")
+                    // "caps"/"uppercase" complaints may target smart
+                    // capitalization rather than the Caps Lock toggle; the
+                    // model's key choice decides, validation just gates.
+                    || complaint_lower.contains("caps")
+                    || complaint_lower.contains("uppercase")
             }
             store::CAPS_LOCK_UPPERCASE => {
                 complaint_lower.contains("caps") || complaint_lower.contains("uppercase")

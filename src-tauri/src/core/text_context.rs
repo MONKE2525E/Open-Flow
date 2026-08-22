@@ -552,11 +552,16 @@ fn period_is_nonterminal(text: &str) -> bool {
     if token.chars().count() == 1 && token.chars().all(char::is_alphabetic) {
         return true;
     }
-    token.contains('.')
-        && token
-            .split('.')
-            .filter(|part| !part.is_empty())
-            .all(|part| part.chars().all(char::is_alphabetic) && part.chars().count() <= 3)
+    if !token.contains('.') {
+        return false;
+    }
+    let mut parts = token
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .map(|part| part.chars().all(char::is_alphabetic) && part.chars().count() <= 3);
+    // An empty iterator would vacuously .all() to true and classify a bare
+    // ellipsis ("...") as an abbreviation.
+    parts.next().is_some() && parts.all(std::convert::identity)
 }
 
 fn at_sentence_boundary(left: &str) -> bool {

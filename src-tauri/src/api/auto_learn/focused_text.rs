@@ -409,7 +409,10 @@ impl FocusedTextReader {
 
             if let Some(pattern) = &text_pattern2 {
                 let mut is_active = windows::core::BOOL::default();
-                if !range_seen {
+                // Also retry via the caret range when a selection existed but
+                // its edges could not be read - otherwise a failed TextPattern
+                // read would permanently block this fallback.
+                if !range_seen || context_edges.is_none() {
                     if let Ok(range) = pattern.GetCaretRange(&mut is_active) {
                         if is_active.as_bool() {
                             range_seen = true;
