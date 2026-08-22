@@ -121,6 +121,7 @@
   let modalTone = $state<string | null>(null);
   let modalCleanupIntensity = $state<string | null>(null);
   let modalCustomInstructions = $state('');
+  let editingContextId = $state<number | null>(null);
   // Tone/cleanup dropdown menus render fixed-position at the top level (not
   // nested in the modal card) because the modal card and body both clip
   // overflow — an absolutely-positioned menu inside them gets cut off.
@@ -504,6 +505,9 @@
     const editing = mode === 'edit'
       ? contexts.find((context) => context.id === (targetId ?? contextsStore.selectedId)) ?? null
       : null;
+    // Save uses this id directly so it can never drift to a different
+    // context if the list or selection changes while the modal is open.
+    editingContextId = editing?.id ?? null;
     contextName = editing?.name ?? '';
     modalIcon = editing?.icon ?? null;
     modalColor = editing?.color ?? null;
@@ -671,20 +675,23 @@
     savingContext = true;
     contextError = '';
     let createdContextId: number | null = null;
+    const editing = contextModalMode === 'edit' && editingContextId !== null
+      ? contexts.find((context) => context.id === editingContextId) ?? null
+      : null;
     try {
-      if (contextModalMode === 'edit' && selectedContext) {
-        await invoke('update_context', { contextId: selectedContext.id, name });
+      if (editing) {
+        await invoke('update_context', { contextId: editing.id, name });
         await invoke('update_context_settings', {
-          contextId: selectedContext.id,
+          contextId: editing.id,
           icon: modalIcon,
           tone: modalTone,
           cleanupIntensity: modalCleanupIntensity,
           customInstructions: modalCustomInstructions.trim() || null,
         });
-        if (modalColor !== selectedContext.color) {
-          await invoke('update_context_color', { contextId: selectedContext.id, color: modalColor });
+        if (modalColor !== editing.color) {
+          await invoke('update_context_color', { contextId: editing.id, color: modalColor });
         }
-        contextsStore.contexts = contexts.map((context) => context.id === selectedContext.id
+        contextsStore.contexts = contexts.map((context) => context.id === editing.id
           ? { ...context, name, icon: modalIcon, tone: modalTone, cleanup_intensity: modalCleanupIntensity, custom_instructions: modalCustomInstructions.trim() || null, color: modalColor, updated_at: new Date().toISOString() }
           : context);
       } else {

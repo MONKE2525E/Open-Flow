@@ -57,7 +57,15 @@
 </script>
 
 {#if dataUri}
-  <img class="site-icon" src={dataUri} alt="" style="width: {size}px; height: {size}px;" />
+  <!-- onerror is a belt-and-braces net: the backend validates PNG bytes, but
+       if the webview still fails to decode, fall back to the glyph. -->
+  <img
+    class="site-icon"
+    src={dataUri}
+    alt=""
+    style="width: {size}px; height: {size}px;"
+    onerror={() => (dataUri = null)}
+  />
 {:else}
   <span class="site-icon site-icon-fallback" style="width: {size}px; height: {size}px;" aria-hidden="true">
     <svg width={Math.round(size * 0.7)} height={Math.round(size * 0.7)} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9s-1.1 6.5-3.3 9c-2.2-2.5-3.3-5.5-3.3-9S9.8 5.5 12 3Z"/></svg>
