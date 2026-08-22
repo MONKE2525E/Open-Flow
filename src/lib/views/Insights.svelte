@@ -37,6 +37,16 @@
   const contextLabel = $derived(activeContext?.name ?? 'All contexts');
   const isEmpty = $derived(!data || data.totals.total_transcriptions === 0);
 
+  // A context deleted elsewhere (sidebar, contexts page) must not keep
+  // filtering the page behind an "All contexts" label: drop the stale
+  // selection and reload so the numbers match what the filter shows.
+  $effect(() => {
+    if (contextId === null || contextOptions.length === 0) return;
+    if (contextOptions.some((c) => c.id === contextId)) return;
+    contextId = null;
+    void load();
+  });
+
   async function load(opts?: { silent?: boolean }) {
     const token = ++fetchToken;
     if (!opts?.silent) {

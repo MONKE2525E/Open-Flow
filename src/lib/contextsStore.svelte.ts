@@ -127,5 +127,6 @@ export function compactAge(iso: string): string {
   if (days < 30) return `${weeks}w`;
   const months = Math.floor(days / 30);
   if (months < 12) return `${months}mo`;
-  return `${Math.floor(days / 365)}y`;
+  // Days 360-364 give floor(days / 365) === 0; never show "0y".
+  return `${Math.max(1, Math.floor(days / 365))}y`;
 }
