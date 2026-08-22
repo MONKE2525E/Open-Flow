@@ -353,7 +353,9 @@
       await invoke('set_context_pinned', { contextId: context.id, pinned });
       // Re-pinning restamps, so the row jumps to the top of the pinned group;
       // mirror the backend's `datetime('now')` locally rather than refetching.
-      const pinnedAt = pinned ? new Date().toISOString() : null;
+      // The stamp must match SQLite's `YYYY-MM-DD HH:MM:SS` UTC format or the
+      // pinned sort (a plain string compare) would interleave the two formats.
+      const pinnedAt = pinned ? new Date().toISOString().slice(0, 19).replace('T', ' ') : null;
       contextsStore.contexts = contextsStore.contexts.map((c) =>
         c.id === context.id ? { ...c, pinned_at: pinnedAt } : c
       );

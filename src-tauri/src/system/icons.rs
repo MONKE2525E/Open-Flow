@@ -12,7 +12,7 @@ pub fn get_icon_data_uri(app: &tauri::AppHandle, exe: &str) -> Option<String> {
     let exe = exe.trim().to_lowercase();
     let cache_path = cache_file_path(app, &exe)?;
     if let Ok(bytes) = std::fs::read(&cache_path) {
-        return Some(png_bytes_to_data_uri(&bytes));
+        return png_bytes_to_data_uri(&bytes);
     }
     let full_path = win::resolve_exe_full_path(&exe)?;
     let png = win::extract_icon_png(&full_path)?;
@@ -20,7 +20,7 @@ pub fn get_icon_data_uri(app: &tauri::AppHandle, exe: &str) -> Option<String> {
         let _ = std::fs::create_dir_all(parent);
     }
     let _ = std::fs::write(&cache_path, &png);
-    Some(png_bytes_to_data_uri(&png))
+    png_bytes_to_data_uri(&png)
 }
 
 #[cfg(not(windows))]
@@ -30,12 +30,19 @@ pub fn get_icon_data_uri(_app: &tauri::AppHandle, _exe: &str) -> Option<String> 
     None
 }
 
-fn png_bytes_to_data_uri(bytes: &[u8]) -> String {
+/// Encodes PNG bytes as a data URI, rejecting anything that isn't a PNG.
+/// Guards against truncated cache files (e.g. an interrupted write): serving
+/// those would render a permanently broken image in the webview instead of
+/// the fallback glyph.
+fn png_bytes_to_data_uri(bytes: &[u8]) -> Option<String> {
     use base64::Engine;
-    format!(
+    if bytes.len() < 8 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return None;
+    }
+    Some(format!(
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
-    )
+    ))
 }
 
 fn cache_file_path(app: &tauri::AppHandle, exe: &str) -> Option<PathBuf> {
@@ -351,41 +358,64 @@ pub async fn get_site_icon_data_uri(app: &tauri::AppHandle, domain: &str) -> Opt
         return if bytes.is_empty() {
             None
         } else {
-            Some(png_bytes_to_data_uri(&bytes))
+            png_bytes_to_data_uri(&bytes)
         };
     }
 
-    let bytes = fetch_favicon(&host).await;
+    let (bytes, definitive) = fetch_favicon(&host).await;
     if let Some(parent) = cache_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(&cache_path, bytes.as_deref().unwrap_or_default());
-    bytes.map(|b| png_bytes_to_data_uri(&b))
+    match bytes {
+        Some(bytes) => {
+            let _ = std::fs::write(&cache_path, &bytes);
+            png_bytes_to_data_uri(&bytes)
+        }
+        // Only definitive misses get the 0-byte negative marker. Transient
+        // failures (offline, timeouts) stay unwritten so the next lookup
+        // retries instead of being poisoned forever.
+        None if definitive => {
+            let _ = std::fs::write(&cache_path, []);
+            None
+        }
+        None => None,
+    }
 }
 
 /// Google's favicon service is used rather than guessing `/favicon.ico`,
 /// because most sites declare their icon in HTML rather than serving it from a
 /// predictable path. Only the bare hostname leaves the machine, and only once
 /// per site — the result is cached on disk from then on.
-async fn fetch_favicon(host: &str) -> Option<Vec<u8>> {
+///
+/// Returns the PNG bytes plus whether the outcome is definitive: `false`
+/// marks a transient failure that must not be negative-cached.
+async fn fetch_favicon(host: &str) -> (Option<Vec<u8>>, bool) {
     let url = format!(
         "https://www.google.com/s2/favicons?sz=64&domain={}",
         urlencoding_host(host)
     );
-    let response = crate::api::client::get()
+    let response = match crate::api::client::get()
         .get(&url)
         .timeout(std::time::Duration::from_secs(8))
         .send()
         .await
-        .ok()?;
+    {
+        Ok(response) => response,
+        Err(_) => return (None, false),
+    };
     if !response.status().is_success() {
-        return None;
+        // Resolver-level trouble; a genuinely unknown domain still gets a 200
+        // with the fallback glyph, so treat this as transient.
+        return (None, false);
     }
-    let bytes = response.bytes().await.ok()?;
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(_) => return (None, false),
+    };
     if bytes.is_empty() || bytes.len() > FAVICON_MAX_BYTES {
-        return None;
+        return (None, true);
     }
-    Some(bytes.to_vec())
+    (Some(bytes.to_vec()), true)
 }
 
 /// Hostnames are already restricted to URL-safe characters by
