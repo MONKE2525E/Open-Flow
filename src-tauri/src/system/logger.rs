@@ -331,6 +331,11 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
+    /// Serializes tests that mutate the process-global VERBOSE_MODE flag and
+    /// the shared ring buffer; in parallel they race and intermittently fail
+    /// (e.g. a debug record slipping past set_verbose(false)).
+    static LOGGER_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     fn reset_buffer() {
         let _ = LOG_BUFFER.set(Mutex::new(VecDeque::new()));
         let buf = LOG_BUFFER.get().expect("buffer");
@@ -365,6 +370,7 @@ mod tests {
 
     #[test]
     fn verbose_off_drops_debug_from_app_targets_too() {
+        let _guard = LOGGER_TEST_LOCK.lock().expect("lock");
         reset_buffer();
         super::set_verbose(false);
         log_record(
@@ -395,6 +401,7 @@ mod tests {
 
     #[test]
     fn verbose_on_keeps_app_debug() {
+        let _guard = LOGGER_TEST_LOCK.lock().expect("lock");
         reset_buffer();
         super::set_verbose(true);
         log_record(
@@ -411,6 +418,7 @@ mod tests {
 
     #[test]
     fn verbose_toggle_writes_a_marker() {
+        let _guard = LOGGER_TEST_LOCK.lock().expect("lock");
         reset_buffer();
         ensure_logger_registered();
         super::set_verbose(true);
@@ -422,6 +430,7 @@ mod tests {
 
     #[test]
     fn export_header_carries_metadata_only() {
+        let _guard = LOGGER_TEST_LOCK.lock().expect("lock");
         super::set_verbose(false);
         let header = super::export_header();
         assert!(header.contains(env!("CARGO_PKG_VERSION")));

@@ -442,6 +442,7 @@ fn main() {
             commands::set_pill_size,
             commands::get_installed_apps,
             commands::get_app_icon,
+            commands::get_site_icon,
              commands::get_app_mappings,
              commands::save_app_mappings,
              commands::get_contexts,

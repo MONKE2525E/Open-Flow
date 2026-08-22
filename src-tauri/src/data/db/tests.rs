@@ -136,7 +136,7 @@ fn open_repairs_db_stuck_at_v7_without_spoken_words_column() {
     let db = open(path.to_str().expect("path string")).expect("open repairs stuck db");
 
     // Inserting a new transcription must succeed now that spoken_words exists.
-    insert_transcription_returning(&db, "second clip", "second clip", 2, 1000, "test", None)
+    insert_transcription_returning(&db, "second clip", "second clip", 2, 1000, "test", None, None)
         .expect("insert after repair");
 
     let conn = lock_conn(&db).expect("lock");
@@ -245,7 +245,7 @@ fn open_self_heals_database_stuck_at_v2_with_legacy_dictionary() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .expect("version");
-    assert_eq!(version, 16);
+    assert_eq!(version, 18);
     drop(conn);
     drop(db);
     let _ = std::fs::remove_file(&path);
@@ -303,7 +303,7 @@ fn open_with_recovery_quarantines_a_corrupt_database_and_opens_fresh() {
 
     // …but the startup path must recover: quarantine + fresh database.
     let db = open_with_recovery(&path).expect("recovery opens a fresh database");
-    insert_transcription_returning(&db, "fresh", "fresh", 1, 1000, "test", None)
+    insert_transcription_returning(&db, "fresh", "fresh", 1, 1000, "test", None, None)
         .expect("fresh db is writable");
 
     // The corrupt file must be preserved for diagnosis, not deleted.
@@ -337,7 +337,7 @@ fn open_with_recovery_leaves_a_healthy_database_untouched() {
     let path = temp_db_path("healthy_db_recovery");
     {
         let db = open(&path).expect("healthy open");
-        insert_transcription_returning(&db, "keep me", "keep me", 2, 1000, "test", None)
+        insert_transcription_returning(&db, "keep me", "keep me", 2, 1000, "test", None, None)
             .expect("insert");
     }
     let db = open_with_recovery(&path).expect("recovery keeps healthy db");
@@ -360,7 +360,7 @@ fn open_with_recovery_quarantines_db_and_sidecars_together() {
     let path = temp_db_path("sidecar_recovery");
     {
         let db = open(&path).expect("create db");
-        insert_transcription_returning(&db, "first", "first", 1, 1000, "test", None)
+        insert_transcription_returning(&db, "first", "first", 1, 1000, "test", None, None)
             .expect("insert");
         drop(db);
     }
@@ -926,9 +926,9 @@ fn cache_rejection_after_hit_removes_entry() {
 #[test]
 fn pruning_history_removes_orphaned_api_cost_rows() {
     let db = test_db();
-    let old = insert_transcription_returning(&db, "old", "old", 2, 1000, "test", None)
+    let old = insert_transcription_returning(&db, "old", "old", 2, 1000, "test", None, None)
         .expect("old transcription");
-    let recent = insert_transcription_returning(&db, "recent", "recent", 3, 1000, "test", None)
+    let recent = insert_transcription_returning(&db, "recent", "recent", 3, 1000, "test", None, None)
         .expect("recent transcription");
     let call = |transcription_id: i64| ApiCall {
         transcription_id,
@@ -1093,6 +1093,7 @@ fn stats_avg_wpm_ignores_snippet_triggers_even_when_stored_words_are_inflated() 
         2000,
         "test",
         None,
+        None,
     )
     .expect("transcription");
 
@@ -1114,6 +1115,7 @@ fn stats_avg_wpm_counts_only_non_snippet_spoken_words() {
         2000,
         "test",
         None,
+        None,
     )
     .expect("transcription");
 
@@ -1126,7 +1128,7 @@ fn stats_avg_wpm_counts_only_non_snippet_spoken_words() {
 fn stats_avg_wpm_excludes_pure_snippet_rows_from_average() {
     let db = test_db();
     insert_snippet(&db, "sig", "A long email signature", "").expect("snippet");
-    insert_transcription_returning(&db, "hello world", "hello world", 2, 1000, "test", None)
+    insert_transcription_returning(&db, "hello world", "hello world", 2, 1000, "test", None, None)
         .expect("normal transcription");
     insert_transcription_returning(
         &db,
@@ -1135,6 +1137,7 @@ fn stats_avg_wpm_excludes_pure_snippet_rows_from_average() {
         4,
         1000,
         "test",
+        None,
         None,
     )
     .expect("snippet transcription");
@@ -1162,6 +1165,7 @@ fn stats_avg_wpm_streams_large_transcription_sets() {
             1000,
             "test",
             None,
+            None,
         )
         .expect("transcription");
     }
@@ -1175,9 +1179,9 @@ fn stats_avg_wpm_streams_large_transcription_sets() {
 #[test]
 fn prune_transcriptions_older_than_deletes_only_old_rows() {
     let db = test_db();
-    insert_transcription_returning(&db, "old one", "old one", 2, 1000, "test", None)
+    insert_transcription_returning(&db, "old one", "old one", 2, 1000, "test", None, None)
         .expect("old transcription");
-    insert_transcription_returning(&db, "recent one", "recent one", 2, 1000, "test", None)
+    insert_transcription_returning(&db, "recent one", "recent one", 2, 1000, "test", None, None)
         .expect("recent transcription");
     {
         let conn = lock_conn(&db).expect("lock");
@@ -1205,9 +1209,9 @@ fn prune_transcriptions_older_than_deletes_only_old_rows() {
 #[test]
 fn pruning_old_transcriptions_does_not_reduce_lifetime_word_total() {
     let db = test_db();
-    insert_transcription_returning(&db, "old one", "old one", 5, 1000, "test", None)
+    insert_transcription_returning(&db, "old one", "old one", 5, 1000, "test", None, None)
         .expect("old transcription");
-    insert_transcription_returning(&db, "recent one", "recent one", 3, 1000, "test", None)
+    insert_transcription_returning(&db, "recent one", "recent one", 3, 1000, "test", None, None)
         .expect("recent transcription");
     {
         let conn = lock_conn(&db).expect("lock");
