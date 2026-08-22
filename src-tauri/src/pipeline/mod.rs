@@ -23,8 +23,11 @@ mod pill;
 mod pill_animation;
 mod pill_position;
 mod repair;
+mod repair_proposal;
 mod session;
-mod stages;
+mod stages_cleanup;
+mod stages_style;
+mod stages_transcription;
 mod state;
 use cache::*;
 use chains::*;
@@ -50,7 +53,10 @@ pub(crate) use pill_position::{
 };
 pub use session::*;
 pub(crate) use repair::*;
-use stages::*;
+use repair_proposal::*;
+use stages_cleanup::*;
+use stages_style::*;
+use stages_transcription::*;
 pub use state::*;
 
 #[derive(Clone, Debug)]

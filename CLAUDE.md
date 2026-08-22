@@ -4,7 +4,7 @@
 - Github Repo: https://github.com/MONKE2525E/Verenu
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
 - docs/ROADMAP.md keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
-- currently working towards Verenu 0.15.0.
+- Latest release is 0.17.0. In-progress (unreleased) work lives under "Unreleased" in docs/CHANGELOG.md — check it before assuming a feature's current state.
 - Always add yourself as a co-author  in all commits you make e.g @Claude, @Codex, @google-antigravity, etc but dont add a note at the bottom of the PR description
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -13,6 +13,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Verenu is an open-source AI dictation desktop app for Windows and macOS — a free, API-key-based alternative to the paid "Wispr Flow" app. Users supply their own API keys; there is no subscription. Target RAM usage is ~200MB idle.
 
+Core model: hold the hotkey, talk, release; Verenu transcribes (cloud or fully local), optionally cleans the text up with an LLM, and pastes it into the app that had focus. **Context groups** are the primary organizing feature: a named group ties together target apps/websites, a tone/cleanup-intensity override, custom instructions, and scoped dictionary/snippet items. Local transcription (Parakeet V3) and local LLM cleanup are first-class, with models/runtimes downloaded on demand.
+
 ## Stack
 
 - **Framework:** Tauri 2.x (Rust backend + WebView2 frontend — not Electron, not a web app)
@@ -20,6 +22,8 @@ Verenu is an open-source AI dictation desktop app for Windows and macOS — a fr
 - **Database:** SQLite via `rusqlite` (direct, not `tauri-plugin-sql`)
 - **Settings store:** backend-owned JSON at Tauri `BaseDirectory::AppData/settings.json` via `src-tauri/src/data/store.rs` (non-secret settings only; see [Settings & Configuration](#settings--configuration) for where API keys actually live)
 - **Audio capture:** `cpal` + `hound` for WAV encoding + `nnnoiseless` for noise reduction
+- **Local transcription:** `transcribe-rs` (ONNX runtime, Silero VAD) running Parakeet V3 fully offline
+- **Local cleanup:** managed local LLM server process (`src-tauri/src/local_llm/`) — binary runtime + models downloaded on demand, driven over a local HTTP endpoint
 - **Windows native APIs:** `windows` crate (hotkey hook, active window, SendInput, UI Automation, Credential Manager)
 - **macOS native APIs:** `core-graphics` (`CGEventTap` global hotkey), `security-framework` (Keychain), `accessibility-sys` (AX API), `objc2`/`objc2-foundation` (AppKit interop — `NSWorkspace`, `NSPasteboard`), `coreaudio-rs` (native mute control)
 - **HTTP:** `reqwest` (async API calls to AI providers)
@@ -95,36 +99,56 @@ When executing tasks, refer to the guidelines in the `Agent-Skills/` directory:
 ```
 src/                        # Svelte 5 frontend
   App.svelte                # Root: routing, accent theme injection, event listeners
-  PillApp.svelte            # Floating pill window (recording state display)
+  PillApp.svelte            # Floating pill window (recording/handsfree/repair states)
   main.ts / pill-main.ts    # Vite entry points for each window
   lib/
-    stores.ts               # Svelte writable stores (legacy; most stores are still here)
-    stores.svelte.ts        # Svelte 5 runes-based stores (new additions go here)
+    stores.svelte.ts        # Svelte 5 runes-based app stores
     settings.ts             # Typed settings registry: SettingsValueMap, saveSetting() helper, shared types (ProviderId, AppearanceMode, etc.)
+    settingsSections.ts     # Settings section ids/order + visibility (macOnly/devOnly/legacyOnly)
     transcriptionLanguages.ts  # ISO 639-1 language list + TranscriptionLanguageCode type (frontend mirror of store.rs validation)
     calibration.ts          # Mic gain auto-calibration state machine (loud/whisper phases)
-    appMappings.ts          # App-to-profile mapping store helpers
     platform.ts             # Runtime platform detection (Windows vs macOS)
     motion.ts               # Animation/transition utilities
     modalFocus.ts           # Reusable modal focus trap + focus restoration helper
-    tauri.ts                # Typed wrapper around @tauri-apps/api invoke/listen
+    errors.ts               # classifyIpcError + shared IPC error handling
+    serviceStatus.ts        # Polling client for api.verenu.com provider status/health
+    tauri.ts                # Typed wrapper around @tauri-apps/api invoke/listen (large; split candidate)
     icons.ts                # SVG icon definitions
-    components/layout/      # TitleBar, Sidebar, DictationPill
+    components/layout/      # TitleBar, Sidebar (incl. Contexts sidebar section), DictationPill
     components/             # Shared: Toggle, Dropdown, MicInputButton
-    components/settings/    # Settings sections: General, Models, ApiKeys, AppMappings, Privacy, Audio, Advanced, About
-    views/                  # Home (main flow + paginated history), Dictionary, Snippets, Settings, Setup (first-run wizard orchestrator), Style pages
-    setup/                  # First-run wizard: SetupShell.svelte (shared chrome/header/action bar) + steps/ (Intro, Provider, ApiKey, Permissions [macOS], WritingStyle, Appearance, QuickSettings, Calibration, TryIt, Done)
+    components/settings/    # Settings sections: General, Models, ApiKeys, AppMappings (legacy), Privacy, Audio, Advanced, About
+    views/                  # Home (main flow + paginated history), Contexts (primary), Insights, Settings, Setup, Style pages
+    views/dictionary|home|insights|snippets/    # per-view subcomponents + helpers.ts (Contexts.svelte has no subfolder yet — known monolith)
+    setup/                  # First-run wizard: SetupShell.svelte + steps/
     calibrationCopy.ts       # Localized copy strings for the mic-calibration UI (companion to calibration.ts)
 src-tauri/
   src/
-    main.rs                 # Tauri setup, state initialization, command registration
+    main.rs                 # Module wiring, Tauri builder, command registration
+    app_setup.rs            # Startup glue: readiness watchdog, data dirs, relaunch helpers
+    app_hotkey.rs           # Cross-platform hotkey registration glue
+    app_tray.rs             # Tray icon
     pipeline/
       mod.rs                # run_pipeline() orchestration, quality gates, pill window creation/resize
-      finalize.rs           # final persistence, injection, frontend event emission
-      pill.rs               # floating pill window helpers/state
+      stages_style.rs       # Style resolution: App Mappings, Context overrides, tone priority
+      stages_transcription.rs  # Audio capture handoff, quality gates, transcription paths
+      stages_cleanup.rs     # Cleanup guards, local cleanup, cache, provider chains, orchestration
+      state.rs              # Shared pipeline state machine (recording sessions, exclusive mic)
+      session.rs            # Recording session lifecycle
+      chains.rs             # Model chain validation (primary + fallbacks)
+      cache.rs              # In-pipeline cleanup-cache helpers (table lives in data/db/cleanup_cache.rs)
+      gates.rs              # Quality gates (duration/RMS/hallucination filters)
+      finalize.rs           # Final persistence, injection, frontend event emission
+      repair.rs             # Approval-gated post-dictation repair (session, model calls, mutation)
+      repair_proposal.rs    # Repair proposal types + deterministic validation (pure, no I/O)
+      pill.rs / pill_animation.rs / pill_position.rs  # Floating pill window, animations, multi-monitor placement
+      clipboard_phrase.rs   # Clipboard phrase handling
       fixture.rs            # pipeline test/debug fixtures
       tests.rs              # pipeline-focused tests
-    commands/mod.rs         # All #[tauri::command] handlers (extracted from main.rs)
+    commands/               # All #[tauri::command] handlers, split by domain:
+      mod.rs recording.rs settings.rs contexts.rs history.rs library.rs
+      local_llm.rs local_stt.rs permissions.rs service_status.rs system.rs updater.rs
+    local_llm/              # Local cleanup runtime: managed server process, model/runtime downloads
+    local_stt/              # Local transcription: Parakeet V3 engine, model downloads
     testing.rs              # Test fixture infrastructure — cfg(test)/debug_assertions only
     api/
       mod.rs                 # Shared retry/auth-error classification: AuthErrorCategory, is_retryable_provider_error(), quota_bail()
@@ -135,6 +159,7 @@ src-tauri/
       auto_learn.rs         # Auto-learn coordinator
       auto_learn/
         correction.rs       # Candidate detection and correction ranking helpers
+        focused_text.rs monitor.rs rejection.rs
       prompts/
         mod.rs              # Prompt assembly entrypoints
         transcription.rs    # Transcription-facing prompt text
@@ -147,33 +172,38 @@ src-tauri/
     core/
       hotkey/
         mod.rs               # Platform-dispatch + shared chord/handsfree state
-        win.rs                # Windows: SetWindowsHookExW(WH_KEYBOARD_LL) hold/release hook
-        mac.rs                # macOS: CGEventTap (listen-only) hold/release hook
+        win.rs                # Windows: SetWindowsHookExW(WH_KEYBOARD_LL) hold/release hook + ChordStateMachine
+        mac.rs                # macOS: Carbon RegisterEventHotKey via `global-hotkey` crate
       injection/
         mod.rs              # Shared clipboard-based text injection + platform dispatch
         windows.rs          # Windows paste/clipboard path
         macos.rs            # macOS paste/clipboard path
+      context.rs            # Foreground executable+domain → Context group resolution
       context_probe.rs      # Layered InjectionContextProbe: caret-local read (UIA/AX) → clipboard-sniff → history fallback
       context_probe_macos.rs # macOS-only half of context_probe (AX-based caret read)
       text_context.rs       # SentenceContext / InjectionPrefixClass classification used by context_probe + injection
       window_context.rs     # Foreground window → process name (GetForegroundWindow / NSWorkspace)
+      browser_probe.rs      # Best-effort browser address-bar domain read (no extension; never blocks the pipeline)
     data/
       db/
-        mod.rs              # SQLite schema (inline) + migrations + shared DB entrypoints
+        mod.rs              # SQLite shared DB entrypoints (tests live in tests.rs)
+        schema.rs           # Schema (inline) + versioned migrations with pre-migration backup
         transcriptions.rs   # History queries, insert/delete, pagination
-        dictionary.rs       # Dictionary table queries
-        snippets.rs         # Snippet table queries
-        validation.rs       # Import/export and row validation helpers
-      store.rs              # settings key constants plus backend-owned JSON settings store (NOT api keys; see credentials.rs)
+        contexts.rs         # Context groups, exe/website targets, dictionary/snippet scoping
+        dictionary.rs snippets.rs insights.rs cleanup_cache.rs validation.rs
+      store/                # mod.rs (handle + key constants), config.rs (pipeline/audio config), tests.rs
+                            # backend-owned JSON settings store (NOT api keys; see credentials.rs)
       credentials.rs        # API key storage: Windows Credential Manager (CredWriteW/CredReadW) / macOS Keychain (security-framework). Never settings.json, never SQLite.
       dictionary.rs         # Dictionary substitution logic
       snippets.rs           # Snippet expansion (pure and instruction-based paths)
     media/
       audio.rs              # CPAL mic capture → WAV, RMS level streaming
+      sound.rs              # Playback/mute coordination (coordinated_unmute)
     system/
-      apps.rs               # Registry scan for installed apps + process dedup
+      apps.rs               # Registry scan for installed apps + process dedup, AppMapping type
       mac_app.rs             # macOS-only: NSWorkspace app lookup, NSPasteboard helpers
       macos_ax_text_marker.m # Objective-C shim for AX text-marker APIs (compiled via cc, see build-dependencies)
+      media_control.rs      # DictationMediaPauseGuard (pauses media during dictation)
       logger.rs               # Logging utilities
       memory.rs              # Memory monitoring
       number_parser.rs        # Spoken-number → digit parsing
@@ -183,7 +213,9 @@ src-tauri/
   tauri.conf.json           # Declares only the "main" window (1100×720). The pill window is NOT statically configured.
 tests/
   smoke/                    # Playwright smoke tests — NEVER edit these files
+  integration/              # Feature Playwright tests (settings, onboarding, history, offline…) — editable
   manual/                   # Manual test scripts (hotkey, layout bounds) — not automated
+  OnePyFone.py              # Unified stdlib-only test runner (profiles: fast|live|native|full)
 ```
 
 The pill window is created at runtime by `create_pill_if_needed()` in `pipeline/mod.rs` (`WebviewWindowBuilder`, always-on-top, transparent, decorations off, initial size 380x44) — it is resized per recording state rather than recreated, so don't look for its dimensions in `tauri.conf.json`.
@@ -192,37 +224,67 @@ The pill window is created at runtime by `create_pill_if_needed()` in `pipeline/
 
 ```
 [Ctrl+Windows held]
-  → audio.rs: CPAL captures mic PCM, applies 3.5× gain
+  → audio.rs: CPAL captures mic PCM, applies gain
   → Emits 'audio-level' every 50ms (RMS) → pill visualizer bars
 
 [Ctrl+Windows released]
   → audio.rs: encode PCM → WAV in memory
   → pipeline/mod.rs run_pipeline():
-    1. Quality gates: reject if duration_ms < 700 or rms < 0.008
+    1. Quality gates: reject if duration too short or RMS below the gain-aware floor
     2. Capture foreground HWND (before any async work — foreground may change mid-pipeline)
-    3. transcription.rs → raw_text
-    4. Pure-snippet fast-path: if entire transcription is a single trigger → expand directly, skip cleanup
-    5. Otherwise: snippets.rs collect instruction-based triggers → api/prompts/mod.rs: assemble system prompt
-    6. cleanup.rs → clean_text (LLM with assembled prompt + snippet instructions)
-    7. snippets.rs expand_snippets() (remaining pure-token expansions in clean_text)
-    8. dictionary.rs apply_substitutions() (applied last, to final text before injection)
-    9. data/db/transcriptions.rs INSERT transcription record
-    10. core/injection/mod.rs: re-focus captured HWND → save clipboard → contextual-cap check → Ctrl+V → restore clipboard
-    11. Emit 'verenu:transcribed' to frontend
-    12. auto_learn.rs: monitor focused text for 60s (MONITOR_WINDOW_SECS) via UI Automation/AX for corrections
+    3. If the foreground process is a known browser, browser_probe.rs reads the
+       active tab's address-bar domain (best-effort, never blocks)
+    4. context::resolve_context(): foreground exe (+ domain) → matching Context
+       group, or the built-in "Everywhere" fallback
+    5. Style overrides: Context tone/intensity → App Mapping → global default_tone
+    6. transcription.rs (or local_stt Parakeet) → raw_text; dual-model mode runs
+       primary + first fallback concurrently and reconciles both candidates
+    7. Cleanup-cache lookup (key includes model, prompt inputs, and ctx:<id>) —
+       hit skips the LLM call entirely
+    8. Pure-snippet fast-path: if entire transcription is a single trigger → expand
+       directly, skip cleanup
+    9. Otherwise: snippets.rs collect context/instruction-based triggers →
+       api/prompts/mod.rs: assemble system prompt
+    10. cleanup.rs (or local_llm) → clean_text; refusal/artifact/fabrication guards
+        may retry once, then fall back to pre-cleanup text
+    11. snippets.rs expand_snippets() (remaining pure-token expansions in clean_text)
+    12. dictionary.rs apply_substitutions() (context-scoped entries; applied last)
+    13. data/db/transcriptions.rs INSERT transcription record (with context_id)
+    14. core/injection/mod.rs: re-focus captured HWND → save clipboard →
+        contextual-cap check → Ctrl+V → restore clipboard
+    15. Emit 'verenu:transcribed' to frontend
+    16. auto_learn.rs: monitor focused text for 60s (MONITOR_WINDOW_SECS) via UI
+        Automation/AX for corrections
 ```
 
 ## SQLite Schema
 
-Schema is defined inline in `src-tauri/src/data/db/mod.rs` (not in migration files). Three tables:
+Schema is defined inline in `src-tauri/src/data/db/schema.rs` with versioned migrations (`PRAGMA user_version`, `execute_batch` wrapped in explicit `BEGIN/COMMIT/ROLLBACK`, pre-migration backup at the v2 boundary). Tables, grouped:
 
 ```sql
-transcriptions  (id, raw_text, clean_text, app_name, profile, api_used, words, duration_ms, created_at)
-dictionary      (id, wrong, correct, auto_learned, correction_count, created_at)
-snippets        (id, trigger, expansion, use_count, created_at)
+-- Core content
+transcriptions       (id, raw_text, clean_text, app_name, profile, api_used, words,
+                      duration_ms, context_id, created_at)
+dictionary           (id, wrong, correct, auto_learned, correction_count, created_at)
+snippets             (id, trigger, expansion, use_count, created_at)
+
+-- Context groups (primary organizer; see "Contexts & Style Resolution")
+contexts             (id, name, is_everywhere, icon, tone, cleanup_intensity, color,
+                      custom_instructions, pinned_at, …)
+context_targets      (context_id → contexts, executable)           -- exe/bundle-id matches
+context_website_targets (context_id → contexts, domain)            -- domain matches
+dictionary_contexts  (context_id, dictionary_id)                    -- vocab scoped to a group
+snippet_contexts     (context_id, snippet_id)                       -- snippets scoped to a group
+
+-- Learning / repair
+pending_corrections  auto_learn_events  auto_learn_candidates
+
+-- Ops / analytics
+cleanup_cache        (dedup key incl. ctx:<id>, hit_count, expires_at, is_snippet)
+lifetime_stats  seeded_defaults  api_calls
 ```
 
-WAL mode is enabled. Migrations use `execute_batch` wrapped in explicit `BEGIN/COMMIT/ROLLBACK` — a failed migration rolls back fully rather than leaving a partial schema. API keys are never stored in SQLite — they live in the OS credential store (`data/credentials.rs`).
+WAL mode is enabled. A failed migration rolls back fully rather than leaving a partial schema, and `open()` self-heals certain legacy shapes (e.g. missing cleanup-cache epoch columns — covered by tests). API keys are never stored in SQLite — they live in the OS credential store (`data/credentials.rs`).
 
 ## API Providers
 
@@ -231,8 +293,11 @@ WAL mode is enabled. Migrations use `execute_batch` wrapped in explicit `BEGIN/C
 | Groq | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` |
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
 | Google | `gemini-3.5-flash` (inline audio) | `gemini-3.5-flash` |
+| Local | Parakeet V3 (`transcribe-rs`, ONNX + Silero VAD) | managed local LLM server (model-dependent) |
 
-Groq is the recommended default — free tier, fast LPU inference. Google sends audio as base64 in the request body; Groq and OpenAI use multipart form upload. The cleanup request wraps transcription text in `<raw_dictation>` XML tags. Google cleanup sets `thinking_budget: 0`.
+Groq is the recommended cloud default — free tier, fast LPU inference. Google sends audio as base64 in the request body; Groq and OpenAI use multipart form upload. The cleanup request wraps transcription text in `<raw_dictation>` XML tags. Google cleanup sets `thinking_budget: 0`.
+
+Local models are first-class, not a side path: `local_stt/` runs Parakeet V3 fully offline; `local_llm/` spawns a managed server process (binary runtime downloaded on demand) and talks to it over a local HTTP endpoint. "Fully local" means local transcription paired with local (or no) cleanup. Model/runtime downloads, cancellation, and deletion are all exposed as Tauri commands (`commands/local_stt.rs`, `commands/local_llm.rs`).
 
 The `transcription_language` setting (ISO 639-1, default `en`) is sent to Groq/OpenAI as the `language` form field and to Gemini as a natural-language label via `transcription_language_label()` in `store.rs`. Supported languages: `src/lib/transcriptionLanguages.ts` (frontend), `is_supported_transcription_language()` (Rust).
 
@@ -250,16 +315,35 @@ If a transcription or cleanup call fails with a provider-side error (`is_retryab
 
 ## Global Hotkey Behavior
 
-- **Windows:** Ctrl+Windows (hold) → start recording; release → stop and process
-- **macOS:** Fn+Control (hold/release) via `CGEventTap`
+- **Windows:** Ctrl+Windows (hold) → start recording; release → stop and process. Implemented with a raw `SetWindowsHookExW(WH_KEYBOARD_LL)` hook; both chord keys and the repair hotkey are user-configurable.
+- **macOS:** Carbon `RegisterEventHotKey` via the `global-hotkey` crate (app_hotkey.rs / core/hotkey/mac.rs). This needs **no** Input Monitoring or Accessibility permission, but Carbon hotkeys require a real key — a pure modifier chord (the old CGEventTap Fn+Control) is no longer possible on macOS.
 
-`core/hotkey/` is split by platform: `win.rs` uses a raw `SetWindowsHookExW(WH_KEYBOARD_LL)` hook, `mac.rs` uses a listen-only `CGEventTap`, and `mod.rs` holds the platform dispatch plus shared chord/handsfree state. `tauri-plugin-global-shortcut` is a declared dependency but is not used for the hold/release hotkey — that plugin only fires on keydown, so hold/release state requires the low-level hook on both platforms.
+Beyond hold-to-dictate, the hook layer handles:
+- **Handsfree mode** — double-tap the chord (or press Space while holding it) toggles a discrete recording session; Escape cancels.
+- **Repair hotkey** (default Ctrl+Alt+Z) — opens the approval-gated repair complaint box.
+- **Copy-last shortcut** (default Ctrl+Alt+C) — re-copies the last dictation to the clipboard.
+- Availability probes (`is_hotkey_available`) register/unregister the candidate combo so Settings can warn about conflicts.
 
-## Formatting Profiles
+`core/hotkey/` is split by platform: `win.rs` owns the low-level hook plus the `ChordStateMachine` (unit-tested: autorepeat suppression, double-tap windows, gesture resets that preserve key ownership), `mac.rs` owns the Carbon path, and `mod.rs` holds platform dispatch plus shared chord/handsfree state. `tauri-plugin-global-shortcut` is a declared dependency but is not used for the hold/release hotkey — hold/release state requires the low-level hook on Windows.
 
-Active window process name → profile → system prompt prefix sent to cleanup LLM.
+## Contexts & Style Resolution
 
-Built-in profiles: `casual`, `formal`, `very_casual`. Profile system prompts live in `src-tauri/src/api/cleanup.rs`. `resolve_app_mapping()` reads `AppMapping` entries (`Vec<AppMapping>`) from the backend settings snapshot at pipeline time to map foreground process name → profile name. Lookup key is the lowercase `.exe` name. Falls back to `default_tone` setting if no mapping found.
+Context groups are the primary organizer (0.17.0). A context ties together:
+- **Targets** — executables (`context_targets`, matched case-insensitively by `.exe` name on Windows / bundle id on macOS) and website domains (`context_website_targets`, matched against the browser address-bar domain read by `core/browser_probe.rs`). A target belongs to at most one context; assigning it elsewhere moves it. Website domains are DNS-checked before being accepted.
+- **Style** — optional `tone` and `cleanup_intensity` overrides and `custom_instructions` appended to the cleanup prompt.
+- **Content** — dictionary and snippet items scoped to the group via the `dictionary_contexts` / `snippet_contexts` junction tables.
+
+Every install has a built-in **Everywhere** context (id 1, `EVERYWHERE_CONTEXT_ID`) — the fallback when no target matches; it can be renamed/restyled but never deleted. User contexts are capped (`MAX_USER_CONTEXTS` = 200), names are limited to 30 chars.
+
+**Resolution order** (`core/context.rs::resolve_context` → `stages_style.rs::apply_app_style_overrides`): foreground exe + browser domain → matching context, else Everywhere. Effective style is then `Context tone/intensity → App Mapping profile/intensity → global default_tone`. The context override wins because it can match per-website, which exe-keyed App Mappings cannot.
+
+**Legacy mode:** App Mappings, Dictionary, and Snippets still exist as standalone pages but are hidden by default. `Settings → General → Legacy pages` (`legacyFeaturesEnabled`) swaps them back in and hides Contexts from the nav — the two surfaces are mutually exclusive by design. New UI work should target Contexts; legacy pages are maintenance-only.
+
+**Pipeline touchpoints:** the resolved `context_id` is stored on every transcription row, scopes cleanup-cache keys (`|ctx:<id>`), scopes repair dictionary writes, and feeds `apply_app_style_overrides`. The recording pill pre-resolves the profile (exe-only, fast path) at recording start and re-resolves with the domain at processing time so the shown style always matches what runs.
+
+Built-in tone profiles: `casual`, `formal`, `very_casual`. Profile system prompts live in `src-tauri/src/api/cleanup.rs`.
+
+**Insights** (primary nav view) is read-only analytics over the local DB: usage charts, streaks, cost breakdown, context stats (`data/db/insights.rs`, `commands` `get_insights`, `src/lib/views/insights/`).
 
 Store keys (settings, plus the API key *identifiers* used as credential usernames) are defined as constants in `src-tauri/src/data/store.rs` — always use the constant, never a raw string literal. When adding a new setting, update both `store.rs` (Rust constant + validation) and `src/lib/settings.ts` (frontend `SettingsValueMap` type entry).
 
@@ -297,7 +381,8 @@ Auto-learned dictionary entries whose `mistake` is a plain, non-distinctive word
 - **RAM target: ~200MB idle.** Profile before adding any heavy JS dependency. See [docs/transcription-ram-reliability-plan.md](docs/transcription-ram-reliability-plan.md) for the prioritized list of known memory and reliability issues in the Rust pipeline.
 - **Text injection is clipboard-based.** `SendInput` character-by-character is unreliable across apps; clipboard + Ctrl+V works everywhere.
 - **API keys never touch the DB, logs, or settings.json.** They live only in the OS credential store (`data/credentials.rs`). Commands that check key presence return a boolean status, never the key itself.
-- **MVP scope:** transcription + history + dictionary + snippets + cleanup + hotkey. Insights/stats and IDE integrations are post-MVP.
+- **Contexts are the primary surface.** Dictionary, Snippets, and App Mappings survive as legacy pages (hidden by default; mutually exclusive with Contexts via the Legacy pages toggle). Don't build new features on the legacy pages.
+- **Scope:** transcription + history + contexts (tone/vocabulary/snippets per group) + cleanup + hotkey + local models + insights. IDE integrations remain post-MVP.
 
 ## Shared Frontend Components
 
@@ -306,6 +391,8 @@ Three reusable components in `src/lib/components/`:
 - **Toggle** — `<Toggle checked={bool} onchange={(v) => ...} />`. Renders as `<div class="toggle" role="switch" aria-checked>`. Required by smoke tests — the `toggle` class must stay.
 - **Dropdown** — `<Dropdown bind:open closeSelector="">`. Handles click-outside to close; `closeSelector` exempts an element from triggering close.
 - **MicInputButton** — `<MicInputButton onResult={(text) => ...} />`. Drives a recording state machine (idle → recording → loading) via `start_input_recording` / `stop_and_transcribe_input` Tauri commands. Shows spinner while loading.
+
+Store conventions: `stores.svelte.ts` (runes) is the live store module. `stores.ts` is an empty legacy shim kept only so old imports don't break — do not add anything to it. Settings-section visibility (mac/dev/legacy gating) is centralized in `settingsSections.ts`; IPC errors go through `classifyIpcError()` in `errors.ts`.
 
 ## Patterns & Gotchas
 

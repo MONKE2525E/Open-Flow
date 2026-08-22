@@ -311,7 +311,7 @@ class SettingsContractSyncCheck(PythonTest):
 
     def run(self) -> TestResult:
         t0 = time.monotonic()
-        rust_path = ROOT / "src-tauri" / "src" / "data" / "store.rs"
+        rust_path = ROOT / "src-tauri" / "src" / "data" / "store" / "mod.rs"
         ts_path = ROOT / "src" / "lib" / "settings.ts"
         all_settings_path = ROOT / "src-tauri" / "src" / "commands" / "settings.rs"
 
@@ -355,7 +355,7 @@ class SettingsContractSyncCheck(PythonTest):
         if missing_in_ts:
             problems.append("Missing in SettingsValueMap: " + ", ".join(missing_in_ts))
         if missing_in_rust:
-            problems.append("Missing in store.rs constants: " + ", ".join(missing_in_rust))
+            problems.append("Missing in store/mod.rs constants: " + ", ".join(missing_in_rust))
         if missing_in_payload:
             problems.append("Missing in AllSettings payload: " + ", ".join(missing_in_payload))
 

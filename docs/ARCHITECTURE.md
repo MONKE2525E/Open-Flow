@@ -14,15 +14,16 @@ Verenu is a Tauri 2 desktop app. The frontend is Svelte 5 and TypeScript. The ba
 1. The global hotkey starts local microphone capture.
 2. Releasing the hotkey stops capture and encodes audio as WAV.
 3. Quality gates reject clips that are too short or too quiet.
-4. The selected transcription provider receives audio.
-5. Snippets and cleanup settings are assembled into a cleanup prompt when cleanup is enabled.
-6. The selected cleanup model returns final text.
+4. The active context group is resolved from the foreground executable and, when dictating into a browser, the address-bar domain. The context (or the built-in Everywhere fallback) supplies tone, cleanup intensity, custom instructions, and scoped dictionary/snippet items.
+5. The selected transcription provider (cloud or local Parakeet V3) receives audio.
+6. Snippets and cleanup settings are assembled into a cleanup prompt when cleanup is enabled.
+7. The selected cleanup model returns final text.
 
 When Dual model transcription is enabled, the primary model and the first configured transcription fallback run concurrently. Later fallback models replace failed candidates until two models succeed or the chain is exhausted. The cleanup request receives both candidates in separate data sections and reconciles them before the normal snippet, dictionary, persistence, and injection stages.
-7. Dictionary substitutions and snippet expansions are applied.
-8. The transcription is stored locally in SQLite.
-9. The text injection layer restores focus to the captured app and pastes through the clipboard.
-10. Optional auto-learn monitoring watches for repeated user corrections.
+8. Dictionary substitutions and snippet expansions are applied, scoped to the active context.
+9. The transcription is stored locally in SQLite together with its context id.
+10. The text injection layer restores focus to the captured app and pastes through the clipboard.
+11. Optional auto-learn monitoring watches for repeated user corrections.
 
 ## Important Modules
 
@@ -31,12 +32,14 @@ When Dual model transcription is enabled, the primary model and the first config
 | Tauri setup and command registration | [`../src-tauri/src/main.rs`](../src-tauri/src/main.rs), [`../src-tauri/src/commands/`](../src-tauri/src/commands/) |
 | Pipeline orchestration | [`../src-tauri/src/pipeline/`](../src-tauri/src/pipeline/) |
 | Provider requests and cleanup prompts | [`../src-tauri/src/api/`](../src-tauri/src/api/) |
+| Local transcription and cleanup models | [`../src-tauri/src/local_stt/`](../src-tauri/src/local_stt/), [`../src-tauri/src/local_llm/`](../src-tauri/src/local_llm/) |
+| Context groups (targets, style, scoping) | [`../src-tauri/src/core/context.rs`](../src-tauri/src/core/context.rs), [`../src-tauri/src/data/db/contexts.rs`](../src-tauri/src/data/db/contexts.rs), [`../src/lib/views/Contexts.svelte`](../src/lib/views/Contexts.svelte) |
 | Audio capture | [`../src-tauri/src/media/audio.rs`](../src-tauri/src/media/audio.rs) |
 | Hotkeys | [`../src-tauri/src/core/hotkey/`](../src-tauri/src/core/hotkey/) |
 | Text injection | [`../src-tauri/src/core/injection/`](../src-tauri/src/core/injection/) |
 | Context probing and capitalization | [`../src-tauri/src/core/context_probe.rs`](../src-tauri/src/core/context_probe.rs), [`../src-tauri/src/core/text_context.rs`](../src-tauri/src/core/text_context.rs) |
 | Local database and settings | [`../src-tauri/src/data/`](../src-tauri/src/data/) |
-| Frontend settings and stores | [`../src/lib/settings.ts`](../src/lib/settings.ts), [`../src/lib/stores.ts`](../src/lib/stores.ts), [`../src/lib/stores.svelte.ts`](../src/lib/stores.svelte.ts) |
+| Frontend settings and stores | [`../src/lib/settings.ts`](../src/lib/settings.ts), [`../src/lib/stores.svelte.ts`](../src/lib/stores.svelte.ts) |
 | Main app views | [`../src/lib/views/`](../src/lib/views/) |
 | First-run setup | [`../src/lib/setup/`](../src/lib/setup/) |
 
