@@ -52,6 +52,7 @@ use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_fa
 pub(crate) use pill_position::{
     apply_pill_placement, placement_for_current_monitor, PillPlacement,
 };
+pub use session::*;
 pub(crate) use repair::*;
 use repair_proposal::*;
 use stages_cleanup::*;
