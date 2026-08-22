@@ -107,10 +107,7 @@ fn spawn_relaunch_and_exit(app: &AppHandle) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn spawn_relaunch_and_exit_with_args(
-    app: &AppHandle,
-    extra_args: &[&str],
-) -> Result<(), String> {
+fn spawn_relaunch_and_exit_with_args(app: &AppHandle, extra_args: &[&str]) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
@@ -201,7 +198,10 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
         w.set_decorations(true).ok();
         w.set_background_color(Some(bg)).ok();
         w.set_title("").ok();
-        w.set_title_bar_style(tauri::TitleBarStyle::Transparent)
+        // Overlay (not Transparent): the webview extends under the native
+        // titlebar, so the sidebar runs flush into the traffic lights instead
+        // of a mismatched window-background strip sitting above it.
+        w.set_title_bar_style(tauri::TitleBarStyle::Overlay)
             .ok();
     }
 }
@@ -288,10 +288,14 @@ fn cached_caption_icons(theme: IconTheme) -> (isize, isize) {
 
     let transparent = *TRANSPARENT.get_or_init(|| make_transparent_hicon(16));
     let real = match theme {
-        IconTheme::Dark => *DARK_REAL
-            .get_or_init(|| make_hicon(windows_taskbar_icon_image(IconTheme::Dark, 256).rgba(), 256)),
+        IconTheme::Dark => *DARK_REAL.get_or_init(|| {
+            make_hicon(windows_taskbar_icon_image(IconTheme::Dark, 256).rgba(), 256)
+        }),
         IconTheme::Light => *LIGHT_REAL.get_or_init(|| {
-            make_hicon(windows_taskbar_icon_image(IconTheme::Light, 256).rgba(), 256)
+            make_hicon(
+                windows_taskbar_icon_image(IconTheme::Light, 256).rgba(),
+                256,
+            )
         }),
     };
     (transparent, real)
@@ -585,18 +589,19 @@ mod windows_icon_tests {
         let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
         for i in 0..count {
             let e = 6 + 16 * i;
-            let size = if bytes[e] == 0 { 256 } else { u32::from(bytes[e]) };
+            let size = if bytes[e] == 0 {
+                256
+            } else {
+                u32::from(bytes[e])
+            };
             if size != want {
                 continue;
             }
             let len = u32::from_le_bytes([bytes[e + 8], bytes[e + 9], bytes[e + 10], bytes[e + 11]])
                 as usize;
-            let off = u32::from_le_bytes([
-                bytes[e + 12],
-                bytes[e + 13],
-                bytes[e + 14],
-                bytes[e + 15],
-            ]) as usize;
+            let off =
+                u32::from_le_bytes([bytes[e + 12], bytes[e + 13], bytes[e + 14], bytes[e + 15]])
+                    as usize;
             let data = &bytes[off..off + len];
             assert_eq!(
                 &data[0..4],
@@ -703,7 +708,10 @@ mod windows_icon_tests {
     fn tray_geometry_is_unchanged() {
         let (w, h, cx, cy) = glyph_bounds(runtime_tray_icon_image(IconTheme::Dark, 32).rgba(), 32);
         assert!((w - 0.656).abs() < 0.02, "tray glyph width changed: {w:.3}");
-        assert!((h - 0.500).abs() < 0.02, "tray glyph height changed: {h:.3}");
+        assert!(
+            (h - 0.500).abs() < 0.02,
+            "tray glyph height changed: {h:.3}"
+        );
         assert!((cx - 0.484).abs() < 0.02, "tray centre-x changed: {cx:.3}");
         assert!((cy - 0.531).abs() < 0.02, "tray centre-y changed: {cy:.3}");
     }

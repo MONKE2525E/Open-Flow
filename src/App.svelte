@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { appStore } from './lib/stores';
   import { cleanupPromptEditor } from './lib/stores.svelte';
-  import { isWindows } from './lib/platform';
+  import { isMac, isWindows } from './lib/platform';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
   import Insights from './lib/views/Insights.svelte';
@@ -12,6 +12,8 @@
   import Style from './lib/views/Style.svelte';
   import Settings from './lib/views/Settings.svelte';
   import CleanupPromptModal from './lib/components/settings/CleanupPromptModal.svelte';
+  import SyncPairModal from './lib/components/settings/SyncPairModal.svelte';
+  import { startSyncListeners, syncStore } from './lib/syncStore.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
   import { getVersion, invoke, isTauriRuntime, listen } from './lib/tauri';
@@ -158,6 +160,7 @@
     let stopDownloadManagerListeners: (() => void) | undefined;
     let stopProviderStatusChecks: (() => void) | undefined;
     let stopApiHealthChecks: (() => void) | undefined;
+    let stopSyncListeners: (() => void) | undefined;
     let stopTitleBarMetricsListener: (() => void) | undefined;
 
     if (isWindows && isTauriRuntime()) {
@@ -261,6 +264,7 @@
       stopDownloadManagerListeners = startDownloadManagerListeners();
       stopProviderStatusChecks = startProviderStatusChecks();
       stopApiHealthChecks = startApiHealthChecks();
+      stopSyncListeners = startSyncListeners();
     } catch (error) {
       console.error('Failed to start listeners and status checks:', error);
     }
@@ -303,6 +307,7 @@
       if (stopDownloadManagerListeners) stopDownloadManagerListeners();
       if (stopProviderStatusChecks) stopProviderStatusChecks();
       if (stopApiHealthChecks) stopApiHealthChecks();
+      if (stopSyncListeners) stopSyncListeners();
       if (stopTitleBarMetricsListener) stopTitleBarMetricsListener();
       media?.removeEventListener?.('change', onSystemThemeChange);
       clearInterval(connectivityTimer);
@@ -311,7 +316,7 @@
   });
 </script>
 
-<div class="app" class:app-windows={isWindows}>
+<div class="app" class:app-windows={isWindows} class:app-mac={isMac}>
   {#if appStore.setupComplete === false}
     <Setup />
   {/if}
@@ -352,6 +357,9 @@
   <Settings />
   {#if cleanupPromptEditor.open}
     <CleanupPromptModal />
+  {/if}
+  {#if syncStore.incoming}
+    <SyncPairModal />
   {/if}
   <DictationPill />
 
@@ -417,6 +425,21 @@
      without changing the established macOS page rhythm. */
   .app.app-windows {
     --page-pad-y: calc(var(--native-titlebar-height, 32px) + 10px);
+  }
+
+  /*
+   * macOS uses a native overlay titlebar (traffic lights over the content), so
+   * the window's top 28px is system chrome even though nothing draws there.
+   * Pages keep their rhythm by reserving that strip in the shared page padding,
+   * and full-screen overlays (the setup wizard) offset below it too.
+   */
+  .app.app-mac {
+    --mac-titlebar-h: 28px;
+    --page-pad-y: calc(clamp(16px, 2.4vw, 30px) + var(--mac-titlebar-h));
+  }
+
+  .app.app-mac :global(.setup-shell) {
+    padding-top: var(--mac-titlebar-h);
   }
 
   .body {

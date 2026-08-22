@@ -25,6 +25,7 @@ pub struct PipelineConfig {
     pub app_context_hint: bool,
     pub auto_learn_enabled: bool,
     pub contextual_caps_enabled: bool,
+    pub contextual_formatting_enabled: bool,
     pub auto_spacing_enabled: bool,
     pub caps_lock_uppercase_enabled: bool,
     pub clipboard_phrase_enabled: bool,
@@ -320,6 +321,10 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
             .unwrap_or(false),
         contextual_caps_enabled: store
             .get(CONTEXTUAL_CAPS)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        contextual_formatting_enabled: store
+            .get(CONTEXTUAL_FORMATTING)
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
         auto_spacing_enabled: store

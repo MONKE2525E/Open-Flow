@@ -45,19 +45,20 @@ use gates::{
     MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
 pub(crate) use pill::{
-    emit_pill_profile, emit_pill_stage, hide_pill, pill_wants_repair_focus, show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
+    emit_pill_profile, emit_pill_stage, hide_pill, pill_wants_repair_focus,
+    show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
 };
 use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_failed_pill};
 pub(crate) use pill_position::{
     apply_pill_placement, placement_for_current_monitor, PillPlacement,
 };
-pub use session::*;
 pub(crate) use repair::*;
 use repair_proposal::*;
 use stages_cleanup::*;
 use stages_style::*;
 use stages_transcription::*;
 pub use state::*;
+pub use session::*;
 
 #[derive(Clone, Debug)]
 pub struct CapturedAudio {
@@ -287,6 +288,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
                     cleanup_intensity: None,
                     color: None,
                     custom_instructions: None,
+                    contextual_formatting_disabled: false,
                     pinned_at: None,
                     created_at: String::new(),
                     updated_at: String::new(),
@@ -582,7 +584,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
 
     let (raw_for_cleanup, clipboard_plan, clipboard_warning) =
         prepare_clipboard_phrase(&cfg, &raw).await;
-    let clipboard_instruction = clipboard_plan.as_ref().map(clipboard_phrase::cleanup_instruction);
+    let clipboard_instruction = clipboard_plan
+        .as_ref()
+        .map(clipboard_phrase::cleanup_instruction);
 
     let stage_cleanup = std::time::Instant::now();
     // Only advertise the cleaning stage when the cleanup LLM will actually run
@@ -689,21 +693,23 @@ async fn prepare_clipboard_phrase(
     Option<&'static str>,
 ) {
     if !cfg.clipboard_phrase_enabled
-        || clipboard_phrase::replace_phrase_with_marker(raw, &cfg.clipboard_phrase, String::new()).is_none()
+        || clipboard_phrase::replace_phrase_with_marker(raw, &cfg.clipboard_phrase, String::new())
+            .is_none()
     {
         return (raw.to_string(), None, None);
     }
 
-    match injection::read_current_clipboard_text().await.filter(|text| !text.trim().is_empty()) {
-        Some(text) => match clipboard_phrase::replace_phrase_with_marker(
-            raw,
-            &cfg.clipboard_phrase,
-            text,
-        ) {
-            Some(plan) => (plan.pre_cleanup.clone(), Some(plan), None),
-            None => {
-                log::debug!("pipeline: clipboard phrase match disappeared before planning");
-                (raw.to_string(), None, None)
+    match injection::read_current_clipboard_text()
+        .await
+        .filter(|text| !text.trim().is_empty())
+    {
+        Some(text) => {
+            match clipboard_phrase::replace_phrase_with_marker(raw, &cfg.clipboard_phrase, text) {
+                Some(plan) => (plan.pre_cleanup.clone(), Some(plan), None),
+                None => {
+                    log::debug!("pipeline: clipboard phrase match disappeared before planning");
+                    (raw.to_string(), None, None)
+                }
             }
         }
         None => (
@@ -819,7 +825,9 @@ pub async fn retry_transcription_impl(
     }
     let (raw_for_cleanup, clipboard_plan, clipboard_warning) =
         prepare_clipboard_phrase(&cfg, &raw).await;
-    let clipboard_instruction = clipboard_plan.as_ref().map(clipboard_phrase::cleanup_instruction);
+    let clipboard_instruction = clipboard_plan
+        .as_ref()
+        .map(clipboard_phrase::cleanup_instruction);
     let Some((final_text, dict_entries, cleanup_cache_key, cleanup_api_used)) =
         run_cleanup_and_snippets(
             app,
