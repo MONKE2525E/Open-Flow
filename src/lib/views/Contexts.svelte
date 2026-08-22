@@ -720,14 +720,16 @@
             contextId: created.id,
             executable: app.exe,
           });
-          contextsStore.targets = [...targets.filter((item) => normalizeExe(item.executable) !== normalizeExe(app.exe)), target];
+          // Read the live store array each iteration: a captured snapshot
+          // would drop targets assigned by earlier iterations of this loop.
+          contextsStore.targets = [...contextsStore.targets.filter((item) => normalizeExe(item.executable) !== normalizeExe(app.exe)), target];
         }
         for (const domain of modalWebsites) {
           const site = await invoke<ContextWebsiteTarget>('assign_context_website', {
             contextId: created.id,
             domain,
           });
-          contextsStore.websites = [...websites.filter((item) => item.domain !== domain), site];
+          contextsStore.websites = [...contextsStore.websites.filter((item) => item.domain !== domain), site];
         }
       }
       modal = null;
