@@ -288,7 +288,7 @@ Examples (term / mistake):
 - "that was totally wrong" -> unsupported, no specific words named
 - "stop capitalizing randomly" -> not a dictionary fix, see setting example below
 
-SETTING fix: only for the six keys listed above, only when the complaint clearly describes that exact behavior (too aggressive cleanup, wrong tone, spacing before punctuation, random capitalization, Caps Lock typing uppercase). Never invent a setting, context, dictionary target, or snippet, and never propose a snippet. Never fix ordinary grammar or a no-op such as "the" -> "the".
+SETTING fix: only for the five keys listed above, only when the complaint clearly describes that exact behavior (too aggressive cleanup, wrong tone, spacing before punctuation, random capitalization, Caps Lock typing uppercase). Never invent a setting, context, dictionary target, or snippet, and never propose a snippet. Never fix ordinary grammar or a no-op such as "the" -> "the".
 
 Use only the supplied dictionary ids for update/remove. For a dictionary action, default scope to "context" (the app this dictation happened in) — only use "everywhere" when the complaint itself says the mistake happens in general, everywhere, or across apps. term and mistake are single words or short phrases (a few words at most) — never a sentence, never the full complaint restated. Do not include extra fields."#;
 

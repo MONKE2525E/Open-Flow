@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS contexts (
   cleanup_intensity TEXT,
   color             TEXT,
   custom_instructions TEXT,
+  contextual_formatting_disabled INTEGER NOT NULL DEFAULT 0 CHECK (contextual_formatting_disabled IN (0, 1)),
   pinned_at         DATETIME,
   created_at        DATETIME NOT NULL DEFAULT (datetime('now')),
   updated_at        DATETIME NOT NULL DEFAULT (datetime('now'))
