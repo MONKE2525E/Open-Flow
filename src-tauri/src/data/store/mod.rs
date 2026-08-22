@@ -211,6 +211,7 @@ pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
 pub const AUTO_LEARN_EVENT_MODE: &str = "auto_learn_event_mode";
 pub const CONTEXTUAL_CAPS: &str = "contextual_caps_enabled";
 pub const AUTO_SPACING: &str = "auto_spacing_enabled";
+pub const CONTEXTUAL_FORMATTING: &str = "contextual_formatting_enabled";
 pub const APPEARANCE_MODE: &str = "appearance_mode";
 pub const FORCE_SETUP_ON_LAUNCH: &str = "force_setup_on_launch";
 pub const ADVANCED_MODEL_UI: &str = "advanced_model_ui";

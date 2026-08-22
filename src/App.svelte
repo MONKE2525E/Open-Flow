@@ -438,7 +438,7 @@
     --page-pad-y: calc(clamp(16px, 2.4vw, 30px) + var(--mac-titlebar-h));
   }
 
-  .app.app-mac :global(.setup-shell) {
+  .app.app-mac :global(.setup-overlay) {
     padding-top: var(--mac-titlebar-h);
   }
 
