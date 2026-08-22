@@ -236,6 +236,8 @@ const defaultSettings: Record<string, unknown> = {
   mic_gain: 3.5,
   app_context_hint: false,
   auto_learn_enabled: false,
+  contextual_caps_enabled: true,
+  auto_spacing_enabled: true,
   history_retention: '30 days',
   microphone_device: null,
   update_dismissed_version: null,

@@ -281,7 +281,7 @@
     if (!request) return;
     contextsStore.modalRequest = null;
     if (request.mode === 'edit') contextsStore.selectedId = request.id;
-    openContextModal(request.mode);
+    openContextModal(request.mode, request.mode === 'edit' ? request.id : undefined);
   });
 
   function closeAppPicker() {
@@ -495,10 +495,15 @@
     }
   }
 
-  function openContextModal(mode: 'create' | 'edit' = 'create') {
+  function openContextModal(mode: 'create' | 'edit' = 'create', targetId?: number) {
     if (mode === 'create' && atContextLimit) return;
     contextModalMode = mode;
-    const editing = mode === 'edit' ? selectedContext : null;
+    // Resolve the edit target explicitly from the requested id: going through
+    // the selectedContext derived would silently fall back to contexts[0]
+    // when the id isn't (yet) in the list, prefilled with the wrong context.
+    const editing = mode === 'edit'
+      ? contexts.find((context) => context.id === (targetId ?? contextsStore.selectedId)) ?? null
+      : null;
     contextName = editing?.name ?? '';
     modalIcon = editing?.icon ?? null;
     modalColor = editing?.color ?? null;

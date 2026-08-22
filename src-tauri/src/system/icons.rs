@@ -367,10 +367,16 @@ pub async fn get_site_icon_data_uri(app: &tauri::AppHandle, domain: &str) -> Opt
         let _ = std::fs::create_dir_all(parent);
     }
     match bytes {
-        Some(bytes) => {
-            let _ = std::fs::write(&cache_path, &bytes);
-            png_bytes_to_data_uri(&bytes)
-        }
+        // Validate before caching: a captive portal or proxy can hand back
+        // HTML/ICO garbage, and a cached non-PNG file would lock that domain
+        // out of retries forever.
+        Some(bytes) => match png_bytes_to_data_uri(&bytes) {
+            Some(uri) => {
+                let _ = std::fs::write(&cache_path, &bytes);
+                Some(uri)
+            }
+            None => None,
+        },
         // Only definitive misses get the 0-byte negative marker. Transient
         // failures (offline, timeouts) stay unwritten so the next lookup
         // retries instead of being poisoned forever.
