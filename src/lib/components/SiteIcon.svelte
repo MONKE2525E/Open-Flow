@@ -18,7 +18,9 @@
   function normalizeHost(input: string): string {
     const trimmed = input.trim().toLowerCase();
     if (!trimmed) return '';
-    const withoutScheme = trimmed.split('://').pop() ?? trimmed;
+    // Strip only the leading scheme; split('://').pop() would latch onto a
+    // nested URL in the query string (e.g. ...?redirect=https://other.com).
+    const withoutScheme = trimmed.includes('://') ? trimmed.slice(trimmed.indexOf('://') + 3) : trimmed;
     const host = withoutScheme.split(/[/?#]/)[0]?.split('@').pop()?.split(':')[0] ?? '';
     return host.replace(/^\.+|\.+$/g, '');
   }
