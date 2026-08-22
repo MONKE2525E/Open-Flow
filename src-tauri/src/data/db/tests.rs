@@ -1163,7 +1163,7 @@ fn stats_avg_wpm_ignores_snippet_triggers_even_when_stored_words_are_inflated() 
         2000,
         "test",
         None,
-    None,
+        None,
     )
     .expect("transcription");
 
@@ -1185,7 +1185,7 @@ fn stats_avg_wpm_counts_only_non_snippet_spoken_words() {
         2000,
         "test",
         None,
-    None,
+        None,
     )
     .expect("transcription");
 
@@ -1208,7 +1208,7 @@ fn stats_avg_wpm_excludes_pure_snippet_rows_from_average() {
         1000,
         "test",
         None,
-    None,
+        None,
     )
     .expect("snippet transcription");
 
