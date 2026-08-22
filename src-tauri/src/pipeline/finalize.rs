@@ -20,6 +20,34 @@ pub(super) struct PipelineCompletionContext<'a> {
     pub(super) browser_domain: Option<String>,
 }
 
+/// True when `rest` (the text right after a protected dictionary term) does
+/// not start a new word: either a plain boundary character, or a
+/// possessive/contraction continuation of the term ("'s" in "Verenu's").
+fn is_term_boundary_or_suffix(rest: &str) -> bool {
+    match rest.chars().next() {
+        Some(ch @ ('\'' | '’')) => {
+            // Possessive/contraction shape: apostrophe, a short letter run
+            // ("s", "re", "ll"...), then a non-alphanumeric boundary.
+            let after = &rest[ch.len_utf8()..];
+            let mut chars = after.chars();
+            if !chars.next().is_some_and(|c| c.is_alphabetic()) {
+                return false;
+            }
+            let extra = after
+                .chars()
+                .skip(1)
+                .take_while(|c| c.is_alphabetic())
+                .count();
+            let boundary = after
+                .chars()
+                .nth(1 + extra)
+                .is_none_or(|c| !c.is_alphanumeric());
+            extra <= 2 && boundary
+        }
+        _ => true,
+    }
+}
+
 fn dictionary_protects_initial_case(text: &str, entries: &[db::DictionaryEntry]) -> bool {
     let Some(start) = text
         .char_indices()
@@ -32,9 +60,14 @@ fn dictionary_protects_initial_case(text: &str, entries: &[db::DictionaryEntry])
         !entry.term.is_empty()
             && entry.term.chars().any(char::is_uppercase)
             && leading.strip_prefix(&entry.term).is_some_and(|rest| {
-                rest.chars()
-                    .next()
-                    .is_none_or(|ch| !ch.is_alphanumeric() && !matches!(ch, '\'' | '’'))
+                match rest.chars().next() {
+                    None => true,
+                    // A possessive/contraction suffix stays part of the
+                    // protected word ("Verenu's", "Groq’s"); any other
+                    // alphanumeric continuation is a different word.
+                    Some(ch) if ch.is_alphanumeric() => false,
+                    Some(_) => is_term_boundary_or_suffix(rest),
+                }
             })
     })
 }
@@ -425,5 +458,18 @@ mod tests {
         ));
         assert!(!dictionary_protects_initial_case("Very useful", &entries));
         assert!(!dictionary_protects_initial_case("Use Verenu", &entries));
+    }
+
+    #[test]
+    fn dictionary_case_protection_covers_possessive_suffixes() {
+        let entries = [entry("Verenu")];
+        assert!(dictionary_protects_initial_case("Verenu's API", &entries));
+        assert!(dictionary_protects_initial_case("Verenu\u{2019}s API", &entries));
+        assert!(dictionary_protects_initial_case("Verenu're here", &entries));
+        // A longer alphanumeric continuation is a different word, and a bare
+        // apostrophe followed by a non-letter is not a possessive.
+        assert!(!dictionary_protects_initial_case("Verenustuff", &entries));
+        assert!(!dictionary_protects_initial_case("Verenu'stuff", &entries));
+        assert!(!dictionary_protects_initial_case("Verenu's7", &entries));
     }
 }
