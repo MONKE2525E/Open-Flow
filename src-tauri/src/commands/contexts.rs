@@ -82,6 +82,31 @@ pub async fn update_context_color(
 }
 
 #[tauri::command]
+pub async fn get_context_stats(
+    app: AppHandle,
+    context_id: i64,
+) -> Result<db::ContextStats, String> {
+    let db = db_state(&app);
+    run_blocking("get_context_stats", move || {
+        db::query_context_stats(&db, context_id).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_context_pinned(
+    app: AppHandle,
+    context_id: i64,
+    pinned: bool,
+) -> Result<(), String> {
+    let db = db_state(&app);
+    run_blocking("set_context_pinned", move || {
+        db::set_context_pinned(&db, context_id, pinned).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn delete_context(app: AppHandle, context_id: i64) -> Result<(), String> {
     let db = db_state(&app);
     run_blocking("delete_context", move || {

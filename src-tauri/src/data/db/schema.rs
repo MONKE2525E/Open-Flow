@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS transcriptions (
   spoken_words INTEGER,
   duration_ms INTEGER NOT NULL DEFAULT 0,
   api_used    TEXT    NOT NULL DEFAULT '',
+  context_id  INTEGER,
   created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_transcriptions_created_at
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS contexts (
   cleanup_intensity TEXT,
   color             TEXT,
   custom_instructions TEXT,
+  pinned_at         DATETIME,
   created_at        DATETIME NOT NULL DEFAULT (datetime('now')),
   updated_at        DATETIME NOT NULL DEFAULT (datetime('now'))
 );
@@ -573,6 +575,47 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
                 "ALTER TABLE contexts ADD COLUMN custom_instructions TEXT;",
             )?;
             conn.execute_batch("PRAGMA user_version = 16;")?;
+            Ok(())
+        })?;
+    }
+    if user_version < 17 {
+        log::info!("db: migrating schema {user_version} -> 17");
+        // Pin timestamp for the sidebar's context list: NULL means unpinned,
+        // and pinned rows sort newest-pin-first above the creation-ordered
+        // rest. Column declared in SCHEMA for fresh databases;
+        // ensure_table_column is idempotent for databases that already have it.
+        run_migration(&mut conn, |conn| {
+            ensure_table_column(
+                conn,
+                "contexts",
+                "pinned_at",
+                "ALTER TABLE contexts ADD COLUMN pinned_at DATETIME;",
+            )?;
+            conn.execute_batch("PRAGMA user_version = 17;")?;
+            Ok(())
+        })?;
+    }
+    if user_version < 18 {
+        log::info!("db: migrating schema {user_version} -> 18");
+        // Which context a dictation ran under, so the context page and the
+        // Insights filter can show real per-context totals. Deliberately not a
+        // foreign key: deleting a context must not delete its history, and a
+        // stale id simply stops matching. Rows dictated before v18 keep NULL
+        // and count toward nothing. Column declared in SCHEMA for fresh
+        // databases; ensure_table_column is idempotent for databases that
+        // already have it.
+        run_migration(&mut conn, |conn| {
+            ensure_table_column(
+                conn,
+                "transcriptions",
+                "context_id",
+                "ALTER TABLE transcriptions ADD COLUMN context_id INTEGER;",
+            )?;
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_transcriptions_context_id
+                   ON transcriptions(context_id);
+                 PRAGMA user_version = 18;",
+            )?;
             Ok(())
         })?;
     }

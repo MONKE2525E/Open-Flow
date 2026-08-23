@@ -128,6 +128,12 @@ On Windows and macOS, installing an update opens the published GitHub asset so t
 
 When you attach a website to a context group, Verenu resolves the domain over DNS before accepting it, so a typo can't create a website target that will never match anything. This is a plain DNS lookup, not an HTTP request — it does not fetch the site, send cookies, or reveal your IP to the site owner beyond what any DNS resolution already does. Nothing about your dictation, history, or other settings is included; only the domain you typed leaves your device, to your configured DNS resolver.
 
+### Website favicons
+
+To show a real site icon next to a website context target (in the sidebar and on the context page), Verenu asks Google's public favicon service for that site's icon. Only the bare hostname you attached (for example `mail.google.com`) is sent — never a full URL, path, dictation, history, or API key — and the site itself is never contacted.
+
+Each hostname is requested at most once: the result is cached on disk under the app data directory, including the "this site has no icon" outcome, so the icon is not re-fetched when the sidebar rerenders, you switch pages, or you restart the app. If the lookup fails, the row falls back to a generic globe glyph.
+
 ### Connectivity check
 
 While the app window is open, Verenu periodically sends a lightweight `HEAD` request to `api.github.com` to detect whether you are online and show the offline indicator.

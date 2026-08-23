@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { fly } from 'svelte/transition';
+  import { fly, slide } from 'svelte/transition';
   import { crossfade } from 'svelte/transition';
   import { flip } from 'svelte/animate';
-  import { expoOut } from 'svelte/easing';
+  import { cubicOut, expoOut } from 'svelte/easing';
   import { emit, invoke, listen } from '../tauri';
   import { modalBackdrop, modalCard, MOTION_MS, MOTION_PX, motionMs, motionPx, pageSwap, directionFromOrder } from '../motion';
   import { modalFocusTrap } from '../modalFocus';
@@ -25,8 +25,14 @@
     type InstalledApp,
   } from '../appMappings';
   import { icons } from '../icons';
+  import {
+    contextsStore,
+    loadContexts as loadSharedContexts,
+    EVERYWHERE_ID,
+  } from '../contextsStore.svelte';
   import AppIcon from '../components/AppIcon.svelte';
   import SiteIcon from '../components/SiteIcon.svelte';
+  import Toggle from '../components/Toggle.svelte';
   import { matchesAppSearch } from '../components/appMappings/helpers';
   import { handleListboxOptionKeydown, focusListboxOption } from '../components/appMappings/listbox';
   import DictionaryModal from './dictionary/DictionaryModal.svelte';
@@ -34,7 +40,6 @@
   import { fmtDate as fmtDictionaryDate, confidenceLabel } from './dictionary/helpers';
   import { fmtDate as fmtSnippetDate } from './snippets/helpers';
 
-  const EVERYWHERE_ID = 1;
   const CONTEXT_NAME_MAX_LENGTH = 30;
   const CONTEXT_CUSTOM_INSTRUCTIONS_MAX_LENGTH = 300;
   const CONTEXT_TABS = [
@@ -73,11 +78,13 @@
 
   const [send, receive] = crossfade({ duration: motionMs(MOTION_MS.base), easing: expoOut });
 
-  let contexts = $state<Context[]>([]);
-  let targets = $state<ContextTarget[]>([]);
-  let websites = $state<ContextWebsiteTarget[]>([]);
+  // The context list, its targets and the current selection are shared with
+  // the sidebar, which is where contexts are now navigated and managed from.
+  const contexts = $derived(contextsStore.contexts);
+  const targets = $derived(contextsStore.targets);
+  const websites = $derived(contextsStore.websites);
+  const selectedContextId = $derived(contextsStore.selectedId);
   let installedApps = $state<InstalledApp[]>([]);
-  let selectedContextId = $state(EVERYWHERE_ID);
   let dictionary = $state<DictionaryEntry[]>([]);
   let snippets = $state<Snippet[]>([]);
   let search = $state('');
@@ -114,6 +121,7 @@
   let modalTone = $state<string | null>(null);
   let modalCleanupIntensity = $state<string | null>(null);
   let modalCustomInstructions = $state('');
+  let editingContextId = $state<number | null>(null);
   // Tone/cleanup dropdown menus render fixed-position at the top level (not
   // nested in the modal card) because the modal card and body both clip
   // overflow — an absolutely-positioned menu inside them gets cut off.
@@ -132,13 +140,6 @@
   let websitePickerTrigger = $state<HTMLButtonElement | null>(null);
   let websiteError = $state('');
   let contextErrorMessage = $state('');
-  let contextDeleteArmed = $state(false);
-  let contextMenuOpen = $state(false);
-  let contextMenuPos = $state<{ top: number; right: number } | null>(null);
-  let contextMenuTargetId = $state<number | null>(null);
-  let colorPickerOpen = $state(false);
-  let colorPickerPos = $state<{ top: number; left: number } | null>(null);
-  let colorPickerTargetId = $state<number | null>(null);
   let loading = $state(true);
   let loadToken = 0;
 
@@ -198,6 +199,24 @@
     return list;
   });
 
+  // A compact usage line, not an analytics panel — deeper context analytics
+  // belong in Insights. Counts only dictations recorded since the schema
+  // started attributing them to a context, so it stays empty on fresh installs.
+  type ContextStats = { dictations: number; words: number; last_used_at: string | null };
+  let contextStats = $state<ContextStats | null>(null);
+
+  async function loadContextStats(contextId: number) {
+    const token = loadToken;
+    try {
+      const stats = await invoke<ContextStats>('get_context_stats', { contextId });
+      if (token !== loadToken) return;
+      contextStats = stats ?? null;
+    } catch {
+      // Cosmetic — a failed stats read just hides the line.
+      if (token === loadToken) contextStats = null;
+    }
+  }
+
   async function loadContextItems(contextId: number) {
     const token = ++loadToken;
     loading = true;
@@ -210,6 +229,7 @@
       if (token !== loadToken) return;
       dictionary = nextDictionary ?? [];
       snippets = nextSnippets ?? [];
+      void loadContextStats(contextId);
       selectedDictionary = null;
       selectedSnippet = null;
       closeRowMenu();
@@ -223,22 +243,17 @@
 
   async function loadContexts() {
     try {
-      const [nextContexts, nextTargets, nextWebsites, nextApps] = await Promise.all([
-        invoke<Context[]>('get_contexts'),
-        invoke<ContextTarget[]>('get_context_targets', { contextId: null }),
-        invoke<ContextWebsiteTarget[]>('get_context_websites', { contextId: null }),
+      const [nextApps] = await Promise.all([
         invoke<InstalledApp[]>('get_installed_apps'),
+        // Force a refresh: the sidebar loads this once at startup, but this
+        // page is the surface where targets get added and removed.
+        loadSharedContexts(true),
       ]);
-      contexts = nextContexts ?? [];
-      targets = nextTargets ?? [];
-      websites = nextWebsites ?? [];
       installedApps = (nextApps ?? []).map((app) => ({
         name: cleanAppName(app.name || app.exe),
         exe: normalizeExe(app.exe),
       }));
-      if (!contexts.some((context) => context.id === selectedContextId)) {
-        selectedContextId = contexts.find((context) => context.is_everywhere)?.id ?? contexts[0]?.id ?? EVERYWHERE_ID;
-      }
+      if (contextsStore.error) contextErrorMessage = contextsStore.error;
       await loadContextItems(selectedContextId);
     } catch (error) {
       contextErrorMessage = classifyIpcError(error).message;
@@ -258,6 +273,16 @@
   $effect(() => {
     selectedContextId;
     if (contexts.length > 0) void loadContextItems(selectedContextId);
+  });
+
+  // The sidebar owns the context list but not the context form, so it asks
+  // this page to open the same create/edit modal it always had.
+  $effect(() => {
+    const request = contextsStore.modalRequest;
+    if (!request) return;
+    contextsStore.modalRequest = null;
+    if (request.mode === 'edit') contextsStore.selectedId = request.id;
+    openContextModal(request.mode, request.mode === 'edit' ? request.id : undefined);
   });
 
   function closeAppPicker() {
@@ -298,15 +323,6 @@
       window.removeEventListener('scroll', handleClose, { capture: true });
     };
   });
-
-  function selectContext(id: number) {
-    if (id === selectedContextId) return;
-    selectedContextId = id;
-    closeAppPicker();
-    closeWebsitePicker();
-    closeContextMenu();
-    search = '';
-  }
 
   function selectTab(id: ContextTab) {
     if (id === tab) return;
@@ -480,11 +496,18 @@
     }
   }
 
-  function openContextModal(mode: 'create' | 'edit' = 'create') {
+  function openContextModal(mode: 'create' | 'edit' = 'create', targetId?: number) {
     if (mode === 'create' && atContextLimit) return;
-    closeContextMenu();
     contextModalMode = mode;
-    const editing = mode === 'edit' ? selectedContext : null;
+    // Resolve the edit target explicitly from the requested id: going through
+    // the selectedContext derived would silently fall back to contexts[0]
+    // when the id isn't (yet) in the list, prefilled with the wrong context.
+    const editing = mode === 'edit'
+      ? contexts.find((context) => context.id === (targetId ?? contextsStore.selectedId)) ?? null
+      : null;
+    // Save uses this id directly so it can never drift to a different
+    // context if the list or selection changes while the modal is open.
+    editingContextId = editing?.id ?? null;
     contextName = editing?.name ?? '';
     modalIcon = editing?.icon ?? null;
     modalColor = editing?.color ?? null;
@@ -649,23 +672,32 @@
       contextError = 'Give this context a name.';
       return;
     }
+    let createdContextId: number | null = null;
+    const editing = contextModalMode === 'edit' && editingContextId !== null
+      ? contexts.find((context) => context.id === editingContextId) ?? null
+      : null;
+    if (contextModalMode === 'edit' && !editing) {
+      // The context was deleted (or never resolved) while the modal was
+      // open - refuse rather than silently falling through to create.
+      contextError = 'This context no longer exists.';
+      return;
+    }
     savingContext = true;
     contextError = '';
-    let createdContextId: number | null = null;
     try {
-      if (contextModalMode === 'edit' && selectedContext && !selectedContext.is_everywhere) {
-        await invoke('update_context', { contextId: selectedContext.id, name });
+      if (editing) {
+        await invoke('update_context', { contextId: editing.id, name });
         await invoke('update_context_settings', {
-          contextId: selectedContext.id,
+          contextId: editing.id,
           icon: modalIcon,
           tone: modalTone,
           cleanupIntensity: modalCleanupIntensity,
           customInstructions: modalCustomInstructions.trim() || null,
         });
-        if (modalColor !== selectedContext.color) {
-          await invoke('update_context_color', { contextId: selectedContext.id, color: modalColor });
+        if (modalColor !== editing.color) {
+          await invoke('update_context_color', { contextId: editing.id, color: modalColor });
         }
-        contexts = contexts.map((context) => context.id === selectedContext.id
+        contextsStore.contexts = contexts.map((context) => context.id === editing.id
           ? { ...context, name, icon: modalIcon, tone: modalTone, cleanup_intensity: modalCleanupIntensity, custom_instructions: modalCustomInstructions.trim() || null, color: modalColor, updated_at: new Date().toISOString() }
           : context);
       } else {
@@ -681,27 +713,29 @@
           await invoke('update_context_color', { contextId: created.id, color: modalColor });
           created.color = modalColor;
         }
-        contexts = [...contexts, created];
-        selectedContextId = created.id;
+        contextsStore.contexts = [...contexts, created];
+        contextsStore.selectedId = created.id;
         for (const app of modalApps) {
           const target = await invoke<ContextTarget>('assign_context_target', {
             contextId: created.id,
             executable: app.exe,
           });
-          targets = [...targets.filter((item) => normalizeExe(item.executable) !== normalizeExe(app.exe)), target];
+          // Read the live store array each iteration: a captured snapshot
+          // would drop targets assigned by earlier iterations of this loop.
+          contextsStore.targets = [...contextsStore.targets.filter((item) => normalizeExe(item.executable) !== normalizeExe(app.exe)), target];
         }
         for (const domain of modalWebsites) {
           const site = await invoke<ContextWebsiteTarget>('assign_context_website', {
             contextId: created.id,
             domain,
           });
-          websites = [...websites.filter((item) => item.domain !== domain), site];
+          contextsStore.websites = [...contextsStore.websites.filter((item) => item.domain !== domain), site];
         }
       }
       modal = null;
     } catch (error) {
       if (createdContextId !== null) {
-        selectedContextId = createdContextId;
+        contextsStore.selectedId = createdContextId;
         contextModalMode = 'edit';
       }
       contextError = classifyIpcError(error).message;
@@ -709,69 +743,6 @@
       savingContext = false;
     }
   }
-
-  async function deleteContext(context: Context) {
-    if (context.is_everywhere) return;
-    if (!contextDeleteArmed) {
-      contextDeleteArmed = true;
-      return;
-    }
-    try {
-      await invoke('delete_context', { contextId: context.id });
-      contexts = contexts.filter((c) => c.id !== context.id);
-      targets = targets.filter((target) => target.context_id !== context.id);
-      websites = websites.filter((site) => site.context_id !== context.id);
-      if (selectedContextId === context.id) selectedContextId = EVERYWHERE_ID;
-    } catch (error) {
-      contextErrorMessage = classifyIpcError(error).message;
-    } finally {
-      contextDeleteArmed = false;
-      closeContextMenu();
-    }
-  }
-
-  function editContextFromMenu(context: Context) {
-    selectedContextId = context.id;
-    openContextModal('edit');
-  }
-
-  function closeColorPicker() {
-    colorPickerOpen = false;
-    colorPickerPos = null;
-    colorPickerTargetId = null;
-  }
-
-  function openColorPicker(context: Context, event: MouseEvent) {
-    event.preventDefault();
-    if (context.is_everywhere) return;
-    colorPickerPos = { top: event.clientY + 4, left: event.clientX };
-    colorPickerTargetId = context.id;
-    colorPickerOpen = true;
-  }
-
-  async function pickContextColor(context: Context, color: string | null) {
-    closeColorPicker();
-    try {
-      await invoke('update_context_color', { contextId: context.id, color });
-      contexts = contexts.map((c) => c.id === context.id ? { ...c, color, updated_at: new Date().toISOString() } : c);
-    } catch (error) {
-      contextErrorMessage = classifyIpcError(error).message;
-    }
-  }
-
-  $effect(() => {
-    if (!colorPickerOpen) return;
-    const handleClose = () => closeColorPicker();
-    const timeout = window.setTimeout(() => {
-      window.addEventListener('pointerdown', handleClose);
-      window.addEventListener('scroll', handleClose, { capture: true, passive: true });
-    });
-    return () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener('pointerdown', handleClose);
-      window.removeEventListener('scroll', handleClose, { capture: true });
-    };
-  });
 
   // Same picker, but for a context still being created/edited in the modal —
   // there's no context row to right-click yet, so this sets local modal
@@ -796,43 +767,6 @@
   $effect(() => {
     if (!modalColorPickerOpen) return;
     const handleClose = () => closeModalColorPicker();
-    const timeout = window.setTimeout(() => {
-      window.addEventListener('pointerdown', handleClose);
-      window.addEventListener('scroll', handleClose, { capture: true, passive: true });
-    });
-    return () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener('pointerdown', handleClose);
-      window.removeEventListener('scroll', handleClose, { capture: true });
-    };
-  });
-
-  function closeContextMenu() {
-    contextMenuOpen = false;
-    contextMenuPos = null;
-    contextMenuTargetId = null;
-    contextDeleteArmed = false;
-  }
-
-  function toggleContextMenu(context: Context, trigger: HTMLButtonElement | null) {
-    if (contextMenuOpen && contextMenuTargetId === context.id) {
-      closeContextMenu();
-      return;
-    }
-    if (!trigger) return;
-    const rect = trigger.getBoundingClientRect();
-    contextMenuPos = { top: rect.bottom + 4, right: window.innerWidth - rect.right };
-    contextMenuTargetId = context.id;
-    contextMenuOpen = true;
-    contextDeleteArmed = false;
-  }
-
-  $effect(() => {
-    if (!contextMenuOpen) return;
-    const handleClose = (event: Event) => {
-      if (event.target instanceof Element && event.target.closest('.item-kebab')) return;
-      closeContextMenu();
-    };
     const timeout = window.setTimeout(() => {
       window.addEventListener('pointerdown', handleClose);
       window.addEventListener('scroll', handleClose, { capture: true, passive: true });
@@ -875,7 +809,7 @@
         contextId: selectedContext.id,
         executable: app.exe,
       });
-      targets = [...targets.filter((item) => normalizeExe(item.executable) !== normalizeExe(app.exe)), target];
+      contextsStore.targets = [...targets.filter((item) => normalizeExe(item.executable) !== normalizeExe(app.exe)), target];
       markRecentlyAdded(normalizeExe(app.exe));
       closeAppPicker();
     } catch (error) {
@@ -886,19 +820,10 @@
   async function removeApp(target: ContextTarget) {
     try {
       await invoke('remove_context_target', { contextId: target.context_id, executable: target.executable });
-      targets = targets.filter((item) => item.id !== target.id);
+      contextsStore.targets = targets.filter((item) => item.id !== target.id);
     } catch (error) {
       contextErrorMessage = classifyIpcError(error).message;
     }
-  }
-
-  function contextRowMeta(contextId: number): string {
-    const appCount = targets.filter((target) => target.context_id === contextId).length;
-    const siteCount = websites.filter((site) => site.context_id === contextId).length;
-    const parts: string[] = [];
-    if (appCount) parts.push(`${appCount} app${appCount === 1 ? '' : 's'}`);
-    if (siteCount) parts.push(`${siteCount} site${siteCount === 1 ? '' : 's'}`);
-    return parts.length ? parts.join(', ') : 'No apps or sites yet';
   }
 
   function appLabel(executable: string) {
@@ -949,7 +874,7 @@
         contextId: selectedContext.id,
         domain,
       });
-      websites = [...websites.filter((item) => item.domain !== domain), site];
+      contextsStore.websites = [...websites.filter((item) => item.domain !== domain), site];
       markRecentlyAdded(domain);
       closeWebsitePicker();
     } catch (error) {
@@ -973,7 +898,7 @@
   async function removeWebsite(site: ContextWebsiteTarget) {
     try {
       await invoke('remove_context_website', { contextId: site.context_id, domain: site.domain });
-      websites = websites.filter((item) => item.id !== site.id);
+      contextsStore.websites = websites.filter((item) => item.id !== site.id);
     } catch (error) {
       contextErrorMessage = classifyIpcError(error).message;
     }
@@ -982,7 +907,6 @@
   function closeModal() {
     modal = null;
     contextError = '';
-    contextDeleteArmed = false;
     closeModalColorPicker();
   }
 
@@ -992,8 +916,6 @@
       closeAppPicker();
       closeWebsitePicker();
       closeFieldMenu();
-      closeContextMenu();
-      closeColorPicker();
       closeModalColorPicker();
     }
   }
@@ -1002,9 +924,6 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="content-inner contexts-page" class:modal-open={modal !== null}>
-  <h1 class="page-h">Contexts</h1>
-  <p class="page-sub">Give Verenu the vocabulary and snippets that fit what you are doing.</p>
-
   {#if contextErrorMessage}
     <div class="load-warning" role="alert">
       <span>{contextErrorMessage}</span>
@@ -1013,70 +932,25 @@
   {/if}
 
   <div class="contexts-shell">
-    <aside class="context-rail" aria-label="Contexts">
-      <div class="rail-head">
-        <button
-          class="new-context-btn"
-          type="button"
-          title={atContextLimit ? `You've reached the limit of ${MAX_USER_CONTEXTS} context groups` : ''}
-          disabled={atContextLimit}
-          onclick={() => openContextModal()}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-          New context group
-        </button>
-      </div>
-
-      <div class="context-list">
-        {#each contexts as context (context.id)}
-          <div class="context-row-wrap" class:menu-open={contextMenuOpen && contextMenuTargetId === context.id}>
-            <button
-              type="button"
-              class="context-row"
-              class:is-selected={selectedContextId === context.id}
-              aria-pressed={selectedContextId === context.id}
-              onclick={() => selectContext(context.id)}
-            >
-              <span
-                class="context-row-icon"
-                aria-hidden="true"
-                style={context.color ? `color: ${context.color}` : ''}
-                oncontextmenu={(event) => openColorPicker(context, event)}
-              >
-                {#if context.is_everywhere}
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9s-1.1 6.5-3.3 9c-2.2-2.5-3.3-5.5-3.3-9S9.8 5.5 12 3Z"/></svg>
-                {:else if context.icon && icons[context.icon as keyof typeof icons]}
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{@html icons[context.icon as keyof typeof icons]}</svg>
-                {:else}
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h6M7 16h3"/></svg>
-                {/if}
-              </span>
-              <span class="context-row-copy">
-                <span class="context-row-name">{context.name}</span>
-                <span class="context-row-meta">{context.is_everywhere ? 'Fallback context group' : contextRowMeta(context.id)}</span>
-              </span>
-            </button>
-            {#if !context.is_everywhere}
-              <button
-                type="button"
-                class="item-kebab context-row-kebab"
-                aria-label={`More actions for ${context.name}`}
-                aria-haspopup="menu"
-                aria-expanded={contextMenuOpen && contextMenuTargetId === context.id}
-                onclick={(event) => toggleContextMenu(context, event.currentTarget)}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
-              </button>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    </aside>
-
     <main class="context-main">
       {#key selectedContextId}
       {#if selectedContext}
-        <div class="context-content" in:pageSwap={{ axis: 'y', distance: motionPx(MOTION_PX.panel), duration: motionMs(MOTION_MS.panel) }} out:pageSwap={{ axis: 'y', distance: -motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.fast) }}>
+        <!--
+          Swaps along the sidebar's own axis and in the direction the selection
+          travelled, so the view reads as coming from the row that was clicked.
+          The two panes overlap in one grid cell (see .context-main), so the
+          incoming one never gets pushed below the outgoing one mid-swap.
+
+          |global is required, not decorative: the element sits inside an {#if}
+          whose condition never changes, so a local transition sees its own
+          block as unchanged and skips entirely. It is the {#key} above that
+          swaps, which only a global transition reacts to.
+        -->
+        <div
+          class="context-content"
+          in:pageSwap|global={{ axis: 'y', distance: contextsStore.selectDir * motionPx(MOTION_PX.page), duration: motionMs(MOTION_MS.panel) }}
+          out:pageSwap|global={{ axis: 'y', distance: -contextsStore.selectDir * motionPx(MOTION_PX.lift), duration: motionMs(MOTION_MS.base) }}
+        >
         <div class="context-header">
           <div>
             <h2>{selectedContext.name}</h2>
@@ -1157,6 +1031,18 @@
             </div>
           {/if}
         </div>
+
+        {#if contextStats && contextStats.dictations > 0}
+          <div class="context-stats" in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast) }}>
+            <span class="context-stat"><strong>{contextStats.words.toLocaleString()}</strong> {contextStats.words === 1 ? 'word' : 'words'}</span>
+            <span class="context-stat-sep" aria-hidden="true">·</span>
+            <span class="context-stat"><strong>{contextStats.dictations.toLocaleString()}</strong> {contextStats.dictations === 1 ? 'dictation' : 'dictations'}</span>
+            {#if contextStats.last_used_at}
+              <span class="context-stat-sep" aria-hidden="true">·</span>
+              <span class="context-stat">last used {fmtDictionaryDate(contextStats.last_used_at)}</span>
+            {/if}
+          </div>
+        {/if}
 
         {#if !selectedContext.is_everywhere}
           <div class="target-strip">
@@ -1345,69 +1231,6 @@
     </main>
   </div>
 </div>
-
-{#if contextMenuOpen && contextMenuPos && contextMenuTargetId !== null}
-  {@const menuContext = contexts.find((c) => c.id === contextMenuTargetId)}
-  {#if menuContext}
-    <div
-      class="ui-dropdown-menu row-menu-fixed"
-      role="menu"
-      tabindex="-1"
-      style="top: {contextMenuPos.top}px; right: {contextMenuPos.right}px;"
-      onpointerdown={(event) => event.stopPropagation()}
-      in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast) }} out:fly={{ y: motionPx(MOTION_PX.nudge) * 0.6, duration: motionMs(120) }}
-    >
-      <button class="ui-dropdown-option" type="button" role="menuitem" onclick={() => editContextFromMenu(menuContext)}>Edit</button>
-      <button
-        class="ui-dropdown-option row-menu-delete"
-        class:is-armed={contextDeleteArmed}
-        type="button"
-        role="menuitem"
-        onclick={() => void deleteContext(menuContext)}
-      >
-        {contextDeleteArmed ? 'Confirm delete' : 'Delete'}
-      </button>
-    </div>
-  {/if}
-{/if}
-
-{#if colorPickerOpen && colorPickerPos && colorPickerTargetId !== null}
-  {@const colorContext = contexts.find((c) => c.id === colorPickerTargetId)}
-  {#if colorContext}
-    <div
-      class="ui-dropdown-menu color-picker-fixed"
-      role="menu"
-      tabindex="-1"
-      style="top: {colorPickerPos.top}px; left: {colorPickerPos.left}px;"
-      onpointerdown={(event) => event.stopPropagation()}
-      in:fly={{ y: motionPx(MOTION_PX.nudge), duration: motionMs(MOTION_MS.fast) }} out:fly={{ y: motionPx(MOTION_PX.nudge) * 0.6, duration: motionMs(120) }}
-    >
-      <div class="color-swatch-row">
-        {#each CONTEXT_COLOR_CHOICES as choice (choice.id)}
-          <button
-            type="button"
-            class="color-swatch"
-            class:is-selected={colorContext.color === choice.value}
-            style="background: {choice.value};"
-            aria-label={choice.label}
-            title={choice.label}
-            onclick={() => void pickContextColor(colorContext, choice.value)}
-          ></button>
-        {/each}
-        <button
-          type="button"
-          class="color-swatch color-swatch-none"
-          class:is-selected={!colorContext.color}
-          aria-label="Default"
-          title="Default"
-          onclick={() => void pickContextColor(colorContext, null)}
-        >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-    </div>
-  {/if}
-{/if}
 
 {#if modalColorPickerOpen && modalColorPickerPos}
   <div
@@ -1748,16 +1571,6 @@
     padding: var(--page-pad-y) var(--page-pad-x) 36px;
     min-width: 0;
   }
-  .page-h {
-    font-family: var(--serif);
-    font-size: 26px;
-    font-weight: 500;
-    letter-spacing: -0.02em;
-    margin: 0 0 4px;
-    line-height: 1.1;
-    color: var(--ink);
-  }
-  .page-sub { color: var(--ink-mute); font-size: 12.5px; margin: 0 0 22px; max-width: 560px; line-height: 1.5; }
   .load-warning {
     margin: 0 0 16px;
     padding: 8px 10px;
@@ -1774,45 +1587,52 @@
   .contexts-page { min-width: 0; }
   .contexts-page:not(.modal-open) ~ :global(.modal-card),
   .contexts-page:not(.modal-open) ~ :global(.ui-modal-backdrop) { pointer-events: none; }
-  .contexts-shell { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 20px; align-items: start; }
-  .context-rail { min-width: 0; position: sticky; top: 0; }
-  .rail-head, .context-header, .target-strip, .library-toolbar { display: flex; align-items: center; }
-  .rail-head { margin-bottom: 8px; }
-  .new-context-btn {
-    width: 100%;
-    border: 1px dashed var(--line);
-    border-radius: var(--r-sm);
-    background: transparent;
-    color: var(--ink-mute);
+  .contexts-shell { min-width: 0; }
+  /* One cell, so the outgoing and incoming context panes cross-fade in place. */
+  .context-main { display: grid; }
+  .context-content { grid-area: 1 / 1; min-width: 0; }
+
+  /*
+   * A light cascade behind the pane swap: header, stats, targets, tabs and the
+   * list each settle a beat apart, which is what makes switching context feel
+   * like something happened rather than a straight cross-fade. Keyed remount
+   * replays it on every switch.
+   */
+  .context-content > :global(*) {
+    animation: context-rise var(--ctx-rise-ms) cubic-bezier(0.33, 1, 0.68, 1) both;
+  }
+  .context-content { --ctx-rise-ms: 300ms; }
+  .context-content > :global(:nth-child(1)) { animation-delay: 0ms; }
+  .context-content > :global(:nth-child(2)) { animation-delay: 35ms; }
+  .context-content > :global(:nth-child(3)) { animation-delay: 70ms; }
+  .context-content > :global(:nth-child(4)) { animation-delay: 105ms; }
+  .context-content > :global(:nth-child(n + 5)) { animation-delay: 140ms; }
+
+  @keyframes context-rise {
+    from { opacity: 0; transform: translate3d(0, 6px, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .context-content { --ctx-rise-ms: 1ms; }
+    .context-content > :global(*) { animation-delay: 0ms !important; }
+  }
+  .context-header, .target-strip, .library-toolbar { display: flex; align-items: center; }
+  .context-main { min-width: 0; position: relative; }
+  .context-stats {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 9px 8px;
-    font-size: 12.5px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: -8px 0 16px;
+    font-size: 11.5px;
+    color: var(--ink-mute);
   }
-  .new-context-btn:hover:not(:disabled) { background: var(--control-hover); border-color: var(--line-strong); color: var(--ink-soft); }
-  .new-context-btn:disabled { opacity: .5; cursor: not-allowed; }
-  .context-list { display: flex; flex-direction: column; gap: 2px; }
-  .context-row-wrap { position: relative; }
-  .context-row { width: 100%; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--ink-soft); display: flex; align-items: center; gap: 9px; padding: 9px 28px 9px 8px; text-align: left; cursor: pointer; transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
-  .context-row:hover { background: var(--control-hover); }
-  .context-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .context-row.is-selected { background: var(--control-active); border-color: var(--line); color: var(--ink); }
-  .context-row-kebab { position: absolute; top: 50%; right: 4px; translate: 0 -50%; width: 22px; height: 22px; opacity: 0; scale: .85; transition: opacity .16s ease, scale .16s ease; }
-  .context-row-wrap:hover .context-row-kebab,
-  .context-row-wrap:focus-within .context-row-kebab,
-  .context-row-wrap.menu-open .context-row-kebab { opacity: 1; scale: 1; }
-  .context-row-icon { color: var(--ink-mute); display: grid; place-items: center; flex: 0 0 18px; }
-  .context-row-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-  .context-row-name { font-size: 12.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .context-row-meta { font-size: 10.5px; color: var(--ink-faint); }
-  .context-main { min-width: 0; position: relative; }
+  .context-stats strong { color: var(--ink-soft); font-weight: 550; font-variant-numeric: tabular-nums; }
+  .context-stat-sep { color: var(--ink-faint); }
   .context-header { justify-content: space-between; gap: 16px; margin-bottom: 16px; }
   .context-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; position: relative; }
-  .context-header h2 { font-family: var(--serif); font-size: 23px; font-weight: 500; letter-spacing: -.02em; line-height: 1.1; margin: 4px 0 4px; color: var(--ink); }
+  .context-header h2 { font-family: var(--serif); font-size: 26px; font-weight: 500; letter-spacing: -.02em; line-height: 1.1; margin: 4px 0 4px; color: var(--ink); }
   .context-header p { color: var(--ink-mute); font-size: 12px; margin: 0; line-height: 1.45; }
   .target-strip { flex-wrap: wrap; gap: 6px; padding: 9px 0 14px; border-top: 1px solid var(--line-soft); }
   .target-label { color: var(--ink-faint); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; margin-right: 3px; }
@@ -1962,9 +1782,6 @@
   .save-error { color: var(--danger); background: var(--danger-bg); border: 1px solid var(--danger-line); border-radius: var(--r-sm); font-size: 11.5px; margin: 0; padding: 6px 10px; }
 
   @media (max-width: 900px) {
-    .contexts-shell { grid-template-columns: 1fr; }
-    .context-rail { position: static; }
-    .context-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
     .app-picker { position: static; width: 100%; margin: 6px 0 0; }
   }
   @media (max-width: 650px) {

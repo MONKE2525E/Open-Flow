@@ -40,6 +40,7 @@ type DevContext = {
   cleanup_intensity: string | null;
   color: string | null;
   custom_instructions: string | null;
+  pinned_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -307,7 +308,10 @@ function devNow() {
 }
 
 function readDevContexts(): DevContext[] {
-  const rows = readDevList<DevContext>(DEV_CONTEXTS_KEY);
+  const rows = readDevList<DevContext>(DEV_CONTEXTS_KEY).map((row) => ({
+    ...row,
+    pinned_at: row.pinned_at ?? null,
+  }));
   if (rows.some((context) => context.id === DEV_EVERYWHERE_CONTEXT_ID)) return rows;
   const now = devNow();
   const everywhere: DevContext = {
@@ -319,6 +323,7 @@ function readDevContexts(): DevContext[] {
     cleanup_intensity: null,
     color: null,
     custom_instructions: null,
+    pinned_at: null,
     created_at: now,
     updated_at: now,
   };
@@ -951,9 +956,13 @@ function devPermissionSnapshot(provider?: unknown) {
  * index, no Math.random) so the page doesn't flicker between renders and the
  * smoke tests see stable numbers.
  */
-function devInsights(days: number): unknown {
+function devInsights(days: number, contextId: number | null): unknown {
   const span = days > 0 ? days : 120;
-  const noise = (n: number) => ((Math.sin(n * 12.9898) * 43758.5453) % 1 + 1) % 1;
+  // Deterministic per-context scaling: enough for the filter to visibly change
+  // the page in browser dev mode without inventing a second fake dataset.
+  const scale = contextId === null ? 1 : 1 / (1 + (contextId % 5));
+  const noise = (n: number) =>
+    ((Math.sin((n + (contextId ?? 0) * 7) * 12.9898) * 43758.5453) % 1 + 1) % 1;
 
   const today = new Date();
   const daily = Array.from({ length: span }, (_, i) => {
@@ -993,6 +1002,12 @@ function devInsights(days: number): unknown {
     };
   });
 
+  for (const d of daily) {
+    d.words = Math.round(d.words * scale);
+    d.transcriptions = d.words === 0 ? 0 : Math.max(1, Math.round(d.transcriptions * scale));
+    d.speaking_ms = Math.round(d.speaking_ms * scale);
+  }
+
   const wordsInRange = daily.reduce((sum, d) => sum + d.words, 0);
   const transcriptions = daily.reduce((sum, d) => sum + d.transcriptions, 0);
   const speakingMs = daily.reduce((sum, d) => sum + d.speaking_ms, 0);
@@ -1025,10 +1040,11 @@ function devInsights(days: number): unknown {
   });
 
   return {
+    context_id: contextId,
     range_days: days,
     generated_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
     totals: {
-      total_words: wordsInRange + 218_400,
+      total_words: contextId === null ? wordsInRange + 218_400 : wordsInRange,
       total_transcriptions: transcriptions,
       total_speaking_ms: speakingMs,
       avg_words_per_transcription: transcriptions ? Math.round(wordsInRange / transcriptions) : 0,
@@ -1149,9 +1165,10 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         is_everywhere: false,
         icon: (args?.icon as string | null | undefined) ?? null,
         tone: (args?.tone as string | null | undefined) ?? null,
-        cleanup_intensity: (args?.cleanup_intensity as string | null | undefined) ?? null,
+        cleanup_intensity: ((args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined) ?? null,
         color: null,
         custom_instructions: ((args?.customInstructions ?? args?.custom_instructions) as string | null | undefined) ?? null,
+        pinned_at: null,
         created_at: now,
         updated_at: now,
       };
@@ -1164,7 +1181,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       const rows = readDevContexts();
       const index = rows.findIndex((row) => row.id === id);
       if (index === -1) throw new Error(`Context ${id} was not found`);
-      if (rows[index].is_everywhere) throw new Error('The Everywhere context cannot be renamed');
       if (rows.some((row) => row.id !== id && row.name.toLowerCase() === name.toLowerCase())) {
         throw new Error('UNIQUE constraint failed: contexts.name');
       }
@@ -1177,7 +1193,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       const rows = readDevContexts();
       const index = rows.findIndex((row) => row.id === id);
       if (index === -1) throw new Error(`Context ${id} was not found`);
-      if (rows[index].is_everywhere) throw new Error('The Everywhere context cannot have a tone override');
       rows[index] = {
         ...rows[index],
         icon: (args?.icon as string | null | undefined) ?? null,
@@ -1199,12 +1214,30 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       const rows = readDevContexts();
       const index = rows.findIndex((row) => row.id === id);
       if (index === -1) throw new Error(`Context ${id} was not found`);
-      if (rows[index].is_everywhere) throw new Error('The Everywhere context cannot have a color override');
       rows[index] = {
         ...rows[index],
         color: (args?.color as string | null | undefined) ?? null,
         updated_at: devNow(),
       };
+      writeDevList(DEV_CONTEXTS_KEY, rows);
+      return undefined as T;
+    }
+    case 'get_context_stats': {
+      // Browser dev mode has no dictation history to attribute, so the strip
+      // gets deterministic sample numbers rather than a permanent zero state.
+      const id = Number(args?.contextId ?? args?.context_id) || 0;
+      if (id === DEV_EVERYWHERE_CONTEXT_ID) {
+        return { dictations: 128, words: 9_412, last_used_at: devNow() } as T;
+      }
+      return { dictations: 6 * id, words: 317 * id, last_used_at: devNow() } as T;
+    }
+    case 'set_context_pinned': {
+      const id = Number(args?.contextId ?? args?.context_id);
+      const pinned = Boolean(args?.pinned);
+      const rows = readDevContexts();
+      const index = rows.findIndex((row) => row.id === id);
+      if (index === -1) throw new Error(`Context ${id} was not found`);
+      rows[index] = { ...rows[index], pinned_at: pinned ? devNow() : null };
       writeDevList(DEV_CONTEXTS_KEY, rows);
       return undefined as T;
     }
@@ -1293,6 +1326,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return undefined as T;
     }
     case 'get_app_icon':
+    case 'get_site_icon':
       return null as T;
     case 'get_context_dictionary': {
       const contextId = Number(args?.contextId ?? args?.context_id);
@@ -1346,8 +1380,11 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       ] as T;
     case 'get_stats':
       return { total_words: 0, avg_wpm: 0, day_streak: 0 } as T;
-    case 'get_insights':
-      return devInsights(Number(args?.days ?? 30)) as T;
+    case 'get_insights': {
+      const raw = args?.contextId ?? args?.context_id;
+      const id = raw === null || raw === undefined ? null : Number(raw);
+      return devInsights(Number(args?.days ?? 30), id) as T;
+    }
     case 'get_memory_mb':
       return 0 as T;
     case 'local_models_supported_on_this_platform':

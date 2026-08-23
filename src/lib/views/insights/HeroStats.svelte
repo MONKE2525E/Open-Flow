@@ -9,6 +9,11 @@
 
   let { data, rangeLabel }: { data: InsightsPayload; rangeLabel: string } = $props();
 
+  // Dictionary fixes and auto-learned terms are lifetime counters with no
+  // context dimension in the schema, so they stay global even when the rest of
+  // the page is filtered. Say so rather than letting them read as scoped.
+  const scoped = $derived(data.context_id !== null);
+
   /* Gauge spans 0–200 wpm. The average speaking pace (~100 wpm) sits dead
      centre, so most readings land mid-arc with room on both sides for
      unusually slow or fast talkers. */
@@ -118,6 +123,9 @@
       <span class="big"><AnimatedNumber value={data.cleanup.edits_applied} /></span>
     </div>
     <p class="tile-label">fixes made by Verenu</p>
+    {#if scoped}
+      <p class="tile-note tile-note-dim">across all contexts</p>
+    {/if}
     <div class="sub-rows">
       <div class="stat-line">
         <span class="stat-num"><AnimatedNumber value={data.cleanup.dictionary_fixes} /></span>
