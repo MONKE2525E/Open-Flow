@@ -198,9 +198,13 @@ pub fn is_repair_hotkey_available(key1: &str, key2: &str, key3: &str) -> bool {
         };
         Some(flags | flag)
     });
-    let Some(modifier_flags) = modifier_flags else { return true };
+    let Some(modifier_flags) = modifier_flags else {
+        return true;
+    };
     let vk = map_code_to_vk(key3);
-    if vk == 0 { return true; }
+    if vk == 0 {
+        return true;
+    }
     unsafe {
         if RegisterHotKey(None, 0x5A8F, HOT_KEY_MODIFIERS(modifier_flags), vk).is_ok() {
             let _ = UnregisterHotKey(None, 0x5A8F);
@@ -711,7 +715,8 @@ static REPAIR_MOD1: AtomicU32 = AtomicU32::new(162); // Ctrl
 static REPAIR_MOD2: AtomicU32 = AtomicU32::new(164); // Alt
 static REPAIR_TRIGGER: AtomicU32 = AtomicU32::new(0x5A); // 'Z'
 static REPAIR_TRIGGER_DOWN: AtomicBool = AtomicBool::new(false);
-static REPAIR_OPEN_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+static REPAIR_OPEN_CB: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> =
+    std::sync::OnceLock::new();
 
 pub fn update_repair_keys(mod1: u32, mod2: u32, trigger: u32) {
     REPAIR_MOD1.store(mod1, Ordering::SeqCst);

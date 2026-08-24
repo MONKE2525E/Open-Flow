@@ -650,11 +650,11 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
         context_custom_instructions.as_deref().unwrap_or(""),
         protected_instruction.unwrap_or(""),
     ]
-        .iter()
-        .filter(|s| !s.is_empty())
-        .copied()
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    .iter()
+    .filter(|s| !s.is_empty())
+    .copied()
+    .collect::<Vec<_>>()
+    .join("\n\n");
     log::debug!(
         "pipeline: cleanup extra_rules chars={} lines={}",
         extra_rules.chars().count(),

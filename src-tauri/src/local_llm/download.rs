@@ -38,12 +38,7 @@ pub(super) fn download_client() -> &'static reqwest::Client {
     })
 }
 
-fn emit_progress(
-    app: &AppHandle,
-    model_id: &str,
-    downloaded_bytes: u64,
-    total_bytes: Option<u64>,
-) {
+fn emit_progress(app: &AppHandle, model_id: &str, downloaded_bytes: u64, total_bytes: Option<u64>) {
     let progress = total_bytes
         .map(|total| {
             if total == 0 {
@@ -71,13 +66,21 @@ fn ensure_not_cancelled(cancel: &AtomicBool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn partial_file_path(root: &Path, manifest: &LocalLlmModelManifest, artifact: &LocalLlmArtifact) -> PathBuf {
+fn partial_file_path(
+    root: &Path,
+    manifest: &LocalLlmModelManifest,
+    artifact: &LocalLlmArtifact,
+) -> PathBuf {
     manifest
         .partial_download_path(root)
         .join(format!("{}.partial", artifact.filename))
 }
 
-fn final_file_path(root: &Path, manifest: &LocalLlmModelManifest, artifact: &LocalLlmArtifact) -> PathBuf {
+fn final_file_path(
+    root: &Path,
+    manifest: &LocalLlmModelManifest,
+    artifact: &LocalLlmArtifact,
+) -> PathBuf {
     manifest.final_path(root).join(artifact.filename)
 }
 
@@ -304,7 +307,9 @@ async fn download_one_artifact(
     let resumed = probe.status() == reqwest::StatusCode::PARTIAL_CONTENT;
     let already_complete = probe.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE;
     let mut response = match probe.status() {
-        reqwest::StatusCode::PARTIAL_CONTENT | reqwest::StatusCode::OK => Some(probe.error_for_status()?),
+        reqwest::StatusCode::PARTIAL_CONTENT | reqwest::StatusCode::OK => {
+            Some(probe.error_for_status()?)
+        }
         reqwest::StatusCode::RANGE_NOT_SATISFIABLE => None,
         _ => Some(probe.error_for_status()?),
     };
@@ -417,11 +422,7 @@ pub async fn download_model(
     // verification, replace whatever was previously in final_dir — so a
     // failed or cancelled download never destroys a working installed model.
     let partial_dir = manifest.partial_download_path(root);
-    let backup_path = root.join(format!(
-        ".{}-backup-{}",
-        manifest.id,
-        std::process::id()
-    ));
+    let backup_path = root.join(format!(".{}-backup-{}", manifest.id, std::process::id()));
     if backup_path.exists() {
         if backup_path.is_dir() {
             std::fs::remove_dir_all(&backup_path)?;
@@ -478,7 +479,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("verenu-sha-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("abc.txt");
-        std::fs::File::create(&path).unwrap().write_all(b"abc").unwrap();
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"abc")
+            .unwrap();
 
         let hash = sha256_hex(&path).unwrap();
         assert_eq!(
@@ -495,8 +499,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path_a = dir.join("a.txt");
         let path_b = dir.join("b.txt");
-        std::fs::File::create(&path_a).unwrap().write_all(b"hello").unwrap();
-        std::fs::File::create(&path_b).unwrap().write_all(b"world").unwrap();
+        std::fs::File::create(&path_a)
+            .unwrap()
+            .write_all(b"hello")
+            .unwrap();
+        std::fs::File::create(&path_b)
+            .unwrap()
+            .write_all(b"world")
+            .unwrap();
 
         assert_ne!(sha256_hex(&path_a).unwrap(), sha256_hex(&path_b).unwrap());
 

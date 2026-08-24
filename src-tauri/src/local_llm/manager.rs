@@ -561,11 +561,10 @@ impl LocalLlmManager {
         }
         let manager = self.clone();
         let model_id_for_slot = model_id.to_owned();
-        let should_load = tokio::task::spawn_blocking(move || {
-            manager.wait_for_load_slot(&model_id_for_slot)
-        })
-        .await
-        .map_err(|err| anyhow::anyhow!("local cleanup loading task failed: {err}"))??;
+        let should_load =
+            tokio::task::spawn_blocking(move || manager.wait_for_load_slot(&model_id_for_slot))
+                .await
+                .map_err(|err| anyhow::anyhow!("local cleanup loading task failed: {err}"))??;
         let Some(_slot_guard) = should_load else {
             return Ok(());
         };

@@ -368,7 +368,10 @@ mod tests {
         let cases = [
             (LocalSttEngineType::Parakeet, "\"parakeet\""),
             (LocalSttEngineType::Moonshine, "\"moonshine\""),
-            (LocalSttEngineType::MoonshineStreaming, "\"moonshine_streaming\""),
+            (
+                LocalSttEngineType::MoonshineStreaming,
+                "\"moonshine_streaming\"",
+            ),
             (LocalSttEngineType::SenseVoice, "\"sense_voice\""),
             (LocalSttEngineType::GigaAm, "\"giga_am\""),
             (LocalSttEngineType::Canary, "\"canary\""),

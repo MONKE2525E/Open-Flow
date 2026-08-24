@@ -564,7 +564,9 @@ fn handle_hotkey_event(ev: GlobalHotKeyEvent) {
         }
         return;
     }
-    if REPAIR_HOTKEY_ID.load(Ordering::SeqCst) != 0 && ev.id == REPAIR_HOTKEY_ID.load(Ordering::SeqCst) {
+    if REPAIR_HOTKEY_ID.load(Ordering::SeqCst) != 0
+        && ev.id == REPAIR_HOTKEY_ID.load(Ordering::SeqCst)
+    {
         if matches!(ev.state, HotKeyState::Pressed) {
             if let Some(cb) = REPAIR_OPEN_CB.get() {
                 cb();

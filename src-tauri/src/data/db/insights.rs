@@ -402,7 +402,8 @@ fn query_totals(
 
     let total_words: i64 = match context_id {
         None => conn.query_row(
-            "SELECT COALESCE((SELECT total_words FROM lifetime_stats WHERE id = 1), 0)",
+            "SELECT COALESCE((SELECT total_words FROM lifetime_stats WHERE id = 1), 0)
+                  + COALESCE((SELECT SUM(total_words) FROM sync_remote_stats), 0)",
             [],
             |r| r.get(0),
         )?,
@@ -607,7 +608,8 @@ fn query_cleanup(
     };
 
     let dictionary_fixes: i64 = conn.query_row(
-        "SELECT COALESCE((SELECT dictionary_fixes FROM lifetime_stats WHERE id = 1), 0)",
+        "SELECT COALESCE((SELECT dictionary_fixes FROM lifetime_stats WHERE id = 1), 0)
+              + COALESCE((SELECT SUM(dictionary_fixes) FROM sync_remote_stats), 0)",
         [],
         |r| r.get(0),
     )?;

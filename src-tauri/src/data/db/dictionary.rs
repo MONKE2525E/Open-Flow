@@ -150,9 +150,7 @@ pub fn insert_dictionary_entry_returning(
                 |row| row.get(0),
             )?;
             if existing_mistake != normalized_mistake {
-                anyhow::bail!(
-                    "\"{normalized_term}\" already exists with a different correction"
-                );
+                anyhow::bail!("\"{normalized_term}\" already exists with a different correction");
             }
             tx.execute(
                 "INSERT OR IGNORE INTO dictionary_contexts (context_id, dictionary_id) VALUES (?1, ?2)",
@@ -214,9 +212,14 @@ pub fn apply_dictionary_repair(
     let id = match operation {
         "add" => {
             let term = require_nonempty_trimmed("Term", term.unwrap_or_default())?;
-            let mistake = require_nonempty_trimmed("Often mistranscribed as", mistake.unwrap_or_default())?;
+            let mistake =
+                require_nonempty_trimmed("Often mistranscribed as", mistake.unwrap_or_default())?;
             validate_char_limit("Term", &term, DICTIONARY_ENTRY_CHAR_LIMIT)?;
-            validate_char_limit("Often mistranscribed as", &mistake, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+            validate_char_limit(
+                "Often mistranscribed as",
+                &mistake,
+                DICTIONARY_ENTRY_CHAR_LIMIT,
+            )?;
             tx.execute(
                 "INSERT INTO dictionary (term, mistake, confidence_tier, last_seen_at) VALUES (?1, ?2, 'manual', datetime('now'))",
                 params![term, mistake],
@@ -230,14 +233,19 @@ pub fn apply_dictionary_repair(
                 params![id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-            if Some(current.0.as_str()) != expected_term || current.1.as_deref() != expected_mistake {
+            if Some(current.0.as_str()) != expected_term || current.1.as_deref() != expected_mistake
+            {
                 anyhow::bail!("Dictionary entry changed while you were reviewing it")
             }
             let term = require_nonempty_trimmed("Term", term.unwrap_or_default())?;
             validate_char_limit("Term", &term, DICTIONARY_ENTRY_CHAR_LIMIT)?;
             let normalized_mistake = normalize_optional_trimmed(mistake);
             if let Some(value) = normalized_mistake.as_deref() {
-                validate_char_limit("Often mistranscribed as", value, DICTIONARY_ENTRY_CHAR_LIMIT)?;
+                validate_char_limit(
+                    "Often mistranscribed as",
+                    value,
+                    DICTIONARY_ENTRY_CHAR_LIMIT,
+                )?;
             }
             let changed = tx.execute(
                 "UPDATE dictionary SET term = ?1, mistake = ?2 WHERE id = ?3",
@@ -255,10 +263,14 @@ pub fn apply_dictionary_repair(
                 params![id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-            if Some(current.0.as_str()) != expected_term || current.1.as_deref() != expected_mistake {
+            if Some(current.0.as_str()) != expected_term || current.1.as_deref() != expected_mistake
+            {
                 anyhow::bail!("Dictionary entry changed while you were reviewing it")
             }
-            tx.execute("DELETE FROM dictionary_contexts WHERE dictionary_id = ?1", params![id])?;
+            tx.execute(
+                "DELETE FROM dictionary_contexts WHERE dictionary_id = ?1",
+                params![id],
+            )?;
             if tx.execute("DELETE FROM dictionary WHERE id = ?1", params![id])? != 1 {
                 anyhow::bail!("Dictionary entry no longer exists")
             }
@@ -268,7 +280,10 @@ pub fn apply_dictionary_repair(
     };
 
     if operation != "remove" {
-        tx.execute("DELETE FROM dictionary_contexts WHERE dictionary_id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM dictionary_contexts WHERE dictionary_id = ?1",
+            params![id],
+        )?;
         tx.execute(
             "INSERT INTO dictionary_contexts (context_id, dictionary_id) VALUES (?1, ?2)",
             params![context_id, id],

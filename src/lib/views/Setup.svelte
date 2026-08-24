@@ -287,8 +287,7 @@
         // The wizard no longer asks about these one by one; they are the
         // recommended defaults and are disclosed on the Done screen.
         () => saveSetting('noise_reduction', true),
-        () => saveSetting('contextual_caps_enabled', true),
-        () => saveSetting('auto_spacing_enabled', true),
+        () => saveSetting('contextual_formatting_enabled', true),
         () => saveSetting('caps_lock_uppercase_enabled', true),
         () => saveSetting('app_context_hint', true),
         () => saveSetting('auto_learn_enabled', true),

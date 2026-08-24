@@ -98,4 +98,4 @@ pub(super) fn snippet_instructions_fingerprint(instructions: &str) -> u64 {
         h = h.wrapping_shl(5).wrapping_add(h).wrapping_add(b as u64);
     }
     h
-}
+}

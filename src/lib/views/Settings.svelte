@@ -12,6 +12,7 @@
   import ApiKeysSection from '../components/settings/ApiKeysSection.svelte';
   import ModelsSection from '../components/settings/ModelsSection.svelte';
   import PrivacySection from '../components/settings/PrivacySection.svelte';
+  import SyncSection from '../components/settings/SyncSection.svelte';
   import AudioSection from '../components/settings/AudioSection.svelte';
   import PermissionsSection from '../components/settings/PermissionsSection.svelte';
   import AboutSection from '../components/settings/AboutSection.svelte';
@@ -228,6 +229,8 @@
                 <ModelsSection />
               {:else if section === 'privacy'}
                 <PrivacySection />
+              {:else if section === 'sync'}
+                <SyncSection />
               {:else if section === 'advanced'}
                 <AudioSection />
               {:else if section === 'permissions' && isMac}

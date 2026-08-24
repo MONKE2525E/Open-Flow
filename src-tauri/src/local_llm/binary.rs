@@ -51,9 +51,8 @@ impl LlamaBackend {
     /// cudart DLLs as a separate archive from the main build; every other
     /// backend is one file.
     fn assets(self) -> Vec<RuntimeAsset> {
-        let base = format!(
-            "https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_CPP_TAG}"
-        );
+        let base =
+            format!("https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_CPP_TAG}");
         match self {
             LlamaBackend::Cuda => vec![
                 RuntimeAsset {
@@ -382,7 +381,15 @@ async fn ensure_llama_server_binary_inner(
     for (idx, asset) in assets.iter().enumerate() {
         ensure_not_cancelled(cancel)?;
         let archive_path = tmp_dir.join(format!("asset-{idx}.tmp"));
-        download_to_file(app, &asset.url, &archive_path, cancel, &mut downloaded, None).await?;
+        download_to_file(
+            app,
+            &asset.url,
+            &archive_path,
+            cancel,
+            &mut downloaded,
+            None,
+        )
+        .await?;
 
         // Verify before extracting — an unverified archive must never reach
         // the extractor, since the binary inside it (llama-server.exe) gets
@@ -395,7 +402,8 @@ async fn ensure_llama_server_binary_inner(
         // async executor (audio capture, hotkey handling, etc.) for seconds
         // at a time.
         let hash_path = archive_path.clone();
-        let actual = tokio::task::spawn_blocking(move || super::download::sha256_hex(&hash_path)).await??;
+        let actual =
+            tokio::task::spawn_blocking(move || super::download::sha256_hex(&hash_path)).await??;
         if actual != asset.sha256 {
             log::error!(
                 "local-llm: runtime asset checksum mismatch url={} expected={} actual={}",
@@ -405,13 +413,17 @@ async fn ensure_llama_server_binary_inner(
             );
             let _ = std::fs::remove_dir_all(&tmp_dir);
             let _ = std::fs::remove_dir_all(&root);
-            anyhow::bail!("downloaded runtime asset failed checksum verification: {}", asset.url);
+            anyhow::bail!(
+                "downloaded runtime asset failed checksum verification: {}",
+                asset.url
+            );
         }
 
         emit_progress(app, downloaded, None, "extracting");
         let extract_archive_path = archive_path.clone();
         let extract_root = root.clone();
-        tokio::task::spawn_blocking(move || extract_archive(&extract_archive_path, &extract_root)).await??;
+        tokio::task::spawn_blocking(move || extract_archive(&extract_archive_path, &extract_root))
+            .await??;
         let _ = std::fs::remove_file(&archive_path);
     }
     let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -452,7 +464,11 @@ mod tests {
     #[test]
     fn cuda_ships_main_build_plus_separate_cudart_bundle() {
         let assets = LlamaBackend::Cuda.assets();
-        assert_eq!(assets.len(), 2, "CUDA needs the main build and the cudart DLL bundle");
+        assert_eq!(
+            assets.len(),
+            2,
+            "CUDA needs the main build and the cudart DLL bundle"
+        );
         assert!(assets[0].url.contains("bin-win-cuda"));
         assert!(assets[1].url.contains("cudart-llama-bin-win-cuda"));
     }
@@ -461,7 +477,11 @@ mod tests {
     fn vulkan_metal_cpu_ship_a_single_asset() {
         for backend in [LlamaBackend::Vulkan, LlamaBackend::Metal, LlamaBackend::Cpu] {
             let assets = backend.assets();
-            assert_eq!(assets.len(), 1, "{backend:?} should ship exactly one archive");
+            assert_eq!(
+                assets.len(),
+                1,
+                "{backend:?} should ship exactly one archive"
+            );
         }
     }
 
@@ -514,7 +534,10 @@ mod tests {
                     asset.sha256.len()
                 );
                 assert!(
-                    asset.sha256.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                    asset
+                        .sha256
+                        .chars()
+                        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
                     "{} sha256 is not lowercase hex: {}",
                     asset.url,
                     asset.sha256
@@ -525,7 +548,11 @@ mod tests {
 
     #[test]
     fn cuda_is_the_heaviest_download_estimate() {
-        assert!(LlamaBackend::Cuda.approx_download_mb() > LlamaBackend::Vulkan.approx_download_mb());
-        assert!(LlamaBackend::Vulkan.approx_download_mb() > LlamaBackend::Metal.approx_download_mb());
+        assert!(
+            LlamaBackend::Cuda.approx_download_mb() > LlamaBackend::Vulkan.approx_download_mb()
+        );
+        assert!(
+            LlamaBackend::Vulkan.approx_download_mb() > LlamaBackend::Metal.approx_download_mb()
+        );
     }
 }

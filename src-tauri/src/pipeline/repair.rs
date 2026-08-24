@@ -26,8 +26,7 @@ pub struct RepairSettings {
     pub cleanup_enabled: bool,
     pub cleanup_intensity: String,
     pub default_tone: String,
-    pub contextual_caps_enabled: bool,
-    pub auto_spacing_enabled: bool,
+    pub contextual_formatting_enabled: bool,
     pub caps_lock_uppercase_enabled: bool,
 }
 
@@ -95,13 +94,15 @@ pub(crate) fn begin_feedback(
             cleanup_enabled: cfg.cleanup_enabled,
             cleanup_intensity: cfg.cleanup_intensity.clone(),
             default_tone: cfg.default_tone.clone(),
-            contextual_caps_enabled: cfg.contextual_caps_enabled,
-            auto_spacing_enabled: cfg.auto_spacing_enabled,
+            contextual_formatting_enabled: cfg.contextual_formatting_enabled,
             caps_lock_uppercase_enabled: cfg.caps_lock_uppercase_enabled,
         },
     };
     if let Ok(mut locked) = state.lock() {
-        locked.repair = Some(RepairSession { snapshot, proposal: None });
+        locked.repair = Some(RepairSession {
+            snapshot,
+            proposal: None,
+        });
     }
     super::show_pill(app, "feedback_prompt");
 }
@@ -124,7 +125,11 @@ pub(crate) fn emit_repair_error(app: &AppHandle, message: &str) {
     emit_error(app, message);
 }
 
-pub(crate) async fn diagnose_repair(app: AppHandle, state: SharedState, complaint: String) -> anyhow::Result<()> {
+pub(crate) async fn diagnose_repair(
+    app: AppHandle,
+    state: SharedState,
+    complaint: String,
+) -> anyhow::Result<()> {
     diagnose(app, state, complaint).await
 }
 
@@ -143,7 +148,11 @@ pub(crate) async fn finish_complaint_recording(app: AppHandle, state: SharedStat
     }
 }
 
-pub(crate) async fn apply_repair(app: AppHandle, state: SharedState, proposal_id: u64) -> anyhow::Result<String> {
+pub(crate) async fn apply_repair(
+    app: AppHandle,
+    state: SharedState,
+    proposal_id: u64,
+) -> anyhow::Result<String> {
     apply(app, state, proposal_id).await
 }
 
@@ -162,7 +171,10 @@ fn bounded_excerpt(text: &str) -> String {
         return text.to_string();
     }
     let side = EXCERPT_LIMIT / 2;
-    chars[..side].iter().chain(chars[chars.len() - side..].iter()).collect()
+    chars[..side]
+        .iter()
+        .chain(chars[chars.len() - side..].iter())
+        .collect()
 }
 
 fn safe_text(text: &str, limit: usize) -> String {
@@ -217,26 +229,45 @@ fn diff_excerpt(text: &str, reference: &str) -> String {
 
 fn model_input(snapshot: &RepairSnapshot, complaint: &str) -> String {
     let complaint = safe_text(complaint, COMPLAINT_LIMIT);
-    let raw = safe_text(&diff_excerpt(&snapshot.raw, &snapshot.cleaned), SHORT_TEXT_LIMIT);
-    let cleaned = safe_text(&diff_excerpt(&snapshot.cleaned, &snapshot.raw), SHORT_TEXT_LIMIT);
-    let delivered = safe_text(&diff_excerpt(&snapshot.delivered_private, &snapshot.cleaned), SHORT_TEXT_LIMIT);
+    let raw = safe_text(
+        &diff_excerpt(&snapshot.raw, &snapshot.cleaned),
+        SHORT_TEXT_LIMIT,
+    );
+    let cleaned = safe_text(
+        &diff_excerpt(&snapshot.cleaned, &snapshot.raw),
+        SHORT_TEXT_LIMIT,
+    );
+    let delivered = safe_text(
+        &diff_excerpt(&snapshot.delivered_private, &snapshot.cleaned),
+        SHORT_TEXT_LIMIT,
+    );
     let dictionary = snapshot
         .dictionary
         .iter()
         .take(16)
-        .map(|entry| format!("{}|{}|{}", entry.id, safe_text(&entry.term, 80), entry.mistake.as_deref().map(|value| safe_text(value, 80)).unwrap_or_default()))
+        .map(|entry| {
+            format!(
+                "{}|{}|{}",
+                entry.id,
+                safe_text(&entry.term, 80),
+                entry
+                    .mistake
+                    .as_deref()
+                    .map(|value| safe_text(value, 80))
+                    .unwrap_or_default()
+            )
+        })
         .collect::<Vec<_>>()
         .join(";");
     format!(
-        "Complaint:{complaint}\nRaw:{raw}\nCleaned:{cleaned}\nDelivered:{delivered}\nTarget:{}|{}|{}\nDictionary(id|term|mistake):{dictionary}\nSettings:cleanup_enabled={}|cleanup_intensity={}|tone={}|contextual_caps={}|spacing={}|caps_lock_uppercase={}",
+        "Complaint:{complaint}\nRaw:{raw}\nCleaned:{cleaned}\nDelivered:{delivered}\nTarget:{}|{}|{}\nDictionary(id|term|mistake):{dictionary}\nSettings:cleanup_enabled={}|cleanup_intensity={}|tone={}|contextual_formatting={}|caps_lock_uppercase={}",
         safe_text(&snapshot.process_name, 80),
         safe_text(snapshot.browser_domain.as_deref().unwrap_or("none"), 120),
         safe_text(&snapshot.context_name, 80),
         snapshot.settings.cleanup_enabled,
         safe_text(&snapshot.settings.cleanup_intensity, 24),
         safe_text(&snapshot.settings.default_tone, 24),
-        snapshot.settings.contextual_caps_enabled,
-        snapshot.settings.auto_spacing_enabled,
+        snapshot.settings.contextual_formatting_enabled,
         snapshot.settings.caps_lock_uppercase_enabled,
     )
 }
@@ -244,7 +275,7 @@ fn model_input(snapshot: &RepairSnapshot, complaint: &str) -> String {
 const REPAIR_SYSTEM_PROMPT: &str = r#"You read one user complaint about a Verenu dictation and decide whether it describes a specific, fixable mistake. Return JSON only, no markdown, exactly one of:
 {"status":"unsupported","action":null}
 {"status":"proposed","action":{"kind":"dictionary","operation":"add|update|remove","dictionary_id":null or number,"term":string or null,"mistake":string or null,"scope":"context"|"everywhere","expected_term":string or null,"expected_mistake":string or null}}
-{"status":"proposed","action":{"kind":"setting","key":"cleanup_enabled|cleanup_intensity|default_tone|contextual_caps_enabled|auto_spacing_enabled|caps_lock_uppercase_enabled","value":boolean or string,"expected_value":boolean or string}}
+{"status":"proposed","action":{"kind":"setting","key":"cleanup_enabled|cleanup_intensity|default_tone|contextual_formatting_enabled|caps_lock_uppercase_enabled","value":boolean or string,"expected_value":boolean or string}}
 
 The complaint is itself often dictated, so it can carry small transcription typos or odd spacing (e.g. "oout" instead of "out") — read past those to what the user actually means, the same way you'd read past a typo in any message. Do not reject a complaint just because a word in it is spelled oddly.
 
@@ -261,7 +292,11 @@ SETTING fix: only for the six keys listed above, only when the complaint clearly
 
 Use only the supplied dictionary ids for update/remove. For a dictionary action, default scope to "context" (the app this dictation happened in) — only use "everywhere" when the complaint itself says the mistake happens in general, everywhere, or across apps. term and mistake are single words or short phrases (a few words at most) — never a sentence, never the full complaint restated. Do not include extra fields."#;
 
-async fn diagnose_with_model(app: &AppHandle, cfg: &store::PipelineConfig, input: &str) -> anyhow::Result<String> {
+async fn diagnose_with_model(
+    app: &AppHandle,
+    cfg: &store::PipelineConfig,
+    input: &str,
+) -> anyhow::Result<String> {
     let mut chain = Vec::new();
     if let Some((provider, model)) = store::parse_model_id(&cfg.cleanup_default_model) {
         chain.push((provider, model));
@@ -281,10 +316,30 @@ async fn diagnose_with_model(app: &AppHandle, cfg: &store::PipelineConfig, input
             continue;
         }
         let result = if is_local {
-            let manager = app.state::<crate::local_llm::LocalLlmManager>().inner().clone();
-            manager.cleanup_with_prompt(app, &model, input, REPAIR_SYSTEM_PROMPT, REPAIR_MAX_OUTPUT_TOKENS).await
+            let manager = app
+                .state::<crate::local_llm::LocalLlmManager>()
+                .inner()
+                .clone();
+            manager
+                .cleanup_with_prompt(
+                    app,
+                    &model,
+                    input,
+                    REPAIR_SYSTEM_PROMPT,
+                    REPAIR_MAX_OUTPUT_TOKENS,
+                )
+                .await
         } else {
-            cleanup::structured_request(input, ProviderId::from_str(&provider), key, &model, REPAIR_SYSTEM_PROMPT, REPAIR_MAX_OUTPUT_TOKENS, 0).await
+            cleanup::structured_request(
+                input,
+                ProviderId::from_str(&provider),
+                key,
+                &model,
+                REPAIR_SYSTEM_PROMPT,
+                REPAIR_MAX_OUTPUT_TOKENS,
+                0,
+            )
+            .await
         };
         match result {
             Ok(value) if !value.trim().is_empty() => return Ok(value),
@@ -292,23 +347,42 @@ async fn diagnose_with_model(app: &AppHandle, cfg: &store::PipelineConfig, input
             Err(error) => last_error = Some(error),
         }
     }
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No configured repair-capable provider/model")))
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("No configured repair-capable provider/model")))
 }
 
-pub(crate) async fn diagnose(app: AppHandle, state: SharedState, complaint: String) -> anyhow::Result<()> {
-    let complaint = complaint.trim().chars().take(COMPLAINT_LIMIT).collect::<String>();
+pub(crate) async fn diagnose(
+    app: AppHandle,
+    state: SharedState,
+    complaint: String,
+) -> anyhow::Result<()> {
+    let complaint = complaint
+        .trim()
+        .chars()
+        .take(COMPLAINT_LIMIT)
+        .collect::<String>();
     if complaint.is_empty() {
         anyhow::bail!("Tell Verenu what went wrong first")
     }
-    let snapshot = state.lock().map_err(|_| anyhow::anyhow!("Repair state lock was poisoned"))?.repair.as_ref().ok_or_else(|| anyhow::anyhow!("Repair session expired"))?.snapshot.clone();
+    let snapshot = state
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Repair state lock was poisoned"))?
+        .repair
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Repair session expired"))?
+        .snapshot
+        .clone();
     super::show_pill(&app, "repair_processing");
 
     let settings = store::settings_snapshot(&app).map_err(anyhow::Error::msg)?;
     let cfg = store::load_pipeline_config(&settings);
-    let output = tokio::time::timeout(std::time::Duration::from_secs(REPAIR_TIMEOUT_SECS), diagnose_with_model(&app, &cfg, &model_input(&snapshot, &complaint)))
-        .await
-        .map_err(|_| anyhow::anyhow!("Repair diagnosis timed out"))?
-        .inspect_err(|e| log::warn!("repair: model call failed: {e}"))?;
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(REPAIR_TIMEOUT_SECS),
+        diagnose_with_model(&app, &cfg, &model_input(&snapshot, &complaint)),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Repair diagnosis timed out"))?
+    .inspect_err(|e| log::warn!("repair: model call failed: {e}"))?;
     let parsed = parse_model_proposal(&output).map_err(|e| {
         log::warn!("repair: could not parse model output as JSON: {e}");
         anyhow::anyhow!(NO_SAFE_REPAIR_MESSAGE)
@@ -317,22 +391,38 @@ pub(crate) async fn diagnose(app: AppHandle, state: SharedState, complaint: Stri
         log::debug!("repair: model returned status={}", parsed.status);
         anyhow::bail!(NO_SAFE_REPAIR_MESSAGE)
     } else {
-        validate_action(&snapshot, &complaint, parsed.action.ok_or_else(|| anyhow::anyhow!(NO_SAFE_REPAIR_MESSAGE))?)
-            .map_err(|e| {
-                log::warn!("repair: proposal failed validation: {e}");
-                anyhow::anyhow!(NO_SAFE_REPAIR_MESSAGE)
-            })?
+        validate_action(
+            &snapshot,
+            &complaint,
+            parsed
+                .action
+                .ok_or_else(|| anyhow::anyhow!(NO_SAFE_REPAIR_MESSAGE))?,
+        )
+        .map_err(|e| {
+            log::warn!("repair: proposal failed validation: {e}");
+            anyhow::anyhow!(NO_SAFE_REPAIR_MESSAGE)
+        })?
     };
-    let view = RepairProposalView { id: proposal.id, summary: proposal.summary.clone(), scope: proposal.scope.clone() };
+    let view = RepairProposalView {
+        id: proposal.id,
+        summary: proposal.summary.clone(),
+        scope: proposal.scope.clone(),
+    };
     {
-        let mut locked = state.lock().map_err(|_| anyhow::anyhow!("Repair state lock was poisoned"))?;
-        let session = locked.repair.as_mut().ok_or_else(|| anyhow::anyhow!("Repair session expired"))?;
+        let mut locked = state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Repair state lock was poisoned"))?;
+        let session = locked
+            .repair
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Repair session expired"))?;
         if session.snapshot.id != snapshot.id {
             anyhow::bail!("Repair session was replaced by a newer dictation")
         }
         session.proposal = Some(proposal);
     }
-    app.emit("repair-proposal", &view).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    app.emit("repair-proposal", &view)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     super::show_pill(&app, "repair_proposal");
     Ok(())
 }
@@ -341,18 +431,43 @@ fn parse_model_proposal(output: &str) -> anyhow::Result<ModelProposal> {
     if let Ok(value) = serde_json::from_str::<ModelProposal>(output.trim()) {
         return Ok(value);
     }
-    let fenced = output.split("```").nth(1).unwrap_or("").trim_start_matches("json").trim();
-    serde_json::from_str::<ModelProposal>(fenced).map_err(|_| anyhow::anyhow!("Repair response was not valid structured output"))
+    let fenced = output
+        .split("```")
+        .nth(1)
+        .unwrap_or("")
+        .trim_start_matches("json")
+        .trim();
+    serde_json::from_str::<ModelProposal>(fenced)
+        .map_err(|_| anyhow::anyhow!("Repair response was not valid structured output"))
 }
 
-pub(crate) async fn apply(app: AppHandle, state: SharedState, proposal_id: u64) -> anyhow::Result<String> {
-    let session = state.lock().map_err(|_| anyhow::anyhow!("Repair state lock was poisoned"))?.repair.clone().ok_or_else(|| anyhow::anyhow!("Repair session expired"))?;
-    let proposal = session.proposal.ok_or_else(|| anyhow::anyhow!("No repair proposal is awaiting approval"))?;
+pub(crate) async fn apply(
+    app: AppHandle,
+    state: SharedState,
+    proposal_id: u64,
+) -> anyhow::Result<String> {
+    let session = state
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Repair state lock was poisoned"))?
+        .repair
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("Repair session expired"))?;
+    let proposal = session
+        .proposal
+        .ok_or_else(|| anyhow::anyhow!("No repair proposal is awaiting approval"))?;
     if proposal.id != proposal_id {
         anyhow::bail!("Repair proposal is stale")
     }
     let result = match proposal.action {
-        RepairAction::Dictionary { operation, dictionary_id, term, mistake, scope, expected_term, expected_mistake } => {
+        RepairAction::Dictionary {
+            operation,
+            dictionary_id,
+            term,
+            mistake,
+            scope,
+            expected_term,
+            expected_mistake,
+        } => {
             let scope_context_id = resolve_scope_id(&session.snapshot, scope);
             let db = app.state::<crate::DbHandle>().inner().clone();
             let operation_name = match operation {
@@ -360,10 +475,27 @@ pub(crate) async fn apply(app: AppHandle, state: SharedState, proposal_id: u64) 
                 DictionaryOperation::Update => "update",
                 DictionaryOperation::Remove => "remove",
             };
-            let id = tokio::task::spawn_blocking(move || db::apply_dictionary_repair(&db, operation_name, dictionary_id, term.as_deref(), mistake.as_deref(), scope_context_id, expected_term.as_deref(), expected_mistake.as_deref())).await.map_err(|e| anyhow::anyhow!(e.to_string()))??;
+            let id = tokio::task::spawn_blocking(move || {
+                db::apply_dictionary_repair(
+                    &db,
+                    operation_name,
+                    dictionary_id,
+                    term.as_deref(),
+                    mistake.as_deref(),
+                    scope_context_id,
+                    expected_term.as_deref(),
+                    expected_mistake.as_deref(),
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))??;
             format!("Vocabulary item applied (entry {id})")
         }
-        RepairAction::Setting { key, value, expected_value } => {
+        RepairAction::Setting {
+            key,
+            value,
+            expected_value,
+        } => {
             let settings = store::settings_handle(&app).map_err(anyhow::Error::msg)?;
             let key_for_thread = key.clone();
             let value_for_thread = value.clone();
@@ -375,9 +507,27 @@ pub(crate) async fn apply(app: AppHandle, state: SharedState, proposal_id: u64) 
                 if current != expected_for_thread {
                     anyhow::bail!("Setting changed while you were reviewing it")
                 }
-                crate::commands::validate_setting(&key_for_thread, &value_for_thread).map_err(anyhow::Error::msg)?;
-                settings.save_value(key_for_thread, value_for_thread).map_err(anyhow::Error::msg)
-            }).await.map_err(|e| anyhow::anyhow!(e.to_string()))??;
+                crate::commands::validate_setting(&key_for_thread, &value_for_thread)
+                    .map_err(anyhow::Error::msg)?;
+                if key_for_thread == store::CONTEXTUAL_FORMATTING {
+                    settings
+                        .set(store::CONTEXTUAL_FORMATTING, value_for_thread.clone())
+                        .map_err(anyhow::Error::msg)?;
+                    settings
+                        .set(store::CONTEXTUAL_CAPS, value_for_thread.clone())
+                        .map_err(anyhow::Error::msg)?;
+                    settings
+                        .set(store::AUTO_SPACING, value_for_thread)
+                        .map_err(anyhow::Error::msg)?;
+                    settings.save().map_err(anyhow::Error::msg)
+                } else {
+                    settings
+                        .save_value(key_for_thread, value_for_thread)
+                        .map_err(anyhow::Error::msg)
+                }
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))??;
             format!("{} updated", setting_label(&key).unwrap_or("Setting"))
         }
     };
@@ -419,8 +569,7 @@ mod tests {
                 cleanup_enabled: true,
                 cleanup_intensity: "balanced".into(),
                 default_tone: "casual".into(),
-                contextual_caps_enabled: true,
-                auto_spacing_enabled: true,
+                contextual_formatting_enabled: true,
                 caps_lock_uppercase_enabled: false,
             },
         }
@@ -449,10 +598,9 @@ mod tests {
 
     #[test]
     fn strict_parser_rejects_unknown_fields_and_unauthorized_settings() {
-        assert!(parse_model_proposal(
-            r#"{"status":"proposed","extra":true,"action":null}"#,
-        )
-        .is_err());
+        assert!(
+            parse_model_proposal(r#"{"status":"proposed","extra":true,"action":null}"#,).is_err()
+        );
 
         let action: RepairAction = serde_json::from_str(
             r#"{"kind":"setting","key":"api_key","value":true,"expected_value":false}"#,
@@ -478,7 +626,12 @@ mod tests {
             r#"{"kind":"dictionary","operation":"add","dictionary_id":null,"term":"pull request","mistake":"pool request","scope":"everywhere","expected_term":null,"expected_mistake":null}"#,
         )
         .unwrap();
-        assert!(validate_action(&snapshot(), "I said pull request and it wrote pool request", everywhere).is_ok());
+        assert!(validate_action(
+            &snapshot(),
+            "I said pull request and it wrote pool request",
+            everywhere
+        )
+        .is_ok());
     }
 
     #[test]
@@ -487,7 +640,12 @@ mod tests {
             r#"{"kind":"dictionary","operation":"add","dictionary_id":null,"term":"pull request","mistake":"pool request","scope":"context","expected_term":null,"expected_mistake":null}"#,
         )
         .unwrap();
-        assert!(validate_action(&snapshot(), "I said pull request and it wrote pool request", action).is_ok());
+        assert!(validate_action(
+            &snapshot(),
+            "I said pull request and it wrote pool request",
+            action
+        )
+        .is_ok());
     }
 
     #[test]
@@ -504,7 +662,9 @@ mod tests {
             r#"{"kind":"dictionary","operation":"add","dictionary_id":null,"term":"pull request","mistake":"pool request","scope":"context","expected_term":null,"expected_mistake":null}"#,
         )
         .unwrap();
-        assert!(validate_action(&snap, "pool request should have been pull request", action).is_ok());
+        assert!(
+            validate_action(&snap, "pool request should have been pull request", action).is_ok()
+        );
     }
 
     #[test]
@@ -513,7 +673,12 @@ mod tests {
             r#"{"kind":"dictionary","operation":"update","dictionary_id":3,"term":"pull request","mistake":"pool request","scope":"context","expected_term":"pull request","expected_mistake":"pool request"}"#,
         )
         .unwrap();
-        assert!(validate_action(&snapshot(), "I said pull request and it wrote pool request", action).is_err());
+        assert!(validate_action(
+            &snapshot(),
+            "I said pull request and it wrote pool request",
+            action
+        )
+        .is_err());
     }
 
     #[test]
@@ -526,6 +691,11 @@ mod tests {
             r#"{"kind":"dictionary","operation":"update","dictionary_id":3,"term":"pull request","mistake":"pool request","scope":"everywhere","expected_term":"pull request","expected_mistake":"pool request"}"#,
         )
         .unwrap();
-        assert!(validate_action(&snapshot(), "I said pull request and it wrote pool request", action).is_ok());
+        assert!(validate_action(
+            &snapshot(),
+            "I said pull request and it wrote pool request",
+            action
+        )
+        .is_ok());
     }
 }

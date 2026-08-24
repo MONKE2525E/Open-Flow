@@ -15,10 +15,14 @@ mod tests {
     #[test]
     fn resolver_matches_executables_case_insensitively() {
         let db = db::open(":memory:").expect("db");
-        let context = db::insert_context_returning(&db, "Editor", None, None, None, None).expect("context");
+        let context = db::insert_context_returning(&db, "Editor", None, None, None, None, false)
+            .expect("context");
         db::assign_context_target(&db, context.id, "editor.exe").expect("target");
 
-        assert_eq!(resolve_context(&db, "EDITOR.EXE", None).unwrap().id, context.id);
+        assert_eq!(
+            resolve_context(&db, "EDITOR.EXE", None).unwrap().id,
+            context.id
+        );
     }
 
     #[test]

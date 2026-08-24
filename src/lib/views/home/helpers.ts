@@ -101,6 +101,15 @@ function parseTimestamp(value: string): Date {
   return new Date(value.replace(' ', 'T') + 'Z');
 }
 
+export function localDayKey(iso: string): string {
+  const d = parseTimestamp(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function fmtTime(iso: string) {
   try {
     return parseTimestamp(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });

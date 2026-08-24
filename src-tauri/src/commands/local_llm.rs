@@ -19,7 +19,9 @@ pub async fn download_local_llm_model(
     if crate::system::platform::is_macos_intel() {
         return Err(LOCAL_MODELS_UNAVAILABLE_ON_MACOS_INTEL.to_string());
     }
-    manager.download_model(&app, &model_id).map_err(|e| e.to_string())
+    manager
+        .download_model(&app, &model_id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

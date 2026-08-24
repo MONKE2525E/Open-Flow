@@ -19,6 +19,7 @@ pub async fn create_context(
     tone: Option<String>,
     cleanup_intensity: Option<String>,
     custom_instructions: Option<String>,
+    contextual_formatting_disabled: bool,
 ) -> Result<db::Context, String> {
     let db = db_state(&app);
     run_blocking("create_context", move || {
@@ -29,6 +30,7 @@ pub async fn create_context(
             tone.as_deref(),
             cleanup_intensity.as_deref(),
             custom_instructions.as_deref(),
+            contextual_formatting_disabled,
         )
         .map_err(|e| e.to_string())
     })
@@ -52,6 +54,7 @@ pub async fn update_context_settings(
     tone: Option<String>,
     cleanup_intensity: Option<String>,
     custom_instructions: Option<String>,
+    contextual_formatting_disabled: bool,
 ) -> Result<(), String> {
     let db = db_state(&app);
     run_blocking("update_context_settings", move || {
@@ -62,6 +65,7 @@ pub async fn update_context_settings(
             tone.as_deref(),
             cleanup_intensity.as_deref(),
             custom_instructions.as_deref(),
+            contextual_formatting_disabled,
         )
         .map_err(|e| e.to_string())
     })

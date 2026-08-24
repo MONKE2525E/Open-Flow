@@ -68,6 +68,10 @@
       }
 
       draftKeys[provider] = '';
+      // The model picker lives in a sibling section and can only list a
+      // provider's models once the key is actually saved, so tell it now
+      // rather than making the user reopen Settings.
+      window.dispatchEvent(new CustomEvent('verenu:api-key-saved', { detail: { provider } }));
       // 'unknown' = couldn't reach the provider; we saved it anyway (might be fine)
       // but say so plainly instead of claiming it's verified.
       keyValidation[provider] =

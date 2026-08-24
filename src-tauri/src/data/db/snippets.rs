@@ -95,10 +95,13 @@ pub fn insert_snippet_returning_conn(
                 params![id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-            if existing_payload != (normalized_expansion.clone(), normalized_instructions.clone()) {
-                anyhow::bail!(
-                    "\"{normalized_trigger}\" already exists with different content"
-                );
+            if existing_payload
+                != (
+                    normalized_expansion.clone(),
+                    normalized_instructions.clone(),
+                )
+            {
+                anyhow::bail!("\"{normalized_trigger}\" already exists with different content");
             }
             conn.execute(
                 "INSERT OR IGNORE INTO snippet_contexts (context_id, snippet_id) VALUES (?1, ?2)",

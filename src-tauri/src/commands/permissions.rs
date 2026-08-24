@@ -112,7 +112,8 @@ fn accessibility_permission_status() -> String {
     // `AXIsProcessTrusted()` check is reporting a stale `false` (e.g. after an
     // ad-hoc rebuild changed the signature the TCC grant was tied to). The raw
     // check is still surfaced separately via `diagnostics.accessibility_trusted`.
-    if crate::system::mac_app::is_accessibility_verified() || check_accessibility_permission(false) {
+    if crate::system::mac_app::is_accessibility_verified() || check_accessibility_permission(false)
+    {
         "authorized".to_string()
     } else {
         "needs_permission".to_string()
@@ -284,7 +285,10 @@ pub fn restart_app(handle: tauri::AppHandle) {
 fn open_macos_settings(urls: &[&str]) -> Result<(), String> {
     let mut last_error = None;
     for url in urls {
-        match std::process::Command::new("/usr/bin/open").arg(url).status() {
+        match std::process::Command::new("/usr/bin/open")
+            .arg(url)
+            .status()
+        {
             Ok(status) if status.success() => return Ok(()),
             Ok(status) => last_error = Some(format!("open exited with status: {status}")),
             Err(err) => last_error = Some(err.to_string()),

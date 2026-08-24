@@ -99,7 +99,8 @@ fn create_pill_if_needed(app: &AppHandle) {
             // an explicit native colour, WebView2 can briefly repaint the
             // newly interactive surface as an opaque rectangle around the
             // capsule.
-            pill.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0))).ok();
+            pill.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)))
+                .ok();
             harden_pill_window(&pill);
 
             // The repair pill actively steals OS keyboard focus while
@@ -143,7 +144,8 @@ fn create_pill_if_needed(app: &AppHandle) {
                     let Some(state) = app_for_check.try_state::<SharedState>() else {
                         return;
                     };
-                    let has_repair_session = state.inner().lock().is_ok_and(|st| st.repair.is_some());
+                    let has_repair_session =
+                        state.inner().lock().is_ok_and(|st| st.repair.is_some());
                     if has_repair_session {
                         super::clear_repair(state.inner());
                         hide_pill(&app_for_check);
@@ -366,7 +368,8 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     // set_ignore_cursor_events above does for every repair-flow state), which
     // showed up as whatever sits behind the pill flashing through for a
     // frame — e.g. clicking "Not good"/"Good" on the feedback card.
-    pill.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0))).ok();
+    pill.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)))
+        .ok();
 
     // Show the window before emitting state so WebView2 is active when it
     // receives the event. WebView2 suspends event processing while hidden;
@@ -433,7 +436,11 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     // Must fire after pill-state (see PENDING_PILL_PROFILE) — this is the
     // one place every reveal path (immediate or animated) actually
     // converges, so it's the only point where the ordering is guaranteed.
-    if let Some(profile) = PENDING_PILL_PROFILE.lock().ok().and_then(|mut slot| slot.take()) {
+    if let Some(profile) = PENDING_PILL_PROFILE
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take())
+    {
         pill.emit("pill-profile", profile).ok();
     }
 }

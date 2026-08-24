@@ -425,3 +425,30 @@ input[type='range'].ui-range:focus-visible {
     --ui-duration-base: 120ms;
   }
 }
+
+/* Provider marks that ship a light and a dark cut (OpenAI's is monochrome, so
+   one cut alone would vanish against its own background). getProviderLogo
+   emits both; exactly one must ever be visible. This lives here rather than in
+   a component because every logo consumer needs it — scoping it to the model
+   picker left the API Keys page drawing both marks on top of each other. */
+.mark-dark {
+  display: none;
+}
+
+[data-theme='dark'] .mark-light {
+  display: none;
+}
+
+[data-theme='dark'] .mark-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .mark-light {
+    display: none;
+  }
+
+  :root:not([data-theme='light']) .mark-dark {
+    display: block;
+  }
+}

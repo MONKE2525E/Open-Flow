@@ -40,6 +40,7 @@ type DevContext = {
   cleanup_intensity: string | null;
   color: string | null;
   custom_instructions: string | null;
+  contextual_formatting_disabled: boolean;
   pinned_at: string | null;
   created_at: string;
   updated_at: string;
@@ -236,8 +237,7 @@ const defaultSettings: Record<string, unknown> = {
   mic_gain: 3.5,
   app_context_hint: false,
   auto_learn_enabled: false,
-  contextual_caps_enabled: true,
-  auto_spacing_enabled: true,
+  contextual_formatting_enabled: true,
   history_retention: '30 days',
   microphone_device: null,
   update_dismissed_version: null,
@@ -311,6 +311,7 @@ function readDevContexts(): DevContext[] {
   const rows = readDevList<DevContext>(DEV_CONTEXTS_KEY).map((row) => ({
     ...row,
     pinned_at: row.pinned_at ?? null,
+    contextual_formatting_disabled: row.contextual_formatting_disabled ?? false,
   }));
   if (rows.some((context) => context.id === DEV_EVERYWHERE_CONTEXT_ID)) return rows;
   const now = devNow();
@@ -323,6 +324,7 @@ function readDevContexts(): DevContext[] {
     cleanup_intensity: null,
     color: null,
     custom_instructions: null,
+    contextual_formatting_disabled: false,
     pinned_at: null,
     created_at: now,
     updated_at: now,
@@ -1168,6 +1170,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         cleanup_intensity: ((args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined) ?? null,
         color: null,
         custom_instructions: ((args?.customInstructions ?? args?.custom_instructions) as string | null | undefined) ?? null,
+        contextual_formatting_disabled: Boolean(args?.contextualFormattingDisabled ?? args?.contextual_formatting_disabled),
         pinned_at: null,
         created_at: now,
         updated_at: now,
@@ -1199,6 +1202,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         tone: (args?.tone as string | null | undefined) ?? null,
         cleanup_intensity: (args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined ?? null,
         custom_instructions: (args?.customInstructions ?? args?.custom_instructions) as string | null | undefined ?? null,
+        contextual_formatting_disabled: Boolean(args?.contextualFormattingDisabled ?? args?.contextual_formatting_disabled),
         updated_at: devNow(),
       };
       writeDevList(DEV_CONTEXTS_KEY, rows);
@@ -1990,6 +1994,28 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return undefined as T;
     case 'download_logs':
       return 'browser-dev://verenu-logs.txt' as T;
+    // LAN sync — browser dev mode has no backend to sync with; return a quiet
+    // empty snapshot so the Sync settings section renders its empty states.
+    case 'sync_get_status':
+      return {
+        this_device: { uuid: 'dev-device', name: 'This browser' },
+        listener_active: false,
+        pairing: null,
+        discovered: [],
+        peers: [],
+        last_error_hint: 'Sync runs in the desktop app only.',
+      } as T;
+    case 'sync_set_device_name':
+    case 'sync_cancel_pairing':
+    case 'sync_remove_device':
+    case 'sync_now':
+      return undefined as T;
+    case 'sync_start_pairing':
+      return '000000' as T;
+    case 'sync_respond_to_pairing':
+      return undefined as T;
+    case 'sync_get_diagnostics':
+      return { log_entries: 0, peers: [] } as T;
     default:
       throw new Error(`Tauri command "${command}" is unavailable in browser dev mode.`);
   }

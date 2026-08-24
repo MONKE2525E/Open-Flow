@@ -69,9 +69,10 @@ npm run test:native                          # platform/manual-adjacent checks
 python tests/OnePyFone.py                    # fast profile, auto-starts Vite :1420
 python tests/OnePyFone.py --profile full     # fast + live + native
 python tests/OnePyFone.py --suite ui,state   # targeted suites
+python tests/OnePyFone.py --test accessibility.settings-focus  # stable test ID/name filter
 
 # Available profiles: fast | live | native | full
-# Available suites: preflight | frontend | rust | contract | ui | state | animation | pipeline | native
+# Available suites: preflight | unit | frontend | rust | contract | ui | accessibility | state | performance | animation | pipeline | native
 # fast is deterministic and CI-friendly; live/native are opt-in
 
 # Run Playwright smoke tests directly (bypasses the OnePyFone harness)
@@ -460,7 +461,11 @@ Files in `tests/smoke/` are a frozen contract — **never edit them**. Fix the a
 | Info badges | `badge` on a `<div>` |
 | Hotkey badge | `badge key-badge` on a `<kbd>` (contains "Ctrl") |
 | About GitHub button | `btn-ghost` on a `<button>` |
-| Model selector rows | `model-row` (active row also has `active`) |
+| Model task tiles | `task-tile` (exactly 2: Transcription, Clean-up) |
+| Model picker triggers | `tile-btn-primary` (Change) / `add-fallback` |
+| Model picker dialog | `picker-card` (modal, portalled to `<body>`) |
+| Model picker rows | `row-main`; setup CTAs carry `row-state-cta` |
+| Fallback chain chips | `fallback-chip-item` |
 | Advanced gain display | `span.gain-value` |
 
 Since 0.15.0 settings is a full-screen page beside the sidebar, not a modal:

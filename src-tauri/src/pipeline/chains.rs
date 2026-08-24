@@ -41,23 +41,26 @@ pub(super) fn validate_transcription_chain(
     let root = transcription_chain_root(local_manager);
     let mut selected_local_missing = false;
 
-    let has_usable_candidate = transcription_model_chain(cfg).iter().any(|(provider, model)| {
-        if provider == store::LOCAL {
-            let is_downloaded = crate::local_stt::model::manifest_by_id(model)
-                .map(|manifest| manifest.is_downloaded(&root))
-                .unwrap_or(false);
-            if !is_downloaded
-                && cfg.transcription_provider == store::LOCAL
-                && store::parse_model_id(&cfg.transcription_default_model)
-                    .is_some_and(|(provider, selected)| provider == store::LOCAL && selected == *model)
-            {
-                selected_local_missing = true;
+    let has_usable_candidate = transcription_model_chain(cfg)
+        .iter()
+        .any(|(provider, model)| {
+            if provider == store::LOCAL {
+                let is_downloaded = crate::local_stt::model::manifest_by_id(model)
+                    .map(|manifest| manifest.is_downloaded(&root))
+                    .unwrap_or(false);
+                if !is_downloaded
+                    && cfg.transcription_provider == store::LOCAL
+                    && store::parse_model_id(&cfg.transcription_default_model).is_some_and(
+                        |(provider, selected)| provider == store::LOCAL && selected == *model,
+                    )
+                {
+                    selected_local_missing = true;
+                }
+                is_downloaded
+            } else {
+                !cfg.key_for(provider).is_empty()
             }
-            is_downloaded
-        } else {
-            !cfg.key_for(provider).is_empty()
-        }
-    });
+        });
 
     if has_usable_candidate {
         Ok(())
@@ -69,17 +72,17 @@ pub(super) fn validate_transcription_chain(
 }
 
 pub(super) fn has_cleanup_key_in_chain(cfg: &store::PipelineConfig) -> bool {
-    cleanup_model_chain(cfg)
-        .iter()
-        .any(|(provider, model)| {
-            if provider == store::LOCAL {
-                crate::local_llm::model::manifest_by_id(model)
-                    .map(|manifest| manifest.is_downloaded(&crate::local_llm::LocalLlmManager::models_root()))
-                    .unwrap_or(false)
-            } else {
-                !cfg.key_for(provider).is_empty()
-            }
-        })
+    cleanup_model_chain(cfg).iter().any(|(provider, model)| {
+        if provider == store::LOCAL {
+            crate::local_llm::model::manifest_by_id(model)
+                .map(|manifest| {
+                    manifest.is_downloaded(&crate::local_llm::LocalLlmManager::models_root())
+                })
+                .unwrap_or(false)
+        } else {
+            !cfg.key_for(provider).is_empty()
+        }
+    })
 }
 
 pub(super) fn trim_err(s: &str) -> String {
