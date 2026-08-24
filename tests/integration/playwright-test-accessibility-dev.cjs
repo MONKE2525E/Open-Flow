@@ -10,7 +10,11 @@ function auditSurface() {
   const visible = (element) => {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
-    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+    return style.visibility !== 'hidden'
+      && style.display !== 'none'
+      && rect.width > 0
+      && rect.height > 0
+      && !element.closest('[aria-hidden="true"]');
   };
   const nameFor = (element) => {
     const labelledBy = element.getAttribute('aria-labelledby');
@@ -91,10 +95,14 @@ function auditSurface() {
 
     const privacyNav = page.locator('.settings-nav-item', { hasText: 'Privacy' }).first();
     await privacyNav.click({ timeout: TIMEOUT });
-    const switchControl = page.getByRole('switch', { name: 'App context hint' }).first();
-    if (!(await switchControl.count())) {
+    await page.locator('.settings-nav-item.active', { hasText: 'Privacy' }).waitFor({ state: 'visible', timeout: TIMEOUT });
+    const switchControl = page.getByRole('switch', { name: 'App context hint', exact: true }).first();
+    try {
+      await switchControl.waitFor({ state: 'visible', timeout: TIMEOUT });
+    } catch {
       findings.push('settings: keyboard: App context hint switch was not found');
-    } else {
+    }
+    if (await switchControl.count()) {
       const switchName = await switchControl.evaluate((element) => {
         const labelledBy = element.getAttribute('aria-labelledby');
         if (labelledBy) {
