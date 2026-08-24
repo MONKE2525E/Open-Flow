@@ -887,6 +887,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         accumulated_results = merge_loop_results(accumulated_results, results)
         overall_exit = max(overall_exit, exit_code)
         if args.until_pass and exit_code == 0:
+            overall_exit = 0
             break
 
     elapsed = time.monotonic() - total_started

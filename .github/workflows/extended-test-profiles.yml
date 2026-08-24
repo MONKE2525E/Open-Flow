@@ -49,7 +49,7 @@ jobs:
 
       - name: Upload live regression results
         if: always() && steps.live-secrets.outputs.enabled == 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: live-regression-results
           path: test-results/
@@ -75,8 +75,7 @@ jobs:
 
       - name: Upload native regression results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: native-regression-results
           path: test-results/
-

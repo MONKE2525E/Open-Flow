@@ -11,8 +11,8 @@ const expected = 'The model picker receives focus, traps Tab navigation, closes 
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const failures = [];
 
-  await seedDevState(page, { settings: { setup_complete: true, advanced_model_ui: true } });
   try {
+    await seedDevState(page, { settings: { setup_complete: true, advanced_model_ui: true } });
     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
     await openSettings(page);
     await page.locator('.settings-nav-item', { hasText: 'Models' }).click({ timeout: TIMEOUT });
@@ -23,7 +23,7 @@ const expected = 'The model picker receives focus, traps Tab navigation, closes 
 
     const dialog = page.locator('.picker-card[role="dialog"][aria-modal="true"]');
     await dialog.waitFor({ state: 'visible', timeout: TIMEOUT });
-    await page.waitForTimeout(50);
+    await page.waitForFunction(() => document.querySelector('.picker-card')?.contains(document.activeElement) ?? false, null, { timeout: TIMEOUT }).catch(() => {});
     const initialInside = await page.evaluate(() => document.querySelector('.picker-card')?.contains(document.activeElement) ?? false);
     if (!initialInside) failures.push('focus did not move into the model picker');
 
@@ -45,7 +45,7 @@ const expected = 'The model picker receives focus, traps Tab navigation, closes 
     if (!closedWithEscape) failures.push('Escape did not close the model picker');
     let restored = false;
     if (closedWithEscape) {
-      await page.waitForTimeout(80);
+      await page.waitForFunction(() => document.activeElement?.matches('button.tile-btn-primary'), null, { timeout: TIMEOUT }).catch(() => {});
       restored = await trigger.evaluate((element) => document.activeElement === element);
       if (!restored) failures.push('focus did not return to the Change button after Escape');
     }
@@ -65,4 +65,3 @@ const expected = 'The model picker receives focus, traps Tab navigation, closes 
     await browser.close();
   }
 })();
-

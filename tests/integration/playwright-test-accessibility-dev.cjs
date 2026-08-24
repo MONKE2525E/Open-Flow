@@ -24,6 +24,7 @@ function auditSurface() {
       const label = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
       if (label?.textContent?.trim()) return label.textContent.trim();
     }
+    if (element instanceof HTMLInputElement && element.value?.trim()) return element.value.trim();
     if (element instanceof HTMLInputElement && element.placeholder?.trim()) return element.placeholder.trim();
     return (element.textContent || '').replace(/\s+/g, ' ').trim();
   };
@@ -114,4 +115,3 @@ function auditSurface() {
     await browser.close();
   }
 })();
-

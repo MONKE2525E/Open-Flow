@@ -40,7 +40,10 @@ fn settings_path() -> Option<PathBuf> {
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {
-        None
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|path| PathBuf::from(path).join(".config")))?;
+        Some(base.join("com.verenu.app").join("settings.json"))
     }
 }
 
@@ -284,4 +287,3 @@ async fn live_transcription_regression() {
         "configured transcription output was empty or too short"
     );
 }
-
