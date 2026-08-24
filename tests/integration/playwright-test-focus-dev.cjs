@@ -28,7 +28,7 @@ const expected = 'Model settings tiles open from the keyboard, retain focus with
     if (initialInside) {
       await page.keyboard.press('Tab');
       tabCycles = 1;
-      if (!await page.evaluate(() => document.activeElement != null)) failures.push('Tab navigation left the document without an active element');
+      if (!await page.evaluate(() => document.activeElement && document.activeElement !== document.body && document.activeElement !== document.documentElement)) failures.push('Tab navigation left focus on the document body');
     }
 
     await page.keyboard.press('Escape');
