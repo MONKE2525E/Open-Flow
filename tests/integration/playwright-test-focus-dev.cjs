@@ -22,8 +22,11 @@ const expected = 'Model settings tiles open from the keyboard, retain focus with
     await page.keyboard.press('Enter');
     const opened = await page.waitForFunction(() => document.querySelector('.task-tile.task-open') != null, null, { timeout: TIMEOUT }).then(() => true).catch(() => false);
     if (!opened) failures.push('Enter did not open the model tile');
-    const initialInside = opened && await page.evaluate(() => document.querySelector('.task-tile.task-open')?.contains(document.activeElement) ?? false);
-    if (!initialInside) failures.push('focus did not remain within the expanded model tile');
+    let initialInside = false;
+    if (opened) {
+      initialInside = await page.evaluate(() => document.querySelector('.task-tile.task-open')?.contains(document.activeElement) ?? false);
+      if (!initialInside) failures.push('focus did not remain within the expanded model tile');
+    }
 
     let tabCycles = 0;
     if (initialInside) {
@@ -32,8 +35,12 @@ const expected = 'Model settings tiles open from the keyboard, retain focus with
       if (!await page.evaluate(() => document.activeElement && document.activeElement !== document.body && document.activeElement !== document.documentElement)) failures.push('Tab navigation left focus on the document body');
     }
 
-    const closedWithEscape = opened && (await page.keyboard.press('Escape'), await page.waitForFunction(() => !document.querySelector('.task-tile.task-open'), null, { timeout: TIMEOUT }).then(() => true).catch(() => false));
-    if (!closedWithEscape) failures.push('Escape did not collapse the model tile');
+    let closedWithEscape = false;
+    if (opened) {
+      await page.keyboard.press('Escape');
+      closedWithEscape = await page.waitForFunction(() => !document.querySelector('.task-tile.task-open'), null, { timeout: TIMEOUT }).then(() => true).catch(() => false);
+      if (!closedWithEscape) failures.push('Escape did not collapse the model tile');
+    }
     let restored = false;
     if (closedWithEscape) {
       await page.waitForFunction(() => document.activeElement?.matches('button.tile-head'), null, { timeout: TIMEOUT }).catch(() => {});

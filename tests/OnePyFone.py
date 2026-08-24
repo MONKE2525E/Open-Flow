@@ -365,7 +365,7 @@ def _terminate_process_tree(proc: subprocess.Popen[str]) -> None:
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=20)
         else:
-                os.killpg(proc.pid, signal.SIGTERM)
+            os.killpg(proc.pid, signal.SIGTERM)
         proc.wait(timeout=10)
     except Exception:
         try:

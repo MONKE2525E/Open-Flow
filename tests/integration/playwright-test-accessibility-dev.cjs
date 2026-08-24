@@ -105,10 +105,11 @@ function auditSurface() {
         return (element.textContent || '').replace(/\s+/g, ' ').trim() || 'unnamed switch';
       });
       const before = await switchControl.getAttribute('aria-checked');
+      await switchControl.evaluate((element) => element.setAttribute('data-regression-switch-target', 'true'));
       await switchControl.focus();
       await page.keyboard.press('Space');
       await page.waitForFunction(({ beforeValue }) => {
-        const changed = document.querySelector('[role="switch"]')?.getAttribute('aria-checked') !== beforeValue;
+        const changed = document.querySelector('[data-regression-switch-target]')?.getAttribute('aria-checked') !== beforeValue;
         const dialog = document.querySelector('[role="dialog"]');
         const dialogVisible = dialog && getComputedStyle(dialog).display !== 'none' && getComputedStyle(dialog).visibility !== 'hidden';
         return changed || Boolean(dialogVisible);
