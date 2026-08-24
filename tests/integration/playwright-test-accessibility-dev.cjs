@@ -1,6 +1,6 @@
 'use strict';
 
-const { chromium, expect } = require('playwright');
+const { chromium } = require('playwright');
 const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-helpers.cjs');
 const { finish, message } = require('./_regression-result.cjs');
 
@@ -28,25 +28,11 @@ function auditSurface() {
       const label = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
       if (label?.textContent?.trim()) return label.textContent.trim();
     }
-<<<<<<< New base: Consolidate outstanding workspace work for dev
     const wrapped = element.closest('label');
     if (wrapped?.textContent?.trim()) return wrapped.textContent.trim();
-||||||| Common ancestor
-    const wrappedLabel = element.closest('label');
-    if (wrappedLabel?.textContent?.trim()) return wrappedLabel.textContent.trim();
-=======
->>>>>>> Current commit: Address AI review findings
     if (element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(element.type) && element.value?.trim()) return element.value.trim();
     if (element instanceof HTMLInputElement && element.placeholder?.trim()) return element.placeholder.trim();
-<<<<<<< New base: Consolidate outstanding workspace work for dev
     if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) return '';
-||||||| Common ancestor
-    // Selects and textareas are named by labels/ARIA, not their option or
-    // default text content. Falling back to descendants would hide unlabeled
-    // controls behind incidental option text.
-    if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) return '';
-=======
->>>>>>> Current commit: Address AI review findings
     return (element.textContent || '').replace(/\s+/g, ' ').trim();
   };
 
@@ -103,17 +89,10 @@ function auditSurface() {
       const label = rawLabel.trim();
       if (!label) continue;
       await page.locator('.settings-nav-item', { hasText: label }).first().click({ timeout: TIMEOUT });
-<<<<<<< New base: Consolidate outstanding workspace work for dev
       await page.locator('.settings-nav-item.active', { hasText: label }).waitFor({ state: 'visible', timeout: TIMEOUT });
-||||||| Common ancestor
-      await page.locator('.settings-nav-item.active', { hasText: label }).first().waitFor({ state: 'visible', timeout: TIMEOUT });
-=======
-      await page.waitForTimeout(60);
->>>>>>> Current commit: Address AI review findings
       await collect(`settings/${label}`);
     }
 
-<<<<<<< New base: Consolidate outstanding workspace work for dev
     const privacyNav = page.locator('.settings-nav-item', { hasText: 'Privacy' }).first();
     await privacyNav.click({ timeout: TIMEOUT });
     await page.locator('.settings-nav-item.active', { hasText: 'Privacy' }).waitFor({ state: 'visible', timeout: TIMEOUT });
@@ -123,18 +102,6 @@ function auditSurface() {
     } catch {
       findings.push('settings: keyboard: App context hint switch was not found');
     }
-||||||| Common ancestor
-    await page.locator('.settings-nav-item:visible', { hasText: 'Privacy' }).first().click({ timeout: TIMEOUT });
-    await page.locator('.settings-nav-item.active:visible', { hasText: 'Privacy' }).first().waitFor({ state: 'visible', timeout: TIMEOUT });
-    await page.locator('h2.settings-h:visible', { hasText: 'Privacy' }).waitFor({ state: 'visible', timeout: TIMEOUT });
-    let switchControl = page.getByRole('switch', { name: 'App context hint' }).first();
-    await switchControl.waitFor({ state: 'visible', timeout: Math.min(TIMEOUT, 2000) }).catch(() => {});
-    if (!(await switchControl.count())) switchControl = page.getByRole('switch').first();
-    if (await switchControl.count()) await switchControl.waitFor({ state: 'visible', timeout: Math.min(TIMEOUT, 2000) }).catch(() => {});
-=======
-    await page.locator('.settings-nav-item', { hasText: 'Privacy' }).click({ timeout: TIMEOUT });
-    const switchControl = page.getByRole('switch', { name: 'App context hint' }).first();
->>>>>>> Current commit: Address AI review findings
     if (await switchControl.count()) {
       const switchName = await switchControl.evaluate((element) => {
         const labelledBy = element.getAttribute('aria-labelledby');
@@ -160,7 +127,6 @@ function auditSurface() {
       const before = await switchControl.getAttribute('aria-checked');
       await switchControl.focus();
       await page.keyboard.press('Space');
-<<<<<<< New base: Consolidate outstanding workspace work for dev
       await page.waitForFunction(
         (initialChecked) => {
           const activeElement = document.activeElement;
@@ -177,20 +143,6 @@ function auditSurface() {
         before,
         { timeout: TIMEOUT },
       ).catch(() => {});
-||||||| Common ancestor
-      await page.waitForFunction(({ beforeValue }) => {
-        const changed = document.querySelector('[data-regression-switch-target]')?.getAttribute('aria-checked') !== beforeValue;
-        const dialog = document.querySelector('[role="dialog"]');
-        const dialogVisible = dialog && getComputedStyle(dialog).display !== 'none' && getComputedStyle(dialog).visibility !== 'hidden';
-        return changed || Boolean(dialogVisible);
-      }, { beforeValue: before }, { timeout: Math.min(TIMEOUT, 2000) }).catch(() => {});
-=======
-      await expect.poll(async () => {
-        const checked = await switchControl.getAttribute('aria-checked');
-        const dialog = await page.locator('[role="dialog"]:visible').count();
-        return checked !== before || dialog > 0;
-      }, { timeout: TIMEOUT }).toBe(true);
->>>>>>> Current commit: Address AI review findings
       const after = await switchControl.getAttribute('aria-checked');
       measurements.switchesTested = 1;
       const confirmationOpened = await page.locator('[role="dialog"]:visible').count() > 0;
