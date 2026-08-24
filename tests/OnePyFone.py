@@ -29,7 +29,7 @@ import threading
 import time
 import tempfile
 import urllib.request
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -697,7 +697,7 @@ def merge_loop_results(accumulated: Dict[str, TestResult], current: Dict[str, Te
             merged[test_id] = result
             continue
         statuses_differ = previous.status != result.status
-        chosen = result if rank[result.status] >= rank[previous.status] else previous
+        chosen = replace(result if rank[result.status] >= rank[previous.status] else previous)
         chosen.duration_s = previous.duration_s + result.duration_s
         chosen.attempts = previous.attempts + result.attempts
         if statuses_differ:

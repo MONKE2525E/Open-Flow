@@ -97,7 +97,7 @@ fn configured_transcription() -> Option<(String, String, String)> {
         .map(str::to_string)
         .or_else(first_environment_provider)?;
     let default_model = match provider.as_str() {
-        "openai" => "gpt-4o-mini-transcribe",
+        "openai" => "gpt-4o-transcribe",
         "google" => "gemini-2.5-flash",
         _ => "whisper-large-v3-turbo",
     };
