@@ -52,6 +52,16 @@
     localModels?: Array<{ id: string; is_downloaded?: boolean }>;
   } = $props();
 
+  let tileHead: HTMLButtonElement;
+
+  function handleTileKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && opened) {
+      event.preventDefault();
+      onToggleOpen(type);
+      requestAnimationFrame(() => tileHead?.focus());
+    }
+  }
+
   const fallbackCount = $derived(fallbackModels.length);
 
   function missingKeyWarning(): string {
@@ -91,8 +101,8 @@
 <!-- Escape collapses the open tile no matter which control inside it has
      focus, so the key backs out one layer at a time (tile → Settings).
      preventDefault marks the key as handled for Settings' window guard. -->
-<div class="task-tile" class:task-open={opened} onkeydown={(event) => { if (event.key === 'Escape' && opened) { event.preventDefault(); onToggleOpen(type); } }}>
-  <button class="tile-head" onclick={() => onToggleOpen(type)} aria-expanded={opened}>
+<div class="task-tile" class:task-open={opened} onkeydown={handleTileKeydown}>
+  <button bind:this={tileHead} class="tile-head" onclick={() => onToggleOpen(type)} aria-expanded={opened}>
     <div class="head-left">
       <span class="head-title">{taskLabel(type)}</span>
       <div class="summary-row">
