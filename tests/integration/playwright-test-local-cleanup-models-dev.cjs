@@ -42,16 +42,19 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
     await page.locator('.settings-nav-item:has-text("Models")').click();
     await page.locator('h2.settings-h:has-text("Models")').waitFor({ state: 'visible', timeout: TIMEOUT });
 
-    const subheads = await page.locator('h2.settings-h:has-text("Models") ~ .settings-subhead').evaluateAll((els) => els.map((el) => el.textContent?.trim()).filter(Boolean));
     const expectedOrder = ['Model selection', 'Local models', 'Model settings'];
+    const subheads = await page.locator('.settings-page .panel h3.settings-subhead:visible').evaluateAll((els) => els
+      .map((el) => el.textContent?.trim())
+      .filter((text) => ['Model selection', 'Local models', 'Model settings'].includes(text)));
     if (subheads.join('|') !== expectedOrder.join('|')) {
       errors.push(`Models subsection order mismatch: ${subheads.join(' | ')}`);
     }
 
-    const tileCount = await page.locator('.task-tile').count();
-    if (tileCount !== 3) errors.push(`Expected 3 top-level model tiles, found ${tileCount}`);
+    const transcriptionTile = page.locator('.task-tile').filter({ has: page.locator('.head-title', { hasText: 'Transcription' }) }).first();
+    const cleanupTile = page.locator('.task-tile').filter({ has: page.locator('.head-title', { hasText: 'Clean-up' }) }).first();
+    const tileCount = (await transcriptionTile.count()) + (await cleanupTile.count());
+    if (tileCount !== 2) errors.push(`Expected transcription and clean-up model tiles, found ${tileCount}`);
 
-    const cleanupTile = page.locator('.task-tile').nth(1);
     const cleanupHead = cleanupTile.locator('.tile-head');
     if ((await cleanupHead.getAttribute('aria-expanded')) !== 'true') {
       await cleanupHead.click();
@@ -83,7 +86,9 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
       null,
       { timeout: TIMEOUT },
     );
-    await cleanupTile.locator('.model-row:has-text("Qwen3.6 27B")').click();
+    const activeCloudModel = cleanupTile.locator('.model-row.simple-active').first();
+    await activeCloudModel.waitFor({ state: 'visible', timeout: TIMEOUT });
+    await activeCloudModel.click();
     await page.waitForFunction(
       () => {
         try {
@@ -104,13 +109,17 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
       errors.push('Clean-up summary chip did not update to Local after selecting a local cleanup model');
     }
 
-    const downloadsTile = page.locator('.task-tile').nth(2);
+    const transcriptionDownloads = page.locator('.task-tile').filter({ hasText: 'Speech-to-text' }).first();
+    const transcriptionHead = transcriptionDownloads.locator('.tile-head');
+    if ((await transcriptionHead.getAttribute('aria-expanded')) !== 'true') await transcriptionHead.click();
+    await page.locator('#transcription-models-block').waitFor({ state: 'visible', timeout: TIMEOUT });
+
+    const downloadsTile = page.locator('.local-download-tile').last();
     const downloadsHead = downloadsTile.locator('.tile-head');
     if ((await downloadsHead.getAttribute('aria-expanded')) !== 'true') {
       await downloadsHead.click();
     }
-    await downloadsTile.locator('h3:has-text("Transcription models")').waitFor({ state: 'visible', timeout: TIMEOUT });
-    await downloadsTile.locator('h3:has-text("Cleanup models")').waitFor({ state: 'visible', timeout: TIMEOUT });
+    await page.locator('#cleanup-models-block').waitFor({ state: 'visible', timeout: TIMEOUT });
 
     const advancedToggle = page.locator('[role="switch"][aria-label="Advanced Models"]');
     await advancedToggle.waitFor({ state: 'visible', timeout: TIMEOUT });

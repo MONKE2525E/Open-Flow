@@ -47,6 +47,7 @@
   let contextualCaps = $state(true);
   let autoSpacing = $state(true);
   let capsLockUppercase = $state(false);
+  let legacySaveError = $state('');
   let hotkey = $state(defaultHotkey);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
@@ -297,11 +298,13 @@
   }
 
   async function applyLegacyFeatures(value: boolean) {
+    legacySaveError = '';
     appStore.legacyFeaturesEnabled = value;
     try {
       await saveSetting('legacy_features_enabled', value);
     } catch (err) {
       appStore.legacyFeaturesEnabled = !value;
+      legacySaveError = 'Could not save Legacy pages. Your previous setting was restored.';
       console.error('save legacy_features_enabled failed:', err);
     }
   }
@@ -780,7 +783,12 @@
 <h3 class="settings-subhead">Legacy</h3>
 <div class="setting-row">
   <div><div class="label">Legacy pages</div><div class="desc">Bring back the standalone App Mappings settings page and the Dictionary/Snippets pages, superseded by Contexts.</div></div>
-  <Toggle checked={appStore.legacyFeaturesEnabled} onchange={handleLegacyFeatures} label="Legacy pages" />
+  <div class="legacy-toggle-wrap">
+    <Toggle checked={appStore.legacyFeaturesEnabled} onchange={handleLegacyFeatures} label="Legacy pages" />
+    {#if legacySaveError}
+      <div class="settings-error" role="alert">{legacySaveError}</div>
+    {/if}
+  </div>
 </div>
 
 {#if confirmCleanupOff}
@@ -853,6 +861,8 @@
 {/if}
 
 <style>
+  .legacy-toggle-wrap { display: grid; justify-items: end; gap: 6px; }
+  .settings-error { max-width: 240px; color: var(--danger, #b42318); font-size: 11px; line-height: 1.35; text-align: right; }
   .hotkey-tip {
     margin: -2px 0 2px;
     font-size: 11.5px;

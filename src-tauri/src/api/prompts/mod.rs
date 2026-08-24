@@ -6,6 +6,8 @@ mod cleanup_rules;
 mod cleanup_templates;
 mod gemini;
 #[cfg(test)]
+mod regression_fixtures;
+#[cfg(test)]
 mod tests;
 mod transcription;
 

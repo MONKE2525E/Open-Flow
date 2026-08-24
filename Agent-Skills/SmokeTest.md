@@ -51,8 +51,11 @@ python tests/OnePyFone.py --profile live
 python tests/OnePyFone.py --profile native
 python tests/OnePyFone.py --profile full
 
-# Parallel-safe suites only
-python tests/OnePyFone.py --suite ui,animation --parallel --workers 3 --fresh-server
+# Browser tests run in parallel by default
+python tests/OnePyFone.py --suite ui,accessibility,animation --workers 3 --fresh-server
+
+# Target one stable test ID; use --sequential while debugging
+python tests/OnePyFone.py --test accessibility.settings-focus --sequential
 
 # npm entrypoints
 npm test
@@ -94,3 +97,4 @@ the relevant subsystem:
 - The `native` profile is opt-in for platform/manual-adjacent checks and should explain skip reasons clearly.
 - Use `--fresh-server` to avoid stale listener/process false failures.
 - OnePyFone now shows live elapsed seconds while tests run.
+

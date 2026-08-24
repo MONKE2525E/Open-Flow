@@ -8,7 +8,7 @@ Use the smallest test pass that covers the change, then run broader checks befor
 npm test
 ```
 
-This runs the OnePyFone fast profile. It is deterministic and CI-friendly: no live APIs, no microphone capture, no OS permission prompts, and no real clipboard injection.
+This runs the OnePyFone fast profile. It is deterministic and CI-friendly: no live APIs, no microphone capture, no OS permission prompts, and no real clipboard injection. Isolated browser tests run in parallel by default. Every run writes `test-results/onepyfone.json` unless `--no-json-report` is passed.
 
 ## Common Local Checks
 
@@ -29,12 +29,14 @@ npm run test:all
 npm run test:full
 npm run test:live
 npm run test:native
+npm run test:quality
+npm run test:prompt
 ```
 
 | Profile | Purpose |
 | --- | --- |
-| `fast` | Default deterministic suite for PRs and normal local work |
-| `live` | Provider/API checks, skipped when keys are absent |
+| `fast` | Default deterministic suite for unit, compile, backend, UI, accessibility, state, and performance regressions |
+| `live` | Configured-provider transcription and semantic prompt checks; skips when credentials or the optional WAV fixture are absent |
 | `native` | Platform and manual-adjacent checks |
 | `full` | Fast, live, and native profiles |
 
@@ -42,8 +44,18 @@ You can target suites directly:
 
 ```bash
 python3 tests/OnePyFone.py --suite ui,state
-python3 tests/OnePyFone.py --suite ui,animation --parallel --workers 3 --fresh-server
+python3 tests/OnePyFone.py --test accessibility.settings-focus
+python3 tests/OnePyFone.py --suite ui,animation --workers 3 --fresh-server
+python3 tests/OnePyFone.py --list
 ```
+
+Use `--sequential` when investigating a timing or interaction failure. `--test` matches a stable test ID, display name, or category. Each registered process has a timeout, and the runner terminates its child process tree if that timeout expires.
+
+## Results and performance baselines
+
+The terminal summary names the failed contract, expected behavior, observed behavior, likely regression area, and whether the failure came from product behavior or test infrastructure. The JSON report uses schema version 2 and records the same fields for agents, plus status, measurements, checked baselines, duration, attempts, required or optional state, and Git metadata. Pass `--junit-report <path>` when a CI system also needs JUnit XML.
+
+Browser performance budgets live in [`../tests/baselines/ui-performance.json`](../tests/baselines/ui-performance.json). The performance test records startup, settings open and close, section-change p95, long tasks, and uncaught errors. Change a budget only after repeated measurements show that the old limit no longer represents the supported local environment.
 
 On Windows, use `python` instead of `python3` if `python3` is not available in your shell.
 
@@ -69,13 +81,17 @@ cargo test --manifest-path src-tauri/Cargo.toml <test_name>
 
 Rust tests cover pure logic, provider error classification, prompt assembly, pipeline fixtures, SQLite behavior, context decisions, snippets, dictionary behavior, and data validation.
 
+Prompt contracts are data-driven in [`../tests/fixtures/prompt-regressions.json`](../tests/fixtures/prompt-regressions.json). Deterministic cases inspect the assembled prompt. Live cases call the configured cleanup model and check meaning, instruction boundaries, forbidden behavior, and output limits without exact-string matching.
+
 ## Privacy Rules For Tests
 
 - Do not print API keys.
 - Do not print clipboard contents.
 - Do not include real dictated text in fixtures or output.
 - Do not commit screenshots with private text.
-- Live provider tests must skip cleanly when secrets are unavailable.
+- Live provider tests read the provider and model from Verenu settings and the credential through Verenu's Rust credential module. They never print the key or full model output.
+- CI may use provider-key environment secrets because OS credential stores are unavailable on hosted Linux runners. Local environment-key fallback stays disabled unless `VERENU_ALLOW_ENV_CREDENTIALS=1` is set explicitly.
+- Live provider tests must skip cleanly when credentials, provider support, or optional fixtures are unavailable.
 
 ## CI
 
@@ -96,3 +112,4 @@ GitHub Actions currently run:
   <a href="RELEASE.md"><img alt="Release Process" src="https://img.shields.io/badge/Release-Process-7e7266"></a>
   <a href="README.md"><img alt="Docs Index" src="https://img.shields.io/badge/Docs-Index-2b2422"></a>
 </p>
+

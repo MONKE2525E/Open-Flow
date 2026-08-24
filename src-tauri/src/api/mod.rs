@@ -7,6 +7,9 @@ pub mod service_status;
 pub mod transcription;
 pub mod updater;
 
+#[cfg(test)]
+mod live_regression_tests;
+
 const AUTH_401_PREFIX: &str = "AUTH_401";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
