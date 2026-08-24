@@ -5,6 +5,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
 use super::*;
 
@@ -681,7 +682,8 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
 /// Adds the LAN device-sync layer (v20) without changing any existing row
 /// shapes:
 ///
-/// - Every syncable table gains a `uuid` column (backfilled with random hex)
+/// - Every syncable table gains a `uuid` column (backfilled with canonical
+///   hyphenated UUIDs)
 ///   plus a unique index, so records have stable identities that mean the same
 ///   thing on every paired device. Local integer ids stay the primary keys.
 /// - `sync_log` records one row per captured mutation (table, row uuid, op,
@@ -700,6 +702,10 @@ fn apply_v20_sync_migration(conn: &Connection) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS sync_state (
            applying INTEGER NOT NULL DEFAULT 0
          );
+         DELETE FROM sync_state
+          WHERE rowid NOT IN (SELECT rowid FROM sync_state LIMIT 1);
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_state_singleton
+           ON sync_state ((1));
          INSERT OR IGNORE INTO sync_state (applying) VALUES (0);
          CREATE TABLE IF NOT EXISTS sync_identity (
            uuid TEXT NOT NULL,
@@ -748,7 +754,7 @@ fn apply_v20_sync_migration(conn: &Connection) -> Result<()> {
 
     // Stable identities for existing rows. Everywhere gets a fixed
     // well-known uuid so its (editable) name/style syncs as one record.
-    for (table, _key) in [
+    for (table, _) in [
         ("dictionary", "id"),
         ("snippets", "id"),
         ("contexts", "id"),
@@ -763,9 +769,9 @@ fn apply_v20_sync_migration(conn: &Connection) -> Result<()> {
             "uuid",
             &format!("ALTER TABLE {table} ADD COLUMN uuid TEXT;"),
         )?;
+        backfill_canonical_uuids(conn, table)?;
         conn.execute_batch(&format!(
-            "UPDATE {table} SET uuid = lower(hex(randomblob(16))) WHERE uuid IS NULL;
-             CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_uuid ON {table}(uuid);"
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_uuid ON {table}(uuid);"
         ))?;
     }
     conn.execute_batch(
@@ -783,6 +789,37 @@ fn apply_v20_sync_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Keep UUIDs in the canonical hyphenated form used by `Uuid::to_string()`.
+/// Older partial migrations generated bare hex strings with SQLite's
+/// `randomblob`, which would compare unequal to UUIDs created by Rust.
+fn backfill_canonical_uuids(conn: &Connection, table: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("SELECT rowid, uuid FROM {table}"))?;
+    let repairs = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter_map(|(rowid, value)| {
+            let canonical = value
+                .as_deref()
+                .and_then(|raw| Uuid::parse_str(raw).ok())
+                .map(|uuid| uuid.hyphenated().to_string());
+            (canonical.as_deref() != value.as_deref()).then_some((rowid, canonical))
+        })
+        .collect::<Vec<_>>();
+    drop(stmt);
+
+    for (rowid, canonical) in repairs {
+        let uuid = canonical.unwrap_or_else(|| Uuid::new_v4().to_string());
+        conn.execute(
+            &format!("UPDATE {table} SET uuid = ?1 WHERE rowid = ?2"),
+            params![uuid, rowid],
+        )?;
+    }
+    Ok(())
+}
+
 /// All change-capture triggers. Insert triggers on content tables first ensure
 /// the row has a uuid (app code never sets one), then log - the log references
 /// the row by re-reading its uuid after the backfill UPDATE. Matching UPDATE
@@ -792,7 +829,7 @@ fn apply_v20_sync_migration(conn: &Connection) -> Result<()> {
 /// (row + targets + memberships) is what syncs.
 const SYNC_TRIGGER_SQL: &str = "
 CREATE TRIGGER IF NOT EXISTS trg_sync_dictionary_ins AFTER INSERT ON dictionary BEGIN
-  UPDATE dictionary SET uuid = lower(hex(randomblob(16))) WHERE id = NEW.id AND uuid IS NULL;
+  UPDATE dictionary SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
   INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
   SELECT 'dictionary', (SELECT uuid FROM dictionary WHERE id = NEW.id), 'upsert',
          CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
@@ -824,7 +861,7 @@ CREATE TRIGGER IF NOT EXISTS trg_sync_dictionary_del AFTER DELETE ON dictionary 
     AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
 END;
 CREATE TRIGGER IF NOT EXISTS trg_sync_snippets_ins AFTER INSERT ON snippets BEGIN
-  UPDATE snippets SET uuid = lower(hex(randomblob(16))) WHERE id = NEW.id AND uuid IS NULL;
+  UPDATE snippets SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
   INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
   SELECT 'snippets', (SELECT uuid FROM snippets WHERE id = NEW.id), 'upsert',
          CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
@@ -856,7 +893,7 @@ CREATE TRIGGER IF NOT EXISTS trg_sync_snippets_del AFTER DELETE ON snippets BEGI
     AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
 END;
 CREATE TRIGGER IF NOT EXISTS trg_sync_contexts_ins AFTER INSERT ON contexts BEGIN
-  UPDATE contexts SET uuid = lower(hex(randomblob(16))) WHERE id = NEW.id AND uuid IS NULL;
+  UPDATE contexts SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
   INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
   SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = NEW.id), 'upsert',
          CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
@@ -1020,7 +1057,7 @@ CREATE TRIGGER IF NOT EXISTS trg_sync_snippet_contexts_del AFTER DELETE ON snipp
     AND (SELECT uuid FROM contexts WHERE id = OLD.context_id) IS NOT NULL;
 END;
 CREATE TRIGGER IF NOT EXISTS trg_sync_transcriptions_ins AFTER INSERT ON transcriptions BEGIN
-  UPDATE transcriptions SET uuid = lower(hex(randomblob(16))) WHERE id = NEW.id AND uuid IS NULL;
+  UPDATE transcriptions SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
   INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
   SELECT 'transcriptions', (SELECT uuid FROM transcriptions WHERE id = NEW.id), 'upsert',
          CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
@@ -1041,7 +1078,7 @@ CREATE TRIGGER IF NOT EXISTS trg_sync_transcriptions_del AFTER DELETE ON transcr
     AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
 END;
 CREATE TRIGGER IF NOT EXISTS trg_sync_api_calls_ins AFTER INSERT ON api_calls BEGIN
-  UPDATE api_calls SET uuid = lower(hex(randomblob(16))) WHERE id = NEW.id AND uuid IS NULL;
+  UPDATE api_calls SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
   INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
   SELECT 'api_calls', (SELECT uuid FROM api_calls WHERE id = NEW.id), 'upsert',
          CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),

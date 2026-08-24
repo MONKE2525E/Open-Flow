@@ -66,8 +66,7 @@ async function closeSettings(page) {
     // Rows that still need a key or a download are calls to action, not
     // choices — clicking one opens setup instead of adding a fallback.
     const fallbackChoice = picker
-      .locator('.row-main:visible')
-      .filter({ hasNot: picker.locator('.row-state-cta') })
+      .locator('.row-main:visible:not(:has(.row-state))')
       .first();
     if (!(await fallbackChoice.count())) {
       errors.push('Fallback picker offered no models');
@@ -79,12 +78,26 @@ async function closeSettings(page) {
     const fallbackRows = transcriptionTile.locator('.fallback-chip-item');
     if ((await fallbackRows.count()) < 1) errors.push('Fallback chain did not show added model');
 
+    // The product persists each setting through IPC. Wait for the mock's
+    // durable store before navigating away so this test checks persistence,
+    // rather than racing the queued save with the Settings unmount.
+    await page.waitForFunction(() => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('__open_flow_tauri_mock_settings') || '{}');
+        return Array.isArray(stored.transcription_fallback_models)
+          && stored.transcription_fallback_models.length >= 1;
+      } catch {
+        return false;
+      }
+    }, null, { timeout: TIMEOUT });
+
     await closeSettings(page);
     await openSettings(page);
     await page.locator('.settings-nav-item:has-text("Models")').click();
 
-    const tileSummary = page.locator('.task-tile').first().locator('.summary-item').nth(2);
-    const summaryText = (await tileSummary.textContent()) || '';
+    const fallbackSummary = page.locator('.task-tile').first().locator('.summary-item.fallback-chip');
+    await fallbackSummary.waitFor({ state: 'visible', timeout: TIMEOUT });
+    const summaryText = (await fallbackSummary.textContent()) || '';
     if (!summaryText.includes('1')) errors.push('Fallback summary count did not persist');
 
     if (errors.length) {

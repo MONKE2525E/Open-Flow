@@ -399,7 +399,9 @@ pub(super) async fn inject_text(
     // focused at all"; this probe only feeds contextual formatting and
     // post-paste verification, never a hard reject.
 
-    if crate::core::window_context::get_foreground_hwnd() != target_hwnd {
+    if (contextual_caps || auto_spacing)
+        && crate::core::window_context::get_foreground_hwnd() != target_hwnd
+    {
         log::debug!(
             "injection: rejecting stale UIA probe target_hwnd={} probe_pid={}",
             target_hwnd,

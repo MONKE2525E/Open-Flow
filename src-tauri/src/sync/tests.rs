@@ -146,6 +146,14 @@ fn triggers_capture_content_changes() {
     assert_eq!(stamped.1, a_uuid, "origin should be this device");
     let snippet_uuid = row_uuid(&conn, "snippets", snippet.id);
     assert!(
+        uuid::Uuid::parse_str(&dict_uuid).is_ok(),
+        "trigger-generated dictionary UUID should be canonical"
+    );
+    assert!(
+        uuid::Uuid::parse_str(&snippet_uuid).is_ok(),
+        "trigger-generated snippet UUID should be canonical"
+    );
+    assert!(
         sync_store::latest_op_stamp(&conn, "snippets", &snippet_uuid)
             .expect("stamp")
             .is_some(),

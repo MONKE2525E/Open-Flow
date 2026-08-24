@@ -315,5 +315,6 @@ pub fn migrate_contextual_formatting(settings: &SettingsHandle) -> Result<(), St
     }
 
     let merged = caps.unwrap_or(true) && spacing.unwrap_or(true);
-    settings.set(CONTEXTUAL_FORMATTING, Value::Bool(merged))
+    settings.set(CONTEXTUAL_FORMATTING, Value::Bool(merged))?;
+    settings.save()
 }

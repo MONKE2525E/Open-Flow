@@ -607,12 +607,19 @@ fn query_cleanup(
         (raw, clean)
     };
 
-    let dictionary_fixes: i64 = conn.query_row(
-        "SELECT COALESCE((SELECT dictionary_fixes FROM lifetime_stats WHERE id = 1), 0)
-              + COALESCE((SELECT SUM(dictionary_fixes) FROM sync_remote_stats), 0)",
-        [],
-        |r| r.get(0),
-    )?;
+    let dictionary_fixes: i64 = match context_id {
+        None => conn.query_row(
+            "SELECT COALESCE((SELECT dictionary_fixes FROM lifetime_stats WHERE id = 1), 0)
+                  + COALESCE((SELECT SUM(dictionary_fixes) FROM sync_remote_stats), 0)",
+            [],
+            |r| r.get(0),
+        )?,
+        Some(_) => conn.query_row(
+            "SELECT COALESCE((SELECT dictionary_fixes FROM lifetime_stats WHERE id = 1), 0)",
+            [],
+            |r| r.get(0),
+        )?,
+    };
     let auto_learned_terms: i64 = conn.query_row(
         "SELECT COUNT(*) FROM dictionary WHERE auto_learned = 1",
         [],

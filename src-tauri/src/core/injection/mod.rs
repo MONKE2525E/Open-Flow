@@ -519,7 +519,13 @@ fn apply_probe_adjustments(
         },
     );
     let adjusted = decision.text;
-    let case_decision = if !contextual_caps {
+    let case_decision = if !contextual_caps && (formatting_enabled || left_reliable) {
+        if !left_reliable {
+            CaseDecision::ConservativeDegradePreserved
+        } else {
+            CaseDecision::ContextualCapsDisabled
+        }
+    } else if !contextual_caps {
         CaseDecision::ContextualCapsDisabled
     } else if !left_reliable {
         CaseDecision::ConservativeDegradePreserved
@@ -574,7 +580,7 @@ fn context_head_signal(head: &str) -> &'static str {
             }
         }
         Some(ch) if ch.is_alphanumeric() => "alnum",
-        Some(')' | ']' | '}' | '>' | '.' | ',' | ';' | ':' | '!' | '?') => {
+        Some(')' | ']' | '}' | '.' | ',' | ';' | ':' | '!' | '?') => {
             "punct"
         }
         Some(_) => "other",

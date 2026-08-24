@@ -563,7 +563,7 @@ fn at_sentence_boundary(left: &str) -> bool {
     if left.is_empty() || left.ends_with(['\n', '\r']) {
         return true;
     }
-    let line = left.rsplit(['\n', '\r']).next().unwrap_or(left);
+    let line = left.rsplit(['\n', '\r']).next().unwrap_or_default();
     if line_is_list_prefix(line) {
         return true;
     }
@@ -588,8 +588,8 @@ fn at_sentence_boundary(left: &str) -> bool {
     let without_closers = trimmed.trim_end_matches(is_closing_delimiter);
     match without_closers.chars().next_back() {
         None => true,
-        Some('!') | Some('?') | Some('。') | Some('！') | Some('？') => true,
         Some('.') => !period_is_nonterminal(without_closers),
+        Some(ch) if is_sentence_terminator(ch) => true,
         Some(_) => false,
     }
 }
@@ -658,6 +658,7 @@ pub fn decide_insertion(text: &str, context: CaretTextContext<'_>) -> InsertionD
             .into_iter()
             .chain(right_immediate)
             .chain(first)
+            .chain(last)
             .any(is_cjk);
     let uses_spaces =
         language_uses_interword_spaces(context.language) && !auto_detected_no_space_script;
