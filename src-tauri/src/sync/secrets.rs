@@ -25,8 +25,7 @@ pub fn store_identity_key(key_der: &[u8]) -> Result<(), String> {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let _ = key_der;
-        Ok(())
+        store_fallback(key_der)
     }
 }
 
@@ -41,7 +40,7 @@ pub fn load_identity_key() -> Option<Vec<u8>> {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        None
+        load_fallback()
     }
 }
 
@@ -55,6 +54,12 @@ pub fn delete_identity_key() {
     {
         let _ = mac_store::delete(MAC_SERVICE, MAC_ACCOUNT);
     }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        if let Some(path) = fallback_path() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 /// Last-resort storage when the OS credential store is unavailable. The key
@@ -65,7 +70,6 @@ fn fallback_path() -> Option<std::path::PathBuf> {
     Some(dir.join(FALLBACK_FILE))
 }
 
-#[cfg(target_os = "windows")]
 fn store_fallback(key_der: &[u8]) -> Result<(), String> {
     let path = fallback_path().ok_or("no app data dir")?;
     #[cfg(unix)]
