@@ -48,10 +48,11 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
       errors.push(`Models subsection order mismatch: ${subheads.join(' | ')}`);
     }
 
-    const tileCount = await page.locator('.task-tile:has(.model-container)').count();
-    if (tileCount !== 2) errors.push(`Expected 2 model-selection tiles, found ${tileCount}`);
+    const transcriptionTile = page.locator('.task-tile').filter({ has: page.locator('.head-title', { hasText: 'Transcription' }) }).first();
+    const cleanupTile = page.locator('.task-tile').filter({ has: page.locator('.head-title', { hasText: 'Clean-up' }) }).first();
+    const tileCount = (await transcriptionTile.count()) + (await cleanupTile.count());
+    if (tileCount !== 2) errors.push(`Expected transcription and clean-up model tiles, found ${tileCount}`);
 
-    const cleanupTile = page.locator('.task-tile:has(.model-container)').nth(1);
     const cleanupHead = cleanupTile.locator('.tile-head');
     if ((await cleanupHead.getAttribute('aria-expanded')) !== 'true') {
       await cleanupHead.click();
