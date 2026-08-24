@@ -83,7 +83,9 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
       null,
       { timeout: TIMEOUT },
     );
-    await cleanupTile.locator('.model-row:has-text("Qwen3.6 27B")').click();
+    const activeCloudModel = cleanupTile.locator('.model-row.simple-active').first();
+    await activeCloudModel.waitFor({ state: 'visible', timeout: TIMEOUT });
+    await activeCloudModel.click();
     await page.waitForFunction(
       () => {
         try {
