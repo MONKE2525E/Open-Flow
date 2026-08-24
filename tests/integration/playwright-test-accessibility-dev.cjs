@@ -93,7 +93,9 @@ function auditSurface() {
     await page.locator('.settings-nav-item.active:visible', { hasText: 'Privacy' }).first().waitFor({ state: 'visible', timeout: TIMEOUT });
     await page.locator('h2.settings-h:visible', { hasText: 'Privacy' }).waitFor({ state: 'visible', timeout: TIMEOUT });
     let switchControl = page.getByRole('switch', { name: 'App context hint' }).first();
+    await switchControl.waitFor({ state: 'visible', timeout: Math.min(TIMEOUT, 2000) }).catch(() => {});
     if (!(await switchControl.count())) switchControl = page.getByRole('switch').first();
+    if (await switchControl.count()) await switchControl.waitFor({ state: 'visible', timeout: Math.min(TIMEOUT, 2000) }).catch(() => {});
     if (await switchControl.count()) {
       const switchName = await switchControl.evaluate((element) => {
         const labelledBy = element.getAttribute('aria-labelledby');
