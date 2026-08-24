@@ -58,10 +58,13 @@ fn build_windows_titlebar() {
             ])
             .output()
             .expect("run vswhere");
+        let output = String::from_utf8(output.stdout).expect("vswhere output is UTF-8");
         PathBuf::from(
-            String::from_utf8(output.stdout)
-                .expect("vswhere output is UTF-8")
-                .trim(),
+            output
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .expect("vswhere found no MSBuild"),
         )
     } else {
         PathBuf::from("MSBuild.exe")

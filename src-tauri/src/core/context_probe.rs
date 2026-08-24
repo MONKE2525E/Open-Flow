@@ -127,7 +127,11 @@ static BASE_INSTANT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLo
 #[cfg(target_os = "macos")]
 fn get_monotonic_ms() -> u64 {
     let base = *BASE_INSTANT.get_or_init(std::time::Instant::now);
-    std::time::Instant::now().duration_since(base).as_millis() as u64 + 1
+    (std::time::Instant::now()
+        .duration_since(base)
+        .as_millis()
+        .min(u64::MAX as u128) as u64)
+        .saturating_add(1)
 }
 
 #[cfg(target_os = "macos")]

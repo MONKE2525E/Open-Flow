@@ -494,9 +494,11 @@ pub async fn save_setting(
     let key_clone = key.clone();
     run_blocking("save_setting", move || {
         if key_clone == store::CONTEXTUAL_FORMATTING {
-            settings.set(store::CONTEXTUAL_FORMATTING, value.clone())?;
-            settings.set(store::CONTEXTUAL_CAPS, value.clone())?;
-            settings.set(store::AUTO_SPACING, value)?;
+            settings.set_many([
+                (store::CONTEXTUAL_FORMATTING, value.clone()),
+                (store::CONTEXTUAL_CAPS, value.clone()),
+                (store::AUTO_SPACING, value),
+            ])?;
             settings.save()
         } else {
             settings.save_value(key_clone, value)

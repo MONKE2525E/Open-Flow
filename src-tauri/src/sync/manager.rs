@@ -59,6 +59,7 @@ pub(crate) struct Inner {
     pub mdns: tokio::sync::Mutex<Option<ServiceDaemon>>,
     pub listener_port: AtomicU16,
     pub available: AtomicBool,
+    pub listener_failed: AtomicBool,
 }
 
 pub(crate) enum PendingPairing {
@@ -150,6 +151,7 @@ pub struct PairingStateDto {
 pub struct SyncStatusSnapshot {
     pub this_device: DeviceInfoDto,
     pub listener_active: bool,
+    pub listener_failed: bool,
     pub pairing: Option<PairingStateDto>,
     pub discovered: Vec<DiscoveredDto>,
     pub peers: Vec<PeerDto>,
@@ -176,12 +178,14 @@ impl SyncManager {
             mdns: tokio::sync::Mutex::new(None),
             listener_port: AtomicU16::new(0),
             available: AtomicBool::new(false),
+            listener_failed: AtomicBool::new(false),
         });
         let manager = SyncManager { inner };
 
         let init = manager.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(err) = init.initialize().await {
+                init.inner.listener_failed.store(true, Ordering::Relaxed);
                 log::error!("sync: disabled - {err:#}");
             }
         });
@@ -463,6 +467,7 @@ impl SyncManager {
         SyncStatusSnapshot {
             this_device,
             listener_active: self.inner.available.load(Ordering::Relaxed),
+            listener_failed: self.inner.listener_failed.load(Ordering::Relaxed),
             pairing,
             discovered,
             peers,
@@ -1599,9 +1604,11 @@ impl SyncHost for ManagerHost {
         // validation the local save path uses.
         validate_setting(key, value)?;
         if key == store::CONTEXTUAL_FORMATTING {
-            self.settings.set(store::CONTEXTUAL_FORMATTING, value.clone())?;
-            self.settings.set(store::CONTEXTUAL_CAPS, value.clone())?;
-            self.settings.set(store::AUTO_SPACING, value.clone())?;
+            self.settings.set_many([
+                (store::CONTEXTUAL_FORMATTING, value.clone()),
+                (store::CONTEXTUAL_CAPS, value.clone()),
+                (store::AUTO_SPACING, value.clone()),
+            ])?;
             self.settings.save()?;
         } else {
             self.settings.save_value(key, value.clone())?;

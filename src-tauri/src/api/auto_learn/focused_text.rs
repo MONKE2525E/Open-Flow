@@ -137,7 +137,8 @@ unsafe fn read_context_edges(
         TextPatternRangeEndpoint_Start,
     )
     .ok()?;
-    left.MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -64)
+    let left_moved = left
+        .MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -64)
         .ok()?;
     let left_text = left.GetText(-1).ok()?.to_string();
 
@@ -149,12 +150,12 @@ unsafe fn read_context_edges(
             TextPatternRangeEndpoint_End,
         )
         .ok()?;
-    right
+    let right_moved = right
         .MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, 64)
         .ok()?;
     let right_text = right.GetText(-1).ok()?.to_string();
 
-    let left_at_document_start = document_range.is_some_and(|document| {
+    let left_at_document_start = left_moved == 0 || document_range.is_some_and(|document| {
         matches!(
             range.CompareEndpoints(
                 TextPatternRangeEndpoint_Start,
@@ -164,7 +165,7 @@ unsafe fn read_context_edges(
             Ok(0)
         )
     });
-    let right_at_document_end = document_range.is_some_and(|document| {
+    let right_at_document_end = right_moved == 0 || document_range.is_some_and(|document| {
         matches!(
             range.CompareEndpoints(
                 TextPatternRangeEndpoint_End,

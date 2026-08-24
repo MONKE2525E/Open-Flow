@@ -132,6 +132,10 @@ pub fn read_injection_context_probe_sync() -> InjectionContextProbe {
 
     let source = map_source(raw.source);
 
+    if raw.pid < 0 {
+        return InjectionContextProbe::unavailable(source, "invalid_pid");
+    }
+
     // A response other than "permission missing" / "unavailable" means the AX API
     // returned real data for another app's focused element — authoritative proof
     // Accessibility is granted, even if `AXIsProcessTrusted()` is reporting a stale
@@ -180,6 +184,6 @@ pub fn read_injection_context_probe_sync() -> InjectionContextProbe {
         } else {
             control_type
         },
-        target_id: raw.pid.max(0) as usize,
+        target_id: raw.pid as usize,
     }
 }

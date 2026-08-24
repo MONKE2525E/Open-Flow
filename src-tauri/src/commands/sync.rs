@@ -27,7 +27,7 @@ pub async fn sync_get_status(app: AppHandle) -> Result<SyncStatusDto, String> {
     let snapshot = manager.snapshot();
     // Surface a firewall-style hint when the listener never came up - the most
     // common "nothing shows up" cause.
-    let last_error_hint = if !snapshot.listener_active {
+    let last_error_hint = if snapshot.listener_failed {
         Some(
             "Verenu couldn't open its local network listener. Check Windows Firewall / macOS \
              Firewall settings and allow Verenu on private networks."
@@ -99,11 +99,15 @@ pub async fn sync_now(app: AppHandle, device_uuid: Option<String>) -> Result<(),
 pub async fn sync_get_diagnostics(app: AppHandle) -> Result<serde_json::Value, String> {
     let db = app.state::<crate::DbHandle>().inner().clone();
     super::run_blocking("sync_get_diagnostics", move || {
-        let conn = db.lock().map_err(|_| "database lock poisoned".to_string())?;
-        let log_size: i64 = conn
-            .query_row("SELECT COUNT(*) FROM sync_log", [], |r| r.get(0))
-            .map_err(|e| e.to_string())?;
-        let peers = sync_store::list_peers(&conn).map_err(|e| e.to_string())?;
+        let log_size: i64 = {
+            let conn = db.lock().map_err(|_| "database lock poisoned".to_string())?;
+            conn.query_row("SELECT COUNT(*) FROM sync_log", [], |r| r.get(0))
+                .map_err(|e| e.to_string())?
+        };
+        let peers = {
+            let conn = db.lock().map_err(|_| "database lock poisoned".to_string())?;
+            sync_store::list_peers(&conn).map_err(|e| e.to_string())?
+        };
         Ok(serde_json::json!({
             "log_entries": log_size,
             "peers": peers.into_iter().map(|p| serde_json::json!({

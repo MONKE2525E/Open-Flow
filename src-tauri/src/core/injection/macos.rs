@@ -91,9 +91,7 @@ pub(super) async fn inject_text(
     let change_count = match crate::system::mac_app::pasteboard_write_string(&adjusted) {
         Ok(change_count) => change_count,
         Err(change_count) => {
-            if change_count >= 0 {
-                restore_guard.mark_temporary_write(change_count);
-            }
+            restore_guard.mark_temporary_write(change_count);
             anyhow::bail!("Could not write temporary pasteboard payload");
         }
     };

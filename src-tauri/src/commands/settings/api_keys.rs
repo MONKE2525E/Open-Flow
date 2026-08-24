@@ -120,7 +120,10 @@ pub async fn validate_api_key(
     };
 
     let status = response.status().as_u16();
-    let body = response.text().await.unwrap_or_default();
+    let body = response
+        .text()
+        .await
+        .map_err(|_| "Couldn't read the provider response to verify the key.".to_string())?;
     Ok(classify_validation_response(status, &body))
 }
 
