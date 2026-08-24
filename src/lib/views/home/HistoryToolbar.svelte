@@ -30,6 +30,8 @@
   let groupEl = $state<HTMLElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
   let appTriggerEl = $state<HTMLButtonElement | null>(null);
+  let appMenuEl = $state<HTMLElement | null>(null);
+  let appMenuOpensUp = $state(false);
 
   let filtersActive = $derived((search ?? '').trim().length > 0 || appFilter !== null);
   let expanded = $derived(uiExpanded || filtersActive);
@@ -57,6 +59,35 @@
       preserveExpanded = false;
     });
   }
+
+  async function updateAppMenuPlacement() {
+    await tick();
+    if (!appDropdownOpen || !appTriggerEl || !appMenuEl) return;
+
+    const dropdownRect = appMenuEl.parentElement?.getBoundingClientRect();
+    if (!dropdownRect) return;
+    const menuHeight = Math.min(appMenuEl.scrollHeight, 240);
+    const spaceAbove = dropdownRect.top - 4;
+    const spaceBelow = window.innerHeight - dropdownRect.bottom - 4;
+    const predictedBottom = dropdownRect.bottom + 4 + menuHeight;
+    appMenuOpensUp = predictedBottom > window.innerHeight - 8 && spaceAbove > spaceBelow;
+  }
+
+  async function toggleAppDropdown() {
+    appDropdownOpen = !appDropdownOpen;
+    if (appDropdownOpen) await updateAppMenuPlacement();
+  }
+
+  $effect(() => {
+    if (!appDropdownOpen) return;
+    const reposition = () => void updateAppMenuPlacement();
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    };
+  });
 
   $effect(() => {
     const handleAway = (event: Event) => {
@@ -109,13 +140,13 @@
             aria-haspopup="listbox"
             aria-expanded={appDropdownOpen}
             aria-controls="history-app-menu"
-            onclick={() => (appDropdownOpen = !appDropdownOpen)}
+            onclick={toggleAppDropdown}
           >
             <span>{appFilter ? formatAppLabel(appFilter) : 'All apps'}</span>
             <svg class="ui-chevron" class:open={appDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
           </button>
           {#if appDropdownOpen}
-            <div id="history-app-menu" class="ui-dropdown-menu history-app-menu scroll-styled" role="listbox" aria-label="Filter history by app" transition:scale={{ duration: motionMs(MOTION_MS.fast), start: 0.96, opacity: 0 }}>
+            <div bind:this={appMenuEl} id="history-app-menu" class="ui-dropdown-menu history-app-menu scroll-styled" class:opens-up={appMenuOpensUp} role="listbox" aria-label="Filter history by app" transition:scale={{ duration: motionMs(MOTION_MS.fast), start: 0.96, opacity: 0 }}>
               <button class="ui-dropdown-option" class:active={!appFilter} role="option" aria-selected={!appFilter} onclick={() => selectAppFilter(null)}>All apps</button>
               {#each apps as app}
                 <button class="ui-dropdown-option" class:active={appFilter === app} role="option" aria-selected={appFilter === app} onclick={() => selectAppFilter(app)}>{formatAppLabel(app)}</button>
@@ -222,6 +253,7 @@
   .history-app-trigger[aria-expanded='true'] { background: var(--control-hover); border-color: transparent; }
 
   .history-app-menu { width: max-content; min-width: 180px; max-width: 280px; }
+  .history-app-menu.opens-up { bottom: calc(100% + 4px); top: auto; }
 
   .clear-filters-wrap { display: flex; align-items: center; height: 100%; flex-shrink: 0; }
 
