@@ -245,7 +245,7 @@ fn open_self_heals_database_stuck_at_v2_with_legacy_dictionary() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .expect("version");
-    assert_eq!(version, 18);
+    assert_eq!(version, 20);
     drop(conn);
     drop(db);
     let _ = std::fs::remove_file(&path);
