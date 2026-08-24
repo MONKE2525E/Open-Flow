@@ -20,7 +20,7 @@ use anyhow::{anyhow, Result};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use hkdf::Hkdf;
-use rand::RngCore;
+use rand::{Rng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use spake2::{Ed25519Group, Identity, Password, Spake2};
@@ -42,9 +42,7 @@ pub struct IdentityExchange {
 
 /// A fresh numeric pairing code, e.g. "483920".
 pub fn generate_pairing_code() -> String {
-    let mut bytes = [0u8; 4];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    let value = u32::from_be_bytes(bytes) % 1_000_000;
+    let value = rand::thread_rng().gen_range(0..1_000_000);
     format!("{value:06}")
 }
 
