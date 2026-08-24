@@ -73,7 +73,7 @@ fn configured_cleanup() -> Option<(String, String)> {
         .or_else(first_environment_provider)?;
     let default_model = match provider.as_str() {
         "openai" => "gpt-4o-mini",
-        "google" => "gemini-2.5-flash",
+        "google" => "gemini-3.5-flash",
         _ => "qwen/qwen3.6-27b",
     };
     let configured_model = settings
@@ -98,7 +98,7 @@ fn configured_transcription() -> Option<(String, String, String)> {
         .or_else(first_environment_provider)?;
     let default_model = match provider.as_str() {
         "openai" => "gpt-4o-transcribe",
-        "google" => "gemini-2.5-flash",
+        "google" => "gemini-3.5-flash",
         _ => "whisper-large-v3-turbo",
     };
     let configured_model = settings

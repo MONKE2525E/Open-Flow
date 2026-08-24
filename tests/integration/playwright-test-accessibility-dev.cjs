@@ -84,7 +84,7 @@ function auditSurface() {
       const label = rawLabel.trim();
       if (!label) continue;
       await page.locator('.settings-nav-item', { hasText: label }).first().click({ timeout: TIMEOUT });
-      await page.waitForTimeout(60);
+      await page.locator('.settings-nav-item.active', { hasText: label }).first().waitFor({ state: 'visible', timeout: TIMEOUT });
       await collect(`settings/${label}`);
     }
 
@@ -92,7 +92,18 @@ function auditSurface() {
     let switchControl = page.getByRole('switch', { name: 'App context hint' }).first();
     if (!(await switchControl.count())) switchControl = page.getByRole('switch').first();
     if (await switchControl.count()) {
-      const switchName = await switchControl.getAttribute('aria-label') || 'unnamed switch';
+      const switchName = await switchControl.evaluate((element) => {
+        const labelledBy = element.getAttribute('aria-labelledby');
+        if (labelledBy) {
+          const value = labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent || '').join(' ').trim();
+          if (value) return value;
+        }
+        const direct = element.getAttribute('aria-label');
+        if (direct?.trim()) return direct.trim();
+        const wrapped = element.closest('label');
+        if (wrapped?.textContent?.trim()) return wrapped.textContent.trim();
+        return (element.textContent || '').replace(/\s+/g, ' ').trim() || 'unnamed switch';
+      });
       const before = await switchControl.getAttribute('aria-checked');
       await switchControl.focus();
       await page.keyboard.press('Space');

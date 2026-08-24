@@ -618,6 +618,19 @@ def kill_port_owner(port: int) -> bool:
     return "killed" in proc.stdout
 
 
+def wait_for_port_closed(port: int, timeout_s: float = 15.0) -> bool:
+    """Wait until no process is accepting TCP connections on ``port``."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+                time.sleep(0.25)
+                continue
+        except OSError:
+            return True
+    return False
+
+
 def select_tests(suites: Sequence[str], pattern: str = "") -> List[TestEntry]:
     suite_set = set(suites)
     selected = [test for test in ALL_TESTS if test.suite in suite_set]
@@ -663,6 +676,7 @@ def execute_plan(entries: Sequence[TestEntry], args: argparse.Namespace) -> Dict
         if server_tests and not args.no_server:
             if args.fresh_server:
                 kill_port_owner(PORT)
+                wait_for_port_closed(PORT)
             if not server.start(args.tauri):
                 for test in server_tests:
                     results[test.id] = TestResult(
