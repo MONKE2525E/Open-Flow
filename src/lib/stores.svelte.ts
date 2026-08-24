@@ -101,6 +101,7 @@ export const appStore = $state({
   // Dictionary/Snippets pages in the sidebar nav — both superseded by Contexts,
   // kept reachable for anyone still relying on the old per-page workflow.
   legacyFeaturesEnabled: false,
+  syncEnabled: false,
   pillState: 'idle' as PillState,
   setupComplete: null as boolean | null,
   snippets: [] as Snippet[],

@@ -226,6 +226,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
         true,
         true,
     ),
+    setting_spec(store::SYNC_ENABLED, SettingKind::Bool, true, false),
     // Readable so the picker can hydrate it, never exportable: it is derived
     // cache state, and shipping it in a settings export would carry one
     // machine's stale provider view onto another.
@@ -561,6 +562,7 @@ pub struct AllSettings {
     pub clipboard_phrase: Option<String>,
     pub clipboard_phrase_enabled: Option<bool>,
     pub legacy_features_enabled: Option<bool>,
+    pub sync_enabled: Option<bool>,
     pub transcription_provider: Option<String>,
     pub transcription_model: Option<String>,
     pub transcription_language: Option<String>,
@@ -630,6 +632,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         clipboard_phrase: str_val(store::CLIPBOARD_PHRASE),
         clipboard_phrase_enabled: bool_val(store::CLIPBOARD_PHRASE_ENABLED),
         legacy_features_enabled: bool_val(store::LEGACY_FEATURES_ENABLED),
+        sync_enabled: bool_val(store::SYNC_ENABLED),
         transcription_provider: str_val(store::TRANSCRIPTION_PROVIDER),
         transcription_model: str_val(store::TRANSCRIPTION_MODEL),
         transcription_language: str_val(store::TRANSCRIPTION_LANGUAGE),

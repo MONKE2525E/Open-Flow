@@ -221,6 +221,7 @@ pub const SETUP_COMPLETE: &str = "setup_complete";
 pub const CLIPBOARD_PHRASE: &str = "clipboard_phrase";
 pub const CLIPBOARD_PHRASE_ENABLED: &str = "clipboard_phrase_enabled";
 pub const LEGACY_FEATURES_ENABLED: &str = "legacy_features_enabled";
+pub const SYNC_ENABLED: &str = "sync_enabled";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
 pub const AUTO_LEARN_EVENT_MODE: &str = "auto_learn_event_mode";
@@ -318,3 +319,4 @@ pub fn migrate_contextual_formatting(settings: &SettingsHandle) -> Result<(), St
     settings.set(CONTEXTUAL_FORMATTING, Value::Bool(merged))?;
     settings.save()
 }
+

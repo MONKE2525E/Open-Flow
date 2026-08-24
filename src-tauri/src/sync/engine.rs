@@ -1772,3 +1772,4 @@ impl ApplySummary {
         self.skipped += other.skipped;
     }
 }
+

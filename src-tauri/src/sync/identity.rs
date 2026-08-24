@@ -224,3 +224,4 @@ mod tests {
         secrets::delete_identity_key();
     }
 }
+
