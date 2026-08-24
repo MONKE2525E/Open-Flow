@@ -28,6 +28,10 @@ function auditSurface() {
     if (wrappedLabel?.textContent?.trim()) return wrappedLabel.textContent.trim();
     if (element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(element.type) && element.value?.trim()) return element.value.trim();
     if (element instanceof HTMLInputElement && element.placeholder?.trim()) return element.placeholder.trim();
+    // Selects and textareas are named by labels/ARIA, not their option or
+    // default text content. Falling back to descendants would hide unlabeled
+    // controls behind incidental option text.
+    if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) return '';
     return (element.textContent || '').replace(/\s+/g, ' ').trim();
   };
 

@@ -55,7 +55,10 @@ const expected = 'Model settings tiles open from the keyboard, retain focus with
       regressionArea: 'settings keyboard interaction and focus management',
       measurements: { tabCycles, closedWithEscape, focusRestored: restored },
       failureKind: failures.length ? 'product' : null,
-      regressionStatus: failures.length ? 'pre_existing' : 'unknown',
+      // The harness cannot determine whether a UI failure predates the
+      // current change; leave classification unknown rather than asserting
+      // that every failure is pre-existing.
+      regressionStatus: 'unknown',
     });
   } catch (error) {
     finish({ status: 'failed', expected, observed: message(error), regressionArea: 'focus-flow test execution', failureKind: 'infrastructure' });
