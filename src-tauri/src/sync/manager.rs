@@ -601,7 +601,7 @@ impl SyncManager {
                 other => return Err(anyhow!("unexpected pairing response: {other:?}")),
             };
             let cipher = pairing::initiator_cipher(spake_state, &responder_msg)?;
-            pairing::initiator_exchange(&mut tls, &cipher, &identity).await
+            pairing::initiator_exchange(&mut tls, &cipher, &identity, &target.uuid).await
         };
         let outcome = tokio::time::timeout(PAIRING_TIMEOUT, exchange)
             .await
@@ -974,7 +974,10 @@ impl SyncManager {
                 .collect()
         };
         for uuid in targets {
-            self.sync_to_peer(&uuid).await;
+            let manager = self.clone();
+            tauri::async_runtime::spawn(async move {
+                manager.sync_to_peer(&uuid).await;
+            });
         }
     }
 

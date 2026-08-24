@@ -1091,10 +1091,32 @@ CREATE TRIGGER IF NOT EXISTS trg_sync_transcriptions_del AFTER DELETE ON transcr
   WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
     AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
 END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_transcriptions_upd AFTER UPDATE ON transcriptions
+  WHEN NEW.uuid IS OLD.uuid BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'transcriptions', NEW.uuid, 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
 CREATE TRIGGER IF NOT EXISTS trg_sync_api_calls_ins AFTER INSERT ON api_calls BEGIN
   UPDATE api_calls SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
   INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
   SELECT 'api_calls', (SELECT uuid FROM api_calls WHERE id = NEW.id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_api_calls_upd AFTER UPDATE ON api_calls
+  WHEN NEW.uuid IS OLD.uuid BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'api_calls', NEW.uuid, 'upsert',
          CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
          (SELECT uuid FROM sync_identity),
          COALESCE((SELECT MAX(origin_seq) FROM sync_log

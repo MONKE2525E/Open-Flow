@@ -652,6 +652,7 @@ async fn pairing_succeeds_with_matching_code_and_fails_with_wrong_code() {
     let (state_a, msg_a) = pairing::initiator_start(&code);
     let code_b = code.clone();
     let expected_uuid = identity_b.device_uuid.clone();
+    let expected_uuid_for_initiator = expected_uuid.clone();
     let id_a = identity_a.clone();
     let (initiator, responder) = tokio::join!(
         async move {
@@ -671,7 +672,7 @@ async fn pairing_succeeds_with_matching_code_and_fails_with_wrong_code() {
                 other => panic!("expected accept, got {other:?}"),
             };
             let cipher = pairing::initiator_cipher(state_a, &responder_msg).expect("cipher");
-            pairing::initiator_exchange(&mut a, &cipher, &id_a).await
+            pairing::initiator_exchange(&mut a, &cipher, &id_a, &expected_uuid_for_initiator).await
         },
         async move {
             let request = read_message(&mut b).await.expect("request");
@@ -690,6 +691,7 @@ async fn pairing_succeeds_with_matching_code_and_fails_with_wrong_code() {
     // Wrong code: both sides must fail with a friendly error, not panic.
     let identity_a2 = IdentityExchange { cert_der: vec![7], ..identity_a };
     let identity_b2 = IdentityExchange { cert_der: vec![8], ..identity_b_for_second };
+    let expected_uuid2 = identity_b2.device_uuid.clone();
     let (mut a2, mut b2) = tokio::io::duplex(64 * 1024);
     let (state_a2, msg_a2) = pairing::initiator_start("111111");
     let (initiator, responder) = tokio::join!(
@@ -710,7 +712,7 @@ async fn pairing_succeeds_with_matching_code_and_fails_with_wrong_code() {
                 other => panic!("expected accept, got {other:?}"),
             };
             let cipher = pairing::initiator_cipher(state_a2, &responder_msg).expect("cipher");
-            pairing::initiator_exchange(&mut a2, &cipher, &identity_a2).await
+            pairing::initiator_exchange(&mut a2, &cipher, &identity_a2, &expected_uuid2).await
         },
         async move {
             let request = read_message(&mut b2).await.expect("request");

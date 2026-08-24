@@ -87,10 +87,10 @@ pub fn load_or_create(
     // Missing, expired, or corrupt: re-issue the whole identity, keeping the
     // known uuid when there is one.
     let identity = create_identity(known_uuid)?;
-    std::fs::write(&cert_path, identity.cert_der.as_ref())
-        .with_context(|| "failed to write sync certificate")?;
     secrets::store_identity_key(&identity.key_der)
         .map_err(|e| anyhow!("failed to store sync identity key: {e}"))?;
+    std::fs::write(&cert_path, identity.cert_der.as_ref())
+        .with_context(|| "failed to write sync certificate")?;
     Ok(identity)
 }
 

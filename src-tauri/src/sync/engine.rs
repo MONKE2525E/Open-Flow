@@ -806,7 +806,6 @@ fn apply_dictionary_op(conn: &Connection, op: &SyncOp) -> Result<Applied> {
         "dictionary",
         insert,
         &|conn| conflicting_uuid(conn, "dictionary", "term", &row.term, &op.row_uuid),
-        log_contexts_referencing_dictionary,
     )
 }
 
@@ -849,21 +848,19 @@ fn apply_snippet_op(conn: &Connection, op: &SyncOp) -> Result<Applied> {
         "snippets",
         insert,
         &|conn| conflicting_uuid(conn, "snippets", "trigger", &row.trigger, &op.row_uuid),
-        log_contexts_referencing_snippet,
     )
 }
 
 /// Shared upsert flow with natural-key collision resolution. `insert` writes
 /// the row (upsert by uuid); `find_conflict` returns the uuid of a DIFFERENT
-/// local row holding the same natural key; `on_loser_deleted` logs cascades
-/// when a losing local row is removed.
+/// local row holding the same natural key. Context membership cascades are
+/// logged before deleting dictionary/snippet losers.
 fn apply_with_natural_key_resolution(
     conn: &Connection,
     op: &SyncOp,
     table: &str,
     insert: impl Fn(&Connection) -> rusqlite::Result<usize>,
     find_conflict: &dyn Fn(&Connection) -> Result<Option<String>>,
-    on_loser_deleted: impl Fn(&Connection, &str) -> Result<()>,
 ) -> Result<Applied> {
     match insert(conn) {
         Ok(_) => {
@@ -895,7 +892,6 @@ fn apply_with_natural_key_resolution(
                     &format!("DELETE FROM {table} WHERE uuid = ?1"),
                     params![conflict_uuid],
                 )?;
-                on_loser_deleted(conn, &conflict_uuid)?;
                 insert(conn).map_err(|e| anyhow!("sync: retry insert failed: {e}"))?;
                 log_applied(conn, op)?;
                 Ok(Applied::Yes)
@@ -918,10 +914,15 @@ fn conflicting_uuid(
     exclude_uuid: &str,
 ) -> Result<Option<String>> {
     let collate = if table == "contexts" { "COLLATE NOCASE" } else { "" };
+    let context_scope = if table == "contexts" {
+        " AND is_everywhere = 0"
+    } else {
+        ""
+    };
     let uuid: Option<String> = conn
         .query_row(
             &format!(
-                "SELECT uuid FROM {table} WHERE {column} = ?1 {collate} AND uuid != ?2 LIMIT 1"
+                "SELECT uuid FROM {table} WHERE {column} = ?1 {collate}{context_scope} AND uuid != ?2 LIMIT 1"
             ),
             params![value, exclude_uuid],
             |r| r.get(0),
@@ -1449,16 +1450,14 @@ pub fn apply_stats_exchange(conn: &Connection, stats: &StatsExchange, peer_uuid:
     Ok(())
 }
 
-/// Applies the peer's settings with per-key LWW. Keys without a local stamp
-/// are seeded first (at "now"), so the first session compares real timestamps:
-/// a remote change made after pairing wins, otherwise the local value stays.
+/// Applies the peer's settings with per-key LWW. An unstamped local key uses
+/// the zero stamp until it is changed or a remote value is accepted, so an
+/// incoming stamped value can win the first exchange.
 pub fn apply_settings_exchange(
     conn: &Connection,
     host: &dyn SyncHost,
     settings: &[SettingRecord],
 ) -> Result<usize> {
-    let keys: Vec<String> = SYNCABLE_SETTINGS.iter().map(|s| s.to_string()).collect();
-    sync_store::seed_setting_stamps(conn, &host.device_uuid(), &keys)?;
     let mut applied = 0;
     for record in settings {
         if !SYNCABLE_SETTINGS.contains(&record.key.as_str()) {

@@ -66,7 +66,7 @@ async function closeSettings(page) {
     // Rows that still need a key or a download are calls to action, not
     // choices — clicking one opens setup instead of adding a fallback.
     const fallbackChoice = picker
-      .locator('.row-main:visible:not(:has(.row-state))')
+      .locator('.model-row:not(:has(.row-state)) .row-main:visible')
       .first();
     if (!(await fallbackChoice.count())) {
       errors.push('Fallback picker offered no models');

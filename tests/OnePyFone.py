@@ -375,6 +375,10 @@ def _terminate_process_tree(proc: subprocess.Popen[str]) -> None:
                 proc.kill()
         except Exception:
             pass
+    try:
+        proc.wait(timeout=10)
+    except Exception:
+        pass
 
 
 def run_process(command: Sequence[str], timeout_s: int, env: Optional[Dict[str, str]] = None) -> tuple[int, str, float, bool]:
@@ -946,6 +950,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--junit-report", default="", help="Optional JUnit XML report path")
     parser.add_argument("--keep-artifacts", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    args.workers = max(1, args.workers)
 
     if args.list:
         list_tests()

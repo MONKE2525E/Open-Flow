@@ -137,6 +137,7 @@ pub async fn initiator_exchange<S>(
     stream: &mut S,
     cipher: &ChaCha20Poly1305,
     self_identity: &IdentityExchange,
+    expected_peer_uuid: &str,
 ) -> Result<PairingOutcome>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -150,6 +151,9 @@ where
         Message::Error { message } => return Err(anyhow!("pairing failed: {message}")),
         other => return Err(anyhow!("unexpected pairing message: {other:?}")),
     };
+    if outcome.device_uuid != expected_peer_uuid {
+        return Err(anyhow!("pairing peer identity changed mid-handshake"));
+    }
     // The responder confirms it stored us.
     match read_message(stream).await? {
         Message::PairComplete => {}
