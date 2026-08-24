@@ -79,6 +79,7 @@ function auditSurface() {
 
     await collect('home');
     await openSettings(page);
+    await page.locator('.settings-nav-item:visible').first().waitFor({ state: 'visible', timeout: TIMEOUT });
     const sections = await page.locator('.settings-nav-item').allTextContents();
     for (const rawLabel of sections) {
       const label = rawLabel.trim();
