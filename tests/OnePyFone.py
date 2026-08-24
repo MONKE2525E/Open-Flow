@@ -609,28 +609,21 @@ class ServerManager:
 def kill_port_owner(port: int) -> bool:
     if sys.platform != "win32":
         try:
-<<<<<<< New base: Consolidate outstanding workspace work for dev
             probe = subprocess.run(
                 ["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
-||||||| Common ancestor
-            probe = subprocess.run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"], capture_output=True, text=True, timeout=10)
-=======
-            probe = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=10)
->>>>>>> Current commit: Address AI review findings
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
         pids = [pid.strip() for pid in probe.stdout.splitlines() if pid.strip().isdigit()]
         killed = False
         for pid in pids:
             try:
-                os.kill(int(pid), 15)
+                os.kill(int(pid), signal.SIGTERM)
                 killed = True
             except (ProcessLookupError, PermissionError):
-<<<<<<< New base: Consolidate outstanding workspace work for dev
                 continue
         if killed and not wait_for_port_closed(port):
             for pid in pids:
@@ -639,25 +632,12 @@ def kill_port_owner(port: int) -> bool:
                 except (ProcessLookupError, PermissionError):
                     continue
             wait_for_port_closed(port)
-||||||| Common ancestor
-                pass
-        if killed and not wait_for_port_closed(port, timeout_s=3.0):
-            for pid in probe.stdout.splitlines():
-                if pid.strip().isdigit():
-                    try:
-                        os.kill(int(pid), signal.SIGKILL)
-                    except (ProcessLookupError, PermissionError):
-                        pass
-=======
-                continue
->>>>>>> Current commit: Address AI review findings
         return killed
     command = (
         "try { $id = Get-NetTCPConnection -LocalPort " + str(port) +
         " -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess; "
         "if ($id) { Stop-Process -Id $id -Force; 'killed' } } catch {}"
     )
-<<<<<<< New base: Consolidate outstanding workspace work for dev
     try:
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-Command", command],
@@ -667,18 +647,9 @@ def kill_port_owner(port: int) -> bool:
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
-||||||| Common ancestor
-    try:
-        proc = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=10)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-=======
-    proc = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True)
->>>>>>> Current commit: Address AI review findings
     return "killed" in proc.stdout
 
 
-<<<<<<< New base: Consolidate outstanding workspace work for dev
 def wait_for_port_closed(port: int, timeout_s: float = 10.0) -> bool:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -691,22 +662,6 @@ def wait_for_port_closed(port: int, timeout_s: float = 10.0) -> bool:
     return False
 
 
-||||||| Common ancestor
-def wait_for_port_closed(port: int, timeout_s: float = 15.0) -> bool:
-    """Wait until no process is accepting TCP connections on ``port``."""
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
-                time.sleep(0.25)
-                continue
-        except OSError:
-            return True
-    return False
-
-
-=======
->>>>>>> Current commit: Address AI review findings
 def select_tests(suites: Sequence[str], pattern: str = "") -> List[TestEntry]:
     suite_set = set(suites)
     selected = [test for test in ALL_TESTS if test.suite in suite_set]
@@ -745,7 +700,6 @@ def execute_plan(entries: Sequence[TestEntry], args: argparse.Namespace) -> Dict
     no_server = [test for test in entries if test.suite != "preflight" and not test.needs_server]
     server_tests = [test for test in entries if test.needs_server]
     results.update(run_group(preflight, url, args.verbose, False, args.workers))
-<<<<<<< New base: Consolidate outstanding workspace work for dev
     if any(
         test.required and results.get(test.id) is not None and results[test.id].status == "failed"
         for test in preflight
@@ -763,38 +717,14 @@ def execute_plan(entries: Sequence[TestEntry], args: argparse.Namespace) -> Dict
                     skip_reason=reason,
                 )
         return results
-||||||| Common ancestor
-    failed_preflight = [test for test in preflight if results.get(test.id) and results[test.id].status == "failed" and test.required]
-    if failed_preflight:
-        reason = "Required preflight check failed; downstream suites were not started"
-        for test in entries:
-            if test.id not in results:
-                results[test.id] = TestResult(
-                    "skipped",
-                    expected=test.expected,
-                    observed=reason,
-                    skip_reason=reason,
-                    regression_area=test.regression_area,
-                    failure_kind="infrastructure",
-                )
-        return results
-=======
->>>>>>> Current commit: Address AI review findings
     results.update(run_group(no_server, url, args.verbose, False, args.workers))
 
     server = ServerManager()
     try:
         if server_tests and not args.no_server:
             if args.fresh_server:
-<<<<<<< New base: Consolidate outstanding workspace work for dev
                 if kill_port_owner(PORT):
                     wait_for_port_closed(PORT)
-||||||| Common ancestor
-                kill_port_owner(PORT)
-                wait_for_port_closed(PORT)
-=======
-                kill_port_owner(PORT)
->>>>>>> Current commit: Address AI review findings
             if not server.start(args.tauri):
                 for test in server_tests:
                     results[test.id] = TestResult(
@@ -829,22 +759,12 @@ def merge_loop_results(accumulated: Dict[str, TestResult], current: Dict[str, Te
             merged[test_id] = result
             continue
         statuses_differ = previous.status != result.status
-<<<<<<< New base: Consolidate outstanding workspace work for dev
         chosen = result if rank[result.status] >= rank[previous.status] else previous
         chosen = replace(
             chosen,
             duration_s=previous.duration_s + result.duration_s,
             attempts=previous.attempts + result.attempts,
         )
-||||||| Common ancestor
-        chosen = replace(result if rank[result.status] >= rank[previous.status] else previous)
-        chosen.duration_s = previous.duration_s + result.duration_s
-        chosen.attempts = previous.attempts + result.attempts
-=======
-        chosen = result if rank[result.status] >= rank[previous.status] else previous
-        chosen.duration_s = previous.duration_s + result.duration_s
-        chosen.attempts = previous.attempts + result.attempts
->>>>>>> Current commit: Address AI review findings
         if statuses_differ:
             chosen = replace(
                 chosen,
@@ -1039,16 +959,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         suites = parse_suites(args)
     except ValueError as exc:
         parser.error(str(exc))
-<<<<<<< New base: Consolidate outstanding workspace work for dev
     selection_suites = list(SUITE_ORDER) if args.test and not args.suite else suites
     entries = select_tests(selection_suites, args.test)
-||||||| Common ancestor
-    selection_suites = list(SUITE_ORDER) if args.test and not args.suite else suites
-    args.workers = max(1, args.workers)
-    entries = select_tests(selection_suites, args.test)
-=======
-    entries = select_tests(suites, args.test)
->>>>>>> Current commit: Address AI review findings
     if not entries:
         print("No tests matched the requested profile, suites, and filter.", file=sys.stderr)
         return 2
@@ -1064,15 +976,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         started = time.monotonic()
         results = execute_plan(entries, args)
         exit_code = summary(results, entries, time.monotonic() - started)
-<<<<<<< New base: Consolidate outstanding workspace work for dev
         accumulated_results = merge_loop_results(accumulated_results, results)
-||||||| Common ancestor
-        accumulated_results = results if args.until_pass and exit_code == 0 else merge_loop_results(accumulated_results, results)
-        overall_exit = max(overall_exit, exit_code)
-=======
-        accumulated_results = merge_loop_results(accumulated_results, results)
-        overall_exit = max(overall_exit, exit_code)
->>>>>>> Current commit: Address AI review findings
         if args.until_pass and exit_code == 0:
             overall_exit = 0
             break
