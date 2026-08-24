@@ -705,6 +705,10 @@ fn apply_v20_sync_migration(conn: &Connection) -> Result<()> {
            uuid TEXT NOT NULL,
            name TEXT NOT NULL DEFAULT ''
          );
+         DELETE FROM sync_identity
+          WHERE rowid NOT IN (SELECT rowid FROM sync_identity LIMIT 1);
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_identity_singleton
+           ON sync_identity ((1));
          CREATE TABLE IF NOT EXISTS sync_log (
            seq        INTEGER PRIMARY KEY AUTOINCREMENT,
            table_name TEXT NOT NULL,

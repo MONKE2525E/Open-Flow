@@ -335,7 +335,13 @@ pub fn compact_log(conn: &Connection) -> Result<usize> {
         .optional()?
         .flatten();
     let Some(min_cursor) = min_cursor else {
-        return Ok(0);
+        return conn
+            .execute(
+                "DELETE FROM sync_log
+                 WHERE seq NOT IN (SELECT MAX(seq) FROM sync_log GROUP BY table_name, row_uuid)",
+                [],
+            )
+            .map_err(Into::into);
     };
     let n = conn.execute(
         "DELETE FROM sync_log

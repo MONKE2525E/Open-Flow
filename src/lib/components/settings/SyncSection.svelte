@@ -54,7 +54,11 @@
 
   async function saveName(): Promise<void> {
     const name = deviceName.trim();
-    if (!name || name === nameSaved || nameBusy) return;
+    if (!name) {
+      deviceName = nameSaved;
+      return;
+    }
+    if (name === nameSaved || nameBusy) return;
     nameBusy = true;
     try {
       await invoke('sync_set_device_name', { name });

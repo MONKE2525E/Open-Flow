@@ -67,7 +67,7 @@ async function closeSettings(page) {
     // choices — clicking one opens setup instead of adding a fallback.
     const fallbackChoice = picker
       .locator('.row-main:visible')
-      .filter({ hasNot: page.locator('.row-state-cta') })
+      .filter({ hasNot: picker.locator('.row-state-cta') })
       .first();
     if (!(await fallbackChoice.count())) {
       errors.push('Fallback picker offered no models');

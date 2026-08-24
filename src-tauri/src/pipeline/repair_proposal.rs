@@ -163,6 +163,7 @@ pub(super) fn setting_label(key: &str) -> Option<&'static str> {
         store::DEFAULT_TONE => "Default tone",
         store::CONTEXTUAL_CAPS => "Contextual capitalization",
         store::AUTO_SPACING => "Automatic spacing",
+        store::CONTEXTUAL_FORMATTING => "Contextual formatting",
         store::CAPS_LOCK_UPPERCASE => "Caps Lock uppercase",
         _ => return None,
     })
@@ -190,7 +191,7 @@ pub(super) fn current_setting(snapshot: &RepairSnapshot, key: &str) -> Option<Va
         store::CLEANUP_ENABLED => json!(snapshot.settings.cleanup_enabled),
         store::CLEANUP_INTENSITY => json!(snapshot.settings.cleanup_intensity),
         store::DEFAULT_TONE => json!(snapshot.settings.default_tone),
-        store::CONTEXTUAL_CAPS | store::AUTO_SPACING => {
+        store::CONTEXTUAL_FORMATTING | store::CONTEXTUAL_CAPS | store::AUTO_SPACING => {
             json!(snapshot.settings.contextual_formatting_enabled)
         }
         store::CAPS_LOCK_UPPERCASE => json!(snapshot.settings.caps_lock_uppercase_enabled),
@@ -203,7 +204,9 @@ pub(super) fn config_setting(cfg: &store::PipelineConfig, key: &str) -> Option<V
         store::CLEANUP_ENABLED => json!(cfg.cleanup_enabled),
         store::CLEANUP_INTENSITY => json!(cfg.cleanup_intensity),
         store::DEFAULT_TONE => json!(cfg.default_tone),
-        store::CONTEXTUAL_CAPS | store::AUTO_SPACING => json!(cfg.contextual_formatting_enabled),
+        store::CONTEXTUAL_FORMATTING | store::CONTEXTUAL_CAPS | store::AUTO_SPACING => {
+            json!(cfg.contextual_formatting_enabled)
+        }
         store::CAPS_LOCK_UPPERCASE => json!(cfg.caps_lock_uppercase_enabled),
         _ => return None,
     })
@@ -236,8 +239,13 @@ pub(super) fn supports_complaint(
                     .is_some_and(|v| !v.trim().is_empty() && evidence.contains(&v.to_lowercase()))
         }
         RepairAction::Setting { key, .. } => match key.as_str() {
-            store::AUTO_SPACING => {
-                complaint_lower.contains("spacing") || complaint_lower.contains("space before")
+            store::AUTO_SPACING | store::CONTEXTUAL_FORMATTING => {
+                complaint_lower.contains("spacing")
+                    || complaint_lower.contains("space before")
+                    || complaint_lower.contains("formatting")
+                    || complaint_lower.contains("caps")
+                    || complaint_lower.contains("capital")
+                    || complaint_lower.contains("uppercase")
             }
             store::CAPS_LOCK_UPPERCASE | store::CONTEXTUAL_CAPS => {
                 complaint_lower.contains("caps")
@@ -378,6 +386,7 @@ pub(super) fn validate_action(
                 store::CLEANUP_ENABLED
                     | store::CONTEXTUAL_CAPS
                     | store::AUTO_SPACING
+                    | store::CONTEXTUAL_FORMATTING
                     | store::CAPS_LOCK_UPPERCASE
             ) && !value.is_boolean()
             {

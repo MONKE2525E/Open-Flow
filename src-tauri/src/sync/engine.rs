@@ -39,6 +39,9 @@ pub struct SnapshotProgress {
     /// 4 = api_calls, 5 = done.
     pub stage: u8,
     pub last_id: i64,
+    /// Sequence namespace for synthesized snapshot stamps. Snapshot rows are
+    /// not written to the local log, so this must survive across batches.
+    pub origin_seq: Option<i64>,
 }
 
 /// Settings keys that sync between paired devices. Everything else in
@@ -516,11 +519,18 @@ pub fn collect_ops(
         let mut ops = Vec::new();
         let now = sync_store::now_ms();
         let origin = sync_store::self_uuid(conn)?.unwrap_or_default();
-        let mut origin_seq: i64 = conn.query_row(
-            "SELECT COALESCE(MAX(origin_seq), 0) FROM sync_log WHERE origin = ?1",
-            params![origin],
-            |r| r.get(0),
-        )?;
+        let mut origin_seq = match progress.origin_seq {
+            Some(seq) => seq,
+            None => {
+                let seq: i64 = conn.query_row(
+                    "SELECT COALESCE(MAX(origin_seq), 0) FROM sync_log WHERE origin = ?1",
+                    params![origin],
+                    |r| r.get(0),
+                )?;
+                progress.origin_seq = Some(seq);
+                seq
+            }
+        };
         let mut push = |table: &str,
                         uuid: String,
                         payload: Option<serde_json::Value>,
@@ -583,18 +593,22 @@ pub fn collect_ops(
                 progress.stage += 1;
                 progress.last_id = 0;
                 if progress.stage > 4 {
+                    progress.origin_seq = Some(origin_seq);
                     let cursor = sync_store::max_log_seq(conn)?;
                     return Ok((ops, cursor, true));
                 }
             } else {
                 // Batch full; more of this table remains.
+                progress.origin_seq = Some(origin_seq);
                 return Ok((ops, 0, false));
             }
         }
         if progress.stage <= 4 {
             // Capacity exhausted mid-stream.
+            progress.origin_seq = Some(origin_seq);
             return Ok((ops, 0, false));
         }
+        progress.origin_seq = Some(origin_seq);
         let cursor = sync_store::max_log_seq(conn)?;
         return Ok((ops, cursor, true));
     }
@@ -610,7 +624,10 @@ pub fn collect_ops(
     let cursor = if done {
         sync_store::max_log_seq(conn)?
     } else {
-        0
+        entries
+            .last()
+            .map(|entry| entry.seq)
+            .unwrap_or(since_seq)
     };
     Ok((ops, cursor, done))
 }
@@ -1699,10 +1716,11 @@ where
         sync_store::needs_snapshot_for(&conn, &peer.device_uuid, since_seq)?
     };
     let mut progress = SnapshotProgress::default();
+    let mut next_since_seq = since_seq;
     loop {
         let (ops, cursor, done) = {
             let conn = lock(db)?;
-            collect_ops(&conn, since_seq, snapshot, OPS_PER_BATCH, &mut progress)?
+            collect_ops(&conn, next_since_seq, snapshot, OPS_PER_BATCH, &mut progress)?
         };
         let final_cursor = cursor;
         send_message(
@@ -1724,6 +1742,9 @@ where
             }
             Message::Error { message } => return Err(anyhow!("peer error: {message}")),
             other => return Err(anyhow!("unexpected message during serve: {other:?}")),
+        }
+        if !snapshot && !done {
+            next_since_seq = cursor;
         }
         if done {
             break;

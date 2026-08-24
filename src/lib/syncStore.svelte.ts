@@ -83,6 +83,8 @@ export function startSyncListeners(): () => void {
       void refreshSyncStatus();
     }),
     listen<{ uuid: string; ok: boolean; message: string }>('verenu:sync-pair-result', () => {
+      syncStore.incoming = null;
+      syncStore.outgoing = null;
       void refreshSyncStatus();
     }),
     listen<{ tables: string[] }>('verenu:sync-data-changed', (event) => {

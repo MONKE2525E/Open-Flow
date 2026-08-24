@@ -54,11 +54,8 @@ pub fn delete_identity_key() {
     {
         let _ = mac_store::delete(MAC_SERVICE, MAC_ACCOUNT);
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        if let Some(path) = fallback_path() {
-            let _ = std::fs::remove_file(path);
-        }
+    if let Some(path) = fallback_path() {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -70,7 +67,6 @@ fn fallback_path() -> Option<std::path::PathBuf> {
     Some(dir.join(FALLBACK_FILE))
 }
 
-#[cfg(not(target_os = "macos"))]
 fn store_fallback(key_der: &[u8]) -> Result<(), String> {
     let path = fallback_path().ok_or("no app data dir")?;
     #[cfg(unix)]
@@ -107,7 +103,6 @@ mod win_store {
 
     use super::store_fallback;
     use windows::core::{PCWSTR, PWSTR};
-    use windows::Win32::Foundation::ERROR_NOT_FOUND;
     use windows::Win32::Security::Credentials::{
         CredDeleteW, CredFree, CredReadW, CredWriteW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
         CREDENTIALW,
@@ -174,11 +169,9 @@ mod win_store {
                 &mut p_cred,
             )
         };
-        if let Err(err) = result {
-            if err.code().0 != ERROR_NOT_FOUND.0 as i32 {
-                if let Some(key) = super::load_fallback() {
-                    return Some(key);
-                }
+        if let Err(_err) = result {
+            if let Some(key) = super::load_fallback() {
+                return Some(key);
             }
             return None;
         }
@@ -218,7 +211,13 @@ mod mac_store {
             Err(_) => {
                 // Duplicate item: rewrite in place.
                 let _ = delete_generic_password(service, account);
-                set_generic_password(service, account, key_der).map_err(|e| e.to_string())
+                match set_generic_password(service, account, key_der) {
+                    Ok(()) => Ok(()),
+                    Err(err) => {
+                        log::warn!("sync: Keychain write failed; using app data fallback: {err}");
+                        super::store_fallback(key_der)
+                    }
+                }
             }
         }
     }

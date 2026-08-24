@@ -116,12 +116,13 @@ function auditSurface() {
       await page.waitForFunction(
         (initialChecked) => {
           const switchElement = document.querySelector('[role="switch"][aria-label="App context hint"]');
+          if (!switchElement) return false;
           const dialog = [...document.querySelectorAll('[role="dialog"]')].some((element) => {
             const style = getComputedStyle(element);
             const rect = element.getBoundingClientRect();
             return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
           });
-          return switchElement?.getAttribute('aria-checked') !== initialChecked || dialog;
+          return switchElement.getAttribute('aria-checked') !== initialChecked || dialog;
         },
         before,
         { timeout: TIMEOUT },

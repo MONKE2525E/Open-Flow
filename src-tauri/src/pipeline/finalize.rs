@@ -27,14 +27,17 @@ fn dictionary_protects_initial_case(text: &str, entries: &[db::DictionaryEntry])
     else {
         return false;
     };
-    let leading = &text[start..];
+    let leading = text.trim_start();
+    let alphanumeric_leading = &text[start..];
     entries.iter().any(|entry| {
         !entry.term.is_empty()
             && entry.term.chars().any(char::is_uppercase)
-            && leading.strip_prefix(&entry.term).is_some_and(|rest| {
-                rest.chars()
+            && [leading, alphanumeric_leading].into_iter().any(|candidate| {
+                candidate.strip_prefix(&entry.term).is_some_and(|rest| {
+                    rest.chars()
                     .next()
                     .is_none_or(|ch| !ch.is_alphanumeric() && !matches!(ch, '\'' | '’'))
+                })
             })
     })
 }
@@ -422,6 +425,10 @@ mod tests {
         assert!(dictionary_protects_initial_case(
             "\"Verenu works\"",
             &entries
+        ));
+        assert!(dictionary_protects_initial_case(
+            ".NET is a useful platform",
+            &[entry(".NET")]
         ));
         assert!(!dictionary_protects_initial_case("Very useful", &entries));
         assert!(!dictionary_protects_initial_case("Use Verenu", &entries));
