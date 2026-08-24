@@ -222,9 +222,7 @@ pub fn peer_recv_cursor(conn: &Connection, device_uuid: &str) -> Result<i64> {
 
 pub fn set_peer_recv_cursor(conn: &Connection, device_uuid: &str, cursor: i64) -> Result<()> {
     conn.execute(
-        "UPDATE sync_peers
-         SET recv_cursor = MAX(recv_cursor, ?2), needs_snapshot = 0
-         WHERE device_uuid = ?1",
+        "UPDATE sync_peers SET recv_cursor = MAX(recv_cursor, ?2) WHERE device_uuid = ?1",
         params![device_uuid, cursor],
     )?;
     Ok(())
