@@ -47,7 +47,7 @@ const expected = 'The model picker receives focus, traps Tab navigation, closes 
     if (!closedWithEscape) failures.push('Escape did not close the model picker');
     let restored = false;
     if (closedWithEscape) {
-      await page.waitForFunction(() => document.activeElement?.matches('button.tile-btn-primary'), null, { timeout: TIMEOUT }).catch(() => {});
+      await page.waitForFunction((element) => document.activeElement === element, await trigger.elementHandle(), { timeout: TIMEOUT }).catch(() => {});
       restored = await trigger.evaluate((element) => document.activeElement === element);
       if (!restored) failures.push('focus did not return to the Change button after Escape');
     }

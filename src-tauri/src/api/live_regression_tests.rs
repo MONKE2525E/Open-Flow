@@ -170,7 +170,7 @@ async fn live_prompt_regression() {
     let mut measurements = BTreeMap::new();
 
     for (index, case) in fixtures.live_cases.into_iter().enumerate() {
-        let output = cleanup::cleanup(
+        let output = match cleanup::cleanup(
             &case.input,
             provider_id,
             &api_key,
@@ -183,7 +183,13 @@ async fn live_prompt_regression() {
             index as u64 + 1,
         )
         .await
-        .unwrap_or_else(|error| panic!("live case {} provider request failed: {error}", case.id));
+        {
+            Ok(output) => output,
+            Err(error) => {
+                failures.push(format!("{} provider request failed: {error}", case.id));
+                continue;
+            }
+        };
         let normalized = output.to_lowercase();
         for required in case.required_terms {
             if !normalized.contains(&required.to_lowercase()) {
@@ -258,7 +264,7 @@ async fn live_transcription_regression() {
     }
     let wav = std::fs::read(&fixture).expect("read smoke_test.wav");
     let wav_bytes = wav.len();
-    let output = transcription::transcribe(
+    let output = match transcription::transcribe(
         Bytes::from(wav),
         ProviderId::from_str(&provider),
         &api_key,
@@ -267,7 +273,23 @@ async fn live_transcription_regression() {
         1,
     )
     .await
-    .unwrap_or_else(|error| panic!("configured transcription request failed: {error}"));
+    {
+        Ok(output) => output,
+        Err(error) => {
+            println!(
+                "VERENU_TEST_RESULT={}",
+                serde_json::json!({
+                    "status": "failed",
+                    "expected": "Configured provider returns a non-trivial transcription for the known WAV fixture",
+                    "observed": format!("Configured transcription request failed: {error}"),
+                    "measurements": { "wav_bytes": wav_bytes },
+                    "regression_area": "provider transcription pipeline",
+                    "failure_kind": "infrastructure"
+                })
+            );
+            return;
+        }
+    };
     let chars = output.trim().chars().count();
     let words = output.split_whitespace().count();
     let passed = chars >= 10 && words >= 3;
