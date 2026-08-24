@@ -14,10 +14,7 @@ pub(super) const CANCEL_RESUME_WINDOW: std::time::Duration = std::time::Duration
 /// button to pull back onto the clipboard.
 pub(super) const PASTE_FAILURE_WINDOW: std::time::Duration = std::time::Duration::from_secs(300);
 
-fn paste_failure_is_fresh(
-    captured_at: std::time::Instant,
-    now: std::time::Instant,
-) -> bool {
+fn paste_failure_is_fresh(captured_at: std::time::Instant, now: std::time::Instant) -> bool {
     now.checked_duration_since(captured_at)
         .is_some_and(|age| age < PASTE_FAILURE_WINDOW)
 }
@@ -297,10 +294,7 @@ pub fn take_paste_failure_if_fresh(state: &SharedState) -> Option<String> {
     take_paste_failure_if_fresh_at(state, std::time::Instant::now())
 }
 
-fn take_paste_failure_if_fresh_at(
-    state: &SharedState,
-    now: std::time::Instant,
-) -> Option<String> {
+fn take_paste_failure_if_fresh_at(state: &SharedState, now: std::time::Instant) -> Option<String> {
     let mut st = lock_state(state).ok()?;
     st.paste_failure.take().and_then(|f| {
         if paste_failure_is_fresh(f.captured_at, now) {

@@ -12,6 +12,7 @@
   import ApiKeysSection from '../components/settings/ApiKeysSection.svelte';
   import ModelsSection from '../components/settings/ModelsSection.svelte';
   import PrivacySection from '../components/settings/PrivacySection.svelte';
+  import SyncSection from '../components/settings/SyncSection.svelte';
   import AudioSection from '../components/settings/AudioSection.svelte';
   import PermissionsSection from '../components/settings/PermissionsSection.svelte';
   import AboutSection from '../components/settings/AboutSection.svelte';
@@ -103,6 +104,7 @@
     }
 
     requestAnimationFrame(() => {
+      if (document.querySelector('[role="dialog"]')) return;
       // Don't steal focus if the user already moved inside the shell while it
       // was opening (keyboard flows race the entrance transition).
       const active = document.activeElement;
@@ -122,6 +124,7 @@
     const panel = settingsPanelEl;
     requestAnimationFrame(() => {
       if (!panel.isConnected) return;
+      if (document.querySelector('[role="dialog"]')) return;
       // Never fight the user: if focus is already inside the panel (keyboard
       // flow racing the section swap), leave it alone.
       const active = document.activeElement;
@@ -228,6 +231,8 @@
                 <ModelsSection />
               {:else if section === 'privacy'}
                 <PrivacySection />
+              {:else if section === 'sync'}
+                <SyncSection />
               {:else if section === 'advanced'}
                 <AudioSection />
               {:else if section === 'permissions' && isMac}

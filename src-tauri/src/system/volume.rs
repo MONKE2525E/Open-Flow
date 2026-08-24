@@ -74,8 +74,8 @@ mod macos {
         kAudioHardwareNoError, kAudioHardwarePropertyDefaultInputDevice,
         kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyElementMaster,
         kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
-        AudioDeviceID, AudioObjectGetPropertyData, AudioObjectHasProperty, AudioObjectSetPropertyData,
-        AudioObjectIsPropertySettable, AudioObjectPropertyAddress,
+        AudioDeviceID, AudioObjectGetPropertyData, AudioObjectHasProperty,
+        AudioObjectIsPropertySettable, AudioObjectPropertyAddress, AudioObjectSetPropertyData,
         Boolean, OSStatus,
     };
     use std::mem;

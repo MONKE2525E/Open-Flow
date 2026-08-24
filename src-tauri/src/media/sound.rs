@@ -14,10 +14,10 @@
 
 use rodio::buffer::SamplesBuffer;
 use std::f32::consts::{PI, TAU};
-use std::sync::Arc;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::OnceLock;
 
 /// Which dictation transition the cue represents.
 #[derive(Clone, Copy)]
@@ -137,13 +137,13 @@ where
         }
 
         let after_cb = Box::new(after) as AfterPlay;
-        if let Err(mpsc::SendError(SoundCommand::Play { after: Some(cb), .. })) =
-            sound_tx().send(SoundCommand::Play {
-                cue: SoundCue::Start,
-                generation: Some(generation),
-                after: Some(after_cb),
-            })
-        {
+        if let Err(mpsc::SendError(SoundCommand::Play {
+            after: Some(cb), ..
+        })) = sound_tx().send(SoundCommand::Play {
+            cue: SoundCue::Start,
+            generation: Some(generation),
+            after: Some(after_cb),
+        }) {
             log::debug!("sound cue failed: playback worker is unavailable");
             cb();
         }

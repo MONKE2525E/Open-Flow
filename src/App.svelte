@@ -12,6 +12,8 @@
   import Style from './lib/views/Style.svelte';
   import Settings from './lib/views/Settings.svelte';
   import CleanupPromptModal from './lib/components/settings/CleanupPromptModal.svelte';
+  import SyncPairModal from './lib/components/settings/SyncPairModal.svelte';
+  import { startSyncListeners, syncStore } from './lib/syncStore.svelte';
   import DictationPill from './lib/components/layout/DictationPill.svelte';
   import Setup from './lib/views/Setup.svelte';
   import { getVersion, invoke, isTauriRuntime, listen } from './lib/tauri';
@@ -158,6 +160,7 @@
     let stopDownloadManagerListeners: (() => void) | undefined;
     let stopProviderStatusChecks: (() => void) | undefined;
     let stopApiHealthChecks: (() => void) | undefined;
+    let stopSyncListeners: (() => void) | undefined;
     let stopTitleBarMetricsListener: (() => void) | undefined;
 
     if (isWindows && isTauriRuntime()) {
@@ -261,6 +264,7 @@
       stopDownloadManagerListeners = startDownloadManagerListeners();
       stopProviderStatusChecks = startProviderStatusChecks();
       stopApiHealthChecks = startApiHealthChecks();
+      stopSyncListeners = startSyncListeners();
     } catch (error) {
       console.error('Failed to start listeners and status checks:', error);
     }
@@ -303,6 +307,7 @@
       if (stopDownloadManagerListeners) stopDownloadManagerListeners();
       if (stopProviderStatusChecks) stopProviderStatusChecks();
       if (stopApiHealthChecks) stopApiHealthChecks();
+      if (stopSyncListeners) stopSyncListeners();
       if (stopTitleBarMetricsListener) stopTitleBarMetricsListener();
       media?.removeEventListener?.('change', onSystemThemeChange);
       clearInterval(connectivityTimer);
@@ -352,6 +357,9 @@
   <Settings />
   {#if cleanupPromptEditor.open}
     <CleanupPromptModal />
+  {/if}
+  {#if syncStore.incoming}
+    <SyncPairModal />
   {/if}
   <DictationPill />
 

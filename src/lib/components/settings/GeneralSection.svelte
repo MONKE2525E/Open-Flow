@@ -44,10 +44,9 @@
     noDevicesFound: 'No devices found',
   };
   let autostart = $state(false);
-  let contextualCaps = $state(true);
-  let autoSpacing = $state(true);
+  let contextualFormatting = $state(true);
   let capsLockUppercase = $state(false);
-  let legacySaveError = $state('');
+  let legacyFeaturesError = $state('');
   let hotkey = $state(defaultHotkey);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
@@ -172,8 +171,7 @@
       invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
       invoke<TranscriptionLanguageCode | null>('get_setting', { key: 'transcription_language' }),
       invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
-      invoke<boolean | null>('get_setting', { key: 'contextual_caps_enabled' }),
-      invoke<boolean | null>('get_setting', { key: 'auto_spacing_enabled' }),
+      invoke<boolean | null>('get_setting', { key: 'contextual_formatting_enabled' }),
       invoke<boolean | null>('get_setting', { key: 'caps_lock_uppercase_enabled' }),
       invoke<string[]>('get_microphones'),
       invoke<string | null>('get_setting', { key: 'microphone_device' }),
@@ -185,9 +183,8 @@
 
     autostart = val<boolean | null>(0, null) ?? false;
     appStore.cleanupEnabled = val<boolean | null>(5, null) ?? true;
-    contextualCaps = val<boolean | null>(6, null) ?? true;
-    autoSpacing = val<boolean | null>(7, null) ?? true;
-    capsLockUppercase = val<boolean | null>(8, null) ?? false;
+    contextualFormatting = val<boolean | null>(6, null) ?? true;
+    capsLockUppercase = val<boolean | null>(7, null) ?? false;
 
     const hk = val<string[] | null>(1, null);
     if (hk && hk.length === 2) hotkey = hk;
@@ -210,9 +207,9 @@
     }
     initialLanguageLoaded = true;
 
-    microphones = val<string[]>(9, []);
-    selectedMic = val<string | null>(10, null) ?? '';
-    appStore.legacyFeaturesEnabled = val<boolean | null>(11, null) ?? false;
+    microphones = val<string[]>(8, []);
+    selectedMic = val<string | null>(9, null) ?? '';
+    appStore.legacyFeaturesEnabled = val<boolean | null>(10, null) ?? false;
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') console.error(`GeneralSection: invoke[${i}] failed:`, r.reason);
@@ -298,13 +295,13 @@
   }
 
   async function applyLegacyFeatures(value: boolean) {
-    legacySaveError = '';
+    legacyFeaturesError = '';
     appStore.legacyFeaturesEnabled = value;
     try {
       await saveSetting('legacy_features_enabled', value);
     } catch (err) {
       appStore.legacyFeaturesEnabled = !value;
-      legacySaveError = 'Could not save Legacy pages. Your previous setting was restored.';
+      legacyFeaturesError = 'Could not save Legacy pages. Your change was reverted.';
       console.error('save legacy_features_enabled failed:', err);
     }
   }
@@ -366,23 +363,13 @@
     if (e.key === 'Escape' && confirmCleanupOff) confirmCleanupOff = false;
   }
 
-  async function handleContextualCaps(value: boolean) {
-    contextualCaps = value;
+  async function handleContextualFormatting(value: boolean) {
+    contextualFormatting = value;
     try {
-      await saveSetting('contextual_caps_enabled', value);
+      await saveSetting('contextual_formatting_enabled', value);
     } catch (err) {
-      contextualCaps = !value;
-      console.error('save contextual_caps_enabled failed:', err);
-    }
-  }
-
-  async function handleAutoSpacing(value: boolean) {
-    autoSpacing = value;
-    try {
-      await saveSetting('auto_spacing_enabled', value);
-    } catch (err) {
-      autoSpacing = !value;
-      console.error('save auto_spacing_enabled failed:', err);
+      contextualFormatting = !value;
+      console.error('save contextual_formatting_enabled failed:', err);
     }
   }
 
@@ -769,12 +756,8 @@
   <Toggle checked={appStore.cleanupEnabled} onchange={handleCleanup} label="Cleanup" />
 </div>
 <div class="setting-row">
-  <div><div class="label">Contextual capitalization</div><div class="desc">Lowercases the first word when injecting mid-sentence</div></div>
-  <Toggle checked={contextualCaps} onchange={handleContextualCaps} label="Contextual capitalization" />
-</div>
-<div class="setting-row">
-  <div><div class="label">Automatic spacing</div><div class="desc">Adds a space before injected text when the cursor is after existing text</div></div>
-  <Toggle checked={autoSpacing} onchange={handleAutoSpacing} label="Automatic spacing" />
+  <div><div class="label">Smart spacing &amp; capitalization</div><div class="desc">Adjusts capitalization and spacing around inserted text when the cursor context is clear.</div></div>
+  <Toggle checked={contextualFormatting} onchange={handleContextualFormatting} label="Smart spacing and capitalization" />
 </div>
 <div class="setting-row">
   <div><div class="label">Automatic caps lock detection</div><div class="desc">When Caps Lock is on, output your dictation in ALL CAPS</div></div>
@@ -783,13 +766,11 @@
 <h3 class="settings-subhead">Legacy</h3>
 <div class="setting-row">
   <div><div class="label">Legacy pages</div><div class="desc">Bring back the standalone App Mappings settings page and the Dictionary/Snippets pages, superseded by Contexts.</div></div>
-  <div class="legacy-toggle-wrap">
-    <Toggle checked={appStore.legacyFeaturesEnabled} onchange={handleLegacyFeatures} label="Legacy pages" />
-    {#if legacySaveError}
-      <div class="settings-error" role="alert">{legacySaveError}</div>
-    {/if}
-  </div>
+  <Toggle checked={appStore.legacyFeaturesEnabled} onchange={handleLegacyFeatures} label="Legacy pages" />
 </div>
+{#if legacyFeaturesError}
+  <p class="settings-error" role="alert">{legacyFeaturesError}</p>
+{/if}
 
 {#if confirmCleanupOff}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -861,8 +842,6 @@
 {/if}
 
 <style>
-  .legacy-toggle-wrap { display: grid; justify-items: end; gap: 6px; }
-  .settings-error { max-width: 240px; color: var(--danger, #b42318); font-size: 11px; line-height: 1.35; text-align: right; }
   .hotkey-tip {
     margin: -2px 0 2px;
     font-size: 11.5px;
@@ -895,6 +874,12 @@
   .keybind-btn.saving { opacity: 0.9; }
   .keybind-btn.success { background: color-mix(in srgb, var(--accent) 82%, white 18%); color: var(--on-accent); transform: scale(1.03); }
   .keybind-btn.error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); animation: none; }
+  .settings-error {
+    margin: -2px 0 12px;
+    color: var(--danger);
+    font-size: 12px;
+    line-height: 1.45;
+  }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
   .mic-btn {
     max-width: 180px;

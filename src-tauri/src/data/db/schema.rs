@@ -5,6 +5,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
 use super::*;
 
@@ -54,6 +55,7 @@ CREATE TABLE IF NOT EXISTS contexts (
   cleanup_intensity TEXT,
   color             TEXT,
   custom_instructions TEXT,
+  contextual_formatting_disabled INTEGER NOT NULL DEFAULT 0 CHECK (contextual_formatting_disabled IN (0, 1)),
   pinned_at         DATETIME,
   created_at        DATETIME NOT NULL DEFAULT (datetime('now')),
   updated_at        DATETIME NOT NULL DEFAULT (datetime('now'))
@@ -619,6 +621,31 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
             Ok(())
         })?;
     }
+    if user_version < 19 {
+        log::info!("db: migrating schema {user_version} -> 19");
+        run_migration(&mut conn, |conn| {
+            ensure_table_column(
+                conn,
+                "contexts",
+                "contextual_formatting_disabled",
+                "ALTER TABLE contexts ADD COLUMN contextual_formatting_disabled INTEGER NOT NULL DEFAULT 0 CHECK (contextual_formatting_disabled IN (0, 1));",
+            )?;
+            conn.execute_batch("PRAGMA user_version = 19;")?;
+            Ok(())
+        })?;
+    }
+    if user_version < 20 {
+        log::info!("db: migrating schema {user_version} -> 20");
+        run_migration(&mut conn, |conn| {
+            apply_v20_sync_migration(conn)?;
+            conn.execute_batch("PRAGMA user_version = 20;")?;
+            Ok(())
+        })?;
+    }
+    // Triggers can run before the async sync manager finishes loading the
+    // keychain identity. Keep a provisional UUID in place so early writes are
+    // captured; initialize() replaces it with the durable identity UUID.
+    ensure_sync_identity_placeholder(&conn)?;
     ensure_cleanup_cache_schema(&conn)?;
     // Index only needed by existing databases: the SCHEMA above declares it
     // for fresh installs, and the v10 migration block adds it for databases
@@ -656,6 +683,474 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
 
     Ok(Arc::new(Mutex::new(conn)))
 }
+
+/// Adds the LAN device-sync layer (v20) without changing any existing row
+/// shapes:
+///
+/// - Every syncable table gains a `uuid` column (backfilled with canonical
+///   hyphenated UUIDs)
+///   plus a unique index, so records have stable identities that mean the same
+///   thing on every paired device. Local integer ids stay the primary keys.
+/// - `sync_log` records one row per captured mutation (table, row uuid, op,
+///   timestamp, originating device). Peers pull deltas by log position, so
+///   deletes propagate exactly and no tombstone rows pollute the main tables.
+/// - AFTER triggers on the syncable tables append to `sync_log`. The triggers
+///   stay silent while `sync_state.applying` is 1 - that flag is how the sync
+///   engine applies a remote change and records it in the log once (with the
+///   remote's original timestamp/origin) instead of echoing it as a local edit.
+/// - `sync_peers` holds pairing/trust state, `sync_remote_stats` holds other
+///   devices' lifetime counters, `sync_setting_meta` holds per-key sync
+///   timestamps for settings.json, and `sync_identity` mirrors this device's
+///   uuid so trigger bodies can stamp the origin.
+fn apply_v20_sync_migration(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sync_state (
+           applying INTEGER NOT NULL DEFAULT 0
+         );
+         DELETE FROM sync_state
+          WHERE rowid NOT IN (SELECT rowid FROM sync_state LIMIT 1);
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_state_singleton
+           ON sync_state ((1));
+         INSERT OR IGNORE INTO sync_state (applying) VALUES (0);
+         CREATE TABLE IF NOT EXISTS sync_identity (
+           uuid TEXT NOT NULL,
+           name TEXT NOT NULL DEFAULT ''
+         );
+         DELETE FROM sync_identity
+          WHERE rowid NOT IN (SELECT rowid FROM sync_identity LIMIT 1);
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_identity_singleton
+           ON sync_identity ((1));
+         CREATE TABLE IF NOT EXISTS sync_log (
+           seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+           table_name TEXT NOT NULL,
+           row_uuid   TEXT NOT NULL,
+           op         TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
+           ts_ms      INTEGER NOT NULL,
+           origin     TEXT NOT NULL,
+           origin_seq INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_sync_log_row
+           ON sync_log(table_name, row_uuid, seq);
+         CREATE INDEX IF NOT EXISTS idx_sync_log_origin
+           ON sync_log(origin, origin_seq);
+         CREATE TABLE IF NOT EXISTS sync_peers (
+           device_uuid    TEXT PRIMARY KEY,
+           name           TEXT NOT NULL DEFAULT '',
+           cert_fp        TEXT NOT NULL,
+           added_at       TEXT NOT NULL DEFAULT (datetime('now')),
+           last_sync_at   TEXT,
+           send_cursor    INTEGER NOT NULL DEFAULT 0,
+           recv_cursor    INTEGER NOT NULL DEFAULT 0,
+           needs_snapshot INTEGER NOT NULL DEFAULT 1,
+           last_error     TEXT
+         );
+         CREATE TABLE IF NOT EXISTS sync_remote_stats (
+           device_id        TEXT PRIMARY KEY,
+           total_words      INTEGER NOT NULL DEFAULT 0,
+           dictionary_fixes INTEGER NOT NULL DEFAULT 0,
+           updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+         );
+         CREATE TABLE IF NOT EXISTS sync_setting_meta (
+           key    TEXT PRIMARY KEY,
+           ts_ms  INTEGER NOT NULL DEFAULT 0,
+           origin TEXT NOT NULL DEFAULT ''
+         );",
+    )?;
+
+    // Stable identities for existing rows. Everywhere gets a fixed
+    // well-known uuid so its (editable) name/style syncs as one record.
+    for (table, _) in [
+        ("dictionary", "id"),
+        ("snippets", "id"),
+        ("contexts", "id"),
+        ("context_targets", "id"),
+        ("context_website_targets", "id"),
+        ("transcriptions", "id"),
+        ("api_calls", "id"),
+    ] {
+        ensure_table_column(
+            conn,
+            table,
+            "uuid",
+            &format!("ALTER TABLE {table} ADD COLUMN uuid TEXT;"),
+        )?;
+        backfill_canonical_uuids(conn, table)?;
+        conn.execute_batch(&format!(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_uuid ON {table}(uuid);"
+        ))?;
+    }
+    conn.execute_batch(
+        "UPDATE contexts
+         SET uuid = 'everywhere-0000-0000-0000-000000000001'
+         WHERE is_everywhere = 1;",
+    )?;
+
+    // Change-capture triggers. `ts_ms` is wall-clock millis; ties between two
+    // devices are broken by (origin, origin_seq), which the sync engine
+    // compares as a tuple. The `sync_state.applying` guard keeps engine-applied
+    // remote changes from being re-captured as local edits (the engine logs
+    // them itself, preserving the remote origin, so peers can dedup exactly).
+    conn.execute_batch(SYNC_TRIGGER_SQL)?;
+    Ok(())
+}
+
+fn ensure_sync_identity_placeholder(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "INSERT INTO sync_identity (uuid, name)
+         SELECT lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+                lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
+                lower(hex(randomblob(6))), ''
+          WHERE NOT EXISTS (SELECT 1 FROM sync_identity)",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Keep UUIDs in the canonical hyphenated form used by `Uuid::to_string()`.
+/// Older partial migrations generated bare hex strings with SQLite's
+/// `randomblob`, which would compare unequal to UUIDs created by Rust.
+fn backfill_canonical_uuids(conn: &Connection, table: &str) -> Result<()> {
+    const EVERYWHERE_UUID: &str = "everywhere-0000-0000-0000-000000000001";
+    let mut stmt = conn.prepare(&format!("SELECT rowid, uuid FROM {table}"))?;
+    let repairs = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter_map(|(rowid, value)| {
+            let canonical = value
+                .as_deref()
+                .and_then(|raw| {
+                    if raw == EVERYWHERE_UUID {
+                        None
+                    } else {
+                        Uuid::parse_str(raw).ok()
+                    }
+                })
+                .map(|uuid| uuid.hyphenated().to_string());
+            if value.as_deref() == Some(EVERYWHERE_UUID) {
+                None
+            } else if value.is_none() {
+                Some((rowid, canonical))
+            } else {
+                (canonical.as_deref() != value.as_deref()).then_some((rowid, canonical))
+            }
+        })
+        .collect::<Vec<_>>();
+    drop(stmt);
+
+    for (rowid, canonical) in repairs {
+        let uuid = canonical.unwrap_or_else(|| Uuid::new_v4().to_string());
+        conn.execute(
+            &format!("UPDATE {table} SET uuid = ?1 WHERE rowid = ?2"),
+            params![uuid, rowid],
+        )?;
+    }
+    Ok(())
+}
+
+/// All change-capture triggers. Insert triggers on content tables first ensure
+/// the row has a uuid (app code never sets one), then log - the log references
+/// the row by re-reading its uuid after the backfill UPDATE. Matching UPDATE
+/// triggers use `WHEN NEW.uuid IS OLD.uuid` so a uuid-backfill UPDATE (which
+/// changes the uuid) is not itself captured as an edit. Junction/target
+/// triggers attribute the change to the parent context, whose full aggregate
+/// (row + targets + memberships) is what syncs.
+const SYNC_TRIGGER_SQL: &str = "
+CREATE TRIGGER IF NOT EXISTS trg_sync_dictionary_ins AFTER INSERT ON dictionary BEGIN
+  UPDATE dictionary SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'dictionary', (SELECT uuid FROM dictionary WHERE id = NEW.id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_dictionary_upd AFTER UPDATE ON dictionary
+  WHEN NEW.uuid IS OLD.uuid BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'dictionary', NEW.uuid, 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_dictionary_del AFTER DELETE ON dictionary BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'dictionary', OLD.uuid, 'delete',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_snippets_ins AFTER INSERT ON snippets BEGIN
+  UPDATE snippets SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'snippets', (SELECT uuid FROM snippets WHERE id = NEW.id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_snippets_upd AFTER UPDATE ON snippets
+  WHEN NEW.uuid IS OLD.uuid BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'snippets', NEW.uuid, 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_snippets_del AFTER DELETE ON snippets BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'snippets', OLD.uuid, 'delete',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_contexts_ins AFTER INSERT ON contexts BEGIN
+  UPDATE contexts SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = NEW.id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_contexts_upd AFTER UPDATE ON contexts
+  WHEN NEW.uuid IS OLD.uuid BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', NEW.uuid, 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_contexts_del AFTER DELETE ON contexts BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', OLD.uuid, 'delete',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_context_targets_ins AFTER INSERT ON context_targets BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = NEW.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = NEW.context_id) IS NOT NULL;
+END;
+-- Assigning an existing exe/domain to another context moves it: both the
+-- losing and the winning aggregate changed, so both are logged.
+CREATE TRIGGER IF NOT EXISTS trg_sync_context_targets_upd AFTER UPDATE ON context_targets BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = OLD.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = OLD.context_id) IS NOT NULL;
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = NEW.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = NEW.context_id) IS NOT NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_context_targets_del AFTER DELETE ON context_targets BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = OLD.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = OLD.context_id) IS NOT NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_context_websites_ins AFTER INSERT ON context_website_targets BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = NEW.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = NEW.context_id) IS NOT NULL;
+END;
+-- Same two-aggregate rule as exe targets: a moved website domain leaves one
+-- context's aggregate and enters another's.
+CREATE TRIGGER IF NOT EXISTS trg_sync_context_websites_upd AFTER UPDATE ON context_website_targets BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = OLD.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = OLD.context_id) IS NOT NULL;
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = NEW.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = NEW.context_id) IS NOT NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_context_websites_del AFTER DELETE ON context_website_targets BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = OLD.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = OLD.context_id) IS NOT NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_dictionary_contexts_ins AFTER INSERT ON dictionary_contexts BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = NEW.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = NEW.context_id) IS NOT NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_dictionary_contexts_del AFTER DELETE ON dictionary_contexts BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = OLD.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = OLD.context_id) IS NOT NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_snippet_contexts_ins AFTER INSERT ON snippet_contexts BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = NEW.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = NEW.context_id) IS NOT NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_snippet_contexts_del AFTER DELETE ON snippet_contexts BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'contexts', (SELECT uuid FROM contexts WHERE id = OLD.context_id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0
+    AND (SELECT uuid FROM contexts WHERE id = OLD.context_id) IS NOT NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_transcriptions_ins AFTER INSERT ON transcriptions BEGIN
+  UPDATE transcriptions SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'transcriptions', (SELECT uuid FROM transcriptions WHERE id = NEW.id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_transcriptions_del AFTER DELETE ON transcriptions BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'transcriptions', OLD.uuid, 'delete',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_transcriptions_upd AFTER UPDATE ON transcriptions
+  WHEN NEW.uuid IS OLD.uuid BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'transcriptions', NEW.uuid, 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_api_calls_ins AFTER INSERT ON api_calls BEGIN
+  UPDATE api_calls SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'api_calls', (SELECT uuid FROM api_calls WHERE id = NEW.id), 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_api_calls_upd AFTER UPDATE ON api_calls
+  WHEN NEW.uuid IS OLD.uuid BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'api_calls', NEW.uuid, 'upsert',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sync_api_calls_del AFTER DELETE ON api_calls BEGIN
+  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
+  SELECT 'api_calls', OLD.uuid, 'delete',
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         (SELECT uuid FROM sync_identity),
+         COALESCE((SELECT MAX(origin_seq) FROM sync_log
+                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
+  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
+    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
+END;
+";
 
 fn run_migration(conn: &mut Connection, f: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
     let tx = conn.transaction()?;

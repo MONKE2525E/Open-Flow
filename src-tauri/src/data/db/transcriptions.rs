@@ -204,8 +204,11 @@ pub fn query_distinct_apps(db: &Db) -> Result<Vec<String>> {
 pub fn query_stats(db: &Db) -> Result<Stats> {
     let conn = lock_conn(db)?;
 
+    // Own lifetime counter plus any counters synced from paired devices —
+    // each dictation is counted once, by the device it happened on.
     let total_words: i64 = conn.query_row(
-        "SELECT total_words FROM lifetime_stats WHERE id = 1",
+        "SELECT COALESCE((SELECT total_words FROM lifetime_stats WHERE id = 1), 0)
+              + COALESCE((SELECT SUM(total_words) FROM sync_remote_stats), 0)",
         [],
         |r| r.get(0),
     )?;

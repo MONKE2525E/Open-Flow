@@ -75,7 +75,10 @@ fn resolve_llama_server_binary(app: &AppHandle) -> anyhow::Result<PathBuf> {
     }
 
     let candidates = [
-        crate::app_data_dir().join("models").join("bin").join(llama_server_binary_name()),
+        crate::app_data_dir()
+            .join("models")
+            .join("bin")
+            .join(llama_server_binary_name()),
         app.path()
             .resolve(
                 std::path::PathBuf::from("bin").join(llama_server_binary_name()),
@@ -160,7 +163,10 @@ pub(super) fn format_log_tail(lines: &[String]) -> String {
         return String::new();
     }
     let tail: Vec<&str> = lines.iter().rev().take(6).map(String::as_str).collect();
-    format!(" — recent runtime log: {}", tail.into_iter().rev().collect::<Vec<_>>().join(" | "))
+    format!(
+        " — recent runtime log: {}",
+        tail.into_iter().rev().collect::<Vec<_>>().join(" | ")
+    )
 }
 
 async fn wait_until_ready(
@@ -316,7 +322,11 @@ struct ChatAttempt {
 
 async fn send_chat_completion(endpoint: &str, body: &ChatReq) -> anyhow::Result<ChatAttempt> {
     let url = format!("{endpoint}/v1/chat/completions");
-    let response = crate::api::client::get().post(&url).json(body).send().await?;
+    let response = crate::api::client::get()
+        .post(&url)
+        .json(body)
+        .send()
+        .await?;
     let status = response.status();
     let response = response.error_for_status()?;
     let parsed: ChatResp = response.json().await?;
@@ -376,7 +386,9 @@ fn looks_truncated(attempt: &ChatAttempt, input_chars: usize) -> bool {
 /// reason for logging (never the text itself).
 fn retry_reason(attempt: &ChatAttempt, input_text: &str) -> Option<&'static str> {
     if looks_truncated(attempt, input_text.chars().count()) {
-        return Some("looks truncated (finish_reason=length — generation was cut off at the token budget)");
+        return Some(
+            "looks truncated (finish_reason=length — generation was cut off at the token budget)",
+        );
     }
     if let Some(content) = attempt.content.as_deref().or(attempt.reasoning.as_deref()) {
         if crate::api::prompts::looks_like_fabricated_content(input_text, content) {
@@ -424,19 +436,18 @@ pub async fn request_cleanup(
         log::warn!("local-llm: completion {reason} — retrying once");
         attempt = send_chat_completion(endpoint, &body).await?;
         if let Some(reason) = retry_reason(&attempt, text) {
-            log::warn!("local-llm: retry also {reason} — using it anyway, nothing better available");
+            log::warn!(
+                "local-llm: retry also {reason} — using it anyway, nothing better available"
+            );
         }
     }
 
-    attempt
-        .content
-        .or(attempt.reasoning)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "local cleanup runtime returned no choices (finish_reason={:?})",
-                attempt.finish_reason
-            )
-        })
+    attempt.content.or(attempt.reasoning).ok_or_else(|| {
+        anyhow::anyhow!(
+            "local cleanup runtime returned no choices (finish_reason={:?})",
+            attempt.finish_reason
+        )
+    })
 }
 
 #[cfg(test)]
@@ -493,7 +504,10 @@ mod tests {
             LocalLlmPromptFamily::Granite33,
         ] {
             let stops = stop_sequences_for_family(family);
-            assert!(!stops.is_empty(), "{family:?} has no stop sequence configured");
+            assert!(
+                !stops.is_empty(),
+                "{family:?} has no stop sequence configured"
+            );
             assert!(stops.iter().all(|s| !s.trim().is_empty()));
         }
     }

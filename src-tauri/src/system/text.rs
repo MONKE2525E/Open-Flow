@@ -104,8 +104,9 @@ pub fn strip_unspoken_em_dashes(raw: &str, cleaned: &str) -> String {
 /// them know"), a bare um/uh/ah/erm carries no semantic content in English
 /// speech, so mechanical removal here has no real false-positive risk —
 /// unlike "like", which is deliberately NOT on this list.
-const FILLER_HESITATION_WORDS: &[&str] =
-    &["um", "umm", "ummm", "uhm", "uh", "uhh", "uhhh", "erm", "err", "ah", "ahh"];
+const FILLER_HESITATION_WORDS: &[&str] = &[
+    "um", "umm", "ummm", "uhm", "uh", "uhh", "uhhh", "erm", "err", "ah", "ahh",
+];
 
 fn is_filler_hesitation_word(word: &str) -> bool {
     FILLER_HESITATION_WORDS.contains(&word.to_lowercase().as_str())
@@ -410,7 +411,9 @@ pub fn is_number_word_token(token: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{collapse_degenerate_word_runs, strip_filler_hesitations, strip_unspoken_em_dashes};
+    use super::{
+        collapse_degenerate_word_runs, strip_filler_hesitations, strip_unspoken_em_dashes,
+    };
 
     #[test]
     fn strips_an_em_dash_the_model_introduced_mid_sentence() {

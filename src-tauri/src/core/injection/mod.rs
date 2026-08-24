@@ -1,5 +1,5 @@
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 // Serializes the whole save-clipboard -> probe/sniff -> write -> paste ->
 // restore-clipboard critical section across every call site (main pipeline,
@@ -24,11 +24,6 @@ mod windows;
 // Maximum bytes stored for backspace-tracking. Covers any practical editing sequence
 // while keeping the per-injection allocation bounded.
 const HISTORY_TAIL: usize = 512;
-
-// How long a previous injection stays relevant for spacing and capitalization decisions.
-// The keyboard hook resets this early whenever the user types, so the timeout is mainly
-// a safety net for inactivity (e.g. the user idle for a minute then dictates again).
-const INJECTION_STALE: Duration = Duration::from_secs(60);
 
 // Retry gap between successive OpenClipboard attempts when the clipboard is held
 // by another process.
@@ -217,53 +212,6 @@ mod tests {
     }
 
     #[test]
-    fn sniff_verification_gate_only_for_caret_local_mid_sentence() {
-        use crate::core::text_context::SentenceContext;
-        // The one case that needs verification: caps on, caret-local, mid-sentence.
-        assert!(caret_local_needs_sniff_verification(
-            true,
-            ContextProbeSource::CaretLocal,
-            SentenceContext::MidSentence,
-            "casual",
-        ));
-        // A caret read that already says "new sentence" capitalizes — no sniff.
-        assert!(!caret_local_needs_sniff_verification(
-            true,
-            ContextProbeSource::CaretLocal,
-            SentenceContext::NewSentence,
-            "casual",
-        ));
-        // Empty-field and history sources are already trustworthy.
-        assert!(!caret_local_needs_sniff_verification(
-            true,
-            ContextProbeSource::EmptyField,
-            SentenceContext::MidSentence,
-            "casual",
-        ));
-        assert!(!caret_local_needs_sniff_verification(
-            true,
-            ContextProbeSource::HistoryFallback,
-            SentenceContext::MidSentence,
-            "casual",
-        ));
-        // Contextual caps off: never sniff.
-        assert!(!caret_local_needs_sniff_verification(
-            false,
-            ContextProbeSource::CaretLocal,
-            SentenceContext::MidSentence,
-            "casual",
-        ));
-        // very_casual: the sniff can't change the lowercase outcome, so skip its
-        // destructive keystrokes even on a caret-local mid-sentence read.
-        assert!(!caret_local_needs_sniff_verification(
-            true,
-            ContextProbeSource::CaretLocal,
-            SentenceContext::MidSentence,
-            "very_casual",
-        ));
-    }
-
-    #[test]
     fn contextual_caps_disabled_preserves_caps_lock_uppercased_text() {
         // Regression: caps-lock uppercasing must be the final casing decision.
         // With contextual_caps off (as finalize.rs forces when caps lock is on),
@@ -273,12 +221,23 @@ mod tests {
             context: crate::core::text_context::SentenceContext::MidSentence,
             source: ContextProbeSource::CaretLocal,
             context_tail: "hello ".to_string(),
+            context_head: String::new(),
+            left_reliable: true,
+            right_reliable: true,
             selection_state: SelectionState::CollapsedCaret,
             control_identity_hash: "test".to_string(),
             control_type: "test".to_string(),
+            target_id: 1,
         };
-        let (adjusted, _, case_decision) =
-            apply_probe_adjustments("THE REPORT IS READY", false, false, "casual", &probe);
+        let (adjusted, _, case_decision) = apply_probe_adjustments(
+            "THE REPORT IS READY",
+            false,
+            false,
+            "casual",
+            "en",
+            false,
+            &probe,
+        );
         assert_eq!(adjusted, "THE REPORT IS READY");
         assert!(matches!(
             case_decision,
@@ -287,49 +246,82 @@ mod tests {
     }
 
     #[test]
-    fn uppercase_first_word_handles_prefix_symbols() {
-        assert_eq!(uppercase_first_word("hello world"), "Hello world");
-        assert_eq!(uppercase_first_word("\"hello world"), "\"Hello world");
-        assert_eq!(uppercase_first_word("(hello world"), "(Hello world");
+    fn confirmed_unfinished_text_lowercases_an_ordinary_leading_capital() {
+        let probe = InjectionContextProbe {
+            context: crate::core::text_context::SentenceContext::MidSentence,
+            source: ContextProbeSource::CaretLocal,
+            context_tail: "unfinished".to_string(),
+            context_head: String::new(),
+            left_reliable: true,
+            right_reliable: true,
+            selection_state: SelectionState::CollapsedCaret,
+            control_identity_hash: "test".to_string(),
+            control_type: "test".to_string(),
+            target_id: 1,
+        };
+        let (adjusted, context, case_decision) =
+            apply_probe_adjustments("Hello again", true, true, "casual", "en", false, &probe);
+        assert_eq!(adjusted, " hello again");
+        assert!(matches!(context, ContextKind::Continuation));
+        assert!(matches!(
+            case_decision,
+            CaseDecision::ContinuationLowercased
+        ));
     }
 
     #[test]
-    fn lowercase_first_word_blocked_for_i_acronyms_and_camelcase() {
-        // Common grammatical words are lowercased in continuation context.
-        assert_eq!(
-            lowercase_first_word_if_safe("The fix is ready"),
-            ("the fix is ready".into(), true)
+    fn confirmed_comma_continuation_lowercases_even_before_another_titlecase_word() {
+        let probe = InjectionContextProbe {
+            context: crate::core::text_context::SentenceContext::MidSentence,
+            source: ContextProbeSource::CaretLocal,
+            context_tail: "Yabba Dabba Dooba,".to_string(),
+            context_head: String::new(),
+            left_reliable: true,
+            right_reliable: true,
+            selection_state: SelectionState::CollapsedCaret,
+            control_identity_hash: "test".to_string(),
+            control_type: "test".to_string(),
+            target_id: 1,
+        };
+        let (adjusted, context, case_decision) = apply_probe_adjustments(
+            "Dabba Doo.",
+            true,
+            true,
+            "casual",
+            "en",
+            false,
+            &probe,
         );
-        assert_eq!(
-            lowercase_first_word_if_safe("Let me explain"),
-            ("let me explain".into(), true)
-        );
-        assert_eq!(
-            lowercase_first_word_if_safe("Make sure to do this"),
-            ("make sure to do this".into(), true)
-        );
-        // Proper nouns must NOT be lowercased (not in the safe list).
-        assert_eq!(
-            lowercase_first_word_if_safe("London is a city"),
-            ("London is a city".into(), false)
-        );
-        assert_eq!(
-            lowercase_first_word_if_safe("Monday meeting"),
-            ("Monday meeting".into(), false)
-        );
-        // "I", CamelCase, and acronyms are always blocked.
-        assert_eq!(
-            lowercase_first_word_if_safe("OpenAI ships model updates"),
-            ("OpenAI ships model updates".into(), false)
-        );
-        assert_eq!(
-            lowercase_first_word_if_safe("I am here"),
-            ("I am here".into(), false)
-        );
-        assert_eq!(
-            lowercase_first_word_if_safe("HTTP server"),
-            ("HTTP server".into(), false)
-        );
+        assert_eq!(adjusted, " dabba Doo.");
+        assert!(matches!(context, ContextKind::Continuation));
+        assert!(matches!(
+            case_decision,
+            CaseDecision::ContinuationLowercased
+        ));
+    }
+
+    #[test]
+    fn unconfirmed_left_edge_never_capitalizes_or_adds_leading_space() {
+        let probe = InjectionContextProbe {
+            context: crate::core::text_context::SentenceContext::NewSentence,
+            source: ContextProbeSource::CaretLocal,
+            context_tail: String::new(),
+            context_head: "existing".to_string(),
+            left_reliable: false,
+            right_reliable: true,
+            selection_state: SelectionState::CollapsedCaret,
+            control_identity_hash: "test".to_string(),
+            control_type: "test".to_string(),
+            target_id: 1,
+        };
+        let (adjusted, context, case_decision) =
+            apply_probe_adjustments("hello", true, true, "casual", "en", false, &probe);
+        assert_eq!(adjusted, "hello ");
+        assert!(matches!(context, ContextKind::Unknown));
+        assert!(matches!(
+            case_decision,
+            CaseDecision::ConservativeDegradePreserved
+        ));
     }
 
     #[test]
@@ -396,7 +388,7 @@ mod tests {
         ));
     }
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ContextKind {
     Unknown,
     SentenceBoundary,
@@ -488,236 +480,9 @@ fn classify_context(tail: &str) -> ContextKind {
         ContextKind::Continuation
     }
 }
-// Common grammatical function words that are never proper nouns.
-// Lowercasing is only applied to words in this list so that Title-Case proper
-// nouns (London, Monday, Google) are preserved in continuation context.
-const SAFE_TO_LOWERCASE: &[&str] = &[
-    "the",
-    "a",
-    "an",
-    "this",
-    "that",
-    "these",
-    "those",
-    "it",
-    "he",
-    "she",
-    "we",
-    "they",
-    "you",
-    "is",
-    "was",
-    "are",
-    "were",
-    "be",
-    "been",
-    "being",
-    "have",
-    "has",
-    "had",
-    "do",
-    "does",
-    "did",
-    "will",
-    "would",
-    "could",
-    "should",
-    "may",
-    "might",
-    "must",
-    "can",
-    "and",
-    "or",
-    "but",
-    "if",
-    "so",
-    "then",
-    "because",
-    "though",
-    "although",
-    "my",
-    "your",
-    "his",
-    "her",
-    "our",
-    "their",
-    "its",
-    "let",
-    "just",
-    "not",
-    "also",
-    "even",
-    "now",
-    "here",
-    "there",
-    "make",
-    "get",
-    "go",
-    "see",
-    "think",
-    "say",
-    "tell",
-    "look",
-    "seem",
-    "all",
-    "some",
-    "any",
-    "no",
-    "more",
-    "most",
-    "very",
-    "well",
-    "still",
-    "when",
-    "where",
-    "how",
-    "what",
-    "which",
-    "please",
-    "yes",
-    "no",
-    "ok",
-    "okay",
-    "actually",
-    "basically",
-    "honestly",
-    "literally",
-    "really",
-    "totally",
-    "with",
-    "into",
-    "onto",
-    "upon",
-    "about",
-];
-
-fn is_safe_lowercase_candidate(word: &str) -> bool {
-    if word.is_empty() || word == "I" {
-        return false;
-    }
-    // Only lowercase words from the explicit safe list; Title-Case proper nouns
-    // (London, Monday, Google) must never be lowercased.
-    SAFE_TO_LOWERCASE.contains(&word.to_lowercase().as_str())
-}
-fn find_first_alpha_span(text: &str) -> Option<(usize, usize)> {
-    let mut start = None;
-    let mut end = 0usize;
-    for (idx, ch) in text.char_indices() {
-        if start.is_none() {
-            if ch.is_alphabetic() {
-                start = Some(idx);
-                end = idx + ch.len_utf8();
-            }
-            continue;
-        }
-        if ch.is_alphabetic() || ch == '\'' || ch == '-' {
-            end = idx + ch.len_utf8();
-            continue;
-        }
-        break;
-    }
-    start.map(|s| (s, end))
-}
-#[cfg(test)]
-fn uppercase_first_word(text: &str) -> String {
-    let Some((start, _)) = find_first_alpha_span(text) else {
-        return text.to_owned();
-    };
-    let mut chars = text[start..].chars();
-    let Some(first) = chars.next() else {
-        return text.to_owned();
-    };
-    if !first.is_lowercase() {
-        return text.to_owned();
-    }
-    let first_len = first.len_utf8();
-    let mut out = String::with_capacity(text.len());
-    out.push_str(&text[..start]);
-    out.push_str(&first.to_uppercase().collect::<String>());
-    out.push_str(&text[start + first_len..]);
-    out
-}
-fn lowercase_first_word_if_safe(text: &str) -> (String, bool) {
-    let Some((start, end)) = find_first_alpha_span(text) else {
-        return (text.to_owned(), false);
-    };
-    let word = &text[start..end];
-    if !is_safe_lowercase_candidate(word) {
-        return (text.to_owned(), false);
-    }
-    let mut chars = text[start..].chars();
-    let Some(first) = chars.next() else {
-        return (text.to_owned(), false);
-    };
-    let first_len = first.len_utf8();
-    let mut out = String::with_capacity(text.len());
-    out.push_str(&text[..start]);
-    out.push_str(&first.to_lowercase().collect::<String>());
-    out.push_str(&text[start + first_len..]);
-    (out, true)
-}
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn unavailable_injection_probe() -> InjectionContextProbe {
     InjectionContextProbe::unavailable(ContextProbeSource::Unavailable, "unavailable")
-}
-
-fn fallback_probe_from_history(target_hwnd: usize) -> Option<InjectionContextProbe> {
-    if target_hwnd == 0 || crate::core::window_context::get_foreground_hwnd() != target_hwnd {
-        return None;
-    }
-
-    match last_injection().lock() {
-        Ok(guard) => match &*guard {
-            CursorContextState::Known {
-                hwnd,
-                tail,
-                instant,
-            } if *hwnd == target_hwnd && instant.elapsed() < INJECTION_STALE => {
-                Some(InjectionContextProbe {
-                    context: crate::core::text_context::classify_context_tail(tail),
-                    source: ContextProbeSource::HistoryFallback,
-                    context_tail: tail.clone(),
-                    control_type: "history_tail".to_string(),
-                    selection_state: SelectionState::Unknown,
-                    control_identity_hash: "history_tail".to_string(),
-                })
-            }
-            CursorContextState::Unknown { _instant } => {
-                let _ = _instant.elapsed();
-                None
-            }
-            _ => None,
-        },
-        Err(_) => {
-            log::error!("injection history mutex poisoned");
-            None
-        }
-    }
-}
-
-/// Whether a UIA caret-local read that classified as mid-sentence should be
-/// double-checked with a clipboard sniff before lowercasing. Only caret-local
-/// reads are verified: that's the source that can return phantom text before the
-/// caret in a visually empty box (Chromium/Electron). Other sources are either
-/// already trustworthy (history) or already a new sentence (empty field).
-///
-/// The sniff fires synthetic Shift+Left/Ctrl+C/Right keystrokes, which can
-/// corrupt the subsequent paste in Chromium-backed rich editors (Quill/Slack/
-/// Discord). It only earns that risk when its result could change the casing
-/// decision. For the `very_casual` profile it never can: both new-sentence and
-/// mid-sentence preserve the model's lowercase output, so we skip the sniff
-/// entirely and just paste.
-#[cfg_attr(not(windows), allow(dead_code))]
-fn caret_local_needs_sniff_verification(
-    contextual_caps: bool,
-    source: ContextProbeSource,
-    context: crate::core::text_context::SentenceContext,
-    profile: &str,
-) -> bool {
-    contextual_caps
-        && profile != "very_casual"
-        && source == ContextProbeSource::CaretLocal
-        && context == crate::core::text_context::SentenceContext::MidSentence
 }
 
 fn apply_probe_adjustments(
@@ -725,84 +490,95 @@ fn apply_probe_adjustments(
     contextual_caps: bool,
     auto_spacing: bool,
     profile: &str,
+    language: &str,
+    protected_initial_case: bool,
     probe: &InjectionContextProbe,
 ) -> (String, ContextKind, CaseDecision) {
-    let prefix_class = text_context::classify_leading_prefix(text);
-    let context_kind = context_kind_from_sentence_context(probe.context);
-    let mut adjusted = text.to_owned();
-
+    let formatting_enabled = contextual_caps || auto_spacing;
+    let source_reliable = probe.source == ContextProbeSource::EmptyField
+        || (probe.source == ContextProbeSource::CaretLocal
+            && !matches!(probe.selection_state, SelectionState::Unknown));
+    let left_reliable = formatting_enabled && source_reliable && probe.left_reliable;
+    let right_reliable = formatting_enabled && source_reliable && probe.right_reliable;
+    let context_kind = if left_reliable {
+        context_kind_from_sentence_context(probe.context)
+    } else {
+        ContextKind::Unknown
+    };
+    let decision = text_context::decide_insertion(
+        text,
+        text_context::CaretTextContext {
+            left: &probe.context_tail,
+            right: &probe.context_head,
+            left_reliable,
+            right_reliable,
+            language,
+            casing_enabled: contextual_caps,
+            preserve_sentence_case: profile == "very_casual",
+            protected_initial_case,
+        },
+    );
+    let adjusted = decision.text;
     let case_decision = if !contextual_caps {
         CaseDecision::ContextualCapsDisabled
-    } else if !probe.source.supports_contextual_casing() {
+    } else if !left_reliable {
         CaseDecision::ConservativeDegradePreserved
-    } else if probe.context == crate::core::text_context::SentenceContext::NewSentence
-        && profile == "very_casual"
-    {
-        CaseDecision::SentenceBoundaryPreservedVeryCasual
     } else {
-        match prefix_class {
-            text_context::InjectionPrefixClass::PlainWordStart => match context_kind {
-                ContextKind::Unknown => CaseDecision::UnknownContextPreserved,
-                ContextKind::SentenceBoundary => {
-                    adjusted =
-                        text_context::format_injection_text(text, probe.context, prefix_class);
-                    CaseDecision::SentenceBoundaryCapitalized
-                }
-                ContextKind::Continuation => {
-                    let (lowered, did_lower) = lowercase_first_word_if_safe(text);
-                    if did_lower {
-                        adjusted = lowered;
-                        CaseDecision::ContinuationLowercased
-                    } else {
-                        CaseDecision::ContinuationPreserved
-                    }
-                }
-            },
-            text_context::InjectionPrefixClass::HardSentenceTerminator => {
-                adjusted = text_context::format_injection_text(text, probe.context, prefix_class);
+        match decision.case_action {
+            text_context::CaseAction::CapitalizeFirstWord => {
                 CaseDecision::SentenceBoundaryCapitalized
             }
-            text_context::InjectionPrefixClass::SoftPunctuationPrefix
-            | text_context::InjectionPrefixClass::InvisibleOrAmbiguousPrefix => {
-                match context_kind {
-                    ContextKind::Unknown => CaseDecision::UnknownContextPreserved,
-                    ContextKind::SentenceBoundary => {
-                        adjusted = text_context::apply_contextual_casing(text, probe.context);
-                        CaseDecision::SentenceBoundaryCapitalized
-                    }
-                    ContextKind::Continuation => CaseDecision::ContinuationPreserved,
-                }
+            text_context::CaseAction::LowercaseFirstWord => CaseDecision::ContinuationLowercased,
+            text_context::CaseAction::Preserve
+                if context_kind == ContextKind::SentenceBoundary && profile == "very_casual" =>
+            {
+                CaseDecision::SentenceBoundaryPreservedVeryCasual
             }
+            text_context::CaseAction::Preserve if context_kind == ContextKind::Unknown => {
+                CaseDecision::UnknownContextPreserved
+            }
+            text_context::CaseAction::Preserve => CaseDecision::ContinuationPreserved,
         }
     };
-
-    if auto_spacing
-        && text_context::should_add_leading_injection_space(
-            text,
-            probe.context,
-            prefix_class,
-            probe.source.supports_auto_spacing(),
-            &probe.context_tail,
-        )
-    {
-        adjusted = format!(" {adjusted}");
-    }
 
     // Redacted diagnostics for capitalization decisions (issue follow-up: CLI /
     // terminal inputs being read as mid-sentence). Logs the control identity and
     // the *class* of the last char before the caret — never the tail content.
     log::debug!(
-        "injection: caps decision control_type={} probe_source={} context={} prefix={} tail_len={} tail_signal={} case_decision={}",
+        "injection: smart-format control_type={} probe_source={} context={} tail_len={} head_len={} left_reliable={} right_reliable={} tail_signal={} head_signal={} case_decision={} leading_space={} trailing_space={} reason={}",
         probe.control_type,
         probe.source.as_str(),
         probe.context.as_str(),
-        prefix_class.as_str(),
         probe.context_tail.chars().count(),
+        probe.context_head.chars().count(),
+        left_reliable,
+        right_reliable,
         context_tail_signal(&probe.context_tail),
+        context_head_signal(&probe.context_head),
         case_decision.as_str(),
+        decision.leading_space,
+        decision.trailing_space,
+        decision.reason,
     );
 
     (adjusted, context_kind, case_decision)
+}
+
+fn context_head_signal(head: &str) -> &'static str {
+    match head.chars().find(|c| !c.is_whitespace()) {
+        None => {
+            if head.contains('\n') || head.contains('\r') {
+                "newline_only"
+            } else {
+                "empty_or_ws"
+            }
+        }
+        Some(ch) if ch.is_alphanumeric() => "alnum",
+        Some(')' | ']' | '}' | '.' | ',' | ';' | ':' | '!' | '?') => {
+            "punct"
+        }
+        Some(_) => "other",
+    }
 }
 
 /// Redacted classification of the last meaningful character before the caret,
@@ -920,7 +696,8 @@ pub async fn inject_text(
     contextual_caps: bool,
     auto_spacing: bool,
     profile: &str,
-    clipboard_sniff_enabled: bool,
+    language: &str,
+    protected_initial_case: bool,
 ) -> anyhow::Result<InjectionOutcome> {
     #[cfg(any(test, debug_assertions))]
     if crate::testing::is_enabled() {
@@ -948,7 +725,8 @@ pub async fn inject_text(
             contextual_caps,
             auto_spacing,
             profile,
-            clipboard_sniff_enabled,
+            language,
+            protected_initial_case,
         )
         .await;
     }
@@ -961,7 +739,8 @@ pub async fn inject_text(
             contextual_caps,
             auto_spacing,
             profile,
-            clipboard_sniff_enabled,
+            language,
+            protected_initial_case,
         )
         .await;
     }

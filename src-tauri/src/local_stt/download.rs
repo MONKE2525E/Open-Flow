@@ -99,12 +99,7 @@ impl<'a, R: Read> Read for ProgressReader<'a, R> {
     }
 }
 
-fn emit_progress(
-    app: &AppHandle,
-    model_id: &str,
-    downloaded_bytes: u64,
-    total_bytes: Option<u64>,
-) {
+fn emit_progress(app: &AppHandle, model_id: &str, downloaded_bytes: u64, total_bytes: Option<u64>) {
     let progress = total_bytes
         .map(|total| {
             if total == 0 {
@@ -321,12 +316,7 @@ fn extract_archive(
         archive_path.file_name().unwrap_or_default(),
         extracting_dir.file_name().unwrap_or_default()
     );
-    emit_model_event(
-        app,
-        "local-stt-model-extraction-started",
-        manifest.id,
-        None,
-    );
+    emit_model_event(app, "local-stt-model-extraction-started", manifest.id, None);
     std::fs::create_dir_all(&extracting_dir)?;
     ensure_not_cancelled(cancel)?;
 
@@ -475,7 +465,13 @@ pub async fn download_model(
             }
         }
     } else {
-        response = Some(download_client().get(url).send().await?.error_for_status()?);
+        response = Some(
+            download_client()
+                .get(url)
+                .send()
+                .await?
+                .error_for_status()?,
+        );
     }
 
     let total_bytes = if already_complete {
@@ -576,8 +572,10 @@ pub async fn download_model(
         let manifest = manifest.clone();
         let partial_path = partial_path.clone();
         let cancel = cancel.clone();
-        tokio::task::spawn_blocking(move || verify_checksum_if_present(&app, &manifest, &partial_path, &cancel))
-            .await??;
+        tokio::task::spawn_blocking(move || {
+            verify_checksum_if_present(&app, &manifest, &partial_path, &cancel)
+        })
+        .await??;
     }
 
     if manifest.is_directory {
@@ -587,8 +585,10 @@ pub async fn download_model(
             let partial_path = partial_path.clone();
             let root = root.to_path_buf();
             let cancel = cancel.clone();
-            tokio::task::spawn_blocking(move || extract_archive(&app, &manifest, &partial_path, &root, &cancel))
-                .await??;
+            tokio::task::spawn_blocking(move || {
+                extract_archive(&app, &manifest, &partial_path, &root, &cancel)
+            })
+            .await??;
         }
         let _ = std::fs::remove_file(&partial_path);
     } else {
@@ -635,7 +635,10 @@ mod tests {
     use std::fs;
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("verenu-local-stt-test-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "verenu-local-stt-test-{name}-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

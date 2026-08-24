@@ -164,14 +164,28 @@ pub async fn structured_request(
     let _ = gen;
     let request = async {
         if let Some(url) = provider.cleanup_url() {
-            openai_compat(text, api_key, url, provider.label(), model, prompt, max_output_tokens, None, gen).await
+            openai_compat(
+                text,
+                api_key,
+                url,
+                provider.label(),
+                model,
+                prompt,
+                max_output_tokens,
+                None,
+                gen,
+            )
+            .await
         } else {
             google_cleanup(text, api_key, prompt, model, max_output_tokens, None, gen).await
         }
     };
-    tokio::time::timeout(std::time::Duration::from_secs(CLEANUP_REQUEST_TIMEOUT_SECS), request)
-        .await
-        .map_err(|_| anyhow::anyhow!("Repair provider request timed out"))?
+    tokio::time::timeout(
+        std::time::Duration::from_secs(CLEANUP_REQUEST_TIMEOUT_SECS),
+        request,
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Repair provider request timed out"))?
 }
 
 #[derive(Serialize)]
@@ -585,7 +599,10 @@ mod tests {
     fn google_cleanup_request_includes_gemini_config() {
         let body = build_google_cleanup_request("hello", "prompt", "gemini-3.7-flash", 256);
         let json = serde_json::to_value(&body).unwrap();
-        assert_eq!(json["generationConfig"]["thinkingConfig"]["thinkingLevel"], "minimal");
+        assert_eq!(
+            json["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "minimal"
+        );
         assert_eq!(json["generationConfig"]["maxOutputTokens"], 256);
         assert_eq!(json["generationConfig"]["temperature"], 0.0);
     }
@@ -630,4 +647,3 @@ mod tests {
         assert!(input.contains("<alternate_transcript>"));
     }
 }
-

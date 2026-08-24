@@ -1,5 +1,5 @@
 use super::{
-    GeminiGenConfig, GeminiThinkingConfig, is_gemini_25_model, model_supports_gemini_thinking,
+    is_gemini_25_model, model_supports_gemini_thinking, GeminiGenConfig, GeminiThinkingConfig,
 };
 
 pub fn gemini_generation_config(model: &str, max_output_tokens: u32) -> GeminiGenConfig {

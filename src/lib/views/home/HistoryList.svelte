@@ -7,7 +7,7 @@
   import { motionMs } from '../../motion';
   import { fmtDuration } from '../insights/helpers';
   import HistoryToolbar from './HistoryToolbar.svelte';
-  import { fmtDate, fmtTime, formatAppLabel, type Entry, type RenderItem } from './helpers';
+  import { fmtDate, fmtTime, formatAppLabel, localDayKey, type Entry, type RenderItem } from './helpers';
 
   export let recents: Entry[];
   export let failedEntry: { created_at: string } | null;
@@ -54,7 +54,10 @@
     const seenHeaders = new Set<string>();
     const dateCache = new Map<string, string>();
     flatItems = recents.reduce<RenderItem[]>((acc, entry) => {
-      const dayKey = entry.created_at.slice(0, 10);
+      // Group by the user's local calendar day. The database stores UTC
+      // timestamps, so the raw date prefix can split one local day into two
+      // separate headers around UTC midnight.
+      const dayKey = localDayKey(entry.created_at);
       let label = dateCache.get(dayKey);
       if (!label) {
         label = fmtDate(entry.created_at);

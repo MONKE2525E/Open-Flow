@@ -275,10 +275,7 @@ pub async fn cancel_recording_with_resume(
 /// Stops and discards a recording that belongs to a transient flow such as
 /// repair feedback. Unlike normal dictation cancellation, this never stashes
 /// audio for resume and never shows the cancelled-dictation affordance.
-pub async fn discard_recording(
-    app: &AppHandle,
-    state: &SharedState,
-) {
+pub async fn discard_recording(app: &AppHandle, state: &SharedState) {
     let Some((session, exclusive_mic_session_id)) = state::take_recording_plain(state) else {
         if state_is_idle(state) {
             hide_pill(app);

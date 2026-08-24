@@ -5,16 +5,14 @@
 //! This is the macOS half of the layered `InjectionContextProbe`. It calls into
 //! the Objective-C shim (`system/macos_ax_text_marker.m`) which uses the
 //! Accessibility (AX) API to read the focused element's selected text range and
-//! the characters immediately before the caret. When AX permits, this returns a
-//! genuine `ContextProbeSource::CaretLocal` result with a real `context_tail`,
-//! exactly like the Windows UI Automation path — it is NOT clipboard-sniffing or
-//! history-guessing.
+//! the characters on both sides of it. When AX permits, this returns a genuine
+//! `ContextProbeSource::CaretLocal` result with independent confidence for each
+//! edge, exactly like the Windows UI Automation path.
 //!
 //! ## Known OS limitations (why this can fall back)
 //!
 //! The AX API does not expose caret context for every control. The shim reports
-//! these cases so the caller can drop to the clipboard-sniff / history fallback
-//! (see `ContextProbeSource::allows_history_fallback`):
+//! these cases so the caller can preserve the payload instead of guessing:
 //!
 //! - **Accessibility permission not granted** → `SOURCE_PERMISSION_MISSING`. The
 //!   app must be trusted under System Settings → Privacy & Security →
@@ -26,9 +24,9 @@
 //!   coarse `AXTextArea` without `AXSelectedTextRange`/`AXTextMarker` support.
 //! - **Secure text fields** (password inputs) deliberately withhold contents →
 //!   typically reported as unsupported/ambiguous.
-//! - **Non-collapsed selection** → `SOURCE_AMBIGUOUS_SELECTION`: there is a
-//!   selection rather than a single caret, so the "what precedes the caret"
-//!   question is ill-defined and we do not guess.
+//! - **Non-collapsed selection with unreadable endpoints** →
+//!   `SOURCE_AMBIGUOUS_SELECTION`. Readable selections use the text before the
+//!   selection start and after the selection end.
 //!
 //! The read is synchronous on the calling thread (the AX round-trip is fast for
 //! supported controls); the caller runs it off the hotkey path.
@@ -58,12 +56,15 @@ struct MacosContextProbeResult {
     source: i32,
     selection_state: i32,
     pid: i32,
+    left_reliable: i32,
+    right_reliable: i32,
     control_type: [c_char; 64],
     role: [c_char; 64],
     subrole: [c_char; 64],
     identifier: [c_char; 128],
     title: [c_char; 160],
-    tail: [c_char; 256],
+    tail: [c_char; 512],
+    head: [c_char; 512],
 }
 
 unsafe extern "C" {
@@ -73,12 +74,17 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-fn c_buf_to_string(buf: &[c_char]) -> String {
+fn c_buf_to_string(buf: &[c_char], preserve_whitespace: bool) -> String {
     // Find the null terminator within the buffer bounds to avoid a buffer
     // overread if the Objective-C shim fails to write a trailing null byte.
     let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
     let u8_bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, len) };
-    String::from_utf8_lossy(u8_bytes).trim().to_string()
+    let value = String::from_utf8_lossy(u8_bytes).to_string();
+    if preserve_whitespace {
+        value
+    } else {
+        value.trim().to_string()
+    }
 }
 
 fn map_source(source: i32) -> ContextProbeSource {
@@ -107,12 +113,15 @@ pub fn read_injection_context_probe_sync() -> InjectionContextProbe {
         source: SOURCE_UNAVAILABLE,
         selection_state: SELECTION_UNKNOWN,
         pid: 0,
+        left_reliable: 0,
+        right_reliable: 0,
         control_type: [0; 64],
         role: [0; 64],
         subrole: [0; 64],
         identifier: [0; 128],
         title: [0; 160],
-        tail: [0; 256],
+        tail: [0; 512],
+        head: [0; 512],
     };
 
     // SAFETY: The shim fills the provided POD struct and does not retain Rust memory.
@@ -122,6 +131,10 @@ pub fn read_injection_context_probe_sync() -> InjectionContextProbe {
     }
 
     let source = map_source(raw.source);
+
+    if raw.pid < 0 {
+        return InjectionContextProbe::unavailable(source, "invalid_pid");
+    }
 
     // A response other than "permission missing" / "unavailable" means the AX API
     // returned real data for another app's focused element — authoritative proof
@@ -136,14 +149,19 @@ pub fn read_injection_context_probe_sync() -> InjectionContextProbe {
     }
 
     let selection_state = map_selection_state(raw.selection_state);
-    let control_type = c_buf_to_string(&raw.control_type);
-    let role = c_buf_to_string(&raw.role);
-    let subrole = c_buf_to_string(&raw.subrole);
-    let identifier = c_buf_to_string(&raw.identifier);
-    let title = c_buf_to_string(&raw.title);
-    let tail = c_buf_to_string(&raw.tail);
+    let control_type = c_buf_to_string(&raw.control_type, false);
+    let role = c_buf_to_string(&raw.role, false);
+    let subrole = c_buf_to_string(&raw.subrole, false);
+    let identifier = c_buf_to_string(&raw.identifier, false);
+    let title = c_buf_to_string(&raw.title, false);
+    let tail = c_buf_to_string(&raw.tail, true);
+    let head = c_buf_to_string(&raw.head, true);
     let pid = raw.pid.to_string();
-    let context = resolve_context_from_tail(source == ContextProbeSource::EmptyField, Some(&tail));
+    let context = resolve_context_from_tail(
+        source == ContextProbeSource::EmptyField,
+        (source == ContextProbeSource::CaretLocal && raw.left_reliable != 0)
+            .then_some(tail.as_str()),
+    );
     let control_identity_hash = stable_metadata_hash(&[
         pid.as_str(),
         role.as_str(),
@@ -156,6 +174,9 @@ pub fn read_injection_context_probe_sync() -> InjectionContextProbe {
         context,
         source,
         context_tail: tail,
+        context_head: head,
+        left_reliable: raw.left_reliable != 0,
+        right_reliable: raw.right_reliable != 0,
         selection_state,
         control_identity_hash,
         control_type: if control_type.is_empty() {
@@ -163,5 +184,6 @@ pub fn read_injection_context_probe_sync() -> InjectionContextProbe {
         } else {
             control_type
         },
+        target_id: raw.pid as usize,
     }
 }

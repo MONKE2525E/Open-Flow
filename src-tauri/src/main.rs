@@ -11,6 +11,7 @@ mod local_llm;
 mod local_stt;
 mod media;
 mod pipeline;
+mod sync;
 mod system;
 #[cfg(any(test, debug_assertions))]
 mod testing;
@@ -121,6 +122,9 @@ fn main() {
             let settings = crate::data::store::SettingsHandle::open(app.handle())
                 .map_err(std::io::Error::other)?;
             crate::data::credentials::migrate_from_store(app.handle(), &settings);
+            if let Err(error) = crate::data::store::migrate_contextual_formatting(&settings) {
+                log::warn!("Failed to migrate contextual formatting setting: {error}");
+            }
             let _first_launch = {
                 if let Some(val) = settings.get(crate::data::store::HOTKEY) {
                     if let Some(arr) = val.as_array() {
@@ -200,6 +204,13 @@ fn main() {
                 app.manage(settings.clone());
                 first_launch
             };
+
+            // LAN device sync: identity, mDNS discovery, listener, sessions.
+            // Soft-fails internally — never blocks startup.
+            app.manage(sync::SyncManager::start(
+                app.handle().clone(),
+                app.state::<DbHandle>().inner().clone(),
+            ));
 
             app_tray::setup_tray(app)?;
             #[cfg(target_os = "windows")]
@@ -379,6 +390,7 @@ fn main() {
             commands::delete_api_key,
             commands::get_api_key_status,
             commands::validate_api_key,
+            commands::list_provider_models,
             commands::save_setting,
             commands::get_setting,
             commands::get_all_settings,
@@ -492,6 +504,14 @@ fn main() {
             commands::test_notifications,
             commands::export_data,
             commands::import_data,
+            commands::sync_get_status,
+            commands::sync_set_device_name,
+            commands::sync_start_pairing,
+            commands::sync_respond_to_pairing,
+            commands::sync_cancel_pairing,
+            commands::sync_remove_device,
+            commands::sync_now,
+            commands::sync_get_diagnostics,
         ])
         .build(tauri::generate_context!())
         .expect("error building Verenu")

@@ -16,7 +16,10 @@ pub(crate) fn should_pause_for_dictation(state: MediaPlaybackState) -> bool {
 
 #[cfg(any(test, windows))]
 pub(crate) fn should_resume_after_dictation(state: MediaPlaybackState) -> bool {
-    !matches!(state, MediaPlaybackState::Stopped | MediaPlaybackState::Closed)
+    !matches!(
+        state,
+        MediaPlaybackState::Stopped | MediaPlaybackState::Closed
+    )
 }
 
 pub struct DictationMediaPauseGuard {

@@ -24,12 +24,10 @@ pub struct PipelineConfig {
     pub cleanup_intensity: String,
     pub app_context_hint: bool,
     pub auto_learn_enabled: bool,
-    pub contextual_caps_enabled: bool,
-    pub auto_spacing_enabled: bool,
+    pub contextual_formatting_enabled: bool,
     pub caps_lock_uppercase_enabled: bool,
     pub clipboard_phrase_enabled: bool,
     pub clipboard_phrase: String,
-    pub macos_clipboard_sniff_enabled: bool,
     pub advanced_model_ui: bool,
     pub local_model_memory_policy: String,
     pub cleanup_prompt_overrides: std::collections::HashMap<String, String>,
@@ -318,12 +316,8 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
             .get(AUTO_LEARN_ENABLED)
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        contextual_caps_enabled: store
-            .get(CONTEXTUAL_CAPS)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true),
-        auto_spacing_enabled: store
-            .get(AUTO_SPACING)
+        contextual_formatting_enabled: store
+            .get(CONTEXTUAL_FORMATTING)
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
         caps_lock_uppercase_enabled: store
@@ -340,10 +334,6 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
             .map(normalize_clipboard_phrase)
             .filter(|v| is_valid_clipboard_phrase(v))
             .unwrap_or_else(|| DEFAULT_CLIPBOARD_PHRASE.to_string()),
-        macos_clipboard_sniff_enabled: store
-            .get(MACOS_CLIPBOARD_SNIFF)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
         advanced_model_ui: store
             .get(ADVANCED_MODEL_UI)
             .and_then(|v| v.as_bool())

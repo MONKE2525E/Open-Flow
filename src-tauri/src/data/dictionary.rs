@@ -71,7 +71,8 @@ fn contains_nonempty(haystack: &str, needle: &str) -> bool {
 fn fuzzy_token_match(entry: &db::DictionaryEntry, raw_tokens: &[&str]) -> bool {
     matches_source_tokens(&entry.term, raw_tokens)
         || entry.mistake.as_ref().is_some_and(|mistake| {
-            parse_dictionary_mistakes(mistake).any(|variant| matches_source_tokens(variant, raw_tokens))
+            parse_dictionary_mistakes(mistake)
+                .any(|variant| matches_source_tokens(variant, raw_tokens))
         })
 }
 
@@ -286,7 +287,8 @@ pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> 
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_substitutions_from, build_dictionary_prompt_limited, build_relevant_dictionary_prompt_from,
+        apply_substitutions_from, build_dictionary_prompt_limited,
+        build_relevant_dictionary_prompt_from,
     };
     use crate::data::db::DictionaryEntry;
 

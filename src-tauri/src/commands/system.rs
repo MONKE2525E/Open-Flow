@@ -129,14 +129,21 @@ pub async fn save_hotkey(app: AppHandle, key1: String, key2: String) -> Result<(
 /// combo isn't allowed here.
 #[tauri::command]
 pub async fn check_repair_hotkey(key1: String, key2: String, key3: String) -> Result<bool, String> {
-    Ok(crate::core::hotkey::is_repair_hotkey_available(&key1, &key2, &key3))
+    Ok(crate::core::hotkey::is_repair_hotkey_available(
+        &key1, &key2, &key3,
+    ))
 }
 
 /// Same shape as `save_hotkey`, but all three slots empty is a valid "unset"
 /// state (disables the repair-open hotkey rather than requiring one be bound
 /// — Ctrl+Alt+Z remains the working default until the user changes it).
 #[tauri::command]
-pub async fn save_repair_hotkey(app: AppHandle, key1: String, key2: String, key3: String) -> Result<(), String> {
+pub async fn save_repair_hotkey(
+    app: AppHandle,
+    key1: String,
+    key2: String,
+    key3: String,
+) -> Result<(), String> {
     let unset = key1.is_empty() && key2.is_empty() && key3.is_empty();
     let vk1 = crate::core::hotkey::map_code_to_vk(&key1);
     let vk2 = crate::core::hotkey::map_code_to_vk(&key2);

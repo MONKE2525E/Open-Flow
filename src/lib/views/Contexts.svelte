@@ -121,6 +121,8 @@
   let modalTone = $state<string | null>(null);
   let modalCleanupIntensity = $state<string | null>(null);
   let modalCustomInstructions = $state('');
+  let modalContextualFormattingDisabled = $state(false);
+  let modalAdvancedOpen = $state(false);
   let editingContextId = $state<number | null>(null);
   // Tone/cleanup dropdown menus render fixed-position at the top level (not
   // nested in the modal card) because the modal card and body both clip
@@ -515,6 +517,8 @@
     modalTone = editing?.tone ?? null;
     modalCleanupIntensity = editing?.cleanup_intensity ?? null;
     modalCustomInstructions = editing?.custom_instructions ?? '';
+    modalContextualFormattingDisabled = editing?.contextual_formatting_disabled ?? false;
+    modalAdvancedOpen = false;
     modalApps = [];
     modalAppQuery = '';
     modalWebsites = [];
@@ -693,12 +697,13 @@
           tone: modalTone,
           cleanupIntensity: modalCleanupIntensity,
           customInstructions: modalCustomInstructions.trim() || null,
+          contextualFormattingDisabled: modalContextualFormattingDisabled,
         });
         if (modalColor !== editing.color) {
           await invoke('update_context_color', { contextId: editing.id, color: modalColor });
         }
         contextsStore.contexts = contexts.map((context) => context.id === editing.id
-          ? { ...context, name, icon: modalIcon, tone: modalTone, cleanup_intensity: modalCleanupIntensity, custom_instructions: modalCustomInstructions.trim() || null, color: modalColor, updated_at: new Date().toISOString() }
+          ? { ...context, name, icon: modalIcon, tone: modalTone, cleanup_intensity: modalCleanupIntensity, custom_instructions: modalCustomInstructions.trim() || null, contextual_formatting_disabled: modalContextualFormattingDisabled, color: modalColor, updated_at: new Date().toISOString() }
           : context);
       } else {
         const created = await invoke<Context>('create_context', {
@@ -707,6 +712,7 @@
           tone: modalTone,
           cleanupIntensity: modalCleanupIntensity,
           customInstructions: modalCustomInstructions.trim() || null,
+          contextualFormattingDisabled: modalContextualFormattingDisabled,
         });
         createdContextId = created.id;
         if (modalColor) {
@@ -1425,6 +1431,33 @@
       ></textarea>
       <p class="field-hint">Sent directly to the cleanup model whenever this context group is active.</p>
 
+      <div class="advanced-disclosure">
+        <button
+          class="advanced-trigger"
+          type="button"
+          aria-expanded={modalAdvancedOpen}
+          aria-controls="context-advanced-settings"
+          onclick={() => modalAdvancedOpen = !modalAdvancedOpen}
+        >
+          <span>
+            <span class="advanced-trigger-label">Advanced</span>
+            <span class="advanced-trigger-hint">Context-specific behavior</span>
+          </span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        {#if modalAdvancedOpen}
+          <div id="context-advanced-settings" class="advanced-content" transition:slide={{ duration: motionMs(MOTION_MS.base), easing: cubicOut }}>
+            <div class="advanced-setting-row">
+              <div>
+                <span class="advanced-setting-label">Disable smart formatting</span>
+                <p>Skips automatic spacing and capitalization in this context.</p>
+              </div>
+              <Toggle checked={modalContextualFormattingDisabled} onchange={(value) => modalContextualFormattingDisabled = value} label="Disable smart formatting for this context" />
+            </div>
+          </div>
+        {/if}
+      </div>
+
       {#if contextModalMode === 'create'}
         <label class="field-label" for="context-app">Attach apps (optional)</label>
         {#if modalApps.length > 0}
@@ -1775,6 +1808,19 @@
   .char-counter.is-limit { color: var(--danger); }
   .custom-instructions-input { resize: vertical; font-size: 12.5px; max-height: 160px; }
   .field-hint { color: var(--ink-mute); font-size: 11px; margin: 3px 0 0; }
+  .advanced-disclosure { margin-top: 10px; }
+  .advanced-trigger { align-items: center; background: transparent; border: 0; border-radius: var(--r-sm); color: var(--ink-soft); cursor: pointer; display: flex; justify-content: space-between; padding: 7px 8px; text-align: left; transition: background-color 150ms ease, color 150ms ease; width: 100%; }
+  .advanced-trigger:hover { background: var(--control-hover); color: var(--ink); }
+  .advanced-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .advanced-trigger > span { display: flex; flex-direction: column; gap: 1px; }
+  .advanced-trigger-label { font-size: 11.5px; font-weight: 500; }
+  .advanced-trigger-hint { color: var(--ink-faint); font-size: 10.5px; font-weight: 400; }
+  .advanced-trigger svg { color: var(--ink-faint); flex-shrink: 0; transition: transform 180ms cubic-bezier(.22, 1, .36, 1); }
+  .advanced-trigger[aria-expanded='true'] svg { transform: rotate(180deg); }
+  .advanced-content { overflow: hidden; padding: 5px 0 1px; }
+  .advanced-setting-row { align-items: center; background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--r-sm); display: flex; gap: 16px; justify-content: space-between; padding: 10px 11px; }
+  .advanced-setting-label { color: var(--ink); display: block; font-size: 11.5px; font-weight: 500; }
+  .advanced-setting-row p { color: var(--ink-mute); font-size: 10.5px; line-height: 1.35; margin: 2px 0 0; }
   .domain-preview { display: flex; align-items: center; gap: 5px; color: var(--ink-faint); font-size: 11px; margin: 5px 0 0; }
   .domain-preview.is-valid { color: var(--ink-mute); }
   .domain-preview svg { color: var(--accent); flex-shrink: 0; }

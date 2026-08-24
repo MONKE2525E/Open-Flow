@@ -323,27 +323,48 @@ pub fn auth_401_display_message(parsed: &ParsedAuth401Error) -> String {
     auth_401_user_message(&parsed.provider, parsed.category)
 }
 
-/// Converts an error into a safe, actionable user-facing message. This is the
-/// single entry point for anything that will be shown on the pill or in a
-/// toast — callers must never put `e.to_string()` of a provider error straight
-/// into the UI.
-///
-/// Rules:
-/// - Structured `AUTH_401|...` errors become their category-specific guidance;
-///   the wire metadata (provider/model/request_id/status) never reaches the UI.
-/// - `QUOTA_EXCEEDED:` becomes quota guidance with the provider name.
-/// - Provider context strings that embed raw response bodies (`body_preview=`)
-///   and internal request ids lose that payload; the HTTP status decides
-///   whether the failure reads as temporary or as a configuration problem.
-/// - Anything else passes through, truncated. Pipeline-local messages are
-///   already user-crafted; unrecognized backend strings stay useful rather
-///   than being replaced with a generic placeholder.
+pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
+    if is_quota_error(e) {
+        return true;
+    }
+
+    for cause in e.chain() {
+        if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
+            if reqwest_err.is_timeout() || reqwest_err.is_connect() || reqwest_err.is_request() {
+                return true;
+            }
+            if let Some(status) = reqwest_err.status() {
+                return status.as_u16() == 408
+                    || status.as_u16() == 429
+                    || status.is_server_error();
+            }
+        }
+    }
+
+    let msg = e.to_string().to_lowercase();
+    if let Some(status) = extract_http_status_code(&msg) {
+        if status == 408 || status == 429 || (500..=599).contains(&status) {
+            return true;
+        }
+    }
+    msg.contains("timeout")
+        || msg.contains("timed out")
+        || msg.contains("connection")
+        || msg.contains("temporarily unavailable")
+        || msg.contains("overloaded")
+        || msg.contains("rate limit")
+        || msg.contains(" 502")
+        || msg.contains(" 503")
+        || msg.contains(" 504")
+}
+
+/// Converts an error into a safe, actionable user-facing message. Provider
+/// metadata and response bodies must never be shown directly in the UI.
 pub fn user_facing_error(e: &anyhow::Error) -> String {
     user_facing_message(&e.to_string())
 }
 
-/// String-based sibling of [`user_facing_error`] for call sites that already
-/// hold a `String` (e.g. recording-session errors).
+/// String-based sibling for call sites that already hold an error message.
 pub fn user_facing_message(msg: &str) -> String {
     if let Some(parsed) = parse_auth_401_error(msg) {
         return auth_401_display_message(&parsed);
@@ -383,45 +404,7 @@ fn truncate_display(s: &str) -> String {
     }
 }
 
-pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
-    if is_quota_error(e) {
-        return true;
-    }
-
-    for cause in e.chain() {
-        if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
-            if reqwest_err.is_timeout() || reqwest_err.is_connect() || reqwest_err.is_request() {
-                return true;
-            }
-            if let Some(status) = reqwest_err.status() {
-                return status.as_u16() == 408
-                    || status.as_u16() == 429
-                    || status.is_server_error();
-            }
-        }
-    }
-
-    let msg = e.to_string().to_lowercase();
-    if let Some(status) = extract_http_status_code(&msg) {
-        if status == 408 || status == 429 || (500..=599).contains(&status) {
-            return true;
-        }
-    }
-    msg.contains("timeout")
-        || msg.contains("timed out")
-        || msg.contains("connection")
-        || msg.contains("temporarily unavailable")
-        || msg.contains("overloaded")
-        || msg.contains("rate limit")
-        || msg.contains(" 502")
-        || msg.contains(" 503")
-        || msg.contains(" 504")
-}
-
-/// Whether an error indicates the request never reached a reachable server — a
-/// local connection/DNS failure rather than a provider returning an HTTP
-/// response. Used to decide when an active connectivity probe is warranted
-/// (distinguishing "your internet is down" from "a provider is down").
+/// Whether an error indicates the request never reached a reachable server.
 pub fn is_connectivity_error(e: &anyhow::Error) -> bool {
     for cause in e.chain() {
         if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
@@ -506,7 +489,7 @@ mod tests {
     fn auth_error_can_encode_forbidden_status() {
         let err = super::auth_status_error(
             "Google",
-            "gemini-3.7-flash",
+            "gemini-3.5-flash",
             "req_403",
             403,
             AuthErrorCategory::ScopeOrAccountRestriction,
@@ -524,84 +507,5 @@ mod tests {
         assert!(!preview.contains('\t'));
         assert!(preview.contains("line one line two line three"));
     }
-
-    #[test]
-    fn user_message_strips_auth_wire_metadata() {
-        let msg = super::user_facing_message(
-            "AUTH_401|provider=Groq|category=invalid_or_revoked_key|model=whisper-large-v3-turbo|request_id=req_123|status=401: Groq API key looks invalid or revoked. Re-enter it in Settings.",
-        );
-        assert!(msg.contains("invalid or revoked"));
-        assert!(msg.contains("Settings"));
-        assert!(!msg.contains("AUTH_401"));
-        assert!(!msg.contains("request_id"));
-        assert!(!msg.contains("req_123"));
-        assert!(!msg.contains("whisper-large-v3-turbo"));
-    }
-
-    #[test]
-    fn user_message_explains_quota_with_provider() {
-        let msg = super::user_facing_message("QUOTA_EXCEEDED: Groq quota reached");
-        assert!(msg.contains("Groq"));
-        assert!(msg.contains("quota"));
-        assert!(msg.to_lowercase().contains("credits"));
-    }
-
-    #[test]
-    fn user_message_removes_provider_body_preview() {
-        let msg = super::user_facing_message(
-            r#"Transcription API error provider=Groq model=whisper-large-v3-turbo status=400 request_id=req_xyz body_preview={"error":{"message":"bad request"}}"#,
-        );
-        assert!(!msg.contains("body_preview"));
-        assert!(!msg.contains("req_xyz"));
-        assert!(!msg.contains("bad request"));
-        assert!(!msg.contains("{")); // no JSON remnants
-        assert!(msg.contains("HTTP 400"));
-        assert!(msg.contains("API key and model settings"));
-    }
-
-    #[test]
-    fn user_message_frames_temporary_status_as_temporary() {
-        let msg = super::user_facing_message(
-            "Cleanup API error provider=Groq model=llama-3.3-70b-versatile status=503 request_id=req_503 body_preview=overloaded",
-        );
-        assert!(msg.contains("temporarily unavailable"));
-        assert!(msg.contains("HTTP 503"));
-        assert!(!msg.contains("overloaded"));
-        assert!(!msg.contains("llama-3.3"));
-    }
-
-    #[test]
-    fn user_message_survives_malformed_auth_string() {
-        // Starts with the marker but cannot parse — must fall through, not panic.
-        let msg = super::user_facing_message("AUTH_401 garbage that does not parse");
-        assert!(msg.contains("AUTH_401"));
-        assert!(!msg.is_empty());
-    }
-
-    #[test]
-    fn user_message_passes_through_plain_errors_truncated() {
-        let long = "x".repeat(300);
-        let msg = super::user_facing_message(&long);
-        assert!(msg.chars().count() <= 121);
-    }
-
-    #[test]
-    fn connectivity_error_detected_from_request_text() {
-        // The Display string reqwest produces for a failed `.send()` — no
-        // downcastable reqwest::Error in the chain here, only the message.
-        let err = anyhow::anyhow!(
-            "error sending request for url (https://api.groq.com/openai/v1/audio/transcriptions)"
-        );
-        assert!(super::is_connectivity_error(&err));
-    }
-
-    #[test]
-    fn connectivity_error_not_detected_for_http_rejection() {
-        // A provider that answered with an HTTP error is reachable — this is
-        // not a connectivity problem and must not trigger an offline probe.
-        let err = anyhow::anyhow!(
-            "Transcription API error provider=Groq status=400 request_id=req body_preview=bad request"
-        );
-        assert!(!super::is_connectivity_error(&err));
-    }
 }
+

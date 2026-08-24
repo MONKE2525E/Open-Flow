@@ -95,7 +95,11 @@ fn parse_vm_stat_free_bytes(text: &str) -> Option<u64> {
             .unwrap_or(0)
     };
     let free_pages = page_count("Pages free:");
-    if free_pages == 0 && !text.lines().any(|line| line.trim_start().starts_with("Pages free:")) {
+    if free_pages == 0
+        && !text
+            .lines()
+            .any(|line| line.trim_start().starts_with("Pages free:"))
+    {
         return None;
     }
     let reclaimable_pages = free_pages
@@ -534,4 +538,3 @@ pub fn free_bytes_for_path(path: &std::path::Path) -> Result<u64, String> {
         Ok(u64::MAX)
     }
 }
-

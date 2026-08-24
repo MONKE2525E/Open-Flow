@@ -22,7 +22,8 @@
     "test:smoke:state": "node tests/smoke/playwright-test-state.cjs",
     "macos:signing-identity": "bash scripts/macos/ensure-signing-identity.sh",
     "tauri:build:signed": "bash scripts/macos/build-signed.sh",
-    "tauri": "node scripts/tauri-cli.mjs"
+    "tauri": "node scripts/tauri-cli.mjs",
+    "test:unit": "vitest run src"
   },
   "keywords": [
     "dictation",
@@ -53,7 +54,8 @@
     "svelte": "^5.55.5",
     "svelte-check": "^4.4.8",
     "typescript": "^6.0.3",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.9",

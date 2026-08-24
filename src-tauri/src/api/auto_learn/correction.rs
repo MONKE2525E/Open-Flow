@@ -150,7 +150,10 @@ pub(super) fn is_common_word(word: &str) -> bool {
     )
 }
 
-pub(super) fn compute_correction_metrics(original: &WordToken, corrected: &WordToken) -> CorrectionMetrics {
+pub(super) fn compute_correction_metrics(
+    original: &WordToken,
+    corrected: &WordToken,
+) -> CorrectionMetrics {
     let a_len = original.norm.chars().count();
     let b_len = corrected.norm.chars().count();
     let max_len = a_len.max(b_len);
@@ -449,7 +452,10 @@ pub(super) fn align_word_ops(
     ops
 }
 
-pub(super) fn detect_span_corrections(original_span: &str, current_span: &str) -> Vec<CandidateCorrection> {
+pub(super) fn detect_span_corrections(
+    original_span: &str,
+    current_span: &str,
+) -> Vec<CandidateCorrection> {
     let original = tokenize_words(original_span);
     let current = tokenize_words(current_span);
 

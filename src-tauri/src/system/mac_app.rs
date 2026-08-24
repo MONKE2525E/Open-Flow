@@ -385,66 +385,129 @@ pub fn activate_pid(pid: i32) -> bool {
     })
 }
 
-/// Returns true if the general pasteboard contains non-text or rich-text formats
-/// that would be lost if we cleared and wrote back only plain text.
-pub fn pasteboard_has_non_text_formats() -> bool {
-    autoreleasepool(|_| unsafe {
-        let pb: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
-        if pb.is_null() {
-            return false;
-        }
-        let types: *mut AnyObject = msg_send![pb, types];
-        if types.is_null() {
-            return false;
-        }
-        let count: usize = msg_send![types, count];
-        for i in 0..count {
-            let item_type: *mut AnyObject = msg_send![types, objectAtIndex: i];
-            if let Some(type_str) = nsstring_to_string(item_type) {
-                let type_lower = type_str.to_lowercase();
-                if type_lower.contains("html")
-                    || type_lower.contains("rtf")
-                    || type_lower.contains("image")
-                    || type_lower.contains("pdf")
-                    || type_lower.contains("file-url")
-                    || type_lower == "public.tiff"
-                    || type_lower == "public.png"
-                    || type_lower == "public.jpeg"
-                    || type_lower == "public.url"
-                    || type_lower == "com.apple.webarchive"
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    })
+#[derive(Debug)]
+pub struct PasteboardSnapshot {
+    items: Vec<Vec<(String, Vec<u8>)>>,
 }
 
-/// Current plain-text contents of the general pasteboard, if any.
-pub fn pasteboard_get_string() -> Option<String> {
+/// Copies every pasteboard item and every advertised representation. Saving
+/// only the plain-text projection destroys rich text, images, file URLs, and
+/// multi-item clipboards when Verenu restores after Cmd+V.
+pub fn pasteboard_snapshot() -> Option<PasteboardSnapshot> {
     autoreleasepool(|_| unsafe {
         let pb: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
         if pb.is_null() {
             return None;
         }
-        let ty = NSString::from_str(PASTEBOARD_TYPE_STRING);
-        let s: *mut AnyObject = msg_send![pb, stringForType: &*ty];
-        nsstring_to_string(s)
+        let pasteboard_items: *mut AnyObject = msg_send![pb, pasteboardItems];
+        if pasteboard_items.is_null() {
+            return Some(PasteboardSnapshot { items: Vec::new() });
+        }
+        let item_count: usize = msg_send![pasteboard_items, count];
+        let mut items = Vec::with_capacity(item_count);
+        for item_index in 0..item_count {
+            let item: *mut AnyObject = msg_send![pasteboard_items, objectAtIndex: item_index];
+            let types: *mut AnyObject = msg_send![item, types];
+            if types.is_null() {
+                items.push(Vec::new());
+                continue;
+            }
+            let type_count: usize = msg_send![types, count];
+            let mut representations = Vec::with_capacity(type_count);
+            for type_index in 0..type_count {
+                let item_type: *mut AnyObject = msg_send![types, objectAtIndex: type_index];
+                let Some(type_name) = nsstring_to_string(item_type) else {
+                    continue;
+                };
+                let data: *mut AnyObject = msg_send![item, dataForType: item_type];
+                if data.is_null() {
+                    continue;
+                }
+                let length: usize = msg_send![data, length];
+                let bytes: *const u8 = msg_send![data, bytes];
+                let value = if length == 0 {
+                    Vec::new()
+                } else if bytes.is_null() {
+                    continue;
+                } else {
+                    std::slice::from_raw_parts(bytes, length).to_vec()
+                };
+                representations.push((type_name, value));
+            }
+            items.push(representations);
+        }
+        Some(PasteboardSnapshot { items })
     })
 }
 
-/// Replace the general pasteboard with `s` as plain text.
-pub fn pasteboard_set_string(s: &str) {
+impl PasteboardSnapshot {
+    /// Restores only if nobody changed the pasteboard after Verenu wrote its
+    /// temporary payload. This prevents a user copy made during a slow paste
+    /// from being overwritten by the delayed restore.
+    pub fn restore_if_unchanged(self, expected_change_count: isize) -> bool {
+        autoreleasepool(|_| unsafe {
+            let pb: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
+            if pb.is_null() {
+                return false;
+            }
+            let current_change_count: isize = msg_send![pb, changeCount];
+            if current_change_count != expected_change_count {
+                log::debug!(
+                    "pasteboard restore skipped: expected change_count={} current={}",
+                    expected_change_count,
+                    current_change_count
+                );
+                return false;
+            }
+
+            let objects: *mut AnyObject = msg_send![class!(NSMutableArray), array];
+            let was_empty = self.items.is_empty();
+            for representations in self.items {
+                let item: *mut AnyObject = msg_send![class!(NSPasteboardItem), alloc];
+                let item: *mut AnyObject = msg_send![item, init];
+                for (type_name, value) in representations {
+                    let ty = NSString::from_str(&type_name);
+                    let data: *mut AnyObject = if value.is_empty() {
+                        msg_send![class!(NSData), data]
+                    } else {
+                        msg_send![
+                            class!(NSData),
+                            dataWithBytes: value.as_ptr(),
+                            length: value.len()
+                        ]
+                    };
+                    let _ok: bool = msg_send![item, setData: data, forType: &*ty];
+                }
+                let _: () = msg_send![objects, addObject: item];
+                let _: () = msg_send![item, release];
+            }
+            let _: isize = msg_send![pb, clearContents];
+            if was_empty {
+                true
+            } else {
+                let ok: bool = msg_send![pb, writeObjects: objects];
+                ok
+            }
+        })
+    }
+}
+
+pub fn pasteboard_write_string(s: &str) -> Result<isize, isize> {
     autoreleasepool(|_| unsafe {
         let pb: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
         if pb.is_null() {
-            return;
+            return Err(-1);
         }
         let _: isize = msg_send![pb, clearContents];
         let value = NSString::from_str(s);
         let ty = NSString::from_str(PASTEBOARD_TYPE_STRING);
-        let _ok: bool = msg_send![pb, setString: &*value, forType: &*ty];
+        let ok: bool = msg_send![pb, setString: &*value, forType: &*ty];
+        let change_count: isize = msg_send![pb, changeCount];
+        if ok {
+            Ok(change_count)
+        } else {
+            Err(change_count)
+        }
     })
 }
 

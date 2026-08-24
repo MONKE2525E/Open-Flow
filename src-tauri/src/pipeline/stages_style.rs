@@ -38,6 +38,9 @@ pub(super) fn apply_app_style_overrides(
     if let Some(intensity) = context_intensity.or(mapping_intensity) {
         cfg.cleanup_intensity = intensity.to_owned();
     }
+    if context.is_some_and(|context| context.contextual_formatting_disabled) {
+        cfg.contextual_formatting_enabled = false;
+    }
 
     let context_tone = context
         .and_then(|c| c.tone.as_deref())

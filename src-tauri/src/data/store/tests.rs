@@ -114,8 +114,10 @@ fn setting_audit_empty_store_resolves_to_documented_defaults() {
     assert_eq!(cfg.cleanup_intensity, "medium");
     assert!(!cfg.app_context_hint);
     assert!(!cfg.auto_learn_enabled);
-    assert!(cfg.contextual_caps_enabled, "contextual caps default on");
-    assert!(cfg.auto_spacing_enabled, "auto spacing default on");
+    assert!(
+        cfg.contextual_formatting_enabled,
+        "contextual formatting default on"
+    );
     assert!(!cfg.caps_lock_uppercase_enabled);
     assert!(!cfg.advanced_model_ui);
     assert_eq!(cfg.local_model_memory_policy, "unload_after_5m");

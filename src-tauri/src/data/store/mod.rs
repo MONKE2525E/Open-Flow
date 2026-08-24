@@ -70,6 +70,21 @@ impl SettingsHandle {
         Ok(())
     }
 
+    pub fn set_many<I, K>(&self, values: I) -> Result<(), String>
+    where
+        I: IntoIterator<Item = (K, Value)>,
+        K: Into<String>,
+    {
+        let mut settings = self
+            .values
+            .lock()
+            .map_err(|_| "Settings lock was poisoned".to_string())?;
+        for (key, value) in values {
+            settings.insert(key.into(), value);
+        }
+        Ok(())
+    }
+
     pub fn delete(&self, key: &str) -> Result<Option<Value>, String> {
         Ok(self
             .values
@@ -209,14 +224,21 @@ pub const LEGACY_FEATURES_ENABLED: &str = "legacy_features_enabled";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
 pub const AUTO_LEARN_EVENT_MODE: &str = "auto_learn_event_mode";
+pub const CONTEXTUAL_FORMATTING: &str = "contextual_formatting_enabled";
+/// Legacy mirror of [`CONTEXTUAL_FORMATTING`], still written on every save so a
+/// downgrade to an older build keeps working. Read only by the repair proposer.
 pub const CONTEXTUAL_CAPS: &str = "contextual_caps_enabled";
+/// Legacy mirror of [`CONTEXTUAL_FORMATTING`]. See [`CONTEXTUAL_CAPS`].
 pub const AUTO_SPACING: &str = "auto_spacing_enabled";
 pub const APPEARANCE_MODE: &str = "appearance_mode";
 pub const FORCE_SETUP_ON_LAUNCH: &str = "force_setup_on_launch";
 pub const ADVANCED_MODEL_UI: &str = "advanced_model_ui";
 pub const CLEANUP_PROMPT_OVERRIDES: &str = "cleanup_prompt_overrides";
+/// Per-provider snapshot of the live model lists, written only by the model
+/// catalog store. Derived cache state, so it is readable but never exported —
+/// one machine's stale view of a provider must not travel to another.
+pub const PROVIDER_MODEL_CACHE: &str = "provider_model_cache";
 pub const CREDENTIALS_MIGRATED: &str = "credentials_migrated_v1";
-pub const MACOS_CLIPBOARD_SNIFF: &str = "macos_clipboard_sniff_enabled";
 pub const UPDATE_DISMISSED_VERSION: &str = "update_dismissed_version";
 pub const UPDATE_NOTIFIED_VERSION: &str = "update_notified_version";
 pub const BETA_UPDATES_ENABLED: &str = "beta_updates_enabled";
@@ -270,3 +292,29 @@ mod config;
 mod tests;
 
 pub use config::*;
+
+/// Folds the two legacy booleans into the single `contextual_formatting_enabled`
+/// setting they were merged into.
+///
+/// Runs once at launch and is idempotent: if the new key already exists it does
+/// nothing. Old installs get `caps AND spacing` — formatting is only considered
+/// on if the user had both halves on, so nobody who deliberately turned one off
+/// gets it silently switched back on. The legacy keys are left in place as
+/// downgrade mirrors; every later save rewrites all three.
+pub fn migrate_contextual_formatting(settings: &SettingsHandle) -> Result<(), String> {
+    if settings.get(CONTEXTUAL_FORMATTING).is_some() {
+        return Ok(());
+    }
+
+    let legacy = |key: &str| settings.get(key).and_then(|v| v.as_bool());
+    let (caps, spacing) = (legacy(CONTEXTUAL_CAPS), legacy(AUTO_SPACING));
+    if caps.is_none() && spacing.is_none() {
+        // Fresh install: no legacy value to fold, so leave the key unset and
+        // let the normal default apply.
+        return Ok(());
+    }
+
+    let merged = caps.unwrap_or(true) && spacing.unwrap_or(true);
+    settings.set(CONTEXTUAL_FORMATTING, Value::Bool(merged))?;
+    settings.save()
+}

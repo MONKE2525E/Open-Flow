@@ -61,12 +61,15 @@ pub fn load_engine(
     model_path: &Path,
 ) -> anyhow::Result<LoadedLocalSttEngine> {
     match manifest.engine_type {
-        LocalSttEngineType::Parakeet => Ok(LoadedLocalSttEngine::Parakeet(
-            ParakeetModel::load(model_path, &Quantization::Int8)?,
-        )),
-        LocalSttEngineType::Moonshine => Ok(LoadedLocalSttEngine::Moonshine(
-            MoonshineModel::load(model_path, MoonshineVariant::Base, &Quantization::default())?,
-        )),
+        LocalSttEngineType::Parakeet => Ok(LoadedLocalSttEngine::Parakeet(ParakeetModel::load(
+            model_path,
+            &Quantization::Int8,
+        )?)),
+        LocalSttEngineType::Moonshine => Ok(LoadedLocalSttEngine::Moonshine(MoonshineModel::load(
+            model_path,
+            MoonshineVariant::Base,
+            &Quantization::default(),
+        )?)),
         LocalSttEngineType::MoonshineStreaming => Ok(LoadedLocalSttEngine::MoonshineStreaming(
             StreamingModel::load(model_path, MOONSHINE_STREAMING_THREADS, &Quantization::Int8)?,
         )),
