@@ -617,7 +617,10 @@ def kill_port_owner(port: int) -> bool:
         " -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess; "
         "if ($id) { Stop-Process -Id $id -Force; 'killed' } } catch {}"
     )
-    proc = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True)
+    try:
+        proc = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=10)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
     return "killed" in proc.stdout
 
 
