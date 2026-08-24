@@ -677,7 +677,7 @@ def execute_plan(entries: Sequence[TestEntry], args: argparse.Namespace) -> Dict
     no_server = [test for test in entries if test.suite != "preflight" and not test.needs_server]
     server_tests = [test for test in entries if test.needs_server]
     results.update(run_group(preflight, url, args.verbose, False, args.workers))
-    failed_preflight = [test for test in preflight if results.get(test.id) and results[test.id].failed and test.required]
+    failed_preflight = [test for test in preflight if results.get(test.id) and results[test.id].status == "failed" and test.required]
     if failed_preflight:
         reason = "Required preflight check failed; downstream suites were not started"
         for test in entries:
