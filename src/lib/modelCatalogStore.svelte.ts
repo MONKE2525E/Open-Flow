@@ -193,7 +193,7 @@ function persist() {
   writeChain = writeChain
     .then(() => saveSetting('provider_model_cache', snapshot))
     .catch((error) => console.warn('Failed to persist model catalog cache', error));
-  return writeChain;
+  return writeChain.then(() => undefined);
 }
 
 export function refreshCatalog(provider: ProviderId, tracked: string[], now = Date.now()) {
@@ -218,7 +218,7 @@ export function refreshCatalog(provider: ProviderId, tracked: string[], now = Da
       );
     })
     .then(() => {
-      persist();
+      return persist();
     })
     .finally(() => {
       inFlight.delete(provider);

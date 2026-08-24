@@ -206,7 +206,7 @@ pub fn parse_google_models_page(body: &str) -> Result<(Vec<String>, Option<Strin
                 })
         })
         .filter_map(|entry| entry.get("name").and_then(|n| n.as_str()))
-        .map(|name| name.trim_start_matches("models/").trim().to_string())
+        .map(|name| name.strip_prefix("models/").unwrap_or(name).trim().to_string())
         .filter(|id| !id.is_empty())
         .collect();
 

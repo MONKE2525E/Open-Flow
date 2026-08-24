@@ -300,7 +300,7 @@ export function suggestReplacement(
   const dead = catalogEntry(provider, model);
   if (!dead) return null;
 
-  const ranked = curatedRows(ctx)
+  const ranked = curatedRows({ ...ctx, task })
     .filter((row) => row.state === 'ready' && row.provider === provider && row.id !== model)
     .map((row) => {
       const entry = catalogEntry(provider, row.id)!;

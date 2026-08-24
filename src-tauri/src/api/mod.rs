@@ -358,6 +358,71 @@ pub fn is_retryable_provider_error(e: &anyhow::Error) -> bool {
         || msg.contains(" 504")
 }
 
+/// Converts an error into a safe, actionable user-facing message. Provider
+/// metadata and response bodies must never be shown directly in the UI.
+pub fn user_facing_error(e: &anyhow::Error) -> String {
+    user_facing_message(&e.to_string())
+}
+
+/// String-based sibling for call sites that already hold an error message.
+pub fn user_facing_message(msg: &str) -> String {
+    if let Some(parsed) = parse_auth_401_error(msg) {
+        return auth_401_display_message(&parsed);
+    }
+    if msg.starts_with("QUOTA_EXCEEDED:") {
+        let provider = msg
+            .strip_prefix("QUOTA_EXCEEDED:")
+            .unwrap_or("")
+            .split_whitespace()
+            .next()
+            .unwrap_or("The provider");
+        return format!(
+            "{provider} quota reached. Wait for it to reset or add credits, then try again."
+        );
+    }
+    if msg.contains("body_preview=") || msg.contains("request_id=") {
+        return match extract_http_status_code(msg) {
+            Some(status @ (408 | 429 | 500..=599)) => format!(
+                "The provider is temporarily unavailable (HTTP {status}). Wait a moment, then try again."
+            ),
+            Some(status) => format!(
+                "The provider rejected the request (HTTP {status}). Check your API key and model settings, then try again."
+            ),
+            None => "The provider rejected the request. Check your API key and model settings, then try again."
+                .to_string(),
+        };
+    }
+    truncate_display(msg)
+}
+
+fn truncate_display(s: &str) -> String {
+    let s = s.trim();
+    if s.chars().count() > 120 {
+        format!("{}…", s.chars().take(117).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
+/// Whether an error indicates the request never reached a reachable server.
+pub fn is_connectivity_error(e: &anyhow::Error) -> bool {
+    for cause in e.chain() {
+        if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
+            if reqwest_err.is_connect() || reqwest_err.is_request() {
+                return true;
+            }
+        }
+    }
+
+    let msg = e.to_string().to_lowercase();
+    msg.contains("error sending request")
+        || msg.contains("dns error")
+        || msg.contains("connection reset")
+        || msg.contains("connection refused")
+        || msg.contains("network is unreachable")
+        || msg.contains("failed to resolve")
+}
+
 fn extract_http_status_code(msg: &str) -> Option<u16> {
     for marker in ["status=", "status:"] {
         if let Some(idx) = msg.find(marker) {

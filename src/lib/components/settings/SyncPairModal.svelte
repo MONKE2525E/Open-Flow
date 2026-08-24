@@ -15,6 +15,12 @@
 
   const incoming = $derived(syncStore.incoming);
 
+  $effect(() => {
+    incoming;
+    code = '';
+    error = '';
+  });
+
   async function respond(approve: boolean): Promise<void> {
     if (!incoming || busy) return;
     busy = true;
@@ -91,7 +97,7 @@
       maxlength={6}
       spellcheck="false"
       onkeydown={(e) => {
-        if (e.key === 'Enter' && code.trim().length === 6) void respond(true);
+        if (e.key === 'Enter' && !busy && code.replace(/\s/g, '').length === 6) void respond(true);
       }}
     />
     {#if error}

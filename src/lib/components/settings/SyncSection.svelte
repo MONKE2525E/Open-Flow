@@ -26,7 +26,6 @@
   let statusKind = $state<'' | 'ok' | 'err'>('');
 
   let confirmRemove = $state<PairedDevice | null>(null);
-  let removeButton = $state<HTMLButtonElement | null>(null);
   let cancelRemoveButton = $state<HTMLButtonElement | null>(null);
 
   const discovered = $derived(syncStore.status?.discovered ?? []);
@@ -377,7 +376,6 @@
     use:modalFocusTrap={{
       active: !!confirmRemove,
       initialFocus: () => cancelRemoveButton,
-      restoreFocus: () => removeButton,
     }}
     in:modalCard={{ duration: motionMs(MOTION_MS.panel) }}
     out:modalCard={{ duration: motionMs(MOTION_MS.fast) }}
@@ -396,7 +394,6 @@
         Cancel
       </button>
       <button
-        bind:this={removeButton}
         class="btn-danger btn-compact"
         onclick={() => void removeDevice()}
         disabled={removingUuid !== ''}

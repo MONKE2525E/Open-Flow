@@ -703,7 +703,7 @@
           await invoke('update_context_color', { contextId: editing.id, color: modalColor });
         }
         contextsStore.contexts = contexts.map((context) => context.id === editing.id
-          ? { ...context, name, icon: modalIcon, tone: modalTone, cleanup_intensity: modalCleanupIntensity, custom_instructions: modalCustomInstructions.trim() || null, color: modalColor, updated_at: new Date().toISOString() }
+          ? { ...context, name, icon: modalIcon, tone: modalTone, cleanup_intensity: modalCleanupIntensity, custom_instructions: modalCustomInstructions.trim() || null, contextual_formatting_disabled: modalContextualFormattingDisabled, color: modalColor, updated_at: new Date().toISOString() }
           : context);
       } else {
         const created = await invoke<Context>('create_context', {
