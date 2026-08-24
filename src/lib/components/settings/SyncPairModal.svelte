@@ -47,6 +47,12 @@
     error = '';
   }
 
+  $effect(() => {
+    incoming;
+    code = '';
+    error = '';
+  });
+
   async function respond(approve: boolean): Promise<void> {
     if (!incoming || busy) return;
     busy = true;
@@ -132,6 +138,7 @@
     </div>
 
     <label class="pair-label" for="pair-code-input">Enter the code shown there</label>
+<<<<<<< New base: Consolidate outstanding workspace work for dev
 
     {#key shake}
       <div class="code-field" class:is-invalid={!!error}>
@@ -157,6 +164,43 @@
             </span>
           {/each}
         </div>
+||||||| Common ancestor
+    <input
+      id="pair-code-input"
+      bind:this={codeInput}
+      bind:value={code}
+      class="ui-input pair-code"
+      inputmode="numeric"
+      autocomplete="off"
+      placeholder="000000"
+      maxlength={6}
+      spellcheck="false"
+      onkeydown={(e) => {
+        if (e.key === 'Enter' && code.trim().length === 6) void respond(true);
+      }}
+    />
+    {#if error}
+      <div class="pair-error" role="alert" in:fade={{ duration: motionMs(MOTION_MS.fast) }}>
+        {error}
+=======
+    <input
+      id="pair-code-input"
+      bind:this={codeInput}
+      bind:value={code}
+      class="ui-input pair-code"
+      inputmode="numeric"
+      autocomplete="off"
+      placeholder="000000"
+      maxlength={6}
+      spellcheck="false"
+      onkeydown={(e) => {
+        if (e.key === 'Enter' && !busy && code.replace(/\s/g, '').length === 6) void respond(true);
+      }}
+    />
+    {#if error}
+      <div class="pair-error" role="alert" in:fade={{ duration: motionMs(MOTION_MS.fast) }}>
+        {error}
+>>>>>>> Current commit: Address AI review findings
       </div>
     {/key}
 
