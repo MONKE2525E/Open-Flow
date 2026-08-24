@@ -206,7 +206,12 @@
     }
 
     customError = '';
-    onAddCustomModel(modelId(customProvider, value));
+    const selected = modelId(customProvider, value);
+    if (mode === 'fallback') {
+      onAddFallback(selected);
+    } else {
+      onAddCustomModel(selected);
+    }
     onClose();
   }
 

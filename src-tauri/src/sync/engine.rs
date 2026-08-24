@@ -35,7 +35,8 @@ use super::store::SyncPeer;
 /// Where a snapshot send has gotten to. Held by the sender across batches.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SnapshotProgress {
-    /// 0 = small content tables, 1 = transcriptions, 2 = api_calls, 3 = done.
+    /// 0 = dictionary, 1 = snippets, 2 = contexts, 3 = transcriptions,
+    /// 4 = api_calls, 5 = done.
     pub stage: u8,
     pub last_id: i64,
 }
@@ -73,8 +74,9 @@ pub const SYNCABLE_SETTINGS: &[&str] = &[
     store::APP_CONTEXT_HINT,
     store::AUTO_LEARN_ENABLED,
     store::AUTO_LEARN_EVENT_MODE,
-    store::CONTEXTUAL_CAPS,
-    store::AUTO_SPACING,
+    // CONTEXTUAL_CAPS and AUTO_SPACING are legacy mirrors of this canonical
+    // key. They are written together when CONTEXTUAL_FORMATTING changes and
+    // must not be independently LWW-merged.
     store::CONTEXTUAL_FORMATTING,
     store::APPEARANCE_MODE,
     store::ADVANCED_MODEL_UI,
@@ -509,9 +511,8 @@ pub fn collect_ops(
 ) -> Result<(Vec<SyncOp>, i64, bool)> {
     let limit = limit.max(1) as i64;
     if snapshot {
-        // Full state for a new/rejoining peer. Content tables are small and
-        // sent in the first chunk; history and api usage stream in keyset-
-        // paginated chunks so memory stays bounded on big libraries.
+        // Full state for a new/rejoining peer. Every table is keyset-paginated
+        // so the wire batch and sender memory stay bounded on big libraries.
         let mut ops = Vec::new();
         let now = sync_store::now_ms();
         let origin = sync_store::self_uuid(conn)?.unwrap_or_default();
@@ -523,88 +524,65 @@ pub fn collect_ops(
         let mut push = |table: &str,
                         uuid: String,
                         payload: Option<serde_json::Value>,
+                        stamp: Option<(i64, String, i64)>,
                         ops: &mut Vec<SyncOp>| {
-            origin_seq += 1;
+            let (ts_ms, op_origin, op_seq) = stamp.unwrap_or_else(|| {
+                origin_seq += 1;
+                (now, origin.clone(), origin_seq)
+            });
+            if op_origin == origin {
+                origin_seq = origin_seq.max(op_seq);
+            }
             ops.push(SyncOp {
                 table: table.to_string(),
                 row_uuid: uuid,
                 op: "upsert".to_string(),
-                ts_ms: now,
-                origin: origin.clone(),
-                origin_seq,
+                ts_ms,
+                origin: op_origin,
+                origin_seq: op_seq,
                 payload,
             });
         };
 
-        if progress.stage == 0 {
-            let mut stmt = conn.prepare("SELECT uuid FROM dictionary ORDER BY id")?;
-            let uuids = stmt
-                .query_map([], |r| r.get::<_, String>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            for uuid in uuids {
-                let payload = dictionary_payload(conn, &uuid)?;
-                push("dictionary", uuid, payload, &mut ops);
-            }
-            let mut stmt = conn.prepare("SELECT uuid FROM snippets ORDER BY id")?;
-            let uuids = stmt
-                .query_map([], |r| r.get::<_, String>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            for uuid in uuids {
-                let payload = snippet_payload(conn, &uuid)?;
-                push("snippets", uuid, payload, &mut ops);
-            }
-            let mut stmt = conn.prepare("SELECT uuid FROM contexts ORDER BY id")?;
-            let uuids = stmt
-                .query_map([], |r| r.get::<_, String>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            for uuid in uuids {
-                let payload = context_aggregate(conn, &uuid)?;
-                push("contexts", uuid, payload, &mut ops);
-            }
-            progress.stage = 1;
-        }
-
-        // History tables stream in keyset-paginated chunks.
-        while (ops.len() as i64) < limit && progress.stage <= 2 {
+        while (ops.len() as i64) < limit && progress.stage <= 4 {
             let capacity = limit - ops.len() as i64;
             let chunk = capacity.min(SNAPSHOT_ROW_CHUNK);
             let stage = progress.stage;
-            let rows: Vec<(i64, String)> = if stage == 1 {
-                let mut stmt = conn.prepare(
-                    "SELECT id, uuid FROM transcriptions WHERE id > ?1 ORDER BY id LIMIT ?2",
-                )?;
-                let collected = stmt
-                    .query_map(params![progress.last_id, chunk], |r| {
-                        Ok((r.get(0)?, r.get(1)?))
-                    })?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                collected
-            } else {
-                let mut stmt = conn.prepare(
-                    "SELECT id, uuid FROM api_calls WHERE id > ?1 ORDER BY id LIMIT ?2",
-                )?;
-                let collected = stmt
-                    .query_map(params![progress.last_id, chunk], |r| {
-                        Ok((r.get(0)?, r.get(1)?))
-                    })?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                collected
+            let table = match stage {
+                0 => "dictionary",
+                1 => "snippets",
+                2 => "contexts",
+                3 => "transcriptions",
+                4 => "api_calls",
+                _ => unreachable!("snapshot stage is complete"),
             };
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, uuid FROM {table} WHERE id > ?1 ORDER BY id LIMIT ?2"
+            ))?;
+            let rows = stmt
+                .query_map(params![progress.last_id, chunk], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
             let fetched = rows.len() as i64;
             for (id, uuid) in rows {
                 progress.last_id = id;
-                let payload = if stage == 1 {
-                    transcription_payload(conn, &uuid)?
-                } else {
-                    api_call_payload(conn, &uuid)?
+                let payload = match table {
+                    "dictionary" => dictionary_payload(conn, &uuid)?,
+                    "snippets" => snippet_payload(conn, &uuid)?,
+                    "contexts" => context_aggregate(conn, &uuid)?,
+                    "transcriptions" => transcription_payload(conn, &uuid)?,
+                    "api_calls" => api_call_payload(conn, &uuid)?,
+                    _ => unreachable!("snapshot table is complete"),
                 };
-                push(if stage == 1 { "transcriptions" } else { "api_calls" }, uuid, payload, &mut ops);
+                let stamp = latest_stamp(conn, table, &uuid)?;
+                push(table, uuid, payload, stamp, &mut ops);
             }
             if fetched < chunk {
                 // This table is exhausted; move to the next stage.
                 progress.stage += 1;
                 progress.last_id = 0;
-                if progress.stage > 2 {
+                if progress.stage > 4 {
                     let cursor = sync_store::max_log_seq(conn)?;
                     return Ok((ops, cursor, true));
                 }
@@ -613,7 +591,7 @@ pub fn collect_ops(
                 return Ok((ops, 0, false));
             }
         }
-        if progress.stage <= 2 {
+        if progress.stage <= 4 {
             // Capacity exhausted mid-stream.
             return Ok((ops, 0, false));
         }

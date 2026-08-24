@@ -13,8 +13,9 @@ use sha2::{Digest, Sha256};
 use super::secrets;
 
 const CERT_FILE: &str = "sync-identity.der";
-/// Certificate lifetime in days; re-issued lazily shortly before expiry.
-const CERT_DAYS: i64 = 365 * 10;
+/// Certificate lifetime in years; re-issued lazily shortly before expiry.
+const CERT_YEARS: i64 = 10;
+const CERT_DAYS: i64 = 365 * CERT_YEARS;
 /// Re-issue when the stored cert is older than this fraction of its lifetime.
 const REISSUE_FRACTION: f64 = 0.9;
 
@@ -133,7 +134,7 @@ fn create_identity(known_uuid: Option<String>) -> Result<DeviceIdentity> {
     let this_year = time_year() as i64;
     params.not_before = rcgen::date_time_ymd((this_year - 1) as i32, time_month(), 1.min(time_day()));
     params.not_after = rcgen::date_time_ymd(
-        (this_year - 1 + CERT_DAYS) as i32,
+        (this_year - 1 + CERT_YEARS) as i32,
         time_month(),
         1.min(time_day()),
     );

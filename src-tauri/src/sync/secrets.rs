@@ -75,10 +75,25 @@ fn store_fallback(key_der: &[u8]) -> Result<(), String> {
     let path = fallback_path().ok_or("no app data dir")?;
     #[cfg(unix)]
     {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+
+        // Set the mode at creation time as well as after opening an existing
+        // file, so a newly generated identity is never briefly world-readable.
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true).mode(0o600);
+        let mut file = options
+            .open(&path)
+            .map_err(|e| format!("fallback key open failed: {e}"))?;
+        file.write_all(key_der)
+            .map_err(|e| format!("fallback key write failed: {e}"))?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("fallback key permission update failed: {e}"))?;
     }
-    std::fs::write(&path, key_der).map_err(|e| format!("fallback key write failed: {e}"))
+    #[cfg(not(unix))]
+    std::fs::write(&path, key_der).map_err(|e| format!("fallback key write failed: {e}"))?;
+    Ok(())
 }
 
 fn load_fallback() -> Option<Vec<u8>> {

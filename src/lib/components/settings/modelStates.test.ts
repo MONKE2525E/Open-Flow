@@ -128,6 +128,16 @@ describe('unverifiedRows', () => {
     ]);
   });
 
+  it('filters non-task modalities with word-boundary model names', () => {
+    const cache: ModelCatalogCache = {
+      groq: providerCache({
+        ids: ['model-stt', 'tts-1', 'text-embedding-3-small', 'llama-chat'],
+      }),
+    };
+    expect(unverifiedRows(ctx({ cache })).map((r) => r.id)).toEqual(['model-stt']);
+    expect(unverifiedRows(ctx({ task: 'cleanup', cache })).map((r) => r.id)).toEqual(['llama-chat']);
+  });
+
   it('stays silent while a provider has no trustworthy list', () => {
     const cache: ModelCatalogCache = { groq: providerCache({ ids: ['x'], lastError: 'boom' }) };
     expect(unverifiedRows(ctx({ cache }))).toEqual([]);

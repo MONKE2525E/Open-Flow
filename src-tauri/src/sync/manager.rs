@@ -479,12 +479,13 @@ impl SyncManager {
             .get(&peer_uuid)
             .cloned()
             .ok_or_else(|| anyhow!("that device is no longer visible on the network"))?;
-        let generation = self.inner.pairing_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        let generation;
         {
             let mut pending = self.inner.pending.lock().await;
             if pending.is_some() {
                 return Err(anyhow!("a pairing is already in progress"));
             }
+            generation = self.inner.pairing_generation.fetch_add(1, Ordering::Relaxed) + 1;
             *pending = Some(PendingPairing::Outgoing {
                 peer_uuid: peer_uuid.clone(),
                 peer_name: target.name.clone(),
@@ -607,9 +608,11 @@ impl SyncManager {
                     peer_uuid,
                     peer_name,
                     spake_msg,
-                    mut stream,
-                    ..
+                    stream,
+                    created,
+                    generation,
                 }) => {
+                    let mut stream = stream;
                     if !approve {
                         let _ = send_message(
                             &mut stream,
@@ -627,31 +630,61 @@ impl SyncManager {
                             .ok();
                         return Ok(());
                     }
-                    (peer_uuid, peer_name, spake_msg, stream)
+                    (peer_uuid, peer_name, spake_msg, stream, created, generation)
                 }
                 Some(PendingPairing::Outgoing { .. }) | None => {
                     return Err(anyhow!("no incoming pairing request to respond to"));
                 }
             }
         };
-        let (peer_uuid, peer_name, spake_msg, mut stream) = pending;
-        let identity = self.identity_exchange()?;
-        let result = tokio::time::timeout(
-            PAIRING_TIMEOUT,
-            async {
-                let (responder_msg, cipher) = pairing::responder_start(&code, &spake_msg)?;
-                pairing::responder_exchange(
-                    &mut stream,
-                    &cipher,
-                    responder_msg,
-                    &identity,
-                    &peer_uuid,
+        let (peer_uuid, peer_name, spake_msg, mut stream, created, generation) = pending;
+        let identity = match self.identity_exchange() {
+            Ok(identity) => identity,
+            Err(err) => {
+                self.restore_incoming_pairing(
+                    peer_uuid.clone(),
+                    peer_name.clone(),
+                    spake_msg.clone(),
+                    stream,
+                    created,
+                    generation,
                 )
-                .await
-            },
+                .await;
+                return Err(err);
+            }
+        };
+        let (responder_msg, cipher) = match pairing::responder_start(&code, &spake_msg) {
+            Ok(result) => result,
+            Err(err) => {
+                // A mistyped code is retryable; the SPAKE exchange has not
+                // touched the stream yet, so keep the incoming request alive.
+                self.restore_incoming_pairing(
+                    peer_uuid.clone(),
+                    peer_name.clone(),
+                    spake_msg.clone(),
+                    stream,
+                    created,
+                    generation,
+                )
+                .await;
+                return Err(err);
+            }
+        };
+        let result = match tokio::time::timeout(
+            PAIRING_TIMEOUT,
+            pairing::responder_exchange(
+                &mut stream,
+                &cipher,
+                responder_msg,
+                &identity,
+                &peer_uuid,
+            ),
         )
         .await
-        .map_err(|_| anyhow!("pairing timed out"))?;
+        {
+            Ok(result) => result,
+            Err(_) => Err(anyhow!("pairing timed out")),
+        };
         match result {
             Ok(outcome) => {
                 self.complete_pairing(outcome, u64::MAX).await?;
@@ -675,6 +708,31 @@ impl SyncManager {
             }
         }
         Ok(())
+    }
+
+    async fn restore_incoming_pairing(
+        &self,
+        peer_uuid: String,
+        peer_name: String,
+        spake_msg: Vec<u8>,
+        stream: Box<TlsStream<tokio::net::TcpStream>>,
+        created: Instant,
+        generation: u64,
+    ) {
+        let mut pending = self.inner.pending.lock().await;
+        if pending.is_none()
+            && self.inner.pairing_generation.load(Ordering::Relaxed) == generation
+        {
+            *pending = Some(PendingPairing::Incoming {
+                peer_uuid,
+                peer_name,
+                spake_msg,
+                stream,
+                created,
+                generation,
+            });
+            self.inner.emit_devices_changed();
+        }
     }
 
     async fn complete_pairing(&self, outcome: IdentityExchange, generation: u64) -> Result<()> {
@@ -1021,7 +1079,7 @@ impl SyncManager {
             ));
         }
 
-        let host = ManagerHost::new(&self.inner, peer.device_uuid.clone());
+        let host = ManagerHost::new(&self.inner);
         self.set_status(&peer.device_uuid, PeerState::Syncing, None);
         // A stalled peer must not hold the session slot forever.
         let summary = tokio::time::timeout(
@@ -1312,13 +1370,14 @@ async fn handle_incoming_pairing(
         .await;
         return;
     }
-    let generation = inner.pairing_generation.fetch_add(1, Ordering::Relaxed) + 1;
+    let generation;
     {
         let mut pending = inner.pending.lock().await;
         if pending.is_some() {
             let _ = send_message(&mut tls, &Message::PairBusy).await;
             return;
         }
+        generation = inner.pairing_generation.fetch_add(1, Ordering::Relaxed) + 1;
         *pending = Some(PendingPairing::Incoming {
             peer_uuid: peer_uuid.clone(),
             peer_name: peer_name.clone(),
@@ -1424,7 +1483,7 @@ async fn handle_sync_hello(
         }
     }
     let guard = SessionGuard(inner.clone(), hello.device_uuid.clone());
-    let host = ManagerHost::new(&inner, peer.device_uuid.clone());
+    let host = ManagerHost::new(&inner);
     // A stalled peer must not hold the session slot forever.
     let result = match tokio::time::timeout(
         Duration::from_secs(600),
@@ -1468,7 +1527,13 @@ pub(crate) struct ManagerHost {
 }
 
 impl ManagerHost {
-    pub fn new(inner: &Arc<Inner>, uuid: String) -> Self {
+    pub fn new(inner: &Arc<Inner>) -> Self {
+        let uuid = inner
+            .identity
+            .read()
+            .ok()
+            .and_then(|identity| identity.as_ref().map(|identity| identity.uuid.clone()))
+            .unwrap_or_default();
         Self {
             db: inner.db.clone(),
             settings: store::settings_handle(&inner.app).unwrap_or_else(|_| {

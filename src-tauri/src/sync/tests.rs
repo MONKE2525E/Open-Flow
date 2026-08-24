@@ -400,6 +400,57 @@ async fn session_snapshot_seeds_a_new_device() {
     assert!(!needs_snapshot, "A should have cleared the snapshot flag");
 }
 
+#[test]
+fn stale_snapshot_does_not_overwrite_newer_local_row() {
+    let a = test_db(&uuid("aaaa"));
+    let b = test_db(&uuid("bbbb"));
+    let old = test_dictionary_op("snapshot-old", 1_000);
+    let mut newer = old.clone();
+    newer.ts_ms = 5_000;
+    newer.origin_seq = 5_000;
+    newer.payload = Some(json!({
+        "term": "local-newer",
+        "mistake": null,
+        "auto_learned": false,
+        "correction_count": 0,
+        "confidence_tier": "manual",
+        "last_seen_at": null,
+        "created_at": "2026-01-01 00:00:00",
+    }));
+
+    {
+        let conn = a.lock().expect("lock");
+        engine::apply_ops(&conn, &[old]).expect("old row");
+    }
+    {
+        let conn = b.lock().expect("lock");
+        engine::apply_ops(&conn, &[newer]).expect("newer row");
+    }
+
+    let snapshot = {
+        let conn = a.lock().expect("lock");
+        let mut progress = engine::SnapshotProgress::default();
+        let mut snapshot = Vec::new();
+        loop {
+            let (ops, _cursor, done) =
+                engine::collect_ops(&conn, 0, true, 1, &mut progress).expect("collect snapshot");
+            snapshot.extend(ops);
+            if done {
+                break;
+            }
+        }
+        snapshot
+    };
+    {
+        let conn = b.lock().expect("lock");
+        engine::apply_ops(&conn, &snapshot).expect("apply snapshot");
+        let term: String = conn
+            .query_row("SELECT term FROM dictionary", [], |r| r.get(0))
+            .expect("term");
+        assert_eq!(term, "local-newer");
+    }
+}
+
 #[tokio::test]
 async fn session_exchanges_changes_incrementally() {
     let a = test_db(&uuid("aaaa"));

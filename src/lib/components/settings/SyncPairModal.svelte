@@ -94,7 +94,7 @@
       inputmode="numeric"
       autocomplete="off"
       placeholder="000000"
-      maxlength={6}
+      maxlength={7}
       spellcheck="false"
       onkeydown={(e) => {
         if (e.key === 'Enter' && !busy && code.replace(/\s/g, '').length === 6) void respond(true);

@@ -163,10 +163,10 @@ export function curatedRows(ctx: PickerContext, keep: string[] = []): ModelRow[]
  * behind Advanced and is labelled Unverified.
  */
 export function unverifiedRows(ctx: PickerContext): ModelRow[] {
-  const transcriptionish = /whisper|transcribe|speech|[-/]stt/i;
+  const transcriptionish = /whisper|transcribe|speech|[-/]stt\b/i;
   // Neither task can use these, and a provider list is full of them.
   const otherModality =
-    /(tts|text-to-speech|embed|embedding|rerank|moderation|guard|safeguard|image|vision|video|veo|imagen|lyria|dall-e|sora|robotics|orpheus|playai)/i;
+    /\b(tts|text-to-speech|embed|embedding|rerank|moderation|guard|safeguard|image|vision|video|veo|imagen|lyria|dall-e|sora|robotics|orpheus|playai)\b/i;
   const rows: ModelRow[] = [];
 
   for (const provider of LISTED_PROVIDERS) {
