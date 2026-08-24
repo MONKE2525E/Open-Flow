@@ -42,7 +42,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
     await page.locator('.settings-nav-item:has-text("Models")').click();
     await page.locator('h2.settings-h:has-text("Models")').waitFor({ state: 'visible', timeout: TIMEOUT });
 
-    const subheads = await page.locator('h2.settings-h:has-text("Models") ~ .settings-subhead').evaluateAll((els) => els.map((el) => el.textContent?.trim()).filter(Boolean));
+    const subheads = await page.locator('h3.settings-subhead:visible').evaluateAll((els) => els.map((el) => el.textContent?.trim()).filter(Boolean));
     const expectedOrder = ['Model selection', 'Local models', 'Model settings'];
     if (subheads.join('|') !== expectedOrder.join('|')) {
       errors.push(`Models subsection order mismatch: ${subheads.join(' | ')}`);
