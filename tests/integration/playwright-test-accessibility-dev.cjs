@@ -37,7 +37,7 @@ function auditSurface() {
 
   const interactive = [...document.querySelectorAll(
     'button, a[href], input:not([type="hidden"]), textarea, select, [role="button"], [role="switch"], [role="option"], [role="tab"]',
-  )].filter(visible);
+  )].filter((element) => visible(element) && element.getAttribute('aria-hidden') !== 'true');
   const unnamed = interactive
     .filter((element) => !nameFor(element))
     .map((element) => {
