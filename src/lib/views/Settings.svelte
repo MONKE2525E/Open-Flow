@@ -104,6 +104,7 @@
     }
 
     requestAnimationFrame(() => {
+      if (document.querySelector('[role="dialog"]')) return;
       // Don't steal focus if the user already moved inside the shell while it
       // was opening (keyboard flows race the entrance transition).
       const active = document.activeElement;
@@ -123,6 +124,7 @@
     const panel = settingsPanelEl;
     requestAnimationFrame(() => {
       if (!panel.isConnected) return;
+      if (document.querySelector('[role="dialog"]')) return;
       // Never fight the user: if focus is already inside the panel (keyboard
       // flow racing the section swap), leave it alone.
       const active = document.activeElement;

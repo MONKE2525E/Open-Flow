@@ -46,7 +46,7 @@
   let autostart = $state(false);
   let contextualFormatting = $state(true);
   let capsLockUppercase = $state(false);
-  let legacySaveError = $state('');
+  let legacyFeaturesError = $state('');
   let hotkey = $state(defaultHotkey);
   let recordingHotkey = $state(false);
   let capturedKeys = $state<string[]>([]);
@@ -295,13 +295,13 @@
   }
 
   async function applyLegacyFeatures(value: boolean) {
-    legacySaveError = '';
+    legacyFeaturesError = '';
     appStore.legacyFeaturesEnabled = value;
     try {
       await saveSetting('legacy_features_enabled', value);
     } catch (err) {
       appStore.legacyFeaturesEnabled = !value;
-      legacySaveError = 'Could not save Legacy pages. Your previous setting was restored.';
+      legacyFeaturesError = 'Could not save Legacy pages. Your change was reverted.';
       console.error('save legacy_features_enabled failed:', err);
     }
   }
@@ -766,13 +766,11 @@
 <h3 class="settings-subhead">Legacy</h3>
 <div class="setting-row">
   <div><div class="label">Legacy pages</div><div class="desc">Bring back the standalone App Mappings settings page and the Dictionary/Snippets pages, superseded by Contexts.</div></div>
-  <div class="legacy-toggle-wrap">
-    <Toggle checked={appStore.legacyFeaturesEnabled} onchange={handleLegacyFeatures} label="Legacy pages" />
-    {#if legacySaveError}
-      <div class="settings-error" role="alert">{legacySaveError}</div>
-    {/if}
-  </div>
+  <Toggle checked={appStore.legacyFeaturesEnabled} onchange={handleLegacyFeatures} label="Legacy pages" />
 </div>
+{#if legacyFeaturesError}
+  <p class="settings-error" role="alert">{legacyFeaturesError}</p>
+{/if}
 
 {#if confirmCleanupOff}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -844,8 +842,6 @@
 {/if}
 
 <style>
-  .legacy-toggle-wrap { display: grid; justify-items: end; gap: 6px; }
-  .settings-error { max-width: 240px; color: var(--danger, #b42318); font-size: 11px; line-height: 1.35; text-align: right; }
   .hotkey-tip {
     margin: -2px 0 2px;
     font-size: 11.5px;
@@ -878,6 +874,12 @@
   .keybind-btn.saving { opacity: 0.9; }
   .keybind-btn.success { background: color-mix(in srgb, var(--accent) 82%, white 18%); color: var(--on-accent); transform: scale(1.03); }
   .keybind-btn.error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-line); animation: none; }
+  .settings-error {
+    margin: -2px 0 12px;
+    color: var(--danger);
+    font-size: 12px;
+    line-height: 1.45;
+  }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
   .mic-btn {
     max-width: 180px;

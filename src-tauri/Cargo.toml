@@ -56,6 +56,7 @@ zip         = { version = "2", default-features = false, features = ["deflate"] 
 # plumbing needed for local speech detection.
 transcribe-rs = { version = "0.3.11", features = ["onnx", "vad-silero"] }
 image       = { version = "0.25", default-features = false, features = ["png"] }
+libc        = "0.2"     # POSIX host/system calls
 
 [target.'cfg(windows)'.dependencies]
 notify-rust = "4.18.0"
@@ -97,7 +98,6 @@ objc2-foundation   = { version = "0.2", features = ["NSData", "NSString"] }  # N
 block2             = "0.5"     # ObjC completion blocks (AVCaptureDevice mic request)
 accessibility-sys  = "0.1"     # AXUIElement (auto-learn focused text + AX prompt)
 libproc            = "0.14"    # process RSS for memory monitor
-libc               = "0.2"     # statvfs (free disk space)
 security-framework = "2"       # macOS Keychain generic-password storage
 coreaudio          = { package = "coreaudio-rs", version = "0.11" }  # CoreAudio native mute control
 

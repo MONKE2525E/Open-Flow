@@ -8,12 +8,8 @@ const MAC_USER_AGENT =
 
 async function reachPermissionsStep(page) {
   await page.getByRole('button', { name: 'Get Started' }).click();
-  for (let step = 0; step < 6; step += 1) {
-    if (await page.getByRole('heading', { name: 'Check your macOS permissions' }).count()) return;
-    const action = page.locator('.setup-actionbar .btn-primary').first();
-    await action.waitFor({ state: 'visible', timeout: TIMEOUT });
-    await action.click();
-  }
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: /^(Continue|I'll add it later)$/ }).click();
   await page.getByRole('heading', { name: 'Check your macOS permissions' }).waitFor({ state: 'visible', timeout: TIMEOUT });
 }
 

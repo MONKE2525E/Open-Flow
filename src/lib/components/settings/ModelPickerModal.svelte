@@ -86,6 +86,11 @@
   onMount(() => {
     const panel = document.querySelector('.settings-page');
     if (panel) panelLeft = panel.getBoundingClientRect().left;
+    requestAnimationFrame(() => {
+      if (modalEl?.isConnected) {
+        modalEl.querySelector<HTMLElement>('.picker-search')?.focus();
+      }
+    });
   });
 
   const RAIL_ORDER: ProviderId[] = ['groq', 'openai', 'google', 'assemblyai', 'local'];

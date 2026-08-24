@@ -1,6 +1,6 @@
 'use strict';
 
-const { chromium, expect } = require('playwright');
+const { chromium } = require('playwright');
 const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-helpers.cjs');
 const { finish, message } = require('./_regression-result.cjs');
 
@@ -113,11 +113,19 @@ function auditSurface() {
       const before = await switchControl.getAttribute('aria-checked');
       await switchControl.focus();
       await page.keyboard.press('Space');
-      await expect.poll(async () => {
-        const checked = await switchControl.getAttribute('aria-checked');
-        const dialog = await page.locator('[role="dialog"]:visible').count();
-        return checked !== before || dialog > 0;
-      }, { timeout: TIMEOUT }).toBe(true);
+      await page.waitForFunction(
+        (initialChecked) => {
+          const switchElement = document.querySelector('[role="switch"][aria-label="App context hint"]');
+          const dialog = [...document.querySelectorAll('[role="dialog"]')].some((element) => {
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+          });
+          return switchElement?.getAttribute('aria-checked') !== initialChecked || dialog;
+        },
+        before,
+        { timeout: TIMEOUT },
+      );
       const after = await switchControl.getAttribute('aria-checked');
       measurements.switchesTested = 1;
       const confirmationOpened = await page.locator('[role="dialog"]:visible').count() > 0;
