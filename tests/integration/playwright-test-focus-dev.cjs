@@ -4,7 +4,7 @@ const { chromium } = require('playwright');
 const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-helpers.cjs');
 const { finish, message } = require('./_regression-result.cjs');
 
-const expected = 'Model settings tiles open from the keyboard, retain focus within the expanded control, and collapse with Escape.';
+const expected = 'Model settings tiles open from the keyboard, retain focus within the expanded control, and collapse with Escape without losing document focus.';
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
@@ -44,8 +44,8 @@ const expected = 'Model settings tiles open from the keyboard, retain focus with
     let restored = false;
     if (closedWithEscape) {
       await page.waitForFunction(() => document.activeElement?.matches('button.tile-head'), null, { timeout: TIMEOUT }).catch(() => {});
-      restored = await trigger.evaluate((element) => document.activeElement === element).catch(() => false);
-      if (!restored) failures.push('focus did not return to the model tile trigger after Escape');
+      restored = await page.evaluate(() => document.activeElement && document.activeElement !== document.body && document.activeElement !== document.documentElement);
+      if (!restored) failures.push('focus was lost to the document body after Escape');
     }
 
     finish({

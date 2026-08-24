@@ -48,10 +48,10 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
       errors.push(`Models subsection order mismatch: ${subheads.join(' | ')}`);
     }
 
-    const tileCount = await page.locator('.task-tile').count();
+    const tileCount = await page.locator('.task-tile:has(.model-container)').count();
     if (tileCount !== 2) errors.push(`Expected 2 model-selection tiles, found ${tileCount}`);
 
-    const cleanupTile = page.locator('.task-tile').nth(1);
+    const cleanupTile = page.locator('.task-tile:has(.model-container)').nth(1);
     const cleanupHead = cleanupTile.locator('.tile-head');
     if ((await cleanupHead.getAttribute('aria-expanded')) !== 'true') {
       await cleanupHead.click();

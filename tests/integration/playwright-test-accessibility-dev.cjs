@@ -88,8 +88,8 @@ function auditSurface() {
       await collect(`settings/${label}`);
     }
 
-    await page.locator('.settings-nav-item', { hasText: 'Privacy' }).first().click({ timeout: TIMEOUT });
-    await page.locator('.settings-nav-item.active', { hasText: 'Privacy' }).first().waitFor({ state: 'visible', timeout: TIMEOUT });
+    await page.locator('.settings-nav-item:visible', { hasText: 'Privacy' }).first().click({ timeout: TIMEOUT });
+    await page.locator('.settings-nav-item.active:visible', { hasText: 'Privacy' }).first().waitFor({ state: 'visible', timeout: TIMEOUT });
     let switchControl = page.getByRole('switch', { name: 'App context hint' }).first();
     if (!(await switchControl.count())) switchControl = page.getByRole('switch').first();
     if (await switchControl.count()) {
