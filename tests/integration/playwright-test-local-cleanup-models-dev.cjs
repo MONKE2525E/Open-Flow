@@ -45,7 +45,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
     const expectedOrder = ['Model selection', 'Local models', 'Model settings'];
     const subheads = await page.locator('.settings-page .panel h3.settings-subhead:visible').evaluateAll((els) => els
       .map((el) => el.textContent?.trim())
-      .filter((text) => expectedOrder.includes(text)));
+      .filter((text) => ['Model selection', 'Local models', 'Model settings'].includes(text)));
     if (subheads.join('|') !== expectedOrder.join('|')) {
       errors.push(`Models subsection order mismatch: ${subheads.join(' | ')}`);
     }
