@@ -6,6 +6,7 @@
 //! platform store fails, the key falls back to a 0600 file in the app data
 //! directory with a loud warning - pairing still works, but users should know.
 
+#[cfg(target_os = "windows")]
 const WIN_TARGET: &str = "verenu.sync.identity";
 #[cfg(target_os = "macos")]
 const MAC_SERVICE: &str = "com.verenu.app";
@@ -20,7 +21,7 @@ pub fn store_identity_key(key_der: &[u8]) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     {
-        return mac_store::store(MAC_SERVICE, MAC_ACCOUNT, key_der);
+        mac_store::store(MAC_SERVICE, MAC_ACCOUNT, key_der)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
@@ -36,7 +37,7 @@ pub fn load_identity_key() -> Option<Vec<u8>> {
     }
     #[cfg(target_os = "macos")]
     {
-        return mac_store::load(MAC_SERVICE, MAC_ACCOUNT);
+        mac_store::load(MAC_SERVICE, MAC_ACCOUNT)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
@@ -64,6 +65,7 @@ fn fallback_path() -> Option<std::path::PathBuf> {
     Some(dir.join(FALLBACK_FILE))
 }
 
+#[cfg(target_os = "windows")]
 fn store_fallback(key_der: &[u8]) -> Result<(), String> {
     let path = fallback_path().ok_or("no app data dir")?;
     #[cfg(unix)]
@@ -210,7 +212,7 @@ mod mac_store {
 
     pub fn delete(service: &str, account: &str) -> Result<(), String> {
         delete_generic_password(service, account).map_err(|e| {
-            if (e.code() as i32) == NOT_FOUND {
+            if e.code() == NOT_FOUND {
                 String::new()
             } else {
                 e.to_string()

@@ -399,7 +399,7 @@ impl SyncManager {
                         last_seen_ms: d.last_seen_ms,
                     })
                     .collect();
-                list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                list.sort_by_key(|a| a.name.to_lowercase());
                 list
             })
             .unwrap_or_default();
