@@ -67,7 +67,6 @@ fn fallback_path() -> Option<std::path::PathBuf> {
     Some(dir.join(FALLBACK_FILE))
 }
 
-#[cfg(target_os = "windows")]
 fn store_fallback(key_der: &[u8]) -> Result<(), String> {
     let path = fallback_path().ok_or("no app data dir")?;
     #[cfg(unix)]
