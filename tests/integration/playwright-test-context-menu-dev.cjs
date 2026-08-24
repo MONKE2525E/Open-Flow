@@ -18,7 +18,7 @@ const TIMEOUT = 10_000;
   });
 
   try {
-    await page.goto(TARGET_URL, { waitUntil: 'networkidle', timeout: TIMEOUT });
+    await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
 
     const row = page.locator('.ctx-row-wrap').filter({ hasText: 'Work' }).first();
     await row.waitFor({ state: 'visible', timeout: TIMEOUT });
@@ -47,12 +47,12 @@ const TIMEOUT = 10_000;
     if (errors.length > 0) {
       console.error('\nFAIL:');
       errors.forEach((error) => console.error(`  ${error}`));
-      process.exit(1);
+      process.exitCode = 1;
     }
     console.log('PASS - pinned context menu opens, edits, closes, and releases the UI.');
   } catch (error) {
     console.error(`FAIL - test threw: ${error.message}`);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await browser.close();
   }
