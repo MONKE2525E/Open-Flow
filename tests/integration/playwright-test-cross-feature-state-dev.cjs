@@ -27,6 +27,9 @@ const expected = 'Legacy mode and Contexts remain mutually exclusive before and 
     await confirm.getByRole('button', { name: 'Turn on' }).click();
     await closeSettings(page);
     await page.locator('.ctx-head-label:has-text("Contexts")').waitFor({ state: 'hidden', timeout: TIMEOUT }).catch(() => {});
+    for (const label of ['Dictionary', 'Snippets']) {
+      await page.locator(`.nav-item:has-text("${label}")`).first().waitFor({ state: 'visible', timeout: TIMEOUT });
+    }
     if (await page.locator('.ctx-head-label:has-text("Contexts")').count()) failures.push('Contexts remained visible in Legacy mode');
     for (const label of ['Dictionary', 'Snippets']) {
       if ((await page.locator(`.nav-item:has-text("${label}")`).count()) !== 1) failures.push(`${label} was missing in Legacy mode`);
@@ -42,6 +45,14 @@ const expected = 'Legacy mode and Contexts remain mutually exclusive before and 
     await page.getByRole('switch', { name: 'Legacy pages' }).click();
     await closeSettings(page);
     await page.locator('.ctx-head-label:has-text("Contexts")').waitFor({ state: 'visible', timeout: TIMEOUT }).catch(() => {});
+    for (const label of ['Dictionary', 'Snippets']) {
+      await page.locator(`.nav-item:has-text("${label}")`).waitFor({ state: 'hidden', timeout: TIMEOUT }).catch(() => {});
+    }
+    const visibleLegacyItems = await page.locator('.nav-item').evaluateAll((items) => items
+      .filter((item) => getComputedStyle(item).display !== 'none' && getComputedStyle(item).visibility !== 'hidden')
+      .map((item) => item.textContent?.trim() || ''));
+    if (visibleLegacyItems.some((text) => text.includes('Dictionary'))) failures.push('Dictionary remained visible after disabling Legacy mode');
+    if (visibleLegacyItems.some((text) => text.includes('Snippets'))) failures.push('Snippets remained visible after disabling Legacy mode');
     if ((await page.locator('.ctx-head-label:has-text("Contexts")').count()) !== 1) failures.push('Contexts did not return after disabling Legacy mode');
 
     finish({

@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -364,12 +365,12 @@ def _terminate_process_tree(proc: subprocess.Popen[str]) -> None:
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=20)
         else:
-            os.killpg(proc.pid, 15)
+                os.killpg(proc.pid, signal.SIGTERM)
         proc.wait(timeout=10)
     except Exception:
         try:
             if sys.platform != "win32":
-                os.killpg(proc.pid, 9)
+                os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait(timeout=5)
                 return
             proc.kill()
@@ -601,10 +602,17 @@ def kill_port_owner(port: int) -> bool:
             if not pid.strip().isdigit():
                 continue
             try:
-                os.kill(int(pid), 15)
+                os.kill(int(pid), signal.SIGTERM)
                 killed = True
             except (ProcessLookupError, PermissionError):
                 pass
+        if killed and not wait_for_port_closed(port, timeout_s=3.0):
+            for pid in probe.stdout.splitlines():
+                if pid.strip().isdigit():
+                    try:
+                        os.kill(int(pid), signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
         return killed
     command = (
         "try { $id = Get-NetTCPConnection -LocalPort " + str(port) +

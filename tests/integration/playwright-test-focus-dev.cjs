@@ -32,8 +32,7 @@ const expected = 'Model settings tiles open from the keyboard, retain focus with
       if (!await page.evaluate(() => document.activeElement && document.activeElement !== document.body && document.activeElement !== document.documentElement)) failures.push('Tab navigation left focus on the document body');
     }
 
-    await page.keyboard.press('Escape');
-    const closedWithEscape = await page.waitForFunction(() => !document.querySelector('.task-tile.task-open'), null, { timeout: TIMEOUT }).then(() => true).catch(() => false);
+    const closedWithEscape = opened && (await page.keyboard.press('Escape'), await page.waitForFunction(() => !document.querySelector('.task-tile.task-open'), null, { timeout: TIMEOUT }).then(() => true).catch(() => false));
     if (!closedWithEscape) failures.push('Escape did not collapse the model tile');
     let restored = false;
     if (closedWithEscape) {

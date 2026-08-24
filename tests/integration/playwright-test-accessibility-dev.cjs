@@ -107,7 +107,12 @@ function auditSurface() {
       const before = await switchControl.getAttribute('aria-checked');
       await switchControl.focus();
       await page.keyboard.press('Space');
-      await page.waitForTimeout(80);
+      await page.waitForFunction(({ beforeValue }) => {
+        const changed = document.querySelector('[role="switch"]')?.getAttribute('aria-checked') !== beforeValue;
+        const dialog = document.querySelector('[role="dialog"]');
+        const dialogVisible = dialog && getComputedStyle(dialog).display !== 'none' && getComputedStyle(dialog).visibility !== 'hidden';
+        return changed || Boolean(dialogVisible);
+      }, { beforeValue: before }, { timeout: Math.min(TIMEOUT, 2000) }).catch(() => {});
       const after = await switchControl.getAttribute('aria-checked');
       measurements.switchesTested = 1;
       const confirmationOpened = await page.locator('[role="dialog"]:visible').count() > 0;
