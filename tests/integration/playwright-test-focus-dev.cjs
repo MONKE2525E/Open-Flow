@@ -44,7 +44,7 @@ const expected = 'Model settings tiles open from the keyboard, retain focus with
     let restored = false;
     if (closedWithEscape) {
       await page.waitForFunction(() => document.activeElement?.matches('button.tile-head'), null, { timeout: TIMEOUT }).catch(() => {});
-      restored = await trigger.evaluate((element) => document.activeElement === element);
+      restored = await trigger.evaluate((element) => document.activeElement === element).catch(() => false);
       if (!restored) failures.push('focus did not return to the model tile trigger after Escape');
     }
 
