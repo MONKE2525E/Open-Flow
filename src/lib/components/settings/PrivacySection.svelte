@@ -257,7 +257,7 @@
 
 <h3 class="settings-subhead first">Context</h3>
 <div class="setting-row">
-  <div><div class="label">App context hint</div><div class="desc">Passes the active app to the cleanup model to tailor formatting</div></div>
+  <div><div class="label">App context hint</div><div class="desc">Shares the target app, website, window title, and context group so cleanup can choose the right layout</div></div>
   <Toggle checked={appContextHint} onchange={handleAppContextHint} label="App context hint" />
 </div>
 

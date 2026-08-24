@@ -395,8 +395,14 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     }
 
     let stage_config = std::time::Instant::now();
-    let Some((cfg, profile, app_context)) =
-        open_config_and_context(&app, &process_name, Some(&resolved_context)).await
+    let Some((cfg, profile, app_context)) = open_config_and_context(
+        &app,
+        &process_name,
+        target.id,
+        browser_domain.as_deref(),
+        Some(&resolved_context),
+    )
+    .await
     else {
         // open_config_and_context already shows its own error/pill on
         // failure — no separate emit_pipeline_failed here (matches its
