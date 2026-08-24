@@ -116,10 +116,10 @@ fn cert_file_fresh(cert_path: &std::path::Path) -> bool {
     let age_days = std::time::SystemTime::now()
         .duration_since(modified)
         .map(|d| d.as_secs() as f64 / 86_400.0)
-        // A future mtime is a clock-skew case, not evidence that the cert is
-        // expired. Treat it as newly written so a clock correction cannot
-        // rotate the pinned identity unexpectedly.
-        .unwrap_or(0.0);
+        // A future mtime cannot establish that the certificate is still
+        // valid; rotate conservatively rather than treating it as fresh
+        // indefinitely after a clock adjustment or file copy.
+        .unwrap_or(f64::INFINITY);
     age_days < CERT_DAYS as f64 * REISSUE_FRACTION
 }
 

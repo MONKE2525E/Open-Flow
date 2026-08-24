@@ -642,6 +642,10 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
             Ok(())
         })?;
     }
+    // Triggers can run before the async sync manager finishes loading the
+    // keychain identity. Keep a provisional UUID in place so early writes are
+    // captured; initialize() replaces it with the durable identity UUID.
+    ensure_sync_identity_placeholder(&conn)?;
     ensure_cleanup_cache_schema(&conn)?;
     // Index only needed by existing databases: the SCHEMA above declares it
     // for fresh installs, and the v10 migration block adds it for databases
@@ -787,6 +791,18 @@ fn apply_v20_sync_migration(conn: &Connection) -> Result<()> {
     // remote changes from being re-captured as local edits (the engine logs
     // them itself, preserving the remote origin, so peers can dedup exactly).
     conn.execute_batch(SYNC_TRIGGER_SQL)?;
+    Ok(())
+}
+
+fn ensure_sync_identity_placeholder(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "INSERT INTO sync_identity (uuid, name)
+         SELECT lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+                lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
+                lower(hex(randomblob(6))), ''
+          WHERE NOT EXISTS (SELECT 1 FROM sync_identity)",
+        [],
+    )?;
     Ok(())
 }
 

@@ -702,7 +702,7 @@ impl SyncManager {
         };
         match result {
             Ok(outcome) => {
-                self.complete_pairing(outcome, u64::MAX).await?;
+                self.complete_pairing(outcome, generation).await?;
                 self.inner
                     .app
                     .emit(
@@ -754,6 +754,12 @@ impl SyncManager {
         if outcome.device_uuid.is_empty() || outcome.cert_der.is_empty() {
             return Err(anyhow!("peer sent an incomplete identity"));
         }
+        // Serialize the generation check with cancellation/new pairing so a
+        // cancelled exchange cannot persist a peer after the user moved on.
+        let _pairing_generation_guard = self.inner.pending.lock().await;
+        if self.inner.pairing_generation.load(Ordering::Relaxed) != generation {
+            return Err(anyhow!("pairing was cancelled"));
+        }
         let fp = identity::fingerprint_of(&outcome.cert_der);
         {
             let conn = self.lock_db()?;
@@ -766,6 +772,7 @@ impl SyncManager {
                 .collect();
             sync_store::seed_setting_stamps(&conn, &self.device_info().uuid, &keys)?;
         }
+        drop(_pairing_generation_guard);
         self.clear_pending_if_generation(generation).await;
         self.inner
             .app
@@ -968,7 +975,7 @@ impl SyncManager {
                 .filter(|d| paired.contains(&d.uuid))
                 .filter(|d| match backoff.get(&d.uuid) {
                     Some(entry) => now >= entry.next_attempt || dirty,
-                    None => dirty,
+                    None => true,
                 })
                 .map(|d| d.uuid)
                 .collect()
