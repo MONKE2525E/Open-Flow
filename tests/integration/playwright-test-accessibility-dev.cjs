@@ -36,7 +36,10 @@ function auditSurface() {
   )].filter(visible);
   const unnamed = interactive
     .filter((element) => !nameFor(element))
-    .map((element) => `${element.tagName.toLowerCase()}${element.className ? `.${String(element.className).trim().replace(/\s+/g, '.')}` : ''}`)
+    .map((element) => {
+      const className = element.getAttribute('class') || '';
+      return `${element.tagName.toLowerCase()}${className ? `.${className.trim().replace(/\s+/g, '.')}` : ''}`;
+    })
     .slice(0, 20);
   const positiveTabindex = interactive
     .filter((element) => Number(element.getAttribute('tabindex')) > 0)
