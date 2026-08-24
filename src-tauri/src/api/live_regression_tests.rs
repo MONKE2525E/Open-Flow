@@ -287,7 +287,7 @@ async fn live_transcription_regression() {
                     "failure_kind": "infrastructure"
                 })
             );
-            return;
+            panic!("configured transcription request failed: {error}");
         }
     };
     let chars = output.trim().chars().count();

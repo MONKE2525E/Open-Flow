@@ -893,7 +893,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         suites = parse_suites(args)
     except ValueError as exc:
         parser.error(str(exc))
-    entries = select_tests(suites, args.test)
+    selection_suites = list(SUITE_ORDER) if args.test and not args.suite else suites
+    args.workers = max(1, args.workers)
+    entries = select_tests(selection_suites, args.test)
     if not entries:
         print("No tests matched the requested profile, suites, and filter.", file=sys.stderr)
         return 2

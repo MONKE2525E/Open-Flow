@@ -101,6 +101,8 @@ function auditSurface() {
       const confirmationOpened = await page.locator('[role="dialog"]:visible').count() > 0;
       if (before === after && !confirmationOpened) findings.push(`settings: keyboard: Space neither changed "${switchName}" nor opened its confirmation`);
       measurements.switchName = switchName;
+    } else {
+      findings.push('settings: keyboard: expected "App context hint" switch was not present in Privacy settings');
     }
 
     finish({
