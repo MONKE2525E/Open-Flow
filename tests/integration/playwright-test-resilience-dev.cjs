@@ -39,7 +39,7 @@ const expected = 'Malformed persisted state and a rejected settings write do not
     await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Legacy pages"]')?.getAttribute('aria-checked') === 'false', null, { timeout: TIMEOUT }).catch(() => failures.push('failed save left Legacy mode enabled'));
     if (!await page.locator('.app').isVisible()) failures.push('application surface disappeared after failed save');
     const visibleFeedback = page.locator('[role="alert"]:visible, .toast:visible, .error-toast:visible, .settings-error:visible');
-    if ((await visibleFeedback.count()) === 0) failures.push('rejected settings write was only logged to the console; the user received no visible error');
+    await visibleFeedback.first().waitFor({ state: 'visible', timeout: TIMEOUT }).catch(() => failures.push('rejected settings write was only logged to the console; the user received no visible error'));
     if (pageErrors.length) failures.push(`uncaught page errors: ${pageErrors.join(', ')}`);
 
     finish({

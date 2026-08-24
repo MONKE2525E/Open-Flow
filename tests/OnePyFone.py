@@ -368,6 +368,10 @@ def _terminate_process_tree(proc: subprocess.Popen[str]) -> None:
         proc.wait(timeout=10)
     except Exception:
         try:
+            if sys.platform != "win32":
+                os.killpg(proc.pid, 9)
+                proc.wait(timeout=5)
+                return
             proc.kill()
         except Exception:
             pass
@@ -914,7 +918,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         started = time.monotonic()
         results = execute_plan(entries, args)
         exit_code = summary(results, entries, time.monotonic() - started)
-        accumulated_results = merge_loop_results(accumulated_results, results)
+        accumulated_results = results if args.until_pass and exit_code == 0 else merge_loop_results(accumulated_results, results)
         overall_exit = max(overall_exit, exit_code)
         if args.until_pass and exit_code == 0:
             overall_exit = 0
