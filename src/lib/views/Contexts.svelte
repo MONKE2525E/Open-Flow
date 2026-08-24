@@ -156,7 +156,6 @@
     }, 320);
   }
 
-  let checkingDomain = $state(false);
 
   const atContextLimit = $derived(contexts.filter((c) => !c.is_everywhere).length >= MAX_USER_CONTEXTS);
   const selectedContext = $derived(
@@ -627,7 +626,6 @@
   let modalWebsiteError = $state('');
 
   async function addModalWebsite() {
-    if (checkingDomain) return;
     const domain = normalizeDomainInput(modalWebsiteInput);
     if (!domain || !isLikelyValidDomain(domain)) return;
     if (modalWebsites.includes(domain)) {
@@ -635,19 +633,6 @@
       return;
     }
     modalWebsiteError = '';
-    checkingDomain = true;
-    try {
-      const exists = await invoke<boolean>('check_domain_exists', { domain });
-      if (!exists) {
-        modalWebsiteError = "This domain doesn't seem to exist.";
-        return;
-      }
-    } catch {
-      // A failed check (not a resolved "doesn't exist") shouldn't block the
-      // user — fail open rather than punish them for a flaky local network.
-    } finally {
-      checkingDomain = false;
-    }
     modalWebsites = [...modalWebsites, domain];
     markRecentlyAdded(domain);
     modalWebsiteInput = '';
@@ -855,7 +840,6 @@
   }
 
   async function assignWebsite() {
-    if (checkingDomain) return;
     if (!selectedContext || selectedContext.is_everywhere) return;
     const domain = normalizeDomainInput(websiteInput);
     if (!domain || !isLikelyValidDomain(domain)) {
@@ -863,18 +847,6 @@
       return;
     }
     websiteError = '';
-    checkingDomain = true;
-    try {
-      const exists = await invoke<boolean>('check_domain_exists', { domain });
-      if (!exists) {
-        websiteError = "This domain doesn't seem to exist.";
-        return;
-      }
-    } catch {
-      // Fail open — see addModalWebsite for why.
-    } finally {
-      checkingDomain = false;
-    }
     try {
       const site = await invoke<ContextWebsiteTarget>('assign_context_website', {
         contextId: selectedContext.id,
@@ -1015,7 +987,6 @@
                     placeholder="mail.google.com"
                     bind:value={websiteInput}
                     bind:this={websiteInputEl}
-                    disabled={checkingDomain}
                     oninput={() => websiteError = ''}
                     onkeydown={handleWebsiteInputKeydown}
                     autocomplete="off"
@@ -1031,7 +1002,7 @@
                     </p>
                   {/if}
                   {#if websiteError}<p class="save-error">{websiteError}</p>{/if}
-                  <button class="btn-primary btn-compact" type="button" onclick={() => void assignWebsite()} disabled={!websiteValid || checkingDomain}>{checkingDomain ? 'Checking…' : 'Add'}</button>
+                  <button class="btn-primary btn-compact" type="button" onclick={() => void assignWebsite()} disabled={!websiteValid}>Add</button>
                 </div>
               {/if}
             </div>
@@ -1512,8 +1483,8 @@
           </div>
         {/if}
         <div class="website-input-row">
-          <input id="context-website" class="ui-input" type="text" placeholder="mail.google.com" bind:value={modalWebsiteInput} autocomplete="off" disabled={checkingDomain} oninput={() => modalWebsiteError = ''} onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void addModalWebsite(); } }} />
-          <button class="btn-ghost btn-compact website-add-btn" class:is-visible={modalWebsiteValid} type="button" onclick={() => void addModalWebsite()} disabled={!modalWebsiteValid || checkingDomain} tabindex={modalWebsiteValid ? 0 : -1}>{checkingDomain ? 'Checking…' : 'Add'}</button>
+          <input id="context-website" class="ui-input" type="text" placeholder="mail.google.com" bind:value={modalWebsiteInput} autocomplete="off" oninput={() => modalWebsiteError = ''} onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void addModalWebsite(); } }} />
+          <button class="btn-ghost btn-compact website-add-btn" class:is-visible={modalWebsiteValid} type="button" onclick={() => void addModalWebsite()} disabled={!modalWebsiteValid} tabindex={modalWebsiteValid ? 0 : -1}>Add</button>
         </div>
         {#if modalWebsiteError}
           <p class="save-error">{modalWebsiteError}</p>
@@ -1663,8 +1634,8 @@
   }
   .context-stats strong { color: var(--ink-soft); font-weight: 550; font-variant-numeric: tabular-nums; }
   .context-stat-sep { color: var(--ink-faint); }
-  .context-header { justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-  .context-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; position: relative; }
+  .context-header { justify-content: space-between; gap: 16px; margin-bottom: 16px; position: relative; z-index: 2; }
+  .context-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; position: relative; z-index: 2; }
   .context-header h2 { font-family: var(--serif); font-size: 26px; font-weight: 500; letter-spacing: -.02em; line-height: 1.1; margin: 4px 0 4px; color: var(--ink); }
   .context-header p { color: var(--ink-mute); font-size: 12px; margin: 0; line-height: 1.45; }
   .target-strip { flex-wrap: wrap; gap: 6px; padding: 9px 0 14px; border-top: 1px solid var(--line-soft); }
@@ -1673,9 +1644,22 @@
   .target-chip button { display: grid; place-items: center; border: 0; background: transparent; color: var(--ink-faint); padding: 2px; cursor: pointer; border-radius: 4px; }
   .target-chip button:hover { color: var(--danger); background: var(--danger-bg); }
   .target-empty { color: var(--ink-faint); font-size: 11px; font-style: italic; }
-  .app-picker { position: absolute; z-index: 5; top: 100%; right: 0; margin-top: 6px; width: min(320px, calc(100vw - 64px)); display: flex; flex-direction: column; gap: 6px; padding: 8px; }
-  .app-picker-search { width: 100%; }
-  .app-picker-list { max-height: 240px; overflow: auto; display: flex; flex-direction: column; gap: 1px; }
+  .app-picker {
+    position: absolute;
+    z-index: 40;
+    top: 100%;
+    right: 0;
+    margin-top: 6px;
+    width: min(320px, calc(100vw - 64px));
+    max-height: min(360px, calc(100vh - 112px));
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+  }
+  .app-picker-search { flex: 0 0 auto; width: 100%; }
+  .app-picker-list { min-height: 0; max-height: 240px; overflow: auto; display: flex; flex-direction: column; gap: 1px; }
   .website-picker { width: min(280px, calc(100vw - 64px)); }
   .ui-dropdown-option { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; }
   .app-exe { color: var(--ink-faint); font-family: var(--mono); font-size: 10px; margin-left: auto; }

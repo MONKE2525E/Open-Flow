@@ -325,7 +325,7 @@
   $effect(() => {
     if (!contextMenu) return;
     const handleClose = (event: Event) => {
-      if (event.target instanceof Element && event.target.closest('.ctx-kebab')) return;
+      if (event.target instanceof Element && event.target.closest('.ctx-kebab, .ctx-menu')) return;
       closeContextMenu();
     };
     const timeout = window.setTimeout(() => {
@@ -344,6 +344,11 @@
     contextsStore.modalRequest = { mode: 'edit', id: context.id };
     appStore.currentPage = 'contexts';
     closeContextMenu();
+  }
+
+  function editContextById(id: number) {
+    const context = contextsStore.contexts.find((candidate) => candidate.id === id);
+    if (context) editContext(context);
   }
 
   async function togglePin(context: Context) {
@@ -683,7 +688,7 @@
     in:fly={{ y: motionPx(6), duration: motionMs(MOTION_MS.fast) }}
     out:fly={{ y: motionPx(4), duration: motionMs(120) }}
   >
-    <button class="ui-dropdown-option" type="button" role="menuitem" onclick={() => editContext(menuContext)}>Edit</button>
+    <button class="ui-dropdown-option" type="button" role="menuitem" onclick={() => editContextById(menuContext.id)}>Edit</button>
     <button class="ui-dropdown-option" type="button" role="menuitem" onclick={() => void togglePin(menuContext)}>
       {menuContext.pinned_at ? 'Unpin' : 'Pin'}
     </button>
@@ -1216,8 +1221,9 @@
     background: transparent;
     color: var(--ink-mute);
     cursor: pointer;
-    pointer-events: none;
+    pointer-events: auto;
     opacity: 0;
+    z-index: 1;
     transform: translateY(-50%) scale(0.82);
     transition: opacity 150ms ease, transform 170ms cubic-bezier(0.33, 1, 0.68, 1), background-color 140ms ease, color 140ms ease;
   }
