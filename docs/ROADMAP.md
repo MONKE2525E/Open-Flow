@@ -89,10 +89,10 @@
         - No diagnostic path logs private dictated text, clipboard text, names, emails, API keys, or full field contents.
 - **Relevant Files**: `src-tauri/src/core/injection/mod.rs`, `src-tauri/src/core/hotkey.rs`, `src-tauri/src/api/auto_learn.rs`, `src-tauri/src/api/prompts/mod.rs`, `src-tauri/src/api/cleanup.rs`, `src-tauri/src/pipeline/mod.rs`, `src/lib/components/settings/GeneralSection.svelte`, `tests/manual/`, `tests/OnePyFone.py`.
 
-## 4. Model-Specific Prompt Contracts and Context Retention
-- **Goal**: Replace generic cleanup prompting with model-specific contracts that are token-efficient while preserving essential context, especially on `light` mode.
+## 4. Shared Prompt Contract and Context Retention
+- **Goal**: Keep one token-efficient cleanup contract across models while preserving essential context, especially on `light` mode.
 - **Implementation Plan**:
-    - Create provider/model-specific cleanup prompt templates instead of one generalized instruction path for all models.
+    - Maintain one shared default prompt with dynamic cleanup, tone, formatting, and context settings instead of separate provider templates that can drift.
     - Define explicit edit budgets per intensity (`none`, `light`, `medium`, `high`) and enforce "must keep" constraints for factual clauses, entities, and user intent.
     - Add regression fixtures where losing a single clause changes meaning, and compare outputs against known-good 0.10.0 medium-mode behavior.
     - Audit snippet overrides, dictionary substitutions, and post-cleanup transforms so context is not dropped after the model already returned a good output.

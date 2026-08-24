@@ -25,15 +25,15 @@
 
   const cleanupCards = [
     { id: 'none', name: 'Off', desc: 'Skip cleanup and keep the raw transcript.', sample: "so um i was thinking like we should probably leave a bit earlier you know cause there's gonna be traffic i think" },
-    { id: 'light', name: 'Light', desc: 'Removes filler words, nothing else.', sample: "i was thinking we should probably leave a bit earlier, cause there's gonna be traffic i think" },
-    { id: 'medium', name: 'Medium', desc: 'Cleans it up, keeps your words.', sample: "I think we should leave a bit earlier, there's going to be traffic." },
-    { id: 'high', name: 'Strong', desc: 'Rewrites more aggressively for brevity.', sample: 'Leave early. Traffic.' },
+    { id: 'light', name: 'Light', desc: 'Removes fillers and false starts. Keeps your wording and order.', sample: "I was thinking we should probably leave a bit earlier because there's going to be traffic, I think." },
+    { id: 'medium', name: 'Medium', desc: 'Rewrites for clearer flow while preserving every important detail.', sample: "I think we should leave a bit earlier. There's going to be traffic." },
+    { id: 'high', name: 'Strong', desc: 'Leads with the point and cuts repetition, hedging, and detours.', sample: 'Leave early. There will be traffic.' },
   ];
 
   const personalCards = [
-    { id: 'casual', name: 'Casual', desc: 'Conversational. Light caps and punctuation.', sample: "Hey, are you free for lunch tomorrow? Let's do 12 if that works" },
-    { id: 'formal', name: 'Formal', desc: 'Professional prose. Full punctuation, formal vocabulary.', sample: 'Hey, are you free for lunch tomorrow? I would love to do 12 if that works for you.' },
-    { id: 'very_casual', name: 'Very Casual', desc: 'All lowercase, almost no punctuation.', sample: "hey are you free for lunch tomorrow let's do 12 if that works" },
+    { id: 'casual', name: 'Casual', desc: 'Conversational wording, contractions, and normal punctuation.', sample: "Hey, are you free for lunch tomorrow? Let's do 12 if that works." },
+    { id: 'formal', name: 'Formal', desc: 'Professional wording, full punctuation, and expanded contractions.', sample: 'Are you available for lunch tomorrow? Let us meet at 12 if that works for you.' },
+    { id: 'very_casual', name: 'Very Casual', desc: 'Mostly lowercase with contractions and minimal punctuation.', sample: "hey are you free for lunch tomorrow let's do 12 if that works" },
   ];
 
   onMount(async () => {

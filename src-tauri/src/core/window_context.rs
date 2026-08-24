@@ -120,10 +120,15 @@ pub fn get_process_name_for_hwnd(hwnd: usize) -> Option<String> {
     None
 }
 
-/// Returns a human-readable context hint for the cleanup prompt, e.g.
-/// "Google Chrome — GitHub · Build software better, together" or "Slack".
-/// Returns `None` if there is no useful context to add.
-pub fn get_app_context_hint(process_name: &str) -> Option<String> {
+/// Returns a compact, labeled context hint for the cleanup prompt. It reads
+/// the captured target window because focus may move during processing.
+pub fn get_app_context_hint(
+    process_name: &str,
+    target_id: usize,
+    browser_domain: Option<&str>,
+    context_name: Option<&str>,
+) -> Option<String> {
+    let mut lines = Vec::new();
     #[cfg(any(windows, target_os = "macos"))]
     {
         let browser = BROWSER_EXES
@@ -132,30 +137,73 @@ pub fn get_app_context_hint(process_name: &str) -> Option<String> {
             .map(|(_, name)| *name);
 
         if let Some(browser_name) = browser {
-            let title = get_active_window_title().unwrap_or_default();
-            if title.is_empty() {
-                return Some(browser_name.to_string());
+            lines.push(format!("Application: {browser_name}"));
+            if let Some(domain) = browser_domain
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                lines.push(format!("Website: {}", truncate_hint_value(domain, 120)));
             }
+            let title = get_window_title(target_id).unwrap_or_default();
             let page = strip_browser_suffix(&title, browser_name);
-            if page.is_empty() {
-                return Some(browser_name.to_string());
+            if !page.is_empty() {
+                lines.push(format!("Window title: {}", truncate_hint_value(&page, 160)));
             }
-            return Some(format!("{browser_name} — {page}"));
+        } else {
+            lines.push(format!("Application: {}", friendly_app_name(process_name)));
         }
     }
 
-    // For non-browsers strip the platform suffix so the model sees "Slack"
-    // rather than "slack.exe" / "slack.app".
-    let friendly = process_name
-        .trim_end_matches(".exe")
-        .trim_end_matches(".app");
-    Some(friendly.to_string())
+    #[cfg(not(any(windows, target_os = "macos")))]
+    lines.push(format!("Application: {}", friendly_app_name(process_name)));
+
+    if let Some(name) = context_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("Everywhere"))
+    {
+        lines.push(format!("Verenu context: {}", truncate_hint_value(name, 60)));
+    }
+
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
-fn get_active_window_title() -> Option<String> {
+fn friendly_app_name(process_name: &str) -> String {
+    let base = process_name
+        .trim_end_matches(".exe")
+        .trim_end_matches(".app");
+    match base.to_ascii_lowercase().as_str() {
+        "code" => "Visual Studio Code".to_string(),
+        "winword" => "Microsoft Word".to_string(),
+        "excel" => "Microsoft Excel".to_string(),
+        "powerpnt" => "Microsoft PowerPoint".to_string(),
+        "outlook" | "olk" => "Microsoft Outlook".to_string(),
+        "slack" => "Slack".to_string(),
+        "discord" => "Discord".to_string(),
+        "teams" | "ms-teams" => "Microsoft Teams".to_string(),
+        "notepad" => "Notepad".to_string(),
+        "obsidian" => "Obsidian".to_string(),
+        "notion" => "Notion".to_string(),
+        _ => base.to_string(),
+    }
+}
+
+fn truncate_hint_value(value: &str, max_chars: usize) -> String {
+    let clean = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if clean.chars().count() <= max_chars {
+        return clean;
+    }
+    let mut shortened = clean
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    shortened.push('…');
+    shortened
+}
+
+fn get_window_title(target_id: usize) -> Option<String> {
     #[cfg(windows)]
     unsafe {
-        let hwnd = GetForegroundWindow();
+        let hwnd = HWND(target_id as *mut core::ffi::c_void);
         if hwnd.0.is_null() {
             return None;
         }
@@ -168,7 +216,10 @@ fn get_active_window_title() -> Option<String> {
         }
     }
     #[cfg(not(windows))]
-    None
+    {
+        let _ = target_id;
+        None
+    }
 }
 
 /// Strips the trailing " - Browser Name" or " — Browser Name" suffix from a
@@ -189,4 +240,33 @@ fn strip_browser_suffix(title: &str, browser_name: &str) -> String {
         }
     }
     title.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn friendly_app_names_hide_process_file_conventions() {
+        assert_eq!(friendly_app_name("code.exe"), "Visual Studio Code");
+        assert_eq!(friendly_app_name("winword.exe"), "Microsoft Word");
+        assert_eq!(friendly_app_name("slack.app"), "Slack");
+    }
+
+    #[test]
+    fn hint_values_are_single_line_and_bounded() {
+        let value = format!("  issue\n{}  ", "x".repeat(200));
+        let shortened = truncate_hint_value(&value, 40);
+        assert_eq!(shortened.chars().count(), 40);
+        assert!(!shortened.contains('\n'));
+        assert!(shortened.ends_with('…'));
+    }
+
+    #[test]
+    fn browser_suffix_is_removed_from_window_title() {
+        assert_eq!(
+            strip_browser_suffix("Pull request · GitHub - Google Chrome", "Google Chrome"),
+            "Pull request · GitHub"
+        );
+    }
 }

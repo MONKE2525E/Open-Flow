@@ -1,18 +1,14 @@
-use super::{PromptTier, count_words};
+use super::{count_words, PromptTier};
 
-pub(super) const FORMATTING_RULES: &str = "FORMATTING COMMANDS: If speech includes literal commands like \
-'new paragraph', 'new line', 'bullet point', 'numbered list', 'open quote', or 'close quote', \
-apply the formatting. \
-PUNCTUATION: Only use an em dash (\u{2014}) if the speaker already used one.";
-
-fn role_line(intensity: &str) -> &'static str {
-    match intensity {
-        "none" => "You are a transcription mirror for <raw_dictation>.",
-        "light" => "You make a minimal edit to <raw_dictation>, removing only speech artifacts.",
-        "high" => "You rewrite <raw_dictation> into the shortest result that leads with the main point.",
-        _ => "You do a normal dictation cleanup of <raw_dictation>, preserving detail and intent.",
-    }
-}
+pub(super) const FORMATTING_RULES: &str = r#"<formatting>
+- Execute spoken paragraph, line, list, punctuation, symbol, capitalization, and spacing commands, then remove the command words. Accept equivalent wording. Preserve such phrases when discussed, quoted, or named.
+- Commands include comma, period/full stop, colon, semicolon, question/exclamation mark; open/close quote, parenthesis, bracket, brace; slash, backslash, pipe, underscore, hyphen, dash, em dash, percent, ampersand; all caps on/off, no space on/off, and numeral.
+- Split distinct ideas into paragraphs separated by a blank line.
+- Create a list only when explicitly requested or when several clearly parallel items are dictated as separate entries. Keep rhetorical "first" or "second" sequencing and ordinary prose as prose unless items are clearly enumerated.
+- "Hyphen" or "dash" → "-"; "em dash" or an unambiguous equivalent → "—". Never introduce an em dash stylistically. Preserve punctuation and line breaks.
+- In clear technical-token dictation, compact spoken at, dot, slash, backslash, colon, dash/hyphen, underscore, pipe, equals, plus, hash, or no space into an email, URL, path, command, filename, package, domain, variable, or identifier. Interpret these components specially only there; preserve correct tokens without restyling.
+- For clear spelling, join dictated letters and digits. Honor explicitly spoken capitalization instructions and phonetic letter names. By default preserve the spelled sequence as letters; use conventional proper-name casing only when vocabulary or context strongly supports it. Never concatenate ambiguous sequences.
+</formatting>"#;
 
 fn intensity_rules(
     intensity: &str,
@@ -21,72 +17,28 @@ fn intensity_rules(
     profile: &str,
 ) -> String {
     let base = match (intensity, tier) {
-        ("none", _) => {
-            if profile == "formal" {
-                "CLEANUP: Keep wording and structure unchanged by default. \
-                You may only change wording where needed to apply FORMAL profanity policy replacements. \
-                MUST NOT add words, sentences, or explanations that were not spoken."
-                    .to_string()
-            } else {
-                "CLEANUP: Return input unchanged, character-for-character.".to_string()
-            }
-        }
-        ("light", _) => {
-            "CLEANUP (LIGHT): MUST remove filler words (um, uh, like, you know), immediate duplicated words, and immediate false starts. \
-            MUST NOT remove any other word, including emphasis or qualifier words like 'just', 'really', 'actually', 'honestly', or 'again' — keep them even when they sound redundant, since they carry the speaker's meaning. \
-            MUST NOT summarize, compress, reorder, or rewrite personality away. \
-            MUST NOT add words, phrases, sentences, explanations, or clarifications that were not spoken — never pad, elaborate, or expand on what was said. \
-            MUST preserve sentence structure and almost all content. \
-            The cleaned result must be about the same length as the input, or shorter — never noticeably longer."
-                .to_string()
-        }
-        ("high", PromptTier::Short) => {
-            "CLEANUP (DIRECT): MUST rewrite to the shortest clear version and lead with the main point. Aim for roughly half the input words or fewer (unless already concise). \
-            MUST cut filler, false starts, circular phrasing, lead-ins, scene-setting, context the point does not need, hedges, repeated ideas, throat-clearing, and qualifiers. \
-            MUST keep concrete facts, names, and numbers. \
-            MUST NOT invent content."
-                .to_string()
-        }
-        ("high", PromptTier::Medium) => {
-            "CLEANUP (DIRECT): MUST rewrite to the shortest clear version and lead with the main point. Target roughly 30-50% of input words. \
-            MUST cut filler (um, uh, like, you know), lead-ins, scene-setting, context the point does not need, hedges (I think, maybe, probably), repeated ideas, false starts, circular phrasing, throat-clearing, and qualifiers. \
-            MUST keep concrete facts, names, and numbers. \
-            MUST NOT invent content."
-                .to_string()
-        }
-        ("high", PromptTier::Detailed) => {
-            "CLEANUP (DIRECT): MUST rewrite aggressively to the core and lead with the main point. Target roughly 30-50% of input words. \
-            MUST cut filler, lead-ins, scene-setting, context the point does not need, hedges, repeated ideas, false starts, circular phrasing, throat-clearing, and qualifiers. MAY merge or reorder sentences so the key point comes first. \
-            MUST keep concrete facts, names, and numbers. \
-            MUST NOT invent content."
-                .to_string()
-        }
-        (_, PromptTier::Short) => {
-            "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling, and obvious speech artifacts, and tighten wordy or roundabout phrasing into clean, direct sentences. \
-            MUST keep the meaning, key detail, and speaker intent. \
-            MUST NOT drop specifics or rewrite into a terse summary."
-                .to_string()
-        }
-        (_, PromptTier::Medium) => {
-            "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow. \
-            MAY lightly merge or reorder sentences when clarity improves. \
-            MUST preserve detail and speaker intent. \
-            MUST NOT aggressively compress or drop specifics."
-                .to_string()
-        }
-        (_, PromptTier::Detailed) => {
-            "CLEANUP (MEDIUM): MUST remove filler, repetition, rambling loops, and obvious speech artifacts, and smooth sentence flow. \
-            MAY restructure for clarity while preserving meaning. \
-            MUST preserve detail, important specifics, and speaker intent. \
-            MUST NOT aggressively compress."
-                .to_string()
-        }
+        ("none", _) if profile == "formal" =>
+            "Cleanup: Off. Keep wording and structure unchanged except for the formal profanity rule. Do not add content.".to_string(),
+        ("none", _) =>
+            "Cleanup: Off. Return the dictation unchanged, character-for-character.".to_string(),
+        ("light", _) =>
+            "Cleanup: Light. Remove filler words, immediate duplicates, and abandoned false starts only. Keep sentence order, personality, emphasis, qualifiers, and every distinct point. Do not summarize, paraphrase, pad, or noticeably change length.".to_string(),
+        ("high", PromptTier::Short) =>
+            "Cleanup: Strong. Lead with the main point and rewrite to the shortest clear version, aiming for about half the words unless already concise. Cut filler, false starts, repetition, throat-clearing, unnecessary setup, hedges, and weak qualifiers. Keep concrete facts, names, numbers, and required context.".to_string(),
+        ("high", PromptTier::Medium) =>
+            "Cleanup: Strong. Lead with the main point and target 30-50% of the words. Cut filler, false starts, repetition, circular phrasing, throat-clearing, unnecessary setup, hedges, and weak qualifiers. Keep concrete facts, names, numbers, and required context.".to_string(),
+        ("high", PromptTier::Detailed) =>
+            "Cleanup: Strong. Lead with the main point and target 30-50% of the words. Merge related sentences when useful, but preserve the speaker's sequence of reasoning unless the original is clearly scrambled. Cut filler, false starts, repetition, circular phrasing, throat-clearing, unnecessary setup, hedges, and weak qualifiers. Keep concrete facts, names, numbers, and required context.".to_string(),
+        (_, PromptTier::Short) =>
+            "Cleanup: Medium. Remove filler, repetition, rambling, false starts, and speech artifacts. Tighten roundabout wording into clear sentences while keeping meaning, specifics, personality, and intent. Do not reduce it to a terse summary.".to_string(),
+        (_, PromptTier::Medium) =>
+            "Cleanup: Medium. Remove filler, repetition, rambling loops, false starts, and speech artifacts. Smooth boundaries and merge adjacent thoughts when helpful. Reorder words or nearby clauses for grammar, but do not reorganize distinct ideas or change the speaker's reasoning sequence unless clearly scrambled. Preserve details, personality, and intent; do not aggressively compress.".to_string(),
+        (_, PromptTier::Detailed) =>
+            "Cleanup: Medium. Remove filler, repetition, rambling loops, false starts, and speech artifacts. Smooth boundaries and merge adjacent thoughts when helpful. Reorder words or nearby clauses for grammar, but do not reorganize distinct ideas or change the speaker's reasoning sequence unless clearly scrambled. Preserve details, important specifics, personality, and intent; do not aggressively compress.".to_string(),
     };
 
     if has_overrides {
-        format!(
-            "{base}\nSNIPPET OVERRIDES: If FINAL OUTPUT OVERRIDES conflict with cleanup rules, overrides win."
-        )
+        format!("{base}\nPriority: Final output overrides win if they conflict with this cleanup setting.")
     } else {
         base
     }
@@ -94,39 +46,26 @@ fn intensity_rules(
 
 fn tone_rules(profile: &str) -> &'static str {
     match profile {
-        "formal" => {
-            "TONE: Formal. Full sentences, proper capitalization, complete punctuation, expanded contractions."
-        }
-        "very_casual" => {
-            "TONE: Very casual. Mostly lowercase, minimal punctuation, keep contractions. \
-            MUST affect voice and capitalization only; MUST NOT alter the level of content pruning or detail preservation specified by the cleanup rules."
-        }
-        _ => {
-            "TONE: Casual. Natural conversational phrasing, sentence capitalization, light punctuation."
-        }
+        "formal" => "Tone: Formal. Use professional wording, complete sentences and punctuation, standard capitalization, and expanded contractions.",
+        "very_casual" => "Tone: Very casual. Use mostly lowercase, minimal punctuation, and contractions. Tone changes voice and casing only; cleanup intensity still controls what may be removed.",
+        _ => "Tone: Casual. Use natural conversational wording, sentence capitalization, contractions, and normal punctuation.",
     }
 }
 
 fn profanity_policy(profile: &str, intensity: &str) -> String {
     if profile == "formal" {
-        return "PROFANITY (FORMAL): Soften most profanity to professional wording, preserving meaning and emphasis. No asterisk censorship. This overrides intensity profanity defaults."
+        return "Profanity: Replace most profanity with professional wording while preserving meaning and emphasis. Do not use asterisk censorship."
             .to_string();
     }
 
     let intensity_label = match intensity {
-        "none" => "VERBATIM",
-        "light" => "LIGHT",
-        "high" => "DIRECT",
-        _ => "MEDIUM",
+        "none" => "Off",
+        "light" => "Light",
+        "high" => "Strong",
+        _ => "Medium",
     };
-
-    let tone_line = match profile {
-        "very_casual" => "PROFANITY TONE (VERY CASUAL): Keep swear words and speaker intensity.",
-        _ => "PROFANITY TONE (CASUAL): Keep swear words and speaker intensity.",
-    };
-
     format!(
-        "PROFANITY ({intensity_label}): Keep profanity as spoken. Do not sanitize or euphemize.\n{tone_line}"
+        "Profanity ({intensity_label}): Keep profanity and its intensity as spoken. Do not sanitize, euphemize, or censor it."
     )
 }
 
@@ -134,9 +73,7 @@ fn number_style_block(tier: PromptTier, has_numeric_content: bool) -> String {
     if tier == PromptTier::Short && !has_numeric_content {
         String::new()
     } else {
-        "NUMBER STYLE: Plain-language cardinal numbers below 10 must be words. \
-        Cardinal numbers 10 or above must be digits. \
-        Do not apply this rule inside preserved technical tokens."
+        "Numbers: Preserve the speaker's apparent numeric style when it matters. In ordinary prose, spell out simple cardinal numbers below 10 and use digits for 10 or above. Prefer digits for technical discussion, comparisons, quantities, measurements, dates, times, versions, addresses, identifiers, and when the dictated form is clearly numeric."
             .to_string()
     }
 }
@@ -149,7 +86,7 @@ pub(super) fn build_preset_block(
     has_overrides: bool,
 ) -> String {
     let mut lines = vec![
-        role_line(intensity).to_string(),
+        "<active_settings>".to_string(),
         intensity_rules(intensity, tier, has_overrides, profile),
         tone_rules(profile).to_string(),
         profanity_policy(profile, intensity),
@@ -158,20 +95,21 @@ pub(super) fn build_preset_block(
     if !number_style.is_empty() {
         lines.push(number_style);
     }
+    lines.push("</active_settings>".to_string());
     lines.join("\n")
 }
 
 fn to_imperative(raw: &str) -> String {
-    let s = raw.trim();
-    let s = s.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')');
-    let s = s.trim();
+    let value = raw.trim();
+    let value = value.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')');
+    let value = value.trim();
 
-    if s.to_uppercase().starts_with("MUST") {
-        return s.to_owned();
+    if value.to_uppercase().starts_with("MUST") {
+        return value.to_owned();
     }
-    for neg in &["don't ", "do not ", "never ", "avoid "] {
-        if s.to_lowercase().starts_with(neg) {
-            let rest = &s[neg.len()..];
+    for negative in &["don't ", "do not ", "never ", "avoid "] {
+        if value.to_lowercase().starts_with(negative) {
+            let rest = &value[negative.len()..];
             let mut chars = rest.chars();
             let capitalized = match chars.next() {
                 None => String::new(),
@@ -180,7 +118,7 @@ fn to_imperative(raw: &str) -> String {
             return format!("MUST NOT {capitalized}");
         }
     }
-    format!("MUST {s}")
+    format!("MUST {value}")
 }
 
 pub(super) fn snippet_overrides_block(extra_rules: &str) -> String {
@@ -188,19 +126,19 @@ pub(super) fn snippet_overrides_block(extra_rules: &str) -> String {
         return String::new();
     }
 
-    let override_lines: String = extra_rules
+    let override_lines = extra_rules
         .lines()
-        .filter(|l| !l.trim().is_empty())
+        .filter(|line| !line.trim().is_empty())
         .enumerate()
-        .map(|(i, line)| format!("{}. {}", i + 1, to_imperative(line)))
+        .map(|(index, line)| format!("{}. {}", index + 1, to_imperative(line)))
         .collect::<Vec<_>>()
         .join("\n");
 
     format!(
-        "FINAL OUTPUT OVERRIDES\n\
-        Apply these rules last. They override cleanup, tone, punctuation, and preserve-syntax rules.\n\
-        Follow every rule exactly.\n\
-        {override_lines}"
+        "<final_output_overrides>\n\
+        These user-authored rules have final say over cleanup, tone, punctuation, and formatting.\n\
+        {override_lines}\n\
+        </final_output_overrides>"
     )
 }
 
@@ -211,26 +149,28 @@ pub(super) fn render_cleanup_template(
     formatting_rules: &str,
     snippet_overrides: &str,
 ) -> String {
+    // Replace untrusted target context last. A window title containing a
+    // template token must remain data rather than expanding into instructions.
     template
-        .replace("{{ active_app }}", active_app)
         .replace("{{ cleanup_preset }}", cleanup_preset)
         .replace("{{ formatting_rules }}", formatting_rules)
         .replace("{{ snippet_overrides }}", snippet_overrides)
+        .replace("{{ active_app }}", active_app)
 }
 
-pub(super) fn collapse_blank_lines(s: &str) -> String {
-    let s = s.replace("\r\n", "\n");
-    let mut result = String::with_capacity(s.len());
+pub(super) fn collapse_blank_lines(value: &str) -> String {
+    let value = value.replace("\r\n", "\n");
+    let mut result = String::with_capacity(value.len());
     let mut newline_run = 0;
-    for c in s.chars() {
-        if c == '\n' {
+    for character in value.chars() {
+        if character == '\n' {
             newline_run += 1;
             if newline_run <= 2 {
-                result.push(c);
+                result.push(character);
             }
         } else {
             newline_run = 0;
-            result.push(c);
+            result.push(character);
         }
     }
     result.trim_end().to_string()
