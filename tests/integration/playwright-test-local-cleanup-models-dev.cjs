@@ -49,7 +49,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
     }
 
     const tileCount = await page.locator('.task-tile').count();
-    if (tileCount !== 3) errors.push(`Expected 3 top-level model tiles, found ${tileCount}`);
+    if (tileCount !== 2) errors.push(`Expected 2 model-selection tiles, found ${tileCount}`);
 
     const cleanupTile = page.locator('.task-tile').nth(1);
     const cleanupHead = cleanupTile.locator('.tile-head');
@@ -106,13 +106,17 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
       errors.push('Clean-up summary chip did not update to Local after selecting a local cleanup model');
     }
 
-    const downloadsTile = page.locator('.task-tile').nth(2);
+    const transcriptionDownloads = page.locator('.task-tile').filter({ hasText: 'Speech-to-text' }).first();
+    const transcriptionHead = transcriptionDownloads.locator('.tile-head');
+    if ((await transcriptionHead.getAttribute('aria-expanded')) !== 'true') await transcriptionHead.click();
+    await page.locator('#transcription-models-block').waitFor({ state: 'visible', timeout: TIMEOUT });
+
+    const downloadsTile = page.locator('.local-download-tile').last();
     const downloadsHead = downloadsTile.locator('.tile-head');
     if ((await downloadsHead.getAttribute('aria-expanded')) !== 'true') {
       await downloadsHead.click();
     }
-    await downloadsTile.locator('h3:has-text("Transcription models")').waitFor({ state: 'visible', timeout: TIMEOUT });
-    await downloadsTile.locator('h3:has-text("Cleanup models")').waitFor({ state: 'visible', timeout: TIMEOUT });
+    await page.locator('#cleanup-models-block').waitFor({ state: 'visible', timeout: TIMEOUT });
 
     const advancedToggle = page.locator('[role="switch"][aria-label="Advanced Models"]');
     await advancedToggle.waitFor({ state: 'visible', timeout: TIMEOUT });

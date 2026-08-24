@@ -4,7 +4,7 @@ const { chromium } = require('playwright');
 const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-helpers.cjs');
 const { finish, message } = require('./_regression-result.cjs');
 
-const expected = 'The model picker receives focus, traps Tab navigation, closes with Escape, and restores focus to its trigger.';
+const expected = 'Model settings tiles open from the keyboard, retain focus within the expanded control, and collapse with Escape.';
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
@@ -16,16 +16,13 @@ const expected = 'The model picker receives focus, traps Tab navigation, closes 
     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
     await openSettings(page);
     await page.locator('.settings-nav-item', { hasText: 'Models' }).click({ timeout: TIMEOUT });
-    const trigger = page.locator('button.tile-btn-primary', { hasText: 'Change' }).first();
+    const trigger = page.locator('.task-tile button.tile-head').first();
     await trigger.waitFor({ state: 'visible', timeout: TIMEOUT });
     await trigger.focus();
     await page.keyboard.press('Enter');
-
-    const dialog = page.locator('.picker-card[role="dialog"][aria-modal="true"]');
-    await dialog.waitFor({ state: 'visible', timeout: TIMEOUT });
-    await page.waitForFunction(() => document.querySelector('.picker-card')?.contains(document.activeElement) ?? false, null, { timeout: TIMEOUT }).catch(() => {});
-    const initialInside = await page.evaluate(() => document.querySelector('.picker-card')?.contains(document.activeElement) ?? false);
-    if (!initialInside) failures.push('focus did not move into the model picker');
+    await page.waitForFunction(() => document.querySelector('.task-tile.task-open') != null, null, { timeout: TIMEOUT });
+    const initialInside = await page.evaluate(() => document.querySelector('.task-tile.task-open')?.contains(document.activeElement) ?? false);
+    if (!initialInside) failures.push('focus did not remain within the expanded model tile');
 
     let escaped = false;
     let tabCycles = 0;
@@ -33,7 +30,7 @@ const expected = 'The model picker receives focus, traps Tab navigation, closes 
       for (let index = 0; index < 30; index += 1) {
         await page.keyboard.press('Tab');
         tabCycles += 1;
-        const inside = await page.evaluate(() => document.querySelector('.picker-card')?.contains(document.activeElement) ?? false);
+        const inside = await page.evaluate(() => document.querySelector('.task-tile.task-open')?.contains(document.activeElement) ?? false);
         if (!inside) {
           escaped = true;
           break;
@@ -43,24 +40,20 @@ const expected = 'The model picker receives focus, traps Tab navigation, closes 
     if (escaped) failures.push('Tab focus escaped the modal dialog');
 
     await page.keyboard.press('Escape');
-    const closedWithEscape = await dialog.waitFor({ state: 'hidden', timeout: TIMEOUT }).then(() => true).catch(() => false);
-    if (!closedWithEscape) failures.push('Escape did not close the model picker');
+    const closedWithEscape = await page.waitForFunction(() => !document.querySelector('.task-tile.task-open'), null, { timeout: TIMEOUT }).then(() => true).catch(() => false);
+    if (!closedWithEscape) failures.push('Escape did not collapse the model tile');
     let restored = false;
     if (closedWithEscape) {
-      await page.waitForFunction(() => {
-        const targetButton = [...document.querySelectorAll('button.tile-btn-primary')]
-          .find((element) => element.textContent?.includes('Change'));
-        return targetButton ? document.activeElement === targetButton : false;
-      }, null, { timeout: TIMEOUT }).catch(() => {});
+      await page.waitForFunction(() => document.activeElement?.matches('button.tile-head'), null, { timeout: TIMEOUT }).catch(() => {});
       restored = await trigger.evaluate((element) => document.activeElement === element);
-      if (!restored) failures.push('focus did not return to the Change button after Escape');
+      if (!restored) failures.push('focus did not return to the model tile trigger after Escape');
     }
 
     finish({
       status: failures.length ? 'failed' : 'passed',
       expected,
-      observed: failures.length ? failures.join('; ') : 'Focus entered the dialog, remained contained, and returned to the trigger',
-      regressionArea: 'modal keyboard and focus management',
+      observed: failures.length ? failures.join('; ') : 'The model tile opened, retained keyboard focus, and collapsed via Escape',
+      regressionArea: 'settings keyboard interaction and focus management',
       measurements: { tabCycles, closedWithEscape, focusRestored: restored },
       failureKind: failures.length ? 'product' : null,
       regressionStatus: failures.length ? 'pre_existing' : 'unknown',
