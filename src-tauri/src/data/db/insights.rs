@@ -841,7 +841,7 @@ mod tests {
     #[test]
     fn context_filter_scopes_per_dictation_figures_but_not_lifetime_counters() {
         let db = test_db();
-        let work = insert_context_returning(&db, "Work", None, None, None, None)
+        let work = insert_context_returning(&db, "Work", None, None, None, None, false)
             .expect("context")
             .id;
 

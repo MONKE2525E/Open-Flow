@@ -634,6 +634,7 @@ mod tests {
             None,
             None,
             Some("  Reply in a friendly tone.  "),
+            false,
         )
         .expect("context");
         assert_eq!(
@@ -648,6 +649,7 @@ mod tests {
             None,
             None,
             Some("Keep it brief."),
+            false,
         )
         .expect("update");
         assert_eq!(
