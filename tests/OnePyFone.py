@@ -30,7 +30,7 @@ import threading
 import time
 import tempfile
 import urllib.request
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -1074,6 +1074,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         overall_exit = max(overall_exit, exit_code)
 >>>>>>> Current commit: Address AI review findings
         if args.until_pass and exit_code == 0:
+            overall_exit = 0
             break
         overall_exit = max(overall_exit, exit_code)
 
