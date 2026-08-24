@@ -137,7 +137,6 @@ pub async fn initiator_exchange<S>(
     stream: &mut S,
     cipher: &ChaCha20Poly1305,
     self_identity: &IdentityExchange,
-    peer_name_hint: &str,
 ) -> Result<PairingOutcome>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -157,7 +156,6 @@ where
         Message::Error { message } => return Err(anyhow!("pairing failed: {message}")),
         other => return Err(anyhow!("unexpected pairing message: {other:?}")),
     }
-    let _ = peer_name_hint;
     Ok(outcome)
 }
 

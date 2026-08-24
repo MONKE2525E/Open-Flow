@@ -605,7 +605,12 @@ class ServerManager:
 def kill_port_owner(port: int) -> bool:
     if sys.platform != "win32":
         try:
-            probe = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=10)
+            probe = subprocess.run(
+                ["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
         pids = [pid.strip() for pid in probe.stdout.splitlines() if pid.strip().isdigit()]
@@ -632,6 +637,18 @@ def kill_port_owner(port: int) -> bool:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     return "killed" in proc.stdout
+
+
+def wait_for_port_closed(port: int, timeout_s: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                pass
+        except OSError:
+            return True
+        time.sleep(0.1)
+    return False
 
 
 def select_tests(suites: Sequence[str], pattern: str = "") -> List[TestEntry]:
@@ -672,13 +689,28 @@ def execute_plan(entries: Sequence[TestEntry], args: argparse.Namespace) -> Dict
     no_server = [test for test in entries if test.suite != "preflight" and not test.needs_server]
     server_tests = [test for test in entries if test.needs_server]
     results.update(run_group(preflight, url, args.verbose, False, args.workers))
+    if any(results[test.id].status == "failed" for test in preflight):
+        reason = "Skipped because a required preflight check failed"
+        for test in entries:
+            if test.suite != "preflight":
+                results[test.id] = TestResult(
+                    "skipped",
+                    output=reason,
+                    expected=test.expected,
+                    observed=reason,
+                    regression_area=test.regression_area,
+                    failure_kind="infrastructure",
+                    skip_reason=reason,
+                )
+        return results
     results.update(run_group(no_server, url, args.verbose, False, args.workers))
 
     server = ServerManager()
     try:
         if server_tests and not args.no_server:
             if args.fresh_server:
-                kill_port_owner(PORT)
+                if kill_port_owner(PORT):
+                    wait_for_port_closed(PORT)
             if not server.start(args.tauri):
                 for test in server_tests:
                     results[test.id] = TestResult(
@@ -912,7 +944,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         suites = parse_suites(args)
     except ValueError as exc:
         parser.error(str(exc))
-    entries = select_tests(suites, args.test)
+    selection_suites = list(SUITE_ORDER) if args.test and not args.suite else suites
+    entries = select_tests(selection_suites, args.test)
     if not entries:
         print("No tests matched the requested profile, suites, and filter.", file=sys.stderr)
         return 2

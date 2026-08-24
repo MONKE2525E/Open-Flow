@@ -24,8 +24,11 @@ function auditSurface() {
       const label = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
       if (label?.textContent?.trim()) return label.textContent.trim();
     }
+    const wrapped = element.closest('label');
+    if (wrapped?.textContent?.trim()) return wrapped.textContent.trim();
     if (element instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(element.type) && element.value?.trim()) return element.value.trim();
     if (element instanceof HTMLInputElement && element.placeholder?.trim()) return element.placeholder.trim();
+    if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) return '';
     return (element.textContent || '').replace(/\s+/g, ' ').trim();
   };
 
@@ -86,9 +89,12 @@ function auditSurface() {
       await collect(`settings/${label}`);
     }
 
-    await page.locator('.settings-nav-item', { hasText: 'Privacy' }).click({ timeout: TIMEOUT });
+    const privacyNav = page.locator('.settings-nav-item', { hasText: 'Privacy' }).first();
+    await privacyNav.click({ timeout: TIMEOUT });
     const switchControl = page.getByRole('switch', { name: 'App context hint' }).first();
-    if (await switchControl.count()) {
+    if (!(await switchControl.count())) {
+      findings.push('settings: keyboard: App context hint switch was not found');
+    } else {
       const switchName = await switchControl.evaluate((element) => {
         const labelledBy = element.getAttribute('aria-labelledby');
         if (labelledBy) {

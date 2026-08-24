@@ -50,6 +50,7 @@ pub(crate) struct Inner {
     pub data_dir: PathBuf,
     pub identity: RwLock<Option<Arc<DeviceIdentity>>>,
     pub pending: tokio::sync::Mutex<Option<PendingPairing>>,
+    pub pairing_in_progress: AtomicBool,
     pub pairing_generation: AtomicU64,
     pub sessions: Mutex<HashSet<String>>,
     pub discovered: Mutex<HashMap<String, DiscoveredDevice>>,
@@ -169,6 +170,7 @@ impl SyncManager {
             data_dir: data_dir.clone(),
             identity: RwLock::new(None),
             pending: tokio::sync::Mutex::new(None),
+            pairing_in_progress: AtomicBool::new(false),
             pairing_generation: AtomicU64::new(0),
             sessions: Mutex::new(HashSet::new()),
             discovered: Mutex::new(HashMap::new()),
@@ -596,7 +598,7 @@ impl SyncManager {
                 other => return Err(anyhow!("unexpected pairing response: {other:?}")),
             };
             let cipher = pairing::initiator_cipher(spake_state, &responder_msg)?;
-            pairing::initiator_exchange(&mut tls, &cipher, &identity, &target.name).await
+            pairing::initiator_exchange(&mut tls, &cipher, &identity).await
         };
         let outcome = tokio::time::timeout(PAIRING_TIMEOUT, exchange)
             .await
@@ -608,7 +610,7 @@ impl SyncManager {
     pub async fn respond_to_pairing(&self, code: String, approve: bool) -> Result<()> {
         let pending = {
             let mut guard = self.inner.pending.lock().await;
-            match guard.take() {
+            let pending = match guard.take() {
                 Some(PendingPairing::Incoming {
                     peer_uuid,
                     peer_name,
@@ -640,8 +642,13 @@ impl SyncManager {
                 Some(PendingPairing::Outgoing { .. }) | None => {
                     return Err(anyhow!("no incoming pairing request to respond to"));
                 }
-            }
+            };
+            self.inner
+                .pairing_in_progress
+                .store(true, Ordering::Release);
+            pending
         };
+        let _pairing_guard = PairingInProgressGuard(&self.inner.pairing_in_progress);
         let (peer_uuid, peer_name, spake_msg, mut stream, created, generation) = pending;
         let identity = match self.identity_exchange() {
             Ok(identity) => identity,
@@ -1159,6 +1166,14 @@ impl Drop for SessionGuard {
     }
 }
 
+struct PairingInProgressGuard<'a>(&'a AtomicBool);
+
+impl Drop for PairingInProgressGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 impl Inner {
     /// Tells the frontend the discovered/paired device lists may have changed.
     pub(crate) fn emit_devices_changed(&self) {
@@ -1378,7 +1393,7 @@ async fn handle_incoming_pairing(
     let generation;
     {
         let mut pending = inner.pending.lock().await;
-        if pending.is_some() {
+        if inner.pairing_in_progress.load(Ordering::Acquire) || pending.is_some() {
             let _ = send_message(&mut tls, &Message::PairBusy).await;
             return;
         }
@@ -1478,16 +1493,26 @@ async fn handle_sync_hello(
             app_version: env!("CARGO_PKG_VERSION").to_string(),
         }
     };
+    // Reserve the session before acknowledging it. Otherwise a duplicate
+    // connection can receive HelloAck and then fail at the first session read.
+    let session_available = {
+        let mut sessions = inner.sessions.lock().expect("sessions lock");
+        sessions.insert(hello.device_uuid.clone())
+    };
+    if !session_available {
+        let _ = send_message(
+            &mut tls,
+            &Message::Error {
+                message: "a sync session with this device is already running".to_string(),
+            },
+        )
+        .await;
+        return;
+    }
+    let _session_guard = SessionGuard(inner.clone(), hello.device_uuid.clone());
     if send_message(&mut tls, &Message::HelloAck(identity)).await.is_err() {
         return;
     }
-    {
-        let mut sessions = inner.sessions.lock().expect("sessions lock");
-        if !sessions.insert(hello.device_uuid.clone()) {
-            return; // a session with this peer is already running
-        }
-    }
-    let guard = SessionGuard(inner.clone(), hello.device_uuid.clone());
     let host = ManagerHost::new(&inner);
     // A stalled peer must not hold the session slot forever.
     let result = match tokio::time::timeout(
@@ -1519,7 +1544,6 @@ async fn handle_sync_hello(
             }
         }
     }
-    drop(guard);
 }
 
 // ---- SyncHost implementation over the real app ----

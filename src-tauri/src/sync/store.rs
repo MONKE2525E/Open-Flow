@@ -121,6 +121,8 @@ pub fn upsert_peer(
            name = excluded.name,
            cert_fp = excluded.cert_fp,
            needs_snapshot = 1,
+           send_cursor = 0,
+           recv_cursor = 0,
            last_error = NULL",
         params![device_uuid, name, cert_fp],
     )?;

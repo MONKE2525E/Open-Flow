@@ -1130,8 +1130,12 @@ fn reconcile_context_children(
         context_id,
         &aggregate.targets,
     )?;
-    for domain in &aggregate.websites {
-        let normalized = normalize_domain(domain);
+    let normalized_websites = aggregate
+        .websites
+        .iter()
+        .map(|domain| normalize_domain(domain))
+        .collect::<Vec<_>>();
+    for normalized in &normalized_websites {
         if normalized.is_empty() {
             continue;
         }
@@ -1146,7 +1150,7 @@ fn reconcile_context_children(
         "context_website_targets",
         "domain",
         context_id,
-        &aggregate.websites,
+        &normalized_websites,
     )?;
     reconcile_context_members(conn, context_id, aggregate)?;
     Ok(())

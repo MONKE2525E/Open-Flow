@@ -793,6 +793,7 @@ fn apply_v20_sync_migration(conn: &Connection) -> Result<()> {
 /// Older partial migrations generated bare hex strings with SQLite's
 /// `randomblob`, which would compare unequal to UUIDs created by Rust.
 fn backfill_canonical_uuids(conn: &Connection, table: &str) -> Result<()> {
+    const EVERYWHERE_UUID: &str = "everywhere-0000-0000-0000-000000000001";
     let mut stmt = conn.prepare(&format!("SELECT rowid, uuid FROM {table}"))?;
     let repairs = stmt
         .query_map([], |row| {
@@ -803,9 +804,19 @@ fn backfill_canonical_uuids(conn: &Connection, table: &str) -> Result<()> {
         .filter_map(|(rowid, value)| {
             let canonical = value
                 .as_deref()
-                .and_then(|raw| Uuid::parse_str(raw).ok())
+                .and_then(|raw| {
+                    if raw == EVERYWHERE_UUID {
+                        None
+                    } else {
+                        Uuid::parse_str(raw).ok()
+                    }
+                })
                 .map(|uuid| uuid.hyphenated().to_string());
-            (canonical.as_deref() != value.as_deref()).then_some((rowid, canonical))
+            if value.as_deref() == Some(EVERYWHERE_UUID) {
+                None
+            } else {
+                (canonical.as_deref() != value.as_deref()).then_some((rowid, canonical))
+            }
         })
         .collect::<Vec<_>>();
     drop(stmt);

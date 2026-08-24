@@ -671,7 +671,7 @@ async fn pairing_succeeds_with_matching_code_and_fails_with_wrong_code() {
                 other => panic!("expected accept, got {other:?}"),
             };
             let cipher = pairing::initiator_cipher(state_a, &responder_msg).expect("cipher");
-            pairing::initiator_exchange(&mut a, &cipher, &id_a, "B").await
+            pairing::initiator_exchange(&mut a, &cipher, &id_a).await
         },
         async move {
             let request = read_message(&mut b).await.expect("request");
@@ -710,7 +710,7 @@ async fn pairing_succeeds_with_matching_code_and_fails_with_wrong_code() {
                 other => panic!("expected accept, got {other:?}"),
             };
             let cipher = pairing::initiator_cipher(state_a2, &responder_msg).expect("cipher");
-            pairing::initiator_exchange(&mut a2, &cipher, &identity_a2, "B").await
+            pairing::initiator_exchange(&mut a2, &cipher, &identity_a2).await
         },
         async move {
             let request = read_message(&mut b2).await.expect("request");

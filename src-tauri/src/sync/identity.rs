@@ -6,6 +6,7 @@
 //! the only way pairing "forgets" this device.
 
 use anyhow::{anyhow, Context, Result};
+use chrono::Datelike;
 use rcgen::{CertificateParams, KeyPair, PKCS_ECDSA_P256_SHA256};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
@@ -134,12 +135,16 @@ fn create_identity(known_uuid: Option<String>) -> Result<DeviceIdentity> {
         .distinguished_name
         .push(rcgen::DnType::OrganizationName, "Verenu");
     // Small back-dated start so a slightly skewed peer clock still accepts it.
-    let this_year = time_year() as i64;
-    params.not_before = rcgen::date_time_ymd((this_year - 1) as i32, time_month(), 1.min(time_day()));
+    let now = chrono::Utc::now();
+    let this_year = now.year() as i64;
+    let month = now.month() as u8;
+    // Start on the first of the current month so certificate creation is
+    // stable across month lengths and remains slightly back-dated.
+    params.not_before = rcgen::date_time_ymd((this_year - 1) as i32, month, 1);
     params.not_after = rcgen::date_time_ymd(
         (this_year - 1 + CERT_YEARS) as i32,
-        time_month(),
-        1.min(time_day()),
+        month,
+        1,
     );
     let cert = params
         .self_signed(&key_pair)
@@ -150,18 +155,6 @@ fn create_identity(known_uuid: Option<String>) -> Result<DeviceIdentity> {
         cert_der: cert.der().clone(),
         key_der: key_pair.serialize_der(),
     })
-}
-
-fn time_year() -> u32 {
-    chrono::Utc::now().format("%Y").to_string().parse().unwrap_or(2026)
-}
-
-fn time_month() -> u8 {
-    chrono::Utc::now().format("%m").to_string().parse().unwrap_or(1)
-}
-
-fn time_day() -> u8 {
-    chrono::Utc::now().format("%d").to_string().parse().unwrap_or(1)
 }
 
 /// Best-effort human name for this machine, shown on the peer during pairing.
