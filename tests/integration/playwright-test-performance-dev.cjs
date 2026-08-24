@@ -68,7 +68,11 @@ const round = (value) => Math.round(value * 100) / 100;
     };
     for (const [measurement, budgetKey] of Object.entries(mapping)) {
       const limit = baseline.budgets_ms[budgetKey];
-      if (measurements[measurement] > limit) failures.push(`${measurement} was ${measurements[measurement]}ms, budget ${limit}ms`);
+      if (typeof limit !== 'number' || !Number.isFinite(limit)) {
+        failures.push(`Missing numeric performance budget for ${budgetKey}`);
+      } else if (measurements[measurement] > limit) {
+        failures.push(`${measurement} was ${measurements[measurement]}ms, budget ${limit}ms`);
+      }
     }
     if (longTasks > baseline.limits.long_tasks_over_50ms) failures.push(`${longTasks} long tasks exceeded limit ${baseline.limits.long_tasks_over_50ms}`);
     if (pageErrors.length > baseline.limits.uncaught_errors) failures.push(`${pageErrors.length} uncaught errors exceeded limit ${baseline.limits.uncaught_errors}`);
@@ -88,4 +92,3 @@ const round = (value) => Math.round(value * 100) / 100;
     await browser.close();
   }
 })();
-
