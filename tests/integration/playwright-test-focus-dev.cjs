@@ -20,8 +20,9 @@ const expected = 'Model settings tiles open from the keyboard, retain focus with
     await trigger.waitFor({ state: 'visible', timeout: TIMEOUT });
     await trigger.focus();
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => document.querySelector('.task-tile.task-open') != null, null, { timeout: TIMEOUT });
-    const initialInside = await page.evaluate(() => document.querySelector('.task-tile.task-open')?.contains(document.activeElement) ?? false);
+    const opened = await page.waitForFunction(() => document.querySelector('.task-tile.task-open') != null, null, { timeout: TIMEOUT }).then(() => true).catch(() => false);
+    if (!opened) failures.push('Enter did not open the model tile');
+    const initialInside = opened && await page.evaluate(() => document.querySelector('.task-tile.task-open')?.contains(document.activeElement) ?? false);
     if (!initialInside) failures.push('focus did not remain within the expanded model tile');
 
     let tabCycles = 0;

@@ -593,7 +593,7 @@ class ServerManager:
 def kill_port_owner(port: int) -> bool:
     if sys.platform != "win32":
         try:
-            probe = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=10)
+            probe = subprocess.run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"], capture_output=True, text=True, timeout=10)
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
         killed = False

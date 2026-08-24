@@ -52,7 +52,15 @@ fn load_settings() -> Option<serde_json::Value> {
     serde_json::from_str(&raw).ok()
 }
 
+fn environment_credentials_allowed() -> bool {
+    std::env::var_os("CI").is_some()
+        || std::env::var("VERENU_ALLOW_ENV_CREDENTIALS").is_ok_and(|value| value == "1")
+}
+
 fn first_environment_provider() -> Option<String> {
+    if !environment_credentials_allowed() {
+        return None;
+    }
     [
         ("groq", "GROQ_API_KEY"),
         ("openai", "OPENAI_API_KEY"),
@@ -124,9 +132,7 @@ fn credential_for(provider: &str) -> String {
     if !saved.is_empty() {
         return saved;
     }
-    let allow_environment = std::env::var_os("CI").is_some()
-        || std::env::var("VERENU_ALLOW_ENV_CREDENTIALS").is_ok_and(|value| value == "1");
-    if !allow_environment {
+    if !environment_credentials_allowed() {
         return String::new();
     }
     let variable = match provider {
