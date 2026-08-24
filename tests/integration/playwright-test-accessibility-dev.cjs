@@ -82,7 +82,7 @@ function auditSurface() {
       const label = rawLabel.trim();
       if (!label) continue;
       await page.locator('.settings-nav-item', { hasText: label }).first().click({ timeout: TIMEOUT });
-      await page.waitForTimeout(60);
+      await page.locator('.settings-nav-item.active', { hasText: label }).waitFor({ state: 'visible', timeout: TIMEOUT });
       await collect(`settings/${label}`);
     }
 
@@ -115,14 +115,16 @@ function auditSurface() {
       await page.keyboard.press('Space');
       await page.waitForFunction(
         (initialChecked) => {
-          const switchElement = document.querySelector('[role="switch"][aria-label="App context hint"]');
-          if (!switchElement) return false;
+          const activeElement = document.activeElement;
+          const switchElement = activeElement?.getAttribute('role') === 'switch'
+            ? activeElement
+            : document.querySelector('[role="switch"]:focus');
           const dialog = [...document.querySelectorAll('[role="dialog"]')].some((element) => {
             const style = getComputedStyle(element);
             const rect = element.getBoundingClientRect();
             return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
           });
-          return switchElement.getAttribute('aria-checked') !== initialChecked || dialog;
+          return Boolean(switchElement && switchElement.getAttribute('aria-checked') !== initialChecked) || dialog;
         },
         before,
         { timeout: TIMEOUT },

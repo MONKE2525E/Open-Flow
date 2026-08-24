@@ -42,7 +42,15 @@
     syncStore.incoming = null;
     void invoke('sync_respond_to_pairing', { code: '', approve: false }).catch(() => {});
   }
+
+  function handleKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape' || !incoming) return;
+    event.preventDefault();
+    dismiss();
+  }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 {#if incoming}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->

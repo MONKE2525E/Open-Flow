@@ -30,7 +30,7 @@ import threading
 import time
 import tempfile
 import urllib.request
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -622,7 +622,15 @@ def kill_port_owner(port: int) -> bool:
         " -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess; "
         "if ($id) { Stop-Process -Id $id -Force; 'killed' } } catch {}"
     )
-    proc = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
     return "killed" in proc.stdout
 
 
@@ -706,11 +714,17 @@ def merge_loop_results(accumulated: Dict[str, TestResult], current: Dict[str, Te
             continue
         statuses_differ = previous.status != result.status
         chosen = result if rank[result.status] >= rank[previous.status] else previous
-        chosen.duration_s = previous.duration_s + result.duration_s
-        chosen.attempts = previous.attempts + result.attempts
+        chosen = replace(
+            chosen,
+            duration_s=previous.duration_s + result.duration_s,
+            attempts=previous.attempts + result.attempts,
+        )
         if statuses_differ:
-            chosen.regression_status = "flaky"
-            chosen.observed = f"Status changed across loops: {previous.status} -> {result.status}. {chosen.observed}"
+            chosen = replace(
+                chosen,
+                regression_status="flaky",
+                observed=f"Status changed across loops: {previous.status} -> {result.status}. {chosen.observed}",
+            )
         merged[test_id] = chosen
     return merged
 
@@ -915,9 +929,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         results = execute_plan(entries, args)
         exit_code = summary(results, entries, time.monotonic() - started)
         accumulated_results = merge_loop_results(accumulated_results, results)
-        overall_exit = max(overall_exit, exit_code)
         if args.until_pass and exit_code == 0:
+            overall_exit = 0
             break
+        overall_exit = max(overall_exit, exit_code)
 
     elapsed = time.monotonic() - total_started
     if not args.keep_artifacts:

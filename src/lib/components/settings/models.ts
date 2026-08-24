@@ -68,8 +68,8 @@ export type CatalogEntry = {
 export const CATALOG: CatalogEntry[] = [
   { provider: 'groq', id: 'whisper-large-v3', label: 'Whisper Large v3', tasks: ['transcription'], tags: ['accurate'], tier: 'premium' },
   { provider: 'groq', id: 'whisper-large-v3-turbo', label: 'Whisper Large v3 Turbo', tasks: ['transcription'], tags: ['fast', 'cheap'], tier: 'standard' },
-  { provider: 'groq', id: 'qwen/qwen3.6-27b', label: 'Qwen3.6 27B', tasks: ['cleanup'], tags: ['accurate'], tier: 'premium' },
-  { provider: 'groq', id: 'openai/gpt-oss-20b', label: 'GPT OSS 20B', tasks: ['cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
+  { provider: 'groq', id: GROQ_QWEN_3_6_27B_MODEL, label: 'Qwen3.6 27B', tasks: ['cleanup'], tags: ['accurate'], tier: 'premium' },
+  { provider: 'groq', id: GROQ_GPT_OSS_20B_MODEL, label: 'GPT OSS 20B', tasks: ['cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
   { provider: 'groq', id: 'openai/gpt-oss-120b', label: 'GPT OSS 120B', tasks: ['cleanup'], tags: ['accurate'] },
   { provider: 'groq', id: 'groq/compound', label: 'Compound', tasks: ['cleanup'], tags: ['accurate'] },
   { provider: 'groq', id: 'groq/compound-mini', label: 'Compound Mini', tasks: ['cleanup'], tags: ['fast'] },
