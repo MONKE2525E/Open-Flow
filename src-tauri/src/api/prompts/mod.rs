@@ -5,7 +5,7 @@ use super::gemini_types::{GeminiGenConfig, GeminiThinkingConfig};
 mod cleanup_rules;
 mod cleanup_templates;
 mod gemini;
-#[cfg(test)]
+#[cfg(test)]`nmod regression_fixtures;`n#[cfg(test)]
 mod tests;
 mod transcription;
 
