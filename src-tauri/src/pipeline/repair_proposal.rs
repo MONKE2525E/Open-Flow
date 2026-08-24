@@ -105,24 +105,44 @@ impl RepairAction {
                         truncate_for_display(term.as_deref().unwrap_or("new term"))
                     ),
                     DictionaryOperation::Update => {
-                        let id = dictionary_id.ok_or_else(|| anyhow::anyhow!("missing vocabulary target"))?;
-                        let current = snapshot.dictionary.iter().find(|e| e.id == id).ok_or_else(|| anyhow::anyhow!("unknown vocabulary target"))?;
+                        let id = dictionary_id
+                            .ok_or_else(|| anyhow::anyhow!("missing vocabulary target"))?;
+                        let current = snapshot
+                            .dictionary
+                            .iter()
+                            .find(|e| e.id == id)
+                            .ok_or_else(|| anyhow::anyhow!("unknown vocabulary target"))?;
                         format!(
                             "Vocabulary item: {} -> {}",
-                            truncate_for_display(current.mistake.as_deref().unwrap_or(&current.term)),
+                            truncate_for_display(
+                                current.mistake.as_deref().unwrap_or(&current.term)
+                            ),
                             truncate_for_display(term.as_deref().unwrap_or(&current.term))
                         )
                     }
                     DictionaryOperation::Remove => {
-                        let id = dictionary_id.ok_or_else(|| anyhow::anyhow!("missing vocabulary target"))?;
-                        let current = snapshot.dictionary.iter().find(|e| e.id == id).ok_or_else(|| anyhow::anyhow!("unknown vocabulary target"))?;
-                        format!("Remove vocabulary item {}", truncate_for_display(&current.term))
+                        let id = dictionary_id
+                            .ok_or_else(|| anyhow::anyhow!("missing vocabulary target"))?;
+                        let current = snapshot
+                            .dictionary
+                            .iter()
+                            .find(|e| e.id == id)
+                            .ok_or_else(|| anyhow::anyhow!("unknown vocabulary target"))?;
+                        format!(
+                            "Remove vocabulary item {}",
+                            truncate_for_display(&current.term)
+                        )
                     }
                 };
                 Ok((summary, format!("Apply in: {scope_name}")))
             }
-            Self::Setting { key, value, expected_value } => {
-                let label = setting_label(key).ok_or_else(|| anyhow::anyhow!("unsupported setting"))?;
+            Self::Setting {
+                key,
+                value,
+                expected_value,
+            } => {
+                let label =
+                    setting_label(key).ok_or_else(|| anyhow::anyhow!("unsupported setting"))?;
                 Ok((
                     format!(
                         "{label}: {} -> {}",
@@ -149,7 +169,10 @@ pub(super) fn setting_label(key: &str) -> Option<&'static str> {
 }
 
 pub(super) fn display_value(value: &Value) -> String {
-    value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string())
+    value
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| value.to_string())
 }
 
 pub(super) fn scope_name(snapshot: &RepairSnapshot, context_id: i64) -> anyhow::Result<String> {
@@ -167,8 +190,9 @@ pub(super) fn current_setting(snapshot: &RepairSnapshot, key: &str) -> Option<Va
         store::CLEANUP_ENABLED => json!(snapshot.settings.cleanup_enabled),
         store::CLEANUP_INTENSITY => json!(snapshot.settings.cleanup_intensity),
         store::DEFAULT_TONE => json!(snapshot.settings.default_tone),
-        store::CONTEXTUAL_CAPS => json!(snapshot.settings.contextual_caps_enabled),
-        store::AUTO_SPACING => json!(snapshot.settings.auto_spacing_enabled),
+        store::CONTEXTUAL_CAPS | store::AUTO_SPACING => {
+            json!(snapshot.settings.contextual_formatting_enabled)
+        }
         store::CAPS_LOCK_UPPERCASE => json!(snapshot.settings.caps_lock_uppercase_enabled),
         _ => return None,
     })
@@ -179,16 +203,23 @@ pub(super) fn config_setting(cfg: &store::PipelineConfig, key: &str) -> Option<V
         store::CLEANUP_ENABLED => json!(cfg.cleanup_enabled),
         store::CLEANUP_INTENSITY => json!(cfg.cleanup_intensity),
         store::DEFAULT_TONE => json!(cfg.default_tone),
-        store::CONTEXTUAL_CAPS => json!(cfg.contextual_caps_enabled),
-        store::AUTO_SPACING => json!(cfg.auto_spacing_enabled),
+        store::CONTEXTUAL_CAPS | store::AUTO_SPACING => json!(cfg.contextual_formatting_enabled),
         store::CAPS_LOCK_UPPERCASE => json!(cfg.caps_lock_uppercase_enabled),
         _ => return None,
     })
 }
 
-pub(super) fn supports_complaint(snapshot: &RepairSnapshot, complaint: &str, action: &RepairAction) -> bool {
+pub(super) fn supports_complaint(
+    snapshot: &RepairSnapshot,
+    complaint: &str,
+    action: &RepairAction,
+) -> bool {
     let complaint_lower = complaint.to_lowercase();
-    let evidence = format!("{} {} {}", complaint_lower, snapshot.raw, snapshot.delivered_private).to_lowercase();
+    let evidence = format!(
+        "{} {} {}",
+        complaint_lower, snapshot.raw, snapshot.delivered_private
+    )
+    .to_lowercase();
     match action {
         // The real anti-hallucination guard is the substring checks below: both
         // the proposed correct term and the proposed mistake must actually
@@ -198,15 +229,34 @@ pub(super) fn supports_complaint(snapshot: &RepairSnapshot, complaint: &str, act
         // completely ordinary phrasing like "X became Y" or "X should be
         // Y" — including the app's own placeholder example — so it's gone.
         RepairAction::Dictionary { term, mistake, .. } => {
-            term.as_deref().is_some_and(|v| !v.trim().is_empty() && evidence.contains(&v.to_lowercase()))
-                && mistake.as_deref().is_some_and(|v| !v.trim().is_empty() && evidence.contains(&v.to_lowercase()))
+            term.as_deref()
+                .is_some_and(|v| !v.trim().is_empty() && evidence.contains(&v.to_lowercase()))
+                && mistake
+                    .as_deref()
+                    .is_some_and(|v| !v.trim().is_empty() && evidence.contains(&v.to_lowercase()))
         }
         RepairAction::Setting { key, .. } => match key.as_str() {
-            store::AUTO_SPACING => complaint_lower.contains("spacing") || complaint_lower.contains("space before"),
-            store::CAPS_LOCK_UPPERCASE | store::CONTEXTUAL_CAPS => complaint_lower.contains("caps") || complaint_lower.contains("capital") || complaint_lower.contains("uppercase"),
-            store::DEFAULT_TONE => complaint_lower.contains("tone") || complaint_lower.contains("formal") || complaint_lower.contains("casual"),
-            store::CLEANUP_INTENSITY => complaint_lower.contains("cleanup") || complaint_lower.contains("formatting") || complaint_lower.contains("too aggressive"),
-            store::CLEANUP_ENABLED => complaint_lower.contains("cleanup") || complaint_lower.contains("automatic cleanup"),
+            store::AUTO_SPACING => {
+                complaint_lower.contains("spacing") || complaint_lower.contains("space before")
+            }
+            store::CAPS_LOCK_UPPERCASE | store::CONTEXTUAL_CAPS => {
+                complaint_lower.contains("caps")
+                    || complaint_lower.contains("capital")
+                    || complaint_lower.contains("uppercase")
+            }
+            store::DEFAULT_TONE => {
+                complaint_lower.contains("tone")
+                    || complaint_lower.contains("formal")
+                    || complaint_lower.contains("casual")
+            }
+            store::CLEANUP_INTENSITY => {
+                complaint_lower.contains("cleanup")
+                    || complaint_lower.contains("formatting")
+                    || complaint_lower.contains("too aggressive")
+            }
+            store::CLEANUP_ENABLED => {
+                complaint_lower.contains("cleanup") || complaint_lower.contains("automatic cleanup")
+            }
             _ => false,
         },
     }
@@ -216,7 +266,11 @@ pub(super) fn same_word(left: &str, right: &str) -> bool {
     left.trim().eq_ignore_ascii_case(right.trim())
 }
 
-pub(super) fn validate_action(snapshot: &RepairSnapshot, complaint: &str, action: RepairAction) -> anyhow::Result<ValidatedProposal> {
+pub(super) fn validate_action(
+    snapshot: &RepairSnapshot,
+    complaint: &str,
+    action: RepairAction,
+) -> anyhow::Result<ValidatedProposal> {
     if !supports_complaint(snapshot, complaint, &action) {
         anyhow::bail!("No safe repair could be mapped to the observed text")
     }
@@ -234,17 +288,30 @@ pub(super) fn validate_action(snapshot: &RepairSnapshot, complaint: &str, action
             scope_name(snapshot, resolve_scope_id(snapshot, *scope))?;
             match operation {
                 DictionaryOperation::Add => {
-                    if dictionary_id.is_some() || term.as_deref().unwrap_or("").trim().is_empty() || mistake.as_deref().unwrap_or("").trim().is_empty() {
+                    if dictionary_id.is_some()
+                        || term.as_deref().unwrap_or("").trim().is_empty()
+                        || mistake.as_deref().unwrap_or("").trim().is_empty()
+                    {
                         anyhow::bail!("invalid dictionary add")
                     }
-                    if same_word(term.as_deref().unwrap_or(""), mistake.as_deref().unwrap_or("")) {
+                    if same_word(
+                        term.as_deref().unwrap_or(""),
+                        mistake.as_deref().unwrap_or(""),
+                    ) {
                         anyhow::bail!("dictionary add is a no-op")
                     }
                 }
                 DictionaryOperation::Update => {
-                    let id = dictionary_id.ok_or_else(|| anyhow::anyhow!("missing dictionary target"))?;
-                    let current = snapshot.dictionary.iter().find(|e| e.id == id).ok_or_else(|| anyhow::anyhow!("unknown dictionary target"))?;
-                    if expected_term.as_deref() != Some(current.term.as_str()) || expected_mistake.as_deref() != current.mistake.as_deref() {
+                    let id = dictionary_id
+                        .ok_or_else(|| anyhow::anyhow!("missing dictionary target"))?;
+                    let current = snapshot
+                        .dictionary
+                        .iter()
+                        .find(|e| e.id == id)
+                        .ok_or_else(|| anyhow::anyhow!("unknown dictionary target"))?;
+                    if expected_term.as_deref() != Some(current.term.as_str())
+                        || expected_mistake.as_deref() != current.mistake.as_deref()
+                    {
                         anyhow::bail!("dictionary entry changed")
                     }
                     if term.as_deref().unwrap_or("").trim().is_empty() {
@@ -257,36 +324,72 @@ pub(super) fn validate_action(snapshot: &RepairSnapshot, complaint: &str, action
                     // real no-op only when term, mistake, AND scope are unchanged,
                     // since an update can also exist purely to move an entry's scope.
                     if same_word(term.as_deref().unwrap_or(""), current.term.as_str())
-                        && mistake.as_deref().is_none_or(|value| current.mistake.as_deref().is_some_and(|old| same_word(value, old)))
+                        && mistake.as_deref().is_none_or(|value| {
+                            current
+                                .mistake
+                                .as_deref()
+                                .is_some_and(|old| same_word(value, old))
+                        })
                         && resolve_scope_id(snapshot, *scope) == snapshot.context_id
                     {
                         anyhow::bail!("dictionary update is a no-op")
                     }
                 }
                 DictionaryOperation::Remove => {
-                    let id = dictionary_id.ok_or_else(|| anyhow::anyhow!("missing dictionary target"))?;
-                    let current = snapshot.dictionary.iter().find(|e| e.id == id).ok_or_else(|| anyhow::anyhow!("unknown dictionary target"))?;
-                    if expected_term.as_deref() != Some(current.term.as_str()) || expected_mistake.as_deref() != current.mistake.as_deref() {
+                    let id = dictionary_id
+                        .ok_or_else(|| anyhow::anyhow!("missing dictionary target"))?;
+                    let current = snapshot
+                        .dictionary
+                        .iter()
+                        .find(|e| e.id == id)
+                        .ok_or_else(|| anyhow::anyhow!("unknown dictionary target"))?;
+                    if expected_term.as_deref() != Some(current.term.as_str())
+                        || expected_mistake.as_deref() != current.mistake.as_deref()
+                    {
                         anyhow::bail!("dictionary entry changed")
                     }
                 }
             }
         }
-        RepairAction::Setting { key, value, expected_value } => {
-            if setting_label(key).is_none() || current_setting(snapshot, key).as_ref() != Some(expected_value) {
+        RepairAction::Setting {
+            key,
+            value,
+            expected_value,
+        } => {
+            if setting_label(key).is_none()
+                || current_setting(snapshot, key).as_ref() != Some(expected_value)
+            {
                 anyhow::bail!("setting is not allowlisted or changed")
             }
-            if matches!(key.as_str(), store::CLEANUP_INTENSITY) && !value.as_str().is_some_and(store::is_supported_cleanup_intensity) {
+            if matches!(key.as_str(), store::CLEANUP_INTENSITY)
+                && !value
+                    .as_str()
+                    .is_some_and(store::is_supported_cleanup_intensity)
+            {
                 anyhow::bail!("invalid cleanup intensity")
             }
-            if matches!(key.as_str(), store::DEFAULT_TONE) && !value.as_str().is_some_and(store::is_supported_default_tone) {
+            if matches!(key.as_str(), store::DEFAULT_TONE)
+                && !value.as_str().is_some_and(store::is_supported_default_tone)
+            {
                 anyhow::bail!("invalid tone")
             }
-            if matches!(key.as_str(), store::CLEANUP_ENABLED | store::CONTEXTUAL_CAPS | store::AUTO_SPACING | store::CAPS_LOCK_UPPERCASE) && !value.is_boolean() {
+            if matches!(
+                key.as_str(),
+                store::CLEANUP_ENABLED
+                    | store::CONTEXTUAL_CAPS
+                    | store::AUTO_SPACING
+                    | store::CAPS_LOCK_UPPERCASE
+            ) && !value.is_boolean()
+            {
                 anyhow::bail!("setting requires boolean")
             }
         }
     }
     let (summary, scope) = action.summary(snapshot)?;
-    Ok(ValidatedProposal { id: REPAIR_ID.fetch_add(1, Ordering::Relaxed), action, summary, scope })
+    Ok(ValidatedProposal {
+        id: REPAIR_ID.fetch_add(1, Ordering::Relaxed),
+        action,
+        summary,
+        scope,
+    })
 }
