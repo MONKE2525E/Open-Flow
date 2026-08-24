@@ -5,7 +5,10 @@ pub mod gemini_types;
 pub mod prompts;
 pub mod service_status;
 pub mod transcription;
-pub mod updater;`r`n`r`n#[cfg(test)]`r`nmod live_regression_tests;
+pub mod updater;
+
+#[cfg(test)]
+mod live_regression_tests;
 
 const AUTH_401_PREFIX: &str = "AUTH_401";
 

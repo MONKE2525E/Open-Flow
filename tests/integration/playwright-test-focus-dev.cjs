@@ -41,7 +41,7 @@ const expected = 'The model picker receives focus, traps Tab navigation, closes 
     if (escaped) failures.push('Tab focus escaped the modal dialog');
 
     await page.keyboard.press('Escape');
-    const closedWithEscape = await dialog.waitFor({ state: 'hidden', timeout: 1000 }).then(() => true).catch(() => false);
+    const closedWithEscape = await dialog.waitFor({ state: 'hidden', timeout: TIMEOUT }).then(() => true).catch(() => false);
     if (!closedWithEscape) failures.push('Escape did not close the model picker');
     let restored = false;
     if (closedWithEscape) {

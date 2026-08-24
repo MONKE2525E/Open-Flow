@@ -87,7 +87,7 @@ function auditSurface() {
     }
 
     await page.locator('.settings-nav-item', { hasText: 'Privacy' }).click({ timeout: TIMEOUT });
-    const switchControl = page.getByRole('switch', { name: 'App context hint' });
+    const switchControl = page.getByRole('switch', { name: 'App context hint' }).first();
     if (await switchControl.count()) {
       const switchName = await switchControl.getAttribute('aria-label') || 'unnamed switch';
       const before = await switchControl.getAttribute('aria-checked');
