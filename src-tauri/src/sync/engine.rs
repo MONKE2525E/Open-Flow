@@ -1349,16 +1349,24 @@ fn apply_api_call_op(conn: &Connection, op: &SyncOp) -> Result<Applied> {
             .ok_or_else(|| anyhow!("api_call upsert missing payload"))?,
     )
     .context("invalid api call payload")?;
-    let transcription_id: i64 = match &row.transcription_uuid {
-        Some(transcription_uuid) => conn
-            .query_row(
-                "SELECT id FROM transcriptions WHERE uuid = ?1",
-                params![transcription_uuid],
-                |r| r.get(0),
-            )
-            .optional()?
-            .unwrap_or(0),
-        None => 0,
+    let Some(transcription_uuid) = row.transcription_uuid.as_deref() else {
+        log::warn!("sync: skipping api call {} without a transcription", op.row_uuid);
+        return Ok(Applied::Skipped);
+    };
+    let Some(transcription_id) = conn
+        .query_row(
+            "SELECT id FROM transcriptions WHERE uuid = ?1",
+            params![transcription_uuid],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+    else {
+        log::warn!(
+            "sync: skipping api call {} with missing transcription {}",
+            op.row_uuid,
+            transcription_uuid
+        );
+        return Ok(Applied::Skipped);
     };
     let inserted = conn.execute(
         "INSERT OR IGNORE INTO api_calls
@@ -1671,10 +1679,8 @@ where
                 if batch.done {
                     // Final batch: remember the position so the next session
                     // pulls only fresh changes.
-                    if acked > 0 {
-                        let conn = lock(db)?;
-                        sync_store::set_peer_recv_cursor(&conn, &peer.device_uuid, acked)?;
-                    }
+                    let conn = lock(db)?;
+                    sync_store::set_peer_recv_cursor(&conn, &peer.device_uuid, acked)?;
                     break;
                 }
             }
@@ -1739,10 +1745,8 @@ where
         .await?;
         match read_message(stream).await? {
             Message::Ack { seq } => {
-                if seq > 0 {
-                    let conn = lock(db)?;
-                    sync_store::set_peer_send_position(&conn, &peer.device_uuid, seq, false)?;
-                }
+                let conn = lock(db)?;
+                sync_store::set_peer_send_position(&conn, &peer.device_uuid, seq, false)?;
             }
             Message::Error { message } => return Err(anyhow!("peer error: {message}")),
             other => return Err(anyhow!("unexpected message during serve: {other:?}")),

@@ -289,6 +289,9 @@ impl SyncManager {
     }
 
     async fn start_discovery(&self) -> Result<()> {
+        if let Some(previous) = self.inner.mdns.lock().await.take() {
+            let _ = previous.shutdown();
+        }
         let daemon = ServiceDaemon::new()
             .map_err(|e| anyhow!("mDNS daemon failed to start: {e}"))?;
         let (uuid, name, port) = {

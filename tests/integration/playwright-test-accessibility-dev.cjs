@@ -142,7 +142,7 @@ function auditSurface() {
         },
         before,
         { timeout: TIMEOUT },
-      );
+      ).catch(() => {});
       const after = await switchControl.getAttribute('aria-checked');
       measurements.switchesTested = 1;
       const confirmationOpened = await page.locator('[role="dialog"]:visible').count() > 0;

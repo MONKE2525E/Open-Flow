@@ -84,13 +84,18 @@
   let panelLeft = $state(0);
 
   onMount(() => {
-    const panel = document.querySelector('.settings-page');
-    if (panel) panelLeft = panel.getBoundingClientRect().left;
+    const updatePanelLeft = () => {
+      const panel = document.querySelector('.settings-page');
+      if (panel) panelLeft = panel.getBoundingClientRect().left;
+    };
+    updatePanelLeft();
+    window.addEventListener('resize', updatePanelLeft);
     requestAnimationFrame(() => {
       if (modalEl?.isConnected) {
         modalEl.querySelector<HTMLElement>('.picker-search')?.focus();
       }
     });
+    return () => window.removeEventListener('resize', updatePanelLeft);
   });
 
   const RAIL_ORDER: ProviderId[] = ['groq', 'openai', 'google', 'assemblyai', 'local'];

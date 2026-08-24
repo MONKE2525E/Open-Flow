@@ -64,11 +64,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
       errors.push('Picker did not mark the installed local cleanup model as installed');
     }
 
-    // Clicking an unselected model row adds it as a fallback (the row itself
-    // is labeled "Add fallback") — it does not immediately become the active
-    // default. Swapping the active model is a two-step gesture: add the new
-    // model as a fallback, then click the current active row, which demotes
-    // it and promotes the (only) fallback to take its place.
+    // Clicking the installed local model row selects it as the active cleanup
     await installedLocalRow.locator('.row-main').click();
     await page.waitForFunction(
       () => {

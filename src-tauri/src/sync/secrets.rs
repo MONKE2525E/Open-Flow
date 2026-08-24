@@ -62,7 +62,7 @@ pub fn delete_identity_key() {
 /// Last-resort storage when the OS credential store is unavailable. The key
 /// file is only readable by the current user where the OS enforces modes.
 fn fallback_path() -> Option<std::path::PathBuf> {
-    let dir = crate::app_setup::app_data_dir();
+    let dir = crate::app_data_dir();
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join(FALLBACK_FILE))
 }

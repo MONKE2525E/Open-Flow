@@ -617,10 +617,17 @@ def kill_port_owner(port: int) -> bool:
         killed = False
         for pid in pids:
             try:
-                os.kill(int(pid), 15)
+                os.kill(int(pid), signal.SIGTERM)
                 killed = True
             except (ProcessLookupError, PermissionError):
                 continue
+        if killed and not wait_for_port_closed(port):
+            for pid in pids:
+                try:
+                    os.kill(int(pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    continue
+            wait_for_port_closed(port)
         return killed
     command = (
         "try { $id = Get-NetTCPConnection -LocalPort " + str(port) +
@@ -689,7 +696,10 @@ def execute_plan(entries: Sequence[TestEntry], args: argparse.Namespace) -> Dict
     no_server = [test for test in entries if test.suite != "preflight" and not test.needs_server]
     server_tests = [test for test in entries if test.needs_server]
     results.update(run_group(preflight, url, args.verbose, False, args.workers))
-    if any(results[test.id].status == "failed" for test in preflight):
+    if any(
+        test.required and results.get(test.id) is not None and results[test.id].status == "failed"
+        for test in preflight
+    ):
         reason = "Skipped because a required preflight check failed"
         for test in entries:
             if test.suite != "preflight":

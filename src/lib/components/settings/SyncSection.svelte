@@ -144,7 +144,12 @@
 
   function relativeTime(iso: string | null): string {
     if (!iso) return 'never';
-    const then = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`).getTime();
+    const normalized = iso.includes('T')
+      ? /(?:Z|[+-]\d{2}:?\d{2})$/.test(iso)
+        ? iso
+        : `${iso}Z`
+      : `${iso.replace(' ', 'T')}Z`;
+    const then = new Date(normalized).getTime();
     if (Number.isNaN(then)) return iso;
     const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
     if (seconds < 45) return 'just now';
