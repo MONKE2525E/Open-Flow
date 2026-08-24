@@ -283,7 +283,7 @@
             : 'The model Verenu reaches for first.'}
         </p>
       </div>
-      <button type="button" class="picker-close ui-focus-ring" aria-label="Close" onclick={onClose}>
+      <button type="button" class="picker-close" aria-label="Close" onclick={onClose}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
           <path d="M6 6l12 12M18 6L6 18" />
         </svg>
@@ -291,37 +291,30 @@
     </header>
 
     <div class="picker-search-row">
-      <div class="picker-search-field">
-        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-          <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
-        </svg>
-        <input
-          class="picker-search"
-          type="search"
-          placeholder="Search {allRows.length} models…"
-          bind:value={query}
-          autocomplete="off"
-          autocapitalize="off"
-          autocorrect="off"
-          spellcheck="false"
-          aria-label="Search models"
-        />
-      </div>
+      <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+      </svg>
+      <input
+        class="picker-search"
+        type="search"
+        placeholder="Search {allRows.length} models…"
+        bind:value={query}
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        aria-label="Search models"
+      />
     </div>
 
     <div class="picker-body">
       <nav class="picker-rail" aria-label="Filter by provider">
         <button
           type="button"
-          class="rail-item ui-focus-ring"
+          class="rail-item"
           class:rail-active={providerFilter === 'all'}
           onclick={() => (providerFilter = 'all')}
         >
-          <span class="rail-logo" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
-              <path d="M4 7h16M4 12h16M4 17h16" />
-            </svg>
-          </span>
           <span class="rail-name">All providers</span>
           {#key searched.length}
             <span class="rail-count" in:fade={{ duration: motionMs(MOTION_MS.fast) }}>
@@ -332,7 +325,7 @@
         {#each RAIL_ORDER.filter((p) => counts[p] > 0) as provider (provider)}
           <button
             type="button"
-            class="rail-item ui-focus-ring"
+            class="rail-item"
             class:rail-active={providerFilter === provider}
             onclick={() => (providerFilter = provider)}
           >
@@ -351,12 +344,7 @@
 
       <div class="picker-list scroll-styled scroll-thumb-elev">
         {#if grouped.length === 0}
-          <div class="picker-empty" in:fade={{ duration: motionMs(MOTION_MS.fast) }}>
-            <p>No models match “{query.trim()}”.</p>
-            <button class="row-tool ui-focus-ring" type="button" onclick={() => (query = '')}>
-              Clear search
-            </button>
-          </div>
+          <p class="picker-empty">No models match “{query.trim()}”.</p>
         {/if}
 
         {#if !local.supported}
@@ -376,7 +364,7 @@
             <div class="runtime-note">
               {#if local.runtime.info.is_downloading}
                 <span>Fetching the on-device runtime…</span>
-                <button class="row-tool ui-focus-ring" type="button" onclick={() => local.runtime?.onCancel()}>Cancel</button>
+                <button class="row-tool" type="button" onclick={() => local.runtime?.onCancel()}>Cancel</button>
               {:else}
                 <span>
                   On-device cleanup needs a one-time runtime (~{local.runtime.info.approx_download_mb} MB).
@@ -387,7 +375,7 @@
           {:else if group.provider === 'local' && local.runtime?.info?.installed}
             <div class="runtime-note">
               <span>On-device runtime installed{local.runtime.info.backend ? ` (${local.runtime.info.backend})` : ''}.</span>
-              <button class="row-tool ui-focus-ring" type="button" onclick={() => local.runtime?.onDelete()}>Remove</button>
+              <button class="row-tool" type="button" onclick={() => local.runtime?.onDelete()}>Remove</button>
             </div>
           {/if}
           {#each group.rows as row, index (row.key)}
@@ -443,14 +431,14 @@
                   <span class="row-tools" in:fade={{ duration: motionMs(MOTION_MS.fast) }}>
                   {#if isDownloading(row.id)}
                     <button
-                      class="row-tool ui-focus-ring"
+                      class="row-tool"
                       data-testid="cancel-model-download"
                       type="button"
                       onclick={() => local.onCancel(row.id)}>Cancel</button
                     >
                   {:else if !isDownloaded(row.id)}
                     <button
-                      class="row-tool row-tool-accent ui-focus-ring"
+                      class="row-tool row-tool-accent"
                       data-testid="download-model"
                       type="button"
                       onclick={() => local.onDownload(row.id)}>Download</button
@@ -458,7 +446,7 @@
                   {:else}
                     {#if task === 'cleanup' && advancedModelUi && local.onEditPrompt}
                       <button
-                        class="row-tool ui-focus-ring"
+                        class="row-tool"
                         data-testid="edit-prompt"
                         type="button"
                         onclick={(event) =>
@@ -470,7 +458,7 @@
                       >
                     {/if}
                     <button
-                      class="row-tool row-tool-danger ui-focus-ring"
+                      class="row-tool row-tool-danger"
                       data-testid="delete-model"
                       type="button"
                       onclick={() => local.onDelete(row.id)}>Delete</button
@@ -480,7 +468,7 @@
                 {/key}
               {:else if mode === 'select' && row.remedy === 'none' && !active && !fallback}
                 <button
-                  class="row-add ui-focus-ring"
+                  class="row-add"
                   type="button"
                   aria-label="Add {row.label} as a fallback"
                   title="Add as fallback"
@@ -530,7 +518,7 @@
               }
             }}
           />
-          <button class="custom-add ui-focus-ring" type="button" disabled={!customDraft.trim()} onclick={submitCustom}>
+          <button class="custom-add" type="button" disabled={!customDraft.trim()} onclick={submitCustom}>
             Add
           </button>
         </div>
@@ -551,10 +539,6 @@
     z-index: 60;
     display: grid;
     place-items: center;
-    /* The inline style overrides padding-left only, to clear the settings
-       rail; the rest keeps the card off the window edges. */
-    padding: 24px;
-    box-sizing: border-box;
   }
 
   .picker-backdrop {
@@ -568,8 +552,8 @@
   .picker-card {
     position: relative;
     z-index: 1;
-    width: min(720px, 100%);
-    height: min(600px, 100%);
+    width: min(720px, 94vw);
+    height: min(600px, 88vh);
     background: var(--bg-elev);
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
@@ -577,8 +561,6 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    container-type: inline-size;
-    container-name: model-picker;
   }
 
   /* ── Header ─────────────────────────────── */
@@ -620,7 +602,6 @@
     background: transparent;
     color: var(--ink-mute);
     cursor: pointer;
-    transition: background-color var(--ui-duration-fast) var(--ui-ease-out), color var(--ui-duration-fast) var(--ui-ease-out), border-color var(--ui-duration-fast) var(--ui-ease-out);
   }
 
   .picker-close svg {
@@ -634,21 +615,13 @@
 
   /* ── Search ─────────────────────────────── */
   .picker-search-row {
-    padding: 4px 20px 14px;
-  }
-
-  /* The row's padding is deliberately lopsided (4 top / 14 bottom), so an icon
-     centred on the row sat below the input it belongs to. Anchor it to the
-     field instead. */
-  .picker-search-field {
     position: relative;
-    display: flex;
-    align-items: center;
+    padding: 4px 20px 14px;
   }
 
   .search-icon {
     position: absolute;
-    left: 10px;
+    left: 32px;
     top: 50%;
     transform: translateY(-50%);
     color: var(--ink-faint);
@@ -664,7 +637,6 @@
     border-radius: 8px;
     background: var(--paper);
     color: var(--ink);
-    transition: border-color var(--ui-duration-fast) var(--ui-ease-out), background-color var(--ui-duration-fast) var(--ui-ease-out);
   }
 
   .picker-search:focus-visible {
@@ -703,7 +675,7 @@
     color: var(--ink-soft);
     cursor: pointer;
     text-align: left;
-    transition: background-color var(--ui-duration-fast) var(--ui-ease-out), color var(--ui-duration-fast) var(--ui-ease-out);
+    transition: background 0.14s, color 0.14s;
   }
 
   .rail-item:hover:not(:disabled) {
@@ -799,21 +771,6 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    /* Trailing room so the "+" and the local tools sit inside the highlight
-       rather than flush against its edge. */
-    padding-right: 6px;
-    border: 1px solid transparent;
-    border-radius: 9px;
-    transition: background-color var(--ui-duration-fast) var(--ui-ease-out), border-color var(--ui-duration-fast) var(--ui-ease-out);
-  }
-
-  .model-row:hover {
-    background: var(--control-hover);
-  }
-
-  .row-active {
-    border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
-    background: var(--accent-soft);
   }
 
   .row-main {
@@ -823,18 +780,28 @@
     align-items: center;
     gap: 10px;
     padding: 8px 10px;
-    border: none;
-    border-radius: 8px;
+    border: 1px solid transparent;
+    border-radius: 9px;
     background: transparent;
     color: var(--ink);
     font-family: var(--sans);
     text-align: left;
     cursor: pointer;
+    transition: background 0.14s, border-color 0.14s;
+  }
+
+  .row-main:hover {
+    background: var(--control-hover);
   }
 
   .row-main:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -1px;
+  }
+
+  .row-active .row-main {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+    background: var(--accent-soft);
   }
 
   .row-dim .row-main {
@@ -861,7 +828,6 @@
     align-items: baseline;
     gap: 6px;
     min-width: 0;
-    overflow: hidden;
     font-size: 10.5px;
     color: var(--ink-faint);
   }
@@ -869,8 +835,6 @@
   .row-sub code {
     font-family: var(--mono);
     font-size: 10px;
-    /* Shrink last, and never past a legible stub. */
-    min-width: 10ch;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -887,9 +851,6 @@
   }
 
   .row-note {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
@@ -927,7 +888,7 @@
     color: var(--ink-soft);
     cursor: pointer;
     white-space: nowrap;
-    transition: background-color var(--ui-duration-fast) var(--ui-ease-out), color var(--ui-duration-fast) var(--ui-ease-out), border-color var(--ui-duration-fast) var(--ui-ease-out);
+    transition: background 0.14s, color 0.14s, border-color 0.14s;
   }
 
   .row-tool:hover {
@@ -969,19 +930,14 @@
     flex-shrink: 0;
     width: 24px;
     height: 24px;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    box-sizing: border-box;
     border: none;
-    border-radius: 7px;
     background: transparent;
     color: var(--ink-faint);
     font-size: 15px;
     line-height: 1;
     cursor: pointer;
     opacity: 0;
-    transition: opacity var(--ui-duration-fast) var(--ui-ease-out), color var(--ui-duration-fast) var(--ui-ease-out), background-color var(--ui-duration-fast) var(--ui-ease-out);
+    transition: opacity 0.14s, color 0.14s;
   }
 
   .model-row:hover .row-add,
@@ -990,7 +946,6 @@
   }
 
   .row-add:hover {
-    background: var(--control-hover);
     color: var(--ink);
   }
 
@@ -1006,20 +961,10 @@
   }
 
   .picker-empty {
-    min-height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
+    margin: 18px 8px;
     font-family: var(--sans);
     font-size: 13px;
     color: var(--ink-mute);
-    text-align: center;
-  }
-
-  .picker-empty p {
-    margin: 0;
   }
 
   /* ── Footer ─────────────────────────────── */
@@ -1063,7 +1008,6 @@
     border-radius: 7px;
     background: var(--bg-elev);
     color: var(--ink);
-    transition: border-color var(--ui-duration-fast) var(--ui-ease-out);
   }
 
   .custom-input:focus-visible {
@@ -1082,7 +1026,6 @@
     background: transparent;
     color: var(--ink-soft);
     cursor: pointer;
-    transition: background-color var(--ui-duration-fast) var(--ui-ease-out), color var(--ui-duration-fast) var(--ui-ease-out), border-color var(--ui-duration-fast) var(--ui-ease-out), opacity var(--ui-duration-fast) var(--ui-ease-out);
   }
 
   .custom-add:hover:not(:disabled) {
@@ -1095,7 +1038,7 @@
     cursor: default;
   }
 
-  @container model-picker (max-width: 600px) {
+  @media (max-width: 640px) {
     .picker-body {
       grid-template-columns: 1fr;
     }
@@ -1105,15 +1048,6 @@
       overflow-x: auto;
       border-right: none;
       border-bottom: 1px solid var(--line);
-    }
-
-    .rail-item {
-      width: auto;
-      flex: 0 0 auto;
-    }
-
-    .rail-name {
-      flex: 0 0 auto;
     }
 
     .rail-count,
