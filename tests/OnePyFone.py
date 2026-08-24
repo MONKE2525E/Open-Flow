@@ -435,16 +435,6 @@ def _parse_protocol(output: str) -> tuple[str, Optional[Dict[str, Any]]]:
 
 def _classify_failure(entry_: TestEntry, output: str, timed_out: bool) -> str:
     lower = output.lower()
-    if '.settings-nav-item:has-text("microphone")' in lower or (
-        entry_.id == "ui.element-contracts" and "checking microphone tab" in lower
-    ):
-        return "infrastructure"
-    if entry_.id == "animation.dropdowns" and "app mappings" in lower:
-        return "infrastructure"
-    if entry_.id == "animation.mic-full" and "404 (not found)" in lower:
-        return "infrastructure"
-    if entry_.id == "ui.macos-permissions" and "button', { name: 'continue'" in lower:
-        return "infrastructure"
     infrastructure_markers = [
         "executable not found", "cannot find module", "failed to launch", "browser executable",
         "eaddrinuse", "connection refused", "could not start", "registered test files missing",
