@@ -36,8 +36,7 @@ const expected = 'Malformed persisted state and a rejected settings write do not
     await toggle.click();
     const dialog = page.getByRole('dialog', { name: 'Turn on Legacy pages?' });
     await dialog.getByRole('button', { name: 'Turn on' }).click();
-    await page.waitForFunction(() => document.querySelector('[role="alert"], .toast, .error-toast, .settings-error') || document.querySelector('[role="switch"][aria-label="Legacy pages"][aria-checked="false"]'), null, { timeout: TIMEOUT }).catch(() => {});
-    if ((await toggle.getAttribute('aria-checked')) !== 'false') failures.push('failed save left Legacy mode enabled');
+    await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Legacy pages"]')?.getAttribute('aria-checked') === 'false', null, { timeout: TIMEOUT }).catch(() => failures.push('failed save left Legacy mode enabled'));
     if (!await page.locator('.app').isVisible()) failures.push('application surface disappeared after failed save');
     const visibleFeedback = page.locator('[role="alert"]:visible, .toast:visible, .error-toast:visible, .settings-error:visible');
     if ((await visibleFeedback.count()) === 0) failures.push('rejected settings write was only logged to the console; the user received no visible error');

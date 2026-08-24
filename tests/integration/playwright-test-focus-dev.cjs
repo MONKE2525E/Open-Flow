@@ -29,13 +29,15 @@ const expected = 'The model picker receives focus, traps Tab navigation, closes 
 
     let escaped = false;
     let tabCycles = 0;
-    for (let index = 0; index < 30; index += 1) {
-      await page.keyboard.press('Tab');
-      tabCycles += 1;
-      const inside = await page.evaluate(() => document.querySelector('.picker-card')?.contains(document.activeElement) ?? false);
-      if (!inside) {
-        escaped = true;
-        break;
+    if (initialInside) {
+      for (let index = 0; index < 30; index += 1) {
+        await page.keyboard.press('Tab');
+        tabCycles += 1;
+        const inside = await page.evaluate(() => document.querySelector('.picker-card')?.contains(document.activeElement) ?? false);
+        if (!inside) {
+          escaped = true;
+          break;
+        }
       }
     }
     if (escaped) failures.push('Tab focus escaped the modal dialog');

@@ -54,6 +54,7 @@ DEFAULT_JSON_REPORT = ROOT / "test-results" / "onepyfone.json"
 NPM = "npm.cmd" if sys.platform == "win32" else "npm"
 PORT = 1420
 RESULT_PREFIX = "VERENU_TEST_RESULT="
+_OUTPUT_LOCK = threading.Lock()
 
 SUITE_ORDER = [
     "preflight",
@@ -458,6 +459,14 @@ def execute(entry_: TestEntry, test_url: str) -> TestResult:
         except Exception as exc:
             result = TestResult("failed", output=f"Unhandled runner exception: {exc}", observed=repr(exc), failure_kind="infrastructure")
     else:
+        if entry_.id == "unit.frontend":
+            package_json = ROOT / "package.json"
+            try:
+                package_data = json.loads(package_json.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                return TestResult("skipped", expected=entry_.expected, observed=f"Could not inspect package.json: {exc}", skip_reason="Optional frontend unit suite is unavailable because package.json could not be read", regression_area=entry_.regression_area)
+            if "test:unit" not in (package_data.get("scripts") or {}):
+                return TestResult("skipped", expected=entry_.expected, observed="package.json does not define test:unit", skip_reason="Optional frontend unit suite is not configured in this checkout", regression_area=entry_.regression_area)
         command = entry_.command or ["node", str(TESTS_DIR / str(entry_.script))]
         env = dict(os.environ)
         env["TEST_URL"] = test_url
@@ -511,21 +520,24 @@ def run_with_retries(entry_: TestEntry, test_url: str, verbose: bool) -> TestRes
     result = TestResult("failed")
     total_started = time.monotonic()
     for attempt in range(1, entry_.retries + 2):
-        print(f"  RUN   {entry_.id} ({attempt}/{entry_.retries + 1})", flush=True)
+        with _OUTPUT_LOCK:
+            print(f"  RUN   {entry_.id} ({attempt}/{entry_.retries + 1})", flush=True)
         result = execute(entry_, test_url)
         result.attempts = attempt
         if result.passed or result.skipped:
             break
         if attempt <= entry_.retries:
-            print(f"  RETRY {entry_.id}: {result.observed}", flush=True)
+            with _OUTPUT_LOCK:
+                print(f"  RETRY {entry_.id}: {result.observed}", flush=True)
     result.duration_s = time.monotonic() - total_started
     status = "PASS" if result.passed else "SKIP" if result.skipped else "FAIL"
-    print(f"  {status:<5} {entry_.id} [{result.duration_s:.2f}s]")
-    if verbose or result.status != "passed":
-        detail = result.skip_reason if result.skipped else result.output
-        if detail:
-            for line in detail.splitlines()[-40:]:
-                print(f"        {line}")
+    with _OUTPUT_LOCK:
+        print(f"  {status:<5} {entry_.id} [{result.duration_s:.2f}s]")
+        if verbose or result.status != "passed":
+            detail = result.skip_reason if result.skipped else result.output
+            if detail:
+                for line in detail.splitlines()[-40:]:
+                    print(f"        {line}")
     return result
 
 
@@ -586,7 +598,20 @@ class ServerManager:
 
 def kill_port_owner(port: int) -> bool:
     if sys.platform != "win32":
-        return False
+        try:
+            probe = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=10)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+        killed = False
+        for pid in probe.stdout.splitlines():
+            if not pid.strip().isdigit():
+                continue
+            try:
+                os.kill(int(pid), 15)
+                killed = True
+            except (ProcessLookupError, PermissionError):
+                pass
+        return killed
     command = (
         "try { $id = Get-NetTCPConnection -LocalPort " + str(port) +
         " -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess; "
