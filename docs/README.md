@@ -15,10 +15,9 @@ This directory contains user, contributor, release, and architecture docs for Ve
 - [Contexts](CONTEXTS.md)
 - [Cleanup Levels](CLEANUP_LEVELS.md)
 - [Local Transcription](LOCAL_TRANSCRIPTION.md)
-- [Dictionary](DICTIONARY.md) *(legacy page)*
-- [Snippets](SNIPPETS.md) *(legacy page)*
-- [App Mappings & Profiles](APP_MAPPINGS.md) *(legacy page)*
 - [Privacy & Data summary](PRIVACY_SUMMARY.md)
+
+Contexts are the current home for app and website targets, cleanup settings, vocabulary, and snippets. The standalone [Dictionary](DICTIONARY.md), [Snippets](SNIPPETS.md), and [App Mappings & Profiles](APP_MAPPINGS.md) pages are kept as legacy references for older installations.
 
 ## Project And Contributor Docs
 

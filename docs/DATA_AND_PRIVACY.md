@@ -24,11 +24,8 @@ Stored locally in app storage and SQLite:
 
 - Settings
 - Provider and model preferences
-- App mappings and tone preferences
-- Context groups, their app/website targets, and per-context tone/cleanup overrides
+- Context groups, their app/website targets, per-context tone/cleanup overrides, vocabulary, and snippets
 - Transcription history
-- Dictionary entries
-- Snippets
 - Auto-learn events and candidate data
 - Update-dismiss state
 
@@ -50,13 +47,12 @@ Manual export and import stay local unless you choose to move the file elsewhere
 Current backup export includes:
 
 - Settings
-- Dictionary
-- Snippets
+- Context groups, vocabulary, and snippets
 - Derived stats
 
 Current backup export does not include full transcription history.
 
-Import and restore paths validate supported setting values and reject oversized prompt overrides, snippet bodies, and unsupported app-mapping values instead of silently accepting junk.
+Import and restore paths validate supported setting values and reject oversized prompt overrides, snippet bodies, and unsupported context-target values instead of silently accepting junk. Legacy app-mapping exports remain supported for migration.
 
 ## What Leaves Your Device
 
@@ -80,7 +76,7 @@ After transcription, Verenu can send text to a cleanup model so it can:
 - remove filler words
 - fix punctuation
 - apply formatting rules
-- apply snippet instructions
+- apply context instructions, vocabulary, and snippet instructions
 - apply tone or cleanup intensity
 
 That means raw transcription text leaves your device when cleanup is enabled, including when transcription itself ran locally.
@@ -111,8 +107,8 @@ any local configuration is mutated.
 
 Depending on your settings and the feature being used, Verenu may also send:
 
-- formatting profile or tone selection
-- snippet instructions
+- context tone and cleanup settings
+- context instructions, vocabulary, and snippet instructions
 - selected model metadata
 - active app context, if app-context hints are enabled
 
@@ -162,8 +158,7 @@ This changes UI loading behavior, not storage location. The full history databas
 `api.verenu.com` is in the product path today (release/update metadata and provider status), but even so, Verenu does not send any of this to that server or any other Verenu-owned server:
 
 - transcription history
-- dictionary entries by default
-- snippets by default
+- context vocabulary and snippets by default
 - local settings backups by default
 - analytics events
 - user profiles
@@ -181,7 +176,7 @@ That said, once data is sent to a third-party AI provider, that provider's reten
 | Cloud transcription | local capture state | audio to selected transcription provider |
 | Cleanup | local settings and local cache | raw transcription text and cleanup context to selected cleanup provider |
 | Repair diagnosis | complaint and bounded in-memory snapshot | complaint and allowlisted bounded diagnostic context to the configured repair provider, only after Analyze |
-| Dictionary and snippets | SQLite | nothing by default |
+| Context vocabulary and snippets | SQLite | nothing by default |
 | Context website check | current app state stays local | the typed domain, via a plain DNS lookup, when you attach a website to a context group |
 | Auto-learn | local monitoring data and promoted entries | nothing by default |
 | Update check | current app state stays local | GitHub release metadata request |

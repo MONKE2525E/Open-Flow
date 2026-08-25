@@ -27,7 +27,7 @@ These are treated as sensitive:
 - Dictated audio and text.
 - Clipboard contents.
 - Transcription history.
-- Dictionary entries and snippets.
+- Context vocabulary and snippets.
 - Cleanup prompts and provider request bodies.
 - Full local file paths.
 - Logs that include private operational details.
