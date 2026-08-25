@@ -199,11 +199,12 @@ async function upsertStateComment(prNumber, existing, summary, state) {
   }
 }
 
-async function updateProgress(prNumber, existing, summary, state) {
+async function updateProgress(prNumber, existing, summary, state, { warning = null } = {}) {
   try {
     return (await upsertStateComment(prNumber, existing, summary, state)) || existing;
   } catch (err) {
     console.error(`failed to update review progress comment: ${err.message}`);
+    if (warning) console.log(`::warning::${warning}`);
     return existing;
   }
 }
@@ -646,11 +647,19 @@ async function main() {
     await postFindings(prNumber, pr, findings);
     const outcome = reviewOutcome(findings);
     const finalStage = outcome.hasFindings ? "findings" : "complete";
+    const finalSummary = formatProgressSummary({
+      stage: finalStage,
+      model: activeModel,
+      mode,
+      findings: outcome.count,
+      headSha: pr.head.sha,
+    });
+    console.log(finalSummary);
 
     stateComment = await updateProgress(
       prNumber,
       stateComment,
-      formatProgressSummary({ stage: finalStage, model: activeModel, mode, findings: outcome.count, headSha: pr.head.sha }),
+      finalSummary,
       {
         ...baseState,
         model: activeModel,
@@ -662,6 +671,7 @@ async function main() {
         timestamp: new Date().toISOString(),
         completed: true,
       },
+      { warning: "AI review completed, but GitHub could not publish the final result comment; see the review job logs for the outcome." },
     );
     if (outcome.hasFindings) {
       console.error(`OCR review found ${outcome.count} finding${outcome.count === 1 ? "" : "s"}`);
