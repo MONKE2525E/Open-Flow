@@ -19,7 +19,8 @@
   }
 </script>
 
-<div
+<button
+  type="button"
   class="toggle"
   class:on={checked}
   role="switch"
@@ -29,12 +30,20 @@
   onclick={() => onchange(!checked)}
   onkeydown={preventToggleKeyScroll}
   onkeyup={handleToggleKeyup}
-></div>
+>
+  <span class="toggle-thumb" aria-hidden="true"></span>
+</button>
 
 <style>
   .toggle {
     width: 30px;
     height: 16px;
+    display: block;
+    box-sizing: border-box;
+    padding: 0;
+    border: 0;
+    appearance: none;
+    -webkit-appearance: none;
     background: var(--line-strong);
     border-radius: 999px;
     position: relative;
@@ -43,8 +52,7 @@
     flex-shrink: 0;
   }
 
-  .toggle::after {
-    content: '';
+  .toggle-thumb {
     position: absolute;
     width: 12px;
     height: 12px;
@@ -55,12 +63,11 @@
     transition: left 0.35s cubic-bezier(0.22, 1, 0.36, 1);
     box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 15%, transparent);
   }
-
   .toggle.on {
     background: var(--accent);
   }
 
-  .toggle.on::after {
+  .toggle.on .toggle-thumb {
     left: 16px;
   }
 
