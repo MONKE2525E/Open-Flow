@@ -7,7 +7,7 @@ Verenu doesn't run its own servers, doesn't have an account system, and doesn't 
 - Your API keys (Windows Credential Manager / macOS Keychain)
 - Your settings, provider preferences, context groups, targets, and tone preferences
 - Your transcription history
-- Your context vocabulary, snippets, and auto-learn data
+- Your context vocabulary, snippets, and Auto-learn data
 - Local logs, unless you explicitly export them
 
 ## What leaves your device
