@@ -1,4 +1,4 @@
-# App Mappings & Profiles
+# Legacy: App Mappings & Profiles
 
 > **Legacy page.** App Mappings has been superseded by [Contexts](CONTEXTS.md), which covers the same per-app (and per-website) tone/cleanup overrides plus vocabulary and snippets in one place. The standalone App Mappings page is hidden by default; turn on **Settings → General → Legacy pages** to bring it back if you still rely on it directly.
 
@@ -10,7 +10,7 @@ The way you write a Slack message is different from the way you write an email o
 
 ## Setting up a mapping
 
-1. Open **Settings → App Mappings**.
+1. Turn on **Settings → General → Legacy pages**, then open **Settings → App Mappings**.
 2. Add an app — pick from your installed apps, or enter one manually.
 3. Choose a **tone** for that app: Casual, Formal, or Very Casual.
 4. Optionally, choose a **cleanup intensity** override (Verbatim, Light, Medium, or Direct) — or leave it as "Default" to use your global cleanup setting.
@@ -38,7 +38,5 @@ Revisit [Cleanup Levels](CLEANUP_LEVELS.md) to choose the right intensity for ea
 <p align="center">
   <a href="CONTEXTS.md"><img alt="Contexts" src="https://img.shields.io/badge/Contexts-Guide-a3352b"></a>
   <a href="CLEANUP_LEVELS.md"><img alt="Cleanup Levels" src="https://img.shields.io/badge/Cleanup-Levels-c44632"></a>
-  <a href="DICTIONARY.md"><img alt="Dictionary" src="https://img.shields.io/badge/Dictionary-Guide-5b554a"></a>
-  <a href="SNIPPETS.md"><img alt="Snippets" src="https://img.shields.io/badge/Snippets-Guide-7e7266"></a>
   <a href="PRIVACY_SUMMARY.md"><img alt="Privacy Summary" src="https://img.shields.io/badge/Privacy-Summary-2b2422"></a>
 </p>

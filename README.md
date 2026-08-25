@@ -23,12 +23,14 @@ It records locally, sends audio and text only to the AI providers you choose, ke
 ## What It Does
 
 - Hold-to-record dictation with global hotkeys, plus a handsfree toggle mode
-- Context groups: tie apps and websites to a tone, cleanup intensity, custom instructions, and their own vocabulary and snippets
+- Contexts: group apps and websites with the tone, cleanup rules, custom instructions, vocabulary, and snippets that belong there
 - Provider choice for transcription and cleanup, including fully local Parakeet V3 transcription and local LLM cleanup
 - Local history, insights, local settings, and local data export/import
 - Optional auto-learn from repeated manual corrections
 
-For more details: [Contexts](docs/CONTEXTS.md), [Cleanup Levels](docs/CLEANUP_LEVELS.md), [Local Transcription](docs/LOCAL_TRANSCRIPTION.md), [Dictionary](docs/DICTIONARY.md), [Snippets](docs/SNIPPETS.md), and [App Mappings & Profiles](docs/APP_MAPPINGS.md) (legacy).
+Contexts are the main place to configure app-specific behavior. They replace the old standalone Dictionary, Snippets, and App Mappings pages with one group that follows you into the apps and websites where you use it. The old pages remain available as legacy pages for existing setups.
+
+For more details: [Contexts](docs/CONTEXTS.md), [Cleanup Levels](docs/CLEANUP_LEVELS.md), and [Local Transcription](docs/LOCAL_TRANSCRIPTION.md).
 
 ## Platform Support
 
@@ -59,7 +61,7 @@ For more details: [Install Verenu](docs/INSTALL.md), [Troubleshooting](docs/TROU
 
 1. Verenu records audio locally while you hold the hotkey.
 2. When you release, it either transcribes locally or sends the audio to your chosen cloud transcription provider.
-3. If cleanup is enabled, it sends the resulting raw text to your chosen cleanup model so filler words, punctuation, tone, snippets, and formatting rules can be applied.
+3. If cleanup is enabled, it sends the resulting raw text to your chosen cleanup model so filler words, punctuation, tone, context instructions, and formatting rules can be applied.
 4. It pastes the final text back into the app that had focus when you started.
 5. It stores local history and optional learning data on your machine.
 
@@ -74,7 +76,7 @@ Verenu's own server (`api.verenu.com`) serves only public app metadata — relea
 - API keys in Windows Credential Manager or macOS Keychain
 - Settings in local app storage
 - Transcription history in local SQLite
-- Dictionary entries, snippets, and auto-learn data in local SQLite
+- Context groups, vocabulary, snippets, and auto-learn data in local SQLite
 - Update-dismiss state, model preferences, and context group targets
 - Local logs unless you explicitly export them
 
@@ -83,7 +85,7 @@ Verenu's own server (`api.verenu.com`) serves only public app metadata — relea
 - Local transcription plus Cleanup Off keeps both audio and transcript on device after the model download
 - Local transcription plus cloud cleanup keeps audio on device but sends transcript text to the cleanup provider
 - Cloud transcription sends recorded audio to your chosen transcription provider
-- Snippet instructions, cleanup settings, and selected model metadata go with cleanup requests
+- Context instructions, cleanup settings, and selected model metadata go with cleanup requests
 - Active app context may be sent if you enable app-context hints
 - Update checks hit GitHub release metadata
 - Provider status and health checks hit `api.verenu.com` (public status only, no dictated content, keys, or history). You can disable these background checks in Settings → Privacy.
