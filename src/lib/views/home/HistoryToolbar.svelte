@@ -115,7 +115,7 @@
             <svg class="ui-chevron" class:open={appDropdownOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
           </button>
           {#if appDropdownOpen}
-            <div id="history-app-menu" class="ui-dropdown-menu history-app-menu scroll-styled" role="listbox" aria-label="Filter history by app" transition:scale={{ duration: motionMs(MOTION_MS.fast), start: 0.96, opacity: 0 }}>
+            <div id="history-app-menu" class="ui-dropdown-menu history-app-menu scroll-styled" role="listbox" aria-label="Filter history by app" out:scale={{ duration: motionMs(MOTION_MS.fast), start: 0.96, opacity: 0 }}>
               <button class="ui-dropdown-option" class:active={!appFilter} role="option" aria-selected={!appFilter} onclick={() => selectAppFilter(null)}>All apps</button>
               {#each apps as app}
                 <button class="ui-dropdown-option" class:active={appFilter === app} role="option" aria-selected={appFilter === app} onclick={() => selectAppFilter(app)}>{formatAppLabel(app)}</button>
