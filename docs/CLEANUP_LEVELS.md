@@ -23,7 +23,7 @@ This is separate from **tone** (Casual, Formal, or Very Casual), which controls 
 
 ## Next step
 
-Explore [Contexts](CONTEXTS.md) to scope cleanup, tone, vocabulary, and snippets to specific apps and sites.
+Explore [Contexts](CONTEXTS.md) to scope cleanup and tone, then see [Vocabulary](VOCABULARY.md) and [Snippets](SNIPPETS.md) for the content that belongs in each context.
 
 ## Related Docs
 

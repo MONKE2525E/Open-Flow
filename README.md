@@ -28,9 +28,9 @@ It records locally, sends audio and text only to the AI providers you choose, ke
 - Local history, insights, local settings, and local data export/import
 - Optional auto-learn from repeated manual corrections
 
-Contexts are the main place to configure app-specific behavior. They replace the old standalone Dictionary, Snippets, and App Mappings pages with one group that follows you into the apps and websites where you use it. The old pages remain available as legacy pages for existing setups.
+Contexts are the main place to configure app-specific behavior. They connect apps and websites to cleanup, tone, custom instructions, vocabulary, and snippets. The old standalone pages remain available only as legacy compatibility pages.
 
-For more details: [Contexts](docs/CONTEXTS.md), [Cleanup Levels](docs/CLEANUP_LEVELS.md), and [Local Transcription](docs/LOCAL_TRANSCRIPTION.md).
+For more details: [Contexts](docs/CONTEXTS.md), [Vocabulary](docs/VOCABULARY.md), [Snippets](docs/SNIPPETS.md), [Cleanup Levels](docs/CLEANUP_LEVELS.md), and [Local Transcription](docs/LOCAL_TRANSCRIPTION.md).
 
 ## Platform Support
 
