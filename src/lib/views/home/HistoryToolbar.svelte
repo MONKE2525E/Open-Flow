@@ -253,6 +253,16 @@
   .history-app-trigger[aria-expanded='true'] { background: var(--control-hover); border-color: transparent; }
 
   .history-app-menu { width: max-content; min-width: 180px; max-width: 280px; }
+  /* WebView2 reserves a native scrollbar gutter even while the custom thumb is
+     transparent. That leaves the selected row looking clipped on Windows.
+     The menu remains wheel/trackpad-scrollable without the gutter. */
+  :global(.app-windows) .history-app-menu {
+    scrollbar-width: none;
+  }
+  :global(.app-windows) .history-app-menu::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
   .history-app-menu.opens-up { bottom: calc(100% + 4px); top: auto; }
 
   .clear-filters-wrap { display: flex; align-items: center; height: 100%; flex-shrink: 0; }
