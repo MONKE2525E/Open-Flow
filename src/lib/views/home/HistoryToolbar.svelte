@@ -1,10 +1,10 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { scale, slide } from 'svelte/transition';
+  import { fly, slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import Dropdown from '../../components/Dropdown.svelte';
   import { formatAppLabel } from './helpers';
-  import { motionMs, MOTION_MS } from '../../motion';
+  import { motionMs, motionPx, MOTION_MS, MOTION_PX } from '../../motion';
 
   type Props = {
     search: string;
