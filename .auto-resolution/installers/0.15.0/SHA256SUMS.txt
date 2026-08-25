@@ -1,4 +1,0 @@
-806375b6d295a0e4a47c1c0efa4a9e4c2b8c75ad7549d3fa0c6a0acf4c7bdab4 *Verenu_0.15.0_x64-setup.exe
-b6cd8cf038cbb8b999e3b043f799ed1e504958eaa704ad41dbf305674459f3f6 *Verenu_0.15.0_x64_en-US.msi
-e3e02168ffe50eb9b62fa71f7bef75c592686d4544bcdd137f5ec5fed3d1aeba *Verenu_0.15.0_Apple_Silicon.dmg
-f66b6135b33bac9c07149e82fe8928f2b17b80c8d71244b540f1e42e196e144c *Verenu_0.15.0_Intel.dmg
