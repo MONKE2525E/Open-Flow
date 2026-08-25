@@ -1,10 +1,10 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { fly, slide } from 'svelte/transition';
+  import { scale, slide } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import Dropdown from '../../components/Dropdown.svelte';
   import { formatAppLabel } from './helpers';
-  import { motionMs, motionPx, MOTION_MS, MOTION_PX } from '../../motion';
+  import { motionMs, MOTION_MS } from '../../motion';
 
   type Props = {
     search: string;
@@ -268,5 +268,19 @@
 
   @media (max-width: 560px) {
     .history-search-group.expanded { flex-basis: 100%; max-width: none; }
+  }
+
+  /* A compositor-backed reveal keeps the menu animation visible in WebKit,
+     including the macOS Tauri window. The Svelte transition still provides
+     the matching exit animation. */
+  .history-app-menu { animation: history-app-menu-enter var(--ui-duration-fast) var(--ui-ease-out); transform-origin: top right; will-change: opacity, transform; }
+
+  @keyframes history-app-menu-enter {
+    from { opacity: 0; transform: translate3d(0, -6px, 0) scale(0.98); }
+    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .history-app-menu { animation: none; will-change: auto; }
   }
 </style>
