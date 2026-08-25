@@ -1,0 +1,17 @@
+[advisories]
+# These advisories affect `quick-xml`, which we only depend on transitively
+# through Tauri's own dependency graph:
+#   - quick-xml 0.37.5 via tauri-winrt-notification -> notify-rust
+#     -> tauri-plugin-notification
+#   - quick-xml 0.39.3 via plist -> tauri-utils -> tauri/tauri-build
+# Both parent crates pin quick-xml below the patched 0.41.0 (`^0.37` and
+# `^0.39.2` respectively), so we cannot bump past them ourselves without
+# vendoring or forking - this requires an upstream Tauri/notify-rust/plist
+# release. Neither path parses untrusted external XML at runtime for Verenu
+# (Windows toast notification metadata and build-time plist reading), so the
+# practical risk is low. Revisit and remove these once `cargo update` can
+# pull in quick-xml >=0.41 on its own.
+ignore = [
+    "RUSTSEC-2026-0194", # quick-xml: quadratic run time on duplicate attribute check
+    "RUSTSEC-2026-0195", # quick-xml: unbounded namespace-declaration allocation (DoS)
+]

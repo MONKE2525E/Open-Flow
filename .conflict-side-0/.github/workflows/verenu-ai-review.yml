@@ -1,0 +1,67 @@
+name: Verenu AI Review
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # Push-triggered reviews and explicit comment-triggered reviews must not
+  # cancel each other. A review request comment is manual input, not a stale
+  # replacement for the review started by the latest commit.
+  group: verenu-ai-review-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      (github.event.comment.body == '/verenu-review' ||
+      startsWith(github.event.comment.body, '/verenu-review ')))
+    runs-on: ubuntu-latest
+    steps:
+      # Trusted checkout only: this always resolves to a commit on the base
+      # repository (the ref that triggered the workflow), never the PR fork.
+      # The PR head is fetched later as git object data, not checked out here.
+      - name: Checkout base repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Pinned intentionally — do not float to @latest. Bump only after
+      # reading the release notes at
+      # https://github.com/alibaba/open-code-review/releases
+      - name: Install Open Code Review
+        run: npm install -g @alibaba-group/open-code-review@1.7.1
+
+      # Joins the runner to the tailnet as an ephemeral node so it can reach
+      # the self-hosted CLI Proxy API on the home LAN over its Tailscale IP
+      # — that box is never exposed to the public internet. The node leaves
+      # the tailnet automatically when this job ends (ephemeral auth key).
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: Run Verenu AI review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLIPROXY_API_KEY: ${{ secrets.CLIPROXY_API_KEY }}
+          CLIPROXY_URL: ${{ secrets.CLIPROXY_URL }}
+          CLIPROXY_MODEL: ${{ secrets.CLIPROXY_MODEL }}
+          CLIPROXY_FALLBACK_MODEL: ${{ secrets.CLIPROXY_FALLBACK_MODEL }}
+        run: node scripts/verenu-ai-review.mjs

@@ -1,0 +1,175 @@
+@import '@fontsource-variable/fraunces/standard.css';
+@import '@fontsource-variable/inter-tight/wght.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';
+
+:root {
+  color-scheme: light;
+
+  /* Soft-amber, paper and surfaces */
+  --amber-50: #f9f7f3;
+  --amber-100: #f1ebe3;
+  --amber-200: #d8c9b5;
+
+  /* Japonica, default accent */
+  --jap-50: #fcf4f0;
+  --jap-100: #f8e6dc;
+  --jap-200: #f0cbb8;
+  --jap-300: #e6a78b;
+  --jap-400: #d97757;
+  --jap-500: #cc5e3e;
+  --jap-600: #c44632;
+  --jap-700: #a3352b;
+
+  /* Armadillo, text and lines */
+  --arm-200: #e8e5e3;
+  --arm-300: #d8d3cf;
+  --arm-400: #ada299;
+  --arm-500: #7e7266;
+  --arm-600: #5b554a;
+  --arm-700: #4a433a;
+  --arm-800: #2b2422;
+  --arm-900: #1e1915;
+  --arm-950: #0d0a08;
+
+  --paper: var(--amber-50);
+  --paper-2: var(--amber-100);
+  --paper-3: var(--amber-200);
+  --bg-elev: #ffffff;
+
+  --ink: var(--arm-950);
+  --ink-strong: var(--arm-800);
+  --ink-soft: var(--arm-700);
+  --ink-mute: var(--arm-500);
+  --ink-faint: var(--arm-400);
+
+  --line: var(--arm-200);
+  --line-soft: #efeae3;
+  --line-strong: var(--arm-300);
+
+  /* Light defaults; dark overrides below in :root[data-theme="dark"]. */
+  --accent: var(--jap-400);
+  --accent-ink: var(--jap-700);
+  --accent-soft: var(--jap-100);
+  --on-accent: #ffffff;
+
+  --danger: #dc2626;
+  --danger-bg: #fef2f2;
+  --danger-line: #fca5a5;
+  --success: #5a8a52;
+  --success-bg: rgba(90, 138, 82, 0.10);
+  --success-line: rgba(90, 138, 82, 0.25);
+  --warning: #f97316;
+  --warning-bg: rgba(249, 115, 22, 0.10);
+  --warning-line: rgba(249, 115, 22, 0.25);
+
+  --overlay: rgba(13, 10, 8, 0.30);
+  --shadow-elev: 0 20px 60px -12px rgba(13, 10, 8, 0.16);
+  --shadow-popover: 0 8px 24px rgba(13, 10, 8, 0.14);
+  --control-hover: var(--amber-50);
+  --control-active: var(--amber-100);
+
+  --pill-bg: var(--arm-950);
+  --pill-fg: #ffffff;
+  --pill-bar: #ffffff;
+  --pill-muted: rgba(255, 255, 255, 0.45);
+  --pill-muted-strong: rgba(255, 255, 255, 0.85);
+
+  /* Error pill is always dark red-tinted, regardless of theme — matches the
+     dark-theme --danger/--danger-bg/--danger-line so the pill and in-app
+     error toast agree. */
+  --pill-error-bg: #351613;
+  --pill-error-border: #7a3027;
+  --pill-error-fg: #ff8f80;
+
+  --serif: 'Fraunces Variable', 'Fraunces', Georgia, serif;
+  --sans: 'Inter Tight Variable', 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
+  --mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
+
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+
+  --page-pad-x: clamp(18px, 3vw, 42px);
+  --page-pad-y: clamp(16px, 2.4vw, 30px);
+  --page-max: 1160px;
+  --page-readable: 680px;
+
+  /* App chrome metrics. --app-gutter mirrors .body's padding/gap in App.svelte;
+     the sidebar runs flush to the window's left edge, so there is no left
+     gutter — the full-screen settings shell offsets itself by the sidebar width
+     plus this gutter to sit flush beside it. */
+  --sidebar-w: 220px;
+  --app-gutter: 14px;
+  /* Measure for the settings content column inside the full-width shell. */
+  --settings-measure: 760px;
+  /* Width of the custom scrollbars in app.css. Anything that has to line up
+     with a `scrollbar-gutter: stable` scroller needs to reserve the same. */
+  --scrollbar-w: 10px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --amber-50: #18130f;
+  --amber-100: #241d17;
+  --amber-200: #3a3028;
+
+  --jap-50: #2b1712;
+  --jap-100: #3a241d;
+  --jap-200: #623527;
+  --jap-300: #f0a987;
+  --jap-400: oklch(0.70 0.13 42);
+  --jap-500: #e58b68;
+  --jap-600: #c8654a;
+  --jap-700: #f0a987;
+
+  --arm-200: #332a23;
+  --arm-300: #4a3c32;
+  --arm-400: #74665b;
+  --arm-500: #a9988a;
+  --arm-600: #d8c9ba;
+  --arm-700: #d8c9ba;
+  --arm-800: #fff8ef;
+  --arm-900: #f7efe6;
+  --arm-950: #0d0a08;
+
+  --paper: #14110e;
+  --paper-2: #1c1712;
+  --paper-3: var(--amber-200);
+  --bg-elev: #211b16;
+
+  --ink: #f7efe6;
+  --ink-strong: #fff8ef;
+  --ink-soft: #d8c9ba;
+  --ink-mute: #a9988a;
+  --ink-faint: #74665b;
+
+  --line: #332a23;
+  --line-soft: #29211b;
+  --line-strong: #4a3c32;
+
+  --accent: oklch(0.70 0.13 42);
+  --accent-soft: #3a241d;
+  --accent-ink: #f0a987;
+  --on-accent: #17100c;
+
+  --danger: #ff8f80;
+  --danger-bg: #351613;
+  --danger-line: #7a3027;
+  --success: #a7d39b;
+  --success-bg: #182a16;
+  --success-line: #365c31;
+  --warning: #f2aa63;
+  --warning-bg: #332214;
+  --warning-line: #714a23;
+
+  --overlay: rgba(5, 4, 3, 0.62);
+  --shadow-elev: 0 20px 60px -12px rgba(0, 0, 0, 0.48);
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.34);
+  --control-hover: #261f19;
+  --control-active: #2e261f;
+
+  --pill-bg: #0d0a08;
+  --pill-fg: #ffffff;
+  --pill-bar: #ffffff;
+}

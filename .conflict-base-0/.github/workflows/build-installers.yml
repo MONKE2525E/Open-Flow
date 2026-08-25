@@ -1,0 +1,273 @@
+name: Build Installers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} Installers
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            os-name: windows
+          - platform: macos-latest
+            os-name: macos
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up macOS targets
+        if: matrix.os-name == 'macos'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+      - name: Set up Python for Intel ONNX Runtime
+        if: matrix.os-name == 'macos'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Cache Intel ONNX Runtime
+        if: matrix.os-name == 'macos'
+        id: intel_ort_cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/verenu/onnxruntime/1.24.2-x86_64
+          key: verenu-onnxruntime-1.24.2-macos-x86_64
+
+      - name: Build Intel ONNX Runtime from source
+        if: matrix.os-name == 'macos' && steps.intel_ort_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ort_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64"
+          ort_source="$ort_root/source"
+          mkdir -p "$(dirname "$ort_root")"
+
+          git clone --depth 1 --branch v1.24.2 --recurse-submodules \
+            https://github.com/microsoft/onnxruntime.git "$ort_source"
+          cd "$ort_source"
+
+          ./build.sh \
+            --config RelWithDebInfo \
+            --build_shared_lib \
+            --parallel \
+            --compile_no_warning_as_error \
+            --skip_submodule_sync \
+            --skip_tests \
+            --skip_onnx_tests \
+            --cmake_extra_defines \
+              CMAKE_OSX_ARCHITECTURES=x86_64 \
+              CMAKE_OSX_DEPLOYMENT_TARGET=13.4
+
+      - name: Stage Intel ONNX Runtime libraries
+        if: matrix.os-name == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ort_build_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/source/build/MacOS"
+          ort_build_profile="$ort_build_root/RelWithDebInfo"
+          ort_shared="$ort_build_profile/libonnxruntime.dylib"
+          ort_link_root="$HOME/.cache/verenu/onnxruntime/1.24.2-x86_64/ort-link"
+          ort_link_profile="$ort_link_root/RelWithDebInfo"
+
+          test -f "$ort_shared"
+          lipo -info "$ort_shared" | grep -q 'x86_64'
+          mkdir -p "$ort_link_profile"
+
+          archive_count=0
+          while IFS= read -r archive; do
+            ln -sfn "$archive" "$ort_link_profile/$(basename "$archive")"
+            archive_count=$((archive_count + 1))
+          done < <(find "$ort_build_profile" -maxdepth 1 -type f -name 'libonnxruntime_*.a' -print)
+          test "$archive_count" -gt 0
+
+          for required in \
+            libonnxruntime_common.a \
+            libonnxruntime_framework.a \
+            libonnxruntime_graph.a \
+            libonnxruntime_mlas.a \
+            libonnxruntime_optimizer.a \
+            libonnxruntime_providers.a \
+            libonnxruntime_session.a \
+            libonnxruntime_util.a; do
+            test -e "$ort_link_profile/$required"
+          done
+
+          test -d "$ort_build_profile/_deps"
+          rm -rf "$ort_link_root/_deps"
+          mkdir -p "$ort_link_root/_deps"
+          dependency_count=0
+          while IFS= read -r archive; do
+            relative_archive="${archive#"$ort_build_profile/_deps/"}"
+            dependency_dir="$(dirname "$relative_archive")"
+            dependency_name="$(basename "$relative_archive")"
+            if [[ "$(basename "$dependency_dir")" == 'RelWithDebInfo' ]]; then
+              staged_relative="$relative_archive"
+            else
+              staged_relative="$dependency_dir/RelWithDebInfo/$dependency_name"
+            fi
+            staged_archive="$ort_link_root/_deps/$staged_relative"
+            mkdir -p "$(dirname "$staged_archive")"
+            ln -sfn "$archive" "$staged_archive"
+            dependency_count=$((dependency_count + 1))
+          done < <(find "$ort_build_profile/_deps" -type f -name '*.a' -print)
+          test "$dependency_count" -gt 0
+          test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx.a"
+          test -e "$ort_link_root/_deps/onnx-build/RelWithDebInfo/libonnx_proto.a"
+          test -e "$ort_link_root/_deps/protobuf-build/RelWithDebInfo/libprotobuf-lite.a" || \
+            test -e "$ort_link_root/_deps/protobuf-build/RelWithDebInfo/libprotobuf.a"
+
+          echo "VERENU_INTEL_ORT_LIB_PATH=$ort_link_root" >> "$GITHUB_ENV"
+          echo 'VERENU_INTEL_ORT_LIB_PROFILE=RelWithDebInfo' >> "$GITHUB_ENV"
+
+      - name: Import macOS signing certificate
+        if: matrix.os-name == 'macos'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MACOS_CERTIFICATE:-}" ]; then
+            echo 'MACOS_CERTIFICATE is not configured; continuing with an unsigned build.'
+            exit 0
+          fi
+          trap 'rm -f certificate.p12' EXIT
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security find-identity -v -p codesigning build.keychain
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Read package version
+        run: |
+          app_version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+          echo "APP_VERSION=$app_version" >> "$GITHUB_ENV"
+        shell: bash
+
+      - name: Build Tauri release app
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ matrix.os-name == 'macos' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+        run: |
+          set -euo pipefail
+
+          MOUNT_DIR=""
+          cleanup_mount() {
+            if [ -n "${MOUNT_DIR:-}" ]; then
+              hdiutil detach "$MOUNT_DIR" -quiet || true
+              rm -rf "$MOUNT_DIR"
+            fi
+          }
+          trap cleanup_mount EXIT
+
+          verify_macos_dmg() {
+            local dmg_path="$1"
+            MOUNT_DIR="$(mktemp -d)"
+
+            hdiutil attach "$dmg_path" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
+
+            local app_path="$MOUNT_DIR/Verenu.app"
+            if [ ! -d "$app_path" ]; then
+              echo "Expected Verenu.app inside $dmg_path"
+              ls -la "$MOUNT_DIR"
+              exit 1
+            fi
+
+            codesign --verify --deep --strict --verbose=4 "$app_path"
+            codesign_info="$(codesign -dv --verbose=4 "$app_path" 2>&1)"
+            echo "$codesign_info"
+
+            if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+              if ! echo "$codesign_info" | grep -q "Authority=${APPLE_SIGNING_IDENTITY}"; then
+                echo "Expected signing identity '${APPLE_SIGNING_IDENTITY}' not found in codesign output - build fell back to ad-hoc signing"
+                exit 1
+              fi
+              echo "Confirmed signed with '${APPLE_SIGNING_IDENTITY}'"
+            fi
+
+            if spctl --assess --type execute --verbose=4 "$app_path"; then
+              echo "spctl accepted $app_path"
+            else
+              echo "spctl rejected $app_path; expected for a self-signed, non-Apple-notarized identity"
+            fi
+
+            hdiutil detach "$MOUNT_DIR" -quiet
+            rm -rf "$MOUNT_DIR"
+            MOUNT_DIR=""
+          }
+
+          if [ "${{ matrix.os-name }}" = "macos" ]; then
+            apple_dmg="src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_aarch64.dmg"
+            apple_release_dmg="src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_Apple_Silicon.dmg"
+            intel_dmg="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_x64.dmg"
+            intel_release_dmg="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_${APP_VERSION}_Intel.dmg"
+
+            npm run tauri build -- --target aarch64-apple-darwin
+            mv "$apple_dmg" "$apple_release_dmg"
+            verify_macos_dmg "$apple_release_dmg"
+
+            ORT_LIB_PATH="$VERENU_INTEL_ORT_LIB_PATH" \
+            ORT_LIB_PROFILE="$VERENU_INTEL_ORT_LIB_PROFILE" \
+              npm run tauri build -- --target x86_64-apple-darwin
+            mv "$intel_dmg" "$intel_release_dmg"
+            verify_macos_dmg "$intel_release_dmg"
+          else
+            npm run tauri build
+          fi
+        shell: bash
+
+      - name: Upload Windows setup installer (.exe)
+        if: matrix.os-name == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Verenu-Windows-setup
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Upload Windows MSI installer (.msi)
+        if: matrix.os-name == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Verenu-Windows-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      - name: Upload macOS Apple Silicon DMG (.dmg)
+        if: matrix.os-name == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Verenu-macOS-Apple-Silicon-dmg
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Verenu_*_Apple_Silicon.dmg
+          if-no-files-found: error
+
+      - name: Upload macOS Intel DMG (.dmg)
+        if: matrix.os-name == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Verenu-macOS-Intel-dmg
+          path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Verenu_*_Intel.dmg
+          if-no-files-found: error

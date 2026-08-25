@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 150">
+  <!-- warm paper background -->
+  <rect width="800" height="150" rx="16" fill="#f9f7f3"/>
+
+
+  <!--
+    Brand mark — 5 bars bottom-aligned, scaled to 88px tall
+    heights: 35%=31  70%=62  100%=88  55%=48  25%=22
+    bar width: 13px  radius: 6.5px  gap: 5px
+    mark total width: 5×13 + 4×5 = 85px
+    mark x-start: (800 - 85 - 16 - textblock) / 2
+    textblock estimate ~235px → total content ~336 → start ~232
+  -->
+  <g transform="translate(232, 31)">
+    <!-- bar 1 -->
+    <rect x="0"  y="57" width="13" height="31" rx="6.5" fill="#d97757"/>
+    <!-- bar 2 -->
+    <rect x="18" y="26" width="13" height="62" rx="6.5" fill="#d97757"/>
+    <!-- bar 3 -->
+    <rect x="36" y="0"  width="13" height="88" rx="6.5" fill="#d97757"/>
+    <!-- bar 4 -->
+    <rect x="54" y="40" width="13" height="48" rx="6.5" fill="#d97757"/>
+    <!-- bar 5 -->
+    <rect x="72" y="66" width="13" height="22" rx="6.5" fill="#d97757"/>
+  </g>
+
+  <!-- wordmark — "Verenu" -->
+  <text
+    x="333"
+    y="90"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="46"
+    font-weight="500"
+    fill="#2b2422"
+    letter-spacing="-0.5"
+  >Verenu</text>
+
+  <!-- tagline -->
+  <text
+    x="335"
+    y="116"
+    font-family="'Segoe UI', Arial, sans-serif"
+    font-size="16"
+    fill="#7e7266"
+    letter-spacing="0.01em"
+  >open-source AI dictation for Windows</text>
+</svg>
