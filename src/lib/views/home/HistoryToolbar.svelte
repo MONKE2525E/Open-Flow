@@ -222,7 +222,6 @@
   .history-app-trigger[aria-expanded='true'] { background: var(--control-hover); border-color: transparent; }
 
   .history-app-menu { width: max-content; min-width: 180px; max-width: 280px; }
-<<<<<<< New base: Fix Insights chart and macOS animations
   /* WebView2 reserves a native scrollbar gutter even while the custom thumb is
      transparent. That leaves the selected row looking clipped on Windows.
      The menu remains wheel/trackpad-scrollable without the gutter. */
