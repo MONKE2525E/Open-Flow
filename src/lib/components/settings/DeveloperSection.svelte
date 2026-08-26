@@ -37,6 +37,13 @@
   let syncApprovalOpen = $state(false);
   let syncMessage = $state('');
 
+  function handleSyncApprovalKeydown(event: KeyboardEvent): void {
+    if (syncApprovalOpen && event.key === 'Escape') {
+      event.preventDefault();
+      syncApprovalOpen = false;
+    }
+  }
+
   const simulatedProviders: { id: ProviderId; label: string }[] = [
     { id: 'groq', label: 'Groq' },
     { id: 'openai', label: 'OpenAI' },
@@ -300,6 +307,8 @@
     };
   });
 </script>
+
+<svelte:window onkeydown={handleSyncApprovalKeydown} />
 
 <h2 class="settings-h">Developer</h2>
 <p class="panel-note">Session log stream from backend runtime. Dev mode resets after app restart.</p>
