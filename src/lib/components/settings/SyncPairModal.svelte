@@ -152,7 +152,7 @@
         />
         <div class="code-slots" aria-hidden="true">
           {#each Array.from({ length: 6 }) as _, i}
-            <span class="slot" class:filled={i < code.length} class:active={i === code.length}>
+            <span class="slot" class:filled={i < code.length} class:active={i === code.length || (complete && i === 5)}>
               {code[i] ?? ''}
             </span>
           {/each}
