@@ -341,7 +341,7 @@
 {#if syncApprovalOpen}
   <div class="sync-approval-backdrop" role="presentation" onclick={() => (syncApprovalOpen = false)}>
     <!-- svelte-ignore a11y_interactive_supports_focus a11y_click_events_have_key_events -->
-    <div class="sync-approval" role="dialog" aria-modal="true" aria-labelledby="sync-approval-title" tabindex="-1" onclick={(event) => event.stopPropagation()} onkeydown={(event) => { event.stopPropagation(); if (event.key === 'Escape') syncApprovalOpen = false; }}>
+    <div class="sync-approval" role="dialog" aria-modal="true" aria-labelledby="sync-approval-title" tabindex="-1" onclick={(event) => event.stopPropagation()} onkeydown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}>
       <h3 id="sync-approval-title">Enable LAN Device Sync?</h3>
       <p>This is a beta feature. It is not fully secure or built out yet. Devices on your local network may discover this installation and paired devices can exchange selected Verenu data.</p>
       <div class="actions">
