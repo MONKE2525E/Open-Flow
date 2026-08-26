@@ -741,3 +741,4 @@ fn pair_test_dbs(a: &DbHandle, b: &DbHandle, a_uuid: &str, b_uuid: &str) {
         sync_store::upsert_peer(&conn, a_uuid, "A", "fp-a").expect("upsert b->a");
     }
 }
+

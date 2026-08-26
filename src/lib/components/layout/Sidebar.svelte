@@ -83,7 +83,7 @@
   // The rail is shared: it shows app navigation normally and swaps to the
   // settings sections while settings is open, so the sidebar never unmounts.
   const settingsGroups = $derived(
-    visibleSettingsSections({ isMac, devMode: appStore.devModeEnabled, legacyMode: appStore.legacyFeaturesEnabled })
+    visibleSettingsSections({ isMac, devMode: appStore.devModeEnabled, legacyMode: appStore.legacyFeaturesEnabled, syncEnabled: appStore.syncEnabled })
   );
 
   type RailEntry =

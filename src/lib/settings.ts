@@ -71,6 +71,7 @@ type SettingsValueMap = {
   /** Derived cache of each provider's live model list. Written only by modelCatalogStore. */
   provider_model_cache: Record<string, unknown>;
   legacy_features_enabled: boolean;
+  sync_enabled: boolean;
 };
 
 type SettingKey = keyof SettingsValueMap;
