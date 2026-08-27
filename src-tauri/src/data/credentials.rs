@@ -271,7 +271,7 @@ pub fn check_access_sentinel() -> KeychainDiagnostic {
         Err(error) => keychain_failure("read", error.code()),
     };
 
-    if let Err(error) = delete_generic_password(service, KEYCHAIN_SENTINEL_ACCOUNT) {
+    if let Err(error) = delete_generic_password(service, &account) {
         if result.state == "available" && error.code() != KEYCHAIN_ITEM_NOT_FOUND {
             return keychain_failure("delete", error.code());
         }
