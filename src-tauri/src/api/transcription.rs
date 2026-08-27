@@ -172,7 +172,101 @@ async fn transcribe_gemini(
 ) -> Result<String> {
     let language_label = crate::data::store::transcription_language_label(language);
     let prompt = get_transcription_prompt("google", model, language_label);
+    if model == "gemini-3.5-transcribe" {
+        return transcribe_gemini_dedicated(wav, api_key, &prompt, model, gen).await;
+    }
     transcribe_gemini_with_prompt(wav, api_key, &prompt, model, gen).await
+}
+
+async fn transcribe_gemini_dedicated(
+    wav: Bytes,
+    api_key: &str,
+    prompt: &str,
+    model: &str,
+    gen: u64,
+) -> Result<String> {
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &wav);
+    let body = super::gemini_types::GeminiInteractionTranscribeReq {
+        model: model.to_owned(),
+        input: vec![
+            super::gemini_types::GeminiInteractionInput::Audio {
+                data: encoded,
+                mime_type: "audio/wav".to_owned(),
+            },
+            super::gemini_types::GeminiInteractionInput::Text {
+                text: prompt.to_owned(),
+            },
+        ],
+    };
+    log::debug!(
+        "transcription: gemini dedicated request gen={} model={} wav_bytes={} prompt_chars={}",
+        gen,
+        model,
+        wav.len(),
+        prompt.chars().count()
+    );
+
+    let request_started = std::time::Instant::now();
+    let resp = super::client::get()
+        .post("https://generativelanguage.googleapis.com/v1beta/interactions")
+        .header("x-goog-api-key", api_key)
+        .json(&body)
+        .send()
+        .await?;
+    let status = resp.status();
+    let request_id = super::response_request_id(&resp);
+    log::debug!(
+        "transcription: gemini dedicated response gen={} status={} request_id={} latency_ms={}",
+        gen,
+        status,
+        request_id,
+        request_started.elapsed().as_millis()
+    );
+    let resp = match super::ensure_provider_success(resp, "Google", Some(("Google", model))).await {
+        Ok(resp) => resp,
+        Err(super::ProviderHttpError::Quota(e)) => return Err(e),
+        Err(super::ProviderHttpError::Auth { error, .. }) => return Err(error),
+        Err(super::ProviderHttpError::NonSuccess {
+            source,
+            status,
+            request_id,
+            preview,
+        }) => {
+            return Err(anyhow::Error::new(source).context(format!(
+                "Gemini Transcribe error status={} request_id={} body_preview={}",
+                status, request_id, preview
+            )))
+        }
+    };
+    let body: serde_json::Value = resp.json().await?;
+    parse_gemini_interaction_text(&body)
+        .ok_or_else(|| anyhow::anyhow!("Gemini Transcribe returned no transcript"))
+}
+
+fn parse_gemini_interaction_text(body: &serde_json::Value) -> Option<String> {
+    if let Some(text) = body.get("output_text").and_then(|v| v.as_str()) {
+        if !text.trim().is_empty() {
+            return Some(text.trim().to_owned());
+        }
+    }
+    let text = body
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|step| step.get("type").and_then(|v| v.as_str()) == Some("model_output"))
+        .flat_map(|step| {
+            step.get("content")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|content| content.get("text").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!text.is_empty()).then_some(text)
 }
 
 async fn transcribe_gemini_with_prompt(
@@ -598,5 +692,40 @@ mod tests {
         );
         assert_eq!(json["generationConfig"]["maxOutputTokens"], 2048);
         assert_eq!(json["generationConfig"]["temperature"], 0.0);
+    }
+
+    #[test]
+    fn dedicated_gemini_interaction_request_uses_audio_input() {
+        let body = super::super::gemini_types::GeminiInteractionTranscribeReq {
+            model: "gemini-3.5-transcribe".to_string(),
+            input: vec![
+                super::super::gemini_types::GeminiInteractionInput::Audio {
+                    data: "ZmFrZQ==".to_string(),
+                    mime_type: "audio/wav".to_string(),
+                },
+                super::super::gemini_types::GeminiInteractionInput::Text {
+                    text: "transcribe this".to_string(),
+                },
+            ],
+        };
+        let json = serde_json::to_value(body).unwrap();
+        assert_eq!(json["model"], "gemini-3.5-transcribe");
+        assert_eq!(json["input"][0]["type"], "audio");
+        assert_eq!(json["input"][0]["mime_type"], "audio/wav");
+        assert_eq!(json["input"][1]["type"], "text");
+    }
+
+    #[test]
+    fn dedicated_gemini_interaction_parser_reads_output_text_and_steps() {
+        assert_eq!(
+            super::parse_gemini_interaction_text(&serde_json::json!({"output_text":" hello "})),
+            Some("hello".to_string())
+        );
+        assert_eq!(
+            super::parse_gemini_interaction_text(&serde_json::json!({
+                "steps": [{"type":"model_output", "content":[{"type":"text", "text":"hello"}, {"type":"text", "text":"world"}]}]
+            })),
+            Some("hello world".to_string())
+        );
     }
 }
