@@ -2,6 +2,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { constants as osConstants } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,12 +12,18 @@ const repoRoot = path.resolve(scriptDir, '..');
 const devConfig = JSON.parse(readFileSync(path.join(repoRoot, 'src-tauri', 'tauri.dev.conf.json'), 'utf8'));
 const BUNDLE_IDENTIFIER = devConfig.identifier;
 const APP_DISPLAY_NAME = devConfig.productName;
-const APP_BUNDLE_NAME = `${devConfig.bundle.macOS.bundleName}.app`;
+const APP_BUNDLE_BASENAME = devConfig?.bundle?.macOS?.bundleName;
 
-if (BUNDLE_IDENTIFIER !== 'com.verenu.app.dev' || APP_DISPLAY_NAME !== 'Verenu Development') {
+if (
+  BUNDLE_IDENTIFIER !== 'com.verenu.app.dev' ||
+  APP_DISPLAY_NAME !== 'Verenu Development' ||
+  typeof APP_BUNDLE_BASENAME !== 'string' ||
+  APP_BUNDLE_BASENAME.length === 0
+) {
   console.error('Invalid macOS development identity contract in src-tauri/tauri.dev.conf.json.');
   process.exit(1);
 }
+const APP_BUNDLE_NAME = `${APP_BUNDLE_BASENAME}.app`;
 
 const args = process.argv.slice(2);
 
@@ -102,7 +109,7 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
       try { process.kill(pid, signal); } catch { /* process already exited */ }
     }
     child.kill(signal);
-    process.exit(0);
+    process.exit(128 + (osConstants.signals[signal] ?? 1));
   });
 }
 

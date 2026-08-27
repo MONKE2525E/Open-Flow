@@ -46,7 +46,7 @@ const plistValue = (key) => {
 const bundleId = plistValue('CFBundleIdentifier');
 const displayName = plistValue('CFBundleDisplayName');
 const executableName = plistValue('CFBundleExecutable');
-const executable = path.join(app, 'Contents', 'MacOS', executableName);
+const executable = executableName ? path.join(app, 'Contents', 'MacOS', executableName) : '';
 const signingResult = run('/usr/bin/codesign', ['-dv', '--verbose=4', app], true);
 const requirementResult = run('/usr/bin/codesign', ['-dr', '-', app], true);
 const entitlementsResult = run('/usr/bin/codesign', ['-d', '--entitlements', ':-', app], true);
@@ -56,7 +56,9 @@ const entitlements = entitlementsResult.output;
 const verify = run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', app], true);
 const spctl = run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=4', app], true);
 const metadata = run('/usr/bin/mdls', ['-name', 'kMDItemCFBundleIdentifier', '-name', 'kMDItemDisplayName', app], true);
-const processes = run('/bin/ps', ['-axo', 'pid=,ppid=,command=']).output.split('\n').filter((line) => line.includes(executable));
+const processes = executable
+  ? run('/bin/ps', ['-axo', 'pid=,ppid=,command=']).output.split('\n').filter((line) => line.includes(executable))
+  : [];
 const registered = run('/usr/bin/mdfind', [`kMDItemCFBundleIdentifier == '${expected.id}'`], true).output;
 
 console.log(`MODE: ${mode}`);
@@ -76,7 +78,12 @@ console.log('\nINDEXED COPIES\n' + (registered || 'none'));
 const failures = [];
 if (bundleId !== expected.id) failures.push(`expected bundle ID ${expected.id}`);
 if (displayName !== expected.name) failures.push(`expected display name ${expected.name}`);
+if (!executableName) failures.push('CFBundleExecutable is missing');
+else if (!existsSync(executable)) failures.push(`bundle executable is missing: ${executable}`);
 if (verify.status !== 0) failures.push('codesign verification failed');
+if (signingResult.status !== 0) failures.push('could not inspect signing identity');
+if (requirementResult.status !== 0) failures.push('could not inspect designated requirement');
+if (entitlementsResult.status !== 0) failures.push('could not inspect entitlements');
 if (mode === 'dev' && !signing.includes('Authority=Apple Development:')) failures.push('development app is not Apple Development signed');
 if (signing.includes('Signature=adhoc')) failures.push('app is ad-hoc signed');
 if (failures.length > 0) {

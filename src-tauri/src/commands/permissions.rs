@@ -9,8 +9,13 @@
 //! stored.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 static PERMISSION_QUERY_GENERATION: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "macos")]
+static SIGNING_INFO: OnceLock<(Option<String>, Option<String>)> = OnceLock::new();
+#[cfg(target_os = "macos")]
+static MACOS_VERSION: OnceLock<String> = OnceLock::new();
 
 // ---------- macOS permissions ----------
 
@@ -77,10 +82,12 @@ fn core_permissions_granted(accessibility: &str, microphone: &str) -> bool {
 #[cfg(target_os = "macos")]
 fn permission_diagnostics() -> MacPermissionDiagnostics {
     let bundle_path = crate::system::mac_app::bundle_path();
-    let (signing_identity, team_identifier) = bundle_path
-        .as_deref()
-        .map(read_signing_identity)
-        .unwrap_or((None, None));
+    let signing = SIGNING_INFO.get_or_init(|| {
+        bundle_path
+            .as_deref()
+            .map(read_signing_identity)
+            .unwrap_or((None, None))
+    });
     MacPermissionDiagnostics {
         bundle_identifier: crate::system::mac_app::bundle_identifier(),
         bundle_display_name: crate::system::mac_app::bundle_display_name(),
@@ -96,9 +103,9 @@ fn permission_diagnostics() -> MacPermissionDiagnostics {
             == Some("app"),
         process_id: std::process::id(),
         process_name: process_name(),
-        macos_version: macos_version(),
-        signing_identity,
-        team_identifier,
+        macos_version: MACOS_VERSION.get_or_init(macos_version).clone(),
+        signing_identity: signing.0.clone(),
+        team_identifier: signing.1.clone(),
         build_profile: if cfg!(debug_assertions) {
             "debug"
         } else {

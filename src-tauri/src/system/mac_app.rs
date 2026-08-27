@@ -8,7 +8,7 @@
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use objc2::rc::autoreleasepool;
 use objc2::runtime::{AnyClass, AnyObject};
@@ -34,6 +34,19 @@ const POLICY_ACCESSORY: u8 = 1;
 const POLICY_REGULAR: u8 = 2;
 
 static LAST_APPLIED_POLICY: AtomicU8 = AtomicU8::new(POLICY_UNKNOWN);
+
+// Compatibility latch used by the AX text/context probes. It records that a
+// real cross-process AX read succeeded during this process lifetime; the
+// Permissions page itself always uses a fresh AXIsProcessTrusted() query.
+static ACCESSIBILITY_VERIFIED: AtomicBool = AtomicBool::new(false);
+
+pub fn mark_accessibility_verified() {
+    ACCESSIBILITY_VERIFIED.store(true, Ordering::SeqCst);
+}
+
+pub fn is_accessibility_verified() -> bool {
+    ACCESSIBILITY_VERIFIED.load(Ordering::SeqCst)
+}
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]

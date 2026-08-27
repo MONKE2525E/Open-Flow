@@ -163,6 +163,8 @@ use security_framework::passwords::{
 };
 #[cfg(target_os = "macos")]
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_os = "macos")]
 const PRODUCTION_KEYCHAIN_SERVICE: &str = "com.verenu.app";
@@ -179,7 +181,7 @@ const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
 #[cfg(target_os = "macos")]
 const KEYCHAIN_DUPLICATE_ITEM: i32 = -25299;
 #[cfg(target_os = "macos")]
-const KEYCHAIN_SENTINEL_ACCOUNT: &str = "__verenu_permission_probe__";
+static KEYCHAIN_PROBE_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNTS_USED_BY_VERENU: &[&str] = &[
     "api_key_groq",
@@ -243,16 +245,17 @@ pub fn check_access_sentinel() -> KeychainDiagnostic {
         }
     }
 
-    let _ = delete_generic_password(service, KEYCHAIN_SENTINEL_ACCOUNT);
-    let sentinel = format!("verenu-keychain-probe-{}", std::process::id());
+    let probe_id = KEYCHAIN_PROBE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let account = format!("__verenu_permission_probe_{}_{}__", std::process::id(), probe_id);
+    let sentinel = format!("verenu-keychain-probe-{}-{}", std::process::id(), probe_id);
 
     if let Err(error) =
-        set_generic_password(service, KEYCHAIN_SENTINEL_ACCOUNT, sentinel.as_bytes())
+        set_generic_password(service, &account, sentinel.as_bytes())
     {
         return keychain_failure("create", error.code());
     }
 
-    let result = match get_generic_password(service, KEYCHAIN_SENTINEL_ACCOUNT) {
+    let result = match get_generic_password(service, &account) {
         Ok(bytes) if bytes == sentinel.as_bytes() => KeychainDiagnostic {
             state: "available".into(),
             operation: "all account reads + create/read/delete".into(),
