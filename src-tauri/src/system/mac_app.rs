@@ -590,6 +590,11 @@ pub async fn request_notifications() -> Result<(), String> {
         let center: *mut AnyObject =
             msg_send![class!(UNUserNotificationCenter), currentNotificationCenter];
         if center.is_null() {
+            if let Ok(mut guard) = tx.lock() {
+                if let Some(tx) = guard.take() {
+                    let _ = tx.send(Err("UNUserNotificationCenter was unavailable".to_string()));
+                }
+            }
             return;
         }
         // alert | sound | badge; request is only called from an explicit UI action.
@@ -619,6 +624,9 @@ pub async fn request_notifications_on_main_thread(app: &AppHandle) -> Result<(),
             let center: *mut AnyObject =
                 msg_send![class!(UNUserNotificationCenter), currentNotificationCenter];
             if center.is_null() {
+                if let Some(tx) = tx.lock().ok().and_then(|mut guard| guard.take()) {
+                    let _ = tx.send(Err("UNUserNotificationCenter was unavailable".to_string()));
+                }
                 return;
             }
             let handler = block2::RcBlock::new(

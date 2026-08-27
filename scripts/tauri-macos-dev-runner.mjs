@@ -70,11 +70,18 @@ const child = spawn('/usr/bin/open', openArgs, {
 let launchedPids = [];
 let sawLaunchedProcess = false;
 let emptySince = 0;
+const launchStartedAt = Date.now();
+const launchTimeoutMs = 10_000;
 const processTracker = setInterval(() => {
   launchedPids = findBundleProcessIds(bundledBinary).filter((pid) => !existingPids.has(pid));
   if (launchedPids.length > 0) {
     sawLaunchedProcess = true;
     emptySince = 0;
+  } else if (!sawLaunchedProcess && Date.now() - launchStartedAt > launchTimeoutMs) {
+    clearInterval(processTracker);
+    console.error(`[macOS dev runner] LaunchServices did not start ${appBundle} within ${launchTimeoutMs}ms.`);
+    try { child.kill(); } catch { /* open may already have exited */ }
+    process.exit(1);
   } else if (sawLaunchedProcess) {
     if (emptySince === 0) emptySince = Date.now();
     // Relaunch intentionally has a short gap between the old process exiting

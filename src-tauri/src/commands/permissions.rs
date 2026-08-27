@@ -387,6 +387,7 @@ pub async fn debug_permission_probe() -> MacPermissionSnapshot {
     snapshot
 }
 
+#[cfg(debug_assertions)]
 fn write_debug_probe(snapshot: &MacPermissionSnapshot) {
     if let Ok(payload) = serde_json::to_string_pretty(snapshot) {
         let _ = std::fs::write("/tmp/verenu-permission-probe.json", payload);
@@ -399,6 +400,9 @@ fn write_debug_probe(snapshot: &MacPermissionSnapshot) {
         );
     }
 }
+
+#[cfg(not(debug_assertions))]
+fn write_debug_probe(_snapshot: &MacPermissionSnapshot) {}
 
 /// Whether Verenu is trusted for the Accessibility API (needed for Cmd+V
 /// injection and auto-learn). When `prompt` is true, macOS shows the system
@@ -531,7 +535,7 @@ pub async fn request_microphone_permission_snapshot(
     Ok(macos_permission_snapshot(provider).await)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", debug_assertions))]
 fn write_microphone_request_trace(
     stage: &str,
     state: &str,
@@ -550,6 +554,15 @@ fn write_microphone_request_trace(
         "captureState": crate::system::mac_app::av_capture_microphone_permission_status(),
     });
     let _ = std::fs::write("/tmp/verenu-microphone-request.json", payload.to_string());
+}
+
+#[cfg(all(target_os = "macos", not(debug_assertions)))]
+fn write_microphone_request_trace(
+    _stage: &str,
+    _state: &str,
+    _callback: Option<bool>,
+    _error: Option<&str>,
+) {
 }
 
 /// Request notification authorization only after an explicit user action,
