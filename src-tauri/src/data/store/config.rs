@@ -48,7 +48,7 @@ pub fn default_transcription_model_for(provider: &str) -> &'static str {
     match provider {
         LOCAL => "parakeet-v3",
         OPENAI => "gpt-4o-transcribe",
-        GOOGLE => "gemini-3.5-flash",
+        GOOGLE => "gemini-3.5-transcribe",
         ASSEMBLYAI => "universal-3-5-pro",
         _ => "whisper-large-v3-turbo",
     }

@@ -35,6 +35,24 @@ pub struct GeminiTranscribeReq {
     pub generation_config: Option<GeminiGenConfig>,
 }
 
+/// Request body for Google's dedicated audio transcription model. Unlike
+/// general Gemini audio understanding, this model is exposed through the
+/// Interactions API rather than generateContent.
+#[derive(Serialize, Debug)]
+pub struct GeminiInteractionTranscribeReq {
+    pub model: String,
+    pub input: Vec<GeminiInteractionInput>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(tag = "type")]
+pub enum GeminiInteractionInput {
+    #[serde(rename = "audio")]
+    Audio { data: String, mime_type: String },
+    #[serde(rename = "text")]
+    Text { text: String },
+}
+
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GeminiGenerateReq {

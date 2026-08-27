@@ -83,6 +83,7 @@ export const CATALOG: CatalogEntry[] = [
   { provider: 'openai', id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', tasks: ['cleanup'], tags: ['accurate'] },
   { provider: 'openai', id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', tasks: ['cleanup'], tags: ['fast'] },
   { provider: 'google', id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', tasks: ['transcription', 'cleanup'], tags: ['accurate'], tier: 'premium' },
+  { provider: 'google', id: 'gemini-3.5-transcribe', label: 'Gemini 3.5 Transcribe', tasks: ['transcription'], tags: ['accurate'] },
   { provider: 'google', id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', tasks: ['transcription', 'cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
   { provider: 'google', id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', tasks: ['transcription', 'cleanup'], tags: ['accurate'] },
   { provider: 'google', id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', tasks: ['transcription', 'cleanup'], tags: ['fast'] },
