@@ -55,22 +55,20 @@ pub(super) fn apply_app_style_overrides(
         .unwrap_or_else(|| cfg.default_tone.clone())
 }
 
-/// Resolves the tone profile that would apply to a foreground window without
-/// running the full pipeline, and emits it to the pill so the recording state
-/// can show which style will apply. Used at recording start, where the full
-/// `open_config_and_context` (chain validation + error pills) is too heavy and
-/// would double-resolve; the pipeline re-emits the same value at processing
-/// time so the shown profile always matches what actually runs.
+/// Resolves the context that would apply to a foreground window without
+/// running the full pipeline, and emits its name to the pill so the recording
+/// state can show where the dictation is headed. Used at recording start,
+/// where the full `open_config_and_context` (chain validation + error pills)
+/// is too heavy and would double-resolve; the pipeline re-emits the
+/// domain-refined context at processing time.
 ///
-/// Deliberately never fails silently: the hwnd→process-name read can come up
-/// empty (elevated target processes, race between capture and start), so the
-/// process name falls back to the live foreground window and then to no
-/// mapping at all — `apply_app_style_overrides` falls back to the default
-/// tone, so the recording pill always shows *some* mode label. Without this
-/// fallback the label only ever appeared once processing began (where the
-/// pipeline resolves the name through a different path), which made the
-/// mode display useless right when it matters.
-pub(super) fn emit_profile_for_window(app: &AppHandle, hwnd: usize) {
+/// The hwnd→process-name read can come up empty (elevated target processes,
+/// race between capture and start), so the process name falls back to the
+/// live foreground window; an unresolved context just leaves the chip hidden
+/// until processing resolves one. Without this early emit the label only ever
+/// appeared once processing began, which made it useless right when it
+/// matters.
+pub(super) fn emit_context_for_window(app: &AppHandle, hwnd: usize) {
     let process_name = if hwnd != 0 {
         window_context::get_process_name_for_hwnd(hwnd)
     } else {
@@ -78,18 +76,13 @@ pub(super) fn emit_profile_for_window(app: &AppHandle, hwnd: usize) {
     }
     .or_else(window_context::get_active_process_name)
     .unwrap_or_default();
-    let Ok(settings) = store::settings_snapshot(app) else {
-        return;
-    };
-    let mapping = resolve_app_mapping(Some(&settings), &process_name);
-    let mut cfg = store::load_pipeline_config(&settings);
     // Exe-only context lookup (no address-bar probe here — this runs on the
     // recording-start path and must stay fast; the real pipeline resolves
-    // the domain-refined context and re-emits the true profile).
+    // the domain-refined context and re-emits it).
     let db_handle = app.state::<crate::DbHandle>().inner().clone();
-    let context = crate::core::context::resolve_context(&db_handle, &process_name, None).ok();
-    let profile = apply_app_style_overrides(&mut cfg, mapping.as_ref(), context.as_ref());
-    crate::pipeline::pill::queue_pill_profile(&profile);
+    if let Ok(context) = crate::core::context::resolve_context(&db_handle, &process_name, None) {
+        crate::pipeline::pill::queue_pill_context(&context.name);
+    }
 }
 
 /// Casual/formal cleanup sometimes omits a closing period on short utterances.
