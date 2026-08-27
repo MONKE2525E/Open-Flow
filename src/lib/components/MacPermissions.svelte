@@ -115,6 +115,7 @@
   let unlistenError: (() => void) | null = null;
   let active = true;
   let refreshGeneration = 0;
+  let refreshInFlight = 0;
   let autoCheckedKeychainProvider: ProviderId | null = null;
 
   const accessibilityPermission = $derived(snapshot.accessibility);
@@ -216,6 +217,7 @@
   async function refreshMacPermissions(silent = false) {
     if (!isMac) return;
     const generation = ++refreshGeneration;
+    refreshInFlight += 1;
     permissionsLoading = true;
     if (!silent) permissionsError = '';
     try {
@@ -228,7 +230,8 @@
         permissionsError = 'Could not refresh permission status right now.';
       }
     } finally {
-      if (generation === refreshGeneration) permissionsLoading = false;
+      refreshInFlight -= 1;
+      if (refreshInFlight === 0) permissionsLoading = false;
     }
   }
 

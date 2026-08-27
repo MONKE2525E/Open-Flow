@@ -514,7 +514,7 @@ pub async fn request_microphone_via_device_input(app: &AppHandle) -> Result<bool
             let mut error: *mut AnyObject = std::ptr::null_mut();
             let _: *mut AnyObject = msg_send![
                 class!(AVCaptureDeviceInput),
-                deviceInputWithDevice: device
+                deviceInputWithDevice: device,
                 error: &mut error
             ];
             let _ = tx.send(Ok(()));
@@ -608,7 +608,7 @@ pub async fn request_notifications() -> Result<(), String> {
             },
         );
         let _: () =
-            msg_send![center, requestAuthorizationWithOptions: 7usize completionHandler: &*handler];
+            msg_send![center, requestAuthorizationWithOptions: 7usize, completionHandler: &*handler];
     });
     tokio::time::timeout(std::time::Duration::from_secs(30), rx)
         .await
@@ -640,7 +640,7 @@ pub async fn request_notifications_on_main_thread(app: &AppHandle) -> Result<(),
             );
             let _: () = msg_send![
                 center,
-                requestAuthorizationWithOptions: 7usize
+                requestAuthorizationWithOptions: 7usize,
                 completionHandler: &*handler
             ];
         });
