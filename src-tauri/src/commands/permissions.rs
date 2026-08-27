@@ -616,6 +616,7 @@ pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     {
         handle.restart();
+        Ok(())
     }
 }
 

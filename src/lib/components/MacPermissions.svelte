@@ -349,9 +349,12 @@
     if (!isMac) return;
     permissionsError = '';
     try {
-      const generation = ++refreshGeneration;
+      // The watcher may refresh while the native prompt is open. The result
+      // of this explicit user action is still a fresh authoritative query and
+      // must be applied when this component is active.
+      ++refreshGeneration;
       const notifications = await invoke<NotificationPermission>('request_notification_permission');
-      if (generation === refreshGeneration && active) snapshot = { ...snapshot, notifications };
+      if (active) snapshot = { ...snapshot, notifications };
     } catch (error) {
       permissionsError = `Could not request Notifications permission: ${extractIpcErrorMessage(error)}`;
     }

@@ -117,7 +117,7 @@ function findBundleProcessIds(executablePath) {
   return result.stdout
     .split('\n')
     .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
-    .filter((match) => match && match[2] === executablePath)
+    .filter((match) => match && (match[2] === executablePath || match[2].startsWith(`${executablePath} `)))
     .map((match) => Number(match[1]));
 }
 

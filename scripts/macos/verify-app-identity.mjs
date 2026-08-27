@@ -33,7 +33,16 @@ const run = (command, args, allowFailure = false) => {
   }
   return { status: result.status ?? 1, output };
 };
-const plistValue = (key) => run('/usr/bin/plutil', ['-extract', key, 'raw', plist]).output;
+const plistValue = (key) => {
+  const value = run('/usr/bin/plutil', ['-extract', key, 'raw', plist], true);
+  if (value.status === 0) return value.output;
+  // CFBundleDisplayName is optional; macOS falls back to CFBundleName.
+  if (key === 'CFBundleDisplayName') {
+    const fallback = run('/usr/bin/plutil', ['-extract', 'CFBundleName', 'raw', plist], true);
+    if (fallback.status === 0) return fallback.output;
+  }
+  return '';
+};
 const bundleId = plistValue('CFBundleIdentifier');
 const displayName = plistValue('CFBundleDisplayName');
 const executableName = plistValue('CFBundleExecutable');

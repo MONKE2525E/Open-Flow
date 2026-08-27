@@ -525,7 +525,7 @@ pub async fn request_microphone_via_device_input(app: &AppHandle) -> Result<bool
         .map_err(|_| "Microphone input request task closed unexpectedly".to_string())??;
 
     for _ in 0..240 {
-        let status = av_capture_microphone_permission_status();
+        let status = microphone_permission_status();
         if status != "not_determined" {
             return Ok(status == "authorized");
         }
@@ -544,6 +544,11 @@ pub async fn notification_settings() -> Result<[i64; 6], String> {
         let center: *mut AnyObject =
             msg_send![class!(UNUserNotificationCenter), currentNotificationCenter];
         if center.is_null() {
+            if let Ok(mut guard) = tx.lock() {
+                if let Some(tx) = guard.take() {
+                    let _ = tx.send(Err("UNUserNotificationCenter was unavailable".to_string()));
+                }
+            }
             return;
         }
         let handler = block2::RcBlock::new(move |settings: *mut AnyObject| {
