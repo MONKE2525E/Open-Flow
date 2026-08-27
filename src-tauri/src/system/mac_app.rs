@@ -11,7 +11,7 @@ use std::os::raw::c_char;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use objc2::rc::autoreleasepool;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyClass, AnyObject};
 use objc2::{class, msg_send};
 use objc2_foundation::{NSData, NSString};
 use tauri::AppHandle;
@@ -242,48 +242,48 @@ pub fn refresh_dock_icon() {
 /// the user grants access mid-session.
 static MIC_VERIFIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Record that the microphone was successfully opened for capture. Call this from
-/// the audio backend once a recording stream is confirmed playing.
-pub fn mark_microphone_verified() {
-    MIC_VERIFIED.store(true, Ordering::SeqCst);
+const AV_AUDIO_PERMISSION_UNDETERMINED: isize = u32::from_be_bytes(*b"undt") as isize;
+const AV_AUDIO_PERMISSION_DENIED: isize = u32::from_be_bytes(*b"deny") as isize;
+const AV_AUDIO_PERMISSION_GRANTED: isize = u32::from_be_bytes(*b"grnt") as isize;
+
+/// `AVAudioApplication.recordPermission` is the modern, audio-specific API on
+/// macOS 14+. Load AVFAudio dynamically so Verenu can keep its macOS 11 minimum.
+fn av_audio_application_class() -> Option<&'static AnyClass> {
+    static AVFAUDIO_LOADED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let loaded = AVFAUDIO_LOADED.get_or_init(|| unsafe {
+        let path = b"/System/Library/Frameworks/AVFAudio.framework/AVFAudio\0";
+        !libc::dlopen(
+            path.as_ptr().cast::<c_char>(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        )
+        .is_null()
+    });
+    loaded
+        .then(|| AnyClass::get("AVAudioApplication"))
+        .flatten()
 }
 
-pub fn is_microphone_verified() -> bool {
-    MIC_VERIFIED.load(Ordering::SeqCst)
+/// Modern Core Audio permission status, when the API exists on this macOS.
+pub fn av_audio_microphone_permission_status() -> Option<&'static str> {
+    let class = av_audio_application_class()?;
+    autoreleasepool(|_| unsafe {
+        let application: *mut AnyObject = msg_send![class, sharedInstance];
+        if application.is_null() {
+            return Some("unknown");
+        }
+        let status: isize = msg_send![application, recordPermission];
+        Some(match status {
+            AV_AUDIO_PERMISSION_GRANTED => "authorized",
+            AV_AUDIO_PERMISSION_UNDETERMINED => "not_determined",
+            AV_AUDIO_PERMISSION_DENIED => "denied",
+            _ => "unknown",
+        })
+    })
 }
 
-/// Latched once a cross-process Accessibility (AX) read succeeds - i.e. the app
-/// actually read another application's focused-element tree. Like the microphone
-/// latch, an empirically successful AX call is authoritative proof the permission
-/// is granted, which matters when `AXIsProcessTrusted()` reports a stale `false`
-/// (most often after an ad-hoc rebuild changes the code signature the TCC grant
-/// was tied to). This is a process-lifetime latch: if the user revokes access the
-/// OS tears the capability down and a relaunch resets the flag, mirroring the
-/// accepted behaviour of [`MIC_VERIFIED`].
-static ACCESSIBILITY_VERIFIED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Record that a cross-process AX read succeeded. Call from the AX caret probe
-/// whenever the OS returned real element data (any source other than
-/// "permission missing" / "unavailable").
-pub fn mark_accessibility_verified() {
-    ACCESSIBILITY_VERIFIED.store(true, Ordering::SeqCst);
-}
-
-pub fn is_accessibility_verified() -> bool {
-    ACCESSIBILITY_VERIFIED.load(Ordering::SeqCst)
-}
-
-/// Current macOS microphone permission status for the app.
-///
-/// Returns one of: `authorized`, `not_determined`, `denied`, `restricted`,
-/// or `unknown`.
-pub fn microphone_permission_status() -> &'static str {
-    // A previously successful capture is proof the permission is granted, even if
-    // the cached AV authorization status is stale.
-    if MIC_VERIFIED.load(Ordering::SeqCst) {
-        return "authorized";
-    }
+/// Legacy AVFoundation status retained for macOS 11-13 compatibility and
+/// diagnostics when the two Apple frameworks disagree.
+pub fn av_capture_microphone_permission_status() -> &'static str {
     autoreleasepool(|_| unsafe {
         let media_type = NSString::from_str("soun");
         let status: isize =
@@ -298,29 +298,70 @@ pub fn microphone_permission_status() -> &'static str {
     })
 }
 
+pub fn microphone_capture_verified() -> bool {
+    MIC_VERIFIED.load(Ordering::SeqCst)
+}
+
+/// Record that the microphone was successfully opened for capture. Call this from
+/// the audio backend once a recording stream is confirmed playing.
+pub fn mark_microphone_verified() {
+    MIC_VERIFIED.store(true, Ordering::SeqCst);
+}
+
+/// Current macOS microphone permission status for the app.
+///
+/// Returns one of: `authorized`, `not_determined`, `denied`, `restricted`,
+/// or `unknown`.
+pub fn microphone_permission_status() -> &'static str {
+    // AVAudioApplication is the authoritative API for the Core Audio recording
+    // path used by cpal. AVCaptureDevice is a compatibility fallback for older
+    // macOS releases. A stream opened in this process is final proof only when
+    // the native API returns the ambiguous undetermined state.
+    let status = av_audio_microphone_permission_status()
+        .unwrap_or_else(av_capture_microphone_permission_status);
+    if status == "not_determined" && microphone_capture_verified() {
+        "authorized"
+    } else {
+        status
+    }
+}
+
 /// Request microphone access, showing the macOS consent prompt when the
-/// permission is undetermined. The completion handler is a no-op - callers read
-/// the resulting status separately via `microphone_permission_status()` once the
-/// user responds. Safe to call when already authorized (no prompt is shown).
-pub async fn request_microphone() -> bool {
+/// permission is undetermined. Fails after a bounded wait if AVFoundation never
+/// calls its completion handler, rather than leaving the permissions UI stuck.
+/// Safe to call when already authorized (no prompt is shown).
+pub async fn request_microphone() -> Result<bool, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx = std::sync::Mutex::new(Some(tx));
     autoreleasepool(|_| unsafe {
-        let media_type = NSString::from_str("soun");
         let handler = block2::RcBlock::new(move |granted: objc2::runtime::Bool| {
+            let granted = granted.as_bool();
+            if granted {
+                mark_microphone_verified();
+            }
             if let Ok(mut guard) = tx.lock() {
                 if let Some(tx) = guard.take() {
-                    let _ = tx.send(granted.as_bool());
+                    let _ = tx.send(granted);
                 }
             }
         });
-        let _: () = msg_send![
-            class!(AVCaptureDevice),
-            requestAccessForMediaType: &*media_type,
-            completionHandler: &*handler
-        ];
+        if let Some(class) = av_audio_application_class() {
+            let _: () = msg_send![class, requestRecordPermissionWithCompletionHandler: &*handler];
+        } else {
+            let media_type = NSString::from_str("soun");
+            let _: () = msg_send![
+                class!(AVCaptureDevice),
+                requestAccessForMediaType: &*media_type,
+                completionHandler: &*handler
+            ];
+        }
     });
-    rx.await.unwrap_or(false)
+    tokio::time::timeout(std::time::Duration::from_secs(60), rx)
+        .await
+        .map_err(|_| {
+            "macOS did not answer the microphone permission request within 60 seconds.".to_string()
+        })?
+        .map_err(|_| "macOS closed the microphone permission request unexpectedly.".to_string())
 }
 
 // UTI for plain UTF-8 text - the value of `NSPasteboardTypeString`.

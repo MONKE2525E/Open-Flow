@@ -390,7 +390,6 @@ fn main() {
             commands::delete_api_key,
             commands::get_api_key_status,
             commands::validate_api_key,
-            commands::list_provider_models,
             commands::save_setting,
             commands::get_setting,
             commands::get_all_settings,

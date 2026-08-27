@@ -8,22 +8,20 @@
     "dev:tauri-host": "node scripts/vite-dev-server.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check": "svelte-check --tsconfig ./tsconfig.json && node scripts/macos/check-identity-contract.mjs",
     "lint": "npm run check && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
     "test": "node scripts/run-onepyfone.mjs --profile fast",
     "test:all": "node scripts/run-onepyfone.mjs --profile fast",
     "test:full": "node scripts/run-onepyfone.mjs --profile full",
     "test:live": "node scripts/run-onepyfone.mjs --profile live",
     "test:native": "node scripts/run-onepyfone.mjs --profile native",
-    "test:quality": "node scripts/run-onepyfone.mjs --suite accessibility,state,performance",
-    "test:prompt": "node scripts/run-onepyfone.mjs --suite contract --test prompt",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:smoke": "node tests/smoke/test.cjs && node tests/smoke/test-app.cjs && node tests/smoke/playwright-test-ui.cjs && node tests/smoke/playwright-test-fixes.cjs",
     "test:smoke:state": "node tests/smoke/playwright-test-state.cjs",
     "macos:signing-identity": "bash scripts/macos/ensure-signing-identity.sh",
+    "macos:verify-identity": "node scripts/macos/verify-app-identity.mjs",
     "tauri:build:signed": "bash scripts/macos/build-signed.sh",
-    "tauri": "node scripts/tauri-cli.mjs",
-    "test:unit": "vitest run src"
+    "tauri": "node scripts/tauri-cli.mjs"
   },
   "keywords": [
     "dictation",
@@ -54,8 +52,7 @@
     "svelte": "^5.55.5",
     "svelte-check": "^4.4.8",
     "typescript": "^6.0.3",
-    "vite": "^8.0.10",
-    "vitest": "^4.1.11"
+    "vite": "^8.0.10"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.9",

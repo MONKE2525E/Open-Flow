@@ -22,9 +22,7 @@
         "minWidth": 900,
         "minHeight": 600,
         "resizable": true,
-        "decorations": false,
-        "transparent": true,
-        "titleBarStyle": "Transparent",
+        "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "visible": false,
         "center": true,
@@ -79,8 +77,7 @@
     "macOS": {
       "bundleName": "Verenu",
       "minimumSystemVersion": "11.0",
-      "entitlements": "Entitlements.plist",
-      "signingIdentity": "-"
+      "entitlements": "Entitlements.plist"
     }
   }
 }

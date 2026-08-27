@@ -9,6 +9,7 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const tauriCli = path.join(repoRoot, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
 const macDevRunner = path.join(__dirname, 'tauri-macos-dev-runner.mjs');
+const macDevConfig = path.join(repoRoot, 'src-tauri', 'tauri.dev.conf.json');
 
 const args = process.argv.slice(2);
 
@@ -17,7 +18,18 @@ if (
   args[0] === 'dev' &&
   !hasRunnerOption(args.slice(1))
 ) {
-  args.splice(1, 0, '--runner', macDevRunner);
+  args.splice(1, 0, '--config', macDevConfig, '--runner', macDevRunner);
+}
+
+if (
+  process.platform === 'darwin' &&
+  args[0] === 'build' &&
+  !process.env.APPLE_SIGNING_IDENTITY?.trim()
+) {
+  console.error(
+    'Refusing an ad-hoc macOS production build. Set APPLE_SIGNING_IDENTITY or run npm run tauri:build:signed.',
+  );
+  process.exit(1);
 }
 
 const child = spawn(process.execPath, [tauriCli, ...args], {
