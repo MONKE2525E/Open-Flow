@@ -178,9 +178,9 @@ pub fn start_recording_session_ex(
                 // returns — queuing here, before that reveal ever happens,
                 // is what makes the profile available in time regardless of
                 // which reveal path this particular call takes (see
-                // PENDING_PILL_PROFILE for the full ordering rationale).
+                // PENDING_PILL_CONTEXT for the full ordering rationale).
                 let target_hwnd = lock_state(state).map(|st| st.target.id).unwrap_or(0);
-                emit_profile_for_window(app, target_hwnd);
+                emit_context_for_window(app, target_hwnd);
                 show_pill(app, pill_state);
             }
             spawn_level_emitter(
