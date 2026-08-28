@@ -498,6 +498,8 @@
             </button>
           {:else if microphonePermission === 'denied' || microphonePermission === 'not_granted'}
             <button class="perm-action" onclick={() => openPermissionSettings('microphone')}>Allow in Settings</button>
+          {:else if microphonePermission === 'unknown'}
+            <button class="perm-action" onclick={() => refreshMacPermissions()}>Refresh status</button>
           {/if}
         {/if}
       </div>

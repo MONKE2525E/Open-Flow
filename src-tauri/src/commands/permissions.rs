@@ -618,12 +618,14 @@ pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
             .ok_or_else(|| {
                 "Cannot relaunch: current process is not inside an app bundle".to_string()
             })?;
+        let pid = std::process::id().to_string();
         std::process::Command::new("/bin/sh")
             .args([
                 "-c",
-                "sleep 0.5; exec /usr/bin/open -n \"$1\"",
+                "while kill -0 \"$2\" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open -n \"$1\"",
                 "verenu-relaunch",
                 &bundle,
+                &pid,
             ])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())

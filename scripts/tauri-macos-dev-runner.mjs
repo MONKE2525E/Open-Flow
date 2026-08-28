@@ -126,7 +126,7 @@ child.on('exit', (code, signal) => {
 });
 
 function findBundleProcessIds(executablePath) {
-  const result = spawnSync('/bin/ps', ['-axo', 'pid=,command='], { encoding: 'utf8' });
+  const result = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' });
   if (result.status !== 0) return [];
   return result.stdout
     .split('\n')
