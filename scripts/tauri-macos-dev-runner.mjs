@@ -333,7 +333,7 @@ function resolveSigningAuthority(identity) {
     encoding: 'utf8',
   });
   const escaped = identity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = identities.stdout?.match(new RegExp(`\\"${escaped}\\"\\s+\\"([^\\"]+)\\"`, 'i'));
+  const match = identities.stdout?.match(new RegExp(`${escaped}\\s+\\"([^\\"]+)\\"`, 'i'));
   return match?.[1] ?? identity;
 }
 
