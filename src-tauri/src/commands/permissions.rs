@@ -615,16 +615,15 @@ pub fn open_notifications_settings() -> Result<(), String> {
 pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let bundle = crate::system::mac_app::bundle_path()
-            .filter(|path| {
-                Path::new(path.trim_end_matches('/'))
-                    .extension()
-                    .map(|extension| extension == "app")
-                    .unwrap_or(false)
-            })
-            .ok_or_else(|| {
-                "Cannot relaunch: current process is not inside an app bundle".to_string()
-            })?;
+        let Some(bundle) = crate::system::mac_app::bundle_path().filter(|path| {
+            Path::new(path.trim_end_matches('/'))
+                .extension()
+                .map(|extension| extension == "app")
+                .unwrap_or(false)
+        }) else {
+            handle.restart();
+            return Ok(());
+        };
         let pid = std::process::id().to_string();
         std::process::Command::new("/bin/sh")
             .args([
