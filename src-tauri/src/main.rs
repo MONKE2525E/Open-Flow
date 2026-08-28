@@ -207,10 +207,18 @@ fn main() {
 
             // LAN device sync: identity, mDNS discovery, listener, sessions.
             // Soft-fails internally — never blocks startup.
+            let sync_enabled = settings
+                .get(crate::data::store::SYNC_ENABLED)
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if sync_enabled {
             app.manage(sync::SyncManager::start(
                 app.handle().clone(),
                 app.state::<DbHandle>().inner().clone(),
             ));
+            } else {
+                log::info!("LAN device sync disabled");
+            }
 
             app_tray::setup_tray(app)?;
             #[cfg(target_os = "windows")]

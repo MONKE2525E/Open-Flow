@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fade } from 'svelte/transition';
+  import { fade, fly } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
   import { invoke, listen } from '../tauri';
   import { formatIpcError } from '../stores';
   import { MOTION_MS, motionMs } from '../motion';
@@ -140,29 +141,29 @@
     <div class="head-filters">
     <!-- The shared Dropdown owns Escape, outside-click, and arrow navigation
          for each menu once it is open. -->
-    <div class="ui-dropdown range-picker context-picker">
-      <button
-        type="button"
-        class="ui-dropdown-trigger ui-dropdown-trigger--compact"
-        aria-expanded={contextOpen}
-        aria-haspopup="listbox"
-        onclick={() => (contextOpen = !contextOpen)}
-      >
-        {#if activeContext}
-          <span class="ctx-swatch" style={activeContext.color ? `color: ${activeContext.color}` : ''} aria-hidden="true">
-            {#if activeContext.is_everywhere}
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2 2.3 3 5 3 8s-1 5.7-3 8c-2-2.3-3-5-3-8s1-5.7 3-8Z"/></svg>
-            {:else if activeContext.icon && icons[activeContext.icon as keyof typeof icons]}
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">{@html icons[activeContext.icon as keyof typeof icons]}</svg>
-            {/if}
-          </span>
-        {/if}
-        {contextLabel}
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-      </button>
-      {#if contextOpen}
-        <Dropdown bind:open={contextOpen} closeSelector=".context-picker">
-          <div class="ui-dropdown-menu ui-dropdown-menu--padded ctx-menu-scroll" role="listbox" aria-label="Context group">
+    <Dropdown bind:open={contextOpen} closeSelector=".context-picker">
+      <div class="ui-dropdown range-picker context-picker">
+        <button
+          type="button"
+          class="ui-dropdown-trigger ui-dropdown-trigger--compact"
+          aria-expanded={contextOpen}
+          aria-haspopup="listbox"
+          onclick={() => (contextOpen = !contextOpen)}
+        >
+          {#if activeContext}
+            <span class="ctx-swatch" style={activeContext.color ? `color: ${activeContext.color}` : ''} aria-hidden="true">
+              {#if activeContext.is_everywhere}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2 2.3 3 5 3 8s-1 5.7-3 8c-2-2.3-3-5-3-8s1-5.7 3-8Z"/></svg>
+              {:else if activeContext.icon && icons[activeContext.icon as keyof typeof icons]}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">{@html icons[activeContext.icon as keyof typeof icons]}</svg>
+              {/if}
+            </span>
+          {/if}
+          {contextLabel}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        {#if contextOpen}
+          <div class="ui-dropdown-menu ui-dropdown-menu--padded ctx-menu-scroll" role="listbox" aria-label="Context group" in:fly={{ y: 5, duration: motionMs(MOTION_MS.fast), easing: expoOut }} out:fly={{ y: 3, duration: motionMs(110), easing: expoOut }}>
             <button
               type="button"
               class="ui-dropdown-option"
@@ -182,24 +183,24 @@
               >{option.name}</button>
             {/each}
           </div>
-        </Dropdown>
-      {/if}
-    </div>
+        {/if}
+      </div>
+    </Dropdown>
 
-    <div class="ui-dropdown range-picker">
-      <button
-        type="button"
-        class="ui-dropdown-trigger ui-dropdown-trigger--compact"
-        aria-expanded={rangeOpen}
-        aria-haspopup="listbox"
-        onclick={() => (rangeOpen = !rangeOpen)}
-      >
-        {rangeLabel}
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-      </button>
-      {#if rangeOpen}
-        <Dropdown bind:open={rangeOpen} closeSelector=".range-picker">
-          <div class="ui-dropdown-menu ui-dropdown-menu--padded" role="listbox" aria-label="Date range">
+    <Dropdown bind:open={rangeOpen} closeSelector=".range-picker">
+      <div class="ui-dropdown range-picker">
+        <button
+          type="button"
+          class="ui-dropdown-trigger ui-dropdown-trigger--compact"
+          aria-expanded={rangeOpen}
+          aria-haspopup="listbox"
+          onclick={() => (rangeOpen = !rangeOpen)}
+        >
+          {rangeLabel}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        {#if rangeOpen}
+          <div class="ui-dropdown-menu ui-dropdown-menu--padded" role="listbox" aria-label="Date range" in:fly={{ y: 5, duration: motionMs(MOTION_MS.fast), easing: expoOut }} out:fly={{ y: 3, duration: motionMs(110), easing: expoOut }}>
             {#each RANGE_OPTIONS as option}
               <button
                 type="button"
@@ -211,9 +212,9 @@
               >{option.label}</button>
             {/each}
           </div>
-        </Dropdown>
-      {/if}
-    </div>
+        {/if}
+      </div>
+    </Dropdown>
     </div>
   </div>
 

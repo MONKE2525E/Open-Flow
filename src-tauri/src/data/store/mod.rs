@@ -221,6 +221,7 @@ pub const SETUP_COMPLETE: &str = "setup_complete";
 pub const CLIPBOARD_PHRASE: &str = "clipboard_phrase";
 pub const CLIPBOARD_PHRASE_ENABLED: &str = "clipboard_phrase_enabled";
 pub const LEGACY_FEATURES_ENABLED: &str = "legacy_features_enabled";
+pub const SYNC_ENABLED: &str = "sync_enabled";
 pub const APP_CONTEXT_HINT: &str = "app_context_hint";
 pub const AUTO_LEARN_ENABLED: &str = "auto_learn_enabled";
 pub const AUTO_LEARN_EVENT_MODE: &str = "auto_learn_event_mode";
@@ -233,6 +234,11 @@ pub const AUTO_SPACING: &str = "auto_spacing_enabled";
 pub const APPEARANCE_MODE: &str = "appearance_mode";
 pub const FORCE_SETUP_ON_LAUNCH: &str = "force_setup_on_launch";
 pub const ADVANCED_MODEL_UI: &str = "advanced_model_ui";
+/// One cleanup prompt for every model. Fallback chains made per-model prompts
+/// a trap: edit the prompt on your default, fall back to another model, and the
+/// edit silently vanished. `CLEANUP_PROMPT_OVERRIDES` is the retired per-model
+/// map, still read once so an existing edit survives the change.
+pub const CLEANUP_PROMPT_OVERRIDE: &str = "cleanup_prompt_override";
 pub const CLEANUP_PROMPT_OVERRIDES: &str = "cleanup_prompt_overrides";
 /// Per-provider snapshot of the live model lists, written only by the model
 /// catalog store. Derived cache state, so it is readable but never exported —
@@ -318,3 +324,4 @@ pub fn migrate_contextual_formatting(settings: &SettingsHandle) -> Result<(), St
     settings.set(CONTEXTUAL_FORMATTING, Value::Bool(merged))?;
     settings.save()
 }
+

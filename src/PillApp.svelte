@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { getProfileLabel } from './lib/appMappings';
   import { formatKeyLabel } from './lib/platform';
 
   type PillState = 'idle' | 'recording' | 'repair_recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'paste_failed' | 'copied' | 'clipboard_warning' | 'feedback_prompt' | 'repair_input' | 'repair_processing' | 'repair_proposal' | 'repair_applying' | 'repair_done' | 'repair_error';
@@ -38,9 +37,9 @@
   let repairIdleTimer: ReturnType<typeof setTimeout> | null = null;
   let repairHotkeyLabel: string | null = null;
 
-  // Resolved tone profile for the current dictation (label form, e.g. "Casual"),
-  // emitted by the backend from the pipeline's own resolution.
-  let profileLabel: string | null = null;
+  // Resolved context for the current dictation (e.g. "Slack", "Everywhere") —
+  // where the text is headed, emitted by the backend's own resolution.
+  let contextLabel: string | null = null;
 
   // Processing sub-stage ("Transcribing…" / "Cleaning…" / "Pasting…"), driven
   // by real `pill-stage` events from the pipeline. Rows for the stages that
@@ -481,7 +480,7 @@
       repairError = '';
       repairProposal = null;
       clearStage();
-      profileLabel = null;
+      contextLabel = null;
       smoothed = 0;
       errOpen = false;
       errWidth = 0;
@@ -704,7 +703,7 @@
           clearStage();
         }
         if (incoming === 'recording' || incoming === 'repair_recording') {
-          profileLabel = null;
+          contextLabel = null;
         } else if (
           incoming === 'error' ||
           incoming === 'cancelled' ||
@@ -712,7 +711,7 @@
           incoming === 'copied'
         ) {
           clearStage();
-          profileLabel = null;
+          contextLabel = null;
         }
 
         if (incoming === 'idle' && state !== 'idle') {
@@ -926,9 +925,9 @@
       if (!mounted) { l3(); return; }
       unlisteners.push(l3);
 
-      const l5 = await listen<string>('pill-profile', (ev) => {
-        const profile = ev.payload;
-        profileLabel = profile && profile !== 'unknown' ? getProfileLabel(profile) : null;
+      const l5 = await listen<string>('pill-context', (ev) => {
+        const name = ev.payload?.trim();
+        contextLabel = name ? name : null;
       });
       if (!mounted) { l5(); return; }
       unlisteners.push(l5);
@@ -1180,8 +1179,8 @@
        class:steady-repair={isRepairCard && cardH > 0}
        style="--repair-w:{cardW}px; --repair-h:{cardH}px"
        bind:this={clusterEl}>
-  {#if profileLabel && (state === 'recording' || state === 'repair_recording' || state === 'processing' || state === 'handsfree' || state === 'loading_local_model')}
-      <span class="pill-profile">{profileLabel}</span>
+  {#if contextLabel && (state === 'recording' || state === 'repair_recording' || state === 'processing' || state === 'handsfree' || state === 'loading_local_model')}
+      <span class="pill-context" title={contextLabel}>{contextLabel}</span>
     {/if}
 
   {#if state === 'recording'}
@@ -1528,7 +1527,7 @@
 
   /* Measured wrapper — the backend sizes the native window to this element's
      size (see measureAndResize) so the transparent click-capture zone stays
-     as small as the visible content. Column layout: the profile label floats
+     as small as the visible content. Column layout: the context label floats
      above the capsule (centered) instead of pushing it off-center. */
   .pill-cluster {
     display: flex;
@@ -1577,11 +1576,11 @@
     justify-content: flex-end;
   }
 
-  /* Resolved tone profile, shown as a small floating tag above the pill so
-     the otherwise-invisible style setting stays legible without crowding or
-     offsetting the pill capsule itself. Fades in softly so its appearance
+  /* Resolved context, shown as a small floating tag above the pill so the
+     dictation's destination stays legible without crowding or offsetting
+     the pill capsule itself. Fades in softly so its appearance
      reads as the pill growing, not a new element popping in. */
-  .pill-profile {
+  .pill-context {
     font-size: 10.5px;
     font-weight: 500;
     letter-spacing: 0.02em;
@@ -1590,6 +1589,11 @@
     border-radius: 999px;
     padding: 2px 8px;
     white-space: nowrap;
+    /* Context names are user-authored and can run long — cap the chip so it
+       never widens the native window (which is sized to .pill-cluster). */
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     text-shadow: 0 1px 2px rgba(0,0,0,0.35);
     animation: chipIn 0.18s ease-out both;
   }

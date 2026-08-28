@@ -153,7 +153,7 @@ Use target context for formatting, register, punctuation, and strongly supported
 
 {{ snippet_overrides }}"#;
 
-pub fn cleanup_template_for(_provider: &str, _model: &str) -> &'static str {
+pub fn default_cleanup_template() -> &'static str {
     DEFAULT_CLEANUP_TEMPLATE
 }
 

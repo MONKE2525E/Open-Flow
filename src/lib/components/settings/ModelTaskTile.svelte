@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { openCleanupPromptEditor, cleanupPromptOverridesStore } from '../../stores.svelte';
+  import { openCleanupPromptEditor, cleanupPromptStore } from '../../stores.svelte';
   import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { MOTION_MS, motionMs } from '../../motion';
   import { getProviderLogo, getProviderPlate } from '../../setup/ProviderLogos';
   import type { ProviderId } from '../../settings';
   import {
-    modelId,
     providerDisplayLabel,
     qualifiedModelLabel,
     splitModelId,
@@ -84,14 +83,7 @@
     ...unavailableMessages(type, defaultModel, fallbackModels, context),
   ]);
 
-  const promptCustomized = $derived(
-    !!(
-      parsedDefault &&
-      cleanupPromptOverridesStore.overrides[
-        modelId(parsedDefault.provider, parsedDefault.model)
-      ]?.trim()
-    ),
-  );
+  const promptCustomized = $derived(!!cleanupPromptStore.override.trim());
 
   function chipLabel(id: string): string {
     const parsed = splitModelId(id);

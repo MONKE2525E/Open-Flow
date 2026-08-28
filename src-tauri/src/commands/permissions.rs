@@ -351,11 +351,15 @@ async fn notification_permission_snapshot() -> NotificationPermissionSnapshot {
 
 async fn macos_permission_snapshot(provider: Option<String>) -> MacPermissionSnapshot {
     let generation = PERMISSION_QUERY_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    #[cfg(target_os = "macos")]
+    let bundle_identifier = crate::system::mac_app::bundle_identifier();
+    #[cfg(not(target_os = "macos"))]
+    let bundle_identifier: Option<String> = None;
     log::info!(
         "[permissions][refresh #{}] begin pid={} bundle={:?}",
         generation,
         std::process::id(),
-        crate::system::mac_app::bundle_identifier()
+        bundle_identifier
     );
     let accessibility = accessibility_permission_status();
     let microphone = microphone_permission_status_string();
@@ -615,16 +619,17 @@ pub fn open_notifications_settings() -> Result<(), String> {
 pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let bundle = crate::system::mac_app::bundle_path()
+        let Some(bundle) = crate::system::mac_app::bundle_path()
             .filter(|path| {
                 Path::new(path.trim_end_matches('/'))
                     .extension()
                     .map(|extension| extension == "app")
                     .unwrap_or(false)
             })
-            .ok_or_else(|| {
-                "Cannot relaunch: current process is not inside an app bundle".to_string()
-            })?;
+            else {
+                handle.restart();
+                return Ok(());
+            };
         let pid = std::process::id().to_string();
         std::process::Command::new("/bin/sh")
             .args([
@@ -644,8 +649,7 @@ pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        handle.restart();
-        Ok(())
+        handle.restart()
     }
 }
 

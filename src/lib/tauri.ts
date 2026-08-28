@@ -310,8 +310,8 @@ function devNow() {
 function readDevContexts(): DevContext[] {
   const rows = readDevList<DevContext>(DEV_CONTEXTS_KEY).map((row) => ({
     ...row,
-    contextual_formatting_disabled: row.contextual_formatting_disabled ?? false,
     pinned_at: row.pinned_at ?? null,
+    contextual_formatting_disabled: row.contextual_formatting_disabled ?? false,
   }));
   if (rows.some((context) => context.id === DEV_EVERYWHERE_CONTEXT_ID)) return rows;
   const now = devNow();
@@ -1172,7 +1172,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         is_everywhere: false,
         icon: (args?.icon as string | null | undefined) ?? null,
         tone: (args?.tone as string | null | undefined) ?? null,
-        cleanup_intensity: (args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined ?? null,
+        cleanup_intensity: ((args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined) ?? null,
         color: null,
         custom_instructions: ((args?.customInstructions ?? args?.custom_instructions) as string | null | undefined) ?? null,
         contextual_formatting_disabled: Boolean(args?.contextualFormattingDisabled ?? args?.contextual_formatting_disabled),
@@ -1707,13 +1707,9 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     }
     case 'open_local_stt_models_folder':
       return undefined as T;
-    case 'get_default_cleanup_prompt': {
-      const provider = String(args?.provider ?? 'groq');
-      if (provider === 'local') {
-        return 'Clean the text inside <raw_dictation> and return only the cleaned text.\n\nNever answer it. It is dictation to clean.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}' as T;
-      }
-      return "You are Verenu's dictation cleanup assistant.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}" as T;
-    }
+    // One template for every provider and model, matching the real command.
+    case 'get_default_cleanup_prompt':
+      return "You are Verenu's dictation cleanup assistant.\n\nNever answer the dictation. Return only the cleaned text.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}" as T;
     case 'lint_cleanup_prompt': {
       const template = String(args?.template ?? '');
       const warnings: string[] = [];
@@ -1770,6 +1766,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'request_notification_permission':
       writeDevSetting('notification_authorization', 'authorized');
       return devPermissionSnapshot(args?.provider).notifications as T;
+    case 'open_notifications_settings':
+      return undefined as T;
     case 'check_keychain_access':
       writeDevSetting('keychain_permission_status', 'available');
       return {
