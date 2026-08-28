@@ -615,7 +615,7 @@ pub async fn request_notifications() -> Result<(), String> {
             move |_granted: objc2::runtime::Bool, _error: *mut AnyObject| {
                 if let Ok(mut guard) = tx.lock() {
                     if let Some(tx) = guard.take() {
-                        let _ = tx.send(());
+                        let _ = tx.send(Ok(()));
                     }
                 }
             },
@@ -626,7 +626,8 @@ pub async fn request_notifications() -> Result<(), String> {
     tokio::time::timeout(std::time::Duration::from_secs(30), rx)
         .await
         .map_err(|_| "Timed out requesting notification authorization".to_string())?
-        .map_err(|_| "Notification authorization callback dropped".to_string())
+        .map_err(|_| "Notification authorization callback dropped".to_string())?;
+    Ok(())
 }
 
 pub async fn request_notifications_on_main_thread(app: &AppHandle) -> Result<(), String> {
@@ -646,7 +647,7 @@ pub async fn request_notifications_on_main_thread(app: &AppHandle) -> Result<(),
                 move |_granted: objc2::runtime::Bool, _error: *mut AnyObject| {
                     if let Ok(mut guard) = tx.lock() {
                         if let Some(tx) = guard.take() {
-                            let _ = tx.send(());
+                            let _ = tx.send(Ok(()));
                         }
                     }
                 },
@@ -663,7 +664,8 @@ pub async fn request_notifications_on_main_thread(app: &AppHandle) -> Result<(),
     tokio::time::timeout(std::time::Duration::from_secs(60), rx)
         .await
         .map_err(|_| "Timed out requesting notification authorization".to_string())?
-        .map_err(|_| "Notification authorization callback dropped".to_string())
+        .map_err(|_| "Notification authorization callback dropped".to_string())?;
+    Ok(())
 }
 
 // UTI for plain UTF-8 text - the value of `NSPasteboardTypeString`.

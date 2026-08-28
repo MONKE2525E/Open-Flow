@@ -131,7 +131,7 @@
   type StatusKind = 'granted' | 'checking' | 'attention';
   function statusKind(status: MacPermissionStatus | KeychainStatus): StatusKind {
     if (status === 'authorized' || status === 'available') return 'granted';
-    if (status === 'unknown') return 'attention';
+    if (status === 'unknown') return 'checking';
     return 'attention';
   }
   const showRepairHint = $derived(accessibilityPermission !== 'authorized');
@@ -378,7 +378,6 @@
   }
 
   async function manualRefresh() {
-    if (permissionsLoading) return;
     refreshAnimating = false;
     requestAnimationFrame(() => {
       refreshAnimating = true;
