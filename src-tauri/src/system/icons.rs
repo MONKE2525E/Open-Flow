@@ -59,6 +59,7 @@ fn cache_file_path(app: &tauri::AppHandle, exe: &str) -> Option<PathBuf> {
 
 #[cfg(windows)]
 mod win {
+    #![allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
     use crate::system::apps::{parse_exe_from_icon, reg_read_string};
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Graphics::Gdi::{

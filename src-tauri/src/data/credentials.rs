@@ -82,6 +82,7 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
 }
 
 #[cfg(windows)]
+#[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
 pub fn get(provider: &str) -> String {
     let user = match user_for(provider) {
         Some(u) => u,
