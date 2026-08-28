@@ -96,6 +96,7 @@ const processTracker = setInterval(() => {
     // through that handoff, but exit normally after a real app quit.
     if (Date.now() - emptySince > 2500) {
       clearInterval(processTracker);
+      console.log('[macOS dev runner] Launched app process ended; LaunchServices does not expose a termination status, so the runner is exiting normally.');
       process.exit(0);
     }
   }
