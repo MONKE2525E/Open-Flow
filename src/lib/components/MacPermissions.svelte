@@ -282,30 +282,32 @@
     accessibilityPrompting = true;
     accessibilityActionTaken = true;
     permissionsError = '';
+    const generation = ++refreshGeneration;
     try {
-      ++refreshGeneration;
       const next = await invoke<MacPermissionSnapshot>('request_accessibility_permission', { provider: null });
-      applySnapshot(next, null);
+      if (generation === refreshGeneration && active) applySnapshot(next, null);
     } catch {
       permissionsError = 'Could not request Accessibility permission.';
+    } finally {
+      accessibilityPrompting = false;
+      if (active) startWatch();
     }
-    accessibilityPrompting = false;
-    startWatch();
   }
 
   async function requestMicrophonePrompt() {
     if (!isMac) return;
     microphoneRequesting = true;
     permissionsError = '';
+    const generation = ++refreshGeneration;
     try {
-      ++refreshGeneration;
       const next = await invoke<MacPermissionSnapshot>('request_microphone_permission_snapshot', { provider: null });
-      applySnapshot(next, null);
+      if (generation === refreshGeneration && active) applySnapshot(next, null);
     } catch (error) {
       permissionsError = `Could not request Microphone permission: ${extractIpcErrorMessage(error)}`;
+    } finally {
+      microphoneRequesting = false;
+      if (active) startWatch();
     }
-    microphoneRequesting = false;
-    startWatch();
   }
 
   async function relaunchApp() {
