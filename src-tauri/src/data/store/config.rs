@@ -30,7 +30,7 @@ pub struct PipelineConfig {
     pub clipboard_phrase: String,
     pub advanced_model_ui: bool,
     pub local_model_memory_policy: String,
-    pub cleanup_prompt_overrides: std::collections::HashMap<String, String>,
+    pub cleanup_prompt_override: String,
 }
 
 pub const GROQ: &str = "groq";
@@ -160,18 +160,33 @@ impl PipelineConfig {
         }
     }
 
-    /// Returns the user's custom cleanup prompt template for `provider/model`,
-    /// or `None` if Advanced Models is off or no override is stored for this model.
-    pub fn cleanup_override_for(&self, provider: &str, model: &str) -> Option<&str> {
+    /// The user's custom cleanup prompt, or `None` if Advanced Models is off or
+    /// nothing has been saved. One template covers every model — see
+    /// `store::CLEANUP_PROMPT_OVERRIDE`.
+    pub fn cleanup_override(&self) -> Option<&str> {
         if !self.advanced_model_ui {
             return None;
         }
-        let key = format!("{provider}/{model}");
-        self.cleanup_prompt_overrides
-            .get(&key)
-            .map(String::as_str)
-            .filter(|s| !s.trim().is_empty())
+        Some(self.cleanup_prompt_override.as_str()).filter(|s| !s.trim().is_empty())
     }
+}
+
+/// The one surviving template from the retired per-model override map.
+///
+/// Ordered so the result is stable across runs rather than whatever the JSON
+/// map iterates first — an arbitrary winner would flip between launches.
+fn legacy_cleanup_prompt_override(store: &SettingsSnapshot) -> Option<String> {
+    let mut entries: Vec<(String, String)> = store
+        .get(CLEANUP_PROMPT_OVERRIDES)?
+        .as_object()?
+        .iter()
+        .filter_map(|(key, value)| {
+            let text = value.as_str()?;
+            (!text.trim().is_empty()).then(|| (key.clone(), text.to_string()))
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries.into_iter().next().map(|(_, text)| text)
 }
 
 pub fn parse_model_id(id: &str) -> Option<(String, String)> {
@@ -274,16 +289,11 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         .into_iter()
         .map(|id| migrate_deprecated_model_id(&id))
         .collect();
-    let cleanup_prompt_overrides = store
-        .get(CLEANUP_PROMPT_OVERRIDES)
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(k, v)| {
-            v.as_str()
-                .map(|s| (migrate_deprecated_model_id(&k), s.to_string()))
-        })
-        .collect();
+    let cleanup_prompt_override = store
+        .get(CLEANUP_PROMPT_OVERRIDE)
+        .and_then(|v| v.as_str().map(String::from))
+        .or_else(|| legacy_cleanup_prompt_override(store))
+        .unwrap_or_default();
 
     PipelineConfig {
         transcription_provider,
@@ -338,7 +348,7 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
             .get(ADVANCED_MODEL_UI)
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        cleanup_prompt_overrides,
+        cleanup_prompt_override,
         local_model_memory_policy: supported_or_default(
             LOCAL_MODEL_MEMORY_POLICY,
             "unload_after_5m",

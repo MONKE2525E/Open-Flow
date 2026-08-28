@@ -5,6 +5,12 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 ## Unreleased
 
 - Reworked cleanup prompting around one default shared by every model, with explicit rule priority, conservative ambiguity handling, multilingual preservation, self-corrections and repair commands, spoken symbols and spelling, technical-token reconstruction, restrained formatting, safer number treatment, and context-assisted disambiguation.
+- **The cleanup prompt is now a single template used by every model**, edited from Clean-up → Edit prompt. It used to be stored per model, so an edit made on your default was silently ignored the moment a fallback model took over. An existing per-model edit is carried over.
+- Fixed Gemini 3 requests failing with `Thinking level MINIMAL is not supported for this model` — affected both cleanup and transcription on newer Gemini 3 flash models, which accept `low` but not `minimal`.
+- Fixed the cleanup prompt editor opening in the bottom-right corner instead of centred.
+- The model picker now lists every model a provider reports, not just the curated ones, behind a **Show N more models** toggle at the foot of the list — so a newly released model is selectable the day it ships without waiting for a Verenu update. Non-text models (image, TTS, embedding, and similar) are filtered out.
+- Fixed the model picker's search icon sitting below the centre of the search field.
+- Fixed the settings sidebar highlight blinking off the item under the cursor while the selection pill travelled to it.
 - Added **LAN device sync** (Settings -> Sync): pair two or more Verenu devices on the same network with a code-confirmed pairing flow, and keep snippets, dictionary, context groups, synced settings, dictation history, and lifetime stats merged across them automatically. Fully local and encrypted - no account, no cloud; API keys and microphone settings never sync. Either device can revoke the pairing at any time. See docs/lan-sync.md.
 - Added a **Legacy pages** toggle (Settings → General) that hides the standalone App Mappings, Dictionary, and Snippets pages by default in favor of Contexts, and brings them back — along with a heads-up that they're no longer actively maintained — when turned on.
 - Contexts is now hidden from the primary nav while Legacy pages is on, so there's only one place to manage app tones, vocabulary, and snippets at a time.

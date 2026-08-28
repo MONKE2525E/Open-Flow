@@ -27,7 +27,7 @@
   import { animateWidth, MOTION_MS, MOTION_PX, motionMs, motionPx } from '../../motion';
   import Toggle from '../Toggle.svelte';
   import Dropdown from '../Dropdown.svelte';
-  import { appStore, cleanupPromptOverridesStore, openCleanupPromptEditor } from '../../stores.svelte';
+  import { appStore, cleanupPromptStore } from '../../stores.svelte';
   import {
     saveSetting,
     type LocalModelMemoryPolicy,
@@ -144,8 +144,6 @@
         onCancel: () => cancelLocalLlmRuntimeDownload().catch((err) => console.error('cancel runtime download failed', err)),
         onDelete: () => deleteLocalLlmRuntime().catch((err) => console.error('delete runtime failed', err)),
       },
-      promptCustomized: (id) => !!cleanupPromptOverridesStore.overrides[modelId('local', id)]?.trim(),
-      onEditPrompt: (id, rect) => openCleanupPromptEditor('local', id, rect),
     };
   }
 
@@ -611,22 +609,8 @@
     ) {
       localModelMemoryPolicy = all.local_model_memory_policy;
     }
-    let cleanupPromptOverridesChanged = false;
-    if (all.cleanup_prompt_overrides && typeof all.cleanup_prompt_overrides === 'object') {
-      const overrides: Record<string, string> = {};
-      const rawOverrides = all.cleanup_prompt_overrides as Record<string, unknown>;
-      for (const [key, value] of Object.entries(rawOverrides)) {
-        if (typeof value === 'string') {
-          const parsed = splitModelId(key);
-          const normalizedKey = parsed?.provider === 'groq'
-            ? modelId('groq', migrateDeprecatedGroqCleanupModel(parsed.model))
-            : key;
-          overrides[normalizedKey] = value;
-        }
-      }
-      cleanupPromptOverridesChanged = JSON.stringify(overrides) !== JSON.stringify(all.cleanup_prompt_overrides);
-      cleanupPromptOverridesStore.overrides = overrides;
-    }
+    cleanupPromptStore.override =
+      typeof all.cleanup_prompt_override === 'string' ? all.cleanup_prompt_override : '';
 
     const preTranscriptionDefault = transcriptionDefaultModel;
     const preCleanupDefault = cleanupDefaultModel;
@@ -648,14 +632,10 @@
       || transcriptionFallbackModels.length !== preTranscriptionFallbackCount
       || cleanupFallbackModels.length !== preCleanupFallbackCount
       || JSON.stringify(cleanupFallbackModels) !== JSON.stringify(preCleanupFallbackModels)
-      || cleanupModelMapChanged
-      || cleanupPromptOverridesChanged;
+      || cleanupModelMapChanged;
 
     if (changed) {
       await persistAll();
-      if (cleanupPromptOverridesChanged) {
-        await saveSetting('cleanup_prompt_overrides', cleanupPromptOverridesStore.overrides);
-      }
     }
 
     await Promise.all([

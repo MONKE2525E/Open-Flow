@@ -525,7 +525,7 @@ fn base_config() -> store::PipelineConfig {
         caps_lock_uppercase_enabled: false,
         advanced_model_ui: false,
         local_model_memory_policy: "unload_after_5m".into(),
-        cleanup_prompt_overrides: std::collections::HashMap::new(),
+        cleanup_prompt_override: String::new(),
     }
 }
 
