@@ -103,6 +103,7 @@
   let permissionsError = $state('');
   let accessibilityPrompting = $state(false);
   let microphoneRequesting = $state(false);
+  let notificationRequesting = $state(false);
   let keychainLoading = $state(false);
   let keychainDiagnostic = $state<KeychainDiagnostic | null>(null);
   let repairing = $state(false);
@@ -349,7 +350,8 @@
   }
 
   async function requestNotificationPrompt() {
-    if (!isMac) return;
+    if (!isMac || notificationRequesting) return;
+    notificationRequesting = true;
     permissionsError = '';
     try {
       // The watcher may refresh while the native prompt is open. The result
@@ -360,6 +362,8 @@
       if (active) snapshot = { ...snapshot, notifications };
     } catch (error) {
       permissionsError = `Could not request Notifications permission: ${extractIpcErrorMessage(error)}`;
+    } finally {
+      notificationRequesting = false;
     }
   }
 
@@ -514,7 +518,9 @@
       <div class="perm-row-side">
         {@render statusIndicator(notificationPermission.authorization === 'authorized' || notificationPermission.authorization === 'provisional' ? 'authorized' : notificationPermission.authorization === 'denied' ? 'denied' : 'unknown', notificationPermission.authorization === 'authorized' || notificationPermission.authorization === 'provisional' ? 'Granted' : notificationPermission.authorization === 'not_determined' ? 'Not yet asked' : notificationPermission.authorization === 'denied' ? 'Denied' : 'Unavailable')}
         {#if notificationPermission.authorization === 'not_determined'}
-          <button class="perm-action" onclick={requestNotificationPrompt}>Request access</button>
+          <button class="perm-action" onclick={requestNotificationPrompt} disabled={notificationRequesting}>
+            {notificationRequesting ? 'Requesting…' : 'Request access'}
+          </button>
         {:else if notificationPermission.authorization === 'denied'}
           <button class="perm-action" onclick={() => openPermissionSettings('notifications')}>Allow in Settings</button>
         {/if}

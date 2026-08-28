@@ -275,6 +275,10 @@ pub fn check_access_sentinel() -> KeychainDiagnostic {
         if result.state == "available" && error.code() != KEYCHAIN_ITEM_NOT_FOUND {
             return keychain_failure("delete", error.code());
         }
+        log::warn!(
+            "credentials: keychain permission probe cleanup failed os_status={}",
+            error.code()
+        );
     }
     result
 }

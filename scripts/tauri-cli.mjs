@@ -18,7 +18,8 @@ if (
   args[0] === 'dev' &&
   !hasRunnerOption(args.slice(1))
 ) {
-  args.splice(1, 0, '--config', macDevConfig, '--runner', macDevRunner);
+  const configArgs = hasConfigOption(args.slice(1)) ? [] : ['--config', macDevConfig];
+  args.splice(1, 0, ...configArgs, '--runner', macDevRunner);
 }
 
 if (
@@ -55,6 +56,14 @@ function hasRunnerOption(args) {
     if (arg === '-r' || arg === '--runner' || arg.startsWith('--runner=')) {
       return true;
     }
+  }
+  return false;
+}
+
+function hasConfigOption(args) {
+  for (const arg of args) {
+    if (arg === '--') return false;
+    if (arg === '-c' || arg === '--config' || arg.startsWith('--config=')) return true;
   }
   return false;
 }
