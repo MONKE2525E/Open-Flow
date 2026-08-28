@@ -57,7 +57,7 @@ const verify = run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--ve
 const spctl = run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=4', app], true);
 const metadata = run('/usr/bin/mdls', ['-name', 'kMDItemCFBundleIdentifier', '-name', 'kMDItemDisplayName', app], true);
 const processes = executable
-  ? run('/bin/ps', ['-axww', '-o', 'pid=,ppid=,command=']).output.split('\n').filter((line) => line.includes(executable))
+  ? run('/bin/ps', ['-axww', '-o', 'pid=,ppid=,command='], true).output.split('\n').filter((line) => line.includes(executable))
   : [];
 const registered = run('/usr/bin/mdfind', [`kMDItemCFBundleIdentifier == '${expected.id}'`], true).output;
 

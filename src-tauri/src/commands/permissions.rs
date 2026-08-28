@@ -10,6 +10,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+#[cfg(target_os = "macos")]
+use std::path::Path;
 
 static PERMISSION_QUERY_GENERATION: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "macos")]
@@ -614,7 +616,12 @@ pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let bundle = crate::system::mac_app::bundle_path()
-            .filter(|path| path.ends_with(".app"))
+            .filter(|path| {
+                Path::new(path.trim_end_matches('/'))
+                    .extension()
+                    .map(|extension| extension == "app")
+                    .unwrap_or(false)
+            })
             .ok_or_else(|| {
                 "Cannot relaunch: current process is not inside an app bundle".to_string()
             })?;

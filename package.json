@@ -8,7 +8,7 @@
     "dev:tauri-host": "node scripts/vite-dev-server.mjs",
     "test:unit": "vitest run src",
     "test:quality": "npm run check && npm run test:unit",
-    "test:prompt": "python3 tests/OnePyFone.py --suite prompt",
+    "test:prompt": "node scripts/run-onepyfone.mjs --suite prompt",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json && node scripts/macos/check-identity-contract.mjs",
