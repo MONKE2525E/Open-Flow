@@ -627,7 +627,9 @@ pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
                 .map(|extension| extension == "app")
                 .unwrap_or(false)
         }) else {
-            return handle.restart();
+            handle.restart();
+            #[allow(unreachable_code)]
+            return Ok(());
         };
         let pid = std::process::id().to_string();
         std::process::Command::new("/bin/sh")
@@ -648,7 +650,9 @@ pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        handle.restart()
+        handle.restart();
+        #[allow(unreachable_code)]
+        Ok(())
     }
 }
 
