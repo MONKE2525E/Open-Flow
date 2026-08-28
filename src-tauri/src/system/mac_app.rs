@@ -753,7 +753,7 @@ pub fn pasteboard_snapshot() -> Option<PasteboardSnapshot> {
         }
         let ty = NSString::from_str(PASTEBOARD_TYPE_STRING);
         let value: *mut AnyObject = msg_send![pb, stringForType: &*ty];
-        let text = nsstring_to_string(value)?;
+        let text = nsstring_to_string(value).unwrap_or_default();
         log::info!(
             "pasteboard snapshot: captured safe plain-text representation bytes={}",
             text.len()

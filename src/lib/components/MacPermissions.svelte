@@ -218,7 +218,7 @@
 
   async function refreshMacPermissions(silent = false) {
     if (!isMac) return;
-    const generation = ++refreshGeneration;
+    ++refreshGeneration;
     refreshInFlight += 1;
     permissionsLoading = true;
     if (!silent) permissionsError = '';
@@ -226,7 +226,7 @@
       const next = await invoke<MacPermissionSnapshot>('get_macos_permission_snapshot', { provider: null });
       // A request can finish after a newer refresh/request. Never let stale
       // native data overwrite the newest coherent snapshot.
-      if (generation === refreshGeneration && active) applySnapshot(next, null);
+      if (active) applySnapshot(next, null);
     } catch {
       if (!silent) {
         permissionsError = 'Could not refresh permission status right now.';
@@ -290,10 +290,10 @@
     accessibilityPrompting = true;
     accessibilityActionTaken = true;
     permissionsError = '';
-    const generation = ++refreshGeneration;
+    ++refreshGeneration;
     try {
       const next = await invoke<MacPermissionSnapshot>('request_accessibility_permission', { provider: null });
-      if (generation === refreshGeneration && active) applySnapshot(next, null);
+      if (active) applySnapshot(next, null);
     } catch {
       permissionsError = 'Could not request Accessibility permission.';
     } finally {
