@@ -617,6 +617,7 @@ pub fn open_notifications_settings() -> Result<(), String> {
 /// process, so synthesised Cmd+V injection may only start working after a
 /// restart once Accessibility has just been granted.
 #[tauri::command]
+#[allow(unreachable_code, clippy::diverging_sub_expression)]
 pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
