@@ -407,6 +407,7 @@ pub fn microphone_permission_status() -> &'static str {
 /// permission is undetermined. Fails after a bounded wait if AVFoundation never
 /// calls its completion handler, rather than leaving the permissions UI stuck.
 /// Safe to call when already authorized (no prompt is shown).
+#[allow(dead_code)]
 pub async fn request_microphone() -> Result<bool, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx = std::sync::Mutex::new(Some(tx));
@@ -596,6 +597,7 @@ pub async fn notification_settings() -> Result<[i64; 6], String> {
     }
 }
 
+#[allow(dead_code)]
 pub async fn request_notifications() -> Result<(), String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx = std::sync::Mutex::new(Some(tx));
