@@ -19,7 +19,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
       cleanup_models_by_provider: {
         groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
         openai: ['gpt-4o-mini', 'gpt-4o'],
-        google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+        google: ['gemini-2.5-flash'],
         local: [],
       },
     },

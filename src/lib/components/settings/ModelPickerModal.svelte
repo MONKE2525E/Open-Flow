@@ -13,7 +13,6 @@
   import {
     curatedRows,
     rowForSelection,
-    unverifiedRows,
     type LocalControls,
     type ModelRow,
     type PickerContext,

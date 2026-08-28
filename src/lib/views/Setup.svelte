@@ -197,7 +197,7 @@
     const map: ProviderModelMap = {
       groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
       openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
-      google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+      google: ['gemini-2.5-flash', 'gemini-3.5-transcribe'],
       assemblyai: [],
       local: ['parakeet-v3'],
     };
@@ -215,7 +215,7 @@
     const map: ProviderModelMap = {
       groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
       openai: ['gpt-4o-mini', 'gpt-4o'],
-      google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+      google: ['gemini-2.5-flash'],
       assemblyai: [],
       local: ['qwen2.5-3b-instruct'],
     };
@@ -238,7 +238,7 @@
       : provider === 'openai'
         ? 'openai/gpt-4o-transcribe'
         : provider === 'google'
-          ? 'google/gemini-3.5-flash'
+          ? 'google/gemini-3.5-transcribe'
           : 'groq/whisper-large-v3-turbo';
     const providerDefaultCleanup = provider === 'local'
       ? 'local/qwen2.5-3b-instruct'
