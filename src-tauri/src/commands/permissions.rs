@@ -9,6 +9,7 @@
 //! stored.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(target_os = "macos")]
 use std::sync::OnceLock;
 #[cfg(target_os = "macos")]
 use std::path::Path;
@@ -466,13 +467,13 @@ pub fn get_accessibility_permission_status() -> String {
 
 #[tauri::command]
 pub async fn request_accessibility_permission(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     provider: Option<String>,
 ) -> MacPermissionSnapshot {
     #[cfg(target_os = "macos")]
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let _ = app.run_on_main_thread(move || {
+        let _ = _app.run_on_main_thread(move || {
             let prompted = check_accessibility_permission(true);
             let _ = tx.send(prompted);
         });
@@ -490,12 +491,12 @@ pub fn get_microphone_permission_status() -> String {
 /// then returns the resulting status. Lets the permissions UI request the mic
 /// directly instead of waiting for the first recording. No-op off macOS.
 #[tauri::command]
-pub async fn request_microphone_permission(app: tauri::AppHandle) -> Result<String, String> {
+pub async fn request_microphone_permission(_app: tauri::AppHandle) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
         let before = crate::system::mac_app::microphone_permission_status();
         if before == "not_determined" {
-            crate::system::mac_app::request_microphone_on_main_thread(&app).await?;
+            crate::system::mac_app::request_microphone_on_main_thread(&_app).await?;
         }
         Ok(crate::system::mac_app::microphone_permission_status().to_string())
     }
@@ -507,7 +508,7 @@ pub async fn request_microphone_permission(app: tauri::AppHandle) -> Result<Stri
 
 #[tauri::command]
 pub async fn request_microphone_permission_snapshot(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     provider: Option<String>,
 ) -> Result<MacPermissionSnapshot, String> {
     #[cfg(target_os = "macos")]
@@ -518,9 +519,9 @@ pub async fn request_microphone_permission_snapshot(
         if before == "not_determined" {
             let request =
                 if crate::system::mac_app::av_audio_microphone_permission_status().is_some() {
-                    crate::system::mac_app::request_audio_application_on_main_thread(&app).await
+                    crate::system::mac_app::request_audio_application_on_main_thread(&_app).await
                 } else {
-                    crate::system::mac_app::request_microphone_on_main_thread(&app).await
+                    crate::system::mac_app::request_microphone_on_main_thread(&_app).await
                 };
             let mut callback = match request {
                 Ok(value) => value,
@@ -532,7 +533,7 @@ pub async fn request_microphone_permission_snapshot(
             let mut after = crate::system::mac_app::microphone_permission_status();
             if !callback && after == "not_determined" {
                 callback =
-                    crate::system::mac_app::request_microphone_via_device_input(&app).await?;
+                    crate::system::mac_app::request_microphone_via_device_input(&_app).await?;
                 after = crate::system::mac_app::microphone_permission_status();
             }
             log::info!(
@@ -582,13 +583,13 @@ fn write_microphone_request_trace(
 /// then re-query UNNotificationSettings for the authoritative result.
 #[tauri::command]
 pub async fn request_notification_permission(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
 ) -> Result<NotificationPermissionSnapshot, String> {
     #[cfg(target_os = "macos")]
     {
         let current = notification_permission_snapshot().await;
         if current.authorization == "not_determined" {
-            crate::system::mac_app::request_notifications_on_main_thread(&app).await?;
+            crate::system::mac_app::request_notifications_on_main_thread(&_app).await?;
         }
     }
     Ok(notification_permission_snapshot().await)
