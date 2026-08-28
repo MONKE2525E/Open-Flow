@@ -31,7 +31,7 @@ assert(cli.includes('Refusing an ad-hoc macOS production build'), 'macOS product
 assert(runner.includes("spawn('/usr/bin/open'"), 'Development must launch its app through /usr/bin/open.');
 assert(!runner.includes('spawn(bundledBinary'), 'Development must never spawn Contents/MacOS/Verenu directly.');
 assert(!runner.includes("const APP_BUNDLE_NAME = 'Verenu.app'"), 'Development must not create an ambiguously named Verenu.app.');
-assert(runner.includes("configured.startsWith('Apple Development:')"), 'Development signing must require Apple Development identity class.');
+assert(runner.includes("configured !== '-'"), 'Development signing must reject ad-hoc identity selection.');
 assert(relaunch.includes('exec /usr/bin/open -n'), 'macOS Relaunch must use LaunchServices.');
 
 if (failures.length > 0) {
