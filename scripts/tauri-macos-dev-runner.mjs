@@ -97,7 +97,10 @@ const processTracker = setInterval(() => {
     if (Date.now() - emptySince > 2500) {
       clearInterval(processTracker);
       console.log('[macOS dev runner] Launched app process ended; LaunchServices does not expose a termination status, so the runner is exiting normally.');
-      process.exit(0);
+      // Let Node terminate naturally after the tracker is cleared. This
+      // preserves the normal-shutdown status without masking a signal-driven
+      // termination in the signal handlers above.
+      return;
     }
   }
 }, 250);
