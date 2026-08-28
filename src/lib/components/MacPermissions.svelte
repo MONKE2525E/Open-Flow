@@ -290,10 +290,10 @@
     accessibilityPrompting = true;
     accessibilityActionTaken = true;
     permissionsError = '';
-    ++refreshGeneration;
+    const generation = ++refreshGeneration;
     try {
       const next = await invoke<MacPermissionSnapshot>('request_accessibility_permission', { provider: null });
-      if (active) applySnapshot(next, null);
+      if (generation === refreshGeneration && active) applySnapshot(next, null);
     } catch {
       permissionsError = 'Could not request Accessibility permission.';
     } finally {
