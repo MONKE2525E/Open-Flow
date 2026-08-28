@@ -65,7 +65,9 @@ pub fn load_or_create(
     let cert_path = app_data_dir.join(CERT_FILE);
 
     let stored_cert = std::fs::read(&cert_path).ok();
-    let cert_is_fresh = stored_cert.as_ref().is_some_and(|_| cert_file_fresh(&cert_path));
+    let cert_is_fresh = stored_cert
+        .as_ref()
+        .is_some_and(|_| cert_file_fresh(&cert_path));
     let stored_key = secrets::load_identity_key();
 
     if let (Some(cert_der), Some(key_der), true) = (stored_cert, stored_key, cert_is_fresh) {
@@ -141,11 +143,7 @@ fn create_identity(known_uuid: Option<String>) -> Result<DeviceIdentity> {
     // Start on the first of the current month so certificate creation is
     // stable across month lengths and remains slightly back-dated.
     params.not_before = rcgen::date_time_ymd((this_year - 1) as i32, month, 1);
-    params.not_after = rcgen::date_time_ymd(
-        (this_year - 1 + CERT_YEARS) as i32,
-        month,
-        1,
-    );
+    params.not_after = rcgen::date_time_ymd((this_year - 1 + CERT_YEARS) as i32, month, 1);
     let cert = params
         .self_signed(&key_pair)
         .context("failed to self-sign sync certificate")?;
@@ -224,4 +222,3 @@ mod tests {
         secrets::delete_identity_key();
     }
 }
-

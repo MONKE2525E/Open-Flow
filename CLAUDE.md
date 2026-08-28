@@ -293,10 +293,10 @@ WAL mode is enabled. A failed migration rolls back fully rather than leaving a p
 |---|---|---|
 | Groq | `whisper-large-v3-turbo` | `llama-3.3-70b-versatile` |
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
-| Google | `gemini-3.5-flash` (inline audio) | `gemini-3.5-flash` |
+| Google | `gemini-3.5-transcribe` | `gemini-3.5-flash-lite` |
 | Local | Parakeet V3 (`transcribe-rs`, ONNX + Silero VAD) | managed local LLM server (model-dependent) |
 
-Groq is the recommended cloud default — free tier, fast LPU inference. Google sends audio as base64 in the request body; Groq and OpenAI use multipart form upload. The cleanup request wraps transcription text in `<raw_dictation>` XML tags. Google cleanup sets `thinking_budget: 0`.
+Groq is the recommended cloud default — free tier, fast LPU inference. Google sends audio as base64 in the request body; Groq and OpenAI use multipart form upload. The cleanup request wraps transcription text in `<raw_dictation>` XML tags. Google Gemini 3.x cleanup sends `thinkingLevel: "minimal"`; Gemini 2.5 Flash/Flash-Lite use `thinkingBudget: 0`.
 
 Local models are first-class, not a side path: `local_stt/` runs Parakeet V3 fully offline; `local_llm/` spawns a managed server process (binary runtime downloaded on demand) and talks to it over a local HTTP endpoint. "Fully local" means local transcription paired with local (or no) cleanup. Model/runtime downloads, cancellation, and deletion are all exposed as Tauri commands (`commands/local_stt.rs`, `commands/local_llm.rs`).
 

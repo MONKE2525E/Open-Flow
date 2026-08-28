@@ -116,10 +116,10 @@
   }
 
   .insp-trigger {
-    font-family: var(--serif);
-    font-size: 19px;
-    font-weight: 500;
-    letter-spacing: -0.015em;
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
     color: var(--ink);
     line-height: 1.2;
   }
@@ -132,10 +132,10 @@
   }
 
   .insp-often-label {
-    font-family: var(--mono);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font-family: var(--sans);
+    font-size: 11px;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--ink-faint);
     flex-shrink: 0;
   }
@@ -252,9 +252,9 @@
   }
 
   .inspector-empty p {
-    font-family: var(--serif);
-    font-style: italic;
-    font-size: 14px;
+    font-family: var(--sans);
+    font-style: normal;
+    font-size: 13px;
     color: var(--ink-mute);
     margin: 0;
     line-height: 1.6;

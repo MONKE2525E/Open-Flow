@@ -291,10 +291,10 @@
   }
 
   .page-h {
-    font-family: var(--serif);
-    font-size: 26px;
-    font-weight: 500;
-    letter-spacing: -0.02em;
+    font-family: var(--sans);
+    font-size: 23px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
     margin: 0 0 4px;
     line-height: 1.1;
     color: var(--ink);
@@ -368,8 +368,8 @@
 
   /* Matches .settings-subhead — 17px was a card title, this is a section head. */
   .content-inner :global(.card-h) {
-    font-family: var(--serif);
-    font-size: 14px;
+    font-family: var(--sans);
+    font-size: 13px;
     font-weight: 500;
     margin: 0;
     color: var(--ink-soft);
@@ -419,9 +419,9 @@
   }
 
   .empty-h {
-    font-family: var(--serif);
-    font-style: italic;
-    font-size: 17px;
+    font-family: var(--sans);
+    font-style: normal;
+    font-size: 15px;
     font-weight: 500;
     color: var(--ink-soft);
     margin: 0;

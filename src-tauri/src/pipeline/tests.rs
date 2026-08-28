@@ -1196,8 +1196,7 @@ async fn pipeline_fixture_accepts_downloaded_local_model_without_api_keys() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn pipeline_fixture_preserves_filler_words_when_cleanup_disabled(
-) {
+async fn pipeline_fixture_preserves_filler_words_when_cleanup_disabled() {
     let _guard = harness_test_lock().lock().expect("harness lock");
     let _local_models = install_local_models(&["parakeet-v3"]);
     reset();

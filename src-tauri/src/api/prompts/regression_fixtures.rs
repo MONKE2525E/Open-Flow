@@ -61,4 +61,3 @@ fn prompt_regression_fixtures_hold() {
         }
     }
 }
-

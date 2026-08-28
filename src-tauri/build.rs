@@ -166,4 +166,3 @@ fn build_windows_titlebar() {
     println!("cargo:rerun-if-changed=native/windows/extended_titlebar.h");
     println!("cargo:rerun-if-changed=native/windows/Verenu.WindowsChrome.vcxproj");
 }
-

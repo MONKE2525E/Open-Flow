@@ -508,4 +508,3 @@ mod tests {
         assert!(preview.contains("line one line two line three"));
     }
 }
-

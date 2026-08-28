@@ -64,7 +64,10 @@ fn encrypt_identity(
     let ciphertext = cipher
         .encrypt(
             Nonce::from_slice(&nonce_bytes),
-            Payload { msg: &plaintext, aad: PAIRING_INFO },
+            Payload {
+                msg: &plaintext,
+                aad: PAIRING_INFO,
+            },
         )
         .map_err(|_| anyhow!("identity encryption failed"))?;
     Ok((ciphertext, nonce_bytes.to_vec()))
@@ -82,7 +85,10 @@ fn decrypt_identity(
     let plaintext = cipher
         .decrypt(
             Nonce::from_slice(&nonce),
-            Payload { msg: ciphertext, aad: PAIRING_INFO },
+            Payload {
+                msg: ciphertext,
+                aad: PAIRING_INFO,
+            },
         )
         .map_err(|_| anyhow!("that code didn't match"))?;
     Ok(serde_json::from_slice(&plaintext)?)
@@ -176,7 +182,13 @@ pub async fn responder_exchange<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    send_message(stream, &Message::PairAccept { spake_msg: responder_msg }).await?;
+    send_message(
+        stream,
+        &Message::PairAccept {
+            spake_msg: responder_msg,
+        },
+    )
+    .await?;
 
     let (ciphertext, nonce) = match read_message(stream).await? {
         Message::PairVerify { ciphertext, nonce } => (ciphertext, nonce),
@@ -191,10 +203,12 @@ where
     let (my_ciphertext, my_nonce) = encrypt_identity(cipher, self_identity)?;
     send_message(
         stream,
-        &Message::PairVerify { ciphertext: my_ciphertext, nonce: my_nonce },
+        &Message::PairVerify {
+            ciphertext: my_ciphertext,
+            nonce: my_nonce,
+        },
     )
     .await?;
     send_message(stream, &Message::PairComplete).await?;
     Ok(peer)
 }
-

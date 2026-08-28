@@ -178,9 +178,9 @@
   }
 
   .big {
-    font-family: var(--serif);
-    font-size: 34px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 28px;
+    font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1;
     color: var(--ink);
@@ -220,8 +220,8 @@
   .tile-label {
     margin: 9px 0 0;
     font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--ink-mute);
   }
 
@@ -266,9 +266,9 @@
   }
 
   .gauge-value {
-    font-family: var(--serif);
-    font-size: 27px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 24px;
+    font-weight: 600;
     fill: var(--ink);
     font-variant-numeric: tabular-nums;
   }
@@ -289,9 +289,9 @@
   }
 
   .stat-num {
-    font-family: var(--serif);
-    font-size: 17px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 600;
     line-height: 1;
     color: var(--ink);
     font-variant-numeric: tabular-nums;

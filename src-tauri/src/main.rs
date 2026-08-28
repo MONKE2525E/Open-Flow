@@ -27,12 +27,12 @@ pub type DbHandle = db::Db;
 
 // Startup helpers live in app_setup.rs; re-exported here so the rest of the
 // crate can keep using `crate::` paths.
+#[cfg(target_os = "macos")]
+pub(crate) use app_setup::hide_main_window;
 pub(crate) use app_setup::{
     app_data_dir, app_db_path, fatal_startup_error, show_main_window, start_frontend_watchdog,
     FrontendReadiness,
 };
-#[cfg(target_os = "macos")]
-pub(crate) use app_setup::hide_main_window;
 #[cfg(target_os = "windows")]
 pub(crate) use app_setup::{cleanup_update_helper_if_requested, wait_for_relaunch_parent_exit};
 pub(crate) use app_tray::apply_runtime_icons;

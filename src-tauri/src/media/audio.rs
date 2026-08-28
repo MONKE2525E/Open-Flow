@@ -222,11 +222,7 @@ impl RecordingSession {
         // `processed` already contains the configured microphone gain. Keep
         // the remaining display multiplier explicit so the envelope and the
         // scalar level use the same effective gain without applying it twice.
-        let processed_display_gain = if gain > 0.0 {
-            display_gain / gain
-        } else {
-            0.0
-        };
+        let processed_display_gain = if gain > 0.0 { display_gain / gain } else { 0.0 };
 
         std::thread::spawn(move || {
             let queue = Arc::new(ArrayQueue::<f32>::new(AUDIO_QUEUE_CAPACITY_SAMPLES));
@@ -598,10 +594,7 @@ pub(crate) fn encode_wav(samples: &[f32], sample_rate: u32, channels: u16) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        append_capped_samples, enqueue_i16_buffer, push_overwriting_oldest,
-        DISPLAY_GAIN,
-    };
+    use super::{append_capped_samples, enqueue_i16_buffer, push_overwriting_oldest, DISPLAY_GAIN};
     use crossbeam_queue::ArrayQueue;
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 

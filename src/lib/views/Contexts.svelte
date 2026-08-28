@@ -1644,10 +1644,10 @@
   .context-stat-sep { color: var(--ink-faint); }
   .context-header { justify-content: space-between; gap: 16px; margin-bottom: 16px; position: relative; z-index: 2; }
   .context-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; position: relative; z-index: 2; }
-  .context-header h2 { font-family: var(--serif); font-size: 26px; font-weight: 500; letter-spacing: -.02em; line-height: 1.1; margin: 4px 0 4px; color: var(--ink); }
+  .context-header h2 { font-family: var(--sans); font-size: 23px; font-weight: 600; letter-spacing: -.025em; line-height: 1.1; margin: 4px 0 6px; color: var(--ink); }
   .context-header p { color: var(--ink-mute); font-size: 12px; margin: 0; line-height: 1.45; }
   .target-strip { flex-wrap: wrap; gap: 6px; padding: 9px 0 14px; border-top: 1px solid var(--line-soft); }
-  .target-label { color: var(--ink-faint); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; margin-right: 3px; }
+  .target-label { color: var(--ink-mute); font-family: var(--sans); font-size: 11px; letter-spacing: 0; text-transform: none; margin-right: 3px; }
   .target-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px 4px 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-elev); color: var(--ink-soft); font-size: 11px; }
   .target-chip button { display: grid; place-items: center; border: 0; background: transparent; color: var(--ink-faint); padding: 2px; cursor: pointer; border-radius: 4px; }
   .target-chip button:hover { color: var(--danger); background: var(--danger-bg); }
@@ -1747,7 +1747,7 @@
   .item-main { display: flex; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; }
   .item-term { font-size: 13px; font-weight: 500; color: var(--ink); flex-shrink: 0; }
   .item-auto-star { color: var(--accent); flex-shrink: 0; position: relative; top: -1px; }
-  .item-often { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-faint); flex-shrink: 0; }
+  .item-often { font-family: var(--sans); font-size: 11px; text-transform: none; letter-spacing: 0; color: var(--ink-mute); flex-shrink: 0; }
   .item-arrow { color: var(--ink-faint); flex-shrink: 0; }
   .item-detail { font-size: 12.5px; color: var(--ink-mute); font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .item-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 11px; color: var(--ink-faint); white-space: nowrap; }

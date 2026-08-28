@@ -341,17 +341,17 @@
   .best { text-align: right; }
   .best-num {
     display: block;
-    font-family: var(--serif);
-    font-size: 20px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 19px;
+    font-weight: 600;
     color: var(--ink);
     line-height: 1.1;
     font-variant-numeric: tabular-nums;
   }
   .best-label {
     font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--ink-mute);
   }
 
@@ -501,8 +501,8 @@
   }
   .stat-label {
     font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--ink-mute);
   }
   .stat-value {

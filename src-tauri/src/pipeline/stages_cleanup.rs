@@ -695,11 +695,8 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             }
             prompt_context.push_str(&dictionary_evidence);
         }
-        let context_fingerprint = dual_cleanup_context_fingerprint(
-            cfg,
-            &prompt_context,
-            app_context,
-        );
+        let context_fingerprint =
+            dual_cleanup_context_fingerprint(cfg, &prompt_context, app_context);
         let cache_plan = cleanup_cache_plan_for_context(
             &expanded,
             profile,

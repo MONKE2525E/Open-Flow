@@ -339,9 +339,7 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
                     missing.as_object().is_some_and(|counters| {
                         counters.values().all(|counter| {
                             counter.as_object().is_some_and(|counter| {
-                                counter
-                                    .get("count")
-                                    .is_some_and(|c| c.as_u64().is_some())
+                                counter.get("count").is_some_and(|c| c.as_u64().is_some())
                                     && counter.get("lastCountedAt").is_some_and(|t| {
                                         t.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0)
                                     })
@@ -388,7 +386,9 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
                 || value.as_str().is_some_and(|color| {
                     color.len() == 7
                         && color.starts_with('#')
-                        && color[1..].chars().all(|character| character.is_ascii_hexdigit())
+                        && color[1..]
+                            .chars()
+                            .all(|character| character.is_ascii_hexdigit())
                 })
         }
         SettingKind::Bool => value.is_boolean(),
@@ -526,7 +526,9 @@ pub async fn save_setting(
         let db = app.state::<DbHandle>().inner().clone();
         let key_for_stamp = key.clone();
         let stamped = run_blocking("save_setting_stamp", move || {
-            let conn = db.lock().map_err(|_| "database lock poisoned".to_string())?;
+            let conn = db
+                .lock()
+                .map_err(|_| "database lock poisoned".to_string())?;
             crate::sync::engine::record_local_setting_change(&conn, &key_for_stamp)
                 .map_err(|e| e.to_string())
         })
@@ -765,7 +767,10 @@ mod provider_model_cache_tests {
         assert!(check(&value).is_err());
 
         let mut value = well_formed();
-        value["groq"].as_object_mut().unwrap().remove("lastAttemptAt");
+        value["groq"]
+            .as_object_mut()
+            .unwrap()
+            .remove("lastAttemptAt");
         assert!(check(&value).is_err());
     }
 

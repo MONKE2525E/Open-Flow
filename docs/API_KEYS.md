@@ -8,7 +8,7 @@ Verenu doesn't have its own servers or subscription — it sends your audio and 
 | --- | --- | --- | --- |
 | **Groq** (recommended) | `whisper-large-v3-turbo` | `qwen/qwen3.6-27b` | Free tier with generous limits, and the fastest of the three (LPU inference) |
 | **OpenAI** | `gpt-4o-transcribe` | `gpt-4o-mini` | Best cleanup quality |
-| **Google** | `gemini-3.5-flash` | `gemini-3.5-flash` | One model handles both transcription and cleanup |
+| **Google** | `gemini-3.5-transcribe` | `gemini-3.5-flash-lite` | Dedicated transcription plus cheap, fast cleanup |
 
 You can add keys for more than one provider and configure fallback models later in Settings, but a single Groq key is enough to start dictating immediately.
 

@@ -132,7 +132,7 @@
   .preview-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0; }
 
   .preview-sample { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-  .preview-label { font-size: 9.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-faint); }
+  .preview-label { font-size: 10px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--ink-faint); }
 
   .preview-before { font-size: 12px; font-style: italic; color: var(--ink-mute); line-height: 1.4; }
 

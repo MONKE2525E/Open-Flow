@@ -187,7 +187,7 @@
 <h2 class="settings-h">Sync</h2>
 
 <!-- This device -->
-<div class="id-card">
+<div class="id-card" data-setting-target="sync-this-device">
   <div class="tile" aria-hidden="true">
     <svg
       viewBox="0 0 24 24"
@@ -254,7 +254,7 @@
 {/if}
 
 <!-- Paired devices -->
-<h3 class="settings-subhead">Paired devices</h3>
+<h3 class="settings-subhead" data-setting-target="sync-paired">Paired devices</h3>
 {#if peers.length === 0}
   <div class="desc empty-note">
     Nothing paired yet. Devices you pair below stay connected until either side removes them.
@@ -307,7 +307,7 @@
 {/if}
 
 <!-- Nearby devices -->
-<h3 class="settings-subhead">Nearby devices</h3>
+<h3 class="settings-subhead" data-setting-target="sync-nearby">Nearby devices</h3>
 {#if !syncStore.loaded}
   <div class="discover-card" role="status">
     <span class="search-dots" aria-hidden="true"><i></i><i></i><i></i></span>

@@ -126,7 +126,7 @@
 
   .done-check-wrap { margin-bottom: 4px; }
 
-  .done-title { font-family: var(--serif); font-size: 26px; font-weight: 500; color: var(--ink-strong); margin: 0; }
+  .done-title { font-family: var(--sans); font-size: 23px; font-weight: 600; color: var(--ink-strong); margin: 0; }
 
   .done-sub { font-size: 13px; color: var(--ink-mute); margin: 0; line-height: 1.55; }
 
@@ -185,9 +185,9 @@
 
   .summary-label {
     font-size: 10.5px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--ink-faint);
   }
 
