@@ -186,6 +186,12 @@
     }
   }
 
+  function notificationIndicatorStatus(status: NotificationPermission['authorization']): MacPermissionStatus {
+    if (status === 'provisional') return 'authorized';
+    if (status === 'error') return 'unknown';
+    return status;
+  }
+
   function applySnapshot(next: MacPermissionSnapshot, providerOverride: ProviderId | null) {
     snapshot = {
       ...next,
@@ -510,7 +516,7 @@
         <div class="perm-row-desc">Optional status and update alerts. Authorization is independent from alert, sound, and badge settings.</div>
       </div>
       <div class="perm-row-side">
-        {@render statusIndicator(notificationPermission.authorization === 'authorized' || notificationPermission.authorization === 'provisional' ? 'authorized' : notificationPermission.authorization === 'denied' ? 'denied' : 'unknown', notificationPermission.authorization === 'authorized' || notificationPermission.authorization === 'provisional' ? 'Granted' : notificationPermission.authorization === 'not_determined' ? 'Not yet asked' : notificationPermission.authorization === 'denied' ? 'Denied' : 'Unavailable')}
+        {@render statusIndicator(notificationIndicatorStatus(notificationPermission.authorization), notificationPermission.authorization === 'authorized' || notificationPermission.authorization === 'provisional' ? 'Granted' : notificationPermission.authorization === 'not_determined' ? 'Not yet asked' : notificationPermission.authorization === 'denied' ? 'Denied' : 'Unavailable')}
         {#if notificationPermission.authorization === 'not_determined'}
           <button class="perm-action" onclick={requestNotificationPrompt} disabled={notificationRequesting}>
             {notificationRequesting ? 'Requesting…' : 'Request access'}

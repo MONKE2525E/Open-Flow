@@ -623,11 +623,11 @@ pub async fn request_notifications() -> Result<(), String> {
         let _: () =
             msg_send![center, requestAuthorizationWithOptions: 7usize, completionHandler: &*handler];
     });
-    tokio::time::timeout(std::time::Duration::from_secs(30), rx)
-        .await
-        .map_err(|_| "Timed out requesting notification authorization".to_string())?
-        .map_err(|_| "Notification authorization callback dropped".to_string())?;
-    Ok(())
+    match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("Notification authorization callback dropped".to_string()),
+        Err(_) => Err("Timed out requesting notification authorization".to_string()),
+    }
 }
 
 pub async fn request_notifications_on_main_thread(app: &AppHandle) -> Result<(), String> {
@@ -661,11 +661,11 @@ pub async fn request_notifications_on_main_thread(app: &AppHandle) -> Result<(),
     })
     .map_err(|error| format!("Could not dispatch notification request to main thread: {error}"))?;
 
-    tokio::time::timeout(std::time::Duration::from_secs(60), rx)
-        .await
-        .map_err(|_| "Timed out requesting notification authorization".to_string())?
-        .map_err(|_| "Notification authorization callback dropped".to_string())?;
-    Ok(())
+    match tokio::time::timeout(std::time::Duration::from_secs(60), rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("Notification authorization callback dropped".to_string()),
+        Err(_) => Err("Timed out requesting notification authorization".to_string()),
+    }
 }
 
 // UTI for plain UTF-8 text - the value of `NSPasteboardTypeString`.

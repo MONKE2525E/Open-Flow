@@ -165,6 +165,8 @@ use security_framework::passwords::{
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(target_os = "macos")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "macos")]
 const PRODUCTION_KEYCHAIN_SERVICE: &str = "com.verenu.app";
@@ -246,12 +248,32 @@ pub fn check_access_sentinel() -> KeychainDiagnostic {
     }
 
     let probe_id = KEYCHAIN_PROBE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let account = format!("__verenu_permission_probe_{}_{}__", std::process::id(), probe_id);
-    let sentinel = format!("verenu-keychain-probe-{}-{}", std::process::id(), probe_id);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let account = format!(
+        "__verenu_permission_probe_{}_{}_{}__",
+        std::process::id(),
+        probe_id,
+        timestamp
+    );
+    let sentinel = format!(
+        "verenu-keychain-probe-{}-{}-{}",
+        std::process::id(),
+        probe_id,
+        timestamp
+    );
 
-    if let Err(error) =
-        set_generic_password(service, &account, sentinel.as_bytes())
-    {
+    if let Err(error) = set_generic_password(service, &account, sentinel.as_bytes()) {
+        if error.code() == KEYCHAIN_DUPLICATE_ITEM {
+            if let Err(cleanup_error) = delete_generic_password(service, &account) {
+                log::warn!(
+                    "credentials: duplicate keychain probe cleanup failed os_status={}",
+                    cleanup_error.code()
+                );
+            }
+        }
         return keychain_failure("create", error.code());
     }
 
