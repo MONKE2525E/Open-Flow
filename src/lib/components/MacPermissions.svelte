@@ -208,13 +208,6 @@
     return snapshot;
   }
 
-  async function readSnapshot(providerOverride = keychainProvider) {
-    const next = await invoke<MacPermissionSnapshot>('get_macos_permission_snapshot', {
-      provider: providerOverride,
-    });
-    return applySnapshot(next, providerOverride);
-  }
-
   async function refreshMacPermissions(silent = false) {
     if (!isMac) return;
     const generation = ++refreshGeneration;
