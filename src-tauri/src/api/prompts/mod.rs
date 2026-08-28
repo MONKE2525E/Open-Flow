@@ -13,7 +13,7 @@ mod transcription;
 
 pub use cleanup_rules::cleanup_max_output_tokens;
 pub use cleanup_templates::{
-    cleanup_template_for, hardened_retry_template, lint_cleanup_template,
+    default_cleanup_template, hardened_retry_template, lint_cleanup_template,
     looks_like_degenerate_repetition, looks_like_excessive_content_loss,
     looks_like_fabricated_content, looks_like_model_artifact_leak, looks_like_perspective_flip,
     looks_like_refusal, looks_like_unwanted_expansion,
@@ -103,10 +103,13 @@ pub fn get_cleanup_prompt_with_extras(
     )
 }
 
+/// `provider` and `model` no longer steer the template — there is one for
+/// every model — but they stay in the signature because every caller already
+/// has them and a per-model divergence would land here if one is ever needed.
 #[allow(clippy::too_many_arguments)]
 pub fn get_cleanup_prompt_with_alternate(
-    provider: &str,
-    model: &str,
+    _provider: &str,
+    _model: &str,
     profile: &str,
     intensity: &str,
     extra_rules: &str,
@@ -119,7 +122,7 @@ pub fn get_cleanup_prompt_with_alternate(
     let has_numeric_content = input_has_numeric_content(input_text);
     let has_overrides = !extra_rules.trim().is_empty();
 
-    let default_template = cleanup_template_for(provider, model);
+    let default_template = default_cleanup_template();
     let template = custom_template
         .map(str::trim)
         .filter(|t| !t.is_empty())

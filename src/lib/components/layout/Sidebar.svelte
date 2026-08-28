@@ -825,7 +825,12 @@
 
   .nav-item :global(svg),
   .settings-nav-item :global(svg),
-  .settings-back :global(svg) { opacity: 0.75; flex-shrink: 0; }
+  .settings-back :global(svg) {
+    opacity: 0.75;
+    flex-shrink: 0;
+    /* Weight and opacity travel with the pill instead of snapping ahead of it. */
+    transition: opacity var(--rail-pill-ms) ease, stroke-width var(--rail-pill-ms) ease;
+  }
 
   .sidebar-windows .nav-item :global(svg),
   .sidebar-windows .settings-nav-item :global(svg),
@@ -845,7 +850,13 @@
     outline-offset: -2px;
   }
 
-  /* No background here — .rail-pill supplies it so the highlight can travel. */
+  /*
+   * No background here — .rail-pill supplies it so the highlight can travel.
+   * The active item deliberately keeps its :hover background too: both are the
+   * same opaque --control-hover, so nothing darkens where they stack, and
+   * clearing it blinked the highlight off the item under the cursor for the
+   * whole 300ms the pill spent travelling to it.
+   */
   .nav-item.active,
   .settings-nav-item.active {
     color: var(--ink);
@@ -853,10 +864,6 @@
   }
   .nav-item.active :global(svg),
   .settings-nav-item.active :global(svg) { opacity: 1; }
-
-  /* Hover must not paint over the pill on the item that already owns it. */
-  .nav-item.active:hover,
-  .settings-nav-item.active:hover { background: transparent; }
 
   .settings-section-label {
     font-family: var(--sans);

@@ -1,6 +1,6 @@
 use super::cleanup_rules::collapse_blank_lines;
 use super::{
-    cleanup_max_output_tokens, cleanup_template_for, count_words, gemini_generation_config,
+    cleanup_max_output_tokens, default_cleanup_template, count_words, gemini_generation_config,
     get_cleanup_prompt_with_alternate, get_cleanup_prompt_with_extras, get_transcription_prompt,
     hardened_retry_template, lint_cleanup_template, looks_like_degenerate_repetition,
     looks_like_excessive_content_loss, looks_like_fabricated_content,
@@ -145,53 +145,17 @@ fn cleanup_prompt_preserves_pronouns_with_positive_framing() {
     assert!(prompt.contains("intended meaning, perspective, stance"));
 }
 
+/// One template serves every provider and model, cloud and local alike, so the
+/// guards small local models need most have to hold in it.
 #[test]
-fn local_cleanup_models_use_the_shared_safe_default() {
-    let expected = cleanup_template_for("openai", "gpt-4o");
-    for model in [
-        "gemma-4-e2b",
-        "gemma-4-e4b",
-        "qwen2.5-0.5b-instruct",
-        "qwen2.5-1.5b-instruct",
-        "qwen2.5-3b-instruct",
-        "qwen2.5-7b-instruct",
-        "phi-3-mini-4k-instruct",
-        "smollm2-360m-instruct",
-        "smollm2-1.7b-instruct",
-        "granite-3.3-2b-instruct",
-        "granite-3.3-8b-instruct",
-    ] {
-        let prompt = cleanup_template_for("local", model);
-        assert_eq!(prompt, expected, "{model} drifted from the shared default");
-        assert!(!prompt.trim().is_empty(), "empty prompt for {model}");
-        let lower = prompt.to_lowercase();
-        assert!(
-            lower.contains("return only") || lower.contains("output only"),
-            "missing return-only guard for {model}"
-        );
-        assert!(
-            lower.contains("do not answer") || lower.contains("never answer"),
-            "missing answer-suppression rule for {model}"
-        );
-        assert!(
-            lower.contains("each retained point once"),
-            "missing stop rule for {model}"
-        );
-    }
-}
-
-#[test]
-fn local_templates_keep_the_dynamic_cleanup_settings() {
-    for model in [
-        "gemma-4-e2b",
-        "qwen2.5-1.5b-instruct",
-        "qwen2.5-3b-instruct",
-        "phi-3-mini-4k-instruct",
-        "granite-3.3-2b-instruct",
-    ] {
-        let template = cleanup_template_for("local", model);
-        assert!(template.contains("{{ cleanup_preset }}"));
-    }
+fn the_shared_default_template_keeps_its_safety_guards() {
+    let prompt = default_cleanup_template();
+    assert!(!prompt.trim().is_empty());
+    assert!(prompt.contains("{{ cleanup_preset }}"));
+    let lower = prompt.to_lowercase();
+    assert!(lower.contains("return only") || lower.contains("output only"));
+    assert!(lower.contains("do not answer") || lower.contains("never answer"));
+    assert!(lower.contains("each retained point once"));
 }
 
 #[test]
@@ -477,24 +441,6 @@ fn overrides_are_numbered() {
 }
 
 #[test]
-fn every_provider_and_model_uses_one_default_template() {
-    let expected = cleanup_template_for("openai", "gpt-4o");
-    for (provider, model) in [
-        ("groq", "llama-3.3-70b-versatile"),
-        ("groq", "qwen/qwen3.6-27b"),
-        ("groq", "openai/gpt-oss-20b"),
-        ("openai", "gpt-4o"),
-        ("openai", "gpt-4o-mini"),
-        ("google", "gemini-3.5-flash"),
-        ("google", "gemini-2.5-flash"),
-        ("custom", "unknown"),
-    ] {
-        let template = cleanup_template_for(provider, model);
-        assert_eq!(template, expected, "{provider}/{model} default drifted");
-    }
-}
-
-#[test]
 fn light_medium_direct_produce_distinct_cleanup_blocks() {
     let input = repeated_words(75);
     let light = openai_cleanup_prompt(&input, "light");
@@ -703,7 +649,7 @@ fn gemini_25_config_uses_thinking_budget() {
 fn gemini_3_config_uses_thinking_level() {
     let config = gemini_generation_config("gemini-3.5-flash", 2048);
     let json = serde_json::to_value(&config).unwrap();
-    assert_eq!(json["thinkingConfig"]["thinkingLevel"], "minimal");
+    assert_eq!(json["thinkingConfig"]["thinkingLevel"], "low");
     assert!(json["thinkingConfig"].get("thinkingBudget").is_none());
     assert_eq!(json["maxOutputTokens"], 2048);
     assert_eq!(json["temperature"], 0.0);
@@ -756,9 +702,8 @@ fn every_default_template_renders_without_unfilled_tags() {
 }
 
 #[test]
-fn unknown_provider_uses_universal_fallback() {
-    let template = cleanup_template_for("some-custom-provider", "some-model");
-    assert_eq!(template, hardened_retry_template());
+fn hardened_retry_reuses_the_default_template() {
+    assert_eq!(default_cleanup_template(), hardened_retry_template());
 }
 
 #[test]
@@ -823,24 +768,9 @@ fn lint_flags_missing_required_tags_and_safety_framing() {
 }
 
 #[test]
-fn lint_passes_default_templates() {
-    for (provider, model) in [
-        ("groq", "llama-3.3-70b-versatile"),
-        ("groq", "qwen/qwen3.6-27b"),
-        ("groq", "openai/gpt-oss-20b"),
-        ("openai", "gpt-4o"),
-        ("openai", "gpt-4o-mini"),
-        ("google", "gemini-3.5-flash"),
-        ("google", "gemini-2.5-flash"),
-        ("custom", "unknown"),
-    ] {
-        let template = cleanup_template_for(provider, model);
-        let warnings = lint_cleanup_template(template);
-        assert!(
-            warnings.is_empty(),
-            "{provider}/{model} default template failed lint: {warnings:?}"
-        );
-    }
+fn lint_passes_the_default_template() {
+    let warnings = lint_cleanup_template(default_cleanup_template());
+    assert!(warnings.is_empty(), "default template failed lint: {warnings:?}");
 }
 
 #[test]

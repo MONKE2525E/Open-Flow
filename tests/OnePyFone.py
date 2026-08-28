@@ -265,7 +265,14 @@ class SettingsContractCheck(PythonTest):
             match.group(2)
             for match in re.finditer(r'pub const ([A-Z0-9_]+): &str = "([^"]+)";', rust_text)
             if not match.group(2).startswith("api_key_")
-            and match.group(2) not in {"credentials_migrated_v1", "auto_learn_event_mode"}
+            # cleanup_prompt_overrides is the retired per-model prompt map. It is
+            # read once to migrate an existing edit onto cleanup_prompt_override
+            # and never written, so it has no frontend or payload counterpart.
+            and match.group(2) not in {
+                "credentials_migrated_v1",
+                "auto_learn_event_mode",
+                "cleanup_prompt_overrides",
+            }
             and match.group(2) not in {
                 "groq", "openai", "google", "assemblyai", "llama-3.1-8b-instant",
                 "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "qwen/qwen3.6-27b",

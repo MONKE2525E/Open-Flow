@@ -601,7 +601,7 @@ mod tests {
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(
             json["generationConfig"]["thinkingConfig"]["thinkingLevel"],
-            "minimal"
+            "low"
         );
         assert_eq!(json["generationConfig"]["maxOutputTokens"], 256);
         assert_eq!(json["generationConfig"]["temperature"], 0.0);

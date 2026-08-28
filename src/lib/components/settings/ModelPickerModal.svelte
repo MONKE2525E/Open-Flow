@@ -46,6 +46,7 @@
     context: PickerContext;
     defaultModel: string;
     fallbackModels: string[];
+    /** Only gates the hand-typed model-id footer, not the model list itself. */
     advancedModelUi: boolean;
     customDraft: string;
     onSelect: (id: string) => void;
@@ -77,6 +78,13 @@
   let query = $state('');
   let providerFilter = $state<ProviderId | 'all'>('all');
   /**
+   * Everything a provider lists that Verenu hasn't vetted. Off by default —
+   * these come straight from the live `/v1/models` fetch, so a brand-new model
+   * shows up here the day it ships, but so does anything the modality filter
+   * couldn't rule out.
+   */
+  let showUnverified = $state(false);
+  /**
    * Settings is a full-screen page beside the rail, so centring on the whole
    * window puts the dialog visibly left of the content it belongs to. Measure
    * the panel and centre inside that instead.
@@ -104,11 +112,11 @@
   // Selections stay listed even after a provider drops them, so a dead choice
   // still has somewhere to show its state and be swapped out.
   const pinned = $derived([defaultModel, ...fallbackModels].filter(Boolean));
-  const allRows = $derived(
-    [...curatedRows(context, pinned), ...(advancedModelUi ? unverifiedRows(context) : [])].filter(
-      (row) => local.supported || row.provider !== 'local',
-    ),
-  );
+  const supportedHere = (row: ModelRow) => local.supported || row.provider !== 'local';
+  const curated = $derived(curatedRows(context, pinned).filter(supportedHere));
+  const unverified = $derived(unverifiedRows(context).filter(supportedHere));
+  /** What the search box says it searches — the collapsed tail isn't in it. */
+  const listedCount = $derived(curated.length + (showUnverified ? unverified.length : 0));
 
   function matches(row: ModelRow): boolean {
     const needle = query.trim().toLowerCase();
@@ -120,12 +128,16 @@
     );
   }
 
-  const searched = $derived(allRows.filter(matches));
-  const shown = $derived(
-    providerFilter === 'all'
-      ? searched
-      : searched.filter((row) => row.provider === providerFilter),
+  const matchedCurated = $derived(curated.filter(matches));
+  const matchedUnverified = $derived(unverified.filter(matches));
+  const searched = $derived(
+    showUnverified ? [...matchedCurated, ...matchedUnverified] : matchedCurated,
   );
+  const inFilter = (row: ModelRow) =>
+    providerFilter === 'all' || row.provider === providerFilter;
+  const shown = $derived(searched.filter(inFilter));
+  /** How many the disclosure would add, counted for the tab you're on. */
+  const hiddenCount = $derived(matchedUnverified.filter(inFilter).length);
 
   /** Usable first, then anything needing setup, then anything gone. */
   const RANK: Record<ModelRow['state'], number> = {
@@ -297,7 +309,7 @@
       <input
         class="picker-search"
         type="search"
-        placeholder="Search {allRows.length} models…"
+        placeholder="Search {listedCount} models…"
         bind:value={query}
         autocomplete="off"
         autocapitalize="off"
@@ -444,19 +456,6 @@
                       onclick={() => local.onDownload(row.id)}>Download</button
                     >
                   {:else}
-                    {#if task === 'cleanup' && advancedModelUi && local.onEditPrompt}
-                      <button
-                        class="row-tool"
-                        data-testid="edit-prompt"
-                        type="button"
-                        onclick={(event) =>
-                          local.onEditPrompt?.(
-                            row.id,
-                            (event.currentTarget as HTMLButtonElement).getBoundingClientRect(),
-                          )}
-                        >Prompt{local.promptCustomized?.(row.id) ? ' •' : ''}</button
-                      >
-                    {/if}
                     <button
                       class="row-tool row-tool-danger"
                       data-testid="delete-model"
@@ -489,6 +488,22 @@
             {/if}
           {/each}
         {/each}
+
+        {#if hiddenCount > 0 || showUnverified}
+          <button
+            class="more-toggle"
+            type="button"
+            aria-expanded={showUnverified}
+            onclick={() => (showUnverified = !showUnverified)}
+          >
+            {#if showUnverified}
+              Hide unverified models
+            {:else}
+              Show {hiddenCount} more model{hiddenCount === 1 ? '' : 's'}
+              <span class="more-note">listed by the provider, unverified and possibly buggy</span>
+            {/if}
+          </button>
+        {/if}
       </div>
     </div>
 
@@ -619,11 +634,14 @@
     padding: 4px 20px 14px;
   }
 
+  /* Centred against the input's box, not the row's: the row's padding is
+     uneven (4px top, 14px bottom), so a plain top:50% sits ~5px low. */
   .search-icon {
     position: absolute;
-    left: 32px;
-    top: 50%;
-    transform: translateY(-50%);
+    left: 30px;
+    top: 4px;
+    bottom: 14px;
+    margin: auto 0;
     color: var(--ink-faint);
     pointer-events: none;
   }
@@ -958,6 +976,42 @@
     font-size: 11.5px;
     line-height: 1.5;
     color: var(--ink-mute);
+  }
+
+  /* Sits at the foot of the list, not in the footer bar: it reveals more of
+     the same list rather than acting on the dialog. */
+  .more-toggle {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    width: 100%;
+    margin-top: 12px;
+    padding: 9px 11px;
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    background: transparent;
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--ink-soft);
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.14s, color 0.14s, border-color 0.14s;
+  }
+
+  .more-toggle:hover {
+    background: var(--control-hover);
+    color: var(--ink);
+    border-color: var(--line-strong);
+  }
+
+  .more-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+
+  .more-note {
+    font-size: 11px;
+    color: var(--ink-faint);
   }
 
   .picker-empty {
