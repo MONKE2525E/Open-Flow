@@ -82,6 +82,7 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
 }
 
 #[cfg(windows)]
+#[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
 pub fn get(provider: &str) -> String {
     let user = match user_for(provider) {
         Some(u) => u,
@@ -163,13 +164,147 @@ use security_framework::passwords::{
 };
 #[cfg(target_os = "macos")]
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(target_os = "macos")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "macos")]
-const KEYCHAIN_SERVICE: &str = "com.verenu.app";
+const PRODUCTION_KEYCHAIN_SERVICE: &str = "com.verenu.app";
+#[cfg(target_os = "macos")]
+fn keychain_service() -> &'static str {
+    // TCC stays isolated by bundle/signing identity, but production and the
+    // canonically signed development app intentionally share Verenu's own
+    // credential namespace. Changing the service name makes existing keys
+    // disappear and leaves development with no configured backend.
+    PRODUCTION_KEYCHAIN_SERVICE
+}
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
 #[cfg(target_os = "macos")]
 const KEYCHAIN_DUPLICATE_ITEM: i32 = -25299;
+#[cfg(target_os = "macos")]
+static KEYCHAIN_PROBE_COUNTER: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "macos")]
+const KEYCHAIN_ACCOUNTS_USED_BY_VERENU: &[&str] = &[
+    "api_key_groq",
+    "api_key_openai",
+    "api_key_google",
+    "api_key_assemblyai",
+    "sync.identity",
+];
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeychainDiagnostic {
+    pub state: String,
+    pub operation: String,
+    pub os_status: i32,
+    pub os_status_meaning: String,
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_status_meaning(code: i32) -> &'static str {
+    match code {
+        0 => "errSecSuccess",
+        -25291 => "errSecNotAvailable",
+        -25293 => "errSecAuthFailed",
+        -25299 => "errSecDuplicateItem",
+        -25300 => "errSecItemNotFound",
+        -25308 => "errSecInteractionNotAllowed",
+        -34018 => "errSecMissingEntitlement",
+        _ => "unknown OSStatus",
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_failure(operation: &str, code: i32) -> KeychainDiagnostic {
+    let state = match code {
+        -25291 | -34018 => "configuration_error",
+        -25293 => "authentication_required",
+        -25308 => "interaction_unavailable",
+        _ => "error",
+    };
+    KeychainDiagnostic {
+        state: state.into(),
+        operation: operation.into(),
+        os_status: code,
+        os_status_meaning: keychain_status_meaning(code).into(),
+    }
+}
+
+/// Proves every generic-password account namespace Verenu currently reads,
+/// then proves create/read/delete capability with a private sentinel. Existing
+/// values are never returned, compared, or logged.
+#[cfg(target_os = "macos")]
+pub fn check_access_sentinel() -> KeychainDiagnostic {
+    let service = keychain_service();
+
+    for account in KEYCHAIN_ACCOUNTS_USED_BY_VERENU {
+        match get_generic_password(service, account) {
+            Ok(_) => {}
+            Err(error) if error.code() == KEYCHAIN_ITEM_NOT_FOUND => {}
+            Err(error) => return keychain_failure(&format!("read:{account}"), error.code()),
+        }
+    }
+
+    let probe_id = KEYCHAIN_PROBE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let account = format!(
+        "__verenu_permission_probe_{}_{}_{}__",
+        std::process::id(),
+        probe_id,
+        timestamp
+    );
+    let sentinel = format!(
+        "verenu-keychain-probe-{}-{}-{}",
+        std::process::id(),
+        probe_id,
+        timestamp
+    );
+
+    if let Err(error) = set_generic_password(service, &account, sentinel.as_bytes()) {
+        if error.code() == KEYCHAIN_DUPLICATE_ITEM {
+            if let Err(cleanup_error) = delete_generic_password(service, &account) {
+                log::warn!(
+                    "credentials: duplicate keychain probe cleanup failed os_status={}",
+                    cleanup_error.code()
+                );
+            }
+        }
+        return keychain_failure("create", error.code());
+    }
+
+    let result = match get_generic_password(service, &account) {
+        Ok(bytes) if bytes == sentinel.as_bytes() => KeychainDiagnostic {
+            state: "available".into(),
+            operation: "all account reads + create/read/delete".into(),
+            os_status: 0,
+            os_status_meaning: "errSecSuccess".into(),
+        },
+        Ok(_) => KeychainDiagnostic {
+            state: "error".into(),
+            operation: "read/compare".into(),
+            os_status: -1,
+            os_status_meaning: "sentinel value mismatch".into(),
+        },
+        Err(error) => keychain_failure("read", error.code()),
+    };
+
+    if let Err(error) = delete_generic_password(service, &account) {
+        if result.state == "available" && error.code() != KEYCHAIN_ITEM_NOT_FOUND {
+            return keychain_failure("delete", error.code());
+        }
+        log::warn!(
+            "credentials: keychain permission probe cleanup failed os_status={}",
+            error.code()
+        );
+    }
+    result
+}
 
 #[cfg(target_os = "macos")]
 fn tauri_legacy_creds_path(app: &AppHandle) -> PathBuf {
@@ -309,7 +444,7 @@ fn read_keychain_service(service: &str, provider: &str) -> Result<Option<String>
 
 #[cfg(target_os = "macos")]
 fn read_keychain(provider: &str) -> Result<Option<String>, String> {
-    read_keychain_service(KEYCHAIN_SERVICE, provider)
+    read_keychain_service(keychain_service(), provider)
 }
 
 #[cfg(target_os = "macos")]
@@ -317,16 +452,16 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
     let key = normalize_key(key);
     let user = keychain_user(provider)?;
     if key.is_empty() {
-        match delete_generic_password(KEYCHAIN_SERVICE, user) {
+        match delete_generic_password(keychain_service(), user) {
             Ok(()) => Ok(()),
             Err(err) if err.code() == KEYCHAIN_ITEM_NOT_FOUND => Ok(()),
             Err(err) => Err(format!("Keychain delete failed for {provider}: {err}")),
         }
     } else {
-        match set_generic_password(KEYCHAIN_SERVICE, user, key.as_bytes()) {
+        match set_generic_password(keychain_service(), user, key.as_bytes()) {
             Ok(()) => Ok(()),
             Err(err) if err.code() == KEYCHAIN_DUPLICATE_ITEM => {
-                match delete_generic_password(KEYCHAIN_SERVICE, user) {
+                match delete_generic_password(keychain_service(), user) {
                     Ok(()) => {}
                     Err(err) if err.code() == KEYCHAIN_ITEM_NOT_FOUND => {}
                     Err(err) => {
@@ -336,7 +471,7 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
                     }
                 }
 
-                set_generic_password(KEYCHAIN_SERVICE, user, key.as_bytes())
+                set_generic_password(keychain_service(), user, key.as_bytes())
                     .map_err(|err| format!("Keychain overwrite failed for {provider}: {err}"))
             }
             Err(err) => Err(format!("Keychain write failed for {provider}: {err}")),
@@ -432,6 +567,7 @@ pub fn delete(provider: &str) -> Result<(), String> {
 /// Returns `Ok(true)` if a key exists and is readable, `Ok(false)` if absent, `Err` on access failure.
 /// On macOS this triggers the Keychain prompt if the app hasn't been granted Always Allow yet.
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 pub fn read_for_status(provider: &str) -> Result<bool, String> {
     match read_keychain(provider) {
         Ok(Some(k)) => Ok(!normalize_key(&k).is_empty()),

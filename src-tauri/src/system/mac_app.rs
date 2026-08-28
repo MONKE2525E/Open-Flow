@@ -8,15 +8,18 @@
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use objc2::rc::autoreleasepool;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyClass, AnyObject};
 use objc2::{class, msg_send};
 use objc2_foundation::{NSData, NSString};
 use tauri::AppHandle;
 
 #[link(name = "AVFoundation", kind = "framework")]
+extern "C" {}
+
+#[link(name = "UserNotifications", kind = "framework")]
 extern "C" {}
 
 // The global hotkey now uses Carbon `RegisterEventHotKey` (see
@@ -31,6 +34,19 @@ const POLICY_ACCESSORY: u8 = 1;
 const POLICY_REGULAR: u8 = 2;
 
 static LAST_APPLIED_POLICY: AtomicU8 = AtomicU8::new(POLICY_UNKNOWN);
+
+// Compatibility latch used by the AX text/context probes. It records that a
+// real cross-process AX read succeeded during this process lifetime; the
+// Permissions page itself always uses a fresh AXIsProcessTrusted() query.
+static ACCESSIBILITY_VERIFIED: AtomicBool = AtomicBool::new(false);
+
+pub fn mark_accessibility_verified() {
+    ACCESSIBILITY_VERIFIED.store(true, Ordering::SeqCst);
+}
+
+pub fn is_accessibility_verified() -> bool {
+    ACCESSIBILITY_VERIFIED.load(Ordering::SeqCst)
+}
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
@@ -234,44 +250,144 @@ pub fn refresh_dock_icon() {
     })
 }
 
-/// Latched once a `cpal` input stream opens successfully. macOS only hands out a
-/// working audio stream when the microphone permission is actually granted, so a
-/// successful capture is authoritative proof - unlike
-/// `AVCaptureDevice authorizationStatusForMediaType:`, which can return a value
-/// cached at first call for the lifetime of the process and never refresh after
-/// the user grants access mid-session.
-static MIC_VERIFIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+const AV_AUDIO_PERMISSION_UNDETERMINED: isize = u32::from_be_bytes(*b"undt") as isize;
+const AV_AUDIO_PERMISSION_DENIED: isize = u32::from_be_bytes(*b"deny") as isize;
+const AV_AUDIO_PERMISSION_GRANTED: isize = u32::from_be_bytes(*b"grnt") as isize;
 
-/// Record that the microphone was successfully opened for capture. Call this from
-/// the audio backend once a recording stream is confirmed playing.
-pub fn mark_microphone_verified() {
-    MIC_VERIFIED.store(true, Ordering::SeqCst);
+/// `AVAudioApplication.recordPermission` is the modern, audio-specific API on
+/// macOS 14+. Load AVFAudio dynamically so Verenu can keep its macOS 11 minimum.
+fn av_audio_application_class() -> Option<&'static AnyClass> {
+    static AVFAUDIO_LOADED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let loaded = AVFAUDIO_LOADED.get_or_init(|| unsafe {
+        let path = b"/System/Library/Frameworks/AVFAudio.framework/AVFAudio\0";
+        !libc::dlopen(
+            path.as_ptr().cast::<c_char>(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        )
+        .is_null()
+    });
+    loaded
+        .then(|| AnyClass::get("AVAudioApplication"))
+        .flatten()
 }
 
-pub fn is_microphone_verified() -> bool {
-    MIC_VERIFIED.load(Ordering::SeqCst)
+fn bundle_info_string(key: &str) -> Option<String> {
+    autoreleasepool(|_| unsafe {
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        if bundle.is_null() {
+            return None;
+        }
+        let key = NSString::from_str(key);
+        let value: *mut AnyObject = msg_send![bundle, objectForInfoDictionaryKey: &*key];
+        nsstring_to_string(value)
+    })
 }
 
-/// Latched once a cross-process Accessibility (AX) read succeeds - i.e. the app
-/// actually read another application's focused-element tree. Like the microphone
-/// latch, an empirically successful AX call is authoritative proof the permission
-/// is granted, which matters when `AXIsProcessTrusted()` reports a stale `false`
-/// (most often after an ad-hoc rebuild changes the code signature the TCC grant
-/// was tied to). This is a process-lifetime latch: if the user revokes access the
-/// OS tears the capability down and a relaunch resets the flag, mirroring the
-/// accepted behaviour of [`MIC_VERIFIED`].
-static ACCESSIBILITY_VERIFIED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Record that a cross-process AX read succeeded. Call from the AX caret probe
-/// whenever the OS returned real element data (any source other than
-/// "permission missing" / "unavailable").
-pub fn mark_accessibility_verified() {
-    ACCESSIBILITY_VERIFIED.store(true, Ordering::SeqCst);
+pub fn bundle_display_name() -> Option<String> {
+    bundle_info_string("CFBundleDisplayName")
 }
 
-pub fn is_accessibility_verified() -> bool {
-    ACCESSIBILITY_VERIFIED.load(Ordering::SeqCst)
+pub fn bundle_name() -> Option<String> {
+    bundle_info_string("CFBundleName")
+}
+
+pub fn bundle_url() -> Option<String> {
+    autoreleasepool(|_| unsafe {
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        if bundle.is_null() {
+            return None;
+        }
+        let url: *mut AnyObject = msg_send![bundle, bundleURL];
+        if url.is_null() {
+            return None;
+        }
+        let value: *mut AnyObject = msg_send![url, absoluteString];
+        nsstring_to_string(value)
+    })
+}
+
+pub fn bundle_executable_url() -> Option<String> {
+    autoreleasepool(|_| unsafe {
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        if bundle.is_null() {
+            return None;
+        }
+        let url: *mut AnyObject = msg_send![bundle, executableURL];
+        if url.is_null() {
+            return None;
+        }
+        let value: *mut AnyObject = msg_send![url, absoluteString];
+        nsstring_to_string(value)
+    })
+}
+
+pub fn bundle_url_extension() -> Option<String> {
+    autoreleasepool(|_| unsafe {
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        if bundle.is_null() {
+            return None;
+        }
+        let url: *mut AnyObject = msg_send![bundle, bundleURL];
+        if url.is_null() {
+            return None;
+        }
+        let ext: *mut AnyObject = msg_send![url, pathExtension];
+        nsstring_to_string(ext)
+    })
+}
+
+pub fn process_name() -> Option<String> {
+    autoreleasepool(|_| unsafe {
+        let process_info: *mut AnyObject = msg_send![class!(NSProcessInfo), processInfo];
+        if process_info.is_null() {
+            return None;
+        }
+        let name: *mut AnyObject = msg_send![process_info, processName];
+        nsstring_to_string(name)
+    })
+}
+
+/// Modern Core Audio permission status, when the API exists on this macOS.
+pub fn av_audio_microphone_permission_raw() -> Option<isize> {
+    let class = av_audio_application_class()?;
+    autoreleasepool(|_| unsafe {
+        let application: *mut AnyObject = msg_send![class, sharedInstance];
+        if application.is_null() {
+            return None;
+        }
+        let status: isize = msg_send![application, recordPermission];
+        Some(status)
+    })
+}
+
+pub fn av_audio_microphone_permission_status() -> Option<&'static str> {
+    av_audio_microphone_permission_raw().map(|status| match status {
+        AV_AUDIO_PERMISSION_GRANTED => "authorized",
+        AV_AUDIO_PERMISSION_UNDETERMINED => "not_determined",
+        AV_AUDIO_PERMISSION_DENIED => "denied",
+        _ => "unknown",
+    })
+}
+
+/// Legacy AVFoundation status retained for macOS 11-13 compatibility and
+/// diagnostics when the two Apple frameworks disagree.
+pub fn av_capture_microphone_permission_raw() -> isize {
+    autoreleasepool(|_| unsafe {
+        let media_type = NSString::from_str("soun");
+        let status: isize =
+            msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: &*media_type];
+        status
+    })
+}
+
+pub fn av_capture_microphone_permission_status() -> &'static str {
+    match av_capture_microphone_permission_raw() {
+        3 => "authorized",
+        0 => "not_determined",
+        1 => "restricted",
+        2 => "denied",
+        _ => "unknown",
+    }
 }
 
 /// Current macOS microphone permission status for the app.
@@ -279,48 +395,289 @@ pub fn is_accessibility_verified() -> bool {
 /// Returns one of: `authorized`, `not_determined`, `denied`, `restricted`,
 /// or `unknown`.
 pub fn microphone_permission_status() -> &'static str {
-    // A previously successful capture is proof the permission is granted, even if
-    // the cached AV authorization status is stale.
-    if MIC_VERIFIED.load(Ordering::SeqCst) {
-        return "authorized";
-    }
-    autoreleasepool(|_| unsafe {
-        let media_type = NSString::from_str("soun");
-        let status: isize =
-            msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: &*media_type];
-        match status {
-            3 => "authorized",
-            0 => "not_determined",
-            1 => "restricted",
-            2 => "denied",
-            _ => "unknown",
-        }
-    })
+    // Runtime verification on macOS 26 showed AVCaptureDevice remaining
+    // `notDetermined` while System Settings was enabled and the current
+    // audio-specific API returned `grnt`. Use exactly one source by OS API
+    // availability: AVAudioApplication on macOS 14+, AVCaptureDevice only on
+    // older systems where AVAudioApplication does not exist.
+    av_audio_microphone_permission_status().unwrap_or_else(av_capture_microphone_permission_status)
 }
 
 /// Request microphone access, showing the macOS consent prompt when the
-/// permission is undetermined. The completion handler is a no-op - callers read
-/// the resulting status separately via `microphone_permission_status()` once the
-/// user responds. Safe to call when already authorized (no prompt is shown).
-pub async fn request_microphone() -> bool {
+/// permission is undetermined. Fails after a bounded wait if AVFoundation never
+/// calls its completion handler, rather than leaving the permissions UI stuck.
+/// Safe to call when already authorized (no prompt is shown).
+#[allow(dead_code)]
+pub async fn request_microphone() -> Result<bool, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx = std::sync::Mutex::new(Some(tx));
     autoreleasepool(|_| unsafe {
-        let media_type = NSString::from_str("soun");
         let handler = block2::RcBlock::new(move |granted: objc2::runtime::Bool| {
+            let granted = granted.as_bool();
             if let Ok(mut guard) = tx.lock() {
                 if let Some(tx) = guard.take() {
-                    let _ = tx.send(granted.as_bool());
+                    let _ = tx.send(granted);
                 }
             }
         });
+        // Keep the request paired with the same AVCaptureDevice API used for
+        // the authoritative UI status. The AVAudioApplication value is logged
+        // after completion as a diagnostic only.
+        let media_type = NSString::from_str("soun");
         let _: () = msg_send![
             class!(AVCaptureDevice),
             requestAccessForMediaType: &*media_type,
             completionHandler: &*handler
         ];
     });
-    rx.await.unwrap_or(false)
+    tokio::time::timeout(std::time::Duration::from_secs(60), rx)
+        .await
+        .map_err(|_| {
+            "macOS did not answer the microphone permission request within 60 seconds.".to_string()
+        })?
+        .map_err(|_| "macOS closed the microphone permission request unexpectedly.".to_string())
+}
+
+/// Starts the AVCaptureDevice request on AppKit's main thread. Calling this
+/// directly from a Tauri async command can produce an immediate `false`
+/// callback while TCC remains `notDetermined` and no system sheet appears.
+pub async fn request_microphone_on_main_thread(app: &AppHandle) -> Result<bool, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = activate_current_app();
+        let tx = std::sync::Mutex::new(Some(tx));
+        autoreleasepool(|_| unsafe {
+            let handler = block2::RcBlock::new(move |granted: objc2::runtime::Bool| {
+                if let Ok(mut guard) = tx.lock() {
+                    if let Some(tx) = guard.take() {
+                        let _ = tx.send(granted.as_bool());
+                    }
+                }
+            });
+            let media_type = NSString::from_str("soun");
+            let _: () = msg_send![
+                class!(AVCaptureDevice),
+                requestAccessForMediaType: &*media_type,
+                completionHandler: &*handler
+            ];
+        });
+    })
+    .map_err(|error| format!("Could not dispatch microphone request to main thread: {error}"))?;
+
+    tokio::time::timeout(std::time::Duration::from_secs(60), rx)
+        .await
+        .map_err(|_| {
+            "macOS did not answer the microphone permission request within 60 seconds.".to_string()
+        })?
+        .map_err(|_| "macOS closed the microphone permission request unexpectedly.".to_string())
+}
+
+/// macOS 14+ native record-permission request. AVCaptureDevice remains the
+/// authoritative status query; this API is used only to present/complete the
+/// consent transaction on current macOS releases.
+pub async fn request_audio_application_on_main_thread(app: &AppHandle) -> Result<bool, String> {
+    let class = av_audio_application_class()
+        .ok_or_else(|| "AVAudioApplication is unavailable on this macOS version".to_string())?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = activate_current_app();
+        let tx = std::sync::Mutex::new(Some(tx));
+        autoreleasepool(|_| unsafe {
+            let handler = block2::RcBlock::new(move |granted: objc2::runtime::Bool| {
+                if let Ok(mut guard) = tx.lock() {
+                    if let Some(tx) = guard.take() {
+                        let _ = tx.send(granted.as_bool());
+                    }
+                }
+            });
+            let _: () = msg_send![
+                class,
+                requestRecordPermissionWithCompletionHandler: &*handler
+            ];
+        });
+    })
+    .map_err(|error| format!("Could not dispatch microphone request to main thread: {error}"))?;
+
+    tokio::time::timeout(std::time::Duration::from_secs(60), rx)
+        .await
+        .map_err(|_| {
+            "macOS did not answer the microphone permission request within 60 seconds.".to_string()
+        })?
+        .map_err(|_| "macOS closed the microphone permission request unexpectedly.".to_string())
+}
+
+/// Documented AVFoundation prompt path for a still-undetermined status:
+/// creating an AVCaptureDeviceInput automatically presents the consent UI.
+/// The input result is deliberately ignored; authorizationStatus remains the
+/// only permission truth and is polled for the user's decision.
+pub async fn request_microphone_via_device_input(app: &AppHandle) -> Result<bool, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = set_regular_activation_policy();
+        let _ = activate_current_app();
+        autoreleasepool(|_| unsafe {
+            let media_type = NSString::from_str("soun");
+            let device: *mut AnyObject = msg_send![
+                class!(AVCaptureDevice),
+                defaultDeviceWithMediaType: &*media_type
+            ];
+            if device.is_null() {
+                let _ = tx.send(Err("No audio capture device is available".to_string()));
+                return;
+            }
+            let mut error: *mut AnyObject = std::ptr::null_mut();
+            let _: *mut AnyObject = msg_send![
+                class!(AVCaptureDeviceInput),
+                deviceInputWithDevice: device,
+                error: &mut error
+            ];
+            let _ = tx.send(Ok(()));
+        });
+    })
+    .map_err(|error| format!("Could not dispatch microphone input request: {error}"))?;
+    rx.await
+        .map_err(|_| "Microphone input request task closed unexpectedly".to_string())??;
+
+    for _ in 0..240 {
+        let status = microphone_permission_status();
+        if status != "not_determined" {
+            return Ok(status == "authorized");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    Err("macOS did not produce a microphone authorization decision within 60 seconds".to_string())
+}
+
+/// Returns the raw values from UNUserNotificationCenter. This is deliberately
+/// separate from the Tauri notification plugin's boolean helper: the
+/// Permissions page needs Apple's authorization and presentation settings.
+pub async fn notification_settings() -> Result<[i64; 6], String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = std::sync::Mutex::new(Some(tx));
+    autoreleasepool(|_| unsafe {
+        let center: *mut AnyObject =
+            msg_send![class!(UNUserNotificationCenter), currentNotificationCenter];
+        if center.is_null() {
+            if let Ok(mut guard) = tx.lock() {
+                if let Some(tx) = guard.take() {
+                    let _ = tx.send(Err("UNUserNotificationCenter was unavailable".to_string()));
+                }
+            }
+            return;
+        }
+        let handler = block2::RcBlock::new(move |settings: *mut AnyObject| {
+            if settings.is_null() {
+                if let Ok(mut guard) = tx.lock() {
+                    if let Some(tx) = guard.take() {
+                        let _ = tx.send(Err("UNNotificationSettings was null".to_string()));
+                    }
+                }
+                return;
+            }
+            let values = [
+                msg_send![settings, authorizationStatus],
+                msg_send![settings, alertSetting],
+                msg_send![settings, soundSetting],
+                msg_send![settings, badgeSetting],
+                msg_send![settings, notificationCenterSetting],
+                msg_send![settings, lockScreenSetting],
+            ];
+            if let Ok(mut guard) = tx.lock() {
+                if let Some(tx) = guard.take() {
+                    let _ = tx.send(Ok(values));
+                }
+            }
+        });
+        let _: () = msg_send![center, getNotificationSettingsWithCompletionHandler: &*handler];
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("Notification settings callback dropped".to_string()),
+        Err(_) => Err("Timed out querying notification settings".to_string()),
+    }
+}
+
+#[allow(dead_code)]
+pub async fn request_notifications() -> Result<(), String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = std::sync::Mutex::new(Some(tx));
+    autoreleasepool(|_| unsafe {
+        let center: *mut AnyObject =
+            msg_send![class!(UNUserNotificationCenter), currentNotificationCenter];
+        if center.is_null() {
+            if let Ok(mut guard) = tx.lock() {
+                if let Some(tx) = guard.take() {
+                    let _ = tx.send(Err("UNUserNotificationCenter was unavailable".to_string()));
+                }
+            }
+            return;
+        }
+        // alert | sound | badge; request is only called from an explicit UI action.
+        let handler = block2::RcBlock::new(
+            move |_granted: objc2::runtime::Bool, error: *mut AnyObject| {
+                if let Ok(mut guard) = tx.lock() {
+                    if let Some(tx) = guard.take() {
+                        let result = if error.is_null() {
+                            Ok(())
+                        } else {
+                            Err("Notification authorization request failed".to_string())
+                        };
+                        let _ = tx.send(result);
+                    }
+                }
+            },
+        );
+        let _: () =
+            msg_send![center, requestAuthorizationWithOptions: 7usize, completionHandler: &*handler];
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("Notification authorization callback dropped".to_string()),
+        Err(_) => Err("Timed out requesting notification authorization".to_string()),
+    }
+}
+
+pub async fn request_notifications_on_main_thread(app: &AppHandle) -> Result<(), String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let tx = std::sync::Mutex::new(Some(tx));
+        autoreleasepool(|_| unsafe {
+            let center: *mut AnyObject =
+                msg_send![class!(UNUserNotificationCenter), currentNotificationCenter];
+            if center.is_null() {
+                if let Some(tx) = tx.lock().ok().and_then(|mut guard| guard.take()) {
+                    let _ = tx.send(Err("UNUserNotificationCenter was unavailable".to_string()));
+                }
+                return;
+            }
+            let handler = block2::RcBlock::new(
+                move |_granted: objc2::runtime::Bool, error: *mut AnyObject| {
+                    if let Ok(mut guard) = tx.lock() {
+                        if let Some(tx) = guard.take() {
+                            let result = if error.is_null() {
+                                Ok(())
+                            } else {
+                                Err("Notification authorization request failed".to_string())
+                            };
+                            let _ = tx.send(result);
+                        }
+                    }
+                },
+            );
+            let _: () = msg_send![
+                center,
+                requestAuthorizationWithOptions: 7usize,
+                completionHandler: &*handler
+            ];
+        });
+    })
+    .map_err(|error| format!("Could not dispatch notification request to main thread: {error}"))?;
+
+    match tokio::time::timeout(std::time::Duration::from_secs(60), rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("Notification authorization callback dropped".to_string()),
+        Err(_) => Err("Timed out requesting notification authorization".to_string()),
+    }
 }
 
 // UTI for plain UTF-8 text - the value of `NSPasteboardTypeString`.
@@ -390,52 +747,37 @@ pub struct PasteboardSnapshot {
     items: Vec<Vec<(String, Vec<u8>)>>,
 }
 
-/// Copies every pasteboard item and every advertised representation. Saving
-/// only the plain-text projection destroys rich text, images, file URLs, and
-/// multi-item clipboards when Verenu restores after Cmd+V.
+/// Takes a conservative plain-text snapshot of the general pasteboard.
+///
+/// Do not eagerly call `dataForType:` for every advertised representation.
+/// Clipboard owners may advertise lazily generated formats and block that
+/// call indefinitely (observed with a live owner while dictation sat at
+/// "Pasting…" for five minutes). The caller also applies a wall-clock bound.
+/// Rich-only clipboards are deliberately not restored rather than risking a
+/// permanent paste hang.
 pub fn pasteboard_snapshot() -> Option<PasteboardSnapshot> {
     autoreleasepool(|_| unsafe {
         let pb: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
         if pb.is_null() {
             return None;
         }
-        let pasteboard_items: *mut AnyObject = msg_send![pb, pasteboardItems];
-        if pasteboard_items.is_null() {
-            return Some(PasteboardSnapshot { items: Vec::new() });
-        }
-        let item_count: usize = msg_send![pasteboard_items, count];
-        let mut items = Vec::with_capacity(item_count);
-        for item_index in 0..item_count {
-            let item: *mut AnyObject = msg_send![pasteboard_items, objectAtIndex: item_index];
-            let types: *mut AnyObject = msg_send![item, types];
-            if types.is_null() {
-                items.push(Vec::new());
-                continue;
-            }
-            let type_count: usize = msg_send![types, count];
-            let mut representations = Vec::with_capacity(type_count);
-            for type_index in 0..type_count {
-                let item_type: *mut AnyObject = msg_send![types, objectAtIndex: type_index];
-                let Some(type_name) = nsstring_to_string(item_type) else {
-                    continue;
-                };
-                let data: *mut AnyObject = msg_send![item, dataForType: item_type];
-                if data.is_null() {
-                    continue;
-                }
-                let length: usize = msg_send![data, length];
-                let bytes: *const u8 = msg_send![data, bytes];
-                let value = if length == 0 {
-                    Vec::new()
-                } else if bytes.is_null() {
-                    continue;
-                } else {
-                    std::slice::from_raw_parts(bytes, length).to_vec()
-                };
-                representations.push((type_name, value));
-            }
-            items.push(representations);
-        }
+        let ty = NSString::from_str(PASTEBOARD_TYPE_STRING);
+        let value: *mut AnyObject = msg_send![pb, stringForType: &*ty];
+        let items = match nsstring_to_string(value) {
+            Some(text) => vec![vec![(
+                PASTEBOARD_TYPE_STRING.to_string(),
+                text.into_bytes(),
+            )]],
+            None => Vec::new(),
+        };
+        log::info!(
+            "pasteboard snapshot: captured safe plain-text representation bytes={}",
+            items
+                .first()
+                .and_then(|item| item.first())
+                .map(|(_, data)| data.len())
+                .unwrap_or(0)
+        );
         Some(PasteboardSnapshot { items })
     })
 }

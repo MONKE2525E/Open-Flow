@@ -212,10 +212,10 @@ fn main() {
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false);
             if sync_enabled {
-                app.manage(sync::SyncManager::start(
-                    app.handle().clone(),
-                    app.state::<DbHandle>().inner().clone(),
-                ));
+            app.manage(sync::SyncManager::start(
+                app.handle().clone(),
+                app.state::<DbHandle>().inner().clone(),
+            ));
             } else {
                 log::info!("LAN device sync disabled");
             }
@@ -399,6 +399,9 @@ fn main() {
             commands::get_api_key_status,
             commands::validate_api_key,
             commands::list_provider_models,
+            commands::open_notifications_settings,
+            commands::request_notification_permission,
+            commands::check_keychain_access,
             commands::save_setting,
             commands::get_setting,
             commands::get_all_settings,

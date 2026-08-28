@@ -58,7 +58,7 @@ type DevContextWebsiteTarget = {
   created_at: string;
 };
 type DevPermissionStatus = 'authorized' | 'needs_permission' | 'not_determined' | 'denied' | 'restricted' | 'unknown';
-type DevKeychainStatus = 'authorized' | 'not_configured' | 'denied' | 'unknown';
+type DevKeychainStatus = 'available' | 'configuration_error' | 'authentication_required' | 'interaction_unavailable' | 'not_checked' | 'unknown' | 'error';
 type LocalSttEngineType =
   | 'parakeet'
   | 'moonshine'
@@ -927,28 +927,33 @@ function devCreated(id: number): CreatedRecordMeta {
 function devPermissionSnapshot(provider?: unknown) {
   const accessibility = String(getDevSetting('accessibility_permission_status') ?? 'authorized') as DevPermissionStatus;
   const microphone = String(getDevSetting('microphone_permission_status') ?? 'authorized') as DevPermissionStatus;
-  const saved = (getDevSetting('__provider_connected') as Record<string, boolean> | null) ?? {};
-  const providerKey = typeof provider === 'string' ? provider : '';
-  const keychain = providerKey && saved[providerKey]
-    ? String(getDevSetting('keychain_permission_status') ?? 'authorized') as DevKeychainStatus
-    : 'not_configured';
+  const keychain = typeof provider === 'string'
+    ? String(getDevSetting('keychain_permission_status') ?? 'not_checked') as DevKeychainStatus
+    : 'not_checked';
 
   return {
     accessibility,
     microphone,
+    notifications: {
+      authorization: String(getDevSetting('notification_authorization') ?? 'authorized'),
+      alerts: String(getDevSetting('notification_alerts') ?? 'enabled'),
+      sounds: String(getDevSetting('notification_sounds') ?? 'enabled'),
+      badges: String(getDevSetting('notification_badges') ?? 'enabled'),
+      notificationCenter: String(getDevSetting('notification_center') ?? 'enabled'),
+      lockScreen: String(getDevSetting('notification_lock_screen') ?? 'enabled'),
+      rawAuthorization: 2,
+    },
     keychain,
     allCoreGranted: accessibility === 'authorized' && microphone === 'authorized',
     lastCheckedAt: new Date().toISOString(),
-    sourceHints: {
-      microphoneVerified: Boolean(getDevSetting('microphone_verified') ?? microphone === 'authorized'),
-      accessibilityVerified: Boolean(getDevSetting('accessibility_verified') ?? accessibility === 'authorized'),
-    },
     diagnostics: {
       bundleIdentifier: String(getDevSetting('bundle_identifier') ?? 'com.verenu.app'),
       bundlePath: String(getDevSetting('bundle_path') ?? '/Applications/Verenu.app'),
       executablePath: String(getDevSetting('executable_path') ?? '/Applications/Verenu.app/Contents/MacOS/Verenu'),
       processId: 12345,
       accessibilityTrusted: accessibility === 'authorized',
+      microphoneAvAudioStatus: microphone,
+      microphoneAvCaptureStatus: microphone,
     },
   };
 }
@@ -1757,8 +1762,20 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return 'authorized' as T;
     case 'request_microphone_permission_snapshot':
       writeDevSetting('microphone_permission_status', 'authorized');
-      writeDevSetting('microphone_verified', true);
       return devPermissionSnapshot(args?.provider) as T;
+    case 'request_notification_permission':
+      writeDevSetting('notification_authorization', 'authorized');
+      return devPermissionSnapshot(args?.provider).notifications as T;
+    case 'open_notifications_settings':
+      return undefined as T;
+    case 'check_keychain_access':
+      writeDevSetting('keychain_permission_status', 'available');
+      return {
+        state: 'available',
+        operation: 'all account reads + create/read/delete',
+        osStatus: 0,
+        osStatusMeaning: 'errSecSuccess',
+      } as T;
     case 'reset_macos_core_permissions':
       writeDevSetting('accessibility_permission_status', 'not_determined');
       return {
