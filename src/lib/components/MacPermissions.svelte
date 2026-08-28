@@ -203,14 +203,16 @@
           ? snapshot.keychain
           : 'unknown',
     };
-    console.info('[permissions][frontend] received/applied', {
-      generation: next.diagnostics?.snapshotGeneration,
-      microphone: next.microphone,
-      microphoneCapture: next.diagnostics?.microphoneAvCaptureStatus,
-      microphoneAudio: next.diagnostics?.microphoneAvAudioStatus,
-      notifications: next.notifications?.authorization,
-      keychain: snapshot.keychain,
-    });
+    if (import.meta.env.DEV) {
+      console.info('[permissions][frontend] received/applied', {
+        generation: next.diagnostics?.snapshotGeneration,
+        microphone: next.microphone,
+        microphoneCapture: next.diagnostics?.microphoneAvCaptureStatus,
+        microphoneAudio: next.diagnostics?.microphoneAvAudioStatus,
+        notifications: next.notifications?.authorization,
+        keychain: snapshot.keychain,
+      });
+    }
     return snapshot;
   }
 
