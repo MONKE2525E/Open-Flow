@@ -13,7 +13,6 @@
   import {
     curatedRows,
     rowForSelection,
-    unverifiedRows,
     type LocalControls,
     type ModelRow,
     type PickerContext,
@@ -104,10 +103,11 @@
   // Selections stay listed even after a provider drops them, so a dead choice
   // still has somewhere to show its state and be swapped out.
   const pinned = $derived([defaultModel, ...fallbackModels].filter(Boolean));
+  // Keep the picker intentional: provider APIs expose many unrelated models
+  // such as embeddings, image, preview, and experimental variants. Advanced
+  // mode still enables custom ids below for users who explicitly need one.
   const allRows = $derived(
-    [...curatedRows(context, pinned), ...(advancedModelUi ? unverifiedRows(context) : [])].filter(
-      (row) => local.supported || row.provider !== 'local',
-    ),
+    curatedRows(context, pinned).filter((row) => local.supported || row.provider !== 'local'),
   );
 
   function matches(row: ModelRow): boolean {
