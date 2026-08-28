@@ -286,12 +286,6 @@ function resolveSigningIdentity() {
     process.env.VERENU_DEV_SIGNING_IDENTITY ?? process.env.APPLE_SIGNING_IDENTITY
   )?.trim();
   if (configured && configured !== '-') {
-    if (!configured.startsWith('Apple Development:')) {
-      console.error(
-        `Development signing identity must be an Apple Development certificate, got: ${configured}`,
-      );
-      process.exit(1);
-    }
     return configured;
   }
 
@@ -316,16 +310,31 @@ function verifyPreparedIdentity(appBundle, expectedIdentity) {
     encoding: 'utf8',
   });
   const signingText = `${signature.stdout ?? ''}\n${signature.stderr ?? ''}`;
+  const expectedAuthority = resolveSigningAuthority(expectedIdentity);
   if (
     bundleId !== BUNDLE_IDENTIFIER ||
     displayName !== APP_DISPLAY_NAME ||
-    !signingText.includes(`Authority=${expectedIdentity}`) ||
+    !signingText.includes(`Authority=${expectedAuthority}`) ||
     signingText.includes('Signature=adhoc')
   ) {
     console.error('Prepared development bundle failed its identity contract.');
     console.error(`bundle=${bundleId} display=${displayName}`);
     process.exit(1);
   }
+}
+
+function resolveSigningAuthority(identity) {
+  // `codesign --sign` accepts either a certificate common name or its
+  // 40-character SHA-1 hash. `codesign -dv` reports the common name in the
+  // Authority field, so resolve hashes through the local identity catalogue
+  // before comparing the signed bundle.
+  if (!/^[0-9a-f]{40}$/i.test(identity)) return identity;
+  const identities = spawnSync('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], {
+    encoding: 'utf8',
+  });
+  const escaped = identity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = identities.stdout?.match(new RegExp(`\\"${escaped}\\"\\s+\\"([^\\"]+)\\"`, 'i'));
+  return match?.[1] ?? identity;
 }
 
 function plistValue(plist, key) {

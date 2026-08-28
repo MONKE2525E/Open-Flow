@@ -9,7 +9,10 @@ const MAC_USER_AGENT =
 async function reachPermissionsStep(page) {
   await page.getByRole('button', { name: 'Get Started' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('button', { name: 'Continue' }).click();
+  // The API-key step uses "I'll add it later" in the default fork mode and
+  // "Continue" after a provider/key has been selected. Both paths lead to
+  // the permissions step, so keep this helper independent of that choice.
+  await page.getByRole('button', { name: /^(Continue|I'll add it later)$/ }).click();
   await page.getByRole('heading', { name: 'Check your macOS permissions' }).waitFor({ state: 'visible', timeout: TIMEOUT });
 }
 
