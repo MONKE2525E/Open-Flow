@@ -245,7 +245,7 @@
       : provider === 'openai'
         ? 'openai/gpt-4o-mini'
         : provider === 'google'
-          ? 'google/gemini-3.5-flash'
+          ? 'google/gemini-2.5-flash'
           : 'groq/qwen/qwen3.6-27b';
 
     // The Models step is the more specific answer, so its target wins over the
