@@ -19,7 +19,8 @@
   }
 </script>
 
-<div
+<button
+  type="button"
   class="toggle"
   class:on={checked}
   role="switch"
@@ -31,7 +32,7 @@
   onkeyup={handleToggleKeyup}
 >
   <span class="toggle-thumb" aria-hidden="true"></span>
-</div>
+</button>
 
 <style>
   .toggle {
