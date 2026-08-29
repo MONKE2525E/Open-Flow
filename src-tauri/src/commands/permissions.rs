@@ -628,29 +628,30 @@ pub fn open_notifications_settings() -> Result<(), String> {
 pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let Some(bundle) = crate::system::mac_app::bundle_path().filter(|path| {
+        if let Some(bundle) = crate::system::mac_app::bundle_path().filter(|path| {
             Path::new(path.trim_end_matches('/'))
                 .extension()
                 .map(|extension| extension == "app")
                 .unwrap_or(false)
-        }) else {
-            return handle.restart();
-        };
-        let pid = std::process::id().to_string();
-        std::process::Command::new("/bin/sh")
-            .args([
-                "-c",
-                "while kill -0 \"$2\" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open -n \"$1\"",
-                "verenu-relaunch",
-                &bundle,
-                &pid,
-            ])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|error| format!("Could not schedule LaunchServices relaunch: {error}"))?;
-        handle.exit(0);
+        }) {
+            let pid = std::process::id().to_string();
+            std::process::Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "while kill -0 \"$2\" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open -n \"$1\"",
+                    "verenu-relaunch",
+                    &bundle,
+                    &pid,
+                ])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|error| format!("Could not schedule LaunchServices relaunch: {error}"))?;
+            handle.exit(0);
+        } else {
+            handle.restart();
+        }
         Ok(())
     }
     #[cfg(not(target_os = "macos"))]
