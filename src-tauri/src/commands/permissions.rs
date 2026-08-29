@@ -467,13 +467,15 @@ pub fn get_accessibility_permission_status() -> String {
 
 #[tauri::command]
 pub async fn request_accessibility_permission(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     provider: Option<String>,
 ) -> MacPermissionSnapshot {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let _ = _app.run_on_main_thread(move || {
+        let _ = app.run_on_main_thread(move || {
             let prompted = check_accessibility_permission(true);
             let _ = tx.send(prompted);
         });
@@ -491,12 +493,14 @@ pub fn get_microphone_permission_status() -> String {
 /// then returns the resulting status. Lets the permissions UI request the mic
 /// directly instead of waiting for the first recording. No-op off macOS.
 #[tauri::command]
-pub async fn request_microphone_permission(_app: tauri::AppHandle) -> Result<String, String> {
+pub async fn request_microphone_permission(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let before = crate::system::mac_app::microphone_permission_status();
         if before == "not_determined" {
-            crate::system::mac_app::request_microphone_on_main_thread(&_app).await?;
+            crate::system::mac_app::request_microphone_on_main_thread(&app).await?;
         }
         Ok(crate::system::mac_app::microphone_permission_status().to_string())
     }
@@ -508,9 +512,11 @@ pub async fn request_microphone_permission(_app: tauri::AppHandle) -> Result<Str
 
 #[tauri::command]
 pub async fn request_microphone_permission_snapshot(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     provider: Option<String>,
 ) -> Result<MacPermissionSnapshot, String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let before = crate::system::mac_app::microphone_permission_status();
@@ -519,9 +525,9 @@ pub async fn request_microphone_permission_snapshot(
         if before == "not_determined" {
             let request =
                 if crate::system::mac_app::av_audio_microphone_permission_status().is_some() {
-                    crate::system::mac_app::request_audio_application_on_main_thread(&_app).await
+                    crate::system::mac_app::request_audio_application_on_main_thread(&app).await
                 } else {
-                    crate::system::mac_app::request_microphone_on_main_thread(&_app).await
+                    crate::system::mac_app::request_microphone_on_main_thread(&app).await
                 };
             let mut callback = match request {
                 Ok(value) => value,
@@ -533,7 +539,7 @@ pub async fn request_microphone_permission_snapshot(
             let mut after = crate::system::mac_app::microphone_permission_status();
             if !callback && after == "not_determined" {
                 callback =
-                    crate::system::mac_app::request_microphone_via_device_input(&_app).await?;
+                    crate::system::mac_app::request_microphone_via_device_input(&app).await?;
                 after = crate::system::mac_app::microphone_permission_status();
             }
             log::info!(
@@ -583,13 +589,15 @@ fn write_microphone_request_trace(
 /// then re-query UNNotificationSettings for the authoritative result.
 #[tauri::command]
 pub async fn request_notification_permission(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
 ) -> Result<NotificationPermissionSnapshot, String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let current = notification_permission_snapshot().await;
         if current.authorization == "not_determined" {
-            crate::system::mac_app::request_notifications_on_main_thread(&_app).await?;
+            crate::system::mac_app::request_notifications_on_main_thread(&app).await?;
         }
     }
     Ok(notification_permission_snapshot().await)
@@ -617,42 +625,38 @@ pub fn open_notifications_settings() -> Result<(), String> {
 /// process, so synthesised Cmd+V injection may only start working after a
 /// restart once Accessibility has just been granted.
 #[tauri::command]
-#[allow(unreachable_code, clippy::diverging_sub_expression)]
 pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let Some(bundle) = crate::system::mac_app::bundle_path().filter(|path| {
+        if let Some(bundle) = crate::system::mac_app::bundle_path().filter(|path| {
             Path::new(path.trim_end_matches('/'))
                 .extension()
                 .map(|extension| extension == "app")
                 .unwrap_or(false)
-        }) else {
+        }) {
+            let pid = std::process::id().to_string();
+            std::process::Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "while kill -0 \"$2\" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open -n \"$1\"",
+                    "verenu-relaunch",
+                    &bundle,
+                    &pid,
+                ])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|error| format!("Could not schedule LaunchServices relaunch: {error}"))?;
+            handle.exit(0);
+        } else {
             handle.restart();
-            #[allow(unreachable_code)]
-            return Ok(());
-        };
-        let pid = std::process::id().to_string();
-        std::process::Command::new("/bin/sh")
-            .args([
-                "-c",
-                "while kill -0 \"$2\" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open -n \"$1\"",
-                "verenu-relaunch",
-                &bundle,
-                &pid,
-            ])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|error| format!("Could not schedule LaunchServices relaunch: {error}"))?;
-        handle.exit(0);
+        }
         Ok(())
     }
     #[cfg(not(target_os = "macos"))]
     {
         handle.restart();
-        #[allow(unreachable_code)]
-        Ok(())
     }
 }
 

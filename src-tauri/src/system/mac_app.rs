@@ -763,22 +763,17 @@ pub fn pasteboard_snapshot() -> Option<PasteboardSnapshot> {
         }
         let ty = NSString::from_str(PASTEBOARD_TYPE_STRING);
         let value: *mut AnyObject = msg_send![pb, stringForType: &*ty];
-        let items = match nsstring_to_string(value) {
-            Some(text) => vec![vec![(
+        let text = nsstring_to_string(value)?;
+        log::info!(
+            "pasteboard snapshot: captured safe plain-text representation bytes={}",
+            text.len()
+        );
+        Some(PasteboardSnapshot {
+            items: vec![vec![(
                 PASTEBOARD_TYPE_STRING.to_string(),
                 text.into_bytes(),
             )]],
-            None => Vec::new(),
-        };
-        log::info!(
-            "pasteboard snapshot: captured safe plain-text representation bytes={}",
-            items
-                .first()
-                .and_then(|item| item.first())
-                .map(|(_, data)| data.len())
-                .unwrap_or(0)
-        );
-        Some(PasteboardSnapshot { items })
+        })
     })
 }
 

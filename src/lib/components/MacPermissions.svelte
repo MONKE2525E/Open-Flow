@@ -263,7 +263,10 @@
     if (!isMac) return;
     if (watchInterval !== null) return;
     watchInterval = setInterval(async () => {
-      if (permissionsLoading) return;
+      // Do not let a passive poll race an explicit native permission prompt.
+      // The prompt handlers own the next snapshot generation and will apply
+      // their post-request result when the OS callback completes.
+      if (permissionsLoading || accessibilityPrompting || microphoneRequesting || notificationRequesting) return;
       await refreshMacPermissions(true);
     }, WATCH_INTERVAL_MS);
   }

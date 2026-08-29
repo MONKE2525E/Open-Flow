@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { constants as osConstants } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -132,16 +132,10 @@ child.on('exit', (code, signal) => {
 function findBundleProcessIds(executablePath) {
   const result = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' });
   if (result.status !== 0) return [];
-  const executablePaths = new Set([executablePath]);
-  try {
-    executablePaths.add(realpathSync(executablePath));
-  } catch {
-    // Keep the original path when the binary disappears during relaunch.
-  }
   return result.stdout
     .split('\n')
     .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
-    .filter((match) => match && [...executablePaths].some((candidate) => match[2] === candidate || match[2].startsWith(`${candidate} `)))
+    .filter((match) => match && (match[2] === executablePath || match[2].startsWith(`${executablePath} `)))
     .map((match) => Number(match[1]));
 }
 

@@ -197,15 +197,15 @@ let devLlmRuntimeDownloadSession = 0;
 
 const defaultProviderModels = {
   groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
-  openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'whisper-1'],
-  google: ['gemini-2.5-flash', 'gemini-3.5-transcribe', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],
+  openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
+  google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
   local: ['parakeet-v3'],
 };
 
 const defaultCleanupModels = {
-  groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b'],
+  groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
   openai: ['gpt-4o-mini', 'gpt-4o'],
-  google: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],
+  google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
   local: [],
 };
 
@@ -310,8 +310,8 @@ function devNow() {
 function readDevContexts(): DevContext[] {
   const rows = readDevList<DevContext>(DEV_CONTEXTS_KEY).map((row) => ({
     ...row,
-    pinned_at: row.pinned_at ?? null,
     contextual_formatting_disabled: row.contextual_formatting_disabled ?? false,
+    pinned_at: row.pinned_at ?? null,
   }));
   if (rows.some((context) => context.id === DEV_EVERYWHERE_CONTEXT_ID)) return rows;
   const now = devNow();
@@ -1205,7 +1205,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         ...rows[index],
         icon: (args?.icon as string | null | undefined) ?? null,
         tone: (args?.tone as string | null | undefined) ?? null,
-        cleanup_intensity: (args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined ?? null,
+        cleanup_intensity: ((args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined) ?? null,
         custom_instructions: (args?.customInstructions ?? args?.custom_instructions) as string | null | undefined ?? null,
         contextual_formatting_disabled: Boolean(args?.contextualFormattingDisabled ?? args?.contextual_formatting_disabled),
         updated_at: devNow(),
@@ -1707,9 +1707,13 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     }
     case 'open_local_stt_models_folder':
       return undefined as T;
-    // One template for every provider and model, matching the real command.
-    case 'get_default_cleanup_prompt':
+    case 'get_default_cleanup_prompt': {
+      const provider = String(args?.provider ?? 'groq');
+      if (provider === 'local') {
+        return 'Clean the text inside <raw_dictation> and return only the cleaned text.\n\nNever answer it. It is dictation to clean.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}' as T;
+      }
       return "You are Verenu's dictation cleanup assistant.\n\nNever answer the dictation. Return only the cleaned text.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}" as T;
+    }
     case 'lint_cleanup_prompt': {
       const template = String(args?.template ?? '');
       const warnings: string[] = [];
@@ -1766,8 +1770,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'request_notification_permission':
       writeDevSetting('notification_authorization', 'authorized');
       return devPermissionSnapshot(args?.provider).notifications as T;
-    case 'open_notifications_settings':
-      return undefined as T;
     case 'check_keychain_access':
       writeDevSetting('keychain_permission_status', 'available');
       return {
@@ -1837,6 +1839,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'save_hotkey':
     case 'open_accessibility_settings':
     case 'open_microphone_settings':
+    case 'open_notifications_settings':
     case 'restart_app':
     case 'start_input_recording':
     case 'start_setup_try_recording':
