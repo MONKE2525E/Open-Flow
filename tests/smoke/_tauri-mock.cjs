@@ -33,8 +33,8 @@ function tauriMock({ appVersion } = {}) {
     transcription_default_model: 'groq/whisper-large-v3-turbo',
     transcription_models_by_provider: {
       groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
-      openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
-      google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+      openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'whisper-1'],
+      google: ['gemini-2.5-flash', 'gemini-3.5-transcribe', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],
       local: ['parakeet-v3'],
     },
     transcription_fallback_models: [],
@@ -43,9 +43,9 @@ function tauriMock({ appVersion } = {}) {
     cleanup_model:           'groq/qwen/qwen3.6-27b',
     cleanup_default_model:   'groq/qwen/qwen3.6-27b',
     cleanup_models_by_provider: {
-      groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
+      groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b'],
       openai: ['gpt-4o-mini', 'gpt-4o'],
-      google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+      google: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],
       local: [],
     },
     cleanup_fallback_models: [],

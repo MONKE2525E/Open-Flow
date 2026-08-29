@@ -28,9 +28,11 @@ const PROMPT_TEST_CASES: &[(&str, &str)] = &[
     ),
 ];
 
+/// One template for every provider and model — the picker's fallback chain
+/// would otherwise silently drop an edit made on a different model.
 #[tauri::command]
-pub fn get_default_cleanup_prompt(provider: String, model: String) -> String {
-    prompts::cleanup_template_for(&provider, &model).to_string()
+pub fn get_default_cleanup_prompt() -> String {
+    prompts::default_cleanup_template().to_string()
 }
 
 #[tauri::command]

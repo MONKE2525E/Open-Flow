@@ -24,6 +24,8 @@ interface SettingsSection {
   devOnly?: boolean;
   /** Only render when Legacy features are enabled. */
   legacyOnly?: boolean;
+  /** Only render when the LAN Sync beta is enabled. */
+  syncOnly?: boolean;
 }
 
 /**
@@ -40,7 +42,7 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'keys',        label: 'API Keys',     icon: 'key',     group: 'Settings' },
   { id: 'models',      label: 'Models',       icon: 'command', group: 'Settings' },
   { id: 'privacy',     label: 'Privacy',      icon: 'lock',    group: 'Settings' },
-  { id: 'sync',        label: 'Sync',         icon: 'devices', group: 'Settings' },
+  { id: 'sync',        label: 'Sync',         icon: 'devices', group: 'Settings', syncOnly: true },
   { id: 'advanced',    label: 'Audio',        icon: 'mic',     group: 'Settings' },
   { id: 'permissions', label: 'Permissions',  icon: 'shield',  group: 'Settings', macOnly: true },
   { id: 'developer',   label: 'Developer',    icon: 'command', group: 'Settings', devOnly: true },
@@ -68,12 +70,14 @@ export function visibleSettingsSections(opts: {
   isMac: boolean;
   devMode: boolean;
   legacyMode?: boolean;
+  syncEnabled?: boolean;
 }): SettingsSectionGroup[] {
   const groups: SettingsSectionGroup[] = [];
   for (const section of SETTINGS_SECTIONS) {
     if (section.macOnly && !opts.isMac) continue;
     if (section.devOnly && !opts.devMode) continue;
     if (section.legacyOnly && !opts.legacyMode) continue;
+    if (section.syncOnly && !opts.syncEnabled) continue;
     const last = groups[groups.length - 1];
     if (last && last.group === section.group) last.items.push(section);
     else groups.push({ group: section.group, items: [section] });

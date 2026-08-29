@@ -154,6 +154,7 @@ fn gain_leniency_scale(active_gain: f32) -> f32 {
 /// Blocking (ONNX inference) — call from `spawn_blocking`, ideally started
 /// concurrently with the transcription API call so it adds no wall-clock
 /// latency of its own.
+#[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
 pub fn analyze_speech(
     samples_16k: &[f32],
     active_gain: f32,

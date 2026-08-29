@@ -67,10 +67,12 @@ type SettingsValueMap = {
   verenu_service_checks_enabled: boolean;
   appearance_mode: AppearanceMode;
   advanced_model_ui: boolean;
-  cleanup_prompt_overrides: Record<string, string>;
+  /** One cleanup prompt for every model — see stores.svelte.ts. */
+  cleanup_prompt_override: string;
   /** Derived cache of each provider's live model list. Written only by modelCatalogStore. */
   provider_model_cache: Record<string, unknown>;
   legacy_features_enabled: boolean;
+  sync_enabled: boolean;
 };
 
 type SettingKey = keyof SettingsValueMap;

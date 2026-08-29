@@ -19,7 +19,7 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
       cleanup_models_by_provider: {
         groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
         openai: ['gpt-4o-mini', 'gpt-4o'],
-        google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+        google: ['gemini-2.5-flash'],
         local: [],
       },
     },
@@ -89,17 +89,21 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
     await cleanupTile.locator('.tile-btn-primary').click();
     await picker.waitFor({ state: 'visible', timeout: TIMEOUT });
     await picker.locator('.rail-item:has-text("Local")').click();
-    const qwenRow = picker.locator('.model-row').filter({ hasText: 'Qwen 2.5 3B Instruct' });
-    await qwenRow.locator('[data-testid="edit-prompt"]').click();
-    await page.locator('.prompt-modal-card').waitFor({ state: 'visible', timeout: TIMEOUT });
-    await page.locator('.prompt-modal-card .prompt-btn:has-text("Save")').click();
-    await page.locator('.prompt-modal-card').waitFor({ state: 'hidden', timeout: TIMEOUT });
-
     const gemmaRow = picker.locator('.model-row').filter({ hasText: 'Gemma 4 E2B' });
     await gemmaRow.locator('[data-testid="download-model"]').click();
     await gemmaRow.locator('[data-testid="cancel-model-download"]').waitFor({ state: 'visible', timeout: TIMEOUT });
     await gemmaRow.locator('[data-testid="cancel-model-download"]').click();
     await gemmaRow.locator('[data-testid="download-model"]').waitFor({ state: 'visible', timeout: TIMEOUT });
+
+    // One cleanup prompt covers every model now, so it is edited from the tile
+    // rather than from a per-model button inside the picker.
+    await picker.locator('.picker-close').click();
+    await picker.waitFor({ state: 'hidden', timeout: TIMEOUT });
+    await cleanupTile.locator('.tile-btn', { hasText: 'Edit prompt' }).click();
+    const promptCard = page.locator('.prompt-modal-card');
+    await promptCard.waitFor({ state: 'visible', timeout: TIMEOUT });
+    await promptCard.locator('.prompt-btn:has-text("Save")').click();
+    await promptCard.waitFor({ state: 'hidden', timeout: TIMEOUT });
 
     if (errors.length) {
       console.error('FAIL');
@@ -115,3 +119,4 @@ const { TARGET_URL, TIMEOUT, seedDevState, openSettings } = require('./_dev-help
     await browser.close();
   }
 })();
+
