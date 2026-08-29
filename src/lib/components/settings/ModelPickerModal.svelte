@@ -12,6 +12,7 @@
   import { modelId, providerDisplayLabel, splitModelId, taskLabel, type TaskType } from './models';
   import {
     curatedRows,
+    unverifiedRows,
     rowForSelection,
     type LocalControls,
     type ModelRow,
