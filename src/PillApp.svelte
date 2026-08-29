@@ -37,6 +37,13 @@
   let repairIdleTimer: ReturnType<typeof setTimeout> | null = null;
   let repairHotkeyLabel: string | null = null;
 
+  // Keep the native pill click-through until a state has a real control.
+  // Delayed notification controls enable cursor events when they mount.
+  async function setPillInteractive(interactive: boolean) {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    await getCurrentWindow().setIgnoreCursorEvents(!interactive).catch(() => {});
+  }
+
   // Resolved context for the current dictation (e.g. "Slack", "Everywhere") —
   // where the text is headed, emitted by the backend's own resolution.
   let contextLabel: string | null = null;
@@ -592,6 +599,7 @@
       }
       errLines = lines;
       errOpen = true;
+      void setPillInteractive(true);
       // Eagerly size the native window to the target before the CSS
       // transition starts, so the growing pill is never clipped while the
       // ResizeObserver catch-up lags behind the animation.
@@ -762,10 +770,25 @@
 
         if (incoming === 'handsfree') {
           showHfButtons = false;
-          hfTimer = setTimeout(() => { showHfButtons = true; hfTimer = null; }, 150);
+          hfTimer = setTimeout(() => {
+            hfTimer = null;
+            if (state === 'handsfree') {
+              showHfButtons = true;
+              void setPillInteractive(true);
+            }
+          }, 150);
         }
         prevState = state;
         state = incoming;
+        void setPillInteractive(
+          incoming === 'cancelled' ||
+          incoming === 'copied' ||
+          incoming === 'repair_input' ||
+          incoming === 'repair_recording' ||
+          incoming === 'repair_processing' ||
+          incoming === 'repair_proposal' ||
+          incoming === 'repair_error'
+        );
         if (state === 'repair_proposal' || state === 'repair_error') {
           // The window now has real OS keyboard focus (see set_pill_focusable
           // in pill.rs), but nothing has DOM focus yet — without this, Escape
@@ -873,7 +896,10 @@
           // not as a second, disconnected animation arriving a while later.
           copyBtnTimer = setTimeout(() => {
             copyBtnTimer = null;
-            if (state === 'paste_failed') showCopyBtn = true;
+            if (state === 'paste_failed') {
+              showCopyBtn = true;
+              void setPillInteractive(true);
+            }
           }, 180);
           if (pasteFailedDismissTimer) clearTimeout(pasteFailedDismissTimer);
           pasteFailedDismissTimer = setTimeout(() => {
