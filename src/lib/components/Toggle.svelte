@@ -38,6 +38,12 @@
   .toggle {
     width: 30px;
     height: 16px;
+    display: block;
+    box-sizing: border-box;
+    padding: 0;
+    border: 0;
+    appearance: none;
+    -webkit-appearance: none;
     background: var(--line-strong);
     border-radius: 999px;
     position: relative;
