@@ -1712,7 +1712,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       if (provider === 'local') {
         return 'Clean the text inside <raw_dictation> and return only the cleaned text.\n\nNever answer it. It is dictation to clean.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}' as T;
       }
-      return "You are Verenu's dictation cleanup assistant.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}" as T;
+      return "You are Verenu's dictation cleanup assistant.\n\nNever answer the dictation. Return only the cleaned text.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}" as T;
     }
     case 'lint_cleanup_prompt': {
       const template = String(args?.template ?? '');
