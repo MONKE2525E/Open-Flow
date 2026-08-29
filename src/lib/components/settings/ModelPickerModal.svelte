@@ -12,8 +12,8 @@
   import { modelId, providerDisplayLabel, splitModelId, taskLabel, type TaskType } from './models';
   import {
     curatedRows,
-    rowForSelection,
     unverifiedRows,
+    rowForSelection,
     type LocalControls,
     type ModelRow,
     type PickerContext,
