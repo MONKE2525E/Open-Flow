@@ -19,8 +19,7 @@
   }
 </script>
 
-<button
-  type="button"
+<div
   class="toggle"
   class:on={checked}
   role="switch"
@@ -32,18 +31,12 @@
   onkeyup={handleToggleKeyup}
 >
   <span class="toggle-thumb" aria-hidden="true"></span>
-</button>
+</div>
 
 <style>
   .toggle {
     width: 30px;
     height: 16px;
-    display: block;
-    box-sizing: border-box;
-    padding: 0;
-    border: 0;
-    appearance: none;
-    -webkit-appearance: none;
     background: var(--line-strong);
     border-radius: 999px;
     position: relative;
@@ -58,11 +51,13 @@
     height: 12px;
     background: var(--bg-elev);
     border-radius: 50%;
-    top: 2px;
+    top: 50%;
     left: 2px;
+    transform: translateY(-50%);
     transition: left 0.35s cubic-bezier(0.22, 1, 0.36, 1);
     box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 15%, transparent);
   }
+
   .toggle.on {
     background: var(--accent);
   }
