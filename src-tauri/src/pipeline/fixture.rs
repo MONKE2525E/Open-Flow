@@ -80,11 +80,13 @@ async fn transcribe_fixture_provider(
 pub async fn run_pipeline_fixture(
     request: PipelineTestRequest,
 ) -> anyhow::Result<PipelineTestResult> {
-    if request.audio.duration_ms < MIN_RECORDING_MS {
-        anyhow::bail!("Recording too short");
-    }
-    if request.rms < MIN_RECORDING_RMS {
-        anyhow::bail!("Audio too quiet - check your mic");
+    if let Some(defect) = gates::capture_defect(
+        request.audio.duration_ms,
+        request.audio.samples_16k.len(),
+        request.audio.wav.len(),
+        request.rms,
+    ) {
+        anyhow::bail!(defect.message());
     }
     if let Err(message) = validate_transcription_chain(&request.config, None) {
         anyhow::bail!(message);

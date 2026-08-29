@@ -5,7 +5,6 @@ use super::*;
 #[derive(Clone, Copy, Default)]
 pub struct RecordingStartOptions {
     pub show_recording_pill: bool,
-    pub emit_globally: bool,
     pub start_cue_delay_ms: Option<u64>,
 }
 
@@ -34,10 +33,8 @@ pub fn start_recording_session(
         state,
         pill_state,
         handless,
-        None,
         RecordingStartOptions {
             show_recording_pill: true,
-            emit_globally: false,
             start_cue_delay_ms,
         },
     ) {
@@ -54,16 +51,28 @@ pub fn start_recording_session(
     }
 }
 
-/// Generalized recording session function supporting calibration overrides.
+/// Generalized recording session function supporting a mic-gain override.
 /// The caller must already have reserved `DictationLifecycle::Starting`.
 pub fn start_recording_session_ex(
     app: &AppHandle,
     state: &SharedState,
     pill_state: &str,
     handless: bool,
-    gain_override: Option<f32>,
     options: RecordingStartOptions,
 ) -> Result<(), String> {
+    // A new recording supersedes any retryable audio from a previous one.
+    // Without this, a dictation that VAD rejected stayed attached to the retry
+    // slot, so a *later* recording that failed early would offer "Try Anyway"
+    // and silently transcribe the older utterance instead — the kind of bug
+    // that makes an adaptive system look haunted.
+    if let Ok(mut st) = lock_state(state) {
+        if st.retry_capture.take().is_some() {
+            log::debug!(
+                "recording: cleared previous retry capture (superseded by a new recording)"
+            );
+        }
+    }
+
     let settings = store::settings_snapshot(app);
     let audio_config = match settings {
         Ok(ref settings) => store::load_audio_config(settings),
@@ -113,22 +122,20 @@ pub fn start_recording_session_ex(
     let noise_reduction = audio_config.noise_reduction;
     let mute_audio = audio_config.mute_audio;
     let exclusive_mic = audio_config.exclusive_mic;
-    let pause_media = audio_config.pause_media_during_dictation && gain_override.is_none();
-    let mic_gain = gain_override.unwrap_or(audio_config.mic_gain);
+    let pause_media = audio_config.pause_media_during_dictation;
     let exclusive_mic_session_id = if cfg!(target_os = "macos")
         && exclusive_mic
         && use_default_input_device
-        && gain_override.is_none()
+        
     {
         Some(crate::system::volume::register_session())
     } else {
         None
     };
 
-    match audio::RecordingSession::start(device, noise_reduction, mic_gain) {
+    match audio::RecordingSession::start(device, noise_reduction) {
         Ok(session) => {
             let level_arc = session.level.clone();
-            let raw_level_arc = session.raw_level.clone();
             let active_arc = session.active.clone();
             let start_cue_active = session.active.clone();
             {
@@ -183,13 +190,7 @@ pub fn start_recording_session_ex(
                 emit_context_for_window(app, target_hwnd);
                 show_pill(app, pill_state);
             }
-            spawn_level_emitter(
-                app.clone(),
-                level_arc,
-                raw_level_arc,
-                active_arc,
-                options.emit_globally,
-            );
+            spawn_level_emitter(app.clone(), level_arc, active_arc);
             if let Some(session_id) = exclusive_mic_session_id {
                 tauri::async_runtime::spawn_blocking(move || {
                     crate::system::volume::hog_mic(session_id)
@@ -199,7 +200,7 @@ pub fn start_recording_session_ex(
                 crate::system::media_control::begin_dictation_media_pause();
             }
             if let Some(delay_ms) = options.start_cue_delay_ms {
-                if mute_audio && gain_override.is_none() {
+                if mute_audio  {
                     crate::media::sound::play_start_delayed_then(delay_ms, move || {
                         if start_cue_active.load(Ordering::Relaxed) {
                             crate::media::sound::coordinated_mute(start_cue_active);
@@ -208,7 +209,7 @@ pub fn start_recording_session_ex(
                 } else {
                     crate::media::sound::play_start_delayed(delay_ms);
                 }
-            } else if mute_audio && gain_override.is_none() {
+            } else if mute_audio  {
                 tauri::async_runtime::spawn_blocking(crate::system::volume::mute);
             }
             Ok(())
@@ -249,14 +250,22 @@ pub async fn cancel_recording_with_resume(
         return;
     };
 
-    let active_gain = store::settings_snapshot(app)
-        .map(|s| store::load_audio_config(&s).mic_gain)
-        .unwrap_or(store::DEFAULT_MIC_GAIN);
-    let min_rms = recording_gate_rms(active_gain);
-    let gate_rms = effective_recording_rms(rms, raw_rms, active_gain);
+    let min_rms = recording_gate_rms();
+    let gate_rms = effective_recording_rms(rms, raw_rms);
 
-    if captured_audio.duration_ms < MIN_RECORDING_MS || gate_rms < min_rms {
-        log::info!("recording: cancelled — capture discarded (duration/quiet gate)");
+    // Structural only: a whispered fragment must stay resumable. An absolute
+    // loudness bar here would discard exactly the captures the adaptive
+    // detector exists to rescue.
+    let _ = (gate_rms, min_rms);
+    if gates::capture_defect(
+        captured_audio.duration_ms,
+        captured_audio.samples_16k.len(),
+        captured_audio.wav.len(),
+        rms,
+    )
+    .is_some()
+    {
+        log::info!("recording: cancelled — capture discarded (structurally unusable)");
         if start_stop_sounds_enabled(app) {
             crate::media::sound::play(crate::media::sound::SoundCue::Cancel);
         }
@@ -369,12 +378,14 @@ pub(crate) fn release_starting_reservation(state: &SharedState) {
 
 /// Spawns a Tokio task that emits `audio-level` events to the pill every 50ms
 /// until the recording's `active` flag goes false.
+///
+/// Pill-only. The app-wide `audio-level` / `audio-level-raw` broadcast existed
+/// solely to drive the mic-calibration meter; adaptive voice detection replaced
+/// that workflow, so nothing outside the pill listens any more.
 pub fn spawn_level_emitter(
     app: AppHandle,
     level: Arc<std::sync::atomic::AtomicU32>,
-    raw_level: Arc<std::sync::atomic::AtomicU32>,
     active: Arc<std::sync::atomic::AtomicBool>,
-    emit_globally: bool,
 ) {
     tauri::async_runtime::spawn(async move {
         // Give WebView2 a brief head start to wake up and process the
@@ -382,9 +393,7 @@ pub fn spawn_level_emitter(
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
 
         let emit_level = |level_val: f32| {
-            if emit_globally {
-                let _ = app.emit("audio-level", level_val);
-            } else if let Some(pill) = app.get_webview_window("pill") {
+            if let Some(pill) = app.get_webview_window("pill") {
                 pill.emit("audio-level", level_val).ok();
             }
         };
@@ -393,20 +402,12 @@ pub fn spawn_level_emitter(
             if !active.load(Ordering::Relaxed) {
                 break;
             }
-            let level_val = f32::from_bits(level.load(Ordering::Relaxed));
-            let raw_level_val = f32::from_bits(raw_level.load(Ordering::Relaxed));
-            emit_level(level_val);
-            if emit_globally {
-                let _ = app.emit("audio-level-raw", raw_level_val);
-            }
+            emit_level(f32::from_bits(level.load(Ordering::Relaxed)));
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
         // Emit final reset to ensure level goes to 0 regardless of timing
         emit_level(0.0);
-        if emit_globally {
-            let _ = app.emit("audio-level-raw", 0.0f32);
-        }
     });
 }
 /// Whether dictation start/stop sound cues are enabled (defaults to true when

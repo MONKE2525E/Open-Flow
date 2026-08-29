@@ -104,8 +104,8 @@ mod win_store {
     use super::store_fallback;
     use windows::core::{PCWSTR, PWSTR};
     use windows::Win32::Security::Credentials::{
-        CredDeleteW, CredFree, CredReadW, CredWriteW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
-        CREDENTIALW,
+        CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
+        CRED_TYPE_GENERIC,
     };
 
     // Windows stores the blob as UTF-16; encode hex so any byte value survives.
@@ -239,4 +239,3 @@ mod mac_store {
         })
     }
 }
-

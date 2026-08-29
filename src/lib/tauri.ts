@@ -234,7 +234,6 @@ const defaultSettings: Record<string, unknown> = {
   play_start_stop_sounds: true,
   sound_effects_volume: 100,
   autostart_enabled: false,
-  mic_gain: 3.5,
   app_context_hint: false,
   auto_learn_enabled: false,
   contextual_formatting_enabled: true,
@@ -246,6 +245,7 @@ const defaultSettings: Record<string, unknown> = {
   advanced_model_ui: false,
   legacy_features_enabled: false,
   cleanup_prompt_overrides: {},
+  cleanup_prompt_template: null,
   local_model_memory_policy: 'unload_after_5m',
   hotkey: defaultHotkey,
 };
@@ -1833,8 +1833,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'dismiss_cancelled_capture':
     case 'copy_paste_failure_to_clipboard':
     case 'install_update':
-    case 'start_calibration_monitoring':
-    case 'stop_calibration_monitoring':
+    case 'reset_voice_detection':
       return undefined as T;
     case 'create_snippet': {
       const trigger = assertDevText(args?.trigger, 'Trigger').trim();

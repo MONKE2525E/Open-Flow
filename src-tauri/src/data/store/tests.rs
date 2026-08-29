@@ -123,7 +123,6 @@ fn setting_audit_empty_store_resolves_to_documented_defaults() {
     assert_eq!(cfg.local_model_memory_policy, "unload_after_5m");
 
     assert!(audio.noise_reduction, "noise reduction default on");
-    assert_eq!(audio.mic_gain, DEFAULT_MIC_GAIN);
     assert_eq!(audio.sound_effects_volume, 1.0);
     assert!(!audio.mute_audio);
     assert!(!audio.exclusive_mic);
@@ -246,25 +245,19 @@ fn setting_audit_unknown_enum_values_fall_back_to_default() {
     assert_eq!(cfg.transcription_language, "en");
 }
 
-/// `mic_gain` stored outside the valid range must be clamped at load time,
-/// matching the slider's 1.0..=8.0 contract.
+/// A stored `mic_gain` from before the slider was removed must simply be
+/// ignored rather than resurfacing as a second, invisible gain control.
 #[test]
-fn setting_audit_mic_gain_clamped_at_load() {
-    let below = SettingsSnapshot::from_pairs([(MIC_GAIN.to_string(), json!(0.2))]);
-    assert_eq!(load_audio_config(&below).mic_gain, MIN_MIC_GAIN);
-
-    let above = SettingsSnapshot::from_pairs([(MIC_GAIN.to_string(), json!(99.0))]);
-    assert_eq!(load_audio_config(&above).mic_gain, MAX_MIC_GAIN);
-
-    let in_range = SettingsSnapshot::from_pairs([(MIC_GAIN.to_string(), json!(4.5))]);
-    assert_eq!(load_audio_config(&in_range).mic_gain, 4.5);
-}
-
-/// A corrupt `mic_gain` type (string) must fall back to the default, not panic.
-#[test]
-fn setting_audit_mic_gain_wrong_type_falls_back_to_default() {
-    let store = SettingsSnapshot::from_pairs([(MIC_GAIN.to_string(), json!("loud"))]);
-    assert_eq!(load_audio_config(&store).mic_gain, DEFAULT_MIC_GAIN);
+fn setting_audit_retired_mic_gain_is_ignored() {
+    let stored = SettingsSnapshot::from_pairs([("mic_gain".to_string(), json!(8.0))]);
+    // Loads cleanly, and carries no gain field for anything to read.
+    let audio = load_audio_config(&stored);
+    assert!(audio.noise_reduction);
+    assert_eq!(
+        crate::media::audio::CAPTURE_GAIN,
+        3.5,
+        "capture gain is fixed at the historical default"
+    );
 }
 
 /// history_retention_days must map every supported label and return None
@@ -280,7 +273,7 @@ fn setting_audit_history_retention_days_mapping() {
 }
 
 /// Cleanup prompt overrides must be inert unless Advanced Models is on,
-/// and whitespace-only overrides must be ignored.
+/// and whitespace-only prompts must be ignored.
 #[test]
 fn setting_audit_cleanup_overrides_gated_by_advanced_ui() {
     let mut overrides = std::collections::HashMap::new();
@@ -291,15 +284,17 @@ fn setting_audit_cleanup_overrides_gated_by_advanced_ui() {
     let base = PipelineConfig {
         advanced_model_ui: true,
         cleanup_prompt_overrides: overrides.clone(),
+        cleanup_prompt_template: Some("universal".to_string()),
         ..Default::default()
     };
     assert_eq!(
         base.cleanup_override_for("groq", "llama-3.3-70b-versatile"),
-        Some("Custom")
+        Some("universal")
     );
     let off = PipelineConfig {
         advanced_model_ui: false,
         cleanup_prompt_overrides: overrides.clone(),
+        cleanup_prompt_template: None,
         ..Default::default()
     };
     assert_eq!(
@@ -315,6 +310,7 @@ fn setting_audit_cleanup_overrides_gated_by_advanced_ui() {
         )]
         .into_iter()
         .collect(),
+        cleanup_prompt_template: None,
         ..Default::default()
     };
     assert_eq!(

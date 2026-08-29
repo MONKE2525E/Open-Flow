@@ -1,6 +1,7 @@
 use super::gates::strip_provider_artifacts;
+use super::gates::{capture_defect, CaptureDefect, MIN_RECORDING_MS, MIN_STRUCTURAL_MS};
 use super::stages_cleanup::{cleanup_cache_plan, dual_cleanup_context_fingerprint};
-use super::stages_transcription::speech_gate_accepts;
+use super::stages_transcription::{empty_result_blames_vad, speech_gate_accepts};
 use super::{
     append_cleanup_api_used, apply_app_style_overrides, effective_recording_rms,
     ensure_terminal_punctuation, has_spoken_content, is_transcription_hallucination,
@@ -294,36 +295,133 @@ fn style_scoped_cache_key_preserves_empty_base_key() {
     assert_eq!(style_scoped_cleanup_cache_key("", "casual", "medium"), "");
 }
 
+/// The fallback gate is a plain constant now that capture gain is fixed —
+/// there is no per-user gain left for it to normalize against.
 #[test]
-fn recording_gate_gets_more_permissive_at_high_gain() {
-    let default_gate = recording_gate_rms(store::DEFAULT_MIC_GAIN);
-    let high_gain_gate = recording_gate_rms(store::MAX_MIC_GAIN);
-
-    assert!((default_gate - 0.005).abs() < f32::EPSILON);
-    assert!(high_gain_gate < default_gate);
-    assert!((high_gain_gate - 0.0021875).abs() < 0.0001);
+fn recording_gate_is_a_fixed_fallback_threshold() {
+    assert!((recording_gate_rms() - 0.005).abs() < f32::EPSILON);
 }
 
-#[test]
-fn speech_gate_does_not_let_loud_rms_bypass_a_vad_rejection() {
-    let vad_rejected = crate::media::vad::SpeechDetectionResult {
-        contains_speech: false,
+/// Deterministic stand-in for a real detector run, so the gate and the
+/// adaptive-feedback rules are testable without a microphone or the ONNX model.
+fn vad_fixture(
+    class: crate::media::vad::SpeechClass,
+    snr_db: f32,
+) -> crate::media::vad::SpeechDetectionResult {
+    crate::media::vad::SpeechDetectionResult {
+        contains_speech: class != crate::media::vad::SpeechClass::Silence,
+        class,
         speech_ms: 0,
         speech_ratio: 0.0,
         peak_probability: 0.9,
         longest_segment_ms: 0,
-    };
-
-    assert!(!speech_gate_accepts(Some(&vad_rejected), 1.0, 0.001));
-    assert!(speech_gate_accepts(None, 1.0, 0.001));
-    assert!(!speech_gate_accepts(None, 0.0001, 0.001));
+        weak_speech_ms: 0,
+        noise_floor_rms: 0.001,
+        peak_frame_rms: 0.05,
+        snr_db,
+        sensitivity: crate::media::vad_profile::DEFAULT_SENSITIVITY,
+    }
 }
 
 #[test]
-fn effective_recording_rms_keeps_quiet_gain_boosted_speech_from_failing() {
-    let effective = effective_recording_rms(0.002, 0.001, store::MAX_MIC_GAIN);
+fn speech_gate_does_not_let_loud_rms_bypass_a_vad_rejection() {
+    let vad_rejected = vad_fixture(crate::media::vad::SpeechClass::Silence, 2.0);
 
-    assert!((effective - 0.008).abs() < 0.0001);
+    assert!(!speech_gate_accepts(Some(&vad_rejected), 1.0, 0.001, 5_000));
+    // VAD unavailable: the conservative absolute thresholds come back.
+    assert!(speech_gate_accepts(None, 1.0, 0.001, 5_000));
+    assert!(!speech_gate_accepts(None, 0.0001, 0.001, 5_000));
+}
+
+#[test]
+fn speech_gate_lets_a_borderline_whisper_through_to_transcription() {
+    let borderline = vad_fixture(crate::media::vad::SpeechClass::Borderline, 7.0);
+
+    // A whisper is quiet by definition: RMS far under the old near-silence
+    // gate, and short. Neither may override VAD, or the absolute thresholds
+    // become a second voice detector that is always stricter than the
+    // adaptive one.
+    assert!(speech_gate_accepts(Some(&borderline), 0.0001, 0.005, 400));
+}
+
+#[test]
+fn quiet_and_short_are_no_longer_independent_rejections() {
+    let speech = vad_fixture(crate::media::vad::SpeechClass::Speech, 20.0);
+
+    // "yes" — well under the old 700ms floor and under the RMS gate.
+    assert!(speech_gate_accepts(Some(&speech), 0.0001, 0.005, 320));
+}
+
+#[test]
+fn absolute_thresholds_only_apply_when_vad_could_not_run() {
+    // Same quiet, short clip as above, but with no VAD verdict to trust:
+    // nothing can tell a short noise from a short word, so stay pessimistic.
+    assert!(!speech_gate_accepts(None, 0.0001, 0.005, 320));
+    assert!(!speech_gate_accepts(None, 1.0, 0.005, MIN_RECORDING_MS - 1));
+    assert!(speech_gate_accepts(None, 1.0, 0.005, MIN_RECORDING_MS));
+}
+
+#[test]
+fn structural_validation_rejects_only_unusable_captures() {
+    // Nothing recorded at all.
+    assert_eq!(capture_defect(0, 0, 0, 0.0), Some(CaptureDefect::NoAudio));
+    assert_eq!(
+        capture_defect(1_000, 0, 512, 0.02),
+        Some(CaptureDefect::NoAudio)
+    );
+    // Broken device / driver.
+    assert_eq!(
+        capture_defect(1_000, 16_000, 512, f32::NAN),
+        Some(CaptureDefect::Corrupt)
+    );
+    // An accidental key tap.
+    assert_eq!(
+        capture_defect(MIN_STRUCTURAL_MS - 1, 800, 512, 0.02),
+        Some(CaptureDefect::KeyTap)
+    );
+}
+
+#[test]
+fn structural_validation_keeps_short_and_quiet_recordings_alive() {
+    // "yes" at a whisper: far below the old duration *and* RMS gates, but a
+    // perfectly valid capture. It must survive to reach the detector, and to
+    // stay retryable if the detector gets it wrong.
+    assert_eq!(capture_defect(320, 5_120, 10_284, 0.0004), None);
+    // A one-word whisper right at the structural floor.
+    assert_eq!(
+        capture_defect(MIN_STRUCTURAL_MS, 2_400, 4_844, 0.0001),
+        None
+    );
+}
+
+#[test]
+fn confirmed_empty_only_trains_vad_when_the_audio_agrees_it_was_empty() {
+    // Accepted, then nothing transcribed, and the clip really was near its own
+    // noise floor: VAD was too permissive.
+    assert!(empty_result_blames_vad(Some(&vad_fixture(
+        crate::media::vad::SpeechClass::Borderline,
+        4.0
+    ))));
+
+    // Plenty of signal above the floor but no text: far more likely an STT
+    // problem, so the detector must not be trained down from it.
+    assert!(!empty_result_blames_vad(Some(&vad_fixture(
+        crate::media::vad::SpeechClass::Speech,
+        25.0
+    ))));
+
+    // VAD never ran (model failed to stage) — an RMS-fallback acceptance says
+    // nothing at all about VAD.
+    assert!(!empty_result_blames_vad(None));
+}
+
+/// Denoising can strip energy after the capture pre-amp was applied, so the
+/// pre-gain level is re-amplified rather than letting a quiet voice fail.
+#[test]
+fn effective_recording_rms_keeps_quiet_denoised_speech_from_failing() {
+    let effective = effective_recording_rms(0.002, 0.001);
+
+    assert!((effective - 0.0035).abs() < 0.0001);
 }
 
 #[test]
@@ -336,11 +434,13 @@ fn merged_audio_does_not_double_apply_microphone_gain() {
     };
 
     let (_, processed_rms, raw_rms) =
-        super::merge_prepend_audio(audio(0.2), audio(0.2), 2.0).expect("merge should encode");
+        super::merge_prepend_audio(audio(0.2), audio(0.2)).expect("merge should encode");
 
     assert!((processed_rms - 0.2).abs() < 0.0001);
-    assert!((raw_rms - 0.1).abs() < 0.0001);
-    assert!((effective_recording_rms(processed_rms, raw_rms, 2.0) - 0.2).abs() < 0.0001);
+    // Merged audio already carries the capture pre-amp; raw_rms undoes it so
+    // the gate cannot apply it a second time.
+    assert!((raw_rms - 0.2 / crate::media::audio::CAPTURE_GAIN).abs() < 0.0001);
+    assert!((effective_recording_rms(processed_rms, raw_rms) - 0.2).abs() < 0.0001);
 }
 
 #[test]
@@ -526,6 +626,7 @@ fn base_config() -> store::PipelineConfig {
         advanced_model_ui: false,
         local_model_memory_policy: "unload_after_5m".into(),
         cleanup_prompt_overrides: std::collections::HashMap::new(),
+        cleanup_prompt_template: None,
     }
 }
 
@@ -665,7 +766,7 @@ fn harness_test_lock() -> &'static std::sync::Mutex<()> {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn pipeline_fixture_rejects_short_recordings_before_provider_calls() {
+async fn pipeline_fixture_rejects_key_taps_before_provider_calls() {
     let _guard = harness_test_lock().lock().expect("harness lock");
     reset();
     set_enabled(true);
@@ -679,11 +780,11 @@ async fn pipeline_fixture_rejects_short_recordings_before_provider_calls() {
     );
 
     let mut request = base_request(base_config());
-    request.audio.duration_ms = 300;
+    request.audio.duration_ms = MIN_STRUCTURAL_MS - 1;
     let err = run_pipeline_fixture(request)
         .await
-        .expect_err("short recording should fail");
-    assert!(err.to_string().contains("Recording too short"));
+        .expect_err("a key tap should fail");
+    assert!(err.to_string().contains("Too short"));
     assert_eq!(
         fixture_hit_count("transcription", "groq", "whisper-large-v3-turbo"),
         0
@@ -691,8 +792,12 @@ async fn pipeline_fixture_rejects_short_recordings_before_provider_calls() {
     reset();
 }
 
+/// The inverse of the old "reject quiet recordings" contract, and the whole
+/// point of the redesign: a quiet recording is a *speech* judgement, so it now
+/// reaches transcription instead of being killed by an absolute RMS gate that
+/// the adaptive detector could never override.
 #[tokio::test(flavor = "current_thread")]
-async fn pipeline_fixture_rejects_quiet_recordings_before_provider_calls() {
+async fn pipeline_fixture_sends_quiet_recordings_to_transcription() {
     let _guard = harness_test_lock().lock().expect("harness lock");
     reset();
     set_enabled(true);
@@ -700,20 +805,31 @@ async fn pipeline_fixture_rejects_quiet_recordings_before_provider_calls() {
         "transcription",
         "groq",
         "whisper-large-v3-turbo",
-        Some("should never be used"),
+        Some("a whispered sentence"),
+        None,
+        None,
+    );
+    fixture(
+        "cleanup",
+        "groq",
+        "llama-3.3-70b-versatile",
+        Some("A whispered sentence."),
         None,
         None,
     );
 
     let mut request = base_request(base_config());
+    // Well under the retired MIN_RECORDING_RMS, and short enough that the old
+    // 700ms floor would also have rejected it.
     request.rms = 0.001;
-    let err = run_pipeline_fixture(request)
+    request.audio.duration_ms = 400;
+    let result = run_pipeline_fixture(request)
         .await
-        .expect_err("quiet recording should fail");
-    assert!(err.to_string().contains("Audio too quiet"));
+        .expect("a quiet recording must still be transcribed");
+    assert!(result.raw_text.contains("whispered"));
     assert_eq!(
         fixture_hit_count("transcription", "groq", "whisper-large-v3-turbo"),
-        0
+        1
     );
     reset();
 }

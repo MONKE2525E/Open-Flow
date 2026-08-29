@@ -27,6 +27,7 @@ export type AllSettingsPayload = {
   dual_transcription_enabled?: boolean | null;
   cleanup_fallback_models?: string[] | null;
   cleanup_prompt_overrides?: unknown;
+  cleanup_prompt_template?: string | null;
   local_model_memory_policy?: string | null;
   provider_model_cache?: unknown;
 };

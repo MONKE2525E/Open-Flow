@@ -1,8 +1,8 @@
 //! Audio capture handoff, quality-gate evaluation, and every transcription
 //! path (single-chain, primary-chain, and dual-model candidates).
 
-use super::*;
 use super::stages_style::{apply_app_style_overrides, resolve_app_mapping};
+use super::*;
 // session.stop() blocks until the audio thread finishes (denoise + resample + WAV encode).
 // spawn_blocking keeps the tokio worker free during that wait. Split from the
 // quality gate (below) so a resumed/prepended recording can be merged first
@@ -81,70 +81,130 @@ pub(super) async fn stop_and_capture_audio(
     ))
 }
 
-/// Quality gate (min duration / near-silence RMS) against already-captured
-/// (and possibly prepend-merged) audio. Shows the rejection pill itself.
-pub(super) fn validate_captured_audio(
-    app: &AppHandle,
-    audio: &CapturedAudio,
-    rms: f32,
-    raw_rms: f32,
-    min_rms: f32,
-    active_gain: f32,
-) -> bool {
-    let gate_rms = effective_recording_rms(rms, raw_rms, active_gain);
-    if audio.duration_ms < MIN_RECORDING_MS || gate_rms < min_rms {
-        let msg = if audio.duration_ms < MIN_RECORDING_MS {
-            "Recording too short"
-        } else {
-            "Audio too quiet — check your mic"
-        };
-        log::debug!(
-            "pipeline: rejected — duration={}ms rms={rms:.4} gate_rms={gate_rms:.4} min_rms={min_rms:.4}",
-            audio.duration_ms
-        );
-        reject_with_pill(app, msg);
-        return false;
+/// Structural gate against already-captured (and possibly prepend-merged)
+/// audio: rejects only captures that are not usable recordings at all. Shows
+/// the rejection pill itself.
+///
+/// Nothing here judges whether the audio contains speech — quiet and short are
+/// explicitly *not* rejections at this stage. That decision belongs to the
+/// adaptive detector, downstream, where the audio has already been retained
+/// for "Try Anyway".
+pub(super) fn validate_capture_structure(app: &AppHandle, audio: &CapturedAudio, rms: f32) -> bool {
+    match capture_defect(
+        audio.duration_ms,
+        audio.samples_16k.len(),
+        audio.wav.len(),
+        rms,
+    ) {
+        Some(defect) => {
+            log::debug!(
+                "pipeline: rejected — structural defect={defect:?} duration={}ms rms={rms:.4}",
+                audio.duration_ms
+            );
+            reject_with_pill(app, defect.message());
+            false
+        }
+        None => true,
     }
-    true
 }
 
 /// Speech-presence decision made before any transcription API call. VAD is
 /// authoritative when available. RMS is only a fallback when VAD itself
 /// failed to load or run (`vad_result: None`), so loud non-speech cannot bypass
 /// a successful VAD rejection.
+///
+/// A `Borderline` verdict passes: a possible whisper is transcribed rather
+/// than discarded, because missing real speech costs the user far more than an
+/// occasional empty transcription costs anyone.
+///
 /// Shows the rejection pill itself, matching `validate_captured_audio`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn passes_speech_gate(
     app: &AppHandle,
     rms: f32,
     raw_rms: f32,
     min_rms: f32,
-    active_gain: f32,
+    duration_ms: u64,
     vad_result: Option<&crate::media::vad::SpeechDetectionResult>,
 ) -> bool {
-    let gate_rms = effective_recording_rms(rms, raw_rms, active_gain);
-    if speech_gate_accepts(vad_result, gate_rms, min_rms) {
-        log::debug!(
-            "pipeline: speech gate accepted gate_rms={gate_rms:.4} min_rms={min_rms:.4} vad={:?}",
-            vad_result
-        );
+    let gate_rms = effective_recording_rms(rms, raw_rms);
+    if speech_gate_accepts(vad_result, gate_rms, min_rms, duration_ms) {
         return true;
     }
-    log::debug!(
-        "pipeline: speech gate rejected — no speech detected rms={rms:.4} min_rms={min_rms:.4} vad={:?}",
-        vad_result
-    );
     reject_with_pill(app, "No speech detected");
     false
 }
 
 /// Pure part of the speech gate, kept separate so the important VAD-versus-
-/// RMS precedence is testable without constructing a Tauri app handle.
+/// fallback precedence is testable without constructing a Tauri app handle.
+///
+/// When VAD ran it is the *whole* answer. Level and duration are already baked
+/// into its classification — it measures the peak against the recording's own
+/// noise floor and counts speech frames — so re-applying an absolute loudness
+/// or duration threshold on top would be a second, non-adaptive voice detector
+/// working against the first, and it is always the stricter of the two for a
+/// whisper.
+///
+/// Only when VAD could not run at all do the absolute thresholds come back,
+/// deliberately conservative, because nothing else can tell speech from noise.
 pub(super) fn speech_gate_accepts(
     vad_result: Option<&crate::media::vad::SpeechDetectionResult>,
     gate_rms: f32,
     min_rms: f32,
+    duration_ms: u64,
 ) -> bool {
-    vad_result.map_or(gate_rms >= min_rms, |result| result.contains_speech)
+    match vad_result {
+        Some(result) => result.contains_speech,
+        None => duration_ms >= gates::MIN_RECORDING_MS && gate_rms >= min_rms,
+    }
+}
+
+/// One structured line per dictation, carrying everything needed to explain a
+/// classification after the fact — levels, the noise floor they were judged
+/// against, the learned sensitivity in force, and the verdict. Counts and
+/// ratios only; never any dictated content.
+pub(super) fn log_vad_diagnostics(
+    device_key: &str,
+    duration_ms: u64,
+    rms: f32,
+    raw_rms: f32,
+    vad_result: Option<&crate::media::vad::SpeechDetectionResult>,
+) {
+    match vad_result {
+        Some(result) => log::info!(
+            "vad: device={device_key} duration_ms={duration_ms} rms={rms:.4} raw_rms={raw_rms:.4} \
+             peak_frame_rms={:.4} noise_floor={:.5} snr_db={:.1} speech_ms={} weak_speech_ms={} \
+             ratio={:.3} peak_prob={:.3} longest_ms={} sensitivity={:.2} class={}",
+            result.peak_frame_rms,
+            result.noise_floor_rms,
+            result.snr_db,
+            result.speech_ms,
+            result.weak_speech_ms,
+            result.speech_ratio,
+            result.peak_probability,
+            result.longest_segment_ms,
+            result.sensitivity,
+            result.class.as_str(),
+        ),
+        None => log::info!(
+            "vad: device={device_key} duration_ms={duration_ms} rms={rms:.4} raw_rms={raw_rms:.4} \
+             class=unavailable (fell back to the RMS-only gate)"
+        ),
+    }
+}
+
+/// Whether an empty transcription is trustworthy evidence that *VAD* was too
+/// permissive, rather than evidence of an STT failure.
+///
+/// Requires that VAD actually ran (an RMS-fallback acceptance says nothing
+/// about VAD) and that the waveform itself corroborates "nothing was there":
+/// a clip with plenty of signal above its own noise floor that still
+/// transcribed to nothing is far more likely a provider problem, and training
+/// the detector down from it would slowly make quiet speech unreachable.
+pub(super) fn empty_result_blames_vad(
+    vad_result: Option<&crate::media::vad::SpeechDetectionResult>,
+) -> bool {
+    vad_result.is_some_and(|result| result.snr_db < crate::media::vad::CONFIDENT_SIGNAL_SNR_DB)
 }
 
 pub(super) async fn open_config_and_context(

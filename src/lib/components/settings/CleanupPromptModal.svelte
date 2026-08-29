@@ -5,7 +5,7 @@
   import { saveSetting } from '../../settings';
   import {
     cleanupPromptEditor,
-    cleanupPromptOverridesStore,
+    cleanupPromptTemplateStore,
     closeCleanupPromptEditor,
   } from '../../stores.svelte';
   import { modalFocusTrap } from '../../modalFocus';
@@ -131,8 +131,7 @@
       const def = await invoke<string>('get_default_cleanup_prompt', { provider, model });
       if (!isMounted) return;
       defaultText = def;
-      const saved = cleanupPromptOverridesStore.overrides[`${provider}/${model}`];
-      const text = saved ?? def;
+      const text = cleanupPromptTemplateStore.template ?? def;
       draft = text;
       runLint(text);
     } catch (err) {
@@ -162,20 +161,24 @@
     runLint(draft);
   }
 
-  function applyOverride(text: string) {
-    const key = `${provider}/${model}`;
-    if (text.trim() === defaultText.trim()) {
-      const { [key]: _, ...rest } = cleanupPromptOverridesStore.overrides;
-      cleanupPromptOverridesStore.overrides = rest;
-    } else {
-      cleanupPromptOverridesStore.overrides = { ...cleanupPromptOverridesStore.overrides, [key]: text };
-    }
+  function applyTemplate(text: string) {
+    cleanupPromptTemplateStore.template = text.trim() ? text : null;
   }
 
   async function handleSave(force = false) {
+    // The built-in template is always safe to persist and should not require
+    // a provider round-trip just to confirm the editor works.
+    if (!force && draft.trim() === defaultText.trim()) {
+      applyTemplate(draft);
+      await saveSetting('cleanup_prompt_template', cleanupPromptTemplateStore.template);
+      if (!isMounted) return;
+      testState = { status: 'passed' };
+      setTimeout(() => { if (isMounted) closeCleanupPromptEditor(); }, 500);
+      return;
+    }
     if (force) {
-      applyOverride(draft);
-      await saveSetting('cleanup_prompt_overrides', cleanupPromptOverridesStore.overrides);
+      applyTemplate(draft);
+      await saveSetting('cleanup_prompt_template', cleanupPromptTemplateStore.template);
       if (!isMounted) return;
       testState = { status: 'passed' };
       setTimeout(() => { if (isMounted) closeCleanupPromptEditor(); }, 500);
@@ -191,8 +194,8 @@
       });
       if (!isMounted) return;
       if (report.passed) {
-        applyOverride(draft);
-        await saveSetting('cleanup_prompt_overrides', cleanupPromptOverridesStore.overrides);
+        applyTemplate(draft);
+        await saveSetting('cleanup_prompt_template', cleanupPromptTemplateStore.template);
         if (!isMounted) return;
         testState = { status: 'passed' };
         setTimeout(() => { if (isMounted) closeCleanupPromptEditor(); }, 600);
@@ -291,8 +294,8 @@
     <!-- Header bar — paper bg like settings sidebar -->
     <div class="prompt-head">
       <div class="prompt-head-info">
-        <span class="prompt-head-provider">{providerLabel}</span>
-        <span class="prompt-head-model">{model}</span>
+        <span class="prompt-head-provider">Universal cleanup prompt</span>
+        <span class="prompt-head-model">Tested with {providerLabel} · {model}</span>
       </div>
       <div class="prompt-head-actions">
         {#if statusKind() !== 'clean'}
@@ -369,7 +372,7 @@
 
 <style>
   .prompt-modal-wrap {
-    position: absolute;
+    position: fixed;
     inset: 0;
     z-index: 70;
     display: grid;

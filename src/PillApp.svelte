@@ -373,7 +373,7 @@
     }
   }
 
-  // Level from Rust is already 0–1 (raw_rms × mic_gain × 15, capped).
+  // Level from Rust is already 0–1 (raw_rms × CAPTURE_GAIN × 15, capped).
   // Gate: ignore anything below 4% of full scale (background noise).
   const GATE = 0.04;
 
@@ -467,6 +467,18 @@
     if (rafId !== 0) { cancelAnimationFrame(rafId); rafId = 0; barHeights = Array(BARS).fill(BAR_MIN_H); }
   }
 
+
+  /// Re-arms the 10s auto-dismiss for whatever error the pill is showing.
+  /// Every path that displays an error must arm this, or the pill sits
+  /// forever — `retryFailed` clears the timer up front, so a failed retry
+  /// depends on it being armed again once the backend repaints the error.
+  function armErrorAutoDismiss() {
+    if (errorTimer) clearTimeout(errorTimer);
+    errorTimer = setTimeout(() => {
+      errorTimer = null;
+      if (state === 'error') goIdle();
+    }, 10000);
+  }
 
   function goIdle() {
     if (dying) return;
@@ -804,11 +816,7 @@
         if (state !== 'recording' && state !== 'repair_recording' && state !== 'handsfree') smoothed = 0;
         if (state === 'error') {
           openError();
-          if (errorTimer) clearTimeout(errorTimer);
-          errorTimer = setTimeout(() => {
-            errorTimer = null;
-            if (state === 'error') goIdle();
-          }, 10000);
+          armErrorAutoDismiss();
         } else if (state !== 'copied' && state !== 'clipboard_warning') {
           // Don't clear errorMsg on 'copied' — show_copied_pill carries its
           // confirmation text through the pill-error event, which fires just
@@ -1025,11 +1033,17 @@
     if (errorTimer) { clearTimeout(errorTimer); errorTimer = null; }
     const { invoke } = await import('@tauri-apps/api/core');
     // Don't go idle before the call — Rust emits 'processing' on success so
-    // the pill morphs from error to processing. If the retry fails, only
-    // fall back to idle while still in the error state — the pill may have
-    // moved on to an active state (recording/handsfree) during the invoke.
+    // the pill morphs from error to processing.
+    //
+    // On failure, do NOT hide the pill. The backend shows an error pill
+    // explaining why the retry failed ("Nothing to retry", "Still no speech in
+    // that recording", ...), and tearing it down here erased that message the
+    // instant it appeared — which is why a failed retry looked like the button
+    // did nothing at all. Just re-arm the auto-dismiss that was cleared above
+    // so the explanation is readable and still self-clears.
     await invoke('retry_transcription').catch(() => {
-      if (state === 'error') goIdle();
+      if (state === 'error') armErrorAutoDismiss();
+      else goIdle();
     });
   }
 

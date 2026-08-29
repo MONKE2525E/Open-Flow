@@ -23,12 +23,12 @@ API keys should never appear in logs, screenshots, issues, PR comments, or expor
 
 ## Dictation Produces No Text
 
-Verenu intentionally rejects recordings that are too short or too quiet.
+Verenu only discards a recording outright when it is not a usable capture (no audio at all, a corrupt device, or a key tap under ~0.15s) or when local voice detection is confident there was no speech. Quiet speech and whispers are deliberately sent to transcription rather than rejected.
 
-- Hold the hotkey for more than about 0.7 seconds.
-- Check the microphone input device.
-- Open Settings and run microphone calibration.
+- Check the microphone input device in Settings → Audio.
 - Watch the floating pill bars while speaking. No movement usually means the app is not receiving usable audio.
+- If the pill says **No speech detected**, press **Retry** on the pill. That reuses the exact same audio with voice detection bypassed, so you do not have to repeat yourself — and a successful retry teaches Verenu that this microphone needs to be more sensitive.
+- There is no microphone calibration to run. Voice detection tunes itself per input device. If it has learned something wrong, use Settings → Audio → **Reset learned sensitivity**.
 
 ## macOS Permissions
 

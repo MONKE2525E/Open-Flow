@@ -107,7 +107,6 @@ src/                        # Svelte 5 frontend
     settings.ts             # Typed settings registry: SettingsValueMap, saveSetting() helper, shared types (ProviderId, AppearanceMode, etc.)
     settingsSections.ts     # Settings section ids/order + visibility (macOnly/devOnly/legacyOnly)
     transcriptionLanguages.ts  # ISO 639-1 language list + TranscriptionLanguageCode type (frontend mirror of store.rs validation)
-    calibration.ts          # Mic gain auto-calibration state machine (loud/whisper phases)
     platform.ts             # Runtime platform detection (Windows vs macOS)
     motion.ts               # Animation/transition utilities
     modalFocus.ts           # Reusable modal focus trap + focus restoration helper
@@ -121,7 +120,6 @@ src/                        # Svelte 5 frontend
     views/                  # Home (main flow + paginated history), Contexts (primary), Insights, Settings, Setup, Style pages
     views/dictionary|home|insights|snippets/    # per-view subcomponents + helpers.ts (Contexts.svelte has no subfolder yet — known monolith)
     setup/                  # First-run wizard: SetupShell.svelte + steps/
-    calibrationCopy.ts       # Localized copy strings for the mic-calibration UI (companion to calibration.ts)
 src-tauri/
   src/
     main.rs                 # Module wiring, Tauri builder, command registration
@@ -199,6 +197,8 @@ src-tauri/
       snippets.rs           # Snippet expansion (pure and instruction-based paths)
     media/
       audio.rs              # CPAL mic capture → WAV, RMS level streaming
+      vad.rs                # Silero voice-activity detection → speech/borderline/silence
+      vad_profile.rs        # Learned per-input-device VAD sensitivity (replaces mic calibration)
       sound.rs              # Playback/mute coordination (coordinated_unmute)
     system/
       apps.rs               # Registry scan for installed apps + process dedup, AppMapping type
@@ -225,13 +225,16 @@ The pill window is created at runtime by `create_pill_if_needed()` in `pipeline/
 
 ```
 [Ctrl+Windows held]
-  → audio.rs: CPAL captures mic PCM, applies gain
-  → Emits 'audio-level' every 50ms (RMS) → pill visualizer bars
+  → audio.rs: CPAL captures mic PCM, applies the fixed CAPTURE_GAIN pre-amp
+  → Emits 'audio-level' to the pill window every 50ms (RMS) → visualizer bars
 
 [Ctrl+Windows released]
   → audio.rs: encode PCM → WAV in memory
   → pipeline/mod.rs run_pipeline():
-    1. Quality gates: reject if duration too short or RMS below the gain-aware floor
+    1. Structural validation only (no audio / corrupt / <150ms key tap), then
+       retry_capture is stored, then local Silero VAD classifies
+       speech/borderline/silence using that device's learned sensitivity
+       (see "Recording quality gates")
     2. Capture foreground HWND (before any async work — foreground may change mid-pipeline)
     3. If the foreground process is a known browser, browser_probe.rs reads the
        active tab's address-bar domain (best-effort, never blocks)
@@ -403,12 +406,59 @@ The `WH_KEYBOARD_LL` callback in `core/hotkey/win.rs` must return within ~300ms 
 ### Pill window — never hide it
 Hiding the pill window suspends the WebView2 renderer. The next state event emitted while it is hidden will be silently dropped, leaving the pill stuck. Keep it always-visible but click-through + transparent in idle state. Emit state events *after* showing the window, not before. The pill uses `SW_SHOWNOACTIVATE` so it appears without stealing focus from the target app. In idle/passive states the pill is click-through; only in "handsfree" state does it accept real cursor events for buttons.
 
-### Recording quality gates
-`run_pipeline()` rejects recordings below two thresholds before calling any API:
-- `duration_ms < 700` — avoids Whisper hallucinations on short clips
-- `rms < 0.008` — near-silence, likely accidental activation
+### Recording quality gates & adaptive voice detection
 
-Rejection shows an error message on the pill (`reject_with_pill()` in `pipeline/mod.rs`, distinguishing "Recording too short" vs "Audio too quiet — check your mic"); the in-app mic button (`transcribe_input_only()` / `MicInputButton.svelte`) shows the equivalent message inline. These thresholds are currently magic numbers in `pipeline/mod.rs`. Recordings are also capped at 15 minutes in `media/audio.rs`; truncated captures abort with a user-facing error instead of silently transcribing partial audio.
+**Structural validation and speech detection are separate layers, deliberately.** An absolute loudness or duration threshold is itself a voice detector; running one in front of the adaptive detector meant two systems fighting, with the non-adaptive one always winning for a whisper — and winning early enough that no audio was retained for a retry.
+
+`run_pipeline()` order is therefore:
+
+```
+recording finishes
+  → structural validation only (gates.rs::capture_defect)
+        NoAudio  — no samples / no bytes / no duration
+        Corrupt  — non-finite levels (broken device)
+        KeyTap   — under MIN_STRUCTURAL_MS (150ms)
+  → store retry_capture          ← owns its own audio before ANY speech judgement
+  → local Silero VAD
+  → speech/borderline/silence
+```
+
+Quiet and short are **not** rejections. `MIN_STRUCTURAL_MS` is 150ms, not 700 — "yes", "no" and "thanks" are real dictations that run 300-500ms. `MIN_RECORDING_MS` (700) and `MIN_RECORDING_RMS` survive on exactly one path: the VAD-unavailable fallback in `speech_gate_accepts`, where nothing else can tell a short noise from a short word. When VAD runs, it decides alone.
+
+The same structural-only rule applies to the in-app mic button (`transcribe_input_only`) and the cancelled-capture stash, so no surface keeps a private whisper-killer.
+
+The "was there speech" judgment is local Silero VAD (`media/vad.rs`), run before transcription. It is **three-way**, not pass/fail:
+
+- `Speech` — confident, process normally
+- `Borderline` — possible quiet speech or a whisper: **transcribed anyway**
+- `Silence` — confident silence: discarded
+
+Borderline is decided from weak-probability frames plus SNR against the recording's *own* estimated noise floor (20th-percentile frame RMS), never an absolute dB cutoff — floors differ by orders of magnitude between microphones.
+
+Acceptance thresholds are scaled by a **learned per-input-device sensitivity** (`media/vad_profile.rs`, persisted in `settings.json` under `vad_device_profiles`, never exported). **Higher sensitivity = easier to accept.** Bounds `[0.6, 2.5]`, default `1.3` (whisper-leaning), and only two events move it:
+
+| Event | Effect |
+|---|---|
+| Confirmed Skip VAD recovery (VAD rejected → user hit Retry → real transcription) | `+0.25` immediately |
+| Confirmed empty (VAD accepted → STT succeeded → no speech → clip's own SNR corroborates) | `-0.15`, but only after 3 in a row |
+
+Everything ambiguous trains nothing: STT/network errors, cancelled dictations, a Skip VAD retry that also produced nothing, a VAD that failed to load, or an empty transcription from a clip with confident signal (`CONFIDENT_SIGNAL_SNR_DB`) — that last one is an STT problem, not a VAD one. The streak requirement is also the anti-oscillation guard: a recovery clears the streak, so alternating events can never ping-pong the value.
+
+**Retry / "Try Anyway"** reuses the *exact* rejected audio from `RetryCapture` and bypasses every speech gate — the user never repeats themselves — bounded by `RETRY_WINDOW` (10 min), not retained beyond it. Because the capture is now stored before validation, every speech-related rejection can offer it.
+
+`rejected_by_vad` is set only when VAD actually produced a verdict. A rejection from the fallback thresholds is still retryable, but a successful retry there teaches nothing — it says nothing about the adaptive detector.
+
+`start_recording_session_ex` clears any previous `retry_capture`, so a new recording always supersedes an older one. Without that, a dictation VAD rejected stayed attached to the retry slot and a *later* recording that failed early would silently transcribe the older utterance.
+
+Diagnostics: one `vad:` log line per dictation carries device, duration, levels, noise floor, SNR, speech/weak-speech times, peak probability, sensitivity, and classification; adaptations log `vad: adapt … reason=… sensitivity old -> new`. Counts and ratios only, never dictated text.
+
+There is **no microphone calibration and no gain slider** — both were removed in favour of this. `Settings → Audio → Voice detection` shows "Automatic" with a single "Reset learned sensitivity" button (`reset_voice_detection`), which clears every device profile and touches nothing else.
+
+Capture gain is now the fixed `media::audio::CAPTURE_GAIN` constant (3.5, the historical default), applied to every recording. It is a hardware-level pre-amp, not a threshold. Because it no longer varies, `gain_leniency_scale` is gone from `media/vad.rs` and `gain_scaled_rms` from `gates.rs`: the learned per-device sensitivity is the **only** thing that scales a detection threshold. A `mic_gain` value left in an old `settings.json` is ignored.
+
+The smoke files were amended a second time for this (owner sign-off): `playwright-test-fixes.cjs` no longer asserts `span.gain-value`, since the element it checked was the gain slider readout.
+
+Rejection shows an error message on the pill (`reject_with_pill()`, distinguishing "Recording too short" / "Audio too quiet — check your mic" / "No speech detected"); the in-app mic button (`transcribe_input_only()` / `MicInputButton.svelte`) shows the equivalent message inline. Recordings are capped at 15 minutes in `media/audio.rs`; truncated captures abort with a user-facing error instead of silently transcribing partial audio.
 
 ### Injection — contextual capitalization and timing
 Capitalization decisions come from a layered `InjectionContextProbe` (`core/context_probe.rs` + `core/text_context.rs`), not a single trick. It tries, in order: a caret-local read via the platform accessibility API (UI Automation on Windows, AX on macOS, `ContextProbeSource::CaretLocal`) → a clipboard-sniff fallback (select one char back with Shift+Left/Cmd+Shift+Left, copy, inspect, then restore the selection — `ContextProbeSource::ClipboardSniff`) → a history-based guess (`HistoryFallback`) when the control is unsupported or permission is missing. The result classifies into `SentenceContext` (`NewSentence`/`MidSentence`/`Unknown`); if not `NewSentence`, the first letter of the injected text is lowercased (mid-sentence join). Timing constants in `core/injection/mod.rs`: `MODIFIER_GAP_MS` = 30ms between releasing modifier keys and sending Ctrl+V/Cmd+V (without this gap, some apps miss the Ctrl key in the same message-pump cycle), and ~30ms waits between the sniff's key-down/key-up stages for the clipboard to populate.
@@ -466,7 +516,6 @@ Files in `tests/smoke/` are a frozen contract — **never edit them**. Fix the a
 | Model picker dialog | `picker-card` (modal, portalled to `<body>`) |
 | Model picker rows | `row-main`; setup CTAs carry `row-state-cta` |
 | Fallback chain chips | `fallback-chip-item` |
-| Advanced gain display | `span.gain-value` |
 
 Since 0.15.0 settings is a full-screen page beside the sidebar, not a modal:
 `.settings-page` is a plain content surface, so don't give it card styling
@@ -476,8 +525,10 @@ that release — expect the old name in older branches and issues.
 The smoke files were amended once, with explicit owner sign-off, when settings
 became full-screen: the version footer moved to the About section only, routine
 open/close now uses `.settings-back` instead of a click at viewport (10, 10),
-and `.settings-modal` was renamed. Treat them as frozen again — that was a
-one-off, not a precedent.
+and `.settings-modal` was renamed. They were amended a second time, also with
+explicit sign-off, when the microphone gain slider was removed: the
+`span.gain-value` assertion in `playwright-test-fixes.cjs` had no element left
+to find. Treat them as frozen again — neither amendment is a precedent.
 Behaviour specific to the full-screen settings page (rail morph, travelling
 highlight, page transition, footer placement) is covered separately in
 `tests/integration/playwright-test-fullscreen-settings-dev.cjs`, which is *not*

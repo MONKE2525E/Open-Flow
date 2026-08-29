@@ -30,7 +30,9 @@ pub struct PipelineConfig {
     pub clipboard_phrase: String,
     pub advanced_model_ui: bool,
     pub local_model_memory_policy: String,
+    #[allow(dead_code)]
     pub cleanup_prompt_overrides: std::collections::HashMap<String, String>,
+    pub cleanup_prompt_template: Option<String>,
 }
 
 pub const GROQ: &str = "groq";
@@ -163,14 +165,10 @@ impl PipelineConfig {
     /// Returns the user's custom cleanup prompt template for `provider/model`,
     /// or `None` if Advanced Models is off or no override is stored for this model.
     pub fn cleanup_override_for(&self, provider: &str, model: &str) -> Option<&str> {
-        if !self.advanced_model_ui {
-            return None;
-        }
-        let key = format!("{provider}/{model}");
-        self.cleanup_prompt_overrides
-            .get(&key)
-            .map(String::as_str)
-            .filter(|s| !s.trim().is_empty())
+        let _ = (provider, model);
+        self.cleanup_prompt_template
+            .as_deref()
+            .filter(|s| self.advanced_model_ui && !s.trim().is_empty())
     }
 }
 
@@ -274,7 +272,7 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
         .into_iter()
         .map(|id| migrate_deprecated_model_id(&id))
         .collect();
-    let cleanup_prompt_overrides = store
+    let cleanup_prompt_overrides: std::collections::HashMap<String, String> = store
         .get(CLEANUP_PROMPT_OVERRIDES)
         .and_then(|v| v.as_object().cloned())
         .unwrap_or_default()
@@ -284,6 +282,20 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
                 .map(|s| (migrate_deprecated_model_id(&k), s.to_string()))
         })
         .collect();
+    // Newer settings use one cleanup prompt for the complete provider chain.
+    // Read the old map only as a one-time compatibility fallback; the pipeline
+    // never applies model-specific entries anymore.
+    let cleanup_prompt_template = store
+        .get(CLEANUP_PROMPT_TEMPLATE)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            cleanup_prompt_overrides
+                .values()
+                .find(|s| !s.trim().is_empty())
+                .cloned()
+        });
 
     PipelineConfig {
         transcription_provider,
@@ -339,6 +351,7 @@ pub fn load_pipeline_config(store: &SettingsSnapshot) -> PipelineConfig {
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         cleanup_prompt_overrides,
+        cleanup_prompt_template,
         local_model_memory_policy: supported_or_default(
             LOCAL_MODEL_MEMORY_POLICY,
             "unload_after_5m",
@@ -356,15 +369,11 @@ pub fn is_valid_clipboard_phrase(value: &str) -> bool {
     (5..=80).contains(&count) && value.chars().any(char::is_alphanumeric)
 }
 
-pub const DEFAULT_MIC_GAIN: f32 = 3.5;
-pub const MIN_MIC_GAIN: f32 = 1.0;
-pub const MAX_MIC_GAIN: f32 = 8.0;
 pub const DEFAULT_SOUND_EFFECTS_VOLUME: f32 = 1.0;
 
 pub struct AudioConfig {
     pub device: Option<String>,
     pub noise_reduction: bool,
-    pub mic_gain: f32,
     pub mute_audio: bool,
     pub exclusive_mic: bool,
     pub pause_media_during_dictation: bool,
@@ -376,7 +385,6 @@ impl Default for AudioConfig {
         Self {
             device: None,
             noise_reduction: true,
-            mic_gain: DEFAULT_MIC_GAIN,
             mute_audio: false,
             exclusive_mic: false,
             pause_media_during_dictation: false,
@@ -393,12 +401,6 @@ pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
         .get(NOISE_REDUCTION)
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    let mic_gain = store
-        .get(MIC_GAIN)
-        .and_then(|v| v.as_f64())
-        .map(|v| v as f32)
-        .unwrap_or(DEFAULT_MIC_GAIN)
-        .clamp(MIN_MIC_GAIN, MAX_MIC_GAIN);
     let mute_audio = store
         .get(MUTE_AUDIO)
         .and_then(|v| v.as_bool())
@@ -426,7 +428,6 @@ pub fn load_audio_config(store: &SettingsSnapshot) -> AudioConfig {
     AudioConfig {
         device,
         noise_reduction,
-        mic_gain,
         mute_audio,
         exclusive_mic,
         pause_media_during_dictation,

@@ -154,6 +154,14 @@ pub struct RetryCapture {
     pub profile: String,
     pub app_context: Option<String>,
     pub caps_lock_on: bool,
+    /// Input device this audio was captured on, so a Skip VAD recovery trains
+    /// the profile of the mic that actually missed the utterance — not
+    /// whichever one happens to be selected when the user hits Retry.
+    pub input_device: Option<String>,
+    /// True when the local VAD gate is what rejected this recording. Retrying
+    /// bypasses VAD entirely, so a retry that then produces real speech is
+    /// direct evidence of a false negative (see `media::vad_profile`).
+    pub rejected_by_vad: bool,
 }
 
 /// Audio from a recording the user cancelled, kept around briefly so the
@@ -349,7 +357,7 @@ pub fn take_active_pipeline_for_escape(state: &SharedState) -> Option<ActivePipe
 
 /// `Recording { .. } -> Idle`, discarding handless/prepend_audio state.
 /// Used by plain cancel paths that never go through the transcribe/finalize
-/// pipeline: the in-app mic button, calibration, a discarded quick-tap, or
+/// pipeline: the in-app mic button, a discarded quick-tap, or
 /// Escape while still actively recording (pre-`Release`).
 pub fn take_recording_plain(state: &SharedState) -> Option<(audio::RecordingSession, Option<u64>)> {
     let mut st = lock_state(state).ok()?;

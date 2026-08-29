@@ -3,57 +3,84 @@
 //! flow. These are behavior-preserving moves; coverage lives in the `pipeline`
 //! test module (see `super::tests`).
 
-use crate::data::store;
 
-/// Minimum recording length before any API is called. Shorter clips make
-/// Whisper hallucinate, so they're rejected outright.
+/// The only duration below which a capture cannot be an utterance at all: a
+/// key tap. Deliberately far below the old 700ms gate — "yes", "no" and
+/// "thanks" are real dictations and genuinely run 300-500ms. Anything above
+/// this is judged by the speech detector, not by the clock.
+pub(super) const MIN_STRUCTURAL_MS: u64 = 150;
+
+/// Conservative duration floor used *only* when VAD could not run. With no
+/// speech detector available there is nothing to tell a short noise from a
+/// short word, and Whisper hallucinates freely on short noise — so that one
+/// path stays pessimistic rather than guessing.
 pub(super) const MIN_RECORDING_MS: u64 = 700;
 
-/// Minimum RMS (at default gain) below which audio is treated as near-silence
-/// and rejected as a likely accidental activation. Lowered from the original
-/// 0.008: local VAD (`media::vad`) is now the primary speech-presence check,
-/// run before transcription — this threshold only backstops it when VAD is
-/// unavailable, so it no longer needs to carry the whole burden of catching
-/// quiet speech on its own and can afford to be less trigger-happy.
+/// Minimum RMS (at default gain) treated as near-silence. This is an absolute
+/// threshold and therefore a *second, non-adaptive voice detector*; it is now
+/// reached only on the VAD-unavailable fallback path. When VAD runs it decides
+/// alone, judging level against the recording's own noise floor — otherwise a
+/// fixed loudness bar would keep discarding whispers before the adaptive
+/// detector ever saw them, and the two systems would fight each other.
 pub(super) const MIN_RECORDING_RMS: f32 = 0.005;
 
-/// A much lower floor than `MIN_RECORDING_RMS`, used only as a cheap
-/// pre-transcription check to skip the transcription API call outright for
-/// audio that's digitally silent or corrupt (e.g. a dead mic). Real
-/// "was there speech" judgment happens after VAD analysis runs alongside
-/// transcription — this just avoids paying for an API call when the answer
-/// is already obvious from the waveform alone.
-pub(super) const SILENCE_FLOOR_RMS: f32 = MIN_RECORDING_RMS * 0.3;
+/// Why a capture is structurally unusable — never a judgement about speech.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CaptureDefect {
+    /// Nothing was recorded: no samples, no encoded bytes, or no duration.
+    NoAudio,
+    /// The capture produced non-finite levels — a broken device or driver.
+    Corrupt,
+    /// Too brief to be an utterance under any circumstances.
+    KeyTap,
+}
 
-/// Scale an RMS threshold by the active mic gain so a gate stays consistent
-/// whether the user is amplifying a quiet mic or attenuating a hot one.
-fn gain_scaled_rms(base: f32, active_gain: f32) -> f32 {
-    let gain = active_gain.clamp(store::MIN_MIC_GAIN, store::MAX_MIC_GAIN);
-    if gain <= store::DEFAULT_MIC_GAIN {
-        base * gain / store::DEFAULT_MIC_GAIN
-    } else {
-        base * store::DEFAULT_MIC_GAIN / gain
+impl CaptureDefect {
+    pub(super) fn message(self) -> &'static str {
+        match self {
+            CaptureDefect::NoAudio => "No audio captured — check your mic",
+            CaptureDefect::Corrupt => "Recording was corrupt — check your mic",
+            CaptureDefect::KeyTap => "Too short — try again",
+        }
     }
 }
 
-/// Scale the near-silence RMS threshold by the active mic gain so the gate
-/// stays consistent whether the user is amplifying a quiet mic or attenuating
-/// a hot one. Used as the fallback gate when local VAD is unavailable.
-pub(super) fn recording_gate_rms(active_gain: f32) -> f32 {
-    gain_scaled_rms(MIN_RECORDING_RMS, active_gain)
+/// Structural validity only: is this a capture at all?
+///
+/// Deliberately says nothing about whether it contains speech. Mixing the two
+/// is what let an absolute loudness threshold silently override the adaptive
+/// detector and discard whispers before it ever ran — and, worse, discard them
+/// early enough that there was no retained audio left for "Try Anyway".
+pub(super) fn capture_defect(
+    duration_ms: u64,
+    sample_count: usize,
+    wav_len: usize,
+    rms: f32,
+) -> Option<CaptureDefect> {
+    if sample_count == 0 || wav_len == 0 || duration_ms == 0 {
+        return Some(CaptureDefect::NoAudio);
+    }
+    if !rms.is_finite() {
+        return Some(CaptureDefect::Corrupt);
+    }
+    if duration_ms < MIN_STRUCTURAL_MS {
+        return Some(CaptureDefect::KeyTap);
+    }
+    None
 }
 
-/// Gain-scaled version of `SILENCE_FLOOR_RMS` — the cheap pre-transcription
-/// "is this obviously digital silence" check.
-pub(super) fn silence_floor_gate_rms(active_gain: f32) -> f32 {
-    gain_scaled_rms(SILENCE_FLOOR_RMS, active_gain)
+/// Near-silence RMS threshold for the VAD-unavailable fallback gate. A plain
+/// constant now that capture gain is fixed — there is no per-user gain left to
+/// normalize against.
+pub(super) fn recording_gate_rms() -> f32 {
+    MIN_RECORDING_RMS
 }
 
 /// Use the post-processed RMS for normal validation, but keep a quiet voice
-/// from being rejected when denoising removes energy after gain was applied.
-pub(super) fn effective_recording_rms(processed_rms: f32, raw_rms: f32, active_gain: f32) -> f32 {
-    let gain = active_gain.clamp(store::MIN_MIC_GAIN, store::MAX_MIC_GAIN);
-    processed_rms.max(raw_rms * gain)
+/// from being rejected when denoising removes energy after capture gain was
+/// applied.
+pub(super) fn effective_recording_rms(processed_rms: f32, raw_rms: f32) -> f32 {
+    processed_rms.max(raw_rms * crate::media::audio::CAPTURE_GAIN)
 }
 
 /// Returns true when the transcription looks like a Whisper prompt-echo or

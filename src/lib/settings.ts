@@ -45,7 +45,15 @@ type SettingsValueMap = {
   pause_media_during_dictation: boolean;
   play_start_stop_sounds: boolean;
   sound_effects_volume: number;
-  mic_gain: number;
+  /**
+   * Learned voice-detection sensitivity per input device, keyed by device name
+   * (`__system_default__` when no microphone is explicitly selected). Written
+   * only by the Rust side (`media/vad_profile.rs`) from real dictation
+   * outcomes — the frontend never reads or writes it, and the only UI control
+   * is Settings → Audio → "Reset learned sensitivity"
+   * (`reset_voice_detection`).
+   */
+  vad_device_profiles: Record<string, { sensitivity: number; emptyStreak: number }>;
   setup_complete: boolean;
   force_setup_on_launch: boolean;
   app_context_hint: boolean;
@@ -68,6 +76,7 @@ type SettingsValueMap = {
   appearance_mode: AppearanceMode;
   advanced_model_ui: boolean;
   cleanup_prompt_overrides: Record<string, string>;
+  cleanup_prompt_template: string | null;
   /** Derived cache of each provider's live model list. Written only by modelCatalogStore. */
   provider_model_cache: Record<string, unknown>;
   legacy_features_enabled: boolean;

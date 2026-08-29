@@ -12,6 +12,7 @@
   import { modelId, providerDisplayLabel, splitModelId, taskLabel, type TaskType } from './models';
   import {
     curatedRows,
+    unverifiedRows,
     rowForSelection,
     type LocalControls,
     type ModelRow,
@@ -75,6 +76,7 @@
   let modalEl = $state<HTMLElement | null>(null);
   let query = $state('');
   let providerFilter = $state<ProviderId | 'all'>('all');
+  let showUnverified = $state(false);
   /**
    * Settings is a full-screen page beside the rail, so centring on the whole
    * window puts the dialog visibly left of the content it belongs to. Measure
@@ -106,9 +108,15 @@
   // Keep the picker intentional: provider APIs expose many unrelated models
   // such as embeddings, image, preview, and experimental variants. Advanced
   // mode still enables custom ids below for users who explicitly need one.
-  const allRows = $derived(
+  const curated = $derived(
     curatedRows(context, pinned).filter((row) => local.supported || row.provider !== 'local'),
   );
+  const unverified = $derived(
+    advancedModelUi
+      ? unverifiedRows(context).filter((row) => local.supported || row.provider !== 'local')
+      : [],
+  );
+  const allRows = $derived(showUnverified ? [...curated, ...unverified] : curated);
 
   function matches(row: ModelRow): boolean {
     const needle = query.trim().toLowerCase();
@@ -444,19 +452,6 @@
                       onclick={() => local.onDownload(row.id)}>Download</button
                     >
                   {:else}
-                    {#if task === 'cleanup' && advancedModelUi && local.onEditPrompt}
-                      <button
-                        class="row-tool"
-                        data-testid="edit-prompt"
-                        type="button"
-                        onclick={(event) =>
-                          local.onEditPrompt?.(
-                            row.id,
-                            (event.currentTarget as HTMLButtonElement).getBoundingClientRect(),
-                          )}
-                        >Prompt{local.promptCustomized?.(row.id) ? ' •' : ''}</button
-                      >
-                    {/if}
                     <button
                       class="row-tool row-tool-danger"
                       data-testid="delete-model"
@@ -489,6 +484,16 @@
             {/if}
           {/each}
         {/each}
+        {#if advancedModelUi && !showUnverified && unverified.length > 0}
+          <button class="show-more-models" type="button" onclick={() => (showUnverified = true)}>
+            Show more potentially unsupported models
+            <span>{unverified.length}</span>
+          </button>
+        {:else if advancedModelUi && showUnverified && unverified.length > 0}
+          <button class="show-more-models show-more-models--less" type="button" onclick={() => (showUnverified = false)}>
+            Hide unverified models
+          </button>
+        {/if}
       </div>
     </div>
 
@@ -622,7 +627,7 @@
   .search-icon {
     position: absolute;
     left: 32px;
-    top: 50%;
+    top: calc(50% - 5px);
     transform: translateY(-50%);
     color: var(--ink-faint);
     pointer-events: none;
@@ -965,6 +970,35 @@
     font-family: var(--sans);
     font-size: 13px;
     color: var(--ink-mute);
+  }
+
+  .show-more-models {
+    width: 100%;
+    margin: 12px 0 4px;
+    padding: 9px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ink-soft);
+    font: 500 12px var(--sans);
+    cursor: pointer;
+  }
+
+  .show-more-models:hover {
+    background: var(--control-hover);
+    color: var(--ink);
+  }
+
+  .show-more-models span {
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .show-more-models--less {
+    justify-content: center;
   }
 
   /* ── Footer ─────────────────────────────── */

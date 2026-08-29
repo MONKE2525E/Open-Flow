@@ -28,8 +28,8 @@
         micState = 'idle';
       } catch (e) {
         const msg = String(e);
-        error = msg.includes('too short') ? 'Too short — try again'
-              : msg.includes('too quiet') ? 'Too quiet — try again'
+        error = msg.includes('too short') || msg.includes('Too short') ? 'Too short — try again'
+              : msg.includes('check your mic') ? 'No audio captured — check your mic'
               : msg.includes('nothing was transcribed') ? 'Nothing detected — try again'
               : msg.includes('Download the selected local model') ? 'Download the local model first'
               : msg.includes('No configured transcription backend') ? 'Choose a transcription backend first'

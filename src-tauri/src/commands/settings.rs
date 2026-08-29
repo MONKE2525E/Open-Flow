@@ -27,7 +27,6 @@ enum SettingKind {
     ProviderModelCache,
     AppearanceMode,
     Bool,
-    MicGain,
     SoundEffectsVolume,
     AppMappings,
     Hotkey,
@@ -146,7 +145,6 @@ const SETTING_SPECS: &[SettingSpec] = &[
         true,
         true,
     ),
-    setting_spec(store::MIC_GAIN, SettingKind::MicGain, true, false),
     setting_spec(store::PLAY_START_STOP_SOUNDS, SettingKind::Bool, true, true),
     setting_spec(
         store::SOUND_EFFECTS_VOLUME,
@@ -172,6 +170,12 @@ const SETTING_SPECS: &[SettingSpec] = &[
     setting_spec(
         store::CLEANUP_PROMPT_OVERRIDES,
         SettingKind::CleanupPromptOverrides,
+        true,
+        false,
+    ),
+    setting_spec(
+        store::CLEANUP_PROMPT_TEMPLATE,
+        SettingKind::StringOrNull,
         true,
         true,
     ),
@@ -343,9 +347,7 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
                     missing.as_object().is_some_and(|counters| {
                         counters.values().all(|counter| {
                             counter.as_object().is_some_and(|counter| {
-                                counter
-                                    .get("count")
-                                    .is_some_and(|c| c.as_u64().is_some())
+                                counter.get("count").is_some_and(|c| c.as_u64().is_some())
                                     && counter.get("lastCountedAt").is_some_and(|t| {
                                         t.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0)
                                     })
@@ -388,7 +390,6 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
             .as_str()
             .is_some_and(|v| matches!(v, "system" | "light" | "dark")),
         SettingKind::Bool => value.is_boolean(),
-        SettingKind::MicGain => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
         SettingKind::SoundEffectsVolume => {
             value.as_f64().is_some_and(|v| (0.0..=100.0).contains(&v))
         }
@@ -514,7 +515,9 @@ pub async fn save_setting(
         let db = app.state::<DbHandle>().inner().clone();
         let key_for_stamp = key.clone();
         let stamped = run_blocking("save_setting_stamp", move || {
-            let conn = db.lock().map_err(|_| "database lock poisoned".to_string())?;
+            let conn = db
+                .lock()
+                .map_err(|_| "database lock poisoned".to_string())?;
             crate::sync::engine::record_local_setting_change(&conn, &key_for_stamp)
                 .map_err(|e| e.to_string())
         })
@@ -590,7 +593,6 @@ pub struct AllSettings {
     pub auto_spacing_enabled: Option<bool>,
     pub contextual_formatting_enabled: Option<bool>,
     pub caps_lock_uppercase_enabled: Option<bool>,
-    pub mic_gain: Option<f64>,
     pub history_retention: Option<String>,
     pub local_model_memory_policy: Option<String>,
     pub microphone_device: Option<String>,
@@ -602,7 +604,13 @@ pub struct AllSettings {
     pub repair_hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
     pub cleanup_prompt_overrides: Option<serde_json::Value>,
+    pub cleanup_prompt_template: Option<String>,
     pub provider_model_cache: Option<serde_json::Value>,
+    /// Learned per-input-device voice-detection sensitivity. Surfaced for
+    /// completeness and diagnostics only — the frontend has no control that
+    /// writes it; adaptation happens in `media::vad_profile` from real
+    /// dictation outcomes, and the only UI is a reset button.
+    pub vad_device_profiles: Option<serde_json::Value>,
 }
 
 #[derive(serde::Serialize)]
@@ -619,6 +627,13 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
     let str_val = |key: &str| s.get(key).and_then(|v| v.as_str().map(String::from));
     let f64_val = |key: &str| s.get(key).and_then(|v| v.as_f64());
     let json_val = |key: &str| s.get_cloned(key);
+    let cleanup_prompt_template = str_val(store::CLEANUP_PROMPT_TEMPLATE).or_else(|| {
+        s.get(store::CLEANUP_PROMPT_OVERRIDES)
+            .and_then(|value| value.as_object())
+            .and_then(|values| values.values().find_map(|value| {
+                value.as_str().filter(|text| !text.trim().is_empty()).map(str::to_string)
+            }))
+    });
     let str_array_val = |key: &str| {
         s.get(key).and_then(|v| {
             v.as_array().map(|arr| {
@@ -660,7 +675,6 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         auto_spacing_enabled: bool_val(store::AUTO_SPACING),
         contextual_formatting_enabled: bool_val(store::CONTEXTUAL_FORMATTING),
         caps_lock_uppercase_enabled: bool_val(store::CAPS_LOCK_UPPERCASE),
-        mic_gain: f64_val(store::MIC_GAIN),
         history_retention: str_val(store::HISTORY_RETENTION),
         local_model_memory_policy: str_val(store::LOCAL_MODEL_MEMORY_POLICY),
         microphone_device: str_val(store::MICROPHONE_DEVICE),
@@ -684,7 +698,9 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         }),
         appearance_mode: str_val(store::APPEARANCE_MODE),
         cleanup_prompt_overrides: json_val(store::CLEANUP_PROMPT_OVERRIDES),
+        cleanup_prompt_template,
         provider_model_cache: json_val(store::PROVIDER_MODEL_CACHE),
+        vad_device_profiles: json_val(store::VAD_DEVICE_PROFILES),
     })
 }
 
@@ -751,7 +767,10 @@ mod provider_model_cache_tests {
         assert!(check(&value).is_err());
 
         let mut value = well_formed();
-        value["groq"].as_object_mut().unwrap().remove("lastAttemptAt");
+        value["groq"]
+            .as_object_mut()
+            .unwrap()
+            .remove("lastAttemptAt");
         assert!(check(&value).is_err());
     }
 

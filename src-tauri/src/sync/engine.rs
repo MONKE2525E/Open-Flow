@@ -301,7 +301,11 @@ pub fn append_self_log(
     )
 }
 
-fn latest_stamp(conn: &Connection, table: &str, row_uuid: &str) -> Result<Option<(i64, String, i64)>> {
+fn latest_stamp(
+    conn: &Connection,
+    table: &str,
+    row_uuid: &str,
+) -> Result<Option<(i64, String, i64)>> {
     sync_store::latest_op_stamp(conn, table, row_uuid)
 }
 
@@ -353,9 +357,11 @@ fn snippet_payload(conn: &Connection, uuid: &str) -> Result<Option<serde_json::V
 
 fn context_aggregate(conn: &Connection, uuid: &str) -> Result<Option<serde_json::Value>> {
     let Some(context_id) = conn
-        .query_row("SELECT id FROM contexts WHERE uuid = ?1", params![uuid], |r| {
-            r.get::<_, i64>(0)
-        })
+        .query_row(
+            "SELECT id FROM contexts WHERE uuid = ?1",
+            params![uuid],
+            |r| r.get::<_, i64>(0),
+        )
         .optional()?
     else {
         return Ok(None);
@@ -624,10 +630,7 @@ pub fn collect_ops(
     let cursor = if done {
         sync_store::max_log_seq(conn)?
     } else {
-        entries
-            .last()
-            .map(|entry| entry.seq)
-            .unwrap_or(since_seq)
+        entries.last().map(|entry| entry.seq).unwrap_or(since_seq)
     };
     Ok((ops, cursor, done))
 }
@@ -800,13 +803,9 @@ fn apply_dictionary_op(conn: &Connection, op: &SyncOp) -> Result<Applied> {
             ],
         )
     };
-    apply_with_natural_key_resolution(
-        conn,
-        op,
-        "dictionary",
-        insert,
-        &|conn| conflicting_uuid(conn, "dictionary", "term", &row.term, &op.row_uuid),
-    )
+    apply_with_natural_key_resolution(conn, op, "dictionary", insert, &|conn| {
+        conflicting_uuid(conn, "dictionary", "term", &row.term, &op.row_uuid)
+    })
 }
 
 fn apply_snippet_op(conn: &Connection, op: &SyncOp) -> Result<Applied> {
@@ -842,13 +841,9 @@ fn apply_snippet_op(conn: &Connection, op: &SyncOp) -> Result<Applied> {
             ],
         )
     };
-    apply_with_natural_key_resolution(
-        conn,
-        op,
-        "snippets",
-        insert,
-        &|conn| conflicting_uuid(conn, "snippets", "trigger", &row.trigger, &op.row_uuid),
-    )
+    apply_with_natural_key_resolution(conn, op, "snippets", insert, &|conn| {
+        conflicting_uuid(conn, "snippets", "trigger", &row.trigger, &op.row_uuid)
+    })
 }
 
 /// Shared upsert flow with natural-key collision resolution. `insert` writes
@@ -878,8 +873,8 @@ fn apply_with_natural_key_resolution(
                     op.row_uuid
                 ));
             };
-            let conflict_stamp = latest_stamp(conn, table, &conflict_uuid)?
-                .unwrap_or((0, String::new(), 0));
+            let conflict_stamp =
+                latest_stamp(conn, table, &conflict_uuid)?.unwrap_or((0, String::new(), 0));
             if op.newer_than(&conflict_stamp) {
                 // Remote row wins: remove the local loser (with its cascades)
                 // and retry the insert.
@@ -913,7 +908,11 @@ fn conflicting_uuid(
     value: &str,
     exclude_uuid: &str,
 ) -> Result<Option<String>> {
-    let collate = if table == "contexts" { "COLLATE NOCASE" } else { "" };
+    let collate = if table == "contexts" {
+        "COLLATE NOCASE"
+    } else {
+        ""
+    };
     let context_scope = if table == "contexts" {
         " AND is_everywhere = 0"
     } else {
@@ -1082,9 +1081,11 @@ fn apply_everywhere_aggregate(conn: &Connection, aggregate: &ContextAggregate) -
 
 fn delete_context_by_uuid(conn: &Connection, uuid: &str) -> Result<()> {
     let Some(context_id) = conn
-        .query_row("SELECT id FROM contexts WHERE uuid = ?1", params![uuid], |r| {
-            r.get::<_, i64>(0)
-        })
+        .query_row(
+            "SELECT id FROM contexts WHERE uuid = ?1",
+            params![uuid],
+            |r| r.get::<_, i64>(0),
+        )
         .optional()?
     else {
         return Ok(());
@@ -1351,7 +1352,10 @@ fn apply_api_call_op(conn: &Connection, op: &SyncOp) -> Result<Applied> {
     )
     .context("invalid api call payload")?;
     let Some(transcription_uuid) = row.transcription_uuid.as_deref() else {
-        log::warn!("sync: skipping api call {} without a transcription", op.row_uuid);
+        log::warn!(
+            "sync: skipping api call {} without a transcription",
+            op.row_uuid
+        );
         return Ok(Applied::Skipped);
     };
     let Some(transcription_id) = conn
@@ -1428,7 +1432,11 @@ pub fn build_stats_exchange(conn: &Connection, self_uuid: &str) -> Result<StatsE
 /// Applies the peer's stats exchange: their own counters and everything they
 /// know about third devices. Rows for ourselves are ignored (our own
 /// `lifetime_stats` row is authoritative for this device).
-pub fn apply_stats_exchange(conn: &Connection, stats: &StatsExchange, peer_uuid: &str) -> Result<()> {
+pub fn apply_stats_exchange(
+    conn: &Connection,
+    stats: &StatsExchange,
+    peer_uuid: &str,
+) -> Result<()> {
     let self_uuid = sync_store::self_uuid(conn)?.unwrap_or_default();
     let mut incoming: Vec<DeviceStatsDto> = Vec::with_capacity(stats.remote_stats.len() + 1);
     incoming.push(stats.self_stats.clone());
@@ -1489,7 +1497,12 @@ pub fn record_local_setting_change(conn: &Connection, key: &str) -> Result<()> {
     if !SYNCABLE_SETTINGS.contains(&key) {
         return Ok(());
     }
-    sync_store::set_setting_stamp(conn, key, sync_store::now_ms(), &sync_store::self_uuid(conn)?.unwrap_or_default())
+    sync_store::set_setting_stamp(
+        conn,
+        key,
+        sync_store::now_ms(),
+        &sync_store::self_uuid(conn)?.unwrap_or_default(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1634,17 +1647,12 @@ fn check_hello(remote: &Hello) -> Result<()> {
 }
 
 fn lock(db: &DbHandle) -> Result<std::sync::MutexGuard<'_, Connection>> {
-    db.lock()
-        .map_err(|_| anyhow!("database lock was poisoned"))
+    db.lock().map_err(|_| anyhow!("database lock was poisoned"))
 }
 
 /// Puller side: request deltas, apply batches until the sender reports a
 /// final cursor. A SyncDone from the peer mid-pull is a clean terminator.
-async fn pull_from_peer<S>(
-    db: &DbHandle,
-    stream: &mut S,
-    peer: &SyncPeer,
-) -> Result<ApplySummary>
+async fn pull_from_peer<S>(db: &DbHandle, stream: &mut S, peer: &SyncPeer) -> Result<ApplySummary>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -1729,7 +1737,13 @@ where
     loop {
         let (ops, cursor, done) = {
             let conn = lock(db)?;
-            collect_ops(&conn, next_since_seq, snapshot, OPS_PER_BATCH, &mut progress)?
+            collect_ops(
+                &conn,
+                next_since_seq,
+                snapshot,
+                OPS_PER_BATCH,
+                &mut progress,
+            )?
         };
         let final_cursor = cursor;
         send_message(
@@ -1772,4 +1786,3 @@ impl ApplySummary {
         self.skipped += other.skipped;
     }
 }
-

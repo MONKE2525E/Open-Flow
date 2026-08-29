@@ -39,10 +39,9 @@ pub use fixture::{
     PipelineTestSnippet,
 };
 use gates::{
-    effective_recording_rms, has_spoken_content, is_transcription_hallucination,
+    capture_defect, effective_recording_rms, has_spoken_content, is_transcription_hallucination,
     normalize_transcription_math_artifacts, preview_text, recording_gate_rms,
-    silence_floor_gate_rms, strip_hallucinated_suffix, strip_trailing_hallucination,
-    MIN_RECORDING_MS, MIN_RECORDING_RMS,
+    strip_hallucinated_suffix, strip_trailing_hallucination,
 };
 pub(crate) use pill::{
     emit_pill_context, emit_pill_stage, hide_pill, pill_wants_repair_focus,
@@ -97,22 +96,23 @@ pub async fn transcribe_input_only(app: AppHandle, state: SharedState) -> anyhow
             return Err(anyhow::anyhow!(e));
         }
     };
-    let active_gain = store::load_audio_config(&settings_store).mic_gain;
-    let min_rms = recording_gate_rms(active_gain);
-    log::debug!("pipeline: input gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
-
-    let Some((captured_audio, rms, raw_rms)) =
+    let Some((captured_audio, rms, _raw_rms)) =
         stop_and_capture_audio(&app, session, exclusive_mic_session_id).await
     else {
         return Err(anyhow::anyhow!("Failed to stop recording"));
     };
-    let gate_rms = effective_recording_rms(rms, raw_rms, active_gain);
-    if captured_audio.duration_ms < MIN_RECORDING_MS || gate_rms < min_rms {
+    // Structural only, matching the dictation pipeline. This path has no VAD
+    // and no retry affordance, so an absolute loudness bar here would be the
+    // last surviving whisper-killer; an empty result is caught downstream by
+    // `has_spoken_content` and surfaces as "Nothing detected — try again".
+    if let Some(defect) = capture_defect(
+        captured_audio.duration_ms,
+        captured_audio.samples_16k.len(),
+        captured_audio.wav.len(),
+        rms,
+    ) {
         hide_pill(&app);
-        if captured_audio.duration_ms < MIN_RECORDING_MS {
-            anyhow::bail!("Recording too short");
-        }
-        anyhow::bail!("Audio too quiet - check your mic");
+        anyhow::bail!(defect.message());
     }
 
     let cfg = store::load_pipeline_config(&settings_store);
@@ -218,7 +218,6 @@ async fn wait_for_cancel(rx: &mut tokio::sync::watch::Receiver<bool>) {
 fn merge_prepend_audio(
     prev: CapturedAudio,
     next: CapturedAudio,
-    active_gain: f32,
 ) -> anyhow::Result<(CapturedAudio, f32, f32)> {
     let mut samples = (*prev.samples_16k).clone();
     samples.extend_from_slice(&next.samples_16k);
@@ -232,11 +231,9 @@ fn merge_prepend_audio(
         sample_rate: 16_000,
         duration_ms,
     };
-    let merged_raw_rms = if active_gain > 0.0 {
-        merged_rms / active_gain
-    } else {
-        merged_rms
-    };
+    // Undo the fixed capture pre-amp to recover the pre-gain level, matching
+    // what `stop_and_capture_audio` reports for an unmerged recording.
+    let merged_raw_rms = merged_rms / crate::media::audio::CAPTURE_GAIN;
     Ok((merged, merged_rms, merged_raw_rms))
 }
 
@@ -323,9 +320,21 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             store::AudioConfig::default()
         }
     };
-    let active_gain = audio_cfg.mic_gain;
-    let min_rms = recording_gate_rms(active_gain);
-    log::debug!("pipeline: audio gate active_gain={active_gain:.2} min_rms={min_rms:.6}");
+    let min_rms = recording_gate_rms();
+    // Learned voice-detection sensitivity for *this* microphone. Switching
+    // input devices switches profiles; an unseen device starts from the
+    // whisper-friendly default and needs no setup. See `media::vad_profile`.
+    let input_device = audio_cfg.device.clone();
+    let vad_device_key = crate::media::vad_profile::device_key(input_device.as_deref());
+    let vad_sensitivity = match store::settings_snapshot(&app) {
+        Ok(snapshot) => {
+            crate::media::vad_profile::sensitivity_for(&snapshot, input_device.as_deref())
+        }
+        Err(_) => crate::media::vad_profile::DEFAULT_SENSITIVITY,
+    };
+    log::debug!(
+        "pipeline: audio gate min_rms={min_rms:.6} vad_device={vad_device_key} vad_sensitivity={vad_sensitivity:.2}"
+    );
 
     let stage_audio = std::time::Instant::now();
     // Capture first, gate second: a resumed/prepended recording needs to be
@@ -339,7 +348,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     };
     if let Some(prev) = prepend_audio {
         let (merged, merged_rms, merged_raw_rms) =
-            match merge_prepend_audio(prev, captured_audio, active_gain) {
+            match merge_prepend_audio(prev, captured_audio) {
                 Ok(merged) => merged,
                 Err(err) => {
                     log::error!("pipeline: {err}");
@@ -352,23 +361,39 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         rms = merged_rms;
         raw_rms = merged_raw_rms;
     }
-    // Only reject here on duration or on RMS so low it's obviously digital
-    // silence/a dead mic — cheap enough to check before paying for an API
-    // call. The real "is there speech" judgment happens in the local VAD gate
-    // below, before any transcription request — this early gate deliberately
-    // stays permissive so quiet/distant speech gets a fair chance at VAD
-    // instead of being rejected on RMS alone.
-    let silence_floor = silence_floor_gate_rms(active_gain);
-    if !validate_captured_audio(
-        &app,
-        &captured_audio,
-        rms,
-        raw_rms,
-        silence_floor,
-        active_gain,
-    ) {
+    // Structural validation only: is this a usable capture at all? Quiet and
+    // short are NOT rejected here. They are speech judgements, they belong to
+    // the adaptive detector below, and making them early gates meant a whisper
+    // could be destroyed before VAD ran — with no retained audio left for the
+    // user to retry.
+    if !validate_capture_structure(&app, &captured_audio, rms) {
         state::leave_stopping_if_owned(&state, generation);
         return;
+    }
+
+    // Retryable capture is owned here, immediately after the recording proves
+    // structurally valid and before every speech-related gate. Everything
+    // downstream that can reject this dictation — VAD silence, the fallback
+    // thresholds, a transcription failure — can therefore offer "Try Anyway"
+    // on the exact same audio instead of asking the user to repeat themselves.
+    //
+    // `profile` and `app_context` are filled in below once config resolves;
+    // the retry path re-resolves the profile from `process_name`/`context_id`
+    // anyway, so an early-rejected dictation loses nothing by starting blank.
+    let retry_captured_at = std::time::Instant::now();
+    if let Ok(mut st) = lock_state(&state) {
+        st.retry_capture = Some(RetryCapture {
+            audio: captured_audio.clone(),
+            captured_at: retry_captured_at,
+            target,
+            process_name: process_name.clone(),
+            context_id,
+            profile: String::new(),
+            app_context: None,
+            caps_lock_on,
+            input_device: input_device.clone(),
+            rejected_by_vad: false,
+        });
     }
     if audio_cfg.sound_effects_volume > 0.0 {
         crate::media::sound::set_volume(audio_cfg.sound_effects_volume);
@@ -437,18 +462,17 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         return;
     }
 
-    let retry_captured_at = std::time::Instant::now();
+    // Config resolved — complete the capture stored before validation so a
+    // retry keeps the app-context hint this dictation would have used.
     if let Ok(mut st) = lock_state(&state) {
-        st.retry_capture = Some(RetryCapture {
-            audio: captured_audio.clone(),
-            captured_at: retry_captured_at,
-            target,
-            process_name: process_name.clone(),
-            context_id,
-            profile: profile.clone(),
-            app_context: app_context.clone(),
-            caps_lock_on,
-        });
+        if let Some(retry) = st
+            .retry_capture
+            .as_mut()
+            .filter(|retry| retry.captured_at == retry_captured_at)
+        {
+            retry.profile = profile.clone();
+            retry.app_context = app_context.clone();
+        }
     }
 
     // Run local VAD before touching the transcription API. This is deliberate:
@@ -458,7 +482,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // the RMS threshold only in that case.
     let vad_samples = captured_audio.samples_16k.clone();
     let vad_handle = tokio::task::spawn_blocking(move || {
-        crate::media::vad::analyze_speech(&vad_samples, active_gain)
+        crate::media::vad::analyze_speech(&vad_samples, vad_sensitivity)
     });
 
     let vad_result = tokio::select! {
@@ -479,14 +503,41 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             return;
         }
     };
+    log_vad_diagnostics(
+        &vad_device_key,
+        captured_audio.duration_ms,
+        rms,
+        raw_rms,
+        vad_result.as_ref(),
+    );
     if !passes_speech_gate(
         &app,
         rms,
         raw_rms,
         min_rms,
-        active_gain,
+        captured_audio.duration_ms,
         vad_result.as_ref(),
     ) {
+        // Keep the audio: the error pill's Retry button reuses this exact
+        // capture with VAD bypassed, so the user never has to repeat
+        // themselves — and if that retry transcribes, it is a confirmed false
+        // negative worth learning from. `RETRY_WINDOW` still bounds how long
+        // it is held, unchanged.
+        //
+        // Only a real VAD verdict counts as "VAD rejected this". If VAD could
+        // not run, the absolute fallback thresholds did the rejecting, and a
+        // successful retry would say nothing about the adaptive detector.
+        if vad_result.is_some() {
+            if let Ok(mut st) = lock_state(&state) {
+                if let Some(retry) = st
+                    .retry_capture
+                    .as_mut()
+                    .filter(|retry| retry.captured_at == retry_captured_at)
+                {
+                    retry.rejected_by_vad = true;
+                }
+            }
+        }
         state::leave_processing_if_owned(&state, generation);
         return;
     }
@@ -577,6 +628,22 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
             "pipeline: transcription had no spoken content or matched a hallucination pattern, dropping silently raw=\"{}\"",
             preview_text(&raw, 60)
         );
+        // VAD said yes, the provider answered successfully, and the answer had
+        // no speech in it. That is a false positive worth a small correction —
+        // but only when the waveform agrees the clip was genuinely empty.
+        if empty_result_blames_vad(vad_result.as_ref()) {
+            note_vad_feedback(
+                &app,
+                input_device.as_deref(),
+                &vad_device_key,
+                crate::media::vad_profile::Feedback::ConfirmedEmpty,
+                "confirmed empty dictation",
+            );
+        } else {
+            log::debug!(
+                "vad: device={vad_device_key} empty transcription not attributed to VAD (no VAD verdict, or the clip had confident signal) — sensitivity unchanged"
+            );
+        }
         if state::leave_processing_if_owned(&state, generation) {
             hide_pill(&app);
         }
@@ -729,6 +796,27 @@ async fn prepare_clipboard_phrase(
 #[cfg(test)]
 mod tests;
 
+/// Records one adaptive-VAD feedback event and logs why the learned value did
+/// or did not move. The `reason` is the whole point of this log line: after a
+/// surprising rejection, "why did the classification change" is the question,
+/// not "what were the raw samples".
+fn note_vad_feedback(
+    app: &AppHandle,
+    device: Option<&str>,
+    device_key: &str,
+    feedback: crate::media::vad_profile::Feedback,
+    reason: &str,
+) {
+    match crate::media::vad_profile::record_feedback(app, device, feedback) {
+        Some((old, new)) => log::info!(
+            "vad: adapt device={device_key} reason=\"{reason}\" sensitivity {old:.2} -> {new:.2}"
+        ),
+        None => log::debug!(
+            "vad: device={device_key} recorded \"{reason}\" without changing sensitivity"
+        ),
+    }
+}
+
 fn append_cleanup_api_used(api_used: String, cleanup_api_used: &str) -> String {
     if cleanup_api_used.is_empty() {
         api_used
@@ -764,7 +852,7 @@ pub async fn retry_transcription_impl(
         anyhow::bail!("Retry window expired");
     }
     let Some(mut capture) = capture else {
-        hide_pill(app);
+        show_error_pill(app, "Nothing to retry").await;
         anyhow::bail!("No retry available");
     };
 
@@ -778,7 +866,7 @@ pub async fn retry_transcription_impl(
     let settings_store = match store::settings_snapshot(app) {
         Ok(settings) => settings,
         Err(error) => {
-            hide_pill(app);
+            show_error_pill(app, "Retry failed — could not read settings").await;
             return Err(anyhow::Error::msg(error));
         }
     };
@@ -801,7 +889,7 @@ pub async fn retry_transcription_impl(
     let Some((raw_unorm, api_used, alternate)) =
         run_transcription(app, &capture.audio, &cfg, 0).await
     else {
-        hide_pill(app);
+        show_error_pill(app, "Retry failed — transcription did not return").await;
         anyhow::bail!("Retry transcription failed");
     };
     let raw = normalize_transcription_math_artifacts(&raw_unorm);
@@ -815,12 +903,26 @@ pub async fn retry_transcription_impl(
     };
     let raw = crate::system::text::collapse_degenerate_word_runs(&raw);
     if !has_spoken_content(&raw) || is_transcription_hallucination(&raw) {
+        // A retry that also produced nothing does not prove VAD was wrong, so
+        // it trains nothing in either direction.
         log::warn!(
             "pipeline: retry transcription had no spoken content or matched a hallucination pattern, dropping raw=\"{}\"",
             preview_text(&raw, 60)
         );
-        hide_pill(app);
+        show_error_pill(app, "Still no speech in that recording").await;
         anyhow::bail!("Recording was too quiet — nothing was transcribed");
+    }
+    // Skip VAD recovery: VAD rejected this exact audio, the user retried with
+    // the gate bypassed, and real speech came back. The strongest false-
+    // negative signal available, so it corrects harder than a confirmed empty.
+    if capture.rejected_by_vad {
+        note_vad_feedback(
+            app,
+            capture.input_device.as_deref(),
+            &crate::media::vad_profile::device_key(capture.input_device.as_deref()),
+            crate::media::vad_profile::Feedback::ConfirmedRecovery,
+            "Skip VAD retry recovered real speech",
+        );
     }
     if should_run_cleanup_llm(
         cfg.cleanup_enabled,
@@ -850,7 +952,7 @@ pub async fn retry_transcription_impl(
         )
         .await
     else {
-        hide_pill(app);
+        show_error_pill(app, "Retry failed during cleanup").await;
         anyhow::bail!("Retry cleanup failed");
     };
     let api_used = append_cleanup_api_used(api_used, &cleanup_api_used);

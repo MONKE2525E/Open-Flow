@@ -2,7 +2,7 @@
 //! mutually-authenticated TLS stream. Boring on purpose - every message is a
 //! serde struct, framed with a 4-byte big-endian length prefix.
 
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -178,7 +178,6 @@ pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Messag
     }
     let mut body = vec![0u8; len as usize];
     reader.read_exact(&mut body).await?;
-    let message: Message =
-        serde_json::from_slice(&body).context("decode message from peer")?;
+    let message: Message = serde_json::from_slice(&body).context("decode message from peer")?;
     Ok(message)
 }

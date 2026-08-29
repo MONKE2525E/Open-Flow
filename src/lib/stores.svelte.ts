@@ -157,6 +157,10 @@ export const cleanupPromptOverridesStore = $state<{ overrides: Record<string, st
   overrides: {},
 });
 
+export const cleanupPromptTemplateStore = $state<{ template: string | null }>({
+  template: null,
+});
+
 export const cleanupPromptEditor = $state<{
   open: boolean;
   provider: ProviderId | null;

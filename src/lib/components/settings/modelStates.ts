@@ -79,9 +79,6 @@ export type LocalControls = {
     onCancel: () => void;
     onDelete: () => void;
   };
-  /** Cleanup only: per-model prompt overrides. */
-  promptCustomized?: (id: string) => boolean;
-  onEditPrompt?: (id: string, rect: DOMRect) => void;
 };
 
 export type PickerContext = {

@@ -136,8 +136,17 @@ fn open_repairs_db_stuck_at_v7_without_spoken_words_column() {
     let db = open(path.to_str().expect("path string")).expect("open repairs stuck db");
 
     // Inserting a new transcription must succeed now that spoken_words exists.
-    insert_transcription_returning(&db, "second clip", "second clip", 2, 1000, "test", None, None)
-        .expect("insert after repair");
+    insert_transcription_returning(
+        &db,
+        "second clip",
+        "second clip",
+        2,
+        1000,
+        "test",
+        None,
+        None,
+    )
+    .expect("insert after repair");
 
     let conn = lock_conn(&db).expect("lock");
     let spoken_words: i64 = conn
@@ -526,27 +535,18 @@ fn auto_learn_does_not_overwrite_manual_dictionary_entry() {
 fn auto_learn_updates_only_exact_existing_pair() {
     let db = test_db();
 
-    assert!(insert_dictionary_entry_auto_learned(
-        &db,
-        "Kubernetes",
-        Some("Koobernetes"),
-        "high"
-    )
-    .expect("first insert"));
-    assert!(insert_dictionary_entry_auto_learned(
-        &db,
-        "Kubernetes",
-        Some("Koobernetes"),
-        "high"
-    )
-    .expect("same pair"));
-    assert!(!insert_dictionary_entry_auto_learned(
-        &db,
-        "Kubernetes",
-        Some("Kubernetties"),
-        "low",
-    )
-    .expect("different pair"));
+    assert!(
+        insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Koobernetes"), "high")
+            .expect("first insert")
+    );
+    assert!(
+        insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Koobernetes"), "high")
+            .expect("same pair")
+    );
+    assert!(
+        !insert_dictionary_entry_auto_learned(&db, "Kubernetes", Some("Kubernetties"), "low",)
+            .expect("different pair")
+    );
 
     let entries = query_dictionary(&db).expect("dictionary");
     assert_eq!(entries.len(), 1);
@@ -673,8 +673,7 @@ fn auto_learn_promote_can_relearn_after_rejection() {
     delete_auto_learned_entries_by_ids(&db, &[id]).expect("reject");
 
     // New learning episode: fresh candidate (promoted_at NULL), two sessions.
-    upsert_auto_learn_candidate(&db, "Koobernetes", "Kubernetes", 0.6)
-        .expect("candidate again");
+    upsert_auto_learn_candidate(&db, "Koobernetes", "Kubernetes", 0.6).expect("candidate again");
     assert_eq!(
         auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2).expect("s1"),
         AutoLearnPromoteResult::BelowThreshold { pending_count: 1 }
@@ -700,8 +699,7 @@ fn auto_learn_promote_manual_entry_blocks_without_claiming() {
     // every attempt (and records the pending rows for later sessions).
     for _ in 0..2 {
         assert_eq!(
-            auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2)
-                .expect("promote"),
+            auto_learn_promote(&db, "Koobernetes", "Kubernetes", "medium", 2, 2).expect("promote"),
             AutoLearnPromoteResult::Blocked
         );
     }
@@ -731,8 +729,7 @@ fn auto_learn_promote_manual_entry_blocks_without_claiming() {
 #[test]
 fn cleanup_cache_insert_get_and_clear() {
     let db = test_db();
-    cleanup_cache_insert_new(&db, "abc", "hello", "2999-01-01 00:00:00", false)
-        .expect("insert");
+    cleanup_cache_insert_new(&db, "abc", "hello", "2999-01-01 00:00:00", false).expect("insert");
     let hit = cleanup_cache_get_active(&db, "abc")
         .expect("query")
         .expect("exists");
@@ -747,10 +744,8 @@ fn cleanup_cache_insert_get_and_clear() {
 #[test]
 fn cleanup_cache_prunes_expired_only() {
     let db = test_db();
-    cleanup_cache_insert_new(&db, "old", "x", "2000-01-01 00:00:00", false)
-        .expect("insert old");
-    cleanup_cache_insert_new(&db, "live", "y", "2999-01-01 00:00:00", false)
-        .expect("insert live");
+    cleanup_cache_insert_new(&db, "old", "x", "2000-01-01 00:00:00", false).expect("insert old");
+    cleanup_cache_insert_new(&db, "live", "y", "2999-01-01 00:00:00", false).expect("insert live");
 
     assert_eq!(cleanup_cache_prune_expired(&db).expect("prune"), 1);
     assert!(cleanup_cache_get_active(&db, "old")
@@ -764,8 +759,7 @@ fn cleanup_cache_prunes_expired_only() {
 #[test]
 fn cleanup_cache_get_active_supports_null_epoch_fallback() {
     let db = test_db();
-    cleanup_cache_insert_new(&db, "legacy", "hello", "2999-01-01 00:00:00", false)
-        .expect("insert");
+    cleanup_cache_insert_new(&db, "legacy", "hello", "2999-01-01 00:00:00", false).expect("insert");
 
     let conn = lock_conn(&db).expect("lock");
     conn.execute(
@@ -809,8 +803,7 @@ fn cleanup_cache_get_active_handles_null_created_and_last_hit_epochs() {
 #[test]
 fn cleanup_cache_epoch_columns_treat_utc_text_as_utc() {
     let db = test_db();
-    cleanup_cache_insert_new(&db, "utc", "value", "2026-01-01 00:00:00", false)
-        .expect("insert");
+    cleanup_cache_insert_new(&db, "utc", "value", "2026-01-01 00:00:00", false).expect("insert");
 
     let conn = lock_conn(&db).expect("lock");
     let (inserted_expiry_epoch, created_at): (i64, String) = conn
@@ -870,8 +863,7 @@ fn cache_rejection_delete_removes_entry() {
 #[test]
 fn cache_rejection_leaves_other_keys_intact() {
     let db = test_db();
-    cleanup_cache_insert_new(&db, "target", "bad", "2999-01-01 00:00:00", false)
-        .expect("target");
+    cleanup_cache_insert_new(&db, "target", "bad", "2999-01-01 00:00:00", false).expect("target");
     cleanup_cache_insert_new(&db, "bystander", "good", "2999-01-01 00:00:00", false)
         .expect("bystander");
 
@@ -891,8 +883,7 @@ fn cache_rejection_leaves_other_keys_intact() {
 #[test]
 fn cache_rejection_after_hit_removes_entry() {
     let db = test_db();
-    cleanup_cache_insert_new(&db, "k", "stale text", "2999-01-01 00:00:00", false)
-        .expect("insert");
+    cleanup_cache_insert_new(&db, "k", "stale text", "2999-01-01 00:00:00", false).expect("insert");
 
     // Simulate a cache hit (the phrase was served from cache once).
     let created_at = cleanup_cache_get_active(&db, "k")
@@ -928,8 +919,9 @@ fn pruning_history_removes_orphaned_api_cost_rows() {
     let db = test_db();
     let old = insert_transcription_returning(&db, "old", "old", 2, 1000, "test", None, None)
         .expect("old transcription");
-    let recent = insert_transcription_returning(&db, "recent", "recent", 3, 1000, "test", None, None)
-        .expect("recent transcription");
+    let recent =
+        insert_transcription_returning(&db, "recent", "recent", 3, 1000, "test", None, None)
+            .expect("recent transcription");
     let call = |transcription_id: i64| ApiCall {
         transcription_id,
         model: "test-model".into(),
@@ -1128,8 +1120,17 @@ fn stats_avg_wpm_counts_only_non_snippet_spoken_words() {
 fn stats_avg_wpm_excludes_pure_snippet_rows_from_average() {
     let db = test_db();
     insert_snippet(&db, "sig", "A long email signature", "").expect("snippet");
-    insert_transcription_returning(&db, "hello world", "hello world", 2, 1000, "test", None, None)
-        .expect("normal transcription");
+    insert_transcription_returning(
+        &db,
+        "hello world",
+        "hello world",
+        2,
+        1000,
+        "test",
+        None,
+        None,
+    )
+    .expect("normal transcription");
     insert_transcription_returning(
         &db,
         "sig.",
@@ -1304,8 +1305,7 @@ fn cache_rejection_full_lifecycle() {
     let bad_answer = "bad cached answer";
 
     // First dictation: LLM runs, result cached.
-    cleanup_cache_insert_new(&db, key, bad_answer, "2999-01-01 00:00:00", false)
-        .expect("insert");
+    cleanup_cache_insert_new(&db, key, bad_answer, "2999-01-01 00:00:00", false).expect("insert");
     assert_eq!(cleanup_cache_count(&db).expect("count"), 1);
 
     // Second dictation: cache hit, stale answer served.

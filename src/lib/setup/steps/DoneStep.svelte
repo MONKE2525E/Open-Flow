@@ -8,7 +8,6 @@
     cleanupName,
     toneName,
     languageLabel,
-    micGain,
     usesHeadphones,
     hasKey,
     presetName,
@@ -18,7 +17,6 @@
     cleanupName: string;
     toneName: string;
     languageLabel: string;
-    micGain: number | null;
     usesHeadphones: boolean;
     hasKey: boolean;
   } = $props();
@@ -111,7 +109,7 @@
     <div class="summary-group">
       <span class="summary-label">Audio</span>
       <span class="summary-val">{usesHeadphones ? 'Headphones' : 'Speakers'}</span>
-      <span class="summary-meta">{micGain != null ? `Mic tuned to ${micGain.toFixed(1)}×` : 'Default mic gain'}</span>
+      <span class="summary-meta">Voice detection tunes itself</span>
     </div>
   </div>
 

@@ -143,17 +143,13 @@ mod win {
     }
 
     fn is_edit_control(element: &IUIAutomationElement) -> bool {
-        unsafe { element.CurrentControlType() }
-            .map(|v| v.0)
-            .ok()
-            == Some(UIA_EditControlTypeId.0)
+        unsafe { element.CurrentControlType() }.map(|v| v.0).ok() == Some(UIA_EditControlTypeId.0)
     }
 
     fn read_value(element: &IUIAutomationElement) -> Option<String> {
-        let pattern = unsafe {
-            element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-        }
-        .ok()?;
+        let pattern =
+            unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+                .ok()?;
         let value = unsafe { pattern.CurrentValue() }.ok()?.to_string();
         if value.trim().is_empty() {
             None
@@ -174,10 +170,10 @@ mod mac {
     }
 }
 
-#[cfg(windows)]
-use win::read_address_bar_text as platform_read_address_bar_text;
 #[cfg(target_os = "macos")]
 use mac::read_address_bar_text as platform_read_address_bar_text;
+#[cfg(windows)]
+use win::read_address_bar_text as platform_read_address_bar_text;
 #[cfg(not(any(windows, target_os = "macos")))]
 fn platform_read_address_bar_text() -> Option<String> {
     None
@@ -206,7 +202,10 @@ mod tests {
 
     #[test]
     fn extracts_domain_from_bare_host() {
-        assert_eq!(extract_domain("Example.com"), Some("example.com".to_string()));
+        assert_eq!(
+            extract_domain("Example.com"),
+            Some("example.com".to_string())
+        );
     }
 
     #[test]

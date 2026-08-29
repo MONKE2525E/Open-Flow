@@ -85,17 +85,8 @@ const { TARGET_URL, TIMEOUT, seedDevState } = require('./_dev-helpers.cjs');
     await page.locator('.env-card:has-text("Speakers")').click();
     await page.getByRole('button', { name: 'Next' }).click();
 
-    const calibrationBox = page.locator('.calibration-box');
-    let hasCalibrationStep = false;
-    try {
-      await calibrationBox.waitFor({ state: 'visible', timeout: 1000 });
-      hasCalibrationStep = true;
-    } catch (e) {
-      // Calibration box did not appear
-    }
-    if (hasCalibrationStep) {
-      await page.locator('.btn-skip').click();
-    }
+    // No microphone-calibration step any more: voice detection adapts per
+    // input device on its own, so the wizard goes straight to Try It.
 
     // Try It step: skip the hands-on hotkey test in automated runs.
     const tryItField = page.locator('.tryit-field');

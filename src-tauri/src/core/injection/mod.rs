@@ -283,15 +283,8 @@ mod tests {
             control_type: "test".to_string(),
             target_id: 1,
         };
-        let (adjusted, context, case_decision) = apply_probe_adjustments(
-            "Dabba Doo.",
-            true,
-            true,
-            "casual",
-            "en",
-            false,
-            &probe,
-        );
+        let (adjusted, context, case_decision) =
+            apply_probe_adjustments("Dabba Doo.", true, true, "casual", "en", false, &probe);
         assert_eq!(adjusted, " dabba Doo.");
         assert!(matches!(context, ContextKind::Continuation));
         assert!(matches!(
@@ -574,9 +567,7 @@ fn context_head_signal(head: &str) -> &'static str {
             }
         }
         Some(ch) if ch.is_alphanumeric() => "alnum",
-        Some(')' | ']' | '}' | '.' | ',' | ';' | ':' | '!' | '?') => {
-            "punct"
-        }
+        Some(')' | ']' | '}' | '.' | ',' | ';' | ':' | '!' | '?') => "punct",
         Some(_) => "other",
     }
 }

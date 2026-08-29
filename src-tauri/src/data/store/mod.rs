@@ -214,7 +214,11 @@ pub const NOISE_REDUCTION: &str = "noise_reduction";
 pub const MUTE_AUDIO: &str = "mute_audio";
 pub const EXCLUSIVE_MIC: &str = "exclusive_mic";
 pub const PAUSE_MEDIA_DURING_DICTATION: &str = "pause_media_during_dictation";
-pub const MIC_GAIN: &str = "mic_gain";
+/// Learned per-input-device voice-detection sensitivity, written only by
+/// `media::vad_profile`. Machine-local and device-specific, so it is readable
+/// (the settings UI shows whether anything has been learned yet) but never
+/// exportable — one machine's microphone profiles are meaningless on another.
+pub const VAD_DEVICE_PROFILES: &str = "vad_device_profiles";
 pub const PLAY_START_STOP_SOUNDS: &str = "play_start_stop_sounds";
 pub const SOUND_EFFECTS_VOLUME: &str = "sound_effects_volume";
 pub const SETUP_COMPLETE: &str = "setup_complete";
@@ -235,6 +239,7 @@ pub const APPEARANCE_MODE: &str = "appearance_mode";
 pub const FORCE_SETUP_ON_LAUNCH: &str = "force_setup_on_launch";
 pub const ADVANCED_MODEL_UI: &str = "advanced_model_ui";
 pub const CLEANUP_PROMPT_OVERRIDES: &str = "cleanup_prompt_overrides";
+pub const CLEANUP_PROMPT_TEMPLATE: &str = "cleanup_prompt_template";
 /// Per-provider snapshot of the live model lists, written only by the model
 /// catalog store. Derived cache state, so it is readable but never exported —
 /// one machine's stale view of a provider must not travel to another.
@@ -287,7 +292,6 @@ pub fn history_retention_days(value: &str) -> Option<i64> {
     }
 }
 
-
 mod config;
 #[cfg(test)]
 mod tests;
@@ -319,4 +323,3 @@ pub fn migrate_contextual_formatting(settings: &SettingsHandle) -> Result<(), St
     settings.set(CONTEXTUAL_FORMATTING, Value::Bool(merged))?;
     settings.save()
 }
-

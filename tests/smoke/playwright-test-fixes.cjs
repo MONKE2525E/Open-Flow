@@ -46,12 +46,11 @@ async function assert(label, locator, errors) {
       errors,
     );
 
-    // Gain value display must render as "X.X×"
-    await assert(
-      'span.gain-value showing mic gain',
-      page.locator('span.gain-value'),
-      errors,
-    );
+    // Amendment (owner sign-off, second amendment after the full-screen
+    // settings rename): the microphone gain slider was removed along with the
+    // mic-calibration workflow. Capture gain is now a fixed constant and
+    // speech detection adapts per input device, so there is no span.gain-value
+    // to assert. Treat this file as frozen again.
 
     // ── General tab ──────────────────────────────────────────────────────────
     console.log('Checking General tab hotkey badge...');

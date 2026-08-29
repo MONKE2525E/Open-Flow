@@ -1,4 +1,4 @@
-//! Microphone + recording/calibration session control commands.
+//! Microphone + recording session control commands.
 
 use super::*;
 use crate::core::window_geometry::{capture_webview_center, WindowTarget};
@@ -63,10 +63,8 @@ pub async fn start_input_recording(
             &state_clone,
             "recording",
             false,
-            None,
             pipeline::RecordingStartOptions {
                 show_recording_pill: true,
-                emit_globally: false,
                 start_cue_delay_ms: None,
             },
         )
@@ -127,10 +125,8 @@ pub async fn start_setup_try_recording(
             &state_clone,
             "recording",
             false,
-            None,
             pipeline::RecordingStartOptions {
                 show_recording_pill: true,
-                emit_globally: false,
                 start_cue_delay_ms: if pipeline::start_stop_sounds_enabled(&app_clone) {
                     Some(0)
                 } else {
@@ -181,138 +177,18 @@ pub async fn stop_setup_try_recording(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn start_calibration_monitoring(
-    app: AppHandle,
-    state: tauri::State<'_, SharedState>,
-) -> Result<(), String> {
-    pipeline::reserve_starting(state.inner())?;
-
-    let target = capture_in_app_target(&app);
-    {
-        let mut st = match lock_state(&state) {
-            Ok(st) => st,
-            Err(err) => {
-                pipeline::release_starting_reservation(state.inner());
-                return Err(err);
-            }
-        };
-        st.target = target;
-        st.pill_placement_stale = true;
-    }
-
-    let state_clone = state.inner().clone();
-    let app_clone = app.clone();
-    let start_result = tokio::task::spawn_blocking(move || {
-        pipeline::start_recording_session_ex(
-            &app_clone,
-            &state_clone,
-            "calibration",
-            false,
-            Some(1.0),
-            pipeline::RecordingStartOptions {
-                show_recording_pill: false,
-                emit_globally: true,
-                start_cue_delay_ms: None,
-            },
-        )
-    })
-    .await;
-
-    let start_result = match start_result {
-        Ok(result) => result,
-        Err(e) => {
-            pipeline::release_starting_reservation(state.inner());
-            return Err(format!("Calibration task panicked: {e}"));
-        }
-    };
-    start_result.map_err(|e| e.to_string())
-}
-
-/// What calibration learned about the capture it just took.
+/// Clears the learned per-device voice-detection sensitivity, restoring the
+/// automatic defaults. Replaces the old manual microphone-calibration
+/// workflow: nothing else needs configuring, and this is the only escape hatch
+/// the ordinary user should ever need.
 ///
-/// `contains_speech` comes from the same Silero VAD the dictation pipeline
-/// uses, not from a peak-RMS threshold — a door slam or a desk bump clears an
-/// RMS bar exactly like a voice does, and it also drags the computed gain down
-/// with it. `null` means VAD could not run (model staging failed); the caller
-/// should fall back rather than treat it as silence.
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CalibrationResult {
-    pub contains_speech: Option<bool>,
-    pub speech_ms: u64,
-    pub speech_ratio: f32,
-    pub peak_probability: f32,
-    pub longest_segment_ms: u64,
-    pub duration_ms: u64,
-}
-
+/// Applies to every input device rather than only the selected one. Learned
+/// state is invisible, so "reset it for the mic that happens to be picked
+/// right now" is the surprising reading — a user who reaches for this wants a
+/// clean slate.
 #[tauri::command]
-pub async fn stop_calibration_monitoring(
-    app: AppHandle,
-    state: tauri::State<'_, SharedState>,
-) -> Result<CalibrationResult, String> {
-    let mut result = CalibrationResult {
-        contains_speech: None,
-        speech_ms: 0,
-        speech_ratio: 0.0,
-        peak_probability: 0.0,
-        longest_segment_ms: 0,
-        duration_ms: 0,
-    };
-
-    let taken = pipeline::take_recording_plain(state.inner());
-    if let Some((session, exclusive_mic_session_id)) = taken {
-        // The capture used to be discarded here. Keeping it costs nothing —
-        // the samples are already in memory — and gives the frontend a real
-        // answer to "did they actually speak?".
-        let analysis = tauri::async_runtime::spawn_blocking(move || {
-            let recording = session.stop();
-            if let Some(session_id) = exclusive_mic_session_id {
-                crate::system::volume::release_mic(session_id);
-            }
-            recording.ok().map(|recording| {
-                // Calibration forces gain 1.0 (see start_calibration_monitoring),
-                // so VAD sees the unamplified signal and needs no leniency scaling.
-                let speech = crate::media::vad::analyze_speech(&recording.samples_16k, 1.0);
-                (recording.duration_ms, speech)
-            })
-        })
-        .await;
-
-        match analysis {
-            Ok(Some((duration_ms, speech))) => {
-                result.duration_ms = duration_ms;
-                match speech {
-                    Ok(speech) => {
-                        result.contains_speech = Some(speech.contains_speech);
-                        result.speech_ms = speech.speech_ms;
-                        result.speech_ratio = speech.speech_ratio;
-                        result.peak_probability = speech.peak_probability;
-                        result.longest_segment_ms = speech.longest_segment_ms;
-                        log::debug!(
-                            "calibration: vad speech={} speech_ms={} ratio={:.3} peak={:.3} longest_ms={}",
-                            speech.contains_speech,
-                            speech.speech_ms,
-                            speech.speech_ratio,
-                            speech.peak_probability,
-                            speech.longest_segment_ms
-                        );
-                    }
-                    Err(e) => {
-                        log::warn!("calibration: VAD unavailable, falling back to level check: {e}")
-                    }
-                }
-            }
-            Ok(None) => log::warn!("calibration: capture returned no audio"),
-            Err(e) => log::error!("calibration: stop task panicked: {e}"),
-        }
-    }
-
-    if let Some(manager) = app.try_state::<crate::local_stt::LocalTranscriptionManager>() {
-        manager.set_recording_active(false);
-    }
-    Ok(result)
+pub async fn reset_voice_detection(app: AppHandle) -> Result<(), String> {
+    crate::media::vad_profile::reset(&app)
 }
 
 #[tauri::command]
@@ -339,10 +215,8 @@ pub async fn start_repair_complaint_recording(
         state.inner(),
         "repair_recording",
         false,
-        None,
         pipeline::RecordingStartOptions {
             show_recording_pill: true,
-            emit_globally: false,
             start_cue_delay_ms: None,
         },
     )

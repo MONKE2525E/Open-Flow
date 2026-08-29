@@ -102,7 +102,6 @@ pub enum PeerState {
 pub struct PeerStatus {
     pub state: PeerState,
     pub error: Option<String>,
-    
 }
 
 #[derive(Debug, Clone)]
@@ -200,10 +199,8 @@ impl SyncManager {
             let conn = self.lock_db()?;
             sync_store::self_uuid(&conn)?
         };
-        let identity =
-            identity::load_or_create(&self.inner.data_dir, known_uuid).map_err(|e| {
-                anyhow!("identity setup failed ({e}); check the OS credential store")
-            })?;
+        let identity = identity::load_or_create(&self.inner.data_dir, known_uuid)
+            .map_err(|e| anyhow!("identity setup failed ({e}); check the OS credential store"))?;
         let identity = Arc::new(identity);
 
         // Prefer a user-set name persisted in the DB over the hostname default.
@@ -292,8 +289,8 @@ impl SyncManager {
         if let Some(previous) = self.inner.mdns.lock().await.take() {
             let _ = previous.shutdown();
         }
-        let daemon = ServiceDaemon::new()
-            .map_err(|e| anyhow!("mDNS daemon failed to start: {e}"))?;
+        let daemon =
+            ServiceDaemon::new().map_err(|e| anyhow!("mDNS daemon failed to start: {e}"))?;
         let (uuid, name, port) = {
             let guard = self.inner.identity.read().expect("identity lock");
             let identity = guard.as_ref().ok_or_else(|| anyhow!("identity missing"))?;
@@ -313,16 +310,10 @@ impl SyncManager {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect();
-        let service = ServiceInfo::new(
-            SERVICE_TYPE,
-            &instance,
-            &host,
-            "0.0.0.0",
-            port,
-            Some(props),
-        )
-        .map_err(|e| anyhow!("mDNS service info invalid: {e}"))?
-        .enable_addr_auto();
+        let service =
+            ServiceInfo::new(SERVICE_TYPE, &instance, &host, "0.0.0.0", port, Some(props))
+                .map_err(|e| anyhow!("mDNS service info invalid: {e}"))?
+                .enable_addr_auto();
         daemon
             .register(service)
             .map_err(|e| anyhow!("mDNS registration failed: {e}"))?;
@@ -366,7 +357,9 @@ impl SyncManager {
 
     pub fn identity_exchange(&self) -> Result<IdentityExchange> {
         let guard = self.inner.identity.read().expect("identity lock");
-        let identity = guard.as_ref().ok_or_else(|| anyhow!("sync is unavailable"))?;
+        let identity = guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("sync is unavailable"))?;
         Ok(IdentityExchange {
             device_uuid: identity.uuid.clone(),
             device_name: identity.name.clone(),
@@ -416,9 +409,7 @@ impl SyncManager {
         let peers = peers
             .into_iter()
             .map(|peer| {
-                let online = discovered
-                    .iter()
-                    .any(|d| d.uuid == peer.device_uuid);
+                let online = discovered.iter().any(|d| d.uuid == peer.device_uuid);
                 let state = status
                     .as_ref()
                     .and_then(|s| s.get(&peer.device_uuid))
@@ -446,29 +437,28 @@ impl SyncManager {
                 }
             })
             .collect();
-        let pairing = self
-            .inner
-            .pending
-            .try_lock()
-            .ok()
-            .and_then(|guard| {
-                guard.as_ref().map(|pending| match pending {
-                    PendingPairing::Incoming {
-                        peer_uuid, peer_name, ..
-                    } => PairingStateDto {
-                        kind: "incoming".to_string(),
-                        peer_uuid: peer_uuid.clone(),
-                        peer_name: peer_name.clone(),
-                    },
-                    PendingPairing::Outgoing {
-                        peer_uuid, peer_name, ..
-                    } => PairingStateDto {
-                        kind: "outgoing".to_string(),
-                        peer_uuid: peer_uuid.clone(),
-                        peer_name: peer_name.clone(),
-                    },
-                })
-            });
+        let pairing = self.inner.pending.try_lock().ok().and_then(|guard| {
+            guard.as_ref().map(|pending| match pending {
+                PendingPairing::Incoming {
+                    peer_uuid,
+                    peer_name,
+                    ..
+                } => PairingStateDto {
+                    kind: "incoming".to_string(),
+                    peer_uuid: peer_uuid.clone(),
+                    peer_name: peer_name.clone(),
+                },
+                PendingPairing::Outgoing {
+                    peer_uuid,
+                    peer_name,
+                    ..
+                } => PairingStateDto {
+                    kind: "outgoing".to_string(),
+                    peer_uuid: peer_uuid.clone(),
+                    peer_name: peer_name.clone(),
+                },
+            })
+        });
         SyncStatusSnapshot {
             this_device,
             listener_active: self.inner.available.load(Ordering::Relaxed),
@@ -495,7 +485,11 @@ impl SyncManager {
             if pending.is_some() {
                 return Err(anyhow!("a pairing is already in progress"));
             }
-            generation = self.inner.pairing_generation.fetch_add(1, Ordering::Relaxed) + 1;
+            generation = self
+                .inner
+                .pairing_generation
+                .fetch_add(1, Ordering::Relaxed)
+                + 1;
             *pending = Some(PendingPairing::Outgoing {
                 peer_uuid: peer_uuid.clone(),
                 peer_name: target.name.clone(),
@@ -510,7 +504,8 @@ impl SyncManager {
         let task = tokio::spawn(async move {
             let result = manager
                 .run_outgoing_pairing(&target, &task_code, generation)
-                .await;            if let Err(err) = result {
+                .await;
+            if let Err(err) = result {
                 log::warn!("sync: pairing with {} failed: {err:#}", target.name);
                 manager
                     .inner
@@ -531,8 +526,11 @@ impl SyncManager {
         let abort = task.abort_handle();
         {
             let mut pending = self.inner.pending.lock().await;
-            if let Some(PendingPairing::Outgoing { abort: slot, generation: g, .. }) =
-                pending.as_mut()
+            if let Some(PendingPairing::Outgoing {
+                abort: slot,
+                generation: g,
+                ..
+            }) = pending.as_mut()
             {
                 if *g == generation {
                     *slot = Some(abort);
@@ -687,13 +685,7 @@ impl SyncManager {
         };
         let result = match tokio::time::timeout(
             PAIRING_TIMEOUT,
-            pairing::responder_exchange(
-                &mut stream,
-                &cipher,
-                responder_msg,
-                &identity,
-                &peer_uuid,
-            ),
+            pairing::responder_exchange(&mut stream, &cipher, responder_msg, &identity, &peer_uuid),
         )
         .await
         {
@@ -735,8 +727,7 @@ impl SyncManager {
         generation: u64,
     ) {
         let mut pending = self.inner.pending.lock().await;
-        if pending.is_none()
-            && self.inner.pairing_generation.load(Ordering::Relaxed) == generation
+        if pending.is_none() && self.inner.pairing_generation.load(Ordering::Relaxed) == generation
         {
             *pending = Some(PendingPairing::Incoming {
                 peer_uuid,
@@ -797,7 +788,9 @@ impl SyncManager {
 
     pub async fn cancel_pairing(&self) -> Result<()> {
         let mut guard = self.inner.pending.lock().await;
-        self.inner.pairing_generation.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .pairing_generation
+            .fetch_add(1, Ordering::Relaxed);
         if let Some(PendingPairing::Outgoing {
             abort: Some(abort_handle),
             ..
@@ -873,7 +866,13 @@ impl SyncManager {
         .await
         .map_err(|_| anyhow!("tls timeout"))??;
         let my_uuid = self.device_info().uuid;
-        send_message(&mut tls, &Message::Unpair { device_uuid: my_uuid }).await?;
+        send_message(
+            &mut tls,
+            &Message::Unpair {
+                device_uuid: my_uuid,
+            },
+        )
+        .await?;
         Ok(())
     }
 
@@ -1009,8 +1008,7 @@ impl SyncManager {
         };
         let Ok(peer) = (|| {
             let conn = self.lock_db()?;
-            sync_store::get_peer(&conn, peer_uuid)?
-                .ok_or_else(|| anyhow!("not paired"))
+            sync_store::get_peer(&conn, peer_uuid)?.ok_or_else(|| anyhow!("not paired"))
         })() else {
             return;
         };
@@ -1453,7 +1451,9 @@ async fn handle_sync_hello(
     // device whose pinned fingerprint matches the presented certificate.
     let peer = (|| {
         let conn = inner.db.lock().ok()?;
-        sync_store::get_peer(&conn, &hello.device_uuid).ok().flatten()
+        sync_store::get_peer(&conn, &hello.device_uuid)
+            .ok()
+            .flatten()
     })();
     let Some(peer) = peer else {
         let _ = send_message(
@@ -1523,7 +1523,10 @@ async fn handle_sync_hello(
         return;
     }
     let _session_guard = SessionGuard(inner.clone(), hello.device_uuid.clone());
-    if send_message(&mut tls, &Message::HelloAck(identity)).await.is_err() {
+    if send_message(&mut tls, &Message::HelloAck(identity))
+        .await
+        .is_err()
+    {
         return;
     }
     let host = ManagerHost::new(&inner);
@@ -1662,4 +1665,3 @@ impl SyncHost for ManagerHost {
         Ok(())
     }
 }
-

@@ -85,11 +85,21 @@ impl FrameDenoiser {
     }
 }
 
+/// Fixed capture pre-amp applied to every recording, in place of the old
+/// user-facing microphone-gain slider.
+///
+/// This is a hardware-level boost on the raw signal, not a detection
+/// threshold: speech presence is decided downstream by adaptive per-device VAD
+/// (`media::vad_profile`). Keeping it adjustable meant a second knob that
+/// silently rescaled every detection threshold underneath the adaptive one.
+/// 3.5 is the value that shipped as the default from 0.10.0 onward, so this
+/// preserves behaviour for anyone who never moved the slider.
+pub const CAPTURE_GAIN: f32 = 3.5;
+
 pub struct RecordingSession {
     stop_tx: mpsc::SyncSender<()>,
     result_rx: mpsc::Receiver<Result<RecordingResult>>,
     pub level: Arc<AtomicU32>,
-    pub raw_level: Arc<AtomicU32>,
     pub active: Arc<AtomicBool>,
 }
 
@@ -104,7 +114,8 @@ pub struct RecordingResult {
 }
 
 impl RecordingSession {
-    pub fn start(device_name: Option<String>, noise_reduction: bool, gain: f32) -> Result<Self> {
+    pub fn start(device_name: Option<String>, noise_reduction: bool) -> Result<Self> {
+        let gain = CAPTURE_GAIN;
         let host = cpal::default_host();
         let device = if let Some(name) = device_name {
             host.input_devices()?
@@ -127,12 +138,10 @@ impl RecordingSession {
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<()>>(1);
 
         let level = Arc::new(AtomicU32::new(0f32.to_bits()));
-        let raw_level = Arc::new(AtomicU32::new(0f32.to_bits()));
         let active = Arc::new(AtomicBool::new(true));
         let display_gain = (DISPLAY_GAIN * gain).max(0.0);
 
         let level_w = Arc::clone(&level);
-        let raw_level_w = Arc::clone(&raw_level);
         let active_w = Arc::clone(&active);
 
         std::thread::spawn(move || {
@@ -214,7 +223,6 @@ impl RecordingSession {
             let level_cb = Arc::clone(&level_w);
             let queue_cb = Arc::clone(&queue);
             let dropped_cb = Arc::clone(&dropped_samples);
-            let raw_level_cb = Arc::clone(&raw_level_w);
             let err_fn = |e| log::error!("Audio stream error: {e}");
 
             let stream = match config.sample_format() {
@@ -227,7 +235,6 @@ impl RecordingSession {
                             &queue_cb,
                             &dropped_cb,
                             &level_cb,
-                            &raw_level_cb,
                             display_gain,
                         )
                     },
@@ -243,7 +250,6 @@ impl RecordingSession {
                             &queue_cb,
                             &dropped_cb,
                             &level_cb,
-                            &raw_level_cb,
                             display_gain,
                         )
                     },
@@ -276,7 +282,6 @@ impl RecordingSession {
 
             active_w.store(false, Ordering::Relaxed);
             level_w.store(0f32.to_bits(), Ordering::Relaxed);
-            raw_level_w.store(0f32.to_bits(), Ordering::Relaxed);
             stop_processing.store(true, Ordering::Relaxed);
 
             let (data, recording_truncated, raw_rms) = match worker.join() {
@@ -322,7 +327,6 @@ impl RecordingSession {
             stop_tx,
             result_rx,
             level,
-            raw_level,
             active,
         })
     }
@@ -341,12 +345,10 @@ fn enqueue_f32_buffer(
     queue: &ArrayQueue<f32>,
     dropped: &AtomicU64,
     level: &AtomicU32,
-    raw_level: &AtomicU32,
     display_gain: f32,
 ) {
     if data.is_empty() {
         level.store(0f32.to_bits(), Ordering::Relaxed);
-        raw_level.store(0f32.to_bits(), Ordering::Relaxed);
         return;
     }
 
@@ -374,7 +376,6 @@ fn enqueue_f32_buffer(
     } else {
         (sum / count as f32).sqrt()
     };
-    raw_level.store(rms.to_bits(), Ordering::Relaxed);
     let display = (rms * display_gain).min(1.0);
     level.store(display.to_bits(), Ordering::Relaxed);
 }
@@ -385,12 +386,10 @@ fn enqueue_i16_buffer(
     queue: &ArrayQueue<f32>,
     dropped: &AtomicU64,
     level: &AtomicU32,
-    raw_level: &AtomicU32,
     display_gain: f32,
 ) {
     if data.is_empty() {
         level.store(0f32.to_bits(), Ordering::Relaxed);
-        raw_level.store(0f32.to_bits(), Ordering::Relaxed);
         return;
     }
 
@@ -418,7 +417,6 @@ fn enqueue_i16_buffer(
     } else {
         (sum / count as f32).sqrt()
     };
-    raw_level.store(rms.to_bits(), Ordering::Relaxed);
     let display = (rms * display_gain).min(1.0);
     level.store(display.to_bits(), Ordering::Relaxed);
 }
@@ -527,17 +525,17 @@ mod tests {
         let q = ArrayQueue::<f32>::new(8);
         let dropped = AtomicU64::new(0);
         let level = AtomicU32::new(0f32.to_bits());
-        let raw_level = AtomicU32::new(0f32.to_bits());
         let data = [i16::MAX, i16::MAX, 0, 0];
 
-        enqueue_i16_buffer(&data, 2, &q, &dropped, &level, &raw_level, DISPLAY_GAIN);
+        // Unity display gain so the asserted level is the un-clipped RMS.
+        enqueue_i16_buffer(&data, 2, &q, &dropped, &level, 1.0);
 
         let first = q.pop().expect("first sample");
         let second = q.pop().expect("second sample");
         assert!((first - 1.0).abs() < 1e-6);
         assert!(second.abs() < 1e-6);
         assert_eq!(dropped.load(Ordering::Relaxed), 0);
-        assert!((f32::from_bits(raw_level.load(Ordering::Relaxed)) - 0.7071).abs() < 0.001);
+        assert!((f32::from_bits(level.load(Ordering::Relaxed)) - 0.7071).abs() < 0.001);
     }
 
     #[test]
@@ -549,24 +547,14 @@ mod tests {
         let high_dropped = AtomicU64::new(0);
         let low_level = AtomicU32::new(0f32.to_bits());
         let high_level = AtomicU32::new(0f32.to_bits());
-        let raw_level = AtomicU32::new(0f32.to_bits());
 
-        enqueue_i16_buffer(
-            &data,
-            1,
-            &low_queue,
-            &low_dropped,
-            &low_level,
-            &raw_level,
-            DISPLAY_GAIN,
-        );
+        enqueue_i16_buffer(&data, 1, &low_queue, &low_dropped, &low_level, DISPLAY_GAIN);
         enqueue_i16_buffer(
             &data,
             1,
             &high_queue,
             &high_dropped,
             &high_level,
-            &raw_level,
             DISPLAY_GAIN * 8.0,
         );
 

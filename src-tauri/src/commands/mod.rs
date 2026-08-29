@@ -164,14 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_setting_mic_gain_enforces_slider_range() {
-        assert!(validate_setting(crate::data::store::MIC_GAIN, &json!(1.0)).is_ok());
-        assert!(validate_setting(crate::data::store::MIC_GAIN, &json!(8.0)).is_ok());
-        assert!(validate_setting(crate::data::store::MIC_GAIN, &json!(0.9)).is_err());
-        assert!(validate_setting(crate::data::store::MIC_GAIN, &json!(8.1)).is_err());
-    }
-
-    #[test]
     fn validate_setting_rejects_non_boolean_bools() {
         for key in [
             crate::data::store::CLEANUP_ENABLED,

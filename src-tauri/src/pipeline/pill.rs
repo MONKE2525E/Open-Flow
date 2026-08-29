@@ -681,7 +681,7 @@ pub(crate) fn show_clipboard_warning_pill(app: &AppHandle, msg: &str) {
 /// focusing the main window or blocking the pipeline task.
 pub(super) fn reject_with_pill(app: &AppHandle, msg: &str) {
     app.emit("verenu:error", msg).ok();
-    // A quality-gate rejection (too short / too quiet) is an error from the
+    // A quality-gate rejection (unusable capture / no speech) is an error from the
     // user's point of view, so play the error cue here too — not just on API
     // failures in show_error_pill.
     if super::start_stop_sounds_enabled(app) {

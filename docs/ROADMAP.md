@@ -170,7 +170,12 @@ LaunchServices caches these and keeps them visible even after the bundles are mo
 
 ---
 
-### macOS-3: Auto Calibration Disappears Instantly ✓ Fixed
+### macOS-3: Auto Calibration Disappears Instantly ✓ Fixed — feature since removed
+
+**Obsolete**: microphone calibration was removed entirely in favour of adaptive
+per-device voice detection (`media/vad_profile.rs`). Every file and command
+referenced below (`calibration.ts`, `start_calibration_monitoring`,
+`stop_calibration_monitoring`) no longer exists. Kept for history only.
 
 **Symptom**: Clicking "Auto calibration" on the Audio settings page causes the calibration panel to appear and immediately vanish, as if it completed in zero milliseconds. No countdown, no microphone activity bar.
 

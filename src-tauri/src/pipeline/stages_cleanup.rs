@@ -2,8 +2,8 @@
 //! cleanup-result cache, provider fallback chains, and the
 //! cleanup+snippet orchestration entrypoints.
 
-use super::*;
 use super::stages_style::ensure_terminal_punctuation;
+use super::*;
 
 // Cleanup is an enhancement, not a reason to leave a completed dictation
 // blocked behind a provider that has accepted a request but stopped replying.
@@ -236,7 +236,6 @@ pub(super) async fn guard_cleanup_refusal(
         }
     }
 }
-
 
 pub(super) struct CleanupCachePlan {
     pub(super) key: String,
