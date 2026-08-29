@@ -9,6 +9,7 @@
 //! stored.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(target_os = "macos")]
 use std::sync::OnceLock;
 #[cfg(target_os = "macos")]
 use std::path::Path;
@@ -351,11 +352,15 @@ async fn notification_permission_snapshot() -> NotificationPermissionSnapshot {
 
 async fn macos_permission_snapshot(provider: Option<String>) -> MacPermissionSnapshot {
     let generation = PERMISSION_QUERY_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    #[cfg(target_os = "macos")]
+    let bundle_identifier = crate::system::mac_app::bundle_identifier();
+    #[cfg(not(target_os = "macos"))]
+    let bundle_identifier: Option<String> = None;
     log::info!(
         "[permissions][refresh #{}] begin pid={} bundle={:?}",
         generation,
         std::process::id(),
-        crate::system::mac_app::bundle_identifier()
+        bundle_identifier
     );
     let accessibility = accessibility_permission_status();
     let microphone = microphone_permission_status_string();
@@ -465,6 +470,8 @@ pub async fn request_accessibility_permission(
     app: tauri::AppHandle,
     provider: Option<String>,
 ) -> MacPermissionSnapshot {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -487,6 +494,8 @@ pub fn get_microphone_permission_status() -> String {
 /// directly instead of waiting for the first recording. No-op off macOS.
 #[tauri::command]
 pub async fn request_microphone_permission(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let before = crate::system::mac_app::microphone_permission_status();
@@ -506,6 +515,8 @@ pub async fn request_microphone_permission_snapshot(
     app: tauri::AppHandle,
     provider: Option<String>,
 ) -> Result<MacPermissionSnapshot, String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let before = crate::system::mac_app::microphone_permission_status();
@@ -580,6 +591,8 @@ fn write_microphone_request_trace(
 pub async fn request_notification_permission(
     app: tauri::AppHandle,
 ) -> Result<NotificationPermissionSnapshot, String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let current = notification_permission_snapshot().await;
@@ -643,7 +656,6 @@ pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     {
         handle.restart();
-        Ok(())
     }
 }
 
