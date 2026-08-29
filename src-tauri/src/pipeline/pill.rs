@@ -343,8 +343,10 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     PILL_VISUALLY_ACTIVE.store(true, Ordering::SeqCst);
 
     // Click-through for passive states so nothing behind the pill is blocked.
-    // Handsfree, error (Retry), and cancelled (Undo/Dismiss) all have real
-    // buttons that need real cursor events.
+    // Keep this list limited to states that actually render a live control.
+    // Some repair states are visual-only (for example the feedback prompt,
+    // applying, and done); treating those as interactive leaves an invisible
+    // click-capture surface over the app underneath the pill.
     let has_clickable_buttons = matches!(
         state,
         "handsfree"
@@ -352,14 +354,11 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
             | "cancelled"
             | "paste_failed"
             | "copied"
-            | "feedback_prompt"
             | "repair_input"
             | "repair_recording"
             | "repair_processing"
             | "repair_proposal"
-            | "repair_applying"
             | "repair_error"
-            | "repair_done"
     );
     pill.set_ignore_cursor_events(!has_clickable_buttons).ok();
     // Re-assert every reveal, not just once at window creation: WebView2 has
