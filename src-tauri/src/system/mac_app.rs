@@ -614,10 +614,15 @@ pub async fn request_notifications() -> Result<(), String> {
         }
         // alert | sound | badge; request is only called from an explicit UI action.
         let handler = block2::RcBlock::new(
-            move |_granted: objc2::runtime::Bool, _error: *mut AnyObject| {
+            move |_granted: objc2::runtime::Bool, error: *mut AnyObject| {
                 if let Ok(mut guard) = tx.lock() {
                     if let Some(tx) = guard.take() {
-                        let _ = tx.send(Ok(()));
+                        let result = if error.is_null() {
+                            Ok(())
+                        } else {
+                            Err("Notification authorization request failed".to_string())
+                        };
+                        let _ = tx.send(result);
                     }
                 }
             },
@@ -646,10 +651,15 @@ pub async fn request_notifications_on_main_thread(app: &AppHandle) -> Result<(),
                 return;
             }
             let handler = block2::RcBlock::new(
-                move |_granted: objc2::runtime::Bool, _error: *mut AnyObject| {
+                move |_granted: objc2::runtime::Bool, error: *mut AnyObject| {
                     if let Ok(mut guard) = tx.lock() {
                         if let Some(tx) = guard.take() {
-                            let _ = tx.send(Ok(()));
+                            let result = if error.is_null() {
+                                Ok(())
+                            } else {
+                                Err("Notification authorization request failed".to_string())
+                            };
+                            let _ = tx.send(result);
                         }
                     }
                 },

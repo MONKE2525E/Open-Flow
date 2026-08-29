@@ -635,6 +635,7 @@ pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
                 .unwrap_or(false)
         }) else {
             handle.restart();
+            return Ok(());
         };
         let pid = std::process::id().to_string();
         std::process::Command::new("/bin/sh")

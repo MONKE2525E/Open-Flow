@@ -1839,6 +1839,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'save_hotkey':
     case 'open_accessibility_settings':
     case 'open_microphone_settings':
+    case 'open_notifications_settings':
     case 'restart_app':
     case 'start_input_recording':
     case 'start_setup_try_recording':
