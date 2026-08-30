@@ -427,5 +427,10 @@ function quarantineLegacyDevelopmentCopy(profileDir, canonicalBundle) {
     console.warn(`  ${duplicateCanonical}`);
     console.warn('Use only the canonical bundle printed by this runner for development permissions.');
   }
-  if (!legacyActive) writeFileSync(marker, `${new Date().toISOString()}\n`, { mode: 0o600 });
+  // Only mark migration complete after the legacy path is gone. If the
+  // quarantine destination already exists, retry/warn on the next run rather
+  // than permanently suppressing detection while Verenu.app remains present.
+  if (!legacyActive && !existsSync(legacyBundle)) {
+    writeFileSync(marker, `${new Date().toISOString()}\n`, { mode: 0o600 });
+  }
 }
