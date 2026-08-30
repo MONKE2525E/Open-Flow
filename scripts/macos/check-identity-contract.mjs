@@ -33,6 +33,9 @@ assert(!runner.includes('spawn(bundledBinary'), 'Development must never spawn Co
 assert(!runner.includes("const APP_BUNDLE_NAME = 'Verenu.app'"), 'Development must not create an ambiguously named Verenu.app.');
 assert(runner.includes("configured !== '-'"), 'Development signing must reject ad-hoc identity selection.');
 assert(relaunch.includes('exec /usr/bin/open -n'), 'macOS Relaunch must use LaunchServices.');
+assert(runner.includes('.staging-'), 'Development bundles must be staged before installation.');
+assert(runner.includes('installPreparedBundle'), 'Development bundle installation must use the atomic swap helper.');
+assert(runner.includes('Invalid Page'), 'Development runner must document the live-code-signature rebuild hazard.');
 
 if (failures.length > 0) {
   console.error('macOS identity contract failed:');
