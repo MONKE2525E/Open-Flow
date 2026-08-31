@@ -11,12 +11,6 @@
     }
   }
 
-  function handleToggleKeyup(event: KeyboardEvent) {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      onchange(!checked);
-    }
-  }
 </script>
 
 <button
@@ -29,7 +23,6 @@
   tabindex="0"
   onclick={() => onchange(!checked)}
   onkeydown={preventToggleKeyScroll}
-  onkeyup={handleToggleKeyup}
 >
   <span class="toggle-thumb" aria-hidden="true"></span>
 </button>
