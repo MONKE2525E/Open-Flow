@@ -466,11 +466,11 @@ impl SyncManager {
     /// logged by the caller, never fatal to sync startup.
     fn reconcile_stale_context_targets(&self) -> Result<()> {
         let conn = self.lock_db()?;
-        let rows: Vec<(i64, i64, String)> = {
+        let rows: Vec<(i64, String)> = {
             let mut stmt =
-                conn.prepare("SELECT id, context_id, executable FROM context_targets WHERE platform IS NULL")?;
+                conn.prepare("SELECT id, executable FROM context_targets WHERE platform IS NULL")?;
             let mapped = stmt
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?;
             mapped
         };
@@ -482,7 +482,7 @@ impl SyncManager {
         let installed_apps = crate::system::apps::list_installed_apps();
         let platform_tag = crate::data::db::current_platform_tag();
 
-        for (id, context_id, executable) in rows {
+        for (id, executable) in rows {
             if executable.starts_with("?::") || executable.to_lowercase().ends_with(native_suffix) {
                 continue;
             }
