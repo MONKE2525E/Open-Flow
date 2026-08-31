@@ -399,21 +399,22 @@ impl SyncManager {
         lan_addresses.sort_unstable();
         lan_addresses.dedup();
         if lan_addresses.is_empty() {
-            return Err(anyhow!("mDNS registration found no usable LAN address"));
+            log::warn!("sync: no usable LAN address found; keeping discovery alive without advertising");
+        } else {
+            log::info!("sync: advertising {host} on {lan_addresses:?}");
+            let service = ServiceInfo::new(
+                SERVICE_TYPE,
+                &instance,
+                &host,
+                lan_addresses.as_slice(),
+                port,
+                Some(props),
+            )
+            .map_err(|e| anyhow!("mDNS service info invalid: {e}"))?;
+            daemon
+                .register(service)
+                .map_err(|e| anyhow!("mDNS registration failed: {e}"))?;
         }
-        log::info!("sync: advertising {host} on {lan_addresses:?}");
-        let service = ServiceInfo::new(
-            SERVICE_TYPE,
-            &instance,
-            &host,
-            lan_addresses.as_slice(),
-            port,
-            Some(props),
-        )
-        .map_err(|e| anyhow!("mDNS service info invalid: {e}"))?;
-        daemon
-            .register(service)
-            .map_err(|e| anyhow!("mDNS registration failed: {e}"))?;
 
         let receiver = daemon
             .browse(SERVICE_TYPE)
@@ -1949,17 +1950,19 @@ pub(crate) fn closest_installed_app<'a>(
 }
 
 fn app_match_key(value: &str) -> String {
-    value
+    let basename = value
         .rsplit(['/', '\\'])
         .next()
-        .unwrap_or(value)
-        .to_lowercase()
+        .unwrap_or(value);
+    let basename = basename.to_lowercase();
+    let basename = basename
+        .strip_suffix(".exe")
+        .or_else(|| basename.strip_suffix(".app"))
+        .unwrap_or(basename.as_str());
+    basename
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric())
         .collect::<String>()
-        .trim_end_matches("exe")
-        .trim_end_matches("app")
-        .to_string()
 }
 
 fn app_match_score(left: &str, right: &str) -> f32 {

@@ -105,7 +105,7 @@
     <input
       id="pair-code-input"
       bind:this={codeInput}
-      bind:value={code}
+      value={code}
       class="ui-input pair-code"
       inputmode="numeric"
       autocomplete="off"
@@ -116,7 +116,6 @@
         const input = event.currentTarget as HTMLInputElement;
         const digits = input.value.replace(/\D/g, '').slice(0, 6);
         code = digits;
-        input.value = digits;
         error = '';
       }}
       onkeydown={(e) => {
@@ -197,7 +196,7 @@
     color: var(--text-dim);
   }
   .pair-code {
-    font-family: var(--font-mono);
+    font-family: var(--mono);
     font-size: 20px;
     letter-spacing: 0.35em;
     text-align: center;

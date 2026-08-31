@@ -41,7 +41,18 @@
       ? syncStore.status.pairing.error ?? 'Pairing could not be completed.'
       : '',
   );
-  const listenerActive = $derived(syncStore.status?.listener_active ?? true);
+  const listenerActive = $derived(syncStore.status?.listener_active ?? false);
+
+  function handleKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return;
+    if (outgoing) {
+      event.preventDefault();
+      cancelOutgoing();
+    } else if (confirmRemove) {
+      event.preventDefault();
+      confirmRemove = null;
+    }
+  }
 
   onMount(() => {
     void refreshSyncStatus().then(() => {
@@ -169,6 +180,8 @@
     return code.length === 6 ? `${code.slice(0, 3)} ${code.slice(3)}` : code;
   }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <h2 class="settings-h">Sync</h2>
 
