@@ -13,6 +13,39 @@ use crate::DbHandle;
 
 // ---- helpers ----
 
+#[test]
+fn listener_port_is_stable_and_device_specific() {
+    let first = super::manager::listener_port_for_uuid("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    let repeated = super::manager::listener_port_for_uuid("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    let second = super::manager::listener_port_for_uuid("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+
+    assert_eq!(first, repeated);
+    assert_ne!(first, second);
+    assert!((49_152..=u16::MAX).contains(&first));
+    assert!((49_152..=u16::MAX).contains(&second));
+}
+
+#[test]
+fn connection_candidates_try_stable_port_before_stale_advertisement() {
+    let uuid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    let candidates = super::manager::connection_candidates(
+        &["192.168.0.86".to_string()],
+        58546,
+        uuid,
+    );
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0].port(), super::manager::listener_port_for_uuid(uuid));
+    assert_eq!(candidates[1].port(), 58546);
+}
+
+#[test]
+fn automatic_sync_has_exactly_one_initiator() {
+    let a = "a734d68e-0000-0000-0000-000000000000";
+    let b = "be256d68-0000-0000-0000-000000000000";
+    assert!(super::manager::should_auto_initiate(a, b));
+    assert!(!super::manager::should_auto_initiate(b, a));
+}
+
 fn test_db(device_uuid: &str) -> DbHandle {
     let conn = db::open(":memory:").expect("test db");
     {
@@ -62,6 +95,7 @@ fn exchange(a: &DbHandle, b: &DbHandle) {
 
 struct TestHost {
     uuid: String,
+    db_probe: Option<DbHandle>,
     settings: std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>,
     stamps: std::sync::Mutex<std::collections::HashMap<String, (i64, String)>>,
 }
@@ -70,9 +104,15 @@ impl TestHost {
     fn new(uuid: &str) -> Self {
         Self {
             uuid: uuid.to_string(),
+            db_probe: None,
             settings: Default::default(),
             stamps: Default::default(),
         }
+    }
+
+    fn with_db_probe(mut self, db: &DbHandle) -> Self {
+        self.db_probe = Some(db.clone());
+        self
     }
 }
 
@@ -90,6 +130,10 @@ impl SyncHost for TestHost {
     }
 
     fn settings_payload(&self) -> Result<Vec<super::protocol::SettingRecord>> {
+        if let Some(db) = &self.db_probe {
+            let conn = db.lock().expect("settings payload database lock");
+            let _: i64 = conn.query_row("SELECT 1", [], |row| row.get(0))?;
+        }
         let settings = self.settings.lock().expect("settings");
         let stamps = self.stamps.lock().expect("stamps");
         Ok(settings
@@ -408,6 +452,57 @@ async fn session_snapshot_seeds_a_new_device() {
     assert!(!needs_snapshot, "A should have cleared the snapshot flag");
 }
 
+#[tokio::test]
+async fn responder_continues_after_dispatcher_consumes_hello() {
+    let a = test_db(&uuid("aaaa"));
+    let b = test_db(&uuid("bbbb"));
+    let host_a = TestHost::new(&uuid("aaaa"));
+    let host_b = TestHost::new(&uuid("bbbb"));
+    pair_test_dbs(&a, &b, &host_a.uuid, &host_b.uuid);
+
+    let (mut side_a, mut side_b) = tokio::io::duplex(1024 * 1024);
+    let peer_a = peer_of(&host_b.uuid);
+    let peer_b = peer_of(&host_a.uuid);
+    let (initiator, responder) = tokio::join!(
+        engine::run_session(&a, &host_a, &mut side_a, true, &peer_a),
+        async {
+            let hello = match super::protocol::read_message(&mut side_b)
+                .await
+                .expect("dispatcher reads hello")
+            {
+                Message::Hello(hello) => hello,
+                other => panic!("expected hello, got {other:?}"),
+            };
+            engine::run_session_after_hello(
+                &b,
+                &host_b,
+                &mut side_b,
+                false,
+                &peer_b,
+                Some(hello),
+            )
+            .await
+        }
+    );
+    initiator.expect("initiator completes");
+    responder.expect("responder completes");
+}
+
+#[tokio::test]
+async fn session_does_not_hold_database_lock_while_building_settings() {
+    let a = test_db(&uuid("aaaa"));
+    let b = test_db(&uuid("bbbb"));
+    let host_a = TestHost::new(&uuid("aaaa")).with_db_probe(&a);
+    let host_b = TestHost::new(&uuid("bbbb")).with_db_probe(&b);
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        run_two_sessions(&a, &b, &host_a, &host_b),
+    )
+    .await
+    .expect("production-style settings lookup must not deadlock");
+}
+
 #[test]
 fn stale_snapshot_does_not_overwrite_newer_local_row() {
     let a = test_db(&uuid("aaaa"));
@@ -593,12 +688,143 @@ fn syncable_settings_exclude_device_local_keys() {
         crate::data::store::AUTOSTART_ENABLED,
         crate::data::store::SETUP_COMPLETE,
         crate::data::store::FORCE_SETUP_ON_LAUNCH,
+        crate::data::store::NOISE_REDUCTION,
+        crate::data::store::MUTE_AUDIO,
+        crate::data::store::EXCLUSIVE_MIC,
+        crate::data::store::PAUSE_MEDIA_DURING_DICTATION,
+        crate::data::store::PLAY_START_STOP_SOUNDS,
+        crate::data::store::SOUND_EFFECTS_VOLUME,
+        crate::data::store::APPEARANCE_MODE,
+        crate::data::store::APP_MAPPINGS,
+        crate::data::store::CLIPBOARD_PHRASE,
+        crate::data::store::CLIPBOARD_PHRASE_ENABLED,
+        crate::data::store::BETA_UPDATES_ENABLED,
+        crate::data::store::LOCAL_MODEL_MEMORY_POLICY,
     ] {
         assert!(
             !SYNCABLE_SETTINGS.contains(&key),
             "{key} must stay device-local"
         );
     }
+}
+
+fn test_context_op(
+    name: &str,
+    ts_ms: i64,
+    executable: &str,
+    platform: Option<&str>,
+) -> super::protocol::SyncOp {
+    super::protocol::SyncOp {
+        table: "contexts".to_string(),
+        row_uuid: uuid(name),
+        op: "upsert".to_string(),
+        ts_ms,
+        origin: uuid("origin"),
+        origin_seq: ts_ms,
+        payload: Some(json!({
+            "name": name,
+            "is_everywhere": false,
+            "icon": null,
+            "tone": null,
+            "cleanup_intensity": null,
+            "color": null,
+            "custom_instructions": null,
+            "contextual_formatting_disabled": false,
+            "pinned_at": null,
+            "created_at": "2026-01-01 00:00:00",
+            "updated_at": "2026-01-01 00:00:00",
+            "targets": [{"executable": executable, "platform": platform}],
+            "websites": [],
+            "dictionary_uuids": [],
+            "snippet_uuids": [],
+        })),
+    }
+}
+
+/// A target this device already resolved for its own platform (whether by a
+/// prior successful auto-match or the user manually picking the app on an
+/// unresolved "?::" chip) must survive a later resync that re-derives a
+/// worse or unresolved match for the same context — see the "sticky" guard
+/// in `reconcile_context_children`.
+#[test]
+fn resolved_context_target_survives_a_later_unresolved_resync() {
+    let db = test_db(&uuid("cccc"));
+    let conn = db.lock().expect("lock");
+
+    engine::apply_ops(
+        &conn,
+        &[test_context_op("Editor Group", 100, "?::antigravity ide.exe", None)],
+    )
+    .expect("apply unresolved");
+    let context_id: i64 = conn
+        .query_row(
+            "SELECT id FROM contexts WHERE name = 'Editor Group'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("context id");
+
+    // The user (or an earlier successful auto-resolve) fixes it locally.
+    let my_platform = db::current_platform_tag();
+    conn.execute(
+        "UPDATE context_targets SET executable = 'antigravity.app', platform = ?1 WHERE context_id = ?2",
+        rusqlite::params![my_platform, context_id],
+    )
+    .expect("simulate local fix");
+
+    // A later resync re-derives a bad/unresolved match again for the same
+    // context — e.g. an unrelated edit made on another device (rename, tone
+    // change) after the fix, which still carries that device's now-stale
+    // view of the target list, since a context syncs as one LWW aggregate.
+    // Use a real "now" stamp so this op is unambiguously newer than the
+    // manual-fix trigger's own self-logged stamp above.
+    let resync_ts = sync_store::now_ms() + 1;
+    let summary = engine::apply_ops(
+        &conn,
+        &[test_context_op("Editor Group", resync_ts, "?::antigravity ide.exe", None)],
+    )
+    .expect("apply resync");
+    assert_eq!(summary.applied, 1, "the resync op must actually apply, not be skipped as stale");
+
+    // The sticky row must survive completely unchanged. (A stray unresolved
+    // marker may additionally appear alongside it here, since this test's
+    // synthetic resync payload deliberately carries a different raw source
+    // string than what actually produced "antigravity.app" — in the real
+    // pipeline, `resolve_context_targets_in_ops` re-derives the same source
+    // deterministically and would just re-affirm the sticky row instead. The
+    // one guarantee this test enforces is what the user asked for: the fix
+    // is never silently deleted or overwritten by a later, worse resync.)
+    let mut stmt = conn
+        .prepare("SELECT executable, platform FROM context_targets WHERE context_id = ?1")
+        .expect("prepare");
+    let rows: Vec<(String, Option<String>)> = stmt
+        .query_map(rusqlite::params![context_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .expect("query")
+        .collect::<rusqlite::Result<_>>()
+        .expect("collect");
+    assert!(
+        rows.contains(&("antigravity.app".to_string(), my_platform.map(str::to_string))),
+        "the manually-fixed target must survive the worse resync unchanged, got {rows:?}"
+    );
+}
+
+#[test]
+fn context_app_matching_uses_local_name_and_rejects_weak_matches() {
+    use crate::system::apps::InstalledApp;
+    let apps = vec![
+        InstalledApp {
+            name: "Visual Studio Code".to_string(),
+            exe: "code.exe".to_string(),
+        },
+        InstalledApp {
+            name: "Google Chrome".to_string(),
+            exe: "chrome.exe".to_string(),
+        },
+    ];
+    let matched = super::manager::closest_installed_app("Visual Studio Code.app", &apps)
+        .expect("cross-platform name match");
+    assert_eq!(matched.exe, "code.exe");
+    assert!(super::manager::closest_installed_app("Completely Different.app", &apps).is_none());
 }
 
 // ---- protocol framing ----

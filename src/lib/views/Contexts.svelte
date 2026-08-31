@@ -818,6 +818,9 @@
   }
 
   function appLabel(executable: string) {
+    if (executable.startsWith('?::')) {
+      return `${cleanAppName(executable.slice(3))} (not found)`;
+    }
     const app = installedApps.find((item) => normalizeExe(item.exe) === normalizeExe(executable));
     return cleanAppName(app?.name || executable);
   }

@@ -362,6 +362,14 @@ input[type='range'].ui-range:focus-visible {
   z-index: 50;
 }
 
+/* A backdrop fills the viewport, so the browser's default button outline
+   looks like a border around the entire app. Dialog controls own the visible
+   keyboard focus treatment instead. */
+.ui-modal-backdrop:focus,
+.modal-backdrop:focus {
+  outline: none;
+}
+
 .ui-modal-card,
 .modal-card {
   background: var(--bg-elev);

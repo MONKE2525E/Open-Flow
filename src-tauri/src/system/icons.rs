@@ -23,10 +23,25 @@ pub fn get_icon_data_uri(app: &tauri::AppHandle, exe: &str) -> Option<String> {
     png_bytes_to_data_uri(&png)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn get_icon_data_uri(app: &tauri::AppHandle, exe: &str) -> Option<String> {
+    let raw_exe = exe.trim();
+    let cache_key = raw_exe.to_lowercase();
+    let cache_path = cache_file_path(app, &cache_key)?;
+    if let Ok(bytes) = std::fs::read(&cache_path) {
+        return png_bytes_to_data_uri(&bytes);
+    }
+    let bundle_path = mac::resolve_app_bundle_path(raw_exe)?;
+    let png = mac::extract_icon_png(&bundle_path)?;
+    if let Some(parent) = cache_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&cache_path, &png);
+    png_bytes_to_data_uri(&png)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn get_icon_data_uri(_app: &tauri::AppHandle, _exe: &str) -> Option<String> {
-    // macOS icon extraction (NSWorkspace icon-for-app -> PNG) isn't
-    // implemented yet; the frontend falls back to its initial-letter badge.
     None
 }
 
@@ -315,6 +330,150 @@ mod win {
             let _ = DeleteObject(HGDIOBJ(info.hbmColor.0));
         }
         result
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod mac {
+    use objc2::rc::autoreleasepool;
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send, Encode, Encoding};
+    use objc2_foundation::NSString;
+
+    /// `CGSize` (two `CGFloat`s). Not exposed by the `objc2-foundation`
+    /// feature set already enabled for this crate, so encode it by hand —
+    /// same approach `mac_app.rs` uses for `NSApplicationActivationPolicy`.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CGSize {
+        width: f64,
+        height: f64,
+    }
+    unsafe impl Encode for CGSize {
+        const ENCODING: Encoding = Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
+    }
+
+    /// Requested render size before rasterizing to PNG. NSWorkspace icons
+    /// carry multiple representations; setting the image's size selects which
+    /// one `TIFFRepresentation` rasterizes from.
+    const ICON_SIZE: f64 = 128.0;
+
+    /// NSBitmapImageFileTypePNG. `NSBitmapImageFileType` is `NSUInteger` in
+    /// the modern SDK — objc2 enforces the signedness at the msg_send call
+    /// site, so this must stay unsigned or every extraction throws.
+    const NS_BITMAP_IMAGE_FILE_TYPE_PNG: usize = 4;
+
+    /// Resolves a lowercased `"<name>.app"` target (the format
+    /// `system::apps::list_installed_apps` produces on macOS) to the bundle's
+    /// full path by scanning the same standard Applications directories.
+    pub fn resolve_app_bundle_path(exe: &str) -> Option<String> {
+        let requested = exe.trim();
+        let requested_path = std::path::Path::new(requested);
+        if requested_path.is_absolute()
+            && requested_path.is_dir()
+            && requested_path.extension().and_then(|e| e.to_str()) == Some("app")
+        {
+            return Some(requested_path.to_string_lossy().into_owned());
+        }
+        let requested = requested.to_lowercase();
+        let mut dirs = vec![
+            std::path::PathBuf::from("/Applications"),
+            std::path::PathBuf::from("/Applications/Utilities"),
+            std::path::PathBuf::from("/System/Applications"),
+            std::path::PathBuf::from("/System/Applications/Utilities"),
+        ];
+        if let Ok(home) = std::env::var("HOME") {
+            dirs.push(std::path::PathBuf::from(home).join("Applications"));
+        }
+        for dir in dirs {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("app") {
+                    continue;
+                }
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let stem = stem.to_lowercase();
+                if requested == stem || requested == format!("{stem}.app") {
+                    return path.to_str().map(str::to_string);
+                }
+            }
+        }
+        None
+    }
+
+    /// Extracts the app's icon at `bundle_path` via `NSWorkspace`, encodes it
+    /// as PNG, and downsizes it to a sane on-disk/wire size.
+    ///
+    /// `-[NSImage setSize:]` does not constrain what `-TIFFRepresentation`
+    /// rasterizes at — every icon comes back as the bundle's native 1024×1024
+    /// representation regardless (measured: a 1024×1024 PNG runs 1.5–2.5MB).
+    /// Sent as a data URI to the frontend for every row in the app picker,
+    /// that made the picker unusable — dozens of multi-megabyte IPC payloads
+    /// in flight at once, appearing to the user as icons that simply never
+    /// load. Resizing here, before caching or returning, is the fix.
+    pub fn extract_icon_png(bundle_path: &str) -> Option<Vec<u8>> {
+        let raw = extract_icon_png_native(bundle_path)?;
+        let resized = image::load_from_memory(&raw)
+            .ok()?
+            .resize(128, 128, image::imageops::FilterType::Lanczos3);
+        let mut png = Vec::new();
+        resized
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .ok()?;
+        Some(png)
+    }
+
+    fn extract_icon_png_native(bundle_path: &str) -> Option<Vec<u8>> {
+        autoreleasepool(|_| unsafe {
+            let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+            if workspace.is_null() {
+                return None;
+            }
+            let path = NSString::from_str(bundle_path);
+            let icon: *mut AnyObject = msg_send![workspace, iconForFile: &*path];
+            if icon.is_null() {
+                return None;
+            }
+            let _: () = msg_send![
+                icon,
+                setSize: CGSize { width: ICON_SIZE, height: ICON_SIZE }
+            ];
+            let tiff: *mut AnyObject = msg_send![icon, TIFFRepresentation];
+            if tiff.is_null() {
+                return None;
+            }
+            let bitmap: *mut AnyObject =
+                msg_send![class!(NSBitmapImageRep), imageRepWithData: tiff];
+            if bitmap.is_null() {
+                return None;
+            }
+            let empty_props: *mut AnyObject = msg_send![class!(NSDictionary), dictionary];
+            let png_data: *mut AnyObject = msg_send![
+                bitmap,
+                representationUsingType: NS_BITMAP_IMAGE_FILE_TYPE_PNG,
+                properties: empty_props
+            ];
+            if png_data.is_null() {
+                return None;
+            }
+            let length: usize = msg_send![png_data, length];
+            if length == 0 {
+                return None;
+            }
+            // `-bytes` is declared `const void *` in the SDK ('^v'); objc2
+            // enforces the exact encoding, so `*const u8` ('*', a C string)
+            // is rejected even though the bit pattern is identical.
+            let ptr: *const std::ffi::c_void = msg_send![png_data, bytes];
+            if ptr.is_null() {
+                return None;
+            }
+            Some(std::slice::from_raw_parts(ptr.cast::<u8>(), length).to_vec())
+        })
     }
 }
 

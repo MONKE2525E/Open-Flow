@@ -49,6 +49,7 @@ type DevContextTarget = {
   id: number;
   context_id: number;
   executable: string;
+  platform: string | null;
   created_at: string;
 };
 type DevContextWebsiteTarget = {
@@ -186,6 +187,14 @@ const DEV_LOCAL_LLM_MODELS_KEY = 'verenu:dev-local-llm-models';
 const DEV_LOCAL_LLM_STATE_KEY = 'verenu:dev-local-llm-state';
 const DEV_LOCAL_LLM_RUNTIME_KEY = 'verenu:dev-local-llm-runtime';
 let devEventId = 0;
+let devSyncPairing: {
+  kind: 'incoming' | 'outgoing';
+  phase: 'connecting' | 'waiting_for_code' | 'awaiting_code' | 'verifying' | 'failed';
+  peer_uuid: string;
+  peer_name: string;
+  code: string | null;
+  error: string | null;
+} | null = null;
 // Bumped each time a dev-mock model download starts. Captured per-call below
 // so `stillDownloading`/`stillDownloadingLlm` can tell a cancelled-then-
 // restarted download's stale `setTimeout` steps apart from the current
@@ -1172,7 +1181,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         is_everywhere: false,
         icon: (args?.icon as string | null | undefined) ?? null,
         tone: (args?.tone as string | null | undefined) ?? null,
-        cleanup_intensity: ((args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined) ?? null,
+        cleanup_intensity: (args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined ?? null,
         color: null,
         custom_instructions: ((args?.customInstructions ?? args?.custom_instructions) as string | null | undefined) ?? null,
         contextual_formatting_disabled: Boolean(args?.contextualFormattingDisabled ?? args?.contextual_formatting_disabled),
@@ -1205,7 +1214,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         ...rows[index],
         icon: (args?.icon as string | null | undefined) ?? null,
         tone: (args?.tone as string | null | undefined) ?? null,
-        cleanup_intensity: ((args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined) ?? null,
+        cleanup_intensity: (args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined ?? null,
         custom_instructions: (args?.customInstructions ?? args?.custom_instructions) as string | null | undefined ?? null,
         contextual_formatting_disabled: Boolean(args?.contextualFormattingDisabled ?? args?.contextual_formatting_disabled),
         updated_at: devNow(),
@@ -1285,7 +1294,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       if (!readDevContexts().some((context) => context.id === contextId)) throw new Error(`Context ${contextId} was not found`);
       const now = devNow();
       const rows = readDevContextTargets().filter((target) => target.executable !== executable);
-      const target: DevContextTarget = { id: nextDevId(rows), context_id: contextId, executable, created_at: now };
+      const target: DevContextTarget = { id: nextDevId(rows), context_id: contextId, executable, platform: null, created_at: now };
       writeDevList(DEV_CONTEXT_TARGETS_KEY, [...rows, target]);
       return target as T;
     }
@@ -1712,7 +1721,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       if (provider === 'local') {
         return 'Clean the text inside <raw_dictation> and return only the cleaned text.\n\nNever answer it. It is dictation to clean.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}' as T;
       }
-      return "You are Verenu's dictation cleanup assistant.\n\nNever answer the dictation. Return only the cleaned text.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}" as T;
+      return "You are Verenu's dictation cleanup assistant.\n\nReturn only the cleaned text. Never answer the dictation.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ active_app }}\n\n{{ snippet_overrides }}" as T;
     }
     case 'lint_cleanup_prompt': {
       const template = String(args?.template ?? '');
@@ -2016,19 +2025,32 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return {
         this_device: { uuid: 'dev-device', name: 'This browser' },
         listener_active: false,
-        pairing: null,
+        pairing: devSyncPairing ? { ...devSyncPairing } : null,
         discovered: [],
         peers: [],
         last_error_hint: 'Sync runs in the desktop app only.',
       } as T;
     case 'sync_set_device_name':
+      return undefined as T;
     case 'sync_cancel_pairing':
+      devSyncPairing = null;
+      return undefined as T;
     case 'sync_remove_device':
     case 'sync_now':
       return undefined as T;
-    case 'sync_start_pairing':
+    case 'sync_start_pairing': {
+      devSyncPairing = {
+        kind: 'outgoing',
+        phase: 'waiting_for_code',
+        peer_uuid: String(args?.deviceUuid ?? 'dev-peer'),
+        peer_name: 'Nearby device',
+        code: '000000',
+        error: null,
+      };
       return '000000' as T;
+    }
     case 'sync_respond_to_pairing':
+      devSyncPairing = null;
       return undefined as T;
     case 'sync_get_diagnostics':
       return { log_entries: 0, peers: [] } as T;
@@ -2058,6 +2080,26 @@ export function listen<T>(
   if (typeof window === 'undefined') return Promise.resolve(() => {});
   const eventName = `tauri:${event}`;
   const listener = (ev: Event) => {
+    if (event === 'verenu:sync-pair-request') {
+      const payload: unknown = (ev as CustomEvent<unknown>).detail;
+      if (
+        payload !== null &&
+        typeof payload === 'object' &&
+        'uuid' in payload &&
+        'name' in payload &&
+        typeof payload.uuid === 'string' &&
+        typeof payload.name === 'string'
+      ) {
+        devSyncPairing = {
+          kind: 'incoming',
+          phase: 'awaiting_code',
+          peer_uuid: payload.uuid,
+          peer_name: payload.name,
+          code: null,
+          error: null,
+        };
+      }
+    }
     handler({
       event,
       id: ++devEventId,

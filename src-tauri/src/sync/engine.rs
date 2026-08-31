@@ -64,16 +64,6 @@ pub const SYNCABLE_SETTINGS: &[&str] = &[
     store::CLEANUP_ENABLED,
     store::DEFAULT_TONE,
     store::CLEANUP_INTENSITY,
-    store::APP_MAPPINGS,
-    store::NOISE_REDUCTION,
-    store::MUTE_AUDIO,
-    store::EXCLUSIVE_MIC,
-    store::PAUSE_MEDIA_DURING_DICTATION,
-    store::PLAY_START_STOP_SOUNDS,
-    store::SOUND_EFFECTS_VOLUME,
-    store::CLIPBOARD_PHRASE,
-    store::CLIPBOARD_PHRASE_ENABLED,
-    store::LEGACY_FEATURES_ENABLED,
     store::APP_CONTEXT_HINT,
     store::AUTO_LEARN_ENABLED,
     store::AUTO_LEARN_EVENT_MODE,
@@ -81,14 +71,12 @@ pub const SYNCABLE_SETTINGS: &[&str] = &[
     // key. They are written together when CONTEXTUAL_FORMATTING changes and
     // must not be independently LWW-merged.
     store::CONTEXTUAL_FORMATTING,
-    store::APPEARANCE_MODE,
-    store::ADVANCED_MODEL_UI,
     store::CLEANUP_PROMPT_OVERRIDE,
-    store::BETA_UPDATES_ENABLED,
     store::VERENU_SERVICE_CHECKS_ENABLED,
     store::HISTORY_RETENTION,
-    store::LOCAL_MODEL_MEMORY_POLICY,
 ];
+
+pub(crate) const UNRESOLVED_APP_PREFIX: &str = "?::";
 
 /// The environment the engine needs beyond the database. The Tauri manager
 /// implements it against the real app; tests use an in-memory stand-in so the
@@ -101,6 +89,60 @@ pub trait SyncHost: Send + Sync {
     fn settings_payload(&self) -> Result<Vec<SettingRecord>>;
     /// Persist a remote setting value and run its local side effects.
     fn apply_remote_setting(&self, key: &str, value: &serde_json::Value) -> Result<(), String>;
+    /// Maps a peer's platform-specific app identifier to this device. `None`
+    /// preserves the assignment as unresolved instead of binding the wrong app.
+    fn resolve_app_target(&self, source: &str) -> Option<String> {
+        Some(source.to_string())
+    }
+}
+
+pub fn unresolved_app_target(source: &str) -> String {
+    format!("{UNRESOLVED_APP_PREFIX}{}", source.trim_start_matches(UNRESOLVED_APP_PREFIX))
+}
+
+fn resolve_context_targets_in_ops(host: &dyn SyncHost, ops: &[SyncOp]) -> Vec<SyncOp> {
+    ops.iter()
+        .cloned()
+        .map(|mut op| {
+            if op.table != "contexts" || op.op == "delete" {
+                return op;
+            }
+            if let Some(targets) = op
+                .payload
+                .as_mut()
+                .and_then(|payload| payload.get_mut("targets"))
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for target in targets {
+                    // Wire shape is either a bare string (a peer on an older
+                    // build, or a legacy pre-platform-tag row) or a
+                    // `{executable, platform}` object. Either way, rewrite
+                    // `executable` to this device's own app identifier (or the
+                    // `?::` unresolved marker) and stamp `platform` with this
+                    // device's OS once resolved, since the rewritten string
+                    // now follows this platform's naming convention.
+                    let source = match target {
+                        serde_json::Value::String(s) => Some(s.clone()),
+                        serde_json::Value::Object(map) => {
+                            map.get("executable").and_then(|v| v.as_str()).map(str::to_string)
+                        }
+                        _ => None,
+                    };
+                    let Some(source) = source else { continue };
+                    let resolved = host
+                        .resolve_app_target(&source)
+                        .unwrap_or_else(|| unresolved_app_target(&source));
+                    let platform = if resolved.starts_with(UNRESOLVED_APP_PREFIX) {
+                        None
+                    } else {
+                        db::current_platform_tag()
+                    };
+                    *target = serde_json::json!({ "executable": resolved, "platform": platform });
+                }
+            }
+            op
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +180,36 @@ pub struct SnippetRow {
     pub created_at: String,
 }
 
+/// A synced exe target, carrying which OS assigned it. `#[serde(untagged)]`
+/// so a peer still running a pre-platform-tagging build (bare string wire
+/// format) deserializes fine, just with `platform: None`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum TargetEntry {
+    Legacy(String),
+    Tagged {
+        executable: String,
+        #[serde(default)]
+        platform: Option<String>,
+    },
+}
+
+impl TargetEntry {
+    fn executable(&self) -> &str {
+        match self {
+            TargetEntry::Legacy(exe) => exe,
+            TargetEntry::Tagged { executable, .. } => executable,
+        }
+    }
+
+    fn platform(&self) -> Option<&str> {
+        match self {
+            TargetEntry::Legacy(_) => None,
+            TargetEntry::Tagged { platform, .. } => platform.as_deref(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ContextAggregate {
     pub name: String,
@@ -160,7 +232,7 @@ pub struct ContextAggregate {
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]
-    pub targets: Vec<String>,
+    pub targets: Vec<TargetEntry>,
     #[serde(default)]
     pub websites: Vec<String>,
     #[serde(default)]
@@ -392,10 +464,15 @@ fn context_aggregate(conn: &Connection, uuid: &str) -> Result<Option<serde_json:
         None => return Ok(None),
     };
     let mut stmt = conn.prepare(
-        "SELECT executable FROM context_targets WHERE context_id = ?1 ORDER BY executable",
+        "SELECT executable, platform FROM context_targets WHERE context_id = ?1 ORDER BY executable",
     )?;
     aggregate.targets = stmt
-        .query_map(params![context_id], |r| r.get::<_, String>(0))?
+        .query_map(params![context_id], |r| {
+            Ok(TargetEntry::Tagged {
+                executable: r.get(0)?,
+                platform: r.get(1)?,
+            })
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut stmt = conn.prepare(
         "SELECT domain FROM context_website_targets WHERE context_id = ?1 ORDER BY domain",
@@ -1112,24 +1189,50 @@ fn reconcile_context_children(
     context_id: i64,
     aggregate: &ContextAggregate,
 ) -> Result<()> {
-    // Exe targets: single-owner by design; assign moves them, extras are removed.
-    for executable in &aggregate.targets {
-        let normalized = executable.trim().to_lowercase();
-        if normalized.is_empty() {
+    // Exe targets: single-owner by design; assign moves them, extras are
+    // removed — EXCEPT a row this device already resolved for its own
+    // platform (a real installed app, not the "?::" unresolved marker) is
+    // sticky: `resolve_context_targets_in_ops` reruns app matching on every
+    // incoming op and always stamps the result with this device's own
+    // platform tag, so without this guard a stale/failed re-match on a later
+    // sync would silently delete a target the user (or an earlier successful
+    // match) already pinned correctly on this device. A genuinely
+    // cross-device removal only reaches this device through its own local
+    // `remove_context_target` call, never through this reconcile path, so
+    // protecting sticky rows here never blocks a real local delete.
+    let my_platform = db::current_platform_tag();
+    let sticky_executables: std::collections::HashSet<String> = conn
+        .prepare(
+            "SELECT executable FROM context_targets
+             WHERE context_id = ?1 AND platform IS ?2 AND executable NOT LIKE '?::%'",
+        )?
+        .query_map(params![context_id, my_platform], |r| r.get::<_, String>(0))?
+        .map(|result| result.map(|executable| executable.trim().to_lowercase()))
+        .collect::<rusqlite::Result<_>>()?;
+    for entry in &aggregate.targets {
+        let normalized = entry.executable().trim().to_lowercase();
+        if normalized.is_empty() || sticky_executables.contains(&normalized) {
             continue;
         }
         conn.execute(
-            "INSERT INTO context_targets (context_id, executable) VALUES (?1, ?2)
-             ON CONFLICT(executable) DO UPDATE SET context_id = excluded.context_id",
-            params![context_id, normalized],
+            "INSERT INTO context_targets (context_id, executable, platform) VALUES (?1, ?2, ?3)
+             ON CONFLICT(executable) DO UPDATE SET context_id = excluded.context_id, platform = excluded.platform",
+            params![context_id, normalized, entry.platform()],
         )?;
     }
+    let target_executables: Vec<String> = aggregate
+        .targets
+        .iter()
+        .map(|entry| entry.executable().trim().to_lowercase())
+        .filter(|executable| !executable.is_empty())
+        .chain(sticky_executables.iter().cloned())
+        .collect();
     remove_missing(
         conn,
         "context_targets",
         "executable",
         context_id,
-        &aggregate.targets,
+        &target_executables,
     )?;
     let normalized_websites = aggregate
         .websites
@@ -1535,6 +1638,22 @@ pub async fn run_session<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
+    run_session_after_hello(db, host, stream, initiator, peer, None).await
+}
+
+/// Responder entry point when the connection dispatcher already consumed and
+/// authenticated the initial Hello frame.
+pub async fn run_session_after_hello<S>(
+    db: &DbHandle,
+    host: &dyn SyncHost,
+    stream: &mut S,
+    initiator: bool,
+    peer: &SyncPeer,
+    remote_hello: Option<Hello>,
+) -> Result<SessionSummary>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     use super::protocol::{read_message, send_message};
 
     // 1. Hello exchange.
@@ -1554,10 +1673,14 @@ where
             other => return Err(anyhow!("expected HelloAck, got {other:?}")),
         }
     } else {
-        match read_message(stream).await? {
-            Message::Hello(remote) => check_hello(&remote)?,
-            Message::Error { message } => return Err(anyhow!("peer error: {message}")),
-            other => return Err(anyhow!("expected Hello, got {other:?}")),
+        if let Some(remote) = remote_hello {
+            check_hello(&remote)?;
+        } else {
+            match read_message(stream).await? {
+                Message::Hello(remote) => check_hello(&remote)?,
+                Message::Error { message } => return Err(anyhow!("peer error: {message}")),
+                other => return Err(anyhow!("expected Hello, got {other:?}")),
+            }
         }
         send_message(
             stream,
@@ -1574,12 +1697,15 @@ where
 
     // 2. Meta exchange (stats + settings), initiator first. The DB lock is
     // never held across an await (the sync DB is shared with the pipeline).
-    let meta = {
+    let stats = {
         let conn = lock(db)?;
-        Message::Meta {
-            stats: build_stats_exchange(&conn, &host.device_uuid())?,
-            settings: host.settings_payload()?,
-        }
+        build_stats_exchange(&conn, &host.device_uuid())?
+    };
+    // ManagerHost reads setting stamps from this same database. Calling it
+    // while holding `conn` deadlocks because std::sync::Mutex is not reentrant.
+    let meta = Message::Meta {
+        stats,
+        settings: host.settings_payload()?,
     };
     if initiator {
         send_message(stream, &meta).await?;
@@ -1605,11 +1731,11 @@ where
     // 3 + 4. Pull both directions in fixed order.
     let mut pulled = ApplySummary::default();
     if initiator {
-        pulled.merge(pull_from_peer(db, stream, peer).await?);
+        pulled.merge(pull_from_peer(db, host, stream, peer).await?);
         serve_peer_pulls(db, stream, peer).await?;
     } else {
         serve_peer_pulls(db, stream, peer).await?;
-        pulled.merge(pull_from_peer(db, stream, peer).await?);
+        pulled.merge(pull_from_peer(db, host, stream, peer).await?);
     }
     summary.applied.merge(pulled);
 
@@ -1642,6 +1768,7 @@ fn lock(db: &DbHandle) -> Result<std::sync::MutexGuard<'_, Connection>> {
 /// final cursor. A SyncDone from the peer mid-pull is a clean terminator.
 async fn pull_from_peer<S>(
     db: &DbHandle,
+    host: &dyn SyncHost,
     stream: &mut S,
     peer: &SyncPeer,
 ) -> Result<ApplySummary>
@@ -1668,9 +1795,10 @@ where
     loop {
         match read_message(stream).await? {
             Message::Ops(batch) => {
+                let resolved_ops = resolve_context_targets_in_ops(host, &batch.ops);
                 let applied = {
                     let conn = lock(db)?;
-                    apply_ops(&conn, &batch.ops)?
+                    apply_ops(&conn, &resolved_ops)?
                 };
                 summary.merge(applied);
                 let acked = batch.cursor;
@@ -1772,4 +1900,3 @@ impl ApplySummary {
         self.skipped += other.skipped;
     }
 }
-
