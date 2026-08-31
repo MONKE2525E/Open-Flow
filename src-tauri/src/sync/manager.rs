@@ -466,11 +466,11 @@ impl SyncManager {
     /// logged by the caller, never fatal to sync startup.
     fn reconcile_stale_context_targets(&self) -> Result<()> {
         let conn = self.lock_db()?;
-        let rows: Vec<(i64, String)> = {
+        let rows: Vec<(i64, i64, String)> = {
             let mut stmt =
-                conn.prepare("SELECT id, executable FROM context_targets WHERE platform IS NULL")?;
+                conn.prepare("SELECT id, context_id, executable FROM context_targets WHERE platform IS NULL")?;
             let mapped = stmt
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
                 .collect::<rusqlite::Result<_>>()?;
             mapped
         };
@@ -482,13 +482,25 @@ impl SyncManager {
         let installed_apps = crate::system::apps::list_installed_apps();
         let platform_tag = crate::data::db::current_platform_tag();
 
-        for (id, executable) in rows {
+        for (id, context_id, executable) in rows {
             if executable.starts_with("?::") || executable.to_lowercase().ends_with(native_suffix) {
                 continue;
             }
-            let resolved = closest_installed_app(&executable, &installed_apps)
+            let mut resolved = closest_installed_app(&executable, &installed_apps)
                 .map(|app| app.exe.clone())
                 .unwrap_or_else(|| engine::unresolved_app_target(&executable));
+            if resolved.starts_with(engine::UNRESOLVED_APP_PREFIX) {
+                let existing_id: Option<i64> = conn
+                    .query_row(
+                        "SELECT id FROM context_targets WHERE executable = ?1",
+                        rusqlite::params![resolved],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if existing_id.is_some_and(|existing_id| existing_id != id) {
+                    resolved = format!("{resolved}#{id}");
+                }
+            }
             let new_platform = (!resolved.starts_with("?::")).then_some(platform_tag).flatten();
             let updated = conn.execute(
                 "UPDATE context_targets SET executable = ?1, platform = ?2 WHERE id = ?3",
