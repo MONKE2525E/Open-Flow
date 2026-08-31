@@ -349,7 +349,7 @@ pub fn query_context_targets(db: &Db, context_id: Option<i64>) -> Result<Vec<Con
         "SELECT id, context_id, executable, platform, created_at
          FROM context_targets
          WHERE (?1 IS NULL OR context_id = ?1)
-           AND (platform IS NULL OR platform = ?2)
+           AND (?2 IS NULL OR platform IS NULL OR platform = ?2)
            AND executable NOT LIKE '?::%'
          ORDER BY executable COLLATE NOCASE ASC",
     )?;

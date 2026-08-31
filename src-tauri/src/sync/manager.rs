@@ -399,21 +399,22 @@ impl SyncManager {
         lan_addresses.sort_unstable();
         lan_addresses.dedup();
         if lan_addresses.is_empty() {
-            return Err(anyhow!("mDNS registration found no usable LAN address"));
+            log::warn!("sync: no usable LAN address found; keeping discovery alive without advertising");
+        } else {
+            log::info!("sync: advertising {host} on {lan_addresses:?}");
+            let service = ServiceInfo::new(
+                SERVICE_TYPE,
+                &instance,
+                &host,
+                lan_addresses.as_slice(),
+                port,
+                Some(props),
+            )
+            .map_err(|e| anyhow!("mDNS service info invalid: {e}"))?;
+            daemon
+                .register(service)
+                .map_err(|e| anyhow!("mDNS registration failed: {e}"))?;
         }
-        log::info!("sync: advertising {host} on {lan_addresses:?}");
-        let service = ServiceInfo::new(
-            SERVICE_TYPE,
-            &instance,
-            &host,
-            lan_addresses.as_slice(),
-            port,
-            Some(props),
-        )
-        .map_err(|e| anyhow!("mDNS service info invalid: {e}"))?;
-        daemon
-            .register(service)
-            .map_err(|e| anyhow!("mDNS registration failed: {e}"))?;
 
         let receiver = daemon
             .browse(SERVICE_TYPE)
@@ -1443,6 +1444,15 @@ pub(crate) fn connection_candidates(
     let mut candidates = Vec::new();
     for address in addresses {
         let Ok(parsed) = address.parse::<SocketAddr>() else {
+            let Ok(ip) = address.parse::<std::net::IpAddr>() else {
+                continue;
+            };
+            for port in [stable_port, advertised_port] {
+                let candidate = SocketAddr::new(ip, port);
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
+            }
             continue;
         };
         for port in [stable_port, advertised_port] {

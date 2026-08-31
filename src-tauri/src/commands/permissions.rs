@@ -19,6 +19,24 @@ static SIGNING_INFO: OnceLock<(Option<String>, Option<String>)> = OnceLock::new(
 #[cfg(target_os = "macos")]
 static MACOS_VERSION: OnceLock<String> = OnceLock::new();
 
+#[cfg(target_os = "macos")]
+fn canonical_relaunch_bundle(bundle: String) -> String {
+    if !cfg!(debug_assertions) {
+        return bundle;
+    }
+    let path = Path::new(&bundle);
+    let legacy = path.file_name().and_then(|name| name.to_str()) == Some("Verenu.app")
+        && path.parent().and_then(|parent| parent.file_name()).and_then(|name| name.to_str())
+            == Some("macos-dev");
+    if !legacy {
+        return bundle;
+    }
+    match path.parent().map(|parent| parent.join("Verenu Development.app")) {
+        Some(candidate) if candidate.is_dir() => candidate.to_string_lossy().into_owned(),
+        _ => bundle,
+    }
+}
+
 // ---------- macOS permissions ----------
 
 #[derive(Clone, serde::Serialize)]

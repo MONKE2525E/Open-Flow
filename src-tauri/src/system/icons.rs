@@ -387,7 +387,8 @@ mod mac {
                 let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                     continue;
                 };
-                if format!("{}.app", stem.to_lowercase()) == exe {
+                let stem = stem.to_lowercase();
+                if stem == exe || format!("{stem}.app") == exe {
                     return path.to_str().map(str::to_string);
                 }
             }

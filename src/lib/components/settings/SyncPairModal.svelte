@@ -51,8 +51,13 @@
     // Closing the prompt without deciding declines quietly - pairing must be
     // explicit on both devices.
     if (busy) return;
-    void invoke('sync_respond_to_pairing', { code: '', approve: false }).catch(() => {});
-    void refreshSyncStatus();
+    try {
+      await invoke('sync_respond_to_pairing', { code: '', approve: false });
+    } catch {
+      // Dismissal is best-effort; the status refresh below is authoritative.
+    } finally {
+      await refreshSyncStatus();
+    }
   }
 
   function handleKeydown(event: KeyboardEvent): void {
