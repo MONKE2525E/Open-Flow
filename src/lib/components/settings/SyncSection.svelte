@@ -41,7 +41,7 @@
       ? syncStore.status.pairing.error ?? 'Pairing could not be completed.'
       : '',
   );
-  const listenerActive = $derived(syncStore.status?.listener_active ?? true);
+  const listenerActive = $derived(syncStore.status?.listener_active ?? false);
 
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape') return;

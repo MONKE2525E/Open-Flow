@@ -564,6 +564,9 @@ fn resolve_entry(conn: &Connection, entry: &sync_store::LogEntry) -> Result<Opti
         _ => None,
     };
     let op = if entry.op == "upsert" && payload.is_none() {
+        if entry.table_name == "transcriptions" {
+            return Ok(None);
+        }
         "delete"
     } else {
         &entry.op
