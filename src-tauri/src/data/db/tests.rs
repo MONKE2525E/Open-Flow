@@ -4,6 +4,32 @@ fn test_db() -> Db {
     open(":memory:").expect("test db")
 }
 
+#[test]
+fn retention_prune_does_not_create_transcription_delete_tombstones() {
+    let db = test_db();
+    insert_transcription_returning(&db, "old", "old", 1, 1_000, "test", None, None)
+        .expect("transcription");
+    {
+        let conn = lock_conn(&db).expect("lock");
+        conn.execute(
+            "UPDATE transcriptions SET created_at = datetime('now', '-30 days')",
+            [],
+        )
+        .expect("backdate transcription");
+    }
+
+    assert_eq!(prune_transcriptions_older_than(&db, 7).expect("prune"), 1);
+    let conn = lock_conn(&db).expect("lock");
+    let delete_logs: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sync_log WHERE table_name = 'transcriptions' AND op = 'delete'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("delete log count");
+    assert_eq!(delete_logs, 0);
+}
+
 fn temp_db_path(name: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -285,7 +311,7 @@ fn open_self_heals_database_stuck_at_v2_with_legacy_dictionary() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .expect("version");
-    assert_eq!(version, 21);
+    assert_eq!(version, 22);
     drop(conn);
     drop(db);
     let _ = std::fs::remove_file(&path);

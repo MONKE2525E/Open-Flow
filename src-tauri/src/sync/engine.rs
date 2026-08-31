@@ -73,7 +73,6 @@ pub const SYNCABLE_SETTINGS: &[&str] = &[
     store::CONTEXTUAL_FORMATTING,
     store::CLEANUP_PROMPT_OVERRIDE,
     store::VERENU_SERVICE_CHECKS_ENABLED,
-    store::HISTORY_RETENTION,
 ];
 
 pub(crate) const UNRESOLVED_APP_PREFIX: &str = "?::";
@@ -549,10 +548,13 @@ fn api_call_payload(conn: &Connection, uuid: &str) -> Result<Option<serde_json::
     Ok(row.map(|row| serde_json::to_value(row).expect("serialize api call row")))
 }
 
-/// Resolves a collapsed log entry into a full wire op. A logged upsert whose
-/// row has since vanished resolves to a delete (the row was removed after the
-/// op was captured; the delete trigger's own entry will supersede this one).
+/// Resolves a collapsed log entry into a full wire op. History is append-only
+/// for sync purposes: retention pruning is device-local, so old transcription
+/// delete tombstones from pre-v22 databases must never be sent to peers.
 fn resolve_entry(conn: &Connection, entry: &sync_store::LogEntry) -> Result<Option<SyncOp>> {
+    if entry.table_name == "transcriptions" && entry.op == "delete" {
+        return Ok(None);
+    }
     let payload = match entry.table_name.as_str() {
         "dictionary" if entry.op == "upsert" => dictionary_payload(conn, &entry.row_uuid)?,
         "snippets" if entry.op == "upsert" => snippet_payload(conn, &entry.row_uuid)?,
@@ -1385,7 +1387,10 @@ fn normalize_domain(domain: &str) -> String {
 
 fn apply_transcription_op(conn: &Connection, op: &SyncOp) -> Result<Applied> {
     if op.is_delete() {
-        return apply_simple_delete(conn, op, "transcriptions", "transcriptions");
+        // Transcription deletion is retention cleanup, and retention is
+        // intentionally device-local. A peer must never erase a row merely
+        // because another device has a shorter local retention window.
+        return Ok(Applied::Skipped);
     }
     if let Some(stamp) = latest_stamp(conn, "transcriptions", &op.row_uuid)? {
         if !op.newer_than(&stamp) {
