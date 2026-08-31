@@ -1528,7 +1528,11 @@ fn handle_resolved(inner: &Arc<Inner>, info: mdns_sd::ResolvedService) {
     let uuid = info
         .get_property_val_str("uuid")
         .map(str::to_string)
-        .or_else(|| info.get_fullname().split('.').next().map(str::to_string));
+        .or_else(|| {
+            let instance_name = info.get_fullname().split('.').next().unwrap_or("");
+            let instance = instance_name.strip_prefix("verenu-").unwrap_or(instance_name);
+            (!instance.is_empty()).then(|| instance.to_string())
+        });
     let Some(uuid) = uuid else { return };
     let self_uuid = {
         let guard = inner.identity.read().expect("identity lock");
