@@ -71,7 +71,7 @@ pub const SYNCABLE_SETTINGS: &[&str] = &[
     // key. They are written together when CONTEXTUAL_FORMATTING changes and
     // must not be independently LWW-merged.
     store::CONTEXTUAL_FORMATTING,
-    store::CLEANUP_PROMPT_OVERRIDES,
+    store::CLEANUP_PROMPT_OVERRIDE,
     store::VERENU_SERVICE_CHECKS_ENABLED,
     store::HISTORY_RETENTION,
 ];

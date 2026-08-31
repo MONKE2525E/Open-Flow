@@ -43,18 +43,25 @@
     }
   }
 
-  function dismiss(): void {
+  async function dismiss(): Promise<void> {
     // Closing the prompt without deciding declines quietly - pairing must be
     // explicit on both devices.
     if (busy) return;
-    void invoke('sync_respond_to_pairing', { code: '', approve: false }).catch(() => {});
-    void refreshSyncStatus();
+    busy = true;
+    try {
+      await invoke('sync_respond_to_pairing', { code: '', approve: false });
+    } catch {
+      // Dismissal is best-effort; the status refresh below is authoritative.
+    } finally {
+      await refreshSyncStatus();
+      busy = false;
+    }
   }
 
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !incoming) return;
     event.preventDefault();
-    dismiss();
+    void dismiss();
   }
 </script>
 
