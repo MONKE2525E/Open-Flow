@@ -85,6 +85,7 @@
       nameSaved = name;
       await refreshSyncStatus();
     } catch (err) {
+      deviceName = nameSaved;
       flash(err instanceof Error ? err.message : String(err), 'err');
     } finally {
       nameBusy = false;

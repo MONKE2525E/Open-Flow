@@ -2031,6 +2031,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         last_error_hint: 'Sync runs in the desktop app only.',
       } as T;
     case 'sync_set_device_name':
+      return undefined as T;
     case 'sync_cancel_pairing':
       devSyncPairing = null;
       return undefined as T;

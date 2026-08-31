@@ -205,7 +205,7 @@
   }
   .pair-error {
     font-size: 12px;
-    color: var(--accent);
+    color: var(--danger);
   }
   .pair-actions {
     display: flex;

@@ -1156,7 +1156,7 @@ impl SyncManager {
             discovered
                 .into_iter()
                 .filter(|d| paired.contains(&d.uuid))
-                .filter(|d| should_auto_initiate(&self.device_info().uuid, &d.uuid))
+                .filter(|d| dirty || should_auto_initiate(&self.device_info().uuid, &d.uuid))
                 .filter(|d| match backoff.get(&d.uuid) {
                     Some(entry) => now >= entry.next_attempt || dirty,
                     None => true,
