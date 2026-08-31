@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { constants as osConstants } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -132,11 +132,28 @@ child.on('exit', (code, signal) => {
 function findBundleProcessIds(executablePath) {
   const result = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' });
   if (result.status !== 0) return [];
+  const executablePaths = processPathCandidates(executablePath);
   return result.stdout
     .split('\n')
     .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
-    .filter((match) => match && (match[2] === executablePath || match[2].startsWith(`${executablePath} `)))
+    .filter((match) => match && [...executablePaths].some((candidate) => (
+      match[2] === candidate || match[2].startsWith(`${candidate} `)
+    )))
     .map((match) => Number(match[1]));
+}
+
+function processPathCandidates(value) {
+  const candidates = new Set([value, path.resolve(value)]);
+  try {
+    candidates.add(realpathSync(value));
+  } catch {
+    // The process may have exited between the bundle scan and this check.
+  }
+  for (const candidate of [...candidates]) {
+    if (candidate.startsWith('/var/')) candidates.add(`/private${candidate}`);
+    if (candidate.startsWith('/private/var/')) candidates.add(candidate.slice('/private'.length));
+  }
+  return candidates;
 }
 
 function resolveTargetDir(cargoArgs) {
@@ -341,12 +358,12 @@ function resolveSigningIdentity() {
   const identities = spawnSync('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], {
     encoding: 'utf8',
   });
-  const match = identities.stdout?.match(/"(Apple Development:[^"]+)"/);
+  const match = identities.stdout?.match(/"((?:Apple Development|Mac Developer):[^"]+)"/);
   if (match) return match[1];
 
   console.error(
     'macOS development requires a stable code-signing identity so TCC permissions survive rebuilds.\n' +
-      'Install an Apple Development certificate or set APPLE_SIGNING_IDENTITY, then retry.',
+    'Install an Apple Development or Mac Developer certificate, or set APPLE_SIGNING_IDENTITY, then retry.',
   );
   process.exit(1);
 }
