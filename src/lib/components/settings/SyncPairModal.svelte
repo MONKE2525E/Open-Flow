@@ -15,7 +15,7 @@
   let rejectButton = $state<HTMLButtonElement | null>(null);
 
   const incoming = $derived(
-    syncStore.status?.pairing?.kind === 'incoming' && syncStore.status.pairing.phase !== 'failed'
+    syncStore.status?.pairing?.kind === 'incoming'
       ? syncStore.status.pairing
       : null,
   );
@@ -31,6 +31,10 @@
 
   async function respond(approve: boolean): Promise<void> {
     if (!incoming || busy) return;
+    if (!approve && incoming.phase === 'failed') {
+      await dismiss();
+      return;
+    }
     busy = true;
     error = '';
     try {
@@ -46,10 +50,15 @@
   async function dismiss(): Promise<void> {
     // Closing the prompt without deciding declines quietly - pairing must be
     // explicit on both devices.
-    if (busy) return;
+    const pairing = incoming;
+    if (!pairing || busy) return;
     busy = true;
     try {
-      await invoke('sync_respond_to_pairing', { code: '', approve: false });
+      if (pairing.phase === 'failed') {
+        await invoke('sync_cancel_pairing');
+      } else {
+        await invoke('sync_respond_to_pairing', { code: '', approve: false });
+      }
     } catch {
       // Dismissal is best-effort; the status refresh below is authoritative.
     } finally {
@@ -131,9 +140,9 @@
         if (e.key === 'Enter' && !busy && code.replace(/\s/g, '').length === 6) void respond(true);
       }}
     />
-    {#if error}
+    {#if error || incoming.error}
       <div class="pair-error" role="alert" in:fade={{ duration: motionMs(MOTION_MS.fast) }}>
-        {error}
+        {error || incoming.error}
       </div>
     {/if}
     <div class="pair-actions">
@@ -143,12 +152,12 @@
         onclick={() => void respond(false)}
         disabled={busy}
       >
-        Reject
+        {incoming.phase === 'failed' ? 'Dismiss' : 'Reject'}
       </button>
       <button
         class="btn-primary btn-compact"
         onclick={() => void respond(true)}
-        disabled={busy || code.replace(/\s/g, '').length !== 6}
+        disabled={busy || incoming.phase === 'failed' || code.replace(/\s/g, '').length !== 6}
       >
         {busy ? 'Pairing…' : 'Pair'}
       </button>

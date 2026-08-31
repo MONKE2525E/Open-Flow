@@ -1234,6 +1234,7 @@ fn apply_v12_context_migration(conn: &Connection) -> Result<()> {
            id           INTEGER PRIMARY KEY AUTOINCREMENT,
            context_id   INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
            executable   TEXT NOT NULL COLLATE NOCASE UNIQUE,
+           platform     TEXT,
            created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
          );
          CREATE INDEX IF NOT EXISTS idx_context_targets_context_id

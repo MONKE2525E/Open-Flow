@@ -76,7 +76,7 @@ pub const SYNCABLE_SETTINGS: &[&str] = &[
     store::HISTORY_RETENTION,
 ];
 
-const UNRESOLVED_APP_PREFIX: &str = "?::";
+pub(crate) const UNRESOLVED_APP_PREFIX: &str = "?::";
 
 /// The environment the engine needs beyond the database. The Tauri manager
 /// implements it against the real app; tests use an in-memory stand-in so the
