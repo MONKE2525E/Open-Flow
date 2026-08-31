@@ -43,6 +43,17 @@
   );
   const listenerActive = $derived(syncStore.status?.listener_active ?? true);
 
+  function handleKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return;
+    if (outgoing) {
+      event.preventDefault();
+      cancelOutgoing();
+    } else if (confirmRemove) {
+      event.preventDefault();
+      confirmRemove = null;
+    }
+  }
+
   onMount(() => {
     void refreshSyncStatus().then(() => {
       deviceName = thisDeviceName();

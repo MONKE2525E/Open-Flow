@@ -13,10 +13,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 #[cfg(target_os = "macos")]
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(target_os = "macos")]
-use std::sync::OnceLock;
-
 static PERMISSION_QUERY_GENERATION: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "macos")]
 static SIGNING_INFO: OnceLock<(Option<String>, Option<String>)> = OnceLock::new();
