@@ -1848,6 +1848,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'save_hotkey':
     case 'open_accessibility_settings':
     case 'open_microphone_settings':
+    case 'open_notifications_settings':
     case 'restart_app':
     case 'start_input_recording':
     case 'start_setup_try_recording':
@@ -2079,15 +2080,24 @@ export function listen<T>(
   const eventName = `tauri:${event}`;
   const listener = (ev: Event) => {
     if (event === 'verenu:sync-pair-request') {
-      const payload = (ev as CustomEvent<{ uuid: string; name: string }>).detail;
-      devSyncPairing = {
-        kind: 'incoming',
-        phase: 'awaiting_code',
-        peer_uuid: payload.uuid,
-        peer_name: payload.name,
-        code: null,
-        error: null,
-      };
+      const payload: unknown = (ev as CustomEvent<unknown>).detail;
+      if (
+        payload !== null &&
+        typeof payload === 'object' &&
+        'uuid' in payload &&
+        'name' in payload &&
+        typeof payload.uuid === 'string' &&
+        typeof payload.name === 'string'
+      ) {
+        devSyncPairing = {
+          kind: 'incoming',
+          phase: 'awaiting_code',
+          peer_uuid: payload.uuid,
+          peer_name: payload.name,
+          code: null,
+          error: null,
+        };
+      }
     }
     handler({
       event,

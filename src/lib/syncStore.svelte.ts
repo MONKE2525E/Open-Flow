@@ -59,6 +59,7 @@ export async function refreshSyncStatus(): Promise<void> {
     syncStore.loaded = true;
   } catch (error) {
     console.error('Failed to load sync status:', error);
+    syncStore.loaded = true;
   }
 }
 

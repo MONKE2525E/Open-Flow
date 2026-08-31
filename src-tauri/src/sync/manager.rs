@@ -1442,11 +1442,14 @@ pub(crate) fn connection_candidates(
     let stable_port = listener_port_for_uuid(peer_uuid);
     let mut candidates = Vec::new();
     for address in addresses {
-        let Ok(parsed) = address.parse::<SocketAddr>() else {
-            continue;
-        };
+        let ip = address
+            .parse::<SocketAddr>()
+            .map(|parsed| parsed.ip())
+            .or_else(|_| address.parse::<std::net::IpAddr>())
+            .ok();
+        let Some(ip) = ip else { continue };
         for port in [stable_port, advertised_port] {
-            let candidate = SocketAddr::new(parsed.ip(), port);
+            let candidate = SocketAddr::new(ip, port);
             if !candidates.contains(&candidate) {
                 candidates.push(candidate);
             }

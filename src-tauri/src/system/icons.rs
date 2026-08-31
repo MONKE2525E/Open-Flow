@@ -366,6 +366,15 @@ mod mac {
     /// `system::apps::list_installed_apps` produces on macOS) to the bundle's
     /// full path by scanning the same standard Applications directories.
     pub fn resolve_app_bundle_path(exe: &str) -> Option<String> {
+        let requested = exe.trim();
+        let requested_path = std::path::Path::new(requested);
+        if requested_path.is_absolute()
+            && requested_path.is_dir()
+            && requested_path.extension().and_then(|e| e.to_str()) == Some("app")
+        {
+            return Some(requested_path.to_string_lossy().into_owned());
+        }
+        let requested = requested.to_lowercase();
         let mut dirs = vec![
             std::path::PathBuf::from("/Applications"),
             std::path::PathBuf::from("/Applications/Utilities"),
@@ -387,7 +396,8 @@ mod mac {
                 let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                     continue;
                 };
-                if format!("{}.app", stem.to_lowercase()) == exe {
+                let stem = stem.to_lowercase();
+                if requested == stem || requested == format!("{stem}.app") {
                     return path.to_str().map(str::to_string);
                 }
             }

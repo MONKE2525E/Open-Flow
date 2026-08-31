@@ -110,8 +110,15 @@
       inputmode="numeric"
       autocomplete="off"
       placeholder="000000"
-      maxlength={7}
+      maxlength={6}
       spellcheck="false"
+      oninput={(event) => {
+        const input = event.currentTarget as HTMLInputElement;
+        const digits = input.value.replace(/\D/g, '').slice(0, 6);
+        code = digits;
+        input.value = digits;
+        error = '';
+      }}
       onkeydown={(e) => {
         if (e.key === 'Enter' && !busy && code.replace(/\s/g, '').length === 6) void respond(true);
       }}
