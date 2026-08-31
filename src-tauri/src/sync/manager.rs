@@ -489,7 +489,7 @@ impl SyncManager {
             let mut resolved = closest_installed_app(&executable, &installed_apps)
                 .map(|app| app.exe.clone())
                 .unwrap_or_else(|| engine::unresolved_app_target(&executable));
-            if resolved.starts_with(engine::UNRESOLVED_APP_PREFIX) {
+            if resolved.starts_with("?::") {
                 let existing_id: Option<i64> = conn
                     .query_row(
                         "SELECT id FROM context_targets WHERE executable = ?1",
