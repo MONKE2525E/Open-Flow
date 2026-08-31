@@ -25,12 +25,13 @@ pub fn get_icon_data_uri(app: &tauri::AppHandle, exe: &str) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 pub fn get_icon_data_uri(app: &tauri::AppHandle, exe: &str) -> Option<String> {
-    let exe = exe.trim().to_lowercase();
-    let cache_path = cache_file_path(app, &exe)?;
+    let raw_exe = exe.trim();
+    let cache_key = raw_exe.to_lowercase();
+    let cache_path = cache_file_path(app, &cache_key)?;
     if let Ok(bytes) = std::fs::read(&cache_path) {
         return png_bytes_to_data_uri(&bytes);
     }
-    let bundle_path = mac::resolve_app_bundle_path(&exe)?;
+    let bundle_path = mac::resolve_app_bundle_path(raw_exe)?;
     let png = mac::extract_icon_png(&bundle_path)?;
     if let Some(parent) = cache_path.parent() {
         let _ = std::fs::create_dir_all(parent);

@@ -116,6 +116,7 @@
         const input = event.currentTarget as HTMLInputElement;
         const digits = input.value.replace(/\D/g, '').slice(0, 6);
         code = digits;
+        input.value = digits;
         error = '';
       }}
       onkeydown={(e) => {

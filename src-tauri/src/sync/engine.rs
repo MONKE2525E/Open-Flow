@@ -1207,6 +1207,7 @@ fn reconcile_context_children(
              WHERE context_id = ?1 AND platform = ?2 AND executable NOT LIKE '?::%'",
         )?
         .query_map(params![context_id, my_platform], |r| r.get::<_, String>(0))?
+        .map(|result| result.map(|executable| executable.trim().to_lowercase()))
         .collect::<rusqlite::Result<_>>()?;
     for entry in &aggregate.targets {
         let normalized = entry.executable().trim().to_lowercase();
@@ -1222,7 +1223,8 @@ fn reconcile_context_children(
     let target_executables: Vec<String> = aggregate
         .targets
         .iter()
-        .map(|entry| entry.executable().to_string())
+        .map(|entry| entry.executable().trim().to_lowercase())
+        .filter(|executable| !executable.is_empty())
         .chain(sticky_executables.iter().cloned())
         .collect();
     remove_missing(

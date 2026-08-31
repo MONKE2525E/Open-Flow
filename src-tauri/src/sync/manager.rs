@@ -429,12 +429,8 @@ impl SyncManager {
                         handle_resolved(&inner, *info);
                     }
                     ServiceEvent::ServiceRemoved(_, fullname) => {
-                        let instance = fullname
-                            .split('.')
-                            .next()
-                            .unwrap_or("")
-                            .strip_prefix("verenu-")
-                            .unwrap_or_else(|| fullname.split('.').next().unwrap_or(""));
+                        let instance_name = fullname.split('.').next().unwrap_or("");
+                        let instance = instance_name.strip_prefix("verenu-").unwrap_or(instance_name);
                         let changed = inner
                             .discovered
                             .lock()
