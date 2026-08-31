@@ -119,6 +119,7 @@
       placeholder="000000"
       maxlength={6}
       spellcheck="false"
+      disabled={busy}
       oninput={(event) => {
         const input = event.currentTarget as HTMLInputElement;
         const digits = input.value.replace(/\D/g, '').slice(0, 6);
