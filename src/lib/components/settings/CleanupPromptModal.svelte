@@ -5,9 +5,11 @@
   import { saveSetting } from '../../settings';
   import {
     cleanupPromptEditor,
-    cleanupPromptOverridesStore,
+    cleanupPromptStore,
     closeCleanupPromptEditor,
   } from '../../stores.svelte';
+  import { portal } from '../../portal';
+  import { qualifiedModelLabel } from './models';
   import { modalFocusTrap } from '../../modalFocus';
   import {
     modalBackdrop,
@@ -66,15 +68,7 @@
   const provider = $derived(cleanupPromptEditor.provider!);
   const model = $derived(cleanupPromptEditor.model!);
 
-  const providerLabel = $derived(
-    provider === 'groq'
-      ? 'Groq'
-      : provider === 'openai'
-        ? 'OpenAI'
-        : provider === 'local'
-          ? 'Local'
-          : 'Gemini'
-  );
+  const testedAgainst = $derived(qualifiedModelLabel(provider, model));
 
   const statusKind = $derived((): 'clean' | 'warn' | 'error' | 'testing' | 'passed' => {
     if (testState.status === 'testing') return 'testing';
@@ -128,11 +122,11 @@
     testState = { status: 'idle' };
     liveWarnings = [];
     try {
-      const def = await invoke<string>('get_default_cleanup_prompt', { provider, model });
+      const def = await invoke<string>('get_default_cleanup_prompt');
       if (!isMounted) return;
       defaultText = def;
-      const saved = cleanupPromptOverridesStore.overrides[`${provider}/${model}`];
-      const text = saved ?? def;
+      const saved = cleanupPromptStore.override.trim();
+      const text = saved || def;
       draft = text;
       runLint(text);
     } catch (err) {
@@ -162,20 +156,15 @@
     runLint(draft);
   }
 
+  /** Matching the default is how you clear the override, not a value to store. */
   function applyOverride(text: string) {
-    const key = `${provider}/${model}`;
-    if (text.trim() === defaultText.trim()) {
-      const { [key]: _, ...rest } = cleanupPromptOverridesStore.overrides;
-      cleanupPromptOverridesStore.overrides = rest;
-    } else {
-      cleanupPromptOverridesStore.overrides = { ...cleanupPromptOverridesStore.overrides, [key]: text };
-    }
+    cleanupPromptStore.override = text.trim() === defaultText.trim() ? '' : text;
   }
 
   async function handleSave(force = false) {
     if (force) {
       applyOverride(draft);
-      await saveSetting('cleanup_prompt_overrides', cleanupPromptOverridesStore.overrides);
+      await saveSetting('cleanup_prompt_override', cleanupPromptStore.override);
       if (!isMounted) return;
       testState = { status: 'passed' };
       setTimeout(() => { if (isMounted) closeCleanupPromptEditor(); }, 500);
@@ -192,7 +181,7 @@
       if (!isMounted) return;
       if (report.passed) {
         applyOverride(draft);
-        await saveSetting('cleanup_prompt_overrides', cleanupPromptOverridesStore.overrides);
+        await saveSetting('cleanup_prompt_override', cleanupPromptStore.override);
         if (!isMounted) return;
         testState = { status: 'passed' };
         setTimeout(() => { if (isMounted) closeCleanupPromptEditor(); }, 600);
@@ -254,7 +243,7 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="prompt-modal-wrap">
+<div class="prompt-modal-wrap" use:portal>
   <div
     class="prompt-modal-backdrop"
     onclick={onBackdropClick}
@@ -268,7 +257,7 @@
 
   <div
     bind:this={modalEl}
-    class="prompt-modal-card ui-modal-card"
+    class="prompt-modal-card"
     use:modalFocusTrap={{
       active: true,
       initialFocus: () => modalEl?.querySelector<HTMLElement>('textarea') ?? modalEl,
@@ -291,8 +280,8 @@
     <!-- Header bar — paper bg like settings sidebar -->
     <div class="prompt-head">
       <div class="prompt-head-info">
-        <span class="prompt-head-provider">{providerLabel}</span>
-        <span class="prompt-head-model">{model}</span>
+        <span class="prompt-head-provider">Cleanup prompt</span>
+        <span class="prompt-head-model">used by every model · tested on {testedAgainst}</span>
       </div>
       <div class="prompt-head-actions">
         {#if statusKind() !== 'clean'}
@@ -368,8 +357,16 @@
 </div>
 
 <style>
+  /*
+   * Fixed and portalled to the body: the settings page animates with a
+   * transform, which would otherwise become this dialog's containing block.
+   * The card also no longer borrows .ui-modal-card — that class is
+   * position:fixed with left/top:50% and translate:-50% -50%, and those offsets
+   * survived the local position:relative override, which is what parked the
+   * dialog in the bottom-right corner.
+   */
   .prompt-modal-wrap {
-    position: absolute;
+    position: fixed;
     inset: 0;
     z-index: 70;
     display: grid;
@@ -442,9 +439,10 @@
     white-space: nowrap;
   }
 
+  /* Prose now, not a model id — sans, per the mono-sparingly rule. */
   .prompt-head-model {
-    font-family: var(--mono);
-    font-size: 10px;
+    font-family: var(--sans);
+    font-size: 11px;
     color: var(--ink-mute);
     white-space: nowrap;
     overflow: hidden;

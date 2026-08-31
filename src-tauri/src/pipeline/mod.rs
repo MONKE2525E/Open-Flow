@@ -45,7 +45,7 @@ use gates::{
     MIN_RECORDING_MS, MIN_RECORDING_RMS,
 };
 pub(crate) use pill::{
-    emit_pill_profile, emit_pill_stage, hide_pill, pill_wants_repair_focus,
+    emit_pill_context, emit_pill_stage, hide_pill, pill_wants_repair_focus,
     show_clipboard_warning_pill, show_copied_pill, show_pill, update_pill_state,
 };
 use pill::{reject_with_pill, show_cancelled_pill, show_error_pill, show_paste_failed_pill};
@@ -412,9 +412,9 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         state::leave_processing_if_owned(&state, generation);
         return;
     };
-    // The profile is now resolved — surface it so the pill can show which
-    // style applies to this dictation (same value emitted at record start).
-    emit_pill_profile(&app, &profile);
+    // Surface the resolved context so the pill can show where this dictation
+    // is going (same value emitted at record start, now domain-refined).
+    emit_pill_context(&app, &resolved_context.name);
     log::debug!(
         "pipeline: config t_provider={} c_provider={} t_model={} c_model={} cleanup_enabled={} intensity={} app_context_hint={} profile={}",
         cfg.transcription_provider,
@@ -793,7 +793,9 @@ pub async fn retry_transcription_impl(
     let db_handle = app.state::<DbHandle>().inner().clone();
     let context = db::query_context(&db_handle, capture.context_id).ok();
     capture.profile = apply_app_style_overrides(&mut cfg, mapping.as_ref(), context.as_ref());
-    emit_pill_profile(app, &capture.profile);
+    if let Some(name) = context.as_ref().map(|c| c.name.as_str()) {
+        emit_pill_context(app, name);
+    }
 
     emit_pill_stage(app, "transcribing");
     let Some((raw_unorm, api_used, alternate)) =

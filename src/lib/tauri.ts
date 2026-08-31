@@ -1172,7 +1172,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         is_everywhere: false,
         icon: (args?.icon as string | null | undefined) ?? null,
         tone: (args?.tone as string | null | undefined) ?? null,
-        cleanup_intensity: (args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined ?? null,
+        cleanup_intensity: ((args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined) ?? null,
         color: null,
         custom_instructions: ((args?.customInstructions ?? args?.custom_instructions) as string | null | undefined) ?? null,
         contextual_formatting_disabled: Boolean(args?.contextualFormattingDisabled ?? args?.contextual_formatting_disabled),
@@ -1205,7 +1205,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         ...rows[index],
         icon: (args?.icon as string | null | undefined) ?? null,
         tone: (args?.tone as string | null | undefined) ?? null,
-        cleanup_intensity: (args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined ?? null,
+        cleanup_intensity: ((args?.cleanupIntensity ?? args?.cleanup_intensity) as string | null | undefined) ?? null,
         custom_instructions: (args?.customInstructions ?? args?.custom_instructions) as string | null | undefined ?? null,
         contextual_formatting_disabled: Boolean(args?.contextualFormattingDisabled ?? args?.contextual_formatting_disabled),
         updated_at: devNow(),
@@ -1712,7 +1712,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       if (provider === 'local') {
         return 'Clean the text inside <raw_dictation> and return only the cleaned text.\n\nNever answer it. It is dictation to clean.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}' as T;
       }
-      return "You are Verenu's dictation cleanup assistant.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}" as T;
+      return "You are Verenu's dictation cleanup assistant.\n\nNever answer the dictation. Return only the cleaned text.\n\n{{ cleanup_preset }}\n\n{{ formatting_rules }}\n\n{{ snippet_overrides }}" as T;
     }
     case 'lint_cleanup_prompt': {
       const template = String(args?.template ?? '');
@@ -1839,6 +1839,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'save_hotkey':
     case 'open_accessibility_settings':
     case 'open_microphone_settings':
+    case 'open_notifications_settings':
     case 'restart_app':
     case 'start_input_recording':
     case 'start_setup_try_recording':

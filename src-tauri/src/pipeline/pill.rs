@@ -41,23 +41,23 @@ static PILL_VISUALLY_ACTIVE: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static PILL_PLACED_ONCE: AtomicBool = AtomicBool::new(false);
 
-/// Holds a resolved tone-profile label until the reveal that should carry it
+/// Holds a resolved context name until the reveal that should carry it
 /// actually runs. `show_pill`'s cross-monitor move animates the window into
 /// place and only calls `reveal_pill` (which emits `pill-state`) once that
 /// tween lands, deferred well past the moment the caller finishes its own
-/// synchronous call — a profile emitted directly at the call site could land
+/// synchronous call — a name emitted directly at the call site could land
 /// either before or after that deferred `pill-state`, and the frontend
-/// unconditionally clears `profileLabel` on `pill-state: recording`, so a
-/// profile that beat it there got silently wiped. Queuing it here and only
+/// unconditionally clears `contextLabel` on `pill-state: recording`, so a
+/// name that beat it there got silently wiped. Queuing it here and only
 /// emitting it from inside `reveal_pill`, right after `pill-state`, makes the
 /// ordering correct regardless of which path a given reveal takes.
-static PENDING_PILL_PROFILE: Mutex<Option<String>> = Mutex::new(None);
+static PENDING_PILL_CONTEXT: Mutex<Option<String>> = Mutex::new(None);
 
-/// Queues a tone-profile label to ride along with whichever reveal happens
-/// next, instead of emitting it immediately (see `PENDING_PILL_PROFILE`).
-pub(crate) fn queue_pill_profile(profile: &str) {
-    if let Ok(mut slot) = PENDING_PILL_PROFILE.lock() {
-        *slot = Some(profile.to_string());
+/// Queues a context name to ride along with whichever reveal happens
+/// next, instead of emitting it immediately (see `PENDING_PILL_CONTEXT`).
+pub(crate) fn queue_pill_context(context: &str) {
+    if let Ok(mut slot) = PENDING_PILL_CONTEXT.lock() {
+        *slot = Some(context.to_string());
     }
 }
 
@@ -343,23 +343,20 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     PILL_VISUALLY_ACTIVE.store(true, Ordering::SeqCst);
 
     // Click-through for passive states so nothing behind the pill is blocked.
-    // Handsfree, error (Retry), and cancelled (Undo/Dismiss) all have real
-    // buttons that need real cursor events.
+    // Keep this list limited to states that always render a live control.
+    // Handsfree, error, and paste-failed reveal their controls after a short
+    // visual transition; the frontend enables cursor events only once those
+    // controls are actually mounted. This prevents the compact/status phase
+    // from capturing clicks over the app underneath the pill.
     let has_clickable_buttons = matches!(
         state,
-        "handsfree"
-            | "error"
-            | "cancelled"
-            | "paste_failed"
+        "cancelled"
             | "copied"
-            | "feedback_prompt"
             | "repair_input"
             | "repair_recording"
             | "repair_processing"
             | "repair_proposal"
-            | "repair_applying"
             | "repair_error"
-            | "repair_done"
     );
     pill.set_ignore_cursor_events(!has_clickable_buttons).ok();
     // Re-assert every reveal, not just once at window creation: WebView2 has
@@ -433,15 +430,15 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     }
     pill.emit("pill-state", state).ok();
 
-    // Must fire after pill-state (see PENDING_PILL_PROFILE) — this is the
+    // Must fire after pill-state (see PENDING_PILL_CONTEXT) — this is the
     // one place every reveal path (immediate or animated) actually
     // converges, so it's the only point where the ordering is guaranteed.
-    if let Some(profile) = PENDING_PILL_PROFILE
+    if let Some(context) = PENDING_PILL_CONTEXT
         .lock()
         .ok()
         .and_then(|mut slot| slot.take())
     {
-        pill.emit("pill-profile", profile).ok();
+        pill.emit("pill-context", context).ok();
     }
 }
 
@@ -646,16 +643,16 @@ pub(crate) fn emit_pill_stage(app: &AppHandle, stage: &str) {
     }
 }
 
-/// Emits the resolved tone profile (e.g. "casual") to the pill window so it
-/// can show which style will apply to the current dictation. Emitted from the
-/// pipeline itself — the frontend never re-resolves it.
-pub(crate) fn emit_pill_profile(app: &AppHandle, profile: &str) {
+/// Emits the resolved context name (e.g. "Slack") to the pill window so it
+/// can show where the current dictation is headed. Emitted from the pipeline
+/// itself — the frontend never re-resolves it.
+pub(crate) fn emit_pill_context(app: &AppHandle, context: &str) {
     match app.get_webview_window("pill") {
         Some(pill) => {
-            let sent = pill.emit("pill-profile", profile).is_ok();
-            log::debug!("pill: profile={profile} sent={sent}");
+            let sent = pill.emit("pill-context", context).is_ok();
+            log::debug!("pill: context={context} sent={sent}");
         }
-        None => log::debug!("pill: profile={profile} sent=false (no pill window)"),
+        None => log::debug!("pill: context={context} sent=false (no pill window)"),
     }
 }
 

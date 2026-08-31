@@ -118,3 +118,4 @@ pub async fn sync_get_diagnostics(app: AppHandle) -> Result<serde_json::Value, S
     })
     .await
 }
+

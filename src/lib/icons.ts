@@ -27,5 +27,6 @@ export const icons = {
   browser:  `<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><circle cx="6.5" cy="6.5" r="0.6" fill="currentColor" stroke="none"/><circle cx="9" cy="6.5" r="0.6" fill="currentColor" stroke="none"/>`,
   chat:     `<path d="M4 4h16v12H8l-4 4V4z"/>`,
   pencil:   `<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>`,
+  refresh:  `<path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/>`,
   devices:  `<rect x="2" y="6" width="13" height="10" rx="2"/><path d="M17 9h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-5"/><path d="M6 20h5"/><path d="M15.5 15.5h.01"/>`,
 };

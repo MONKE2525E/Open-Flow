@@ -9,9 +9,12 @@ pub fn gemini_generation_config(model: &str, max_output_tokens: u32) -> GeminiGe
             thinking_level: None,
         })
     } else if model_supports_gemini_thinking(model) {
+        // "low", not "minimal": Gemini 3 models accept "low" and "high"
+        // universally, while "minimal" is per-model and newer flashes reject it
+        // outright with a 400 ("Thinking level MINIMAL is not supported").
         Some(GeminiThinkingConfig {
             thinking_budget: None,
-            thinking_level: Some("minimal".to_string()),
+            thinking_level: Some("low".to_string()),
         })
     } else {
         None

@@ -23,7 +23,7 @@ enum SettingKind {
     LocalModelMemoryPolicy,
     ModelMap,
     StringArray,
-    CleanupPromptOverrides,
+    CleanupPromptOverride,
     ProviderModelCache,
     AppearanceMode,
     Bool,
@@ -170,8 +170,8 @@ const SETTING_SPECS: &[SettingSpec] = &[
     setting_spec(store::FORCE_SETUP_ON_LAUNCH, SettingKind::Bool, true, false),
     setting_spec(store::ADVANCED_MODEL_UI, SettingKind::Bool, true, true),
     setting_spec(
-        store::CLEANUP_PROMPT_OVERRIDES,
-        SettingKind::CleanupPromptOverrides,
+        store::CLEANUP_PROMPT_OVERRIDE,
+        SettingKind::CleanupPromptOverride,
         true,
         true,
     ),
@@ -226,6 +226,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
         true,
         true,
     ),
+    setting_spec(store::SYNC_ENABLED, SettingKind::Bool, true, false),
     // Readable so the picker can hydrate it, never exportable: it is derived
     // cache state, and shipping it in a settings export would carry one
     // machine's stale provider view onto another.
@@ -275,15 +276,9 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
                 .all(|x| x.as_str().is_some_and(|s| !s.trim().is_empty()))
         })
     };
-    let is_cleanup_prompt_override_map = |v: &serde_json::Value| {
-        v.as_object().is_some_and(|obj| {
-            obj.iter().all(|(model_id, template)| {
-                store::parse_model_id(model_id).is_some()
-                    && template.as_str().is_some_and(|text| {
-                        text.chars().count() <= CLEANUP_PROMPT_OVERRIDE_CHAR_LIMIT
-                    })
-            })
-        })
+    let is_cleanup_prompt_override = |v: &serde_json::Value| {
+        v.as_str()
+            .is_some_and(|text| text.chars().count() <= CLEANUP_PROMPT_OVERRIDE_CHAR_LIMIT)
     };
     let is_valid_app_mappings = |v: &serde_json::Value| {
         let Ok(mappings) = serde_json::from_value::<Vec<AppMapping>>(v.clone()) else {
@@ -381,7 +376,7 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
             .map(store::normalize_clipboard_phrase)
             .is_some_and(|v| store::is_valid_clipboard_phrase(&v)),
         SettingKind::StringArray => is_non_empty_string_array(value),
-        SettingKind::CleanupPromptOverrides => is_cleanup_prompt_override_map(value),
+        SettingKind::CleanupPromptOverride => is_cleanup_prompt_override(value),
         SettingKind::ProviderModelCache => is_provider_model_cache(value),
         SettingKind::AppearanceMode => value
             .as_str()
@@ -561,6 +556,7 @@ pub struct AllSettings {
     pub clipboard_phrase: Option<String>,
     pub clipboard_phrase_enabled: Option<bool>,
     pub legacy_features_enabled: Option<bool>,
+    pub sync_enabled: Option<bool>,
     pub transcription_provider: Option<String>,
     pub transcription_model: Option<String>,
     pub transcription_language: Option<String>,
@@ -599,7 +595,7 @@ pub struct AllSettings {
     pub hotkey: Option<Vec<String>>,
     pub repair_hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
-    pub cleanup_prompt_overrides: Option<serde_json::Value>,
+    pub cleanup_prompt_override: Option<String>,
     pub provider_model_cache: Option<serde_json::Value>,
 }
 
@@ -630,6 +626,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
         clipboard_phrase: str_val(store::CLIPBOARD_PHRASE),
         clipboard_phrase_enabled: bool_val(store::CLIPBOARD_PHRASE_ENABLED),
         legacy_features_enabled: bool_val(store::LEGACY_FEATURES_ENABLED),
+        sync_enabled: bool_val(store::SYNC_ENABLED),
         transcription_provider: str_val(store::TRANSCRIPTION_PROVIDER),
         transcription_model: str_val(store::TRANSCRIPTION_MODEL),
         transcription_language: str_val(store::TRANSCRIPTION_LANGUAGE),
@@ -680,7 +677,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
             })
         }),
         appearance_mode: str_val(store::APPEARANCE_MODE),
-        cleanup_prompt_overrides: json_val(store::CLEANUP_PROMPT_OVERRIDES),
+        cleanup_prompt_override: str_val(store::CLEANUP_PROMPT_OVERRIDE),
         provider_model_cache: json_val(store::PROVIDER_MODEL_CACHE),
     })
 }

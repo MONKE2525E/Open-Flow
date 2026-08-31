@@ -138,8 +138,19 @@
   const canRepairStaleGrant = $derived(
     showRepairHint && accessibilityActionTaken && !!snapshot.diagnostics.bundleIdentifier,
   );
+  // macOS TCC follows the exact signed identity, not the visible app name.
+  // Treat any non-canonical debug launch as invalid even when it exposes some
+  // bundle metadata, so permission actions cannot target a stale identity.
   const invalidDevLaunch = $derived(
-    isMac && snapshot.diagnostics.processId > 0 && !snapshot.diagnostics.bundleIdentifier,
+    isMac && import.meta.env.DEV && snapshot.diagnostics.processId > 0 && (
+      snapshot.diagnostics.bundleIdentifier !== 'com.verenu.app.dev' ||
+      snapshot.diagnostics.bundleDisplayName !== 'Verenu Development' ||
+      !snapshot.diagnostics.isRunningInsideApp ||
+      !snapshot.diagnostics.signingIdentity ||
+      !snapshot.diagnostics.teamIdentifier ||
+      snapshot.diagnostics.signingIdentity === 'adhoc' ||
+      snapshot.diagnostics.teamIdentifier === 'not set'
+    ),
   );
 
   // Keep the bindable flag in sync with the core OS permissions.
@@ -456,9 +467,10 @@
   <div class="mac-permissions" onkeydown={(event) => { if (event.key === 'Escape' && showDiagnostics) { event.preventDefault(); showDiagnostics = false; } }}>
   {#if invalidDevLaunch}
     <div class="permission-warning" role="alert">
-      <strong>Verenu is still running from the old raw development executable.</strong>
-      Stop the current terminal dev command and run <code>npm run tauri dev</code> again.
-      The in-app Relaunch button cannot replace this process with the signed app bundle.
+      <strong>This is not the canonical signed development app.</strong>
+      Stop this process and run <code>npm run tauri dev</code> again. Development
+      permissions belong to <strong>Verenu Development</strong> (<code>com.verenu.app.dev</code>),
+      not another Verenu-named copy.
     </div>
   {/if}
   {#if variant === 'setup' && allGranted}

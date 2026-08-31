@@ -69,7 +69,7 @@ export function modalCard(_node: Element, params: MotionTransitionParams = {}) {
     css: (t: number) => {
       const u = 1 - t;
       const scale = scaleFrom + (1 - scaleFrom) * t;
-      return `opacity:${t}; transform: translate3d(0, ${u * distance}px, 0) scale(${scale});`;
+      return `opacity:${t}; -webkit-transform: translate3d(0, ${u * distance}px, 0) scale(${scale}); transform: translate3d(0, ${u * distance}px, 0) scale(${scale});`;
     },
   };
 }
@@ -112,7 +112,7 @@ export function pageSwap(node: HTMLElement, params: MotionTransitionParams = {},
       const u = 1 - t;
       const x = axis === 'x' ? u * distance : 0;
       const y = axis === 'y' ? u * distance : 0;
-      return `opacity:${0.001 + t * 0.999}; transform: translate3d(${x}px, ${y}px, 0);`;
+      return `opacity:${0.001 + t * 0.999}; -webkit-transform: translate3d(${x}px, ${y}px, 0); transform: translate3d(${x}px, ${y}px, 0);`;
     },
   };
 }
@@ -162,7 +162,7 @@ export function expandFromOrigin(node: Element, params: ExpandFromOriginParams =
     easing: cubicOut,
     css: (t: number) => {
       const scale = scaleFrom + (1 - scaleFrom) * t;
-      return `opacity:${t}; transform: scale(${scale}); transform-origin: ${originX}px ${originY}px;`;
+      return `opacity:${t}; -webkit-transform: scale(${scale}); transform: scale(${scale}); transform-origin: ${originX}px ${originY}px;`;
     },
   };
 }

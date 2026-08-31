@@ -338,15 +338,9 @@ pub(super) fn dual_cleanup_context_fingerprint(
     context.push('\n');
     context.push_str(app_context.unwrap_or(""));
     context.push('\n');
-    for (provider, model) in cleanup_model_chain(cfg) {
-        if let Some(template) = cfg.cleanup_override_for(&provider, &model) {
-            context.push_str(&provider);
-            context.push('/');
-            context.push_str(&model);
-            context.push('\n');
-            context.push_str(template);
-            context.push('\n');
-        }
+    if let Some(template) = cfg.cleanup_override() {
+        context.push_str(template);
+        context.push('\n');
     }
     snippet_instructions_fingerprint(&context)
 }
@@ -438,7 +432,7 @@ async fn run_cleanup_provider_chain(
         }
         let attempts = if is_local { 1 } else { CLEANUP_FAST_ATTEMPTS };
         for attempt in 1..=attempts {
-            let custom_template = cfg.cleanup_override_for(&provider_id, &model);
+            let custom_template = cfg.cleanup_override();
             let outcome = if is_local {
                 run_local_cleanup_request(
                     app,

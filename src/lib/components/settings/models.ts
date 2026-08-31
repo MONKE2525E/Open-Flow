@@ -26,7 +26,7 @@ export type AllSettingsPayload = {
   transcription_fallback_models?: string[] | null;
   dual_transcription_enabled?: boolean | null;
   cleanup_fallback_models?: string[] | null;
-  cleanup_prompt_overrides?: unknown;
+  cleanup_prompt_override?: string | null;
   local_model_memory_policy?: string | null;
   provider_model_cache?: unknown;
 };
@@ -71,30 +71,16 @@ export const CATALOG: CatalogEntry[] = [
   { provider: 'groq', id: GROQ_QWEN_3_6_27B_MODEL, label: 'Qwen3.6 27B', tasks: ['cleanup'], tags: ['accurate'], tier: 'premium' },
   { provider: 'groq', id: GROQ_GPT_OSS_20B_MODEL, label: 'GPT OSS 20B', tasks: ['cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
   { provider: 'groq', id: 'openai/gpt-oss-120b', label: 'GPT OSS 120B', tasks: ['cleanup'], tags: ['accurate'] },
-  { provider: 'groq', id: 'groq/compound', label: 'Compound', tasks: ['cleanup'], tags: ['accurate'] },
-  { provider: 'groq', id: 'groq/compound-mini', label: 'Compound Mini', tasks: ['cleanup'], tags: ['fast'] },
-  { provider: 'openai', id: 'gpt-transcribe', label: 'GPT Transcribe', tasks: ['transcription'], tags: ['accurate'], tier: 'premium' },
   { provider: 'openai', id: 'gpt-4o-mini-transcribe', label: 'GPT-4o mini Transcribe', tasks: ['transcription'], tags: ['fast', 'cheap'], tier: 'standard' },
-  { provider: 'openai', id: 'gpt-4o-transcribe', label: 'GPT-4o Transcribe', tasks: ['transcription'], tags: ['accurate'] },
-  { provider: 'openai', id: 'gpt-live-transcribe', label: 'GPT Live Transcribe', tasks: ['transcription'], tags: ['fast'] },
+  { provider: 'openai', id: 'gpt-4o-transcribe', label: 'GPT-4o Transcribe', tasks: ['transcription'], tags: ['accurate'], tier: 'premium' },
   { provider: 'openai', id: 'whisper-1', label: 'Whisper v1', tasks: ['transcription'], tags: ['cheap'] },
-  { provider: 'openai', id: 'gpt-5.6', label: 'GPT-5.6', tasks: ['cleanup'], tags: ['accurate'], tier: 'premium' },
-  { provider: 'openai', id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', tasks: ['cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
-  { provider: 'openai', id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', tasks: ['cleanup'], tags: ['accurate'] },
-  { provider: 'openai', id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', tasks: ['cleanup'], tags: ['fast'] },
+  { provider: 'openai', id: 'gpt-4o-mini', label: 'GPT-4o mini', tasks: ['cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
+  { provider: 'openai', id: 'gpt-4o', label: 'GPT-4o', tasks: ['cleanup'], tags: ['accurate'], tier: 'premium' },
   { provider: 'google', id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', tasks: ['transcription', 'cleanup'], tags: ['accurate'], tier: 'premium' },
+  { provider: 'google', id: 'gemini-3.5-transcribe', label: 'Gemini 3.5 Transcribe', tasks: ['transcription'], tags: ['accurate'] },
   { provider: 'google', id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', tasks: ['transcription', 'cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
-  { provider: 'google', id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', tasks: ['transcription', 'cleanup'], tags: ['accurate'] },
-  { provider: 'google', id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', tasks: ['transcription', 'cleanup'], tags: ['fast'] },
-  { provider: 'google', id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite', tasks: ['transcription', 'cleanup'], tags: ['fast', 'cheap'] },
-  { provider: 'google', id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', tasks: ['transcription', 'cleanup'], tags: ['fast', 'cheap'] },
-  { provider: 'google', id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro', tasks: ['cleanup'], tags: ['accurate'] },
   { provider: 'google', id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', tasks: ['cleanup'], tags: ['accurate'] },
   { provider: 'google', id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', tasks: ['transcription', 'cleanup'], tags: ['fast', 'cheap'] },
-  { provider: 'google', id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', tasks: ['transcription', 'cleanup'], tags: ['fast'] },
-  { provider: 'google', id: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite', tasks: ['transcription', 'cleanup'], tags: ['fast', 'cheap'] },
-  { provider: 'google', id: 'gemini-flash-latest', label: 'Gemini Flash (latest)', tasks: ['transcription', 'cleanup'], tags: ['fast'] },
-  { provider: 'google', id: 'gemini-omni-flash', label: 'Gemini Omni Flash', tasks: ['transcription', 'cleanup'], tags: ['accurate'] },
   { provider: 'assemblyai', id: 'universal-3-5-pro', label: 'Universal 3.5 Pro', tasks: ['transcription'], tags: ['accurate'], tier: 'premium' },
   { provider: 'assemblyai', id: 'universal-2', label: 'Universal-2', tasks: ['transcription'], tags: ['fast', 'cheap'], tier: 'standard' },
   { provider: 'local', id: 'parakeet-v3', label: 'Parakeet V3', tasks: ['transcription'], tags: ['accurate'] },

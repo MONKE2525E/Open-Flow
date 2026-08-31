@@ -6,19 +6,12 @@
     closeSelector = '',
     restoreFocus = true,
     optionSelector = '.ui-dropdown-option',
-    focusOnOpen = '',
     children,
   }: {
     open: boolean;
     closeSelector?: string;
     restoreFocus?: boolean;
     optionSelector?: string;
-    /**
-     * Selector for an element to focus instead of an option — a searchable
-     * menu should land in its search field, not on a row. Unset keeps the
-     * default selected-or-first-option behaviour.
-     */
-    focusOnOpen?: string;
     children?: import('svelte').Snippet;
   } = $props();
 
@@ -70,17 +63,6 @@
 
   function focusOptionOnOpen() {
     if (!root) return;
-    if (focusOnOpen) {
-      const target = root.querySelector<HTMLElement>(focusOnOpen);
-      if (target) {
-        target.focus();
-        // Options still need their roving tabindex set up so arrow keys work
-        // once focus moves into the list.
-        const options = Array.from(root.querySelectorAll<HTMLElement>(optionSelector));
-        setOptionTabindexes(options, options[0] ?? null);
-        return;
-      }
-    }
     const options = Array.from(root.querySelectorAll<HTMLElement>(optionSelector));
     if (options.length === 0) return;
     const selected = options.find((option) => option.getAttribute('aria-selected') === 'true');
@@ -110,7 +92,12 @@
     // the menu is mounted and immediately closes it again. Resolve the scope
     // from the click target as a fallback so mouse-opened menus stay usable.
     const targetRoot = target?.closest(closeSelector || '.ui-dropdown');
-    if (target && (root?.contains(target) || targetRoot)) return;
+    // When the trigger was focused, only this controller's captured root is
+    // allowed to count as inside. A shared selector can match sibling
+    // dropdowns, especially on Insights where both controls use range-picker.
+    // Keep the target fallback only for WebViews that failed to focus the
+    // opening trigger at all.
+    if (target && (root ? root.contains(target) || targetRoot === root : targetRoot)) return;
     open = false;
   }
 
