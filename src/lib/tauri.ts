@@ -2031,7 +2031,6 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         last_error_hint: 'Sync runs in the desktop app only.',
       } as T;
     case 'sync_set_device_name':
-      return undefined as T;
     case 'sync_cancel_pairing':
       devSyncPairing = null;
       return undefined as T;
@@ -2081,24 +2080,15 @@ export function listen<T>(
   const eventName = `tauri:${event}`;
   const listener = (ev: Event) => {
     if (event === 'verenu:sync-pair-request') {
-      const payload: unknown = (ev as CustomEvent<unknown>).detail;
-      if (
-        payload !== null &&
-        typeof payload === 'object' &&
-        'uuid' in payload &&
-        'name' in payload &&
-        typeof payload.uuid === 'string' &&
-        typeof payload.name === 'string'
-      ) {
-        devSyncPairing = {
-          kind: 'incoming',
-          phase: 'awaiting_code',
-          peer_uuid: payload.uuid,
-          peer_name: payload.name,
-          code: null,
-          error: null,
-        };
-      }
+      const payload = (ev as CustomEvent<{ uuid: string; name: string }>).detail;
+      devSyncPairing = {
+        kind: 'incoming',
+        phase: 'awaiting_code',
+        peer_uuid: payload.uuid,
+        peer_name: payload.name,
+        code: null,
+        error: null,
+      };
     }
     handler({
       event,

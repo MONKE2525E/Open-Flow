@@ -71,12 +71,11 @@ pub const SYNCABLE_SETTINGS: &[&str] = &[
     // key. They are written together when CONTEXTUAL_FORMATTING changes and
     // must not be independently LWW-merged.
     store::CONTEXTUAL_FORMATTING,
-    store::CLEANUP_PROMPT_OVERRIDE,
+    store::CLEANUP_PROMPT_OVERRIDES,
     store::VERENU_SERVICE_CHECKS_ENABLED,
-    store::HISTORY_RETENTION,
 ];
 
-pub(crate) const UNRESOLVED_APP_PREFIX: &str = "?::";
+const UNRESOLVED_APP_PREFIX: &str = "?::";
 
 /// The environment the engine needs beyond the database. The Tauri manager
 /// implements it against the real app; tests use an in-memory stand-in so the
@@ -549,10 +548,13 @@ fn api_call_payload(conn: &Connection, uuid: &str) -> Result<Option<serde_json::
     Ok(row.map(|row| serde_json::to_value(row).expect("serialize api call row")))
 }
 
-/// Resolves a collapsed log entry into a full wire op. A logged upsert whose
-/// row has since vanished resolves to a delete (the row was removed after the
-/// op was captured; the delete trigger's own entry will supersede this one).
+/// Resolves a collapsed log entry into a full wire op. History is append-only
+/// for sync purposes: retention pruning is device-local, so old transcription
+/// delete tombstones from pre-v22 databases must never be sent to peers.
 fn resolve_entry(conn: &Connection, entry: &sync_store::LogEntry) -> Result<Option<SyncOp>> {
+    if entry.table_name == "transcriptions" && entry.op == "delete" {
+        return Ok(None);
+    }
     let payload = match entry.table_name.as_str() {
         "dictionary" if entry.op == "upsert" => dictionary_payload(conn, &entry.row_uuid)?,
         "snippets" if entry.op == "upsert" => snippet_payload(conn, &entry.row_uuid)?,
@@ -1204,10 +1206,9 @@ fn reconcile_context_children(
     let sticky_executables: std::collections::HashSet<String> = conn
         .prepare(
             "SELECT executable FROM context_targets
-             WHERE context_id = ?1 AND platform IS ?2 AND executable NOT LIKE '?::%'",
+             WHERE context_id = ?1 AND platform = ?2 AND executable NOT LIKE '?::%'",
         )?
         .query_map(params![context_id, my_platform], |r| r.get::<_, String>(0))?
-        .map(|result| result.map(|executable| executable.trim().to_lowercase()))
         .collect::<rusqlite::Result<_>>()?;
     for entry in &aggregate.targets {
         let normalized = entry.executable().trim().to_lowercase();
@@ -1223,8 +1224,7 @@ fn reconcile_context_children(
     let target_executables: Vec<String> = aggregate
         .targets
         .iter()
-        .map(|entry| entry.executable().trim().to_lowercase())
-        .filter(|executable| !executable.is_empty())
+        .map(|entry| entry.executable().to_string())
         .chain(sticky_executables.iter().cloned())
         .collect();
     remove_missing(
@@ -1385,7 +1385,10 @@ fn normalize_domain(domain: &str) -> String {
 
 fn apply_transcription_op(conn: &Connection, op: &SyncOp) -> Result<Applied> {
     if op.is_delete() {
-        return apply_simple_delete(conn, op, "transcriptions", "transcriptions");
+        // Transcription deletion is retention cleanup, and retention is
+        // intentionally device-local. A peer must never erase a row merely
+        // because another device has a shorter local retention window.
+        return Ok(Applied::Skipped);
     }
     if let Some(stamp) = latest_stamp(conn, "transcriptions", &op.row_uuid)? {
         if !op.newer_than(&stamp) {

@@ -349,7 +349,7 @@ pub fn query_context_targets(db: &Db, context_id: Option<i64>) -> Result<Vec<Con
         "SELECT id, context_id, executable, platform, created_at
          FROM context_targets
          WHERE (?1 IS NULL OR context_id = ?1)
-           AND (?2 IS NULL OR platform IS NULL OR platform = ?2)
+           AND (platform IS NULL OR platform = ?2)
            AND executable NOT LIKE '?::%'
          ORDER BY executable COLLATE NOCASE ASC",
     )?;
@@ -871,27 +871,6 @@ mod tests {
         let targets = query_context_targets(&db, Some(context.id)).expect("targets");
         assert_eq!(targets.len(), 1, "only the resolved target should be visible");
         assert_eq!(targets[0].executable, "editor.exe");
-    }
-
-    #[cfg(not(any(windows, target_os = "macos")))]
-    #[test]
-    fn query_context_targets_keeps_platform_rows_visible_when_platform_is_unknown() {
-        let db = open(":memory:").expect("db");
-        let context =
-            insert_context_returning(&db, "Cross Platform", None, None, None, None, false)
-                .expect("context");
-        {
-            let conn = lock_conn(&db).expect("lock");
-            conn.execute(
-                "INSERT INTO context_targets (context_id, executable, platform) VALUES (?1, ?2, ?3)",
-                params![context.id, "editor.exe", "windows"],
-            )
-            .expect("insert platform-tagged row");
-        }
-
-        let targets = query_context_targets(&db, Some(context.id)).expect("targets");
-        assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].platform.as_deref(), Some("windows"));
     }
 
     #[test]

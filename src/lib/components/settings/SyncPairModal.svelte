@@ -9,21 +9,21 @@
   let code = $state('');
   let busy = $state(false);
   let error = $state('');
-  let activePairingKey = $state('');
+  let activePeerUuid = $state('');
 
   let codeInput = $state<HTMLInputElement | null>(null);
   let rejectButton = $state<HTMLButtonElement | null>(null);
 
   const incoming = $derived(
-    syncStore.status?.pairing?.kind === 'incoming'
+    syncStore.status?.pairing?.kind === 'incoming' && syncStore.status.pairing.phase !== 'failed'
       ? syncStore.status.pairing
       : null,
   );
 
   $effect(() => {
-    const pairingKey = incoming ? `${incoming.peer_uuid}:${incoming.phase}` : '';
-    if (pairingKey !== activePairingKey) {
-      activePairingKey = pairingKey;
+    const peerUuid = incoming?.peer_uuid ?? '';
+    if (peerUuid !== activePeerUuid) {
+      activePeerUuid = peerUuid;
       code = '';
       error = '';
     }
@@ -50,21 +50,9 @@
   async function dismiss(): Promise<void> {
     // Closing the prompt without deciding declines quietly - pairing must be
     // explicit on both devices.
-    const pairing = incoming;
-    if (!pairing || busy) return;
-    busy = true;
-    try {
-      if (pairing.phase === 'failed') {
-        await invoke('sync_cancel_pairing');
-      } else {
-        await invoke('sync_respond_to_pairing', { code: '', approve: false });
-      }
-    } catch {
-      // Dismissal is best-effort; the status refresh below is authoritative.
-    } finally {
-      await refreshSyncStatus();
-      busy = false;
-    }
+    if (busy) return;
+    void invoke('sync_respond_to_pairing', { code: '', approve: false }).catch(() => {});
+    void refreshSyncStatus();
   }
 
   function handleKeydown(event: KeyboardEvent): void {

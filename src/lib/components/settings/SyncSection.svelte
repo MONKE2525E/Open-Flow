@@ -41,18 +41,7 @@
       ? syncStore.status.pairing.error ?? 'Pairing could not be completed.'
       : '',
   );
-  const listenerActive = $derived(syncStore.status?.listener_active ?? false);
-
-  function handleKeydown(event: KeyboardEvent): void {
-    if (event.key !== 'Escape') return;
-    if (outgoing) {
-      event.preventDefault();
-      cancelOutgoing();
-    } else if (confirmRemove) {
-      event.preventDefault();
-      confirmRemove = null;
-    }
-  }
+  const listenerActive = $derived(syncStore.status?.listener_active ?? true);
 
   onMount(() => {
     void refreshSyncStatus().then(() => {

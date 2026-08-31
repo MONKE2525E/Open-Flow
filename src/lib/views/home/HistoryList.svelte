@@ -13,6 +13,8 @@
   export let failedEntry: { created_at: string } | null;
   export let cancelledEntry: { created_at: string } | null;
   export let loading: boolean;
+  export let historyError = '';
+  export let onRetryHistory: () => void = () => {};
   export let hasMoreHistory: boolean;
   export let loadingMore: boolean;
   export let retrying: boolean;
@@ -294,6 +296,13 @@
     <p class="empty-sub">Fetching your recent dictations.</p>
   </div>
 {:else}
+  {#if historyError}
+    <div class="empty-state" role="alert">
+      <p class="empty-h">History could not be loaded</p>
+      <p class="empty-sub">{historyError}</p>
+      <button class="btn-ghost btn-compact" onclick={onRetryHistory}>Retry</button>
+    </div>
+  {:else}
   {#if hasBanner}
     <div class="day-head day-head-row">
       <span>Today</span>
@@ -415,6 +424,7 @@
         </button>
       </div>
     {/if}
+  {/if}
   {/if}
 {/if}
 

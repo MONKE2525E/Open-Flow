@@ -399,22 +399,21 @@ impl SyncManager {
         lan_addresses.sort_unstable();
         lan_addresses.dedup();
         if lan_addresses.is_empty() {
-            log::warn!("sync: no usable LAN address found; keeping discovery alive without advertising");
-        } else {
-            log::info!("sync: advertising {host} on {lan_addresses:?}");
-            let service = ServiceInfo::new(
-                SERVICE_TYPE,
-                &instance,
-                &host,
-                lan_addresses.as_slice(),
-                port,
-                Some(props),
-            )
-            .map_err(|e| anyhow!("mDNS service info invalid: {e}"))?;
-            daemon
-                .register(service)
-                .map_err(|e| anyhow!("mDNS registration failed: {e}"))?;
+            return Err(anyhow!("mDNS registration found no usable LAN address"));
         }
+        log::info!("sync: advertising {host} on {lan_addresses:?}");
+        let service = ServiceInfo::new(
+            SERVICE_TYPE,
+            &instance,
+            &host,
+            lan_addresses.as_slice(),
+            port,
+            Some(props),
+        )
+        .map_err(|e| anyhow!("mDNS service info invalid: {e}"))?;
+        daemon
+            .register(service)
+            .map_err(|e| anyhow!("mDNS registration failed: {e}"))?;
 
         let receiver = daemon
             .browse(SERVICE_TYPE)
@@ -429,8 +428,12 @@ impl SyncManager {
                         handle_resolved(&inner, *info);
                     }
                     ServiceEvent::ServiceRemoved(_, fullname) => {
-                        let instance_name = fullname.split('.').next().unwrap_or("");
-                        let instance = instance_name.strip_prefix("verenu-").unwrap_or(instance_name);
+                        let instance = fullname
+                            .split('.')
+                            .next()
+                            .unwrap_or("")
+                            .strip_prefix("verenu-")
+                            .unwrap_or_else(|| fullname.split('.').next().unwrap_or(""));
                         let changed = inner
                             .discovered
                             .lock()
@@ -466,11 +469,11 @@ impl SyncManager {
     /// logged by the caller, never fatal to sync startup.
     fn reconcile_stale_context_targets(&self) -> Result<()> {
         let conn = self.lock_db()?;
-        let rows: Vec<(i64, i64, String)> = {
+        let rows: Vec<(i64, String)> = {
             let mut stmt =
-                conn.prepare("SELECT id, context_id, executable FROM context_targets WHERE platform IS NULL")?;
+                conn.prepare("SELECT id, executable FROM context_targets WHERE platform IS NULL")?;
             let mapped = stmt
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?;
             mapped
         };
@@ -482,25 +485,13 @@ impl SyncManager {
         let installed_apps = crate::system::apps::list_installed_apps();
         let platform_tag = crate::data::db::current_platform_tag();
 
-        for (id, context_id, executable) in rows {
+        for (id, executable) in rows {
             if executable.starts_with("?::") || executable.to_lowercase().ends_with(native_suffix) {
                 continue;
             }
-            let mut resolved = closest_installed_app(&executable, &installed_apps)
+            let resolved = closest_installed_app(&executable, &installed_apps)
                 .map(|app| app.exe.clone())
                 .unwrap_or_else(|| engine::unresolved_app_target(&executable));
-            if resolved.starts_with(engine::UNRESOLVED_APP_PREFIX) {
-                let existing_id: Option<i64> = conn
-                    .query_row(
-                        "SELECT id FROM context_targets WHERE executable = ?1",
-                        rusqlite::params![resolved],
-                        |row| row.get(0),
-                    )
-                    .optional()?;
-                if existing_id.is_some_and(|existing_id| existing_id != id) {
-                    resolved = format!("{resolved}#{id}");
-                }
-            }
             let new_platform = (!resolved.starts_with("?::")).then_some(platform_tag).flatten();
             let updated = conn.execute(
                 "UPDATE context_targets SET executable = ?1, platform = ?2 WHERE id = ?3",
@@ -515,22 +506,6 @@ impl SyncManager {
                 Err(rusqlite::Error::SqliteFailure(err, _))
                     if err.code == rusqlite::ErrorCode::ConstraintViolation =>
                 {
-                    let owner_context: Option<i64> = conn
-                        .query_row(
-                            "SELECT context_id FROM context_targets WHERE executable = ?1",
-                            rusqlite::params![resolved],
-                            |row| row.get(0),
-                        )
-                        .optional()?;
-                    if owner_context.is_none() {
-                        return Err(anyhow!(
-                            "context target collision for {resolved} has no owning row"
-                        ));
-                    }
-                    log::debug!(
-                        "sync: dropping stale context target {executable} from context {context_id}; {resolved} is already owned by context {:?}",
-                        owner_context
-                    );
                     conn.execute("DELETE FROM context_targets WHERE id = ?1", rusqlite::params![id])?;
                 }
                 Err(err) => return Err(err.into()),
@@ -1184,7 +1159,7 @@ impl SyncManager {
             discovered
                 .into_iter()
                 .filter(|d| paired.contains(&d.uuid))
-                .filter(|d| dirty || should_auto_initiate(&self.device_info().uuid, &d.uuid))
+                .filter(|d| should_auto_initiate(&self.device_info().uuid, &d.uuid))
                 .filter(|d| match backoff.get(&d.uuid) {
                     Some(entry) => now >= entry.next_attempt || dirty,
                     None => true,
@@ -1467,14 +1442,11 @@ pub(crate) fn connection_candidates(
     let stable_port = listener_port_for_uuid(peer_uuid);
     let mut candidates = Vec::new();
     for address in addresses {
-        let ip = address
-            .parse::<SocketAddr>()
-            .map(|parsed| parsed.ip())
-            .or_else(|_| address.parse::<std::net::IpAddr>())
-            .ok();
-        let Some(ip) = ip else { continue };
+        let Ok(parsed) = address.parse::<SocketAddr>() else {
+            continue;
+        };
         for port in [stable_port, advertised_port] {
-            let candidate = SocketAddr::new(ip, port);
+            let candidate = SocketAddr::new(parsed.ip(), port);
             if !candidates.contains(&candidate) {
                 candidates.push(candidate);
             }
@@ -1954,6 +1926,70 @@ impl SyncHost for ManagerHost {
     fn resolve_app_target(&self, source: &str) -> Option<String> {
         closest_installed_app(source, &self.installed_apps).map(|app| app.exe.clone())
     }
+}
+
+pub(crate) fn closest_installed_app<'a>(
+    source: &str,
+    apps: &'a [crate::system::apps::InstalledApp],
+) -> Option<&'a crate::system::apps::InstalledApp> {
+    let source = source.trim_start_matches("?::");
+    let source_key = app_match_key(source);
+    if source_key.len() < 3 {
+        return None;
+    }
+    apps.iter()
+        .filter_map(|app| {
+            let score = [app_match_key(&app.exe), app_match_key(&app.name)]
+                .into_iter()
+                .map(|candidate| app_match_score(&source_key, &candidate))
+                .fold(0.0_f32, f32::max);
+            (score >= 0.72).then_some((app, score))
+        })
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .map(|(app, _)| app)
+}
+
+fn app_match_key(value: &str) -> String {
+    value
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(value)
+        .to_lowercase()
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .trim_end_matches("exe")
+        .trim_end_matches("app")
+        .to_string()
+}
+
+fn app_match_score(left: &str, right: &str) -> f32 {
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    if left == right {
+        return 1.0;
+    }
+    if left.contains(right) || right.contains(left) {
+        return left.len().min(right.len()) as f32 / left.len().max(right.len()) as f32;
+    }
+    let distance = levenshtein(left.as_bytes(), right.as_bytes());
+    1.0 - distance as f32 / left.len().max(right.len()) as f32
+}
+
+fn levenshtein(left: &[u8], right: &[u8]) -> usize {
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0; right.len() + 1];
+    for (i, &left_byte) in left.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, &right_byte) in right.iter().enumerate() {
+            current[j + 1] = (previous[j + 1] + 1)
+                .min(current[j] + 1)
+                .min(previous[j] + usize::from(left_byte != right_byte));
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()]
 }
 
 pub(crate) fn closest_installed_app<'a>(

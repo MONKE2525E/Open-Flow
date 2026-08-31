@@ -8,6 +8,9 @@
 //! **Microphone**. Keychain access is surfaced separately when a provider key is
 //! stored.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(target_os = "macos")]
+use std::sync::OnceLock;
 #[cfg(target_os = "macos")]
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -659,38 +662,6 @@ pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     {
         handle.restart();
-    }
-}
-
-/// Keep development relaunches on the canonical signed development bundle.
-/// Older dev runs left `Verenu.app` in the same target directory; relaunching
-/// that path would preserve its production identifier and ad-hoc TCC identity
-/// forever. The runner's `Verenu Development.app` is the only supported debug
-/// launch target, so redirect the legacy sibling when it is available.
-#[cfg(target_os = "macos")]
-fn canonical_relaunch_bundle(bundle: String) -> String {
-    if !cfg!(debug_assertions) {
-        return bundle;
-    }
-
-    let path = Path::new(&bundle);
-    let is_legacy_dev_bundle = path.file_name().and_then(|name| name.to_str())
-        == Some("Verenu.app")
-        && path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str())
-            == Some("macos-dev");
-    if !is_legacy_dev_bundle {
-        return bundle;
-    }
-
-    let canonical = path
-        .parent()
-        .map(|parent| parent.join("Verenu Development.app"));
-    match canonical.filter(|candidate| candidate.is_dir()) {
-        Some(candidate) => candidate.to_string_lossy().into_owned(),
-        None => bundle,
     }
 }
 

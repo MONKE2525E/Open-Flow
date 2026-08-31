@@ -29,7 +29,7 @@ fn listener_port_is_stable_and_device_specific() {
 fn connection_candidates_try_stable_port_before_stale_advertisement() {
     let uuid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     let candidates = super::manager::connection_candidates(
-        &["192.168.0.86".to_string()],
+        &["192.168.0.86:58546".to_string()],
         58546,
         uuid,
     );
@@ -700,12 +700,51 @@ fn syncable_settings_exclude_device_local_keys() {
         crate::data::store::CLIPBOARD_PHRASE_ENABLED,
         crate::data::store::BETA_UPDATES_ENABLED,
         crate::data::store::LOCAL_MODEL_MEMORY_POLICY,
+        crate::data::store::HISTORY_RETENTION,
     ] {
         assert!(
             !SYNCABLE_SETTINGS.contains(&key),
             "{key} must stay device-local"
         );
     }
+}
+
+#[test]
+fn remote_transcription_deletes_do_not_erase_local_history() {
+    let db = test_db(&uuid("cccc"));
+    db::insert_transcription_returning(
+        &db,
+        "history text",
+        "history text",
+        2,
+        1_000,
+        "test",
+        None,
+        None,
+    )
+    .expect("transcription");
+    let transcription_uuid: String = {
+        let conn = db.lock().expect("lock");
+        conn.query_row("SELECT uuid FROM transcriptions LIMIT 1", [], |r| r.get(0))
+            .expect("uuid")
+    };
+
+    let op = super::protocol::SyncOp {
+        table: "transcriptions".to_string(),
+        row_uuid: transcription_uuid,
+        op: "delete".to_string(),
+        ts_ms: sync_store::now_ms() + 1,
+        origin: uuid("peer"),
+        origin_seq: 1,
+        payload: None,
+    };
+    let summary = {
+        let conn = db.lock().expect("lock");
+        engine::apply_ops(&conn, &[op]).expect("apply delete")
+    };
+    assert_eq!(summary.applied, 0);
+    let conn = db.lock().expect("lock");
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM transcriptions"), 1);
 }
 
 fn test_context_op(

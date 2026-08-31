@@ -661,6 +661,23 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
             Ok(())
         })?;
     }
+    if user_version < 22 {
+        log::info!("db: migrating schema {user_version} -> 22");
+        // History retention is device-local. Older sync builds logged every
+        // retention prune as a transcription delete, which let one device's
+        // shorter retention window erase history on its peers. Existing
+        // tombstones are retention deletes (there is no user-facing history
+        // delete action), so discard them and stop creating new ones.
+        run_migration(&mut conn, |conn| {
+            conn.execute_batch(
+                "DROP TRIGGER IF EXISTS trg_sync_transcriptions_del;
+                 DELETE FROM sync_log
+                  WHERE table_name = 'transcriptions' AND op = 'delete';
+                 PRAGMA user_version = 22;",
+            )?;
+            Ok(())
+        })?;
+    }
     // Early v20 development databases created sync_peers before receive and
     // send cursors were split. Their version marker is already 20, so the
     // migration above will not run again. Repair that partial v20 shape on
@@ -722,7 +739,9 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
 ///   thing on every paired device. Local integer ids stay the primary keys.
 /// - `sync_log` records one row per captured mutation (table, row uuid, op,
 ///   timestamp, originating device). Peers pull deltas by log position, so
-///   deletes propagate exactly and no tombstone rows pollute the main tables.
+///   content deletes propagate exactly and no tombstone rows pollute the main
+///   tables. Transcription history is append-only for sync: retention cleanup
+///   is local to each device and never becomes a delete op.
 /// - AFTER triggers on the syncable tables append to `sync_log`. The triggers
 ///   stay silent while `sync_state.applying` is 1 - that flag is how the sync
 ///   engine applies a remote change and records it in the log once (with the
@@ -1119,16 +1138,6 @@ CREATE TRIGGER IF NOT EXISTS trg_sync_transcriptions_ins AFTER INSERT ON transcr
   UPDATE transcriptions SET uuid = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))) WHERE id = NEW.id AND uuid IS NULL;
   INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
   SELECT 'transcriptions', (SELECT uuid FROM transcriptions WHERE id = NEW.id), 'upsert',
-         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
-         (SELECT uuid FROM sync_identity),
-         COALESCE((SELECT MAX(origin_seq) FROM sync_log
-                   WHERE origin = (SELECT uuid FROM sync_identity)), 0) + 1
-  WHERE (SELECT uuid FROM sync_identity) IS NOT NULL
-    AND (SELECT COALESCE(applying, 0) FROM sync_state) = 0;
-END;
-CREATE TRIGGER IF NOT EXISTS trg_sync_transcriptions_del AFTER DELETE ON transcriptions BEGIN
-  INSERT INTO sync_log (table_name, row_uuid, op, ts_ms, origin, origin_seq)
-  SELECT 'transcriptions', OLD.uuid, 'delete',
          CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
          (SELECT uuid FROM sync_identity),
          COALESCE((SELECT MAX(origin_seq) FROM sync_log
