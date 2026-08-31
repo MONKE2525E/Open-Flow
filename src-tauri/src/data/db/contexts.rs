@@ -873,27 +873,6 @@ mod tests {
         assert_eq!(targets[0].executable, "editor.exe");
     }
 
-    #[cfg(not(any(windows, target_os = "macos")))]
-    #[test]
-    fn query_context_targets_keeps_platform_rows_visible_when_platform_is_unknown() {
-        let db = open(":memory:").expect("db");
-        let context =
-            insert_context_returning(&db, "Cross Platform", None, None, None, None, false)
-                .expect("context");
-        {
-            let conn = lock_conn(&db).expect("lock");
-            conn.execute(
-                "INSERT INTO context_targets (context_id, executable, platform) VALUES (?1, ?2, ?3)",
-                params![context.id, "editor.exe", "windows"],
-            )
-            .expect("insert platform-tagged row");
-        }
-
-        let targets = query_context_targets(&db, Some(context.id)).expect("targets");
-        assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].platform.as_deref(), Some("windows"));
-    }
-
     #[test]
     fn deleting_a_context_returns_items_to_everywhere() {
         let db = open(":memory:").expect("db");

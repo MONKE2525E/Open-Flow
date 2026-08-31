@@ -2082,14 +2082,8 @@ export function listen<T>(
   const listener = (ev: Event) => {
     if (event === 'verenu:sync-pair-request') {
       const payload: unknown = (ev as CustomEvent<unknown>).detail;
-      if (
-        payload !== null &&
-        typeof payload === 'object' &&
-        'uuid' in payload &&
-        'name' in payload &&
-        typeof payload.uuid === 'string' &&
-        typeof payload.name === 'string'
-      ) {
+      if (payload !== null && typeof payload === 'object' && 'uuid' in payload && 'name' in payload
+        && typeof payload.uuid === 'string' && typeof payload.name === 'string') {
         devSyncPairing = {
           kind: 'incoming',
           phase: 'awaiting_code',

@@ -75,7 +75,7 @@ pub const SYNCABLE_SETTINGS: &[&str] = &[
     store::VERENU_SERVICE_CHECKS_ENABLED,
 ];
 
-pub(crate) const UNRESOLVED_APP_PREFIX: &str = "?::";
+const UNRESOLVED_APP_PREFIX: &str = "?::";
 
 /// The environment the engine needs beyond the database. The Tauri manager
 /// implements it against the real app; tests use an in-memory stand-in so the
@@ -564,6 +564,9 @@ fn resolve_entry(conn: &Connection, entry: &sync_store::LogEntry) -> Result<Opti
         _ => None,
     };
     let op = if entry.op == "upsert" && payload.is_none() {
+        if entry.table_name == "transcriptions" {
+            return Ok(None);
+        }
         "delete"
     } else {
         &entry.op
@@ -1206,10 +1209,11 @@ fn reconcile_context_children(
     let sticky_executables: std::collections::HashSet<String> = conn
         .prepare(
             "SELECT executable FROM context_targets
-             WHERE context_id = ?1 AND platform IS ?2 AND executable NOT LIKE '?::%'",
+               WHERE context_id = ?1
+                 AND (platform = ?2 OR (?2 IS NULL AND platform IS NULL))
+                 AND executable NOT LIKE '?::%'",
         )?
         .query_map(params![context_id, my_platform], |r| r.get::<_, String>(0))?
-        .map(|result| result.map(|executable| executable.trim().to_lowercase()))
         .collect::<rusqlite::Result<_>>()?;
     for entry in &aggregate.targets {
         let normalized = entry.executable().trim().to_lowercase();
@@ -1225,8 +1229,7 @@ fn reconcile_context_children(
     let target_executables: Vec<String> = aggregate
         .targets
         .iter()
-        .map(|entry| entry.executable().trim().to_lowercase())
-        .filter(|executable| !executable.is_empty())
+        .map(|entry| entry.executable().to_string())
         .chain(sticky_executables.iter().cloned())
         .collect();
     remove_missing(

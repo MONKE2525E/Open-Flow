@@ -343,11 +343,10 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     PILL_VISUALLY_ACTIVE.store(true, Ordering::SeqCst);
 
     // Click-through for passive states so nothing behind the pill is blocked.
-    // Keep this list limited to states that always render a live control.
-    // Handsfree, error, and paste-failed reveal their controls after a short
-    // visual transition; the frontend enables cursor events only once those
-    // controls are actually mounted. This prevents the compact/status phase
-    // from capturing clicks over the app underneath the pill.
+    // Keep this list limited to states that actually render a live control.
+    // Some repair states are visual-only (for example the feedback prompt,
+    // applying, and done); treating those as interactive leaves an invisible
+    // click-capture surface over the app underneath the pill.
     let has_clickable_buttons = matches!(
         state,
         "cancelled"

@@ -466,11 +466,11 @@ impl SyncManager {
     /// logged by the caller, never fatal to sync startup.
     fn reconcile_stale_context_targets(&self) -> Result<()> {
         let conn = self.lock_db()?;
-        let rows: Vec<(i64, i64, String)> = {
+        let rows: Vec<(i64, String)> = {
             let mut stmt =
-                conn.prepare("SELECT id, context_id, executable FROM context_targets WHERE platform IS NULL")?;
+                conn.prepare("SELECT id, executable FROM context_targets WHERE platform IS NULL")?;
             let mapped = stmt
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?;
             mapped
         };
@@ -482,14 +482,14 @@ impl SyncManager {
         let installed_apps = crate::system::apps::list_installed_apps();
         let platform_tag = crate::data::db::current_platform_tag();
 
-        for (id, context_id, executable) in rows {
+        for (id, executable) in rows {
             if executable.starts_with("?::") || executable.to_lowercase().ends_with(native_suffix) {
                 continue;
             }
             let mut resolved = closest_installed_app(&executable, &installed_apps)
                 .map(|app| app.exe.clone())
                 .unwrap_or_else(|| engine::unresolved_app_target(&executable));
-            if resolved.starts_with(engine::UNRESOLVED_APP_PREFIX) {
+            if resolved.starts_with("?::") {
                 let existing_id: Option<i64> = conn
                     .query_row(
                         "SELECT id FROM context_targets WHERE executable = ?1",
@@ -515,22 +515,6 @@ impl SyncManager {
                 Err(rusqlite::Error::SqliteFailure(err, _))
                     if err.code == rusqlite::ErrorCode::ConstraintViolation =>
                 {
-                    let owner_context: Option<i64> = conn
-                        .query_row(
-                            "SELECT context_id FROM context_targets WHERE executable = ?1",
-                            rusqlite::params![resolved],
-                            |row| row.get(0),
-                        )
-                        .optional()?;
-                    if owner_context.is_none() {
-                        return Err(anyhow!(
-                            "context target collision for {resolved} has no owning row"
-                        ));
-                    }
-                    log::debug!(
-                        "sync: dropping stale context target {executable} from context {context_id}; {resolved} is already owned by context {:?}",
-                        owner_context
-                    );
                     conn.execute("DELETE FROM context_targets WHERE id = ?1", rusqlite::params![id])?;
                 }
                 Err(err) => return Err(err.into()),
@@ -1184,7 +1168,7 @@ impl SyncManager {
             discovered
                 .into_iter()
                 .filter(|d| paired.contains(&d.uuid))
-                .filter(|d| dirty || should_auto_initiate(&self.device_info().uuid, &d.uuid))
+                .filter(|d| should_auto_initiate(&self.device_info().uuid, &d.uuid))
                 .filter(|d| match backoff.get(&d.uuid) {
                     Some(entry) => now >= entry.next_attempt || dirty,
                     None => true,
@@ -1467,14 +1451,20 @@ pub(crate) fn connection_candidates(
     let stable_port = listener_port_for_uuid(peer_uuid);
     let mut candidates = Vec::new();
     for address in addresses {
-        let ip = address
-            .parse::<SocketAddr>()
-            .map(|parsed| parsed.ip())
-            .or_else(|_| address.parse::<std::net::IpAddr>())
-            .ok();
-        let Some(ip) = ip else { continue };
+        let Ok(parsed) = address.parse::<SocketAddr>() else {
+            let Ok(ip) = address.parse::<std::net::IpAddr>() else {
+                continue;
+            };
+            for port in [stable_port, advertised_port] {
+                let candidate = SocketAddr::new(ip, port);
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
+            }
+            continue;
+        };
         for port in [stable_port, advertised_port] {
-            let candidate = SocketAddr::new(ip, port);
+            let candidate = SocketAddr::new(parsed.ip(), port);
             if !candidates.contains(&candidate) {
                 candidates.push(candidate);
             }
@@ -1955,6 +1945,7 @@ impl SyncHost for ManagerHost {
         closest_installed_app(source, &self.installed_apps).map(|app| app.exe.clone())
     }
 }
+
 
 pub(crate) fn closest_installed_app<'a>(
     source: &str,
