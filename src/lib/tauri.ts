@@ -49,6 +49,7 @@ type DevContextTarget = {
   id: number;
   context_id: number;
   executable: string;
+  platform: string | null;
   created_at: string;
 };
 type DevContextWebsiteTarget = {
@@ -186,6 +187,14 @@ const DEV_LOCAL_LLM_MODELS_KEY = 'verenu:dev-local-llm-models';
 const DEV_LOCAL_LLM_STATE_KEY = 'verenu:dev-local-llm-state';
 const DEV_LOCAL_LLM_RUNTIME_KEY = 'verenu:dev-local-llm-runtime';
 let devEventId = 0;
+let devSyncPairing: {
+  kind: 'incoming' | 'outgoing';
+  phase: 'connecting' | 'waiting_for_code' | 'awaiting_code' | 'verifying' | 'failed';
+  peer_uuid: string;
+  peer_name: string;
+  code: string | null;
+  error: string | null;
+} | null = null;
 // Bumped each time a dev-mock model download starts. Captured per-call below
 // so `stillDownloading`/`stillDownloadingLlm` can tell a cancelled-then-
 // restarted download's stale `setTimeout` steps apart from the current
@@ -1285,7 +1294,7 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       if (!readDevContexts().some((context) => context.id === contextId)) throw new Error(`Context ${contextId} was not found`);
       const now = devNow();
       const rows = readDevContextTargets().filter((target) => target.executable !== executable);
-      const target: DevContextTarget = { id: nextDevId(rows), context_id: contextId, executable, created_at: now };
+      const target: DevContextTarget = { id: nextDevId(rows), context_id: contextId, executable, platform: null, created_at: now };
       writeDevList(DEV_CONTEXT_TARGETS_KEY, [...rows, target]);
       return target as T;
     }
@@ -2015,19 +2024,31 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       return {
         this_device: { uuid: 'dev-device', name: 'This browser' },
         listener_active: false,
-        pairing: null,
+        pairing: devSyncPairing ? { ...devSyncPairing } : null,
         discovered: [],
         peers: [],
         last_error_hint: 'Sync runs in the desktop app only.',
       } as T;
     case 'sync_set_device_name':
     case 'sync_cancel_pairing':
+      devSyncPairing = null;
+      return undefined as T;
     case 'sync_remove_device':
     case 'sync_now':
       return undefined as T;
-    case 'sync_start_pairing':
+    case 'sync_start_pairing': {
+      devSyncPairing = {
+        kind: 'outgoing',
+        phase: 'waiting_for_code',
+        peer_uuid: String(args?.deviceUuid ?? 'dev-peer'),
+        peer_name: 'Nearby device',
+        code: '000000',
+        error: null,
+      };
       return '000000' as T;
+    }
     case 'sync_respond_to_pairing':
+      devSyncPairing = null;
       return undefined as T;
     case 'sync_get_diagnostics':
       return { log_entries: 0, peers: [] } as T;
@@ -2057,6 +2078,17 @@ export function listen<T>(
   if (typeof window === 'undefined') return Promise.resolve(() => {});
   const eventName = `tauri:${event}`;
   const listener = (ev: Event) => {
+    if (event === 'verenu:sync-pair-request') {
+      const payload = (ev as CustomEvent<{ uuid: string; name: string }>).detail;
+      devSyncPairing = {
+        kind: 'incoming',
+        phase: 'awaiting_code',
+        peer_uuid: payload.uuid,
+        peer_name: payload.name,
+        code: null,
+        error: null,
+      };
+    }
     handler({
       event,
       id: ++devEventId,

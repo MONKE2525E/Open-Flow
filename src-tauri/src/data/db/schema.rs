@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS context_targets (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   context_id   INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
   executable   TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  platform     TEXT,
   created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_context_targets_context_id
@@ -642,6 +643,34 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
             Ok(())
         })?;
     }
+    if user_version < 21 {
+        log::info!("db: migrating schema {user_version} -> 21");
+        // Which OS an exe target was assigned on. NULL (all pre-v21 rows) means
+        // "unknown platform" and is treated as visible everywhere — sync keeps
+        // syncing the raw executable string across devices regardless, but a
+        // tagged row is only shown/offered for removal on the device whose OS
+        // produced that executable naming convention.
+        run_migration(&mut conn, |conn| {
+            ensure_table_column(
+                conn,
+                "context_targets",
+                "platform",
+                "ALTER TABLE context_targets ADD COLUMN platform TEXT;",
+            )?;
+            conn.execute_batch("PRAGMA user_version = 21;")?;
+            Ok(())
+        })?;
+    }
+    // Early v20 development databases created sync_peers before receive and
+    // send cursors were split. Their version marker is already 20, so the
+    // migration above will not run again. Repair that partial v20 shape on
+    // every open before pairing can write or query the missing cursor.
+    ensure_table_column(
+        &conn,
+        "sync_peers",
+        "recv_cursor",
+        "ALTER TABLE sync_peers ADD COLUMN recv_cursor INTEGER NOT NULL DEFAULT 0;",
+    )?;
     // Triggers can run before the async sync manager finishes loading the
     // keychain identity. Keep a provisional UUID in place so early writes are
     // captured; initialize() replaces it with the durable identity UUID.

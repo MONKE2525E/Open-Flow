@@ -3,7 +3,7 @@
 //! sync sessions, and reports status to the frontend.
 //!
 //! Networking model (deliberately low-churn):
-//! - One TCP listener on an ephemeral port, advertised via mDNS/Bonjour.
+//! - One TCP listener on a stable per-device port, advertised via mDNS/Bonjour.
 //! - A continuous mDNS browse (event-driven; no polling of peers).
 //! - A sync session starts when a paired peer is discovered, when the user
 //!   clicks "Sync now", or shortly after local data changes (debounced).
@@ -38,6 +38,26 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 const PAIRING_TIMEOUT: Duration = Duration::from_secs(180);
 const PAIRING_PROMPT_LIFETIME: Duration = Duration::from_secs(180);
 const MAX_BACKOFF: Duration = Duration::from_secs(600);
+const PRIVATE_PORT_START: u16 = 49_152;
+const PRIVATE_PORT_COUNT: u32 = 16_384;
+
+/// Keep a device on the same private TCP port across app restarts. mDNS
+/// caches can retain the previous advertisement for part of its TTL; a random
+/// listener port turns that otherwise harmless stale record into an immediate
+/// connection refusal during pairing.
+pub(crate) fn listener_port_for_uuid(uuid: &str) -> u16 {
+    let hash = uuid.as_bytes().iter().fold(2_166_136_261_u32, |hash, byte| {
+        (hash ^ u32::from(*byte)).wrapping_mul(16_777_619)
+    });
+    PRIVATE_PORT_START + (hash % PRIVATE_PORT_COUNT) as u16
+}
+
+/// Pick exactly one automatic initiator for a peer pair. Manual sync remains
+/// available from either device, but discovery/pairing must not start two
+/// competing sessions at once.
+pub(crate) fn should_auto_initiate(local_uuid: &str, peer_uuid: &str) -> bool {
+    local_uuid < peer_uuid
+}
 
 #[derive(Clone)]
 pub struct SyncManager {
@@ -50,6 +70,7 @@ pub(crate) struct Inner {
     pub data_dir: PathBuf,
     pub identity: RwLock<Option<Arc<DeviceIdentity>>>,
     pub pending: tokio::sync::Mutex<Option<PendingPairing>>,
+    pub pairing_status: Mutex<Option<PairingStatus>>,
     pub pairing_in_progress: AtomicBool,
     pub pairing_generation: AtomicU64,
     pub sessions: Mutex<HashSet<String>>,
@@ -73,11 +94,20 @@ pub(crate) enum PendingPairing {
         generation: u64,
     },
     Outgoing {
-        peer_uuid: String,
-        peer_name: String,
         generation: u64,
         abort: Option<tokio::task::AbortHandle>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PairingStatus {
+    kind: &'static str,
+    phase: &'static str,
+    peer_uuid: String,
+    peer_name: String,
+    code: Option<String>,
+    error: Option<String>,
+    generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -142,10 +172,12 @@ pub struct PeerDto {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PairingStateDto {
-    /// "incoming" = someone asked to pair with us; "outgoing" = we asked them.
     pub kind: String,
+    pub phase: String,
     pub peer_uuid: String,
     pub peer_name: String,
+    pub code: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -170,6 +202,7 @@ impl SyncManager {
             data_dir: data_dir.clone(),
             identity: RwLock::new(None),
             pending: tokio::sync::Mutex::new(None),
+            pairing_status: Mutex::new(None),
             pairing_in_progress: AtomicBool::new(false),
             pairing_generation: AtomicU64::new(0),
             sessions: Mutex::new(HashSet::new()),
@@ -226,17 +259,33 @@ impl SyncManager {
 
         // TLS configs (client configs are built per connection; the identity
         // can be rotated by re-initialization).
-        let (cert, key) = {
+        let (uuid, cert, key) = {
             let guard = self.inner.identity.read().expect("identity lock");
             let identity = guard.as_ref().ok_or_else(|| anyhow!("identity missing"))?;
-            (identity.cert_der().clone(), identity.tls_key())
+            (
+                identity.uuid.clone(),
+                identity.cert_der().clone(),
+                identity.tls_key(),
+            )
         };
         let server_cfg = transport::server_config(cert, key)?;
 
-        // Listener.
-        let listener = TcpListener::bind("0.0.0.0:0")
-            .await
-            .map_err(|e| anyhow!("could not bind sync listener: {e}"))?;
+        // Reuse a deterministic port so an mDNS record cached across an app
+        // restart still points at the live listener. Fall back only for a real
+        // local collision, such as two Verenu identities running together.
+        let preferred_port = listener_port_for_uuid(&uuid);
+        let listener = match TcpListener::bind(("0.0.0.0", preferred_port)).await {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
+                log::warn!(
+                    "sync: preferred listener port {preferred_port} is occupied; using an ephemeral port"
+                );
+                TcpListener::bind("0.0.0.0:0")
+                    .await
+                    .map_err(|fallback| anyhow!("could not bind sync listener: {fallback}"))?
+            }
+            Err(err) => return Err(anyhow!("could not bind sync listener: {err}")),
+        };
         let port = listener
             .local_addr()
             .map_err(|e| anyhow!("sync listener has no address: {e}"))?
@@ -272,6 +321,15 @@ impl SyncManager {
             }
         });
 
+        // One-time repair for exe targets written before cross-platform
+        // resolution existed (or before it was applied to that row): a target
+        // that doesn't look like this platform's own naming convention and
+        // was never tagged gets a chance to resolve against apps installed
+        // right now. Best-effort — sync must start regardless.
+        if let Err(err) = self.reconcile_stale_context_targets() {
+            log::warn!("sync: stale context target reconciliation failed: {err:#}");
+        }
+
         // Discovery.
         self.start_discovery().await?;
 
@@ -303,8 +361,11 @@ impl SyncManager {
                 self.inner.listener_port.load(Ordering::Relaxed),
             )
         };
-        let instance = uuid.clone();
-        let host = format!("{uuid}.local.");
+        let instance = format!("verenu-{uuid}");
+        // Namespace the DNS host separately from the service instance. Older
+        // builds published the UUID host as 127.0.0.1 on macOS; using a fresh,
+        // app-specific host prevents that stale A record from hiding the LAN IP.
+        let host = format!("verenu-{uuid}.local.");
         let props: HashMap<String, String> = [
             ("uuid", uuid.clone()),
             ("name", name),
@@ -313,16 +374,43 @@ impl SyncManager {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect();
+        // mdns-sd's automatic address selection can classify active macOS
+        // interfaces as Unknown and publish only 127.0.0.1. Enumerate usable
+        // IPv4 interfaces ourselves so peers receive a reachable LAN address.
+        let mut lan_addresses: Vec<std::net::IpAddr> = if_addrs::get_if_addrs()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|interface| interface.ip())
+            .filter(|address| address.is_ipv4() && !address.is_loopback() && !address.is_unspecified())
+            .collect();
+        // Some directly launched macOS app binaries see only loopback through
+        // getifaddrs. A UDP route lookup does not send traffic and reliably
+        // reveals the primary interface address in that environment.
+        if let Ok(route_probe) = std::net::UdpSocket::bind("0.0.0.0:0") {
+            if route_probe.connect("192.0.2.1:9").is_ok() {
+                if let Ok(local) = route_probe.local_addr() {
+                    let address = local.ip();
+                    if address.is_ipv4() && !address.is_loopback() && !address.is_unspecified() {
+                        lan_addresses.push(address);
+                    }
+                }
+            }
+        }
+        lan_addresses.sort_unstable();
+        lan_addresses.dedup();
+        if lan_addresses.is_empty() {
+            return Err(anyhow!("mDNS registration found no usable LAN address"));
+        }
+        log::info!("sync: advertising {host} on {lan_addresses:?}");
         let service = ServiceInfo::new(
             SERVICE_TYPE,
             &instance,
             &host,
-            "0.0.0.0",
+            lan_addresses.as_slice(),
             port,
             Some(props),
         )
-        .map_err(|e| anyhow!("mDNS service info invalid: {e}"))?
-        .enable_addr_auto();
+        .map_err(|e| anyhow!("mDNS service info invalid: {e}"))?;
         daemon
             .register(service)
             .map_err(|e| anyhow!("mDNS registration failed: {e}"))?;
@@ -340,7 +428,12 @@ impl SyncManager {
                         handle_resolved(&inner, *info);
                     }
                     ServiceEvent::ServiceRemoved(_, fullname) => {
-                        let instance = fullname.split('.').next().unwrap_or("");
+                        let instance = fullname
+                            .split('.')
+                            .next()
+                            .unwrap_or("")
+                            .strip_prefix("verenu-")
+                            .unwrap_or_else(|| fullname.split('.').next().unwrap_or(""));
                         let changed = inner
                             .discovered
                             .lock()
@@ -362,6 +455,63 @@ impl SyncManager {
             .db
             .lock()
             .map_err(|_| anyhow!("database lock was poisoned"))
+    }
+
+    /// Repairs `context_targets` rows that predate cross-platform resolution
+    /// (or were synced in before this device ever ran it): an untagged row
+    /// whose executable doesn't look like this platform's own naming
+    /// convention gets resolved against apps installed right now, mirroring
+    /// what `resolve_context_targets_in_ops` already does for every live
+    /// incoming sync op. A match is tagged with this platform so it now
+    /// displays only here; no match gets the same "?::" unresolved marker the
+    /// live path uses, so the UI shows a clear "(not found)" chip instead of
+    /// a bare foreign string a user can't act on. Best-effort: errors are
+    /// logged by the caller, never fatal to sync startup.
+    fn reconcile_stale_context_targets(&self) -> Result<()> {
+        let conn = self.lock_db()?;
+        let rows: Vec<(i64, String)> = {
+            let mut stmt =
+                conn.prepare("SELECT id, executable FROM context_targets WHERE platform IS NULL")?;
+            let mapped = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            mapped
+        };
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        let native_suffix = if cfg!(target_os = "macos") { ".app" } else { ".exe" };
+        let installed_apps = crate::system::apps::list_installed_apps();
+        let platform_tag = crate::data::db::current_platform_tag();
+
+        for (id, executable) in rows {
+            if executable.starts_with("?::") || executable.to_lowercase().ends_with(native_suffix) {
+                continue;
+            }
+            let resolved = closest_installed_app(&executable, &installed_apps)
+                .map(|app| app.exe.clone())
+                .unwrap_or_else(|| engine::unresolved_app_target(&executable));
+            let new_platform = (!resolved.starts_with("?::")).then_some(platform_tag).flatten();
+            let updated = conn.execute(
+                "UPDATE context_targets SET executable = ?1, platform = ?2 WHERE id = ?3",
+                rusqlite::params![resolved, new_platform, id],
+            );
+            match updated {
+                Ok(_) => {}
+                // The resolved executable already belongs to another row for
+                // this context (both devices' targets turned out to be the
+                // same app) — drop the now-redundant stale row instead of
+                // erroring the whole pass.
+                Err(rusqlite::Error::SqliteFailure(err, _))
+                    if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    conn.execute("DELETE FROM context_targets WHERE id = ?1", rusqlite::params![id])?;
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+        Ok(())
     }
 
     pub fn identity_exchange(&self) -> Result<IdentityExchange> {
@@ -448,26 +598,17 @@ impl SyncManager {
             .collect();
         let pairing = self
             .inner
-            .pending
-            .try_lock()
+            .pairing_status
+            .lock()
             .ok()
-            .and_then(|guard| {
-                guard.as_ref().map(|pending| match pending {
-                    PendingPairing::Incoming {
-                        peer_uuid, peer_name, ..
-                    } => PairingStateDto {
-                        kind: "incoming".to_string(),
-                        peer_uuid: peer_uuid.clone(),
-                        peer_name: peer_name.clone(),
-                    },
-                    PendingPairing::Outgoing {
-                        peer_uuid, peer_name, ..
-                    } => PairingStateDto {
-                        kind: "outgoing".to_string(),
-                        peer_uuid: peer_uuid.clone(),
-                        peer_name: peer_name.clone(),
-                    },
-                })
+            .and_then(|guard| guard.as_ref().cloned())
+            .map(|pairing| PairingStateDto {
+                kind: pairing.kind.to_string(),
+                phase: pairing.phase.to_string(),
+                peer_uuid: pairing.peer_uuid,
+                peer_name: pairing.peer_name,
+                code: pairing.code,
+                error: pairing.error,
             });
         SyncStatusSnapshot {
             this_device,
@@ -497,21 +638,32 @@ impl SyncManager {
             }
             generation = self.inner.pairing_generation.fetch_add(1, Ordering::Relaxed) + 1;
             *pending = Some(PendingPairing::Outgoing {
-                peer_uuid: peer_uuid.clone(),
-                peer_name: target.name.clone(),
                 generation,
                 abort: None,
             });
         }
         let code = pairing::generate_pairing_code();
+        self.inner.set_pairing_status(PairingStatus {
+            kind: "outgoing",
+            phase: "connecting",
+            peer_uuid: peer_uuid.clone(),
+            peer_name: target.name.clone(),
+            code: Some(code.clone()),
+            error: None,
+            generation,
+        });
 
         let manager = self.clone();
         let task_code = code.clone();
         let task = tokio::spawn(async move {
             let result = manager
                 .run_outgoing_pairing(&target, &task_code, generation)
-                .await;            if let Err(err) = result {
+                .await;
+            if let Err(err) = result {
                 log::warn!("sync: pairing with {} failed: {err:#}", target.name);
+                manager
+                    .inner
+                    .fail_pairing(generation, format!("{err:#}"));
                 manager
                     .inner
                     .app
@@ -549,22 +701,34 @@ impl SyncManager {
         generation: u64,
     ) -> Result<()> {
         let identity = self.identity_exchange()?;
-        let addr = target
-            .addresses
-            .first()
-            .ok_or_else(|| anyhow!("device has no reachable address"))?
-            .parse::<SocketAddr>()
-            .map_err(|e| anyhow!("bad device address: {e}"))?;
+        if target.addresses.is_empty() {
+            return Err(anyhow!("device has no reachable address"));
+        }
         let client_cfg = {
             let guard = self.inner.identity.read().expect("identity lock");
             let identity = guard.as_ref().ok_or_else(|| anyhow!("sync unavailable"))?;
             transport::client_config(identity.cert_der().clone(), identity.tls_key())?
         };
         let connector = transport::tls_connector(client_cfg);
-        let tcp = tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect(addr))
-            .await
-            .map_err(|_| anyhow!("timed out connecting to {}", target.name))?
-            .map_err(|e| anyhow!("could not reach {}: {e}", target.name))?;
+        let mut tcp = None;
+        let mut failures = Vec::new();
+        for addr in connection_candidates(&target.addresses, target.port, &target.uuid) {
+            match tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect(addr)).await {
+                Ok(Ok(stream)) => {
+                    tcp = Some(stream);
+                    break;
+                }
+                Ok(Err(err)) => failures.push(format!("{addr}: {err}")),
+                Err(_) => failures.push(format!("{addr}: timed out")),
+            }
+        }
+        let tcp = tcp.ok_or_else(|| {
+            anyhow!(
+                "could not reach {} on any discovered address: {}",
+                target.name,
+                failures.join("; ")
+            )
+        })?;
         let mut tls = tokio::time::timeout(
             CONNECT_TIMEOUT,
             connector.connect(transport::server_name_for(&target.uuid), tcp),
@@ -584,6 +748,7 @@ impl SyncManager {
             },
         )
         .await?;
+        self.inner.update_pairing_phase(generation, "waiting_for_code");
 
         // The responder replies only after its user approves, so the whole
         // exchange runs under the generous pairing timeout.
@@ -638,6 +803,7 @@ impl SyncManager {
                                 serde_json::json!({ "uuid": peer_uuid, "ok": false, "message": "Pairing declined" }),
                             )
                             .ok();
+                        self.inner.clear_pairing_status(generation);
                         return Ok(());
                     }
                     (peer_uuid, peer_name, spake_msg, stream, created, generation)
@@ -653,6 +819,7 @@ impl SyncManager {
         };
         let _pairing_guard = PairingInProgressGuard(&self.inner.pairing_in_progress);
         let (peer_uuid, peer_name, spake_msg, mut stream, created, generation) = pending;
+        self.inner.update_pairing_phase(generation, "verifying");
         let identity = match self.identity_exchange() {
             Ok(identity) => identity,
             Err(err) => {
@@ -702,7 +869,10 @@ impl SyncManager {
         };
         match result {
             Ok(outcome) => {
-                self.complete_pairing(outcome, generation).await?;
+                if let Err(err) = self.complete_pairing(outcome, generation).await {
+                    self.inner.fail_pairing(generation, format!("{err:#}"));
+                    return Err(err);
+                }
                 self.inner
                     .app
                     .emit(
@@ -712,6 +882,7 @@ impl SyncManager {
                     .ok();
             }
             Err(err) => {
+                self.inner.fail_pairing(generation, format!("{err:#}"));
                 self.inner
                     .app
                     .emit(
@@ -739,11 +910,20 @@ impl SyncManager {
             && self.inner.pairing_generation.load(Ordering::Relaxed) == generation
         {
             *pending = Some(PendingPairing::Incoming {
-                peer_uuid,
-                peer_name,
+                peer_uuid: peer_uuid.clone(),
+                peer_name: peer_name.clone(),
                 spake_msg,
                 stream,
                 created,
+                generation,
+            });
+            self.inner.set_pairing_status(PairingStatus {
+                kind: "incoming",
+                phase: "awaiting_code",
+                peer_uuid: peer_uuid.clone(),
+                peer_name: peer_name.clone(),
+                code: None,
+                error: None,
                 generation,
             });
             self.inner.emit_devices_changed();
@@ -774,6 +954,7 @@ impl SyncManager {
         }
         drop(_pairing_generation_guard);
         self.clear_pending_if_generation(generation).await;
+        self.inner.clear_pairing_status(generation);
         self.inner
             .app
             .emit(
@@ -786,12 +967,15 @@ impl SyncManager {
             )
             .ok();
         self.inner.emit_devices_changed();
-        // Pull the peer's data right away.
-        let manager = self.clone();
+        // Pull right away, from one deterministic side only. Both peers finish
+        // pairing at nearly the same time and used to open competing sessions.
         let uuid = outcome.device_uuid.clone();
-        tauri::async_runtime::spawn(async move {
-            manager.sync_to_peer(&uuid).await;
-        });
+        if should_auto_initiate(&self.device_info().uuid, &uuid) {
+            let manager = self.clone();
+            tauri::async_runtime::spawn(async move {
+                manager.sync_to_peer(&uuid).await;
+            });
+        }
         Ok(())
     }
 
@@ -804,6 +988,9 @@ impl SyncManager {
         }) = guard.take()
         {
             abort_handle.abort();
+        }
+        if let Ok(mut pairing) = self.inner.pairing_status.lock() {
+            *pairing = None;
         }
         self.inner.emit_devices_changed();
         Ok(())
@@ -878,20 +1065,19 @@ impl SyncManager {
     }
 
     fn addr_for_peer(&self, peer_uuid: &str) -> Result<Option<SocketAddr>> {
+        Ok(self.addr_candidates_for_peer(peer_uuid)?.into_iter().next())
+    }
+
+    fn addr_candidates_for_peer(&self, peer_uuid: &str) -> Result<Vec<SocketAddr>> {
         let discovered = self
             .inner
             .discovered
             .lock()
             .map_err(|_| anyhow!("discovery lock poisoned"))?;
-        Ok(discovered.get(peer_uuid).and_then(|d| {
-            d.addresses
-                .first()
-                .and_then(|a| a.parse::<SocketAddr>().ok())
-                .map(|mut addr| {
-                    addr.set_port(d.port);
-                    addr
-                })
-        }))
+        Ok(discovered
+            .get(peer_uuid)
+            .map(|d| connection_candidates(&d.addresses, d.port, peer_uuid))
+            .unwrap_or_default())
     }
 
     /// Manual "Sync now". `None` syncs every discovered paired peer.
@@ -973,6 +1159,7 @@ impl SyncManager {
             discovered
                 .into_iter()
                 .filter(|d| paired.contains(&d.uuid))
+                .filter(|d| should_auto_initiate(&self.device_info().uuid, &d.uuid))
                 .filter(|d| match backoff.get(&d.uuid) {
                     Some(entry) => now >= entry.next_attempt || dirty,
                     None => true,
@@ -1004,9 +1191,10 @@ impl SyncManager {
         }
         let _guard = SessionGuard(self.inner.clone(), peer_uuid.to_string());
 
-        let Some(addr) = self.addr_for_peer(peer_uuid).ok().flatten() else {
+        let addrs = self.addr_candidates_for_peer(peer_uuid).unwrap_or_default();
+        if addrs.is_empty() {
             return; // not visible right now; discovery will retrigger us
-        };
+        }
         let Ok(peer) = (|| {
             let conn = self.lock_db()?;
             sync_store::get_peer(&conn, peer_uuid)?
@@ -1016,7 +1204,16 @@ impl SyncManager {
         };
 
         self.set_status(peer_uuid, PeerState::Connecting, None);
-        let result = self.run_client_session(&peer, addr).await;
+        let mut result = Err(anyhow!("no connection candidates"));
+        for addr in addrs {
+            match self.run_client_session(&peer, addr).await {
+                Ok(summary) => {
+                    result = Ok(summary);
+                    break;
+                }
+                Err(err) => result = Err(err),
+            }
+        }
         match result {
             Ok(summary) => {
                 {
@@ -1192,6 +1389,70 @@ impl Inner {
     pub(crate) fn emit_devices_changed(&self) {
         let _ = self.app.emit("verenu:sync-devices-changed", ());
     }
+
+    fn set_pairing_status(&self, status: PairingStatus) {
+        if let Ok(mut pairing) = self.pairing_status.lock() {
+            *pairing = Some(status);
+        }
+        self.emit_devices_changed();
+    }
+
+    fn update_pairing_phase(&self, generation: u64, phase: &'static str) {
+        if let Ok(mut pairing) = self.pairing_status.lock() {
+            if let Some(status) = pairing.as_mut() {
+                if status.generation == generation {
+                    status.phase = phase;
+                    status.error = None;
+                }
+            }
+        }
+        self.emit_devices_changed();
+    }
+
+    fn fail_pairing(&self, generation: u64, error: String) {
+        if let Ok(mut pairing) = self.pairing_status.lock() {
+            if let Some(status) = pairing.as_mut() {
+                if status.generation == generation {
+                    status.phase = "failed";
+                    status.error = Some(error);
+                }
+            }
+        }
+        self.emit_devices_changed();
+    }
+
+    fn clear_pairing_status(&self, generation: u64) {
+        if let Ok(mut pairing) = self.pairing_status.lock() {
+            if pairing
+                .as_ref()
+                .is_some_and(|status| status.generation == generation)
+            {
+                *pairing = None;
+            }
+        }
+        self.emit_devices_changed();
+    }
+}
+
+pub(crate) fn connection_candidates(
+    addresses: &[String],
+    advertised_port: u16,
+    peer_uuid: &str,
+) -> Vec<SocketAddr> {
+    let stable_port = listener_port_for_uuid(peer_uuid);
+    let mut candidates = Vec::new();
+    for address in addresses {
+        let Ok(parsed) = address.parse::<SocketAddr>() else {
+            continue;
+        };
+        for port in [stable_port, advertised_port] {
+            let candidate = SocketAddr::new(parsed.ip(), port);
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+    candidates
 }
 
 fn now_ms_u64() -> u64 {
@@ -1300,7 +1561,7 @@ fn handle_resolved(inner: &Arc<Inner>, info: mdns_sd::ResolvedService) {
 
     // Auto-sync on appearance, respecting backoff and one-session-per-peer.
     let paired = paired_set(conn_peers(&inner.db));
-    if !paired.contains(&uuid) {
+    if !paired.contains(&uuid) || !should_auto_initiate(&self_uuid, &uuid) {
         return;
     }
     let due = inner
@@ -1420,6 +1681,16 @@ async fn handle_incoming_pairing(
             generation,
         });
     }
+    inner.set_pairing_status(PairingStatus {
+        kind: "incoming",
+        phase: "awaiting_code",
+        peer_uuid: peer_uuid.clone(),
+        peer_name: peer_name.clone(),
+        code: None,
+        error: None,
+        generation,
+    });
+    log::info!("sync: pairing request received from {peer_name}");
     let _ = inner.app.emit(
         "verenu:sync-pair-request",
         serde_json::json!({ "uuid": peer_uuid, "name": peer_name }),
@@ -1437,6 +1708,7 @@ async fn handle_incoming_pairing(
                 && watch_inner.pairing_generation.load(Ordering::Relaxed) == generation
             {
                 *pending = None;
+                watch_inner.clear_pairing_status(generation);
                 watch_inner.emit_devices_changed();
             }
         }
@@ -1492,20 +1764,6 @@ async fn handle_sync_hello(
         .await;
         return;
     }
-    // Reply, then run the responder side of the session.
-    let identity = {
-        let guard = inner.identity.read().expect("identity lock");
-        let identity = match guard.as_ref() {
-            Some(identity) => identity.clone(),
-            None => return,
-        };
-        Hello {
-            device_uuid: identity.uuid.clone(),
-            device_name: identity.name.clone(),
-            protocol: PROTOCOL_VERSION,
-            app_version: env!("CARGO_PKG_VERSION").to_string(),
-        }
-    };
     // Reserve the session before acknowledging it. Otherwise a duplicate
     // connection can receive HelloAck and then fail at the first session read.
     let session_available = {
@@ -1523,14 +1781,11 @@ async fn handle_sync_hello(
         return;
     }
     let _session_guard = SessionGuard(inner.clone(), hello.device_uuid.clone());
-    if send_message(&mut tls, &Message::HelloAck(identity)).await.is_err() {
-        return;
-    }
     let host = ManagerHost::new(&inner);
     // A stalled peer must not hold the session slot forever.
     let result = match tokio::time::timeout(
         Duration::from_secs(600),
-        engine::run_session(&inner.db, &host, &mut tls, false, &peer),
+        engine::run_session_after_hello(&inner.db, &host, &mut tls, false, &peer, Some(hello)),
     )
     .await
     {
@@ -1566,6 +1821,7 @@ pub(crate) struct ManagerHost {
     settings: SettingsHandle,
     app: AppHandle,
     uuid: String,
+    installed_apps: Vec<crate::system::apps::InstalledApp>,
 }
 
 impl ManagerHost {
@@ -1586,6 +1842,7 @@ impl ManagerHost {
             }),
             app: inner.app.clone(),
             uuid,
+            installed_apps: crate::system::apps::list_installed_apps(),
         }
     }
 }
@@ -1661,4 +1918,72 @@ impl SyncHost for ManagerHost {
         }
         Ok(())
     }
+
+    fn resolve_app_target(&self, source: &str) -> Option<String> {
+        closest_installed_app(source, &self.installed_apps).map(|app| app.exe.clone())
+    }
+}
+
+pub(crate) fn closest_installed_app<'a>(
+    source: &str,
+    apps: &'a [crate::system::apps::InstalledApp],
+) -> Option<&'a crate::system::apps::InstalledApp> {
+    let source = source.trim_start_matches("?::");
+    let source_key = app_match_key(source);
+    if source_key.len() < 3 {
+        return None;
+    }
+    apps.iter()
+        .filter_map(|app| {
+            let score = [app_match_key(&app.exe), app_match_key(&app.name)]
+                .into_iter()
+                .map(|candidate| app_match_score(&source_key, &candidate))
+                .fold(0.0_f32, f32::max);
+            (score >= 0.72).then_some((app, score))
+        })
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .map(|(app, _)| app)
+}
+
+fn app_match_key(value: &str) -> String {
+    value
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(value)
+        .to_lowercase()
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .trim_end_matches("exe")
+        .trim_end_matches("app")
+        .to_string()
+}
+
+fn app_match_score(left: &str, right: &str) -> f32 {
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    if left == right {
+        return 1.0;
+    }
+    if left.contains(right) || right.contains(left) {
+        return left.len().min(right.len()) as f32 / left.len().max(right.len()) as f32;
+    }
+    let distance = levenshtein(left.as_bytes(), right.as_bytes());
+    1.0 - distance as f32 / left.len().max(right.len()) as f32
+}
+
+fn levenshtein(left: &[u8], right: &[u8]) -> usize {
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0; right.len() + 1];
+    for (i, &left_byte) in left.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, &right_byte) in right.iter().enumerate() {
+            current[j + 1] = (previous[j + 1] + 1)
+                .min(current[j] + 1)
+                .min(previous[j] + usize::from(left_byte != right_byte));
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()]
 }

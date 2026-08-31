@@ -8,6 +8,7 @@
   const iconCache = new Map<string, Promise<string | null>>();
 
   function loadIcon(exe: string): Promise<string | null> {
+    if (exe.startsWith('?::')) return Promise.resolve(null);
     const key = normalizeExe(exe);
     let pending = iconCache.get(key);
     if (!pending) {
@@ -34,7 +35,7 @@
     };
   });
 
-  const initial = $derived((label || exe || '?').trim().slice(0, 1).toUpperCase());
+  const initial = $derived(exe.startsWith('?::') ? '?' : (label || exe || '?').trim().slice(0, 1).toUpperCase());
 </script>
 
 {#if dataUri}

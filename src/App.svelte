@@ -358,7 +358,7 @@
   {#if cleanupPromptEditor.open}
     <CleanupPromptModal />
   {/if}
-  {#if syncStore.incoming}
+  {#if syncStore.status?.pairing?.kind === 'incoming' && syncStore.status.pairing.phase !== 'failed'}
     <SyncPairModal />
   {/if}
   <DictationPill />

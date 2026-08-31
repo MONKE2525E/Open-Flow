@@ -109,6 +109,38 @@ async function gotoSection(page, label) {
     );
     note(`sidebar stacks above the wash (${layering.sidebar} > ${layering.wash})`);
 
+    // Incoming pairing is global, but it commonly arrives while both devices
+    // have Settings open. Its prompt must not be hidden under the settings wash.
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('tauri:verenu:sync-pair-request', {
+        detail: { uuid: 'pairing-test-device', name: 'Nearby MacBook' },
+      }));
+    });
+    const pairingDialog = page.locator('.pair-card[role="dialog"]');
+    await pairingDialog.waitFor({ state: 'visible', timeout: 3_000 });
+    const pairingCode = pairingDialog.locator('#pair-code-input');
+    await pairingCode.fill('123');
+    await page.waitForTimeout(1_250);
+    check(
+      (await pairingCode.inputValue()) === '123',
+      'Incoming pairing code must survive backend status polling',
+    );
+    const pairingLayering = await page.evaluate(() => {
+      const z = (sel) => {
+        const el = document.querySelector(sel);
+        return el ? parseInt(getComputedStyle(el).zIndex, 10) : NaN;
+      };
+      return { prompt: z('.pair-card'), wash: z('.settings-overlay-wrap') };
+    });
+    check(
+      Number.isFinite(pairingLayering.prompt) && pairingLayering.prompt > pairingLayering.wash,
+      `Incoming pairing prompt must stack above Settings ` +
+      `(prompt z-index ${pairingLayering.prompt}, wash ${pairingLayering.wash})`,
+    );
+    note(`incoming pairing prompt stacks above Settings (${pairingLayering.prompt} > ${pairingLayering.wash})`);
+    await pairingDialog.locator('button:has-text("Reject")').click();
+    await pairingDialog.waitFor({ state: 'detached', timeout: 3_000 });
+
     // ── 3. Settings presents as a page, not a floating card ───────────────
     const surface = await page.evaluate(() => {
       const s = getComputedStyle(document.querySelector('.settings-page'));

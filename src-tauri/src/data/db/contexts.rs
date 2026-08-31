@@ -35,7 +35,27 @@ pub struct ContextTarget {
     pub id: i64,
     pub context_id: i64,
     pub executable: String,
+    /// `"windows"` / `"macos"`, or `None` for rows assigned before this field
+    /// existed (or synced from an unrecognized platform) — those stay visible
+    /// on every device rather than disappearing.
+    pub platform: Option<String>,
     pub created_at: String,
+}
+
+/// Tag applied to a target assigned on this device, so a synced-in target
+/// from another OS (e.g. a Windows `.exe` name landing in a Mac's database)
+/// can be hidden from this device's UI without being deleted — going back to
+/// that OS should still see it. Executable naming already differs enough
+/// between platforms (`name.exe` vs `name.app`) that this never affects
+/// foreground-window matching, only which targets a device chooses to show.
+pub fn current_platform_tag() -> Option<&'static str> {
+    if cfg!(windows) {
+        Some("windows")
+    } else if cfg!(target_os = "macos") {
+        Some("macos")
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -303,23 +323,38 @@ pub fn delete_context_conn(conn: &Connection, context_id: i64) -> Result<()> {
     Ok(())
 }
 
+fn context_target_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContextTarget> {
+    Ok(ContextTarget {
+        id: row.get(0)?,
+        context_id: row.get(1)?,
+        executable: row.get(2)?,
+        platform: row.get(3)?,
+        created_at: row.get(4)?,
+    })
+}
+
+/// Targets are shown when untagged (pre-v21 or from an unrecognized platform)
+/// or tagged for this device's own platform — see `current_platform_tag`.
+/// Rows still carrying the sync resolver's "?::" unresolved marker (no
+/// locally installed app came close enough to match) are excluded entirely
+/// rather than shown as a broken chip — a target from a context group that
+/// simply doesn't exist on this device should be invisible here, not a
+/// dead "(not found)" entry the user has to notice and clean up. The row
+/// itself stays in the database so a later sync (once a matching app is
+/// installed, or the row resolves on some other device) can still pick it
+/// up — see `sync::manager::reconcile_stale_context_targets`.
 pub fn query_context_targets(db: &Db, context_id: Option<i64>) -> Result<Vec<ContextTarget>> {
     let conn = lock_conn(db)?;
     let mut stmt = conn.prepare(
-        "SELECT id, context_id, executable, created_at
+        "SELECT id, context_id, executable, platform, created_at
          FROM context_targets
          WHERE (?1 IS NULL OR context_id = ?1)
+           AND (platform IS NULL OR platform = ?2)
+           AND executable NOT LIKE '?::%'
          ORDER BY executable COLLATE NOCASE ASC",
     )?;
     let rows = stmt
-        .query_map(params![context_id], |row| {
-            Ok(ContextTarget {
-                id: row.get(0)?,
-                context_id: row.get(1)?,
-                executable: row.get(2)?,
-                created_at: row.get(3)?,
-            })
-        })?
+        .query_map(params![context_id, current_platform_tag()], context_target_from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
@@ -334,22 +369,15 @@ pub fn assign_context_target(db: &Db, context_id: i64, executable: &str) -> Resu
 
     let tx = conn.transaction()?;
     tx.execute(
-        "INSERT INTO context_targets (context_id, executable) VALUES (?1, ?2)
-         ON CONFLICT(executable) DO UPDATE SET context_id = excluded.context_id",
-        params![context_id, normalized_executable],
+        "INSERT INTO context_targets (context_id, executable, platform) VALUES (?1, ?2, ?3)
+         ON CONFLICT(executable) DO UPDATE SET context_id = excluded.context_id, platform = excluded.platform",
+        params![context_id, normalized_executable, current_platform_tag()],
     )?;
     let target = tx.query_row(
-        "SELECT id, context_id, executable, created_at
+        "SELECT id, context_id, executable, platform, created_at
          FROM context_targets WHERE executable = ?1",
         params![normalized_executable],
-        |row| {
-            Ok(ContextTarget {
-                id: row.get(0)?,
-                context_id: row.get(1)?,
-                executable: row.get(2)?,
-                created_at: row.get(3)?,
-            })
-        },
+        context_target_from_row,
     )?;
     tx.commit()?;
     Ok(target)
@@ -815,6 +843,34 @@ mod tests {
         let targets = query_context_targets(&db, None).expect("targets");
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].context_id, second.id);
+    }
+
+    /// A target the sync resolver couldn't match to any app installed on
+    /// this device (stored with the "?::" unresolved marker) must never
+    /// surface as a chip: a context group synced in from another platform
+    /// can legitimately contain apps that plainly don't exist here, and
+    /// showing a dead "(not found)" entry for every one of them is worse
+    /// than just not showing it. The row itself stays in the table so a
+    /// later reconciliation pass can still resolve it once a match exists.
+    #[test]
+    fn query_context_targets_hides_unresolved_sync_rows() {
+        let db = open(":memory:").expect("db");
+        let context =
+            insert_context_returning(&db, "Cross Platform", None, None, None, None, false)
+                .expect("context");
+        assign_context_target(&db, context.id, "editor.exe").expect("resolved target");
+        {
+            let conn = lock_conn(&db).expect("lock");
+            conn.execute(
+                "INSERT INTO context_targets (context_id, executable, platform) VALUES (?1, ?2, NULL)",
+                params![context.id, "?::some mac only app.app"],
+            )
+            .expect("insert unresolved row");
+        }
+
+        let targets = query_context_targets(&db, Some(context.id)).expect("targets");
+        assert_eq!(targets.len(), 1, "only the resolved target should be visible");
+        assert_eq!(targets[0].executable, "editor.exe");
     }
 
     #[test]

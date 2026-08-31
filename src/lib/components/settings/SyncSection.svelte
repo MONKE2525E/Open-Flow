@@ -31,7 +31,16 @@
   const discovered = $derived(syncStore.status?.discovered ?? []);
   const peers = $derived(syncStore.status?.peers ?? []);
   const unpairedNearby = $derived(discovered.filter((d) => !d.paired));
-  const outgoing = $derived(syncStore.outgoing);
+  const outgoing = $derived(
+    syncStore.status?.pairing?.kind === 'outgoing' && syncStore.status.pairing.phase !== 'failed'
+      ? syncStore.status.pairing
+      : null,
+  );
+  const pairingError = $derived(
+    syncStore.status?.pairing?.phase === 'failed'
+      ? syncStore.status.pairing.error ?? 'Pairing could not be completed.'
+      : '',
+  );
   const listenerActive = $derived(syncStore.status?.listener_active ?? true);
 
   onMount(() => {
@@ -75,8 +84,7 @@
     if (pairingUuid) return;
     pairingUuid = device.uuid;
     try {
-      const code = await invoke<string>('sync_start_pairing', { deviceUuid: device.uuid });
-      syncStore.outgoing = { uuid: device.uuid, name: device.name, code };
+      await invoke<string>('sync_start_pairing', { deviceUuid: device.uuid });
       await refreshSyncStatus();
     } catch (err) {
       flash(err instanceof Error ? err.message : String(err), 'err');
@@ -86,7 +94,6 @@
   }
 
   function cancelOutgoing(): void {
-    syncStore.outgoing = null;
     void invoke('sync_cancel_pairing').catch(() => {});
     void refreshSyncStatus();
   }
@@ -219,6 +226,13 @@
   </div>
 {/if}
 
+{#if pairingError}
+  <div class="desc data-status data-err" role="alert">
+    {pairingError}
+    <button class="btn-ghost btn-compact" onclick={cancelOutgoing}>Dismiss</button>
+  </div>
+{/if}
+
 {#if syncStore.status && !listenerActive}
   <div class="desc data-status data-err" role="alert">
     {syncStore.status.last_error_hint ?? 'Sync is unavailable on this device right now.'}
@@ -338,7 +352,7 @@
     class="modal-card outgoing-card"
     role="dialog"
     aria-modal="true"
-    aria-label="Pairing with {outgoing.name}"
+    aria-label="Pairing with {outgoing.peer_name}"
     use:modalFocusTrap={{ active: !!outgoing, initialFocus: () => null }}
     in:modalCard={{ duration: motionMs(MOTION_MS.panel) }}
     out:modalCard={{ duration: motionMs(MOTION_MS.fast) }}
@@ -350,14 +364,16 @@
         </svg>
       </div>
       <div>
-        <div class="pair-title">Pair with {outgoing.name}</div>
-        <div class="pair-sub">Enter this code on {outgoing.name} to confirm the connection.</div>
+        <div class="pair-title">Pair with {outgoing.peer_name}</div>
+        <div class="pair-sub">Enter this code on {outgoing.peer_name} to confirm the connection.</div>
       </div>
     </div>
-    <div class="outgoing-code">{groupedCode(outgoing.code)}</div>
+    <div class="outgoing-code">{groupedCode(outgoing.code ?? '')}</div>
     <div class="pair-wait">
       <span class="search-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-      Waiting for {outgoing.name}… the code expires in a few minutes.
+      {outgoing.phase === 'connecting'
+        ? `Connecting to ${outgoing.peer_name}…`
+        : `Waiting for ${outgoing.peer_name}… the code expires in a few minutes.`}
     </div>
     <div class="pair-actions">
       <button class="btn-ghost btn-compact" onclick={cancelOutgoing}>Cancel</button>

@@ -13,6 +13,46 @@ fn temp_db_path(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
+fn open_repairs_v20_sync_peers_missing_recv_cursor() {
+    let path = temp_db_path("v20_missing_recv_cursor");
+    {
+        let db = open(path.to_str().expect("path string")).expect("create current db");
+        let conn = lock_conn(&db).expect("lock current db");
+        conn.execute_batch(
+            "ALTER TABLE sync_peers RENAME TO sync_peers_current;
+             CREATE TABLE sync_peers (
+               device_uuid    TEXT PRIMARY KEY,
+               name           TEXT NOT NULL DEFAULT '',
+               cert_fp        TEXT NOT NULL,
+               added_at       TEXT NOT NULL DEFAULT (datetime('now')),
+               last_sync_at   TEXT,
+               send_cursor    INTEGER NOT NULL DEFAULT 0,
+               needs_snapshot INTEGER NOT NULL DEFAULT 1,
+               last_error     TEXT
+             );
+             DROP TABLE sync_peers_current;
+             PRAGMA user_version = 20;",
+        )
+        .expect("seed partial v20 sync schema");
+    }
+
+    let db = open(path.to_str().expect("path string")).expect("open repairs partial v20 db");
+    let conn = lock_conn(&db).expect("lock repaired db");
+    assert!(table_has_column(&conn, "sync_peers", "recv_cursor").expect("column check"));
+    conn.execute(
+        "INSERT INTO sync_peers (device_uuid, name, cert_fp, recv_cursor)
+         VALUES ('peer', 'Peer', 'fingerprint', 7)",
+        [],
+    )
+    .expect("use repaired receive cursor");
+    drop(conn);
+    drop(db);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("db-wal"));
+    let _ = std::fs::remove_file(path.with_extension("db-shm"));
+}
+
+#[test]
 fn open_repairs_legacy_cleanup_cache_missing_epoch_columns() {
     let path = temp_db_path("legacy_cleanup_cache");
     {
@@ -245,7 +285,7 @@ fn open_self_heals_database_stuck_at_v2_with_legacy_dictionary() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .expect("version");
-    assert_eq!(version, 20);
+    assert_eq!(version, 21);
     drop(conn);
     drop(db);
     let _ = std::fs::remove_file(&path);

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '../../tauri';
-  import { syncStore } from '../../syncStore.svelte';
+  import { refreshSyncStatus, syncStore } from '../../syncStore.svelte';
   import { modalFocusTrap } from '../../modalFocus';
   import { modalBackdrop, modalCard, MOTION_MS, motionMs } from '../../motion';
   import { fade } from 'svelte/transition';
@@ -9,16 +9,24 @@
   let code = $state('');
   let busy = $state(false);
   let error = $state('');
+  let activePeerUuid = $state('');
 
   let codeInput = $state<HTMLInputElement | null>(null);
   let rejectButton = $state<HTMLButtonElement | null>(null);
 
-  const incoming = $derived(syncStore.incoming);
+  const incoming = $derived(
+    syncStore.status?.pairing?.kind === 'incoming' && syncStore.status.pairing.phase !== 'failed'
+      ? syncStore.status.pairing
+      : null,
+  );
 
   $effect(() => {
-    incoming;
-    code = '';
-    error = '';
+    const peerUuid = incoming?.peer_uuid ?? '';
+    if (peerUuid !== activePeerUuid) {
+      activePeerUuid = peerUuid;
+      code = '';
+      error = '';
+    }
   });
 
   async function respond(approve: boolean): Promise<void> {
@@ -27,7 +35,7 @@
     error = '';
     try {
       await invoke('sync_respond_to_pairing', { code: code.replace(/\s/g, ''), approve });
-      syncStore.incoming = null;
+      await refreshSyncStatus();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -39,8 +47,8 @@
     // Closing the prompt without deciding declines quietly - pairing must be
     // explicit on both devices.
     if (busy) return;
-    syncStore.incoming = null;
     void invoke('sync_respond_to_pairing', { code: '', approve: false }).catch(() => {});
+    void refreshSyncStatus();
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -55,7 +63,7 @@
 {#if incoming}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <button
-    class="modal-backdrop"
+    class="modal-backdrop pair-backdrop"
     aria-label="Dismiss pairing request"
     onclick={dismiss}
     in:modalBackdrop={{ duration: 180 }}
@@ -65,7 +73,7 @@
     class="modal-card pair-card"
     role="dialog"
     aria-modal="true"
-    aria-label="Pairing request from {incoming.name}"
+    aria-label="Pairing request from {incoming.peer_name}"
     use:modalFocusTrap={{
       active: !!incoming,
       initialFocus: () => codeInput ?? rejectButton,
@@ -89,7 +97,7 @@
       <div>
         <div class="pair-title">Pair this device?</div>
         <div class="pair-sub">
-          <strong>{incoming.name}</strong> wants to sync with this device over your local network.
+          <strong>{incoming.peer_name}</strong> wants to sync with this device over your local network.
         </div>
       </div>
     </div>
@@ -136,7 +144,13 @@
 {/if}
 
 <style>
+  /* Settings owns a z-index 60 stacking context. Incoming pairing can arrive
+     while that page is open, so this global prompt must sit above it. */
+  .pair-backdrop {
+    z-index: 70;
+  }
   .pair-card {
+    z-index: 71;
     width: min(400px, calc(100vw - 48px));
     padding: 20px;
     display: grid;

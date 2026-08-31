@@ -31,8 +31,11 @@ export interface PairedDevice {
 
 export interface PairingState {
   kind: 'incoming' | 'outgoing';
+  phase: 'connecting' | 'waiting_for_code' | 'awaiting_code' | 'verifying' | 'failed';
   peer_uuid: string;
   peer_name: string;
+  code: string | null;
+  error: string | null;
 }
 
 export interface SyncStatus {
@@ -47,10 +50,6 @@ export interface SyncStatus {
 export const syncStore = $state({
   loaded: false,
   status: null as SyncStatus | null,
-  // Incoming pairing prompt state (rendered globally by App.svelte).
-  incoming: null as { uuid: string; name: string } | null,
-  // Outgoing pairing state (rendered inside SyncSection).
-  outgoing: null as { uuid: string; name: string; code: string } | null,
 });
 
 export async function refreshSyncStatus(): Promise<void> {
@@ -71,6 +70,13 @@ export function thisDeviceName(): string {
 export function startSyncListeners(): () => void {
   void refreshSyncStatus();
 
+  // Events reduce latency, but correctness does not depend on catching one.
+  // Poll backend-owned state so a reload or suspended WebView can always
+  // reconstruct an active incoming or outgoing pairing session.
+  const poll = window.setInterval(() => {
+    void refreshSyncStatus();
+  }, 1000);
+
   const unlisteners: Array<Promise<() => void>> = [
     listen('verenu:sync-devices-changed', () => {
       void refreshSyncStatus();
@@ -78,13 +84,10 @@ export function startSyncListeners(): () => void {
     listen('verenu:sync-status', () => {
       void refreshSyncStatus();
     }),
-    listen<{ uuid: string; name: string }>('verenu:sync-pair-request', (event) => {
-      syncStore.incoming = { uuid: event.payload.uuid, name: event.payload.name };
+    listen<{ uuid: string; name: string }>('verenu:sync-pair-request', () => {
       void refreshSyncStatus();
     }),
     listen<{ uuid: string; ok: boolean; message: string }>('verenu:sync-pair-result', () => {
-      syncStore.incoming = null;
-      syncStore.outgoing = null;
       void refreshSyncStatus();
     }),
     listen<{ tables: string[] }>('verenu:sync-data-changed', (event) => {
@@ -97,6 +100,7 @@ export function startSyncListeners(): () => void {
   ];
 
   return () => {
+    window.clearInterval(poll);
     for (const promise of unlisteners) {
       void promise.then((unlisten) => unlisten()).catch(() => {});
     }

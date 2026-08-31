@@ -5811,6 +5811,7 @@ dependencies = [
  "global-hotkey",
  "hkdf",
  "hound",
+ "if-addrs",
  "image",
  "libc",
  "libproc",
