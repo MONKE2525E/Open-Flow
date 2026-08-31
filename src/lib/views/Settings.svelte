@@ -88,6 +88,12 @@
   });
 
   $effect(() => {
+    if (!appStore.syncEnabled && appStore.settingsSection === 'sync') {
+      appStore.settingsSection = 'general';
+    }
+  });
+
+  $effect(() => {
     if (typeof document === 'undefined') return;
 
     if (!appStore.settingsOpen) {

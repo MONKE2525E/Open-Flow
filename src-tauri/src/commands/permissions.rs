@@ -8,10 +8,11 @@
 //! **Microphone**. Keychain access is surfaced separately when a provider key is
 //! stored.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
 #[cfg(target_os = "macos")]
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(target_os = "macos")]
+use std::sync::OnceLock;
 
 static PERMISSION_QUERY_GENERATION: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "macos")]
@@ -351,11 +352,15 @@ async fn notification_permission_snapshot() -> NotificationPermissionSnapshot {
 
 async fn macos_permission_snapshot(provider: Option<String>) -> MacPermissionSnapshot {
     let generation = PERMISSION_QUERY_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    #[cfg(target_os = "macos")]
+    let bundle_identifier = crate::system::mac_app::bundle_identifier();
+    #[cfg(not(target_os = "macos"))]
+    let bundle_identifier: Option<String> = None;
     log::info!(
         "[permissions][refresh #{}] begin pid={} bundle={:?}",
         generation,
         std::process::id(),
-        crate::system::mac_app::bundle_identifier()
+        bundle_identifier
     );
     let accessibility = accessibility_permission_status();
     let microphone = microphone_permission_status_string();
@@ -465,6 +470,8 @@ pub async fn request_accessibility_permission(
     app: tauri::AppHandle,
     provider: Option<String>,
 ) -> MacPermissionSnapshot {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -487,6 +494,8 @@ pub fn get_microphone_permission_status() -> String {
 /// directly instead of waiting for the first recording. No-op off macOS.
 #[tauri::command]
 pub async fn request_microphone_permission(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let before = crate::system::mac_app::microphone_permission_status();
@@ -506,6 +515,8 @@ pub async fn request_microphone_permission_snapshot(
     app: tauri::AppHandle,
     provider: Option<String>,
 ) -> Result<MacPermissionSnapshot, String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let before = crate::system::mac_app::microphone_permission_status();
@@ -580,6 +591,8 @@ fn write_microphone_request_trace(
 pub async fn request_notification_permission(
     app: tauri::AppHandle,
 ) -> Result<NotificationPermissionSnapshot, String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     #[cfg(target_os = "macos")]
     {
         let current = notification_permission_snapshot().await;
@@ -615,36 +628,69 @@ pub fn open_notifications_settings() -> Result<(), String> {
 pub fn restart_app(handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let Some(bundle) = crate::system::mac_app::bundle_path().filter(|path| {
+        if let Some(bundle) = crate::system::mac_app::bundle_path()
+            .map(canonical_relaunch_bundle)
+            .filter(|path| {
             Path::new(path.trim_end_matches('/'))
                 .extension()
                 .map(|extension| extension == "app")
                 .unwrap_or(false)
-        }) else {
+        }) {
+            let pid = std::process::id().to_string();
+            std::process::Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "while kill -0 \"$2\" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open -n \"$1\"",
+                    "verenu-relaunch",
+                    &bundle,
+                    &pid,
+                ])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|error| format!("Could not schedule LaunchServices relaunch: {error}"))?;
+            handle.exit(0);
+        } else {
             handle.restart();
-            return Ok(());
-        };
-        let pid = std::process::id().to_string();
-        std::process::Command::new("/bin/sh")
-            .args([
-                "-c",
-                "while kill -0 \"$2\" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open -n \"$1\"",
-                "verenu-relaunch",
-                &bundle,
-                &pid,
-            ])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|error| format!("Could not schedule LaunchServices relaunch: {error}"))?;
-        handle.exit(0);
+        }
         Ok(())
     }
     #[cfg(not(target_os = "macos"))]
     {
         handle.restart();
-        Ok(())
+    }
+}
+
+/// Keep development relaunches on the canonical signed development bundle.
+/// Older dev runs left `Verenu.app` in the same target directory; relaunching
+/// that path would preserve its production identifier and ad-hoc TCC identity
+/// forever. The runner's `Verenu Development.app` is the only supported debug
+/// launch target, so redirect the legacy sibling when it is available.
+#[cfg(target_os = "macos")]
+fn canonical_relaunch_bundle(bundle: String) -> String {
+    if !cfg!(debug_assertions) {
+        return bundle;
+    }
+
+    let path = Path::new(&bundle);
+    let is_legacy_dev_bundle = path.file_name().and_then(|name| name.to_str())
+        == Some("Verenu.app")
+        && path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            == Some("macos-dev");
+    if !is_legacy_dev_bundle {
+        return bundle;
+    }
+
+    let canonical = path
+        .parent()
+        .map(|parent| parent.join("Verenu Development.app"));
+    match canonical.filter(|candidate| candidate.is_dir()) {
+        Some(candidate) => candidate.to_string_lossy().into_owned(),
+        None => bundle,
     }
 }
 

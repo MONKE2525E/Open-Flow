@@ -98,6 +98,7 @@ fn load_fallback() -> Option<Vec<u8>> {
 
 #[cfg(target_os = "windows")]
 mod win_store {
+    #![allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
     //! Windows Credential Manager storage, same mechanism as
     //! `data::credentials` but for the sync identity key.
 
@@ -239,3 +240,4 @@ mod mac_store {
         })
     }
 }
+

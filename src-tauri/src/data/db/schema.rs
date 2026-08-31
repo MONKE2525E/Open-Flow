@@ -1437,3 +1437,4 @@ fn backfill_spoken_words(conn: &Connection) -> Result<()> {
 
     Ok(())
 }
+

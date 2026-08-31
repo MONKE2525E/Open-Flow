@@ -114,3 +114,4 @@ async function closeSettings(page) {
     await browser.close();
   }
 })();
+

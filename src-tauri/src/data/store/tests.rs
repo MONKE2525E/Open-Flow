@@ -279,46 +279,45 @@ fn setting_audit_history_retention_days_mapping() {
     assert_eq!(history_retention_days(""), None);
 }
 
-/// Cleanup prompt overrides must be inert unless Advanced Models is on,
-/// and whitespace-only overrides must be ignored.
+/// The cleanup prompt override must be inert unless Advanced Models is on,
+/// and a whitespace-only override must be ignored.
 #[test]
-fn setting_audit_cleanup_overrides_gated_by_advanced_ui() {
-    let mut overrides = std::collections::HashMap::new();
-    overrides.insert(
-        "groq/llama-3.3-70b-versatile".to_string(),
-        "Custom".to_string(),
-    );
+fn setting_audit_cleanup_override_gated_by_advanced_ui() {
     let base = PipelineConfig {
         advanced_model_ui: true,
-        cleanup_prompt_overrides: overrides.clone(),
+        cleanup_prompt_override: "Custom".to_string(),
         ..Default::default()
     };
-    assert_eq!(
-        base.cleanup_override_for("groq", "llama-3.3-70b-versatile"),
-        Some("Custom")
-    );
+    assert_eq!(base.cleanup_override(), Some("Custom"));
+
     let off = PipelineConfig {
         advanced_model_ui: false,
-        cleanup_prompt_overrides: overrides.clone(),
+        cleanup_prompt_override: "Custom".to_string(),
         ..Default::default()
     };
-    assert_eq!(
-        off.cleanup_override_for("groq", "llama-3.3-70b-versatile"),
-        None
-    );
+    assert_eq!(off.cleanup_override(), None);
 
     let blank = PipelineConfig {
         advanced_model_ui: true,
-        cleanup_prompt_overrides: [(
-            "groq/llama-3.3-70b-versatile".to_string(),
-            "   ".to_string(),
-        )]
-        .into_iter()
-        .collect(),
+        cleanup_prompt_override: "   ".to_string(),
         ..Default::default()
     };
+    assert_eq!(blank.cleanup_override(), None);
+}
+
+/// An edit saved under the retired per-model map still applies after the
+/// upgrade — losing a hand-written prompt to a schema change is not acceptable.
+#[test]
+fn legacy_per_model_cleanup_override_migrates() {
+    let store = SettingsSnapshot::from_pairs([(
+        CLEANUP_PROMPT_OVERRIDES.to_string(),
+        serde_json::json!({
+            "groq/openai/gpt-oss-20b": "  ",
+            "google/gemini-3.7-flash": "Custom",
+        }),
+    )]);
     assert_eq!(
-        blank.cleanup_override_for("groq", "llama-3.3-70b-versatile"),
-        None
+        load_pipeline_config(&store).cleanup_prompt_override,
+        "Custom"
     );
 }

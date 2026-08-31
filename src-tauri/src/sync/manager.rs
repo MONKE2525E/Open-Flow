@@ -1987,3 +1987,4 @@ fn levenshtein(left: &[u8], right: &[u8]) -> usize {
     }
     previous[right.len()]
 }
+

@@ -79,9 +79,6 @@ export type LocalControls = {
     onCancel: () => void;
     onDelete: () => void;
   };
-  /** Cleanup only: per-model prompt overrides. */
-  promptCustomized?: (id: string) => boolean;
-  onEditPrompt?: (id: string, rect: DOMRect) => void;
 };
 
 export type PickerContext = {
@@ -94,6 +91,7 @@ export type PickerContext = {
 
 /** Providers whose absence from a list means something. Local has no list. */
 const LISTED_PROVIDERS: ProviderId[] = ['groq', 'openai', 'google', 'assemblyai'];
+const GOOGLE_DEDICATED_TRANSCRIBER = 'gemini-3.5-transcribe';
 
 function row(entry: CatalogEntry, state: ModelState, note = '', remedy: Remedy = 'none'): ModelRow {
   return {
@@ -125,6 +123,13 @@ function localRow(entry: CatalogEntry, ctx: PickerContext): ModelRow {
 function cloudRow(entry: CatalogEntry, ctx: PickerContext): ModelRow {
   if (!ctx.apiKeyStatus[entry.provider]) {
     return row(entry, 'needs-setup', 'No API key', 'add-key');
+  }
+
+  // Interactions API models are not returned by Google's generateContent
+  // model listing. Keep the dedicated transcriber selectable when the key is
+  // present instead of misclassifying it as retired.
+  if (entry.provider === 'google' && entry.id === GOOGLE_DEDICATED_TRANSCRIBER) {
+    return row(entry, 'ready');
   }
 
   const cache = ctx.cache[entry.provider];
@@ -268,6 +273,7 @@ export function unavailableSelections(
     // AssemblyAI's list is a static const on the Rust side, so a model missing
     // from it is a Verenu bug, not a provider deprecation.
     if (parsed.provider === 'assemblyai') return;
+    if (parsed.provider === 'google' && parsed.model === GOOGLE_DEDICATED_TRANSCRIBER) return;
 
     const cache = ctx.cache[parsed.provider];
     if (!isTrustworthy(cache)) return;

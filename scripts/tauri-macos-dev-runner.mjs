@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { constants as osConstants } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -132,11 +132,28 @@ child.on('exit', (code, signal) => {
 function findBundleProcessIds(executablePath) {
   const result = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' });
   if (result.status !== 0) return [];
+  const executablePaths = processPathCandidates(executablePath);
   return result.stdout
     .split('\n')
     .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
-    .filter((match) => match && (match[2] === executablePath || match[2].startsWith(`${executablePath} `)))
+    .filter((match) => match && [...executablePaths].some((candidate) => (
+      match[2] === candidate || match[2].startsWith(`${candidate} `)
+    )))
     .map((match) => Number(match[1]));
+}
+
+function processPathCandidates(value) {
+  const candidates = new Set([value, path.resolve(value)]);
+  try {
+    candidates.add(realpathSync(value));
+  } catch {
+    // The process may have exited between the bundle scan and this check.
+  }
+  for (const candidate of [...candidates]) {
+    if (candidate.startsWith('/var/')) candidates.add(`/private${candidate}`);
+    if (candidate.startsWith('/private/var/')) candidates.add(candidate.slice('/private'.length));
+  }
+  return candidates;
 }
 
 function resolveTargetDir(cargoArgs) {
@@ -190,8 +207,21 @@ function optionValue(args, name) {
 
 function prepareSignedDevBundle(sourceBinary) {
   const profileDir = path.dirname(sourceBinary);
-  const appBundle = path.join(profileDir, 'bundle', 'macos-dev', APP_BUNDLE_NAME);
-  const contentsDir = path.join(appBundle, 'Contents');
+  const bundleDir = path.join(profileDir, 'bundle', 'macos-dev');
+  const appBundle = path.join(bundleDir, APP_BUNDLE_NAME);
+  // Never rewrite the executable inside a running app bundle. macOS validates
+  // signed code pages as they are faulted in; copying a rebuilt Mach-O over a
+  // live executable can terminate the old process with SIGKILL
+  // (CODESIGNING/Invalid Page). Build and sign a separate .app, then swap the
+  // directory at the stable path so old processes keep their original inode.
+  const stagingBundle = path.join(
+    bundleDir,
+    `${APP_BUNDLE_BASENAME}.staging-${process.pid}-${Date.now()}.app`,
+  );
+  rmSync(stagingBundle, { recursive: true, force: true });
+  mkdirSync(bundleDir, { recursive: true });
+  const preparedBundle = stagingBundle;
+  const contentsDir = path.join(preparedBundle, 'Contents');
   const macosDir = path.join(contentsDir, 'MacOS');
   const resourcesDir = path.join(contentsDir, 'Resources');
   const bundledBinary = path.join(macosDir, 'Verenu');
@@ -239,7 +269,7 @@ function prepareSignedDevBundle(sourceBinary) {
       normalizedEntitlements,
       '--sign',
       identity,
-      appBundle,
+      preparedBundle,
     ],
     { encoding: 'utf8', env: process.env },
   );
@@ -248,7 +278,7 @@ function prepareSignedDevBundle(sourceBinary) {
     process.exit(signResult.status ?? 1);
   }
 
-  const verifyResult = spawnSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', appBundle], {
+  const verifyResult = spawnSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', preparedBundle], {
     encoding: 'utf8',
     env: process.env,
   });
@@ -257,11 +287,47 @@ function prepareSignedDevBundle(sourceBinary) {
     process.exit(verifyResult.status ?? 1);
   }
 
-  verifyPreparedIdentity(appBundle, identity);
-  warnAboutLegacyDevelopmentCopies(profileDir, appBundle);
+  verifyPreparedIdentity(preparedBundle, identity);
+  installPreparedBundle(preparedBundle, appBundle);
+  quarantineLegacyDevelopmentCopy(profileDir, appBundle);
 
   console.log(`[macOS dev runner] Prepared signed bundle: ${appBundle}`);
-  return bundledBinary;
+  return path.join(appBundle, 'Contents', 'MacOS', 'Verenu');
+}
+
+function installPreparedBundle(preparedBundle, canonicalBundle) {
+  if (!existsSync(canonicalBundle)) {
+    renameSync(preparedBundle, canonicalBundle);
+    return;
+  }
+
+  const backupBundle = `${canonicalBundle}.previous-${process.pid}-${Date.now()}`;
+  try {
+    renameSync(canonicalBundle, backupBundle);
+    renameSync(preparedBundle, canonicalBundle);
+  } catch (error) {
+    if (!existsSync(canonicalBundle) && existsSync(backupBundle)) {
+      try { renameSync(backupBundle, canonicalBundle); } catch { /* preserve original error */ }
+    }
+    rmSync(preparedBundle, { recursive: true, force: true });
+    throw new Error(`Could not atomically install development app bundle: ${error}`);
+  }
+
+  // Keep old bundles alive until no process references their executable.
+  cleanupPreviousBundles(path.dirname(canonicalBundle));
+}
+
+function cleanupPreviousBundles(bundleDir) {
+  const entries = spawnSync('/bin/ls', ['-1', bundleDir], { encoding: 'utf8' });
+  if (entries.status !== 0) return;
+  for (const name of entries.stdout.split('\n').map((value) => value.trim()).filter(Boolean)) {
+    if (!name.startsWith(`${APP_BUNDLE_BASENAME}.app.previous-`)) continue;
+    const previousBundle = path.join(bundleDir, name);
+    const previousExecutable = path.join(previousBundle, 'Contents', 'MacOS', 'Verenu');
+    if (findBundleProcessIds(previousExecutable).length === 0) {
+      rmSync(previousBundle, { recursive: true, force: true });
+    }
+  }
 }
 
 function setPlistValue(plistPath, key, value) {
@@ -292,12 +358,12 @@ function resolveSigningIdentity() {
   const identities = spawnSync('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], {
     encoding: 'utf8',
   });
-  const match = identities.stdout?.match(/"(Apple Development:[^"]+)"/);
+  const match = identities.stdout?.match(/"((?:Apple Development|Mac Developer):[^"]+)"/);
   if (match) return match[1];
 
   console.error(
     'macOS development requires a stable code-signing identity so TCC permissions survive rebuilds.\n' +
-      'Install an Apple Development certificate or set APPLE_SIGNING_IDENTITY, then retry.',
+    'Install an Apple Development or Mac Developer certificate, or set APPLE_SIGNING_IDENTITY, then retry.',
   );
   process.exit(1);
 }
@@ -342,19 +408,46 @@ function plistValue(plist, key) {
   return result.status === 0 ? result.stdout.trim() : '';
 }
 
-function warnAboutLegacyDevelopmentCopies(profileDir, canonicalBundle) {
-  const marker = path.join(profileDir, '.verenu-dev-identity-migration-v1');
+function quarantineLegacyDevelopmentCopy(profileDir, canonicalBundle) {
+  const marker = path.join(profileDir, '.verenu-dev-identity-migration-v2');
   if (existsSync(marker)) return;
-  const candidates = [
-    path.join(profileDir, 'bundle', 'macos-dev', 'Verenu.app'),
-    '/Applications/Verenu Development.app',
-  ].filter((candidate) => candidate !== canonicalBundle && existsSync(candidate));
-  if (candidates.length > 0) {
-    console.warn('[macOS dev runner] Legacy/duplicate development app copies detected:');
-    for (const candidate of candidates) console.warn(`  ${candidate}`);
-    console.warn(
-      'Ignore or remove those copies manually. Grant permissions only to the canonical Verenu Development app shown above.',
-    );
+  const legacyBundle = path.join(profileDir, 'bundle', 'macos-dev', 'Verenu.app');
+  let legacyActive = false;
+  if (existsSync(legacyBundle) && legacyBundle !== canonicalBundle) {
+    const legacyExecutable = path.join(legacyBundle, 'Contents', 'MacOS', 'Verenu');
+    const activePids = findBundleProcessIds(legacyExecutable);
+    if (activePids.length > 0) {
+      legacyActive = true;
+      console.warn('[macOS dev runner] A legacy Verenu.app process is still running:');
+      console.warn(`  ${legacyBundle} (PID ${activePids.join(', ')})`);
+      console.warn('Quit that old copy before using Permissions. The current run will use Verenu Development.app.');
+    } else if (process.env.VERENU_KEEP_LEGACY_COPY === '1') {
+      console.warn(`[macOS dev runner] Keeping legacy copy by request: ${legacyBundle}`);
+    } else {
+      const quarantinedBundle = path.join(profileDir, 'bundle', 'macos-dev', 'Verenu Legacy.app');
+      try {
+        if (existsSync(quarantinedBundle)) {
+          console.warn(`[macOS dev runner] Legacy quarantine already exists: ${quarantinedBundle}`);
+        } else {
+          renameSync(legacyBundle, quarantinedBundle);
+          console.warn(`[macOS dev runner] Quarantined legacy development bundle: ${quarantinedBundle}`);
+        }
+      } catch (error) {
+        console.warn(`[macOS dev runner] Could not quarantine legacy bundle: ${error}`);
+        console.warn('Grant permissions only to the canonical Verenu Development.app shown above.');
+      }
+    }
   }
-  writeFileSync(marker, `${new Date().toISOString()}\n`, { mode: 0o600 });
+  const duplicateCanonical = '/Applications/Verenu Development.app';
+  if (duplicateCanonical !== canonicalBundle && existsSync(duplicateCanonical)) {
+    console.warn('[macOS dev runner] Another Verenu Development.app is registered at:');
+    console.warn(`  ${duplicateCanonical}`);
+    console.warn('Use only the canonical bundle printed by this runner for development permissions.');
+  }
+  // Only mark migration complete after the legacy path is gone. If the
+  // quarantine destination already exists, retry/warn on the next run rather
+  // than permanently suppressing detection while Verenu.app remains present.
+  if (!legacyActive && !existsSync(legacyBundle)) {
+    writeFileSync(marker, `${new Date().toISOString()}\n`, { mode: 0o600 });
+  }
 }

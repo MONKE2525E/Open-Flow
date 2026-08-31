@@ -177,13 +177,14 @@
     // stores disagreeing with what import_data actually wrote to disk.
     async function reloadGlobalSettings() {
       try {
-        const [done, appearance, forceSetupOnLaunch, cleanupEnabled, betaUpdatesEnabled, legacyFeaturesEnabled] = await Promise.all([
+        const [done, appearance, forceSetupOnLaunch, cleanupEnabled, betaUpdatesEnabled, legacyFeaturesEnabled, syncEnabled] = await Promise.all([
           invoke<boolean | null>('get_setting', { key: 'setup_complete' }),
           invoke<'system' | 'light' | 'dark' | null>('get_setting', { key: 'appearance_mode' }),
           invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' }),
           invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
           invoke<boolean | null>('get_setting', { key: 'beta_updates_enabled' }),
           invoke<boolean | null>('get_setting', { key: 'legacy_features_enabled' }),
+          invoke<boolean | null>('get_setting', { key: 'sync_enabled' }),
         ]);
         appStore.setupComplete = forceSetupOnLaunch ? false : done === true;
         if (appearance === 'light' || appearance === 'dark' || appearance === 'system') {
@@ -192,6 +193,7 @@
         appStore.cleanupEnabled = cleanupEnabled ?? true;
         appStore.betaUpdatesEnabled = betaUpdatesEnabled ?? false;
         appStore.legacyFeaturesEnabled = legacyFeaturesEnabled ?? false;
+        appStore.syncEnabled = syncEnabled ?? false;
       } catch {
         appStore.setupComplete = false;
       }
@@ -199,6 +201,11 @@
 
     (async () => {
       await reloadGlobalSettings();
+      if (!mounted) return;
+      if (appStore.syncEnabled) {
+        try { stopSyncListeners = startSyncListeners(); }
+        catch (error) { console.error('Failed to start sync listeners:', error); }
+      }
 
       const unlisten = await listen<string>('verenu:error', (ev) => {
         const raw = ev.payload ?? '';
@@ -264,7 +271,6 @@
       stopDownloadManagerListeners = startDownloadManagerListeners();
       stopProviderStatusChecks = startProviderStatusChecks();
       stopApiHealthChecks = startApiHealthChecks();
-      stopSyncListeners = startSyncListeners();
     } catch (error) {
       console.error('Failed to start listeners and status checks:', error);
     }

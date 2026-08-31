@@ -101,6 +101,7 @@ export const appStore = $state({
   // Dictionary/Snippets pages in the sidebar nav — both superseded by Contexts,
   // kept reachable for anyone still relying on the old per-page workflow.
   legacyFeaturesEnabled: false,
+  syncEnabled: false,
   pillState: 'idle' as PillState,
   setupComplete: null as boolean | null,
   snippets: [] as Snippet[],
@@ -152,12 +153,16 @@ export async function fetchSnippets(): Promise<void> {
   }
 }
 
-export const cleanupPromptOverridesStore = $state<{ overrides: Record<string, string> }>({
-  overrides: {},
-});
+/**
+ * The one cleanup prompt, used by every model. It was once keyed per
+ * provider/model, which quietly lost the edit the moment a fallback took over
+ * — you tuned the prompt on your default and the fallback ran the stock one.
+ */
+export const cleanupPromptStore = $state<{ override: string }>({ override: '' });
 
 export const cleanupPromptEditor = $state<{
   open: boolean;
+  /** The model the editor tests the prompt against — not what it saves under. */
   provider: ProviderId | null;
   model: string | null;
   origin: { x: number; y: number } | null;
