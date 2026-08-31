@@ -458,6 +458,27 @@
 </div>
 
 <style>
+  .data-status {
+    margin-top: 8px;
+    animation: data-drop 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .data-ok {
+    color: var(--success);
+  }
+  .data-err {
+    color: var(--danger);
+  }
+  @keyframes data-drop {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   /* Shared device glyph tile */
   .tile {
     width: 38px;

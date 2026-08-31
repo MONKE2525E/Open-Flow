@@ -9,7 +9,7 @@
   let code = $state('');
   let busy = $state(false);
   let error = $state('');
-  let activePeerUuid = $state('');
+  let activePairingKey = $state('');
 
   let codeInput = $state<HTMLInputElement | null>(null);
   let rejectButton = $state<HTMLButtonElement | null>(null);
@@ -21,9 +21,9 @@
   );
 
   $effect(() => {
-    const peerUuid = incoming?.peer_uuid ?? '';
-    if (peerUuid !== activePeerUuid) {
-      activePeerUuid = peerUuid;
+    const pairingKey = incoming ? `${incoming.peer_uuid}:${incoming.phase}` : '';
+    if (pairingKey !== activePairingKey) {
+      activePairingKey = pairingKey;
       code = '';
       error = '';
     }

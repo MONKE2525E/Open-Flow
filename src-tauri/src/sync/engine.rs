@@ -1204,7 +1204,7 @@ fn reconcile_context_children(
     let sticky_executables: std::collections::HashSet<String> = conn
         .prepare(
             "SELECT executable FROM context_targets
-             WHERE context_id = ?1 AND platform = ?2 AND executable NOT LIKE '?::%'",
+             WHERE context_id = ?1 AND platform IS ?2 AND executable NOT LIKE '?::%'",
         )?
         .query_map(params![context_id, my_platform], |r| r.get::<_, String>(0))?
         .map(|result| result.map(|executable| executable.trim().to_lowercase()))
