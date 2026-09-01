@@ -464,9 +464,20 @@ pub fn list_installed_apps_cached() -> Vec<InstalledApp> {
 
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(Cache { at: None, apps: Vec::new() }));
+    {
+        let guard = cache.lock().expect("installed-app cache lock");
+        if guard.at.is_some_and(|at| at.elapsed() < Duration::from_secs(15)) {
+            return guard.apps.clone();
+        }
+    }
+
+    // Do not hold the mutex while walking the registry/bundle directories.
+    // Multiple callers may refresh concurrently, but none will block behind
+    // the potentially slow inventory operation.
+    let apps = list_installed_apps();
     let mut guard = cache.lock().expect("installed-app cache lock");
     if guard.at.is_none_or(|at| at.elapsed() >= Duration::from_secs(15)) {
-        guard.apps = list_installed_apps();
+        guard.apps = apps;
         guard.at = Some(Instant::now());
     }
     guard.apps.clone()
@@ -554,10 +565,14 @@ fn app_match_score(left: &str, right: &str) -> f32 {
     if left.is_empty() || right.is_empty() { return 0.0; }
     if left == right { return 1.0; }
     if left.contains(right) || right.contains(left) {
-        return left.len().min(right.len()) as f32 / left.len().max(right.len()) as f32;
+        let left_len = left.chars().count();
+        let right_len = right.chars().count();
+        return left_len.min(right_len) as f32 / left_len.max(right_len) as f32;
     }
-    let distance = levenshtein(left.as_bytes(), right.as_bytes());
-    1.0 - distance as f32 / left.len().max(right.len()) as f32
+    let left_chars = left.chars().collect::<Vec<_>>();
+    let right_chars = right.chars().collect::<Vec<_>>();
+    let distance = levenshtein(&left_chars, &right_chars);
+    1.0 - distance as f32 / left_chars.len().max(right_chars.len()) as f32
 }
 
 fn common_prefix_len(left: &str, right: &str) -> usize {
@@ -567,15 +582,15 @@ fn common_prefix_len(left: &str, right: &str) -> usize {
         .count()
 }
 
-fn levenshtein(left: &[u8], right: &[u8]) -> usize {
+fn levenshtein(left: &[char], right: &[char]) -> usize {
     let mut previous: Vec<usize> = (0..=right.len()).collect();
     let mut current = vec![0; right.len() + 1];
-    for (i, &left_byte) in left.iter().enumerate() {
+    for (i, &left_char) in left.iter().enumerate() {
         current[0] = i + 1;
-        for (j, &right_byte) in right.iter().enumerate() {
+        for (j, &right_char) in right.iter().enumerate() {
             current[j + 1] = (previous[j + 1] + 1)
                 .min(current[j] + 1)
-                .min(previous[j] + usize::from(left_byte != right_byte));
+                .min(previous[j] + usize::from(left_char != right_char));
         }
         std::mem::swap(&mut previous, &mut current);
     }
