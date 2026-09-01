@@ -478,7 +478,7 @@ pub fn list_installed_apps_cached() -> Vec<InstalledApp> {
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(Cache { at: None, apps: Vec::new() }));
     let mut guard = cache.lock().expect("installed-app cache lock");
-    if guard.at.map_or(true, |at| at.elapsed() >= Duration::from_secs(15)) {
+    if guard.at.is_none_or(|at| at.elapsed() >= Duration::from_secs(15)) {
         guard.apps = list_installed_apps();
         guard.at = Some(Instant::now());
     }

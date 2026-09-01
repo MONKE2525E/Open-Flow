@@ -46,6 +46,15 @@ pub struct ContextTarget {
     pub created_at: String,
 }
 
+type ContextTargetRow = (
+    i64,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 /// Tag applied to a target assigned on this device, so a synced-in target
 /// from another OS (e.g. a Windows `.exe` name landing in a Mac's database)
 /// can be hidden from this device's UI without being deleted — going back to
@@ -419,7 +428,7 @@ pub fn reconcile_context_targets(
 ) -> Result<bool> {
     let conn = lock_conn(db)?;
     let current_platform = current_platform_tag();
-    let rows: Vec<(i64, i64, String, Option<String>, Option<String>, Option<String>)> = conn
+    let rows: Vec<ContextTargetRow> = conn
         .prepare(
             "SELECT id, context_id, executable, app_name, developer, platform
              FROM context_targets
