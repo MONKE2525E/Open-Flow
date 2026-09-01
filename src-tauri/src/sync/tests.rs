@@ -854,10 +854,12 @@ fn context_app_matching_uses_local_name_and_rejects_weak_matches() {
         InstalledApp {
             name: "Visual Studio Code".to_string(),
             exe: "code.exe".to_string(),
+            developer: None,
         },
         InstalledApp {
             name: "Google Chrome".to_string(),
             exe: "chrome.exe".to_string(),
+            developer: None,
         },
     ];
     let matched = super::manager::closest_installed_app("Visual Studio Code.app", &apps)

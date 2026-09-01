@@ -1944,6 +1944,21 @@ impl SyncHost for ManagerHost {
     fn resolve_app_target(&self, source: &str) -> Option<String> {
         closest_installed_app(source, &self.installed_apps).map(|app| app.exe.clone())
     }
+
+    fn resolve_app_target_with_metadata(
+        &self,
+        source: &str,
+        app_name: Option<&str>,
+        developer: Option<&str>,
+    ) -> Option<(String, Option<String>, Option<String>)> {
+        crate::system::apps::closest_installed_app(
+            source,
+            app_name,
+            developer,
+            &self.installed_apps,
+        )
+        .map(|app| (app.exe.clone(), Some(app.name.clone()), app.developer.clone()))
+    }
 }
 
 
@@ -1951,65 +1966,6 @@ pub(crate) fn closest_installed_app<'a>(
     source: &str,
     apps: &'a [crate::system::apps::InstalledApp],
 ) -> Option<&'a crate::system::apps::InstalledApp> {
-    let source = source.trim_start_matches("?::");
-    let source_key = app_match_key(source);
-    if source_key.len() < 3 {
-        return None;
-    }
-    apps.iter()
-        .filter_map(|app| {
-            let score = [app_match_key(&app.exe), app_match_key(&app.name)]
-                .into_iter()
-                .map(|candidate| app_match_score(&source_key, &candidate))
-                .fold(0.0_f32, f32::max);
-            (score >= 0.72).then_some((app, score))
-        })
-        .max_by(|(_, left), (_, right)| left.total_cmp(right))
-        .map(|(app, _)| app)
-}
-
-fn app_match_key(value: &str) -> String {
-    let basename = value
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(value);
-    let basename = basename.to_lowercase();
-    let basename = basename
-        .strip_suffix(".exe")
-        .or_else(|| basename.strip_suffix(".app"))
-        .unwrap_or(basename.as_str());
-    basename
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .collect::<String>()
-}
-
-fn app_match_score(left: &str, right: &str) -> f32 {
-    if left.is_empty() || right.is_empty() {
-        return 0.0;
-    }
-    if left == right {
-        return 1.0;
-    }
-    if left.contains(right) || right.contains(left) {
-        return left.len().min(right.len()) as f32 / left.len().max(right.len()) as f32;
-    }
-    let distance = levenshtein(left.as_bytes(), right.as_bytes());
-    1.0 - distance as f32 / left.len().max(right.len()) as f32
-}
-
-fn levenshtein(left: &[u8], right: &[u8]) -> usize {
-    let mut previous: Vec<usize> = (0..=right.len()).collect();
-    let mut current = vec![0; right.len() + 1];
-    for (i, &left_byte) in left.iter().enumerate() {
-        current[0] = i + 1;
-        for (j, &right_byte) in right.iter().enumerate() {
-            current[j + 1] = (previous[j + 1] + 1)
-                .min(current[j] + 1)
-                .min(previous[j] + usize::from(left_byte != right_byte));
-        }
-        std::mem::swap(&mut previous, &mut current);
-    }
-    previous[right.len()]
+    crate::system::apps::closest_installed_app(source, None, None, apps)
 }
 

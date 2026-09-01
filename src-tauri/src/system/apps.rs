@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 pub struct InstalledApp {
     pub name: String,
     pub exe: String,
+    /// Publisher/team identity when the platform exposes one. It is kept
+    /// optional because running processes and some unsigned apps do not have
+    /// one.
+    #[serde(default)]
+    pub developer: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -56,7 +61,11 @@ pub fn list_installed_apps() -> Vec<InstalledApp> {
                 };
                 let name = stem.to_string();
                 let exe = format!("{}.app", name.to_lowercase());
-                apps.push(InstalledApp { name, exe });
+                apps.push(InstalledApp {
+                    name,
+                    exe,
+                    developer: mac_app_developer(&path),
+                });
             }
         }
 
@@ -357,7 +366,13 @@ fn scan_uninstall(root: windows::Win32::System::Registry::HKEY, path: &str) -> V
                 if let (Some(name), Some(icon)) = (display_name, display_icon) {
                     if let Some(exe) = parse_exe_from_icon(&icon) {
                         let name = friendly_app_name(&exe, &name);
-                        apps.push(InstalledApp { name, exe });
+                        let publisher = reg_read_string(hsubkey, "Publisher")
+                            .and_then(|value| nonempty_metadata(&value));
+                        apps.push(InstalledApp {
+                            name,
+                            exe,
+                            developer: publisher.map(|value| format!("windows-publisher:{value}")),
+                        });
                     }
                 }
                 let _ = RegCloseKey(hsubkey).ok();
@@ -389,7 +404,11 @@ fn get_running_processes() -> Vec<InstalledApp> {
                     if !exe.is_empty() && exe != "system idle process" && !exe.starts_with('[') {
                         let name =
                             friendly_app_name(&exe, exe.strip_suffix(".exe").unwrap_or(&exe));
-                        let app = InstalledApp { name, exe };
+                        let app = InstalledApp {
+                            name,
+                            exe,
+                            developer: None,
+                        };
                         if is_user_facing_app(&app) {
                             apps.push(app);
                         }
@@ -405,4 +424,193 @@ fn get_running_processes() -> Vec<InstalledApp> {
     apps.sort_by(|a, b| a.exe.cmp(&b.exe));
     apps.dedup_by(|a, b| a.exe == b.exe);
     apps
+}
+
+fn nonempty_metadata(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// Returns a stable bundle identity where macOS exposes one. Bundle identifiers
+/// are available without spawning a process and normally remain stable across
+/// bundle/version changes, making them a useful developer signal here.
+#[cfg(target_os = "macos")]
+fn mac_app_developer(path: &std::path::Path) -> Option<String> {
+    use core_foundation::bundle::CFBundle;
+    use core_foundation::string::CFString;
+    use core_foundation::url::CFURL;
+
+    let url = CFURL::from_path(path, true)?;
+    let bundle = CFBundle::new(url)?;
+    let key = CFString::from_static_string("CFBundleIdentifier");
+    bundle
+        .info_dictionary()
+        .find(key)
+        .and_then(|value| value.downcast::<CFString>())
+        .and_then(|value| nonempty_metadata(&value.to_string()))
+        .map(|value| format!("mac-bundle:{value}"))
+}
+
+/// A cached inventory for the dictation path. Registry/bundle enumeration is
+/// appropriate for the settings UI, but should not happen on every hotkey
+/// release. A short TTL still notices nightly-app replacements promptly.
+pub fn list_installed_apps_cached() -> Vec<InstalledApp> {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+
+    struct Cache {
+        at: Option<Instant>,
+        apps: Vec<InstalledApp>,
+    }
+
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(Cache { at: None, apps: Vec::new() }));
+    {
+        let guard = cache.lock().expect("installed-app cache lock");
+        if guard.at.is_some_and(|at| at.elapsed() < Duration::from_secs(15)) {
+            return guard.apps.clone();
+        }
+    }
+
+    // Do not hold the mutex while walking the registry/bundle directories.
+    // Multiple callers may refresh concurrently, but none will block behind
+    // the potentially slow inventory operation.
+    let apps = list_installed_apps();
+    let mut guard = cache.lock().expect("installed-app cache lock");
+    if guard.at.is_none_or(|at| at.elapsed() >= Duration::from_secs(15)) {
+        guard.apps = apps;
+        guard.at = Some(Instant::now());
+    }
+    guard.apps.clone()
+}
+
+/// Finds a replacement for a target whose executable/name no longer exists.
+/// Exact app identity is preferred, a known developer may lower the name
+/// threshold, and a conflicting known developer is never accepted.
+pub fn closest_installed_app<'a>(
+    source_executable: &str,
+    source_name: Option<&str>,
+    source_developer: Option<&str>,
+    apps: &'a [InstalledApp],
+) -> Option<&'a InstalledApp> {
+    let source_executable = source_executable.trim_start_matches("?::");
+    let source_keys = [source_executable, source_name.unwrap_or("")]
+        .into_iter()
+        .map(app_match_key)
+        .filter(|key| key.len() >= 3)
+        .collect::<Vec<_>>();
+    if source_keys.is_empty() {
+        return None;
+    }
+    let source_developer = normalized_metadata(source_developer);
+    apps.iter()
+        .filter_map(|app| {
+            let candidate_developer = normalized_metadata(app.developer.as_deref());
+            if source_developer.is_some()
+                && candidate_developer.is_some()
+                && developer_metadata_is_comparable(&source_developer, &candidate_developer)
+                && source_developer != candidate_developer
+            {
+                return None;
+            }
+            let candidate_keys = [app.exe.as_str(), app.name.as_str()]
+                .into_iter()
+                .map(app_match_key)
+                .filter(|key| !key.is_empty())
+                .collect::<Vec<_>>();
+            let score = source_keys
+                .iter()
+                .flat_map(|source| candidate_keys.iter().map(move |candidate| app_match_score(source, candidate)))
+                .fold(0.0_f32, f32::max);
+            let same_developer = source_developer.is_some() && source_developer == candidate_developer;
+            let threshold = if same_developer { 0.72 } else { 0.78 };
+            // Legacy targets do not have metadata yet. A lower threshold is
+            // still safe when the candidate preserves a meaningful prefix;
+            // without either developer agreement or that prefix, a similar
+            // score is not enough to auto-rebind a user assignment.
+            let strong_prefix = source_keys.iter().any(|source| {
+                candidate_keys.iter().any(|candidate| common_prefix_len(source, candidate) >= 4)
+            });
+            let ranking_score = score + if same_developer { 0.05 } else { 0.0 };
+            (score >= threshold && (same_developer || strong_prefix))
+                .then_some((app, score, same_developer, ranking_score))
+        })
+        .max_by(|(_, left_score, left_same, left_rank), (_, right_score, right_same, right_rank)| {
+            // A fixed developer bonus prefers same-developer matches within
+            // the intended margin while keeping the ordering transitive.
+            left_rank
+                .total_cmp(right_rank)
+                .then_with(|| left_score.total_cmp(right_score))
+                .then_with(|| left_same.cmp(right_same))
+        })
+        .map(|(app, _, _, _)| app)
+}
+
+fn normalized_metadata(value: Option<&str>) -> Option<String> {
+    value.map(str::trim).filter(|value| !value.is_empty()).map(str::to_lowercase)
+}
+
+fn developer_metadata_is_comparable(left: &Option<String>, right: &Option<String>) -> bool {
+    match (developer_metadata_kind(left.as_deref()), developer_metadata_kind(right.as_deref())) {
+        (Some(left_kind), Some(right_kind)) => left_kind == right_kind,
+        (None, None) => true,
+        // A bundle identifier and a registry publisher are platform-specific
+        // identities. Do not treat their differing formats as proof of a
+        // developer mismatch when resolving a cross-platform synced target.
+        _ => false,
+    }
+}
+
+fn developer_metadata_kind(value: Option<&str>) -> Option<&'static str> {
+    value.and_then(|value| {
+        value
+            .strip_prefix("mac-bundle:")
+            .map(|_| "mac-bundle")
+            .or_else(|| value.strip_prefix("windows-publisher:").map(|_| "windows-publisher"))
+    })
+}
+
+fn app_match_key(value: &str) -> String {
+    let basename = value.rsplit(['/', '\\']).next().unwrap_or(value).to_lowercase();
+    let basename = basename
+        .strip_suffix(".exe")
+        .or_else(|| basename.strip_suffix(".app"))
+        .unwrap_or(basename.as_str());
+    basename.chars().filter(|ch| ch.is_alphanumeric()).collect()
+}
+
+fn app_match_score(left: &str, right: &str) -> f32 {
+    if left.is_empty() || right.is_empty() { return 0.0; }
+    if left == right { return 1.0; }
+    if left.contains(right) || right.contains(left) {
+        let left_len = left.chars().count();
+        let right_len = right.chars().count();
+        return left_len.min(right_len) as f32 / left_len.max(right_len) as f32;
+    }
+    let left_chars = left.chars().collect::<Vec<_>>();
+    let right_chars = right.chars().collect::<Vec<_>>();
+    let distance = levenshtein(&left_chars, &right_chars);
+    1.0 - distance as f32 / left_chars.len().max(right_chars.len()) as f32
+}
+
+fn common_prefix_len(left: &str, right: &str) -> usize {
+    left.chars()
+        .zip(right.chars())
+        .take_while(|(left, right)| left == right)
+        .count()
+}
+
+fn levenshtein(left: &[char], right: &[char]) -> usize {
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0; right.len() + 1];
+    for (i, &left_char) in left.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, &right_char) in right.iter().enumerate() {
+            current[j + 1] = (previous[j + 1] + 1)
+                .min(current[j] + 1)
+                .min(previous[j] + usize::from(left_char != right_char));
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()]
 }

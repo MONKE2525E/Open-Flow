@@ -253,6 +253,7 @@
       installedApps = (nextApps ?? []).map((app) => ({
         name: cleanAppName(app.name || app.exe),
         exe: normalizeExe(app.exe),
+        developer: app.developer ?? null,
       }));
       if (contextsStore.error) contextErrorMessage = contextsStore.error;
       await loadContextItems(selectedContextId);
@@ -710,6 +711,8 @@
           const target = await invoke<ContextTarget>('assign_context_target', {
             contextId: created.id,
             executable: app.exe,
+            appName: app.name,
+            developer: app.developer ?? null,
           });
           // Read the live store array each iteration: a captured snapshot
           // would drop targets assigned by earlier iterations of this loop.
@@ -799,6 +802,8 @@
       const target = await invoke<ContextTarget>('assign_context_target', {
         contextId: selectedContext.id,
         executable: app.exe,
+        appName: app.name,
+        developer: app.developer ?? null,
       });
       contextsStore.targets = [...targets.filter((item) => normalizeExe(item.executable) !== normalizeExe(app.exe)), target];
       markRecentlyAdded(normalizeExe(app.exe));
@@ -817,12 +822,12 @@
     }
   }
 
-  function appLabel(executable: string) {
+  function appLabel(executable: string, target?: ContextTarget) {
     if (executable.startsWith('?::')) {
-      return `${cleanAppName(executable.slice(3))} (not found)`;
+      return cleanAppName(target?.app_name || executable.slice(3));
     }
     const app = installedApps.find((item) => normalizeExe(item.exe) === normalizeExe(executable));
-    return cleanAppName(app?.name || executable);
+    return cleanAppName(app?.name || target?.app_name || executable);
   }
 
   function closeWebsitePicker() {
@@ -1033,9 +1038,9 @@
                 animate:flip={{ duration: motionMs(220), easing: expoOut }}
                 in:fly={{ y: motionPx(MOTION_PX.nudge), duration: recentlyAddedChips.has(normalizeExe(target.executable)) ? motionMs(220) : 0, easing: expoOut }}
               >
-                <AppIcon exe={target.executable} label={appLabel(target.executable)} size={16} />
-                {appLabel(target.executable)}
-                <button type="button" aria-label={`Remove ${appLabel(target.executable)}`} onclick={() => removeApp(target)}>
+                <AppIcon exe={target.executable} label={appLabel(target.executable, target)} size={16} />
+                {appLabel(target.executable, target)}
+                <button type="button" aria-label={`Remove ${appLabel(target.executable, target)}`} onclick={() => removeApp(target)}>
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
                 </button>
               </span>

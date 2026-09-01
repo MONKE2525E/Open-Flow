@@ -49,6 +49,8 @@ type DevContextTarget = {
   id: number;
   context_id: number;
   executable: string;
+  app_name?: string | null;
+  developer?: string | null;
   platform: string | null;
   created_at: string;
 };
@@ -1294,7 +1296,17 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       if (!readDevContexts().some((context) => context.id === contextId)) throw new Error(`Context ${contextId} was not found`);
       const now = devNow();
       const rows = readDevContextTargets().filter((target) => target.executable !== executable);
-      const target: DevContextTarget = { id: nextDevId(rows), context_id: contextId, executable, platform: null, created_at: now };
+      const target: DevContextTarget = {
+        id: nextDevId(rows),
+        context_id: contextId,
+        executable,
+        app_name: typeof (args?.appName ?? args?.app_name) === 'string'
+          ? String(args?.appName ?? args?.app_name)
+          : null,
+        developer: typeof args?.developer === 'string' ? args.developer : null,
+        platform: null,
+        created_at: now,
+      };
       writeDevList(DEV_CONTEXT_TARGETS_KEY, [...rows, target]);
       return target as T;
     }
@@ -1391,10 +1403,10 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
     case 'get_recent_logs':
     case 'get_installed_apps':
       return [
-        { name: 'Google Chrome', exe: 'chrome.exe' },
-        { name: 'Visual Studio Code', exe: 'code.exe' },
-        { name: 'Discord', exe: 'discord.exe' },
-        { name: 'Windows Terminal', exe: 'wt.exe' },
+        { name: 'Google Chrome', exe: 'chrome.exe', developer: 'Google LLC' },
+        { name: 'Visual Studio Code', exe: 'code.exe', developer: 'Microsoft Corporation' },
+        { name: 'Discord', exe: 'discord.exe', developer: 'Discord Inc.' },
+        { name: 'Windows Terminal', exe: 'wt.exe', developer: 'Microsoft Corporation' },
       ] as T;
     case 'get_stats':
       return { total_words: 0, avg_wpm: 0, day_streak: 0 } as T;
