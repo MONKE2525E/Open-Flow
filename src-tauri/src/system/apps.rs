@@ -529,23 +529,19 @@ pub fn closest_installed_app<'a>(
             let strong_prefix = source_keys.iter().any(|source| {
                 candidate_keys.iter().any(|candidate| common_prefix_len(source, candidate) >= 4)
             });
+            let ranking_score = score + if same_developer { 0.05 } else { 0.0 };
             (score >= threshold && (same_developer || strong_prefix))
-                .then_some((app, score, same_developer))
+                .then_some((app, score, same_developer, ranking_score))
         })
-        .max_by(|(_, left_score, left_same), (_, right_score, right_same)| {
-            // Prefer developer-confirmed matches within a small score margin;
-            // otherwise the strongest name match wins.
-            if (left_score - right_score).abs() < 0.05 {
-                left_same
-                    .cmp(right_same)
-                    .then_with(|| left_score.total_cmp(right_score))
-            } else {
-                left_score
-                    .total_cmp(right_score)
-                    .then_with(|| left_same.cmp(right_same))
-            }
+        .max_by(|(_, left_score, left_same, left_rank), (_, right_score, right_same, right_rank)| {
+            // A fixed developer bonus prefers same-developer matches within
+            // the intended margin while keeping the ordering transitive.
+            left_rank
+                .total_cmp(right_rank)
+                .then_with(|| left_score.total_cmp(right_score))
+                .then_with(|| left_same.cmp(right_same))
         })
-        .map(|(app, _, _)| app)
+        .map(|(app, _, _, _)| app)
 }
 
 fn normalized_metadata(value: Option<&str>) -> Option<String> {
