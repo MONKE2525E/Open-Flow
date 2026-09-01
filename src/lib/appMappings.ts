@@ -1,6 +1,7 @@
 export interface InstalledApp {
   name: string;
   exe: string;
+  developer?: string | null;
 }
 
 export interface AppMapping {

@@ -126,6 +126,8 @@ pub async fn get_context_targets(
 ) -> Result<Vec<db::ContextTarget>, String> {
     let db = db_state(&app);
     run_blocking("get_context_targets", move || {
+        let installed_apps = crate::system::apps::list_installed_apps();
+        db::reconcile_context_targets(&db, &installed_apps).map_err(|e| e.to_string())?;
         db::query_context_targets(&db, context_id).map_err(|e| e.to_string())
     })
     .await
@@ -136,10 +138,19 @@ pub async fn assign_context_target(
     app: AppHandle,
     context_id: i64,
     executable: String,
+    app_name: Option<String>,
+    developer: Option<String>,
 ) -> Result<db::ContextTarget, String> {
     let db = db_state(&app);
     run_blocking("assign_context_target", move || {
-        db::assign_context_target(&db, context_id, &executable).map_err(|e| e.to_string())
+        db::assign_context_target_with_metadata(
+            &db,
+            context_id,
+            &executable,
+            app_name.as_deref(),
+            developer.as_deref(),
+        )
+        .map_err(|e| e.to_string())
     })
     .await
 }

@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS context_targets (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   context_id   INTEGER NOT NULL REFERENCES contexts(id) ON DELETE CASCADE,
   executable   TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  app_name     TEXT,
+  developer    TEXT,
   platform     TEXT,
   created_at   DATETIME NOT NULL DEFAULT (datetime('now'))
 );
@@ -675,6 +677,25 @@ pub fn open(path: impl AsRef<std::path::Path>) -> Result<Db> {
                   WHERE table_name = 'transcriptions' AND op = 'delete';
                  PRAGMA user_version = 22;",
             )?;
+            Ok(())
+        })?;
+    }
+    if user_version < 23 {
+        log::info!("db: migrating schema {user_version} -> 23");
+        run_migration(&mut conn, |conn| {
+            ensure_table_column(
+                conn,
+                "context_targets",
+                "app_name",
+                "ALTER TABLE context_targets ADD COLUMN app_name TEXT;",
+            )?;
+            ensure_table_column(
+                conn,
+                "context_targets",
+                "developer",
+                "ALTER TABLE context_targets ADD COLUMN developer TEXT;",
+            )?;
+            conn.execute_batch("PRAGMA user_version = 23;")?;
             Ok(())
         })?;
     }

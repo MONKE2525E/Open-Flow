@@ -93,6 +93,20 @@ pub trait SyncHost: Send + Sync {
     fn resolve_app_target(&self, source: &str) -> Option<String> {
         Some(source.to_string())
     }
+    fn resolve_app_target_with_metadata(
+        &self,
+        source: &str,
+        app_name: Option<&str>,
+        developer: Option<&str>,
+    ) -> Option<(String, Option<String>, Option<String>)> {
+        self.resolve_app_target(source).map(|resolved| {
+            (
+                resolved,
+                app_name.map(str::to_string),
+                developer.map(str::to_string),
+            )
+        })
+    }
 }
 
 pub fn unresolved_app_target(source: &str) -> String {
@@ -115,28 +129,47 @@ fn resolve_context_targets_in_ops(host: &dyn SyncHost, ops: &[SyncOp]) -> Vec<Sy
                 for target in targets {
                     // Wire shape is either a bare string (a peer on an older
                     // build, or a legacy pre-platform-tag row) or a
-                    // `{executable, platform}` object. Either way, rewrite
+                    // `{executable, platform, app_name, developer}` object. Either way, rewrite
                     // `executable` to this device's own app identifier (or the
                     // `?::` unresolved marker) and stamp `platform` with this
                     // device's OS once resolved, since the rewritten string
                     // now follows this platform's naming convention.
-                    let source = match target {
-                        serde_json::Value::String(s) => Some(s.clone()),
+                    let (source, app_name, developer) = match target {
+                        serde_json::Value::String(s) => (Some(s.clone()), None, None),
                         serde_json::Value::Object(map) => {
-                            map.get("executable").and_then(|v| v.as_str()).map(str::to_string)
+                            (
+                                map.get("executable").and_then(|v| v.as_str()).map(str::to_string),
+                                map.get("app_name").and_then(|v| v.as_str()).map(str::to_string),
+                                map.get("developer").and_then(|v| v.as_str()).map(str::to_string),
+                            )
                         }
-                        _ => None,
+                        _ => (None, None, None),
                     };
                     let Some(source) = source else { continue };
-                    let resolved = host
-                        .resolve_app_target(&source)
-                        .unwrap_or_else(|| unresolved_app_target(&source));
+                    let (resolved, resolved_name, resolved_developer) = host
+                        .resolve_app_target_with_metadata(
+                            &source,
+                            app_name.as_deref(),
+                            developer.as_deref(),
+                        )
+                        .unwrap_or_else(|| {
+                            (
+                                unresolved_app_target(&source),
+                                app_name.clone(),
+                                developer.clone(),
+                            )
+                        });
                     let platform = if resolved.starts_with(UNRESOLVED_APP_PREFIX) {
                         None
                     } else {
                         db::current_platform_tag()
                     };
-                    *target = serde_json::json!({ "executable": resolved, "platform": platform });
+                    *target = serde_json::json!({
+                        "executable": resolved,
+                        "platform": platform,
+                        "app_name": resolved_name,
+                        "developer": resolved_developer,
+                    });
                 }
             }
             op
@@ -190,6 +223,10 @@ pub enum TargetEntry {
         executable: String,
         #[serde(default)]
         platform: Option<String>,
+        #[serde(default)]
+        app_name: Option<String>,
+        #[serde(default)]
+        developer: Option<String>,
     },
 }
 
@@ -205,6 +242,20 @@ impl TargetEntry {
         match self {
             TargetEntry::Legacy(_) => None,
             TargetEntry::Tagged { platform, .. } => platform.as_deref(),
+        }
+    }
+
+    fn app_name(&self) -> Option<&str> {
+        match self {
+            TargetEntry::Legacy(_) => None,
+            TargetEntry::Tagged { app_name, .. } => app_name.as_deref(),
+        }
+    }
+
+    fn developer(&self) -> Option<&str> {
+        match self {
+            TargetEntry::Legacy(_) => None,
+            TargetEntry::Tagged { developer, .. } => developer.as_deref(),
         }
     }
 }
@@ -463,13 +514,16 @@ fn context_aggregate(conn: &Connection, uuid: &str) -> Result<Option<serde_json:
         None => return Ok(None),
     };
     let mut stmt = conn.prepare(
-        "SELECT executable, platform FROM context_targets WHERE context_id = ?1 ORDER BY executable",
+        "SELECT executable, platform, app_name, developer
+         FROM context_targets WHERE context_id = ?1 ORDER BY executable",
     )?;
     aggregate.targets = stmt
         .query_map(params![context_id], |r| {
             Ok(TargetEntry::Tagged {
                 executable: r.get(0)?,
                 platform: r.get(1)?,
+                app_name: r.get(2)?,
+                developer: r.get(3)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1221,9 +1275,18 @@ fn reconcile_context_children(
             continue;
         }
         conn.execute(
-            "INSERT INTO context_targets (context_id, executable, platform) VALUES (?1, ?2, ?3)
-             ON CONFLICT(executable) DO UPDATE SET context_id = excluded.context_id, platform = excluded.platform",
-            params![context_id, normalized, entry.platform()],
+            "INSERT INTO context_targets (context_id, executable, app_name, developer, platform)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(executable) DO UPDATE SET context_id = excluded.context_id,
+                 app_name = excluded.app_name, developer = excluded.developer,
+                 platform = excluded.platform",
+            params![
+                context_id,
+                normalized,
+                entry.app_name(),
+                entry.developer(),
+                entry.platform()
+            ],
         )?;
     }
     let target_executables: Vec<String> = aggregate
