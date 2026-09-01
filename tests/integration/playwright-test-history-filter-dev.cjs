@@ -92,10 +92,10 @@ const historyMockWrap = function () {
 
     if (false) {
     // Row metadata: app label + compact duration under the text.
-    const metaFirst = await page.locator('.day-meta').first().innerText();
+    const metaFirst = await page.locator('.day-meta-left').first().innerText();
     if (!/Outlook · \d+s/.test(metaFirst)) errors.push(`row meta wrong: "${metaFirst}"`);
     // Row with no app but a duration still shows just the duration.
-    const metaNoApp = await page.locator('.day-row:has-text("Draft a response to the vendor") .day-meta').innerText();
+    const metaNoApp = await page.locator('.day-row:has-text("Draft a response to the vendor") .day-meta-left').innerText();
     if (metaNoApp !== '5s') errors.push(`no-app row meta wrong: "${metaNoApp}"`);
     if ((await page.locator('.day-row').count()) !== 6) errors.push('all history rows should render unfiltered');
     }
@@ -141,9 +141,9 @@ const historyMockWrap = function () {
     await page.waitForTimeout(500);
     if ((await page.locator('.day-row').count()) !== 6) errors.push('resetting to All apps must restore all rows');
     if ((await page.locator('.empty-state').count()) !== 0) errors.push('empty state must disappear after resetting to All apps');
-    const metaFirst = await page.locator('.day-meta').first().innerText();
+    const metaFirst = await page.locator('.day-meta-left').first().innerText();
     if (!/Outlook/.test(metaFirst) || !/\d+s/.test(metaFirst)) errors.push(`row meta wrong: "${metaFirst}"`);
-    const metaNoApp = await page.locator('.day-row:has-text("Draft a response to the vendor") .day-meta').innerText();
+    const metaNoApp = await page.locator('.day-row:has-text("Draft a response to the vendor") .day-meta-left').innerText();
     if (metaNoApp !== '5s') errors.push(`no-app row meta wrong: "${metaNoApp}"`);
 
     // The explicit clear action enters with a horizontal transition and resets
