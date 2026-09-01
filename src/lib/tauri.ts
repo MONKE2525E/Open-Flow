@@ -1300,7 +1300,9 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
         id: nextDevId(rows),
         context_id: contextId,
         executable,
-        app_name: typeof args?.appName === 'string' ? args.appName : null,
+        app_name: typeof (args?.appName ?? args?.app_name) === 'string'
+          ? String(args?.appName ?? args?.app_name)
+          : null,
         developer: typeof args?.developer === 'string' ? args.developer : null,
         platform: null,
         created_at: now,

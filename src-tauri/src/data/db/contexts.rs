@@ -459,19 +459,19 @@ pub fn reconcile_context_targets(
         if exact.is_none() && candidate.exe.eq_ignore_ascii_case(&executable) {
             continue;
         }
-        let already_owned: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM context_targets WHERE executable = ?1 AND id <> ?2)",
-            params![candidate.exe, id],
-            |row| row.get(0),
-        )?;
-        if already_owned {
-            continue;
-        }
         let next_executable = if exact.is_some() {
             executable.clone()
         } else {
             candidate.exe.trim().to_lowercase()
         };
+        let already_owned: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM context_targets WHERE executable = ?1 AND id <> ?2)",
+            params![next_executable, id],
+            |row| row.get(0),
+        )?;
+        if already_owned {
+            continue;
+        }
         let next_app_name = normalize_optional_trimmed(Some(candidate.name.as_str()));
         let next_developer = normalize_optional_trimmed(candidate.developer.as_deref());
         let next_platform = platform.clone().or(current_platform.map(str::to_string));

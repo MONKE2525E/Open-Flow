@@ -522,10 +522,17 @@ pub fn closest_installed_app<'a>(
                 .then_some((app, score, same_developer))
         })
         .max_by(|(_, left_score, left_same), (_, right_score, right_same)| {
-            // Prefer developer-confirmed matches when scores are close.
-            left_score
-                .total_cmp(right_score)
-                .then_with(|| left_same.cmp(right_same))
+            // Prefer developer-confirmed matches within a small score margin;
+            // otherwise the strongest name match wins.
+            if (left_score - right_score).abs() < 0.05 {
+                left_same
+                    .cmp(right_same)
+                    .then_with(|| left_score.total_cmp(right_score))
+            } else {
+                left_score
+                    .total_cmp(right_score)
+                    .then_with(|| left_same.cmp(right_same))
+            }
         })
         .map(|(app, _, _)| app)
 }
