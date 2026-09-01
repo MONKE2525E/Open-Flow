@@ -782,6 +782,7 @@
         state = incoming;
         void setPillInteractive(
           incoming === 'cancelled' ||
+          incoming === 'paste_failed' ||
           incoming === 'copied' ||
           incoming === 'repair_input' ||
           incoming === 'repair_recording' ||

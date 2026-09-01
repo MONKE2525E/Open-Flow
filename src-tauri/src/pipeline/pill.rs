@@ -350,6 +350,7 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     let has_clickable_buttons = matches!(
         state,
         "cancelled"
+            | "paste_failed"
             | "copied"
             | "repair_input"
             | "repair_recording"
