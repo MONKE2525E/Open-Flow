@@ -440,7 +440,7 @@ pub fn reconcile_context_targets(
         .collect::<rusqlite::Result<_>>()?;
     let mut changed = false;
 
-    for (id, context_id, executable, app_name, developer, platform) in rows {
+    for (id, _context_id, executable, app_name, developer, platform) in rows {
         if executable.starts_with("?::") {
             continue;
         }
@@ -459,12 +459,12 @@ pub fn reconcile_context_targets(
         if exact.is_none() && candidate.exe.eq_ignore_ascii_case(&executable) {
             continue;
         }
-        let owned_elsewhere: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM context_targets WHERE executable = ?1 AND id <> ?2 AND context_id <> ?3)",
-            params![candidate.exe, id, context_id],
+        let already_owned: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM context_targets WHERE executable = ?1 AND id <> ?2)",
+            params![candidate.exe, id],
             |row| row.get(0),
         )?;
-        if owned_elsewhere {
+        if already_owned {
             continue;
         }
         let next_executable = if exact.is_some() {

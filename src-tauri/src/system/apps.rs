@@ -431,36 +431,23 @@ fn nonempty_metadata(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-/// Returns a stable publisher/team hint where macOS exposes one. Team IDs are
-/// the best signal for signed apps and remain stable across bundle/version
-/// changes. Unsigned apps fall back to their bundle identifier, when present.
+/// Returns a stable bundle identity where macOS exposes one. Bundle identifiers
+/// are available without spawning a process and normally remain stable across
+/// bundle/version changes, making them a useful developer signal here.
 #[cfg(target_os = "macos")]
 fn mac_app_developer(path: &std::path::Path) -> Option<String> {
-    use std::process::Command;
+    use core_foundation::bundle::CFBundle;
+    use core_foundation::string::CFString;
+    use core_foundation::url::CFURL;
 
-    let signed = Command::new("/usr/bin/codesign")
-        .args(["-dv", "--verbose=4"])
-        .arg(path)
-        .output()
-        .ok()?;
-    let diagnostic = String::from_utf8_lossy(&signed.stderr);
-    if let Some(team) = diagnostic
-        .lines()
-        .find_map(|line| line.strip_prefix("TeamIdentifier="))
-        .and_then(nonempty_metadata)
-    {
-        return Some(team);
-    }
-
-    // `plutil` handles both XML and binary Info.plist files without adding a
-    // plist parser dependency to the desktop binary.
-    let plist = path.join("Contents/Info.plist");
-    let output = Command::new("/usr/bin/plutil")
-        .args(["-extract", "CFBundleIdentifier", "raw", "-o", "-"])
-        .arg(plist)
-        .output()
-        .ok()?;
-    nonempty_metadata(&String::from_utf8_lossy(&output.stdout))
+    let url = CFURL::from_path(path, true)?;
+    let bundle = CFBundle::new(url)?;
+    let key = CFString::from_static_string("CFBundleIdentifier");
+    bundle
+        .info_dictionary()
+        .find(key)
+        .and_then(|value| value.downcast::<CFString>())
+        .and_then(|value| nonempty_metadata(&value.to_string()))
 }
 
 /// A cached inventory for the dictation path. Registry/bundle enumeration is
@@ -553,7 +540,7 @@ fn app_match_key(value: &str) -> String {
         .strip_suffix(".exe")
         .or_else(|| basename.strip_suffix(".app"))
         .unwrap_or(basename.as_str());
-    basename.chars().filter(|ch| ch.is_ascii_alphanumeric()).collect()
+    basename.chars().filter(|ch| ch.is_alphanumeric()).collect()
 }
 
 fn app_match_score(left: &str, right: &str) -> f32 {
