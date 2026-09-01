@@ -168,6 +168,7 @@
   // per-item background, so the highlight travels when the selection moves —
   // including across the morph, where it slides up from the Settings button.
   let sidebarEl = $state<HTMLElement | null>(null);
+  let navSectionEl = $state<HTMLElement | null>(null);
   let pillTop = $state(0);
   let pillHeight = $state(0);
   // Suppresses the CSS transition for one frame so the pill can be teleported
@@ -183,10 +184,12 @@
   }
 
   function movePillTo(el: HTMLElement | null, { snap = false } = {}) {
-    if (!el) return;
+    if (!el || !sidebarEl) return;
     if (snap) pillSnap = true;
-    pillTop = el.offsetTop;
-    pillHeight = el.offsetHeight;
+    const itemRect = el.getBoundingClientRect();
+    const railRect = navSectionEl?.getBoundingClientRect() ?? sidebarEl.getBoundingClientRect();
+    pillTop = itemRect.top - railRect.top;
+    pillHeight = itemRect.height;
     if (snap) {
       requestAnimationFrame(() => { pillSnap = false; });
     } else {
@@ -213,8 +216,40 @@
   // Legacy mode swaps Contexts back out for the standalone Dictionary and
   // Snippets pages, so the section is hidden there for the same reason the
   // old nav item was.
-  const showContexts = $derived(!appStore.settingsOpen && !appStore.legacyFeaturesEnabled);
+  // Kept mounted while settings is open (just hidden) rather than unmounted —
+  // unmounting replayed every row's entrance transition on the way back,
+  // making rows appear to drop in from the wrong spot before settling.
+  const showContexts = $derived(!appStore.legacyFeaturesEnabled);
   const contextRows = $derived(orderedContexts(contextsStore.contexts));
+  let ctxSectionEl = $state<HTMLElement | null>(null);
+  let ctxWasInSettings = appStore.settingsOpen;
+  let ctxEntrance: Animation | null = null;
+
+  $effect(() => {
+    const open = appStore.settingsOpen;
+    if (open) {
+      ctxEntrance?.cancel();
+      ctxEntrance = null;
+    } else if (ctxWasInSettings) {
+      if (ctxSectionEl) {
+        ctxEntrance = ctxSectionEl.animate(
+          [
+            { opacity: 0, transform: `translate3d(${-motionPx(12)}px, 0, 0)` },
+            { opacity: 1, transform: 'translate3d(0, 0, 0)' },
+          ],
+          {
+            duration: motionMs(280),
+            easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          },
+        );
+      }
+    }
+    ctxWasInSettings = open;
+    return () => {
+      ctxEntrance?.cancel();
+      ctxEntrance = null;
+    };
+  });
 
   onMount(() => { void loadContexts(); });
 
@@ -393,16 +428,16 @@
 <aside class="sidebar" class:rail-settings={appStore.settingsOpen} class:sidebar-windows={isWindows} bind:this={sidebarEl}>
   <Brand />
 
-  <div
-    class="rail-pill"
-    class:rail-pill-snap={pillSnap}
-    class:rail-pill-hidden={!appStore.settingsOpen && appStore.currentPage === 'contexts'}
-    style="top:{pillTop}px; height:{pillHeight}px"
-  ></div>
+  <div class="nav-section" bind:this={navSectionEl}>
+    <div
+      class="rail-pill"
+      class:rail-pill-snap={pillSnap}
+      class:rail-pill-hidden={!appStore.settingsOpen && appStore.currentPage === 'contexts'}
+      style="top:{pillTop}px; height:{pillHeight}px"
+    ></div>
 
-  <div class="nav-section">
     {#if appStore.settingsOpen}
-      <div class="rail-list">
+      <div class="rail-list rail-list-settings">
         {#each settingsEntries as entry, i (entry.key)}
           {#if entry.kind === 'label'}
             <div
@@ -429,7 +464,7 @@
         {/each}
       </div>
     {:else}
-      <div class="rail-list">
+      <div class="rail-list rail-list-app">
         {#each navItems as entry, i (entry.id)}
           <button
             type="button"
@@ -457,7 +492,7 @@
       fixed, only .ctx-list scrolls, and it only scrolls when the rows actually
       overflow (min-height:0 + overflow-y:auto).
     -->
-    <div class="ctx-section">
+    <div bind:this={ctxSectionEl} class="ctx-section" class:ctx-section-hidden={appStore.settingsOpen} inert={appStore.settingsOpen}>
       <div class="ctx-head">
         <span class="ctx-head-label">Contexts</span>
         <span class="ctx-head-rule" aria-hidden="true"></span>
@@ -729,7 +764,10 @@
    * to stay visible and interactive. .app is position:relative with z-index
    * auto and .body is static, so both compare in the same stacking context.
    */
-  .sidebar.rail-settings {
+  /* Always above the settings overlay (z-index 60) — including while the
+     overlay is mid-exit-transition after closing settings, otherwise the
+     sidebar briefly loses its elevation and the opaque overlay paints over it. */
+  .sidebar {
     z-index: 61;
   }
 
@@ -746,6 +784,7 @@
        during the settings morph. */
     padding: 12px 8px 4px;
     display: grid;
+    position: relative;
   }
 
   .sidebar:not(.rail-settings) .nav-section { padding-top: 18px; }
@@ -760,6 +799,20 @@
     flex-direction: column;
     min-width: 0;
   }
+
+  /* Svelte keeps the outgoing branch in the DOM until its outro completes.
+     Remove only that inactive rail from layout so the incoming rail determines
+     .nav-section's height immediately. Its exit animation still paints from
+     the same coordinates. */
+  .rail-settings .rail-list-app,
+  .sidebar:not(.rail-settings) .rail-list-settings {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+  }
+
+  .rail-settings .rail-list-app { top: 18px; }
+  .sidebar:not(.rail-settings) .rail-list-settings { top: 12px; }
 
   /*
    * Single travelling highlight. Positioned against .sidebar (the nearest
@@ -920,6 +973,18 @@
     flex-direction: column;
     /* Small breathing gap between the primary nav and this section. */
     padding: 10px 8px 0;
+    opacity: 1;
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  /* Keep the section mounted so its layout is already final when it enters.
+     It travels only on the horizontal axis and cannot push the rail downward. */
+  .ctx-section-hidden {
+    visibility: hidden;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateX(-12px);
   }
 
   .ctx-head {
