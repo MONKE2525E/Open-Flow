@@ -371,7 +371,7 @@ fn scan_uninstall(root: windows::Win32::System::Registry::HKEY, path: &str) -> V
                         apps.push(InstalledApp {
                             name,
                             exe,
-                            developer: publisher,
+                            developer: publisher.map(|value| format!("windows-publisher:{value}")),
                         });
                     }
                 }
@@ -448,6 +448,7 @@ fn mac_app_developer(path: &std::path::Path) -> Option<String> {
         .find(key)
         .and_then(|value| value.downcast::<CFString>())
         .and_then(|value| nonempty_metadata(&value.to_string()))
+        .map(|value| format!("mac-bundle:{value}"))
 }
 
 /// A cached inventory for the dictation path. Registry/bundle enumeration is
@@ -507,6 +508,7 @@ pub fn closest_installed_app<'a>(
             let candidate_developer = normalized_metadata(app.developer.as_deref());
             if source_developer.is_some()
                 && candidate_developer.is_some()
+                && developer_metadata_is_comparable(&source_developer, &candidate_developer)
                 && source_developer != candidate_developer
             {
                 return None;
@@ -546,6 +548,26 @@ pub fn closest_installed_app<'a>(
 
 fn normalized_metadata(value: Option<&str>) -> Option<String> {
     value.map(str::trim).filter(|value| !value.is_empty()).map(str::to_lowercase)
+}
+
+fn developer_metadata_is_comparable(left: &Option<String>, right: &Option<String>) -> bool {
+    match (developer_metadata_kind(left.as_deref()), developer_metadata_kind(right.as_deref())) {
+        (Some(left_kind), Some(right_kind)) => left_kind == right_kind,
+        (None, None) => true,
+        // A bundle identifier and a registry publisher are platform-specific
+        // identities. Do not treat their differing formats as proof of a
+        // developer mismatch when resolving a cross-platform synced target.
+        _ => false,
+    }
+}
+
+fn developer_metadata_kind(value: Option<&str>) -> Option<&'static str> {
+    value.and_then(|value| {
+        value
+            .strip_prefix("mac-bundle:")
+            .map(|_| "mac-bundle")
+            .or_else(|| value.strip_prefix("windows-publisher:").map(|_| "windows-publisher"))
+    })
 }
 
 fn app_match_key(value: &str) -> String {
