@@ -270,7 +270,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
     // for any other window. Best-effort: a probe failure just means the
     // context resolves by exe alone, same as before this feature existed.
     let browser_domain = if window_context::is_browser_exe(&process_name) {
-        browser_probe::read_active_browser_domain()
+        browser_probe::read_browser_domain_for_window(target.id)
     } else {
         None
     };
