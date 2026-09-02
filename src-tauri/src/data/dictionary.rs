@@ -50,7 +50,7 @@ pub fn build_relevant_dictionary_prompt_from_sources(
             let mut score = 0u16;
             let mut primary_match = false;
             let mut alternate_match = false;
-            for (_list_index, (original_index, _text, weight, lower, tokens)) in sources.iter().enumerate() {
+            for (original_index, _text, weight, lower, tokens) in &sources {
                 let Some(match_score) = entry_match_score(entry, lower, tokens) else {
                     continue;
                 };
