@@ -129,6 +129,7 @@ pub fn start_recording_session_ex(
         Ok(session) => {
             let level_arc = session.level.clone();
             let raw_level_arc = session.raw_level.clone();
+            let envelope_arc = session.envelope.clone();
             let active_arc = session.active.clone();
             let start_cue_active = session.active.clone();
             {
@@ -187,6 +188,7 @@ pub fn start_recording_session_ex(
                 app.clone(),
                 level_arc,
                 raw_level_arc,
+                envelope_arc,
                 active_arc,
                 options.emit_globally,
             );
@@ -369,10 +371,19 @@ pub(crate) fn release_starting_reservation(state: &SharedState) {
 
 /// Spawns a Tokio task that emits `audio-level` events to the pill every 50ms
 /// until the recording's `active` flag goes false.
+///
+/// Also drains the short-window envelope (see `EnvelopeTap` in media/audio.rs)
+/// and ships it as `audio-envelope`. That payload is what lets the pill show
+/// audio *flowing* rather than a level meter: one RMS scalar per tick averages
+/// away everything inside its own window, so a sustained vowel is a constant
+/// number no motion model can animate. Each batch is a handful of f32 peaks at
+/// a fixed ENVELOPE_WINDOW_MS cadence, ~100/sec -- small enough to send
+/// alongside the existing level without being PCM streaming.
 pub fn spawn_level_emitter(
     app: AppHandle,
     level: Arc<std::sync::atomic::AtomicU32>,
     raw_level: Arc<std::sync::atomic::AtomicU32>,
+    envelope: Arc<crate::media::audio::EnvelopeTap>,
     active: Arc<std::sync::atomic::AtomicBool>,
     emit_globally: bool,
 ) {
@@ -389,6 +400,18 @@ pub fn spawn_level_emitter(
             }
         };
 
+        // The pill is the only consumer of the envelope, so this never goes out
+        // globally even when the level does -- no other window needs 100
+        // floats a second.
+        let emit_envelope = |batch: Vec<f32>| {
+            if batch.is_empty() {
+                return;
+            }
+            if let Some(pill) = app.get_webview_window("pill") {
+                pill.emit("audio-envelope", batch).ok();
+            }
+        };
+
         loop {
             if !active.load(Ordering::Relaxed) {
                 break;
@@ -396,6 +419,7 @@ pub fn spawn_level_emitter(
             let level_val = f32::from_bits(level.load(Ordering::Relaxed));
             let raw_level_val = f32::from_bits(raw_level.load(Ordering::Relaxed));
             emit_level(level_val);
+            emit_envelope(envelope.drain());
             if emit_globally {
                 let _ = app.emit("audio-level-raw", raw_level_val);
             }
@@ -403,6 +427,7 @@ pub fn spawn_level_emitter(
         }
 
         // Emit final reset to ensure level goes to 0 regardless of timing
+        emit_envelope(envelope.drain());
         emit_level(0.0);
         if emit_globally {
             let _ = app.emit("audio-level-raw", 0.0f32);
