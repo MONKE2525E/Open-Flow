@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { formatKeyLabel } from './lib/platform';
+  import { BARS, createPillVisualizer } from './lib/pillVisualizer';
 
   type PillState = 'idle' | 'recording' | 'repair_recording' | 'processing' | 'loading_local_model' | 'handsfree' | 'error' | 'cancelled' | 'paste_failed' | 'copied' | 'clipboard_warning' | 'feedback_prompt' | 'repair_input' | 'repair_processing' | 'repair_proposal' | 'repair_applying' | 'repair_done' | 'repair_error';
   type RepairProposal = { id: number; summary: string; scope: string };
@@ -204,8 +205,6 @@
   $: activeStageRows = seenStages.map((i) => STAGE_ROWS[i]);
   $: rollPos = Math.max(0, seenStages.indexOf(stageIndex));
 
-  const BARS = 12;
-
   // --- Content-fit window sizing -------------------------------------------
   // The pill window's native size follows the visible content (capsule +
   // profile label floating above it + expanded error text) so the transparent
@@ -380,98 +379,35 @@
     }
   }
 
-  // Level from Rust is already 0–1 (raw_rms × mic_gain × 15, capped).
-  // Gate: ignore anything below 4% of full scale (background noise).
-  const GATE = 0.04;
-
-  // Per-bar gain coefficients — bell curve so middle bars are taller, fixed at mount.
-  const barGains: number[] = Array.from({ length: BARS }, (_, i) => {
-    const center = Math.sin((i / (BARS - 1)) * Math.PI) * 0.35;
-    return 0.45 + center + Math.random() * 0.2;
-  });
-
+  // Visualizer: mirrored temporal envelope history. Distance from the centre
+  // means AGE — the newest audio appears at the two middle bars and travels
+  // outward as it ages, mirrored left/right, so the outermost pair shows the
+  // envelope ~600ms ago. The whole signal chain (perceptual dB mapping, bounded
+  // normalization, attack/release envelope, history ring, per-bar spring) lives
+  // in lib/pillVisualizer.ts so it can be driven directly by unit tests; this
+  // component only owns the rAF loop and the rendering.
   const BAR_MIN_H = 3;
-  const BAR_MAX_H = 16;
   let barHeights: number[] = Array(BARS).fill(BAR_MIN_H);
-  let targetLevel = 0;
-  let smoothed = 0;
+  const visualizer = createPillVisualizer();
   let rafId = 0;
-  const PEAK_FLOOR = 0.07;
-  let adaptivePeak = PEAK_FLOOR;
-
-  let lastAnimTime = 0;
-
-  // Spatially-continuous shimmer: three sine waves of different spatial
-  // frequencies drifting at different speeds, sampled once per bar. Because
-  // it's a smooth function of (position, time), neighbouring bars always move
-  // together as one flowing waveform. What this replaces gave every bar its
-  // own independent random walk, re-rolled every 400ms and lerped between
-  // rolls — which is why a steady voice read as a row of unrelated twitching
-  // dots instead of audio, and why it managed to look both too static (the
-  // walk barely travelled between rolls) and too restless (neighbours never
-  // agreed on a direction). Being pure (u, t) math it also keeps the row alive
-  // at a dead-constant input level, with no per-frame Math.random() at all.
-  function shimmerAt(u: number, t: number): number {
-    const wave =
-      Math.sin(u * 3.1 + t * 1.9) * 0.5 +
-      Math.sin(u * 6.3 - t * 1.3) * 0.3 +
-      Math.sin(u * 1.7 + t * 2.7) * 0.2;
-    return 0.72 + wave * 0.28; // ≈ 0.44 … 1.00
-  }
 
   function animateBars(time: number) {
-    if (!lastAnimTime) lastAnimTime = time;
-    const dt = Math.min(time - lastAnimTime, 50);
-    lastAnimTime = time;
-
     // Keep bar snapping aligned to whichever monitor the pill is currently on.
     refreshDpr();
-
-    // Rise stays quick so the bars catch speech onsets. The fall used to decay
-    // at 0.97/frame — ~1.3s to bottom out, so the row went on melting long
-    // after the sound stopped and every syllable smeared into the next.
-    // 0.90 lands in ~400ms: still smooth, but it actually tracks the voice.
-    const riseRate = 1 - Math.pow(0.84, dt / 16.66);
-    const fallRate = 1 - Math.pow(0.9, dt / 16.66);
-
-    if (targetLevel > smoothed) {
-      smoothed += (targetLevel - smoothed) * riseRate;
-    } else {
-      smoothed += (targetLevel - smoothed) * fallRate;
-    }
-
-    // Soft noise gate: subtract the floor rather than branching on it. The old
-    // `if (smoothed < GATE) fill(3)` snapped all twelve bars flat in a single
-    // frame the instant the level crossed the threshold, so a fading tail
-    // stopped mid-fall and collapsed — the "drifts down slowly, then just
-    // compacts" artifact. Subtracting is continuous, so the bars simply reach
-    // the floor and stay there.
-    const gated = Math.max(0, smoothed - GATE);
-
-    if (gated > adaptivePeak) adaptivePeak = gated;
-    // Re-adapt within a sentence or two. At the old 0.9997 the peak took ~40s
-    // to forget a single loud moment, so everything after a cough or a laugh
-    // normalised against it and sat near-flat.
-    adaptivePeak = Math.max(PEAK_FLOOR, adaptivePeak * Math.pow(0.9985, dt / 16.66));
-
-    // Normalize against the adaptive peak so quiet mics still drive bars to
-    // full height; ease the mapping (pow 1.5) so small noises stay gentle.
-    const eased = Math.pow(Math.min(gated / adaptivePeak, 1), 1.5);
-    const t = time / 1000;
-
-    barHeights = barGains.map((gain, i) => {
-      const energy = eased * gain * shimmerAt(i / (BARS - 1), t);
-      return BAR_MIN_H + energy * (BAR_MAX_H - BAR_MIN_H);
-    });
-
+    barHeights = visualizer.step(time);
     rafId = requestAnimationFrame(animateBars);
   }
 
+  function resetVisualizer() {
+    visualizer.reset();
+    barHeights = Array(BARS).fill(BAR_MIN_H);
+  }
+
   function startRaf() {
-    if (rafId === 0) { lastAnimTime = 0; rafId = requestAnimationFrame(animateBars); }
+    if (rafId === 0) { resetVisualizer(); rafId = requestAnimationFrame(animateBars); }
   }
   function stopRaf() {
-    if (rafId !== 0) { cancelAnimationFrame(rafId); rafId = 0; barHeights = Array(BARS).fill(BAR_MIN_H); }
+    if (rafId !== 0) { cancelAnimationFrame(rafId); rafId = 0; resetVisualizer(); }
   }
 
 
@@ -488,7 +424,7 @@
       repairProposal = null;
       clearStage();
       contextLabel = null;
-      smoothed = 0;
+      resetVisualizer();
       errOpen = false;
       errWidth = 0;
       errHeight = 34;
@@ -825,7 +761,7 @@
         } else {
           stopRaf();
         }
-        if (state !== 'recording' && state !== 'repair_recording' && state !== 'handsfree') smoothed = 0;
+        if (state !== 'recording' && state !== 'repair_recording' && state !== 'handsfree') resetVisualizer();
         if (state === 'error') {
           openError();
           if (errorTimer) clearTimeout(errorTimer);
@@ -946,8 +882,12 @@
       if (!mounted) { l2(); return; }
       unlisteners.push(l2);
 
-      const l3 = await listen<number>('audio-level', (ev) => {
-        targetLevel = ev.payload ?? 0;
+      // Short-window envelope batches (see EnvelopeTap in media/audio.rs) — the
+      // visualizer's real input. The scalar `audio-level` event is still emitted
+      // for other consumers, but one RMS value per 50ms cannot show audio
+      // flowing, so the pill does not use it.
+      const l3 = await listen<number[]>('audio-envelope', (ev) => {
+        if (ev.payload?.length) visualizer.pushEnvelope(ev.payload);
       });
       if (!mounted) { l3(); return; }
       unlisteners.push(l3);
@@ -1213,7 +1153,7 @@
   {#if state === 'recording'}
     <div class="pill recording" class:dying={dying}>
       {#each barHeights as h, i (i)}
-        <div class="bar" style="height: {snap(h, dpr)}px"></div>
+        <div class="bar" style="height: {h}px"></div>
       {/each}
     </div>
 
@@ -1230,7 +1170,7 @@
         </button>
         <div class="bars-hf">
           {#each barHeights as h, i (i)}
-            <div class="bar" style="height: {snap(h, dpr)}px"></div>
+            <div class="bar" style="height: {h}px"></div>
           {/each}
         </div>
         <button class="hf-btn confirm" onclick={stopRepairRecording} aria-label="Use this complaint">
@@ -1251,6 +1191,7 @@
          class:feedback-card={cardPhase === 'feedback' || cardPhase === 'done'}
          class:repair-form={cardPhase === 'form'}
          class:repair-proposal={cardPhase === 'proposal' || cardPhase === 'error'}
+         class:from-processing={cardPhase === 'feedback' && (prevState === 'processing' || prevState === 'loading_local_model')}
          class:dying={dying}
          style={cardW ? `width:${cardW}px; height:${cardH}px` : ''}
          role="dialog" tabindex="-1" onkeydown={handleRepairKeydown}>
@@ -1475,7 +1416,7 @@
       {/if}
       <div class="bars-hf">
         {#each barHeights as h, i (i)}
-          <div class="bar" style="height: {snap(h, dpr)}px"></div>
+          <div class="bar" style="height: {h}px"></div>
         {/each}
       </div>
       {#if showHfButtons}
@@ -1560,7 +1501,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     /* containing block for .err-sizer, which must stay out of flow so it
        never contributes to the measured cluster size */
     position: relative;
@@ -1686,7 +1627,7 @@
     justify-content: center;
     width: max-content;
     max-width: 260px;
-    padding: 10px 16px;
+    padding: 13px 16px;
     gap: 7px;
   }
   /* Content swaps (stage buttons, an inline error appearing) fade in rather
@@ -1702,6 +1643,21 @@
     line-height: 15px;
     text-align: center;
     white-space: nowrap;
+  }
+  /* The feedback toast follows the processing pill immediately (finalize.rs
+     hides it and shows feedback_prompt in the same call, with no gap) — but
+     they're different template branches, so there's no shared element for a
+     CSS width transition to run on. Without this, the card just popped in at
+     its own resting width (only pillIn's subtle scale softened it), which
+     read as an instant snap next to a short "Transcribing…"/"Cleaning…"
+     stage. Grow from processing's last width instead, same pattern as
+     processIn/loadingLocalIn above. */
+  .feedback-card.from-processing {
+    animation: feedbackFromProcessing 0.28s cubic-bezier(0.22, 1, 0.36, 1) backwards,
+               pillIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes feedbackFromProcessing {
+    from { width: calc(var(--stage-w, 116px) + 24px); }
   }
 
   .repair-form, .repair-proposal { border-radius: 18px; }
