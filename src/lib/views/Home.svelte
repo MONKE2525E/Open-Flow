@@ -31,6 +31,7 @@
   let recents: Entry[] = [];
   let stats: Stats = { total_words: 0, avg_wpm: 0, day_streak: 0 };
   let loading = true;
+  let historyError = '';
   let loadingMore = false;
   let hasMoreHistory = false;
 
@@ -153,11 +154,13 @@
       if (seq !== loadSeq) return;
       recents = reset ? (r ?? []) : [...recents, ...(r ?? [])];
       stats = s;
+      if (reset) historyError = '';
       hasMoreHistory = (r?.length ?? 0) === HISTORY_PAGE_SIZE;
     } catch (err) {
       if (seq !== loadSeq) return;
       console.error('Home load failed:', err);
       if (reset) {
+        historyError = err instanceof Error ? err.message : String(err);
         recents = [];
         stats = { total_words: 0, avg_wpm: 0, day_streak: 0 };
         hasMoreHistory = false;
@@ -316,6 +319,8 @@
         {failedEntry}
         {cancelledEntry}
         {loading}
+        {historyError}
+        onRetryHistory={() => load()}
         {hasMoreHistory}
         {loadingMore}
         {retrying}

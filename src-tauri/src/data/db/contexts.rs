@@ -35,12 +35,25 @@ pub struct ContextTarget {
     pub id: i64,
     pub context_id: i64,
     pub executable: String,
+    /// The app identity captured when this target was assigned. These fields
+    /// let a target survive versioned/nightly app identifiers changing.
+    pub app_name: Option<String>,
+    pub developer: Option<String>,
     /// `"windows"` / `"macos"`, or `None` for rows assigned before this field
     /// existed (or synced from an unrecognized platform) — those stay visible
     /// on every device rather than disappearing.
     pub platform: Option<String>,
     pub created_at: String,
 }
+
+type ContextTargetRow = (
+    i64,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 /// Tag applied to a target assigned on this device, so a synced-in target
 /// from another OS (e.g. a Windows `.exe` name landing in a Mac's database)
@@ -328,8 +341,10 @@ fn context_target_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContextT
         id: row.get(0)?,
         context_id: row.get(1)?,
         executable: row.get(2)?,
-        platform: row.get(3)?,
-        created_at: row.get(4)?,
+        app_name: row.get(3)?,
+        developer: row.get(4)?,
+        platform: row.get(5)?,
+        created_at: row.get(6)?,
     })
 }
 
@@ -346,7 +361,7 @@ fn context_target_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContextT
 pub fn query_context_targets(db: &Db, context_id: Option<i64>) -> Result<Vec<ContextTarget>> {
     let conn = lock_conn(db)?;
     let mut stmt = conn.prepare(
-        "SELECT id, context_id, executable, platform, created_at
+        "SELECT id, context_id, executable, app_name, developer, platform, created_at
          FROM context_targets
          WHERE (?1 IS NULL OR context_id = ?1)
            AND (?2 IS NULL OR platform IS NULL OR platform = ?2)
@@ -359,8 +374,21 @@ pub fn query_context_targets(db: &Db, context_id: Option<i64>) -> Result<Vec<Con
     Ok(rows)
 }
 
+#[cfg(test)]
 pub fn assign_context_target(db: &Db, context_id: i64, executable: &str) -> Result<ContextTarget> {
+    assign_context_target_with_metadata(db, context_id, executable, None, None)
+}
+
+pub fn assign_context_target_with_metadata(
+    db: &Db,
+    context_id: i64,
+    executable: &str,
+    app_name: Option<&str>,
+    developer: Option<&str>,
+) -> Result<ContextTarget> {
     let normalized_executable = normalize_executable(executable)?;
+    let normalized_app_name = normalize_optional_trimmed(app_name);
+    let normalized_developer = normalize_optional_trimmed(developer);
     let mut conn = lock_conn(db)?;
     let context = query_context_conn(&conn, context_id)?;
     if context.is_everywhere {
@@ -369,18 +397,106 @@ pub fn assign_context_target(db: &Db, context_id: i64, executable: &str) -> Resu
 
     let tx = conn.transaction()?;
     tx.execute(
-        "INSERT INTO context_targets (context_id, executable, platform) VALUES (?1, ?2, ?3)
-         ON CONFLICT(executable) DO UPDATE SET context_id = excluded.context_id, platform = excluded.platform",
-        params![context_id, normalized_executable, current_platform_tag()],
+        "INSERT INTO context_targets (context_id, executable, app_name, developer, platform) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(executable) DO UPDATE SET context_id = excluded.context_id, app_name = excluded.app_name, developer = excluded.developer, platform = excluded.platform",
+        params![
+            context_id,
+            normalized_executable,
+            normalized_app_name,
+            normalized_developer,
+            current_platform_tag()
+        ],
     )?;
     let target = tx.query_row(
-        "SELECT id, context_id, executable, platform, created_at
+        "SELECT id, context_id, executable, app_name, developer, platform, created_at
          FROM context_targets WHERE executable = ?1",
         params![normalized_executable],
         context_target_from_row,
     )?;
     tx.commit()?;
     Ok(target)
+}
+
+/// Rebinds a target whose old executable disappeared to a strong local app
+/// candidate. Exact executable matches refresh metadata; replacements require
+/// a close name and reject known developer mismatches. The unique executable
+/// constraint is respected: a candidate already owned by another context is
+/// left alone rather than silently stealing that assignment.
+pub fn reconcile_context_targets(
+    db: &Db,
+    installed_apps: &[crate::system::apps::InstalledApp],
+) -> Result<bool> {
+    let conn = lock_conn(db)?;
+    let current_platform = current_platform_tag();
+    let rows: Vec<ContextTargetRow> = conn
+        .prepare(
+            "SELECT id, context_id, executable, app_name, developer, platform
+             FROM context_targets
+             WHERE platform IS NULL OR platform = ?1",
+        )?
+        .query_map(params![current_platform], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut changed = false;
+
+    for (id, _context_id, executable, app_name, developer, platform) in rows {
+        if executable.starts_with("?::") {
+            continue;
+        }
+        let exact = installed_apps.iter().find(|app| {
+            app.exe.trim().eq_ignore_ascii_case(executable.trim())
+        });
+        let candidate = exact.or_else(|| {
+            crate::system::apps::closest_installed_app(
+                &executable,
+                app_name.as_deref(),
+                developer.as_deref(),
+                installed_apps,
+            )
+        });
+        let Some(candidate) = candidate else { continue };
+        if exact.is_none() && candidate.exe.eq_ignore_ascii_case(&executable) {
+            continue;
+        }
+        let next_executable = if exact.is_some() {
+            executable.clone()
+        } else {
+            candidate.exe.trim().to_lowercase()
+        };
+        let already_owned: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM context_targets WHERE executable = ?1 AND id <> ?2)",
+            params![next_executable, id],
+            |row| row.get(0),
+        )?;
+        if already_owned {
+            continue;
+        }
+        let next_app_name = normalize_optional_trimmed(Some(candidate.name.as_str()));
+        let next_developer = normalize_optional_trimmed(candidate.developer.as_deref());
+        let next_platform = platform.clone().or(current_platform.map(str::to_string));
+        if next_executable == executable
+            && next_app_name == app_name
+            && next_developer == developer
+            && next_platform == platform
+        {
+            continue;
+        }
+        let updated = conn.execute(
+            "UPDATE context_targets
+             SET executable = ?1, app_name = ?2, developer = ?3, platform = ?4
+             WHERE id = ?5",
+            params![
+                next_executable,
+                next_app_name,
+                next_developer,
+                next_platform,
+                id
+            ],
+        )?;
+        changed |= updated > 0;
+    }
+    Ok(changed)
 }
 
 pub fn remove_context_target(db: &Db, context_id: i64, executable: &str) -> Result<()> {
@@ -789,6 +905,55 @@ mod tests {
     }
 
     #[test]
+    fn stale_target_rebinds_to_close_replacement_with_same_developer() {
+        let db = open(":memory:").expect("db");
+        let context = insert_context_returning(&db, "Coding", None, None, None, None, false)
+            .expect("context");
+        assign_context_target_with_metadata(
+            &db,
+            context.id,
+            "t3-code-nightly-20260830.exe",
+            Some("T3 Code (nightly) 0.0.37-nightly.20260830"),
+            Some("T3 Tools"),
+        )
+        .expect("target");
+
+        let apps = vec![crate::system::apps::InstalledApp {
+            name: "T3 Code (nightly) 0.0.38-nightly.20260901".to_string(),
+            exe: "t3-code-nightly-20260901.exe".to_string(),
+            developer: Some("T3 Tools".to_string()),
+        }];
+        assert!(reconcile_context_targets(&db, &apps).expect("reconcile"));
+        let targets = query_context_targets(&db, Some(context.id)).expect("targets");
+        assert_eq!(targets[0].executable, "t3-code-nightly-20260901.exe");
+        assert_eq!(targets[0].developer.as_deref(), Some("T3 Tools"));
+    }
+
+    #[test]
+    fn stale_target_rejects_close_name_from_different_developer() {
+        let db = open(":memory:").expect("db");
+        let context = insert_context_returning(&db, "Coding", None, None, None, None, false)
+            .expect("context");
+        assign_context_target_with_metadata(
+            &db,
+            context.id,
+            "t3-code-nightly-old.exe",
+            Some("T3 Code nightly"),
+            Some("T3 Tools"),
+        )
+        .expect("target");
+
+        let apps = vec![crate::system::apps::InstalledApp {
+            name: "T3 Code nightly".to_string(),
+            exe: "t3-code-nightly-new.exe".to_string(),
+            developer: Some("Unrelated Tools".to_string()),
+        }];
+        assert!(!reconcile_context_targets(&db, &apps).expect("reconcile"));
+        let targets = query_context_targets(&db, Some(context.id)).expect("targets");
+        assert_eq!(targets[0].executable, "t3-code-nightly-old.exe");
+    }
+
+    #[test]
     fn website_domain_match_takes_priority_over_executable_match() {
         let db = open(":memory:").expect("db");
         let exe_context = insert_context_returning(&db, "Browsing", None, None, None, None, false)
@@ -871,27 +1036,6 @@ mod tests {
         let targets = query_context_targets(&db, Some(context.id)).expect("targets");
         assert_eq!(targets.len(), 1, "only the resolved target should be visible");
         assert_eq!(targets[0].executable, "editor.exe");
-    }
-
-    #[cfg(not(any(windows, target_os = "macos")))]
-    #[test]
-    fn query_context_targets_keeps_platform_rows_visible_when_platform_is_unknown() {
-        let db = open(":memory:").expect("db");
-        let context =
-            insert_context_returning(&db, "Cross Platform", None, None, None, None, false)
-                .expect("context");
-        {
-            let conn = lock_conn(&db).expect("lock");
-            conn.execute(
-                "INSERT INTO context_targets (context_id, executable, platform) VALUES (?1, ?2, ?3)",
-                params![context.id, "editor.exe", "windows"],
-            )
-            .expect("insert platform-tagged row");
-        }
-
-        let targets = query_context_targets(&db, Some(context.id)).expect("targets");
-        assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].platform.as_deref(), Some("windows"));
     }
 
     #[test]

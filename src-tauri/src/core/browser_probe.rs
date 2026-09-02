@@ -1,6 +1,6 @@
 //! Best-effort browser address-bar domain read, used to pick a Context by
 //! website when dictating into a browser tab. Only ever called when the
-//! foreground process is a known browser (`window_context::is_browser_exe`).
+//! captured process is a known browser (`window_context::is_browser_exe`).
 //! Any failure, timeout, or missing permission returns `None` and the caller
 //! falls back to exe-only context resolution — this must never block or
 //! error the dictation pipeline.
@@ -40,8 +40,6 @@ mod win {
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker,
         IUIAutomationValuePattern, UIA_EditControlTypeId, UIA_ValuePatternId,
     };
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-
     const BUDGET: Duration = Duration::from_millis(150);
     const MAX_DEPTH: u32 = 8;
     const MAX_VISITED: u32 = 400;
@@ -71,15 +69,15 @@ mod win {
         }
     }
 
-    /// Reads the foreground browser window's address bar text via UI
-    /// Automation. Tries the Chromium `addressEditBox` AutomationId first
-    /// (fast, exact), then falls back to the first Edit control found in a
-    /// depth/time-bounded tree walk (covers Firefox and other engines).
-    pub fn read_address_bar_text() -> Option<String> {
+    /// Reads a browser window's address bar text via UI Automation. Chromium's
+    /// exact `addressEditBox` is preferred even when it appears after a page
+    /// input in the tree; the generic Edit fallback is only used when no exact
+    /// address bar was found (for Firefox and other engines).
+    pub fn read_address_bar_text(window_id: usize) -> Option<String> {
         let _com = ComGuard::init();
         let automation: IUIAutomation =
             unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()? };
-        let hwnd = unsafe { GetForegroundWindow() };
+        let hwnd = HWND(window_id as *mut core::ffi::c_void);
         if hwnd.0.is_null() {
             return None;
         }
@@ -91,7 +89,15 @@ mod win {
             visited: 0,
         };
 
-        find_address_bar(&walker, &root, 0, &mut budget)
+        let mut result = AddressBarSearch::default();
+        find_address_bar(&walker, &root, 0, &mut budget, &mut result);
+        result.exact.or(result.fallback)
+    }
+
+    #[derive(Default)]
+    struct AddressBarSearch {
+        exact: Option<String>,
+        fallback: Option<String>,
     }
 
     fn find_address_bar(
@@ -99,9 +105,10 @@ mod win {
         element: &IUIAutomationElement,
         depth: u32,
         budget: &mut Budget,
-    ) -> Option<String> {
+        result: &mut AddressBarSearch,
+    ) {
         if depth > MAX_DEPTH || budget.exhausted() {
-            return None;
+            return;
         }
         budget.visited += 1;
 
@@ -111,49 +118,36 @@ mod win {
         let control_type = unsafe { element.CurrentControlType() }.ok();
         let is_edit = control_type.map(|v| v.0) == Some(UIA_EditControlTypeId.0);
 
-        if is_edit && automation_id == "addressEditBox" {
+        // Do not require the control type here. The automation id is the
+        // browser-owned identifier and remains the strongest signal if the
+        // browser changes how it exposes the value pattern.
+        if automation_id.eq_ignore_ascii_case("addressEditBox") {
             if let Some(text) = read_value(element) {
-                return Some(text);
+                result.exact = Some(text);
+                return;
             }
         }
 
-        // Recurse into children first (depth-first), remembering the first
-        // plain Edit control as a fallback if no exact address bar is found.
-        let mut fallback: Option<String> = None;
+        if is_edit && result.fallback.is_none() {
+            result.fallback = read_value(element);
+        }
+
         if let Ok(child) = unsafe { walker.GetFirstChildElement(element) } {
             let mut current = Some(child);
             while let Some(node) = current {
-                if budget.exhausted() {
+                if budget.exhausted() || result.exact.is_some() {
                     break;
                 }
-                if let Some(text) = find_address_bar(walker, &node, depth + 1, budget) {
-                    return Some(text);
-                }
-                if fallback.is_none() && is_edit_control(&node) {
-                    fallback = read_value(&node);
-                }
+                find_address_bar(walker, &node, depth + 1, budget, result);
                 current = unsafe { walker.GetNextSiblingElement(&node) }.ok();
             }
         }
-
-        if is_edit && fallback.is_none() {
-            fallback = read_value(element);
-        }
-        fallback
-    }
-
-    fn is_edit_control(element: &IUIAutomationElement) -> bool {
-        unsafe { element.CurrentControlType() }
-            .map(|v| v.0)
-            .ok()
-            == Some(UIA_EditControlTypeId.0)
     }
 
     fn read_value(element: &IUIAutomationElement) -> Option<String> {
-        let pattern = unsafe {
-            element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-        }
-        .ok()?;
+        let pattern =
+            unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+                .ok()?;
         let value = unsafe { pattern.CurrentValue() }.ok()?.to_string();
         if value.trim().is_empty() {
             None
@@ -169,26 +163,26 @@ mod mac {
     /// existing AX shim in `system/macos_ax_text_marker.m` to read the known
     /// per-browser address-bar identifiers). Returns `None` so website
     /// matching silently falls back to exe-only resolution on macOS for now.
-    pub fn read_address_bar_text() -> Option<String> {
+    pub fn read_address_bar_text(_window_id: usize) -> Option<String> {
         None
     }
 }
 
-#[cfg(windows)]
-use win::read_address_bar_text as platform_read_address_bar_text;
 #[cfg(target_os = "macos")]
 use mac::read_address_bar_text as platform_read_address_bar_text;
+#[cfg(windows)]
+use win::read_address_bar_text as platform_read_address_bar_text;
 #[cfg(not(any(windows, target_os = "macos")))]
-fn platform_read_address_bar_text() -> Option<String> {
+fn platform_read_address_bar_text(_window_id: usize) -> Option<String> {
     None
 }
 
-/// Reads the active browser's address bar and returns just the domain, e.g.
-/// "mail.google.com". Caller must confirm the foreground process is a
+/// Reads a browser window's address bar and returns just the domain, e.g.
+/// "mail.google.com". Caller must confirm the captured process is a
 /// browser (`window_context::is_browser_exe`) before calling this — it does
 /// not check that itself, since the OS-level read is comparatively costly.
-pub fn read_active_browser_domain() -> Option<String> {
-    let raw = platform_read_address_bar_text()?;
+pub fn read_browser_domain_for_window(window_id: usize) -> Option<String> {
+    let raw = platform_read_address_bar_text(window_id)?;
     extract_domain(&raw)
 }
 
@@ -206,7 +200,10 @@ mod tests {
 
     #[test]
     fn extracts_domain_from_bare_host() {
-        assert_eq!(extract_domain("Example.com"), Some("example.com".to_string()));
+        assert_eq!(
+            extract_domain("Example.com"),
+            Some("example.com".to_string())
+        );
     }
 
     #[test]

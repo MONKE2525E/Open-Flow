@@ -48,6 +48,9 @@ export interface ContextTarget {
   id: number;
   context_id: number;
   executable: string;
+  app_name: string | null;
+  developer: string | null;
+  platform: string | null;
   created_at: string;
 }
 

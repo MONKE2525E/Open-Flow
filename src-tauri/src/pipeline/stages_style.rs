@@ -46,9 +46,7 @@ pub(super) fn apply_app_style_overrides(
         .and_then(|c| c.tone.as_deref())
         .map(str::trim)
         .filter(|t| !t.is_empty());
-    let mapping_profile = mapping
-        .map(|m| m.profile.trim())
-        .filter(|p| !p.is_empty());
+    let mapping_profile = mapping.map(|m| m.profile.trim()).filter(|p| !p.is_empty());
     context_tone
         .or(mapping_profile)
         .map(str::to_owned)
@@ -64,10 +62,9 @@ pub(super) fn apply_app_style_overrides(
 ///
 /// The hwnd→process-name read can come up empty (elevated target processes,
 /// race between capture and start), so the process name falls back to the
-/// live foreground window; an unresolved context just leaves the chip hidden
-/// until processing resolves one. Without this early emit the label only ever
-/// appeared once processing began, which made it useless right when it
-/// matters.
+/// live foreground window. Browser domains are read from the captured target
+/// too, making website-only groups available before recording begins; an
+/// unresolved context remains hidden until processing resolves one.
 pub(super) fn emit_context_for_window(app: &AppHandle, hwnd: usize) {
     let process_name = if hwnd != 0 {
         window_context::get_process_name_for_hwnd(hwnd)
@@ -76,11 +73,18 @@ pub(super) fn emit_context_for_window(app: &AppHandle, hwnd: usize) {
     }
     .or_else(window_context::get_active_process_name)
     .unwrap_or_default();
-    // Exe-only context lookup (no address-bar probe here — this runs on the
-    // recording-start path and must stay fast; the real pipeline resolves
-    // the domain-refined context and re-emits it).
+    // Read the domain from the captured browser window as well as the exe.
+    // This keeps website-only context groups accurate on the recording pill;
+    // the bounded UIA probe remains best-effort and falls back to exe lookup.
+    let browser_domain = if window_context::is_browser_exe(&process_name) {
+        crate::core::browser_probe::read_browser_domain_for_window(hwnd)
+    } else {
+        None
+    };
     let db_handle = app.state::<crate::DbHandle>().inner().clone();
-    if let Ok(context) = crate::core::context::resolve_context(&db_handle, &process_name, None) {
+    if let Ok(context) =
+        crate::core::context::resolve_context(&db_handle, &process_name, browser_domain.as_deref())
+    {
         crate::pipeline::pill::queue_pill_context(&context.name);
     }
 }

@@ -29,7 +29,7 @@ fn listener_port_is_stable_and_device_specific() {
 fn connection_candidates_try_stable_port_before_stale_advertisement() {
     let uuid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     let candidates = super::manager::connection_candidates(
-        &["192.168.0.86".to_string()],
+        &["192.168.0.86:58546".to_string()],
         58546,
         uuid,
     );
@@ -854,10 +854,12 @@ fn context_app_matching_uses_local_name_and_rejects_weak_matches() {
         InstalledApp {
             name: "Visual Studio Code".to_string(),
             exe: "code.exe".to_string(),
+            developer: None,
         },
         InstalledApp {
             name: "Google Chrome".to_string(),
             exe: "chrome.exe".to_string(),
+            developer: None,
         },
     ];
     let matched = super::manager::closest_installed_app("Visual Studio Code.app", &apps)

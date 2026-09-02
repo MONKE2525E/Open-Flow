@@ -25,13 +25,12 @@ pub fn get_icon_data_uri(app: &tauri::AppHandle, exe: &str) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 pub fn get_icon_data_uri(app: &tauri::AppHandle, exe: &str) -> Option<String> {
-    let raw_exe = exe.trim();
-    let cache_key = raw_exe.to_lowercase();
-    let cache_path = cache_file_path(app, &cache_key)?;
+    let exe = exe.trim().to_lowercase();
+    let cache_path = cache_file_path(app, &exe)?;
     if let Ok(bytes) = std::fs::read(&cache_path) {
         return png_bytes_to_data_uri(&bytes);
     }
-    let bundle_path = mac::resolve_app_bundle_path(raw_exe)?;
+    let bundle_path = mac::resolve_app_bundle_path(&exe)?;
     let png = mac::extract_icon_png(&bundle_path)?;
     if let Some(parent) = cache_path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -367,15 +366,6 @@ mod mac {
     /// `system::apps::list_installed_apps` produces on macOS) to the bundle's
     /// full path by scanning the same standard Applications directories.
     pub fn resolve_app_bundle_path(exe: &str) -> Option<String> {
-        let requested = exe.trim();
-        let requested_path = std::path::Path::new(requested);
-        if requested_path.is_absolute()
-            && requested_path.is_dir()
-            && requested_path.extension().and_then(|e| e.to_str()) == Some("app")
-        {
-            return Some(requested_path.to_string_lossy().into_owned());
-        }
-        let requested = requested.to_lowercase();
         let mut dirs = vec![
             std::path::PathBuf::from("/Applications"),
             std::path::PathBuf::from("/Applications/Utilities"),
@@ -398,7 +388,7 @@ mod mac {
                     continue;
                 };
                 let stem = stem.to_lowercase();
-                if requested == stem || requested == format!("{stem}.app") {
+                if stem == exe || format!("{stem}.app") == exe {
                     return path.to_str().map(str::to_string);
                 }
             }
