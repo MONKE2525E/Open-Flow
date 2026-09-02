@@ -176,7 +176,11 @@ pub(super) async fn open_config_and_context(
         cfg.default_tone,
     );
     let app_context = if cfg.app_context_hint {
-        window_context::get_app_context_hint(process_name, target_id, browser_domain)
+        window_context::get_app_context_hint(
+            process_name,
+            target_id,
+            browser_domain,
+        )
     } else {
         None
     };
