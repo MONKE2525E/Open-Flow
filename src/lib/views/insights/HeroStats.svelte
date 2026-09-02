@@ -236,6 +236,10 @@
     text-align: center;
   }
 
+  .tile-gauge .tile-label {
+    margin-top: 13px;
+  }
+
   .gauge {
     width: 100%;
     max-width: 150px;
