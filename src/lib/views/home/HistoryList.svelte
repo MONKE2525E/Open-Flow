@@ -368,12 +368,19 @@
     <div class="day-table">
       {#if cancelledEntry}
         <div
-          class="day-row"
+          class="day-row banner-row"
           transition:fly={{ y: -10, duration: motionMs(400), easing: expoOut }}
         >
           <div class="day-time">{fmtTime(cancelledEntry.created_at)}</div>
           <div class="day-text error-msg">You cancelled a recording — pick it back up?</div>
           <div class="row-actions">
+            <button
+              class="retry-btn"
+              onclick={onContinueCancelled}
+              disabled={resumingCancelled}
+            >
+              {resumingCancelled ? '…' : 'Continue'}
+            </button>
             <button
               class="dismiss-btn"
               onclick={onDismissCancelled}
@@ -385,19 +392,12 @@
                 <path d="M6 6l12 12M6 18 18 6"/>
               </svg>
             </button>
-            <button
-              class="retry-btn"
-              onclick={onContinueCancelled}
-              disabled={resumingCancelled}
-            >
-              {resumingCancelled ? '…' : 'Continue'}
-            </button>
           </div>
         </div>
       {/if}
       {#if failedEntry}
         <div
-          class="day-row"
+          class="day-row banner-row"
           transition:fly={{ y: -10, duration: motionMs(400), easing: expoOut }}
         >
           <div class="day-time">{fmtTime(failedEntry.created_at)}</div>
@@ -505,9 +505,10 @@
   }
 
   .day-head {
-    font-family: var(--serif);
-    font-style: italic;
-    font-size: 14px;
+    font-family: var(--sans);
+    font-style: normal;
+    font-size: 13px;
+    font-weight: 500;
     color: var(--ink-soft);
     margin: 4px 4px 10px;
   }
@@ -528,6 +529,10 @@
     box-sizing: border-box;
   }
   .day-row:hover { background: var(--control-hover); }
+
+  /* Banner rows put a wider action cluster (Retry, or Discard+Continue) in the
+     third column, which is normally sized just for the 18px copy-btn. */
+  .day-row.banner-row { grid-template-columns: 84px 1fr auto; }
 
   .copy-btn {
     all: unset;
@@ -725,9 +730,9 @@
   }
 
   .empty-h {
-    font-family: var(--serif);
-    font-style: italic;
-    font-size: 17px;
+    font-family: var(--sans);
+    font-style: normal;
+    font-size: 15px;
     font-weight: 500;
     color: var(--ink-soft);
     margin: 0;
