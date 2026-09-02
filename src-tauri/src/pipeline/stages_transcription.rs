@@ -176,10 +176,13 @@ pub(super) async fn open_config_and_context(
         cfg.default_tone,
     );
     let app_context = if cfg.app_context_hint {
+        // Pass the captured context-group name when available; the helper's
+        // fourth argument is part of the current upstream context API.
         window_context::get_app_context_hint(
             process_name,
             target_id,
             browser_domain,
+            context.map(|value| value.name.as_str()),
         )
     } else {
         None
