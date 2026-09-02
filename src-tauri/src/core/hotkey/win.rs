@@ -321,6 +321,28 @@ impl ChordStateMachine {
     fn mark_key_passed_through(&mut self, key: ChordKey) {
         *self.key_passed_through_mut(key) = true;
     }
+    /// Corrects stale ownership bookkeeping against live OS key state. A
+    /// keyup can occasionally never reach this hook (e.g. swallowed by
+    /// another low-level hook, or eaten by the OS's own Start-menu handling
+    /// of a bare Win press) which leaves `key_down` stuck true forever —
+    /// after that, the next lone press of the *other* key looks like a
+    /// chord-forming edge and fires dictation off a single key. Called with
+    /// the live `GetAsyncKeyState` read for the *other* key (never the one
+    /// whose edge is currently being processed — its own down/up handling
+    /// already reconciles itself).
+    fn reconcile_stale_key(&mut self, key: ChordKey, os_held: bool) {
+        if os_held || !*self.key_down_mut(key) {
+            return;
+        }
+        *self.key_down_mut(key) = false;
+        *self.key_passed_through_mut(key) = false;
+        self.set_key_was_chord(key, false);
+        if !self.key1_down && !self.key2_down {
+            self.chord_down = false;
+            self.handless_from_chord = false;
+        }
+    }
+
     fn key_was_chord(&self, key: ChordKey) -> bool {
         match key {
             ChordKey::Key1 => self.key1_was_chord,
@@ -796,9 +818,19 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             let edge = if is_down { KeyEdge::Down } else { KeyEdge::Up };
             let now = GetTickCount64();
 
+            // Live OS truth for whichever key this event is NOT about — never
+            // the key whose own edge we're processing, since its bookkeeping
+            // is about to be updated by on_key_event itself.
+            let (other_key, other_os_held) = if key == ChordKey::Key1 {
+                (ChordKey::Key2, unsafe { modifier_held(k2) })
+            } else {
+                (ChordKey::Key1, unsafe { modifier_held(k1) })
+            };
+
             let (outcome, key1_was_passed_through, key2_was_passed_through) =
                 CHORD_MACHINE.with(|m| {
                     let mut machine = m.borrow_mut();
+                    machine.reconcile_stale_key(other_key, other_os_held);
                     let key1_was_passed_through =
                         key == ChordKey::Key2 && machine.key1_passed_through;
                     let key2_was_passed_through =
@@ -1193,6 +1225,30 @@ mod chord_tests {
         let up = m.on_space_event(KeyEdge::Up);
         assert_eq!(down.disposition, KeyDisposition::Passthrough);
         assert_eq!(up.disposition, KeyDisposition::Passthrough);
+    }
+
+    #[test]
+    fn stale_key_bookkeeping_does_not_fire_on_lone_press() {
+        let mut m = fresh();
+        // Simulate a missed keyup: key1 (e.g. Ctrl) is marked down internally
+        // but the OS no longer reports it held.
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.reconcile_stale_key(ChordKey::Key1, false);
+        assert!(!m.key1_down);
+        // A lone press of key2 must not look like a chord-forming edge.
+        let outcome = m.on_key_event(ChordKey::Key2, KeyEdge::Down, 100);
+        assert_eq!(outcome.action, None);
+        assert_eq!(outcome.disposition, KeyDisposition::Passthrough);
+    }
+
+    #[test]
+    fn reconcile_leaves_genuinely_held_key_untouched() {
+        let mut m = fresh();
+        m.on_key_event(ChordKey::Key1, KeyEdge::Down, 0);
+        m.reconcile_stale_key(ChordKey::Key1, true);
+        assert!(m.key1_down);
+        let outcome = m.on_key_event(ChordKey::Key2, KeyEdge::Down, 10);
+        assert_eq!(outcome.action, Some(ChordAction::FirePress));
     }
 
     #[test]
