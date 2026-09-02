@@ -123,7 +123,8 @@
     // Skip while hovered: the below-variant grows the row on hover, which would
     // otherwise flip the decision mid-interaction.
     if (node.matches(':hover, :focus-within')) return;
-    const fits = metaEl.getBoundingClientRect().bottom <= node.getBoundingClientRect().bottom;
+    // 1px slack: sub-pixel layout differences must not flip the decision.
+    const fits = metaEl.getBoundingClientRect().bottom <= node.getBoundingClientRect().bottom + 1;
     if (stackedMeta[key] !== fits) {
       stackedMeta = { ...stackedMeta, [key]: fits };
     }
@@ -462,8 +463,11 @@
             </div>
             <div class="day-main">
               <div class="day-text">{item.entry.clean_text}</div>
-              {#if !stackedMeta[item.key] && rowMeta(item.entry)}
-                <div class="day-meta day-meta-below">{rowMeta(item.entry)}</div>
+              {#if rowMeta(item.entry)}
+                <!-- Always in the DOM: removing it changed the row height, which
+                     flipped the measured stacked/below decision, which put it
+                     back — a self-feeding hover jitter loop. -->
+                <div class="day-meta day-meta-below" aria-hidden={!!stackedMeta[item.key]}>{rowMeta(item.entry)}</div>
               {/if}
             </div>
             <button
@@ -650,8 +654,8 @@
       transform var(--ui-duration-fast) var(--ui-ease-out),
       max-height var(--ui-duration-fast) var(--ui-ease-out);
   }
-  .day-row:hover .day-meta-below,
-  .day-row:focus-within .day-meta-below {
+  .day-row:not(.meta-stacked):hover .day-meta-below,
+  .day-row:not(.meta-stacked):focus-within .day-meta-below {
     opacity: 1;
     max-height: 16px;
     transform: translateX(0);
