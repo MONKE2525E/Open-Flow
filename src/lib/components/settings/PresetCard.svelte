@@ -192,13 +192,11 @@
 
   .preset-card:hover:not(.preset-active) {
     border-color: var(--line-strong);
-    box-shadow: var(--shadow-card, 0 2px 8px rgba(0, 0, 0, 0.06));
   }
 
   .preset-card.preset-active {
-    border-color: var(--jap-400);
-    background: color-mix(in srgb, var(--jap-100) 40%, var(--bg-elev));
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--jap-400) 35%, transparent);
+    border-color: var(--line-strong);
+    background: var(--control-active);
   }
 
   /* Select target: covers the whole card, sits behind the content. */

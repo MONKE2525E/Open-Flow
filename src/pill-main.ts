@@ -1,6 +1,7 @@
 import { mount } from 'svelte';
 import PillApp from './PillApp.svelte';
-import { invoke } from './lib/tauri';
+import { invoke, listen } from './lib/tauri';
+import { ACCENT_CHANGE_EVENT, applyAccentTheme, normalizeAccentColor } from './lib/accentTheme';
 import { disableBrowserContextMenu } from './lib/disable-context-menu';
 import './theme.css';
 
@@ -24,12 +25,20 @@ applyTheme('system');
 
 (async () => {
   try {
-    const mode = await invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' });
+    const [mode, accentColor] = await Promise.all([
+      invoke<AppearanceMode | null>('get_setting', { key: 'appearance_mode' }),
+      invoke<string | null>('get_setting', { key: 'accent_color' }),
+    ]);
     if (mode === 'system' || mode === 'light' || mode === 'dark') {
       applyTheme(mode);
     }
+    applyAccentTheme(document.documentElement, normalizeAccentColor(accentColor), { animate: false });
   } catch {}
 })();
+
+void listen<string | null>(ACCENT_CHANGE_EVENT, (event) => {
+  applyAccentTheme(document.documentElement, normalizeAccentColor(event.payload));
+});
 
 window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
   if (currentMode === 'system') applyTheme('system');

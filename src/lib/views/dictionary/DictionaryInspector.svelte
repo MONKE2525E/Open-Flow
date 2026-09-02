@@ -182,11 +182,11 @@
   }
 
   .insp-stat-num {
-    font-family: var(--serif);
-    font-size: 22px;
-    font-weight: 500;
-    letter-spacing: -0.02em;
-    color: var(--accent-ink);
+    font-family: var(--sans);
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--ink);
     line-height: 1;
   }
 

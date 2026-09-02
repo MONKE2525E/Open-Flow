@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { emit, invoke } from '../../tauri';
   import { fly, fade } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
@@ -17,6 +17,8 @@
   import { getLanguageSupport } from '../../transcriptionLanguageSupport';
   import { transcriptionModelStore } from '../../transcriptionModelStore.svelte';
   import { modelDisplayLabel, splitModelId } from './models';
+  import AccentColorPicker from './AccentColorPicker.svelte';
+  import { ACCENT_CHANGE_EVENT, animateAccentChange } from '../../accentTheme';
 
   let selectedLanguage = $state<TranscriptionLanguageCode>('en');
   let languageDropdownOpen = $state(false);
@@ -394,6 +396,29 @@
     }
   }
 
+  async function handleAccentColor(color: string | null) {
+    const previous = appStore.accentColor;
+    await animateAccentChange(async () => {
+      appStore.accentColor = color;
+      await tick();
+    });
+    void emit(ACCENT_CHANGE_EVENT, color).catch((err) => {
+      console.warn('broadcast accent color failed:', err);
+    });
+    try {
+      await saveSetting('accent_color', color);
+    } catch (err) {
+      await animateAccentChange(async () => {
+        appStore.accentColor = previous;
+        await tick();
+      });
+      void emit(ACCENT_CHANGE_EVENT, previous).catch((emitErr) => {
+        console.warn('broadcast accent rollback failed:', emitErr);
+      });
+      console.error('save accent_color failed:', err);
+    }
+  }
+
   function startRecordingHotkey(e: MouseEvent | KeyboardEvent) {
     e.stopPropagation();
     if (recordingHotkey) return;
@@ -596,7 +621,7 @@
 
 <h2 class="settings-h">General</h2>
 <h3 class="settings-subhead first">Dictation</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-hotkey">
   <div><div class="label">Hotkey</div><div class="desc">Hold to record, release to transcribe</div></div>
   <button
     bind:this={keybindEl}
@@ -621,11 +646,11 @@
     (or hold <strong>Fn</strong> with F5). You can also pick any other key above.
   </p>
 {/if}
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-copy-last">
   <div><div class="label">Copy last dictation</div><div class="desc">Always available — re-copies your last dictation to the clipboard, in case a paste didn't land</div></div>
   <span class="badge key-badge">{isMac ? '⌥⌘C' : 'Ctrl+Alt+C'}</span>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-report">
   <div><div class="label">Report a dictation issue</div><div class="desc">Opens the complaint box right after a dictation, while the option is still showing</div></div>
   <div style="display:flex; align-items:center; gap:8px;">
     <button class="badge" onclick={clearRepairHotkey} type="button" style="cursor:pointer;">Clear</button>
@@ -643,7 +668,7 @@
     </button>
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-language">
   <div class="lang-setting-text"><div class="label">Spoken Language</div><div class="desc">Tells transcription what language to expect{languageScopeNote}</div></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="ui-dropdown language-dropdown" onkeydown={(e) => { if (e.key === 'Escape' && languageDropdownOpen) { languageDropdownOpen = false; e.stopPropagation(); } }}>
@@ -686,7 +711,7 @@
     {/if}
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-microphone">
   <div>
     <div class="label">{microphoneCopy.inputDeviceLabel}</div>
     <div class="desc">{microphoneCopy.inputDeviceDescription}</div>
@@ -729,7 +754,7 @@
   </div>
 </div>
 <h3 class="settings-subhead">Appearance & System</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-appearance">
   <div><div class="label">Appearance</div><div class="desc">{isMac ? 'Follow macOS or force a specific theme' : 'Follow Windows or force a specific theme'}</div></div>
   <div class="appearance-segment" role="radiogroup" aria-label="Appearance" bind:this={segmentEl}>
     {#if indicatorStyle}
@@ -746,25 +771,29 @@
     {/each}
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-accent">
+  <div><div class="label">Accent color</div><div class="desc">Used for actions, highlights, focus rings, and status details</div></div>
+  <AccentColorPicker value={appStore.accentColor} onchange={handleAccentColor} />
+</div>
+<div class="setting-row" data-setting-target="general-startup">
   <div><div class="label">Start on Boot</div><div class="desc">{isMac ? 'Launch Verenu when macOS starts' : 'Launch Verenu when Windows starts'}</div></div>
   <Toggle checked={autostart} onchange={handleAutostart} label="Start on boot" />
 </div>
 <h3 class="settings-subhead">Text processing</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-cleanup">
   <div><div class="label">Cleanup</div><div class="desc">Runs an LLM-powered cleanup pass after transcription for tone and formatting.</div></div>
   <Toggle checked={appStore.cleanupEnabled} onchange={handleCleanup} label="Cleanup" />
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-spacing">
   <div><div class="label">Smart spacing &amp; capitalization</div><div class="desc">Adjusts capitalization and spacing around inserted text when the cursor context is clear.</div></div>
   <Toggle checked={contextualFormatting} onchange={handleContextualFormatting} label="Smart spacing and capitalization" />
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-caps-lock">
   <div><div class="label">Automatic caps lock detection</div><div class="desc">When Caps Lock is on, output your dictation in ALL CAPS</div></div>
   <Toggle checked={capsLockUppercase} onchange={handleCapsLockUppercase} label="Automatic caps lock detection" />
 </div>
 <h3 class="settings-subhead">Legacy</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="general-legacy">
   <div><div class="label">Legacy pages</div><div class="desc">Bring back the standalone App Mappings settings page and the Dictionary/Snippets pages, superseded by Contexts.</div></div>
   <Toggle checked={appStore.legacyFeaturesEnabled} onchange={handleLegacyFeatures} label="Legacy pages" />
 </div>

@@ -66,6 +66,7 @@ type SettingsValueMap = {
   beta_updates_enabled: boolean;
   verenu_service_checks_enabled: boolean;
   appearance_mode: AppearanceMode;
+  accent_color: string | null;
   advanced_model_ui: boolean;
   /** One cleanup prompt for every model — see stores.svelte.ts. */
   cleanup_prompt_override: string;

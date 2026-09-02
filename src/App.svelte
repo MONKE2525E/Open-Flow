@@ -29,6 +29,7 @@
   import { fly } from 'svelte/transition';
   import { expoOut } from 'svelte/easing';
   import { MOTION_MS, MOTION_PX, NAV_ORDER, SETTINGS_SECTION_ORDER, directionFromOrder, motionMs, motionPx, pageSwap, reducedMotionEnabled } from './lib/motion';
+  import { applyAccentTheme, normalizeAccentColor } from './lib/accentTheme';
 
   type EffectiveTheme = 'light' | 'dark';
   type NativeTitleBarMetrics = { height: number; leftInset: number; rightInset: number; scaleFactor: number };
@@ -59,6 +60,11 @@
   $effect(() => {
     appStore.appearanceMode;
     if (typeof document !== 'undefined') applyTheme();
+  });
+
+  $effect(() => {
+    const accentColor = appStore.accentColor;
+    if (typeof document !== 'undefined') applyAccentTheme(document.documentElement, accentColor);
   });
 
   // Error toast
@@ -177,9 +183,10 @@
     // stores disagreeing with what import_data actually wrote to disk.
     async function reloadGlobalSettings() {
       try {
-        const [done, appearance, forceSetupOnLaunch, cleanupEnabled, betaUpdatesEnabled, legacyFeaturesEnabled, syncEnabled] = await Promise.all([
+        const [done, appearance, accentColor, forceSetupOnLaunch, cleanupEnabled, betaUpdatesEnabled, legacyFeaturesEnabled, syncEnabled] = await Promise.all([
           invoke<boolean | null>('get_setting', { key: 'setup_complete' }),
           invoke<'system' | 'light' | 'dark' | null>('get_setting', { key: 'appearance_mode' }),
+          invoke<string | null>('get_setting', { key: 'accent_color' }),
           invoke<boolean | null>('get_setting', { key: 'force_setup_on_launch' }),
           invoke<boolean | null>('get_setting', { key: 'cleanup_enabled' }),
           invoke<boolean | null>('get_setting', { key: 'beta_updates_enabled' }),
@@ -190,6 +197,7 @@
         if (appearance === 'light' || appearance === 'dark' || appearance === 'system') {
           appStore.appearanceMode = appearance;
         }
+        appStore.accentColor = normalizeAccentColor(accentColor);
         appStore.cleanupEnabled = cleanupEnabled ?? true;
         appStore.betaUpdatesEnabled = betaUpdatesEnabled ?? false;
         appStore.legacyFeaturesEnabled = legacyFeaturesEnabled ?? false;

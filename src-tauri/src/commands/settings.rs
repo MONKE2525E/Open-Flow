@@ -26,6 +26,7 @@ enum SettingKind {
     CleanupPromptOverride,
     ProviderModelCache,
     AppearanceMode,
+    AccentColor,
     Bool,
     MicGain,
     SoundEffectsVolume,
@@ -167,6 +168,7 @@ const SETTING_SPECS: &[SettingSpec] = &[
         true,
         true,
     ),
+    setting_spec(store::ACCENT_COLOR, SettingKind::AccentColor, true, true),
     setting_spec(store::FORCE_SETUP_ON_LAUNCH, SettingKind::Bool, true, false),
     setting_spec(store::ADVANCED_MODEL_UI, SettingKind::Bool, true, true),
     setting_spec(
@@ -381,6 +383,14 @@ pub fn validate_setting(key: &str, value: &serde_json::Value) -> Result<(), Stri
         SettingKind::AppearanceMode => value
             .as_str()
             .is_some_and(|v| matches!(v, "system" | "light" | "dark")),
+        SettingKind::AccentColor => {
+            value.is_null()
+                || value.as_str().is_some_and(|color| {
+                    color.len() == 7
+                        && color.starts_with('#')
+                        && color[1..].chars().all(|character| character.is_ascii_hexdigit())
+                })
+        }
         SettingKind::Bool => value.is_boolean(),
         SettingKind::MicGain => value.as_f64().is_some_and(|v| (1.0..=8.0).contains(&v)),
         SettingKind::SoundEffectsVolume => {
@@ -464,6 +474,14 @@ mod setting_key_tests {
         assert!(validate_setting(store::SOUND_EFFECTS_VOLUME, &serde_json::json!(100)).is_ok());
         assert!(validate_setting(store::SOUND_EFFECTS_VOLUME, &serde_json::json!(-1)).is_err());
         assert!(validate_setting(store::SOUND_EFFECTS_VOLUME, &serde_json::json!(101)).is_err());
+    }
+
+    #[test]
+    fn accent_color_accepts_hex_or_default() {
+        assert!(validate_setting(store::ACCENT_COLOR, &serde_json::json!("#4F7FD8")).is_ok());
+        assert!(validate_setting(store::ACCENT_COLOR, &serde_json::Value::Null).is_ok());
+        assert!(validate_setting(store::ACCENT_COLOR, &serde_json::json!("blue")).is_err());
+        assert!(validate_setting(store::ACCENT_COLOR, &serde_json::json!("#1234")).is_err());
     }
 }
 // ---------- generic settings ----------
@@ -595,6 +613,7 @@ pub struct AllSettings {
     pub hotkey: Option<Vec<String>>,
     pub repair_hotkey: Option<Vec<String>>,
     pub appearance_mode: Option<String>,
+    pub accent_color: Option<String>,
     pub cleanup_prompt_override: Option<String>,
     pub provider_model_cache: Option<serde_json::Value>,
 }
@@ -677,6 +696,7 @@ pub async fn get_all_settings(app: AppHandle) -> Result<AllSettings, String> {
             })
         }),
         appearance_mode: str_val(store::APPEARANCE_MODE),
+        accent_color: str_val(store::ACCENT_COLOR),
         cleanup_prompt_override: str_val(store::CLEANUP_PROMPT_OVERRIDE),
         provider_model_cache: json_val(store::PROVIDER_MODEL_CACHE),
     })

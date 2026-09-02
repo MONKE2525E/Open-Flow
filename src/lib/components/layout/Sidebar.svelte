@@ -6,6 +6,11 @@
   import { isMac, isWindows } from '../../platform';
   import { MOTION_MS, SETTINGS_SECTION_ORDER, directionFromOrder, motionMs, motionPx } from '../../motion';
   import { visibleSettingsSections, type SettingsSectionId } from '../../settingsSections';
+  import {
+    requestSettingsSearchNavigation,
+    searchSettings,
+    type SettingsSearchEntry,
+  } from '../../settingsSearch.svelte';
   import Brand from './Brand.svelte';
   import AppIcon from '../AppIcon.svelte';
   import SiteIcon from '../SiteIcon.svelte';
@@ -107,6 +112,29 @@
     ])
   );
 
+  let settingsQuery = $state('');
+  const settingsSearchResults = $derived(
+    searchSettings(
+      settingsQuery,
+      settingsGroups.flatMap((group) => group.items.map((item) => item.id)),
+    ),
+  );
+  const settingsSearchGroups = $derived.by(() => {
+    const resultsBySection = new Map<SettingsSectionId, SettingsSearchEntry[]>();
+    for (const result of settingsSearchResults) {
+      const results = resultsBySection.get(result.section) ?? [];
+      results.push(result);
+      resultsBySection.set(result.section, results);
+    }
+
+    return settingsGroups.flatMap((group) =>
+      group.items.flatMap((item) => {
+        const results = resultsBySection.get(item.id);
+        return results?.length ? [{ section: item, results }] : [];
+      }),
+    );
+  });
+
   /*
    * Purely horizontal: entries slide in from the rail's left edge and leave the
    * same way, so the sidebar reads as one axis of movement while the content
@@ -142,6 +170,12 @@
       SETTINGS_SECTION_ORDER
     );
     appStore.settingsSection = id;
+  }
+
+  function openSettingsSearchResult(result: SettingsSearchEntry) {
+    goToSection(result.section);
+    requestSettingsSearchNavigation(result);
+    settingsQuery = '';
   }
 
   function backToApp() { appStore.settingsOpen = false; }
@@ -200,6 +234,7 @@
   /** Opens settings, seeding the pill at the Settings button so it slides up from it. */
   function openSettings(event: MouseEvent) {
     movePillTo(event.currentTarget as HTMLElement, { snap: true });
+    settingsQuery = '';
     appStore.settingsOpen = true;
   }
 
@@ -209,6 +244,7 @@
     appStore.currentPage;
     appStore.settingsSection;
     settingsEntries;
+    settingsSearchResults;
     requestAnimationFrame(() => movePillTo(activeRailButton()));
   });
 
@@ -432,36 +468,75 @@
     <div
       class="rail-pill"
       class:rail-pill-snap={pillSnap}
-      class:rail-pill-hidden={!appStore.settingsOpen && appStore.currentPage === 'contexts'}
+      class:rail-pill-hidden={
+        (!appStore.settingsOpen && appStore.currentPage === 'contexts') ||
+        (appStore.settingsOpen && Boolean(settingsQuery.trim()))
+      }
       style="top:{pillTop}px; height:{pillHeight}px"
     ></div>
 
     {#if appStore.settingsOpen}
-      <div class="rail-list rail-list-settings">
-        {#each settingsEntries as entry, i (entry.key)}
-          {#if entry.kind === 'label'}
-            <div
-              class="settings-section-label"
-              in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: railDelay(i, RAIL_IN_DELAY_MS), easing: cubicOut }}
-              out:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_OUT_MS), delay: railDelay(i, 0, RAIL_OUT_STAGGER_MS), easing: cubicOut }}
-            >{entry.label}</div>
-          {:else}
-            <button
-              type="button"
-              class="settings-nav-item"
-              class:active={appStore.settingsSection === entry.id}
-              onclick={() => goToSection(entry.id)}
-              in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: railDelay(i, RAIL_IN_DELAY_MS), easing: cubicOut }}
-              out:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_OUT_MS), delay: railDelay(i, 0, RAIL_OUT_STAGGER_MS), easing: cubicOut }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.settingsSection === entry.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[entry.icon]}</svg>
-              <span>{entry.label}</span>
-              {#if entry.id === 'advanced' && import.meta.env.DEV}
-                <span class="legacy-label" aria-hidden="true">Microphone</span>
-              {/if}
-            </button>
+      <div class="settings-rail-content">
+        <div
+          class="settings-search"
+          in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: 0, easing: cubicOut }}
+          out:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_OUT_MS), delay: 0, easing: cubicOut }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <input type="search" bind:value={settingsQuery} placeholder="Search settings..." aria-label="Search settings" />
+          {#if settingsQuery}
+            <button type="button" class="settings-search-clear" aria-label="Clear settings search" onclick={() => settingsQuery = ''}>×</button>
           {/if}
-        {/each}
+        </div>
+        {#if settingsQuery.trim()}
+          <div class="settings-search-results scroll-styled" aria-live="polite">
+            {#each settingsSearchGroups as group (group.section.id)}
+              <div class="settings-search-group">
+                <div class="settings-search-section">{group.section.label}</div>
+                {#each group.results as result (result.id)}
+                  <button
+                    type="button"
+                    class="settings-search-result"
+                    onclick={() => openSettingsSearchResult(result)}
+                  >
+                    <span class="settings-search-result-title">{result.label}</span>
+                    <span class="settings-search-result-hint">Open in {group.section.label}</span>
+                  </button>
+                {/each}
+              </div>
+            {/each}
+            {#if settingsSearchResults.length === 0}
+              <p class="settings-search-empty">No matching settings</p>
+            {/if}
+          </div>
+        {:else}
+          <div class="rail-list rail-list-settings">
+            {#each settingsEntries as entry, i (entry.key)}
+              {#if entry.kind === 'label'}
+                <div
+                  class="settings-section-label"
+                  in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: 0, easing: cubicOut }}
+                  out:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_OUT_MS), delay: 0, easing: cubicOut }}
+                >{entry.label}</div>
+              {:else}
+                <button
+                  type="button"
+                  class="settings-nav-item"
+                  class:active={appStore.settingsSection === entry.id}
+                  onclick={() => goToSection(entry.id)}
+                  in:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_IN_MS), delay: 0, easing: cubicOut }}
+                  out:fly|global={{ x: -motionPx(RAIL_TRAVEL_PX), duration: motionMs(RAIL_OUT_MS), delay: 0, easing: cubicOut }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={appStore.settingsSection === entry.id ? '2.2' : '1.6'} stroke-linecap="round" stroke-linejoin="round">{@html icons[entry.icon]}</svg>
+                  <span>{entry.label}</span>
+                  {#if entry.id === 'advanced' && import.meta.env.DEV}
+                    <span class="legacy-label" aria-hidden="true">Microphone</span>
+                  {/if}
+                </button>
+              {/if}
+            {/each}
+          </div>
+        {/if}
       </div>
     {:else}
       <div class="rail-list rail-list-app">
@@ -708,7 +783,7 @@
         </span>
       </div>
     </div>
-    <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 200 * 100, 100)}%; background:{$memoryMb >= 150 ? 'var(--accent)' : 'var(--line-strong)'}"></span></div>
+    <div class="local-meter-thin"><span style="width:{Math.min($memoryMb / 400 * 100, 100)}%; background:{$memoryMb >= 150 ? 'var(--accent)' : 'var(--line-strong)'}"></span></div>
   </div>
 </aside>
 
@@ -746,7 +821,7 @@
 <style>
   .sidebar {
     width: var(--sidebar-w);
-    background: var(--bg-elev);
+    background: var(--sidebar-bg);
     border-right: 1px solid var(--line);
     /* .body keeps its bottom gutter for the content column; pull the sidebar
        through it so it runs flush into the bottom-left window corner. */
@@ -788,6 +863,7 @@
   }
 
   .sidebar:not(.rail-settings) .nav-section { padding-top: 18px; }
+  .rail-settings .nav-section { padding-top: 20px; }
 
   /* No Windows-specific nav offset: the brand block owns the rail header on
      every platform, and its min-height matches the native titlebar height, so
@@ -805,7 +881,8 @@
      .nav-section's height immediately. Its exit animation still paints from
      the same coordinates. */
   .rail-settings .rail-list-app,
-  .sidebar:not(.rail-settings) .rail-list-settings {
+  .sidebar:not(.rail-settings) .rail-list-settings,
+  .sidebar:not(.rail-settings) .settings-rail-content {
     position: absolute;
     left: 8px;
     right: 8px;
@@ -813,6 +890,128 @@
 
   .rail-settings .rail-list-app { top: 18px; }
   .sidebar:not(.rail-settings) .rail-list-settings { top: 12px; }
+  .sidebar:not(.rail-settings) .settings-rail-content { top: 0; }
+  .rail-settings .rail-list-settings { position: static; }
+
+  /* Shares the app list's grid cell so the outgoing settings rail (search bar
+     + list) overlaps the incoming app nav instead of stacking into a second
+     grid row — without this the search bar would linger in its own row,
+     visibly growing the rail, until its outro finished and everything below
+     it (the Contexts section) snapped up. */
+  .settings-rail-content {
+    grid-area: 1 / 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .settings-search {
+    align-items: center;
+    display: flex;
+    gap: 7px;
+    margin: 0 2px;
+    min-height: 30px;
+    padding: 0 8px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    color: var(--ink-faint);
+  }
+
+  .settings-search:focus-within {
+    border-color: var(--line-strong);
+  }
+
+  .settings-search input {
+    background: transparent;
+    border: 0;
+    color: var(--ink);
+    flex: 1;
+    font: 12px var(--sans);
+    min-width: 0;
+    outline: 0;
+  }
+
+  .settings-search input::placeholder { color: var(--ink-faint); }
+
+  .settings-search input::-webkit-search-cancel-button,
+  .settings-search input::-webkit-search-decoration {
+    appearance: none;
+    -webkit-appearance: none;
+  }
+
+  .settings-search input::-ms-clear { display: none; }
+
+  .settings-search-clear {
+    background: transparent;
+    border: 0;
+    color: var(--ink-mute);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 1px;
+  }
+
+  .settings-search-empty {
+    color: var(--ink-mute);
+    font-size: 11.5px;
+    margin: 6px 10px;
+  }
+
+  .settings-search-results {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: calc(100vh - 190px);
+    overflow-y: auto;
+    padding: 0 2px 8px;
+  }
+
+  .settings-search-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .settings-search-section {
+    color: var(--ink-mute);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 8px 4px;
+  }
+
+  .settings-search-result {
+    width: 100%;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 7px 8px;
+    text-align: left;
+  }
+
+  .settings-search-result:hover { background: var(--control-hover); }
+
+  .settings-search-result:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  .settings-search-result-title {
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+
+  .settings-search-result-hint {
+    color: var(--ink-mute);
+    font-size: 10.5px;
+    line-height: 1.3;
+  }
 
   /*
    * Single travelling highlight. Positioned against .sidebar (the nearest
@@ -920,11 +1119,10 @@
 
   .settings-section-label {
     font-family: var(--sans);
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
+    font-size: 11px;
+    font-weight: 500;
     color: var(--ink-mute);
-    padding: 10px 10px 5px;
+    padding: 6px 10px 3px;
   }
 
   .legacy-label {
@@ -1520,6 +1718,8 @@
     .sidebar :global(.brand-name) { display: none; }
     .nav-section { padding-inline: 7px; }
     .sidebar:not(.rail-settings) .nav-section { padding-top: 18px; }
+    .settings-search,
+    .settings-search-results { display: none; }
     .nav-item,
     .settings-nav-item,
     .settings-back { justify-content: center; gap: 0; padding-inline: 0; }

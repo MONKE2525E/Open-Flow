@@ -234,8 +234,8 @@
 
 :where(button).ui-dropdown-option.active,
 :where(button).ui-dropdown-option.is-active {
-  background: var(--accent-soft);
-  color: var(--accent-ink);
+  background: var(--control-active);
+  color: var(--ink);
   font-weight: 500;
 }
 
