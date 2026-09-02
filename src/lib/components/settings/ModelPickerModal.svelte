@@ -196,8 +196,8 @@
    * Which provider a hand-typed id belongs to.
    *
    * Never parsed out of the id itself: plenty of ids contain a slash that is
-   * part of the name, not a provider — `openai/gpt-oss-20b` and
-   * `qwen/qwen3.6-27b` are both *Groq* models. Splitting on `/` would file
+   * part of the name, not a provider — `qwen/qwen3.6-27b` is a *Groq* model.
+   * Splitting on `/` would file
    * them under OpenAI. The rail's current filter is an explicit answer, and
    * the active model's provider is the sensible default.
    */
@@ -589,9 +589,9 @@
 
   .picker-title h3 {
     margin: 0;
-    font-family: var(--serif);
+    font-family: var(--sans);
     font-size: 17px;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--ink);
   }
 
@@ -774,10 +774,10 @@
   .group-label {
     margin: 10px 0 4px 6px;
     font-family: var(--sans);
-    font-size: 9px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.09em;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--ink-faint);
   }
 

@@ -431,10 +431,10 @@
   }
 
   .prompt-head-provider {
-    font-family: var(--serif);
+    font-family: var(--sans);
     font-size: 15px;
-    font-weight: 500;
-    letter-spacing: -0.015em;
+    font-weight: 600;
+    letter-spacing: -0.01em;
     color: var(--ink);
     white-space: nowrap;
   }

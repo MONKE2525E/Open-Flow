@@ -272,12 +272,26 @@ fn transcription_does_not_fold_mixed_multiplication_chunks() {
 
 #[test]
 fn cleanup_llm_skips_when_cleanup_is_off_even_for_formal() {
-    assert!(!should_run_cleanup_llm(true, true, true, "none", "formal"));
+    assert!(!should_run_cleanup_llm(
+        true, true, true, "none", "formal", false
+    ));
 }
 
 #[test]
 fn cleanup_llm_skips_for_non_formal_when_none_intensity() {
-    assert!(!should_run_cleanup_llm(true, true, true, "none", "casual"));
+    assert!(!should_run_cleanup_llm(
+        true, true, true, "none", "casual", false
+    ));
+}
+
+#[test]
+fn cleanup_llm_runs_off_only_for_required_dual_fusion() {
+    assert!(should_run_cleanup_llm(
+        true, true, true, "none", "casual", true
+    ));
+    assert!(!should_run_cleanup_llm(
+        false, true, true, "none", "casual", true
+    ));
 }
 
 #[test]
@@ -1182,7 +1196,7 @@ async fn pipeline_fixture_accepts_downloaded_local_model_without_api_keys() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn pipeline_fixture_strips_filler_words_mechanically_when_cleanup_disabled_but_intensity_is_not_none(
+async fn pipeline_fixture_preserves_filler_words_when_cleanup_disabled(
 ) {
     let _guard = harness_test_lock().lock().expect("harness lock");
     let _local_models = install_local_models(&["parakeet-v3"]);
@@ -1216,7 +1230,7 @@ async fn pipeline_fixture_strips_filler_words_mechanically_when_cleanup_disabled
     );
     assert_eq!(
         result.final_text_before_dictionary,
-        "Just have basically sync users, to the database."
+        "Just have um basically sync users, uh, to the database."
     );
     reset();
 }

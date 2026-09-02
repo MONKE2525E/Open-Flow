@@ -5,6 +5,7 @@ export type UiProviderId = 'groq' | 'openai' | 'google' | 'assemblyai';
 
 export const GROQ_GPT_OSS_20B_MODEL = 'openai/gpt-oss-20b';
 export const GROQ_QWEN_3_6_27B_MODEL = 'qwen/qwen3.6-27b';
+export const GROQ_QWEN_3_8_27B_MODEL = 'qwen/qwen3.8-27b';
 const DEPRECATED_GROQ_LLAMA_8B_MODEL = 'llama-3.1-8b-instant';
 const DEPRECATED_GROQ_LLAMA_70B_MODEL = 'llama-3.3-70b-versatile';
 
@@ -68,19 +69,18 @@ export type CatalogEntry = {
 export const CATALOG: CatalogEntry[] = [
   { provider: 'groq', id: 'whisper-large-v3', label: 'Whisper Large v3', tasks: ['transcription'], tags: ['accurate'], tier: 'premium' },
   { provider: 'groq', id: 'whisper-large-v3-turbo', label: 'Whisper Large v3 Turbo', tasks: ['transcription'], tags: ['fast', 'cheap'], tier: 'standard' },
-  { provider: 'groq', id: GROQ_QWEN_3_6_27B_MODEL, label: 'Qwen3.6 27B', tasks: ['cleanup'], tags: ['accurate'], tier: 'premium' },
-  { provider: 'groq', id: GROQ_GPT_OSS_20B_MODEL, label: 'GPT OSS 20B', tasks: ['cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
-  { provider: 'groq', id: 'openai/gpt-oss-120b', label: 'GPT OSS 120B', tasks: ['cleanup'], tags: ['accurate'] },
+  { provider: 'groq', id: GROQ_QWEN_3_8_27B_MODEL, label: 'Qwen3.8 27B', tasks: ['cleanup'], tags: ['accurate'], tier: 'premium' },
+  { provider: 'groq', id: GROQ_QWEN_3_6_27B_MODEL, label: 'Qwen3.6 27B', tasks: ['cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
   { provider: 'openai', id: 'gpt-4o-mini-transcribe', label: 'GPT-4o mini Transcribe', tasks: ['transcription'], tags: ['fast', 'cheap'], tier: 'standard' },
   { provider: 'openai', id: 'gpt-4o-transcribe', label: 'GPT-4o Transcribe', tasks: ['transcription'], tags: ['accurate'], tier: 'premium' },
   { provider: 'openai', id: 'whisper-1', label: 'Whisper v1', tasks: ['transcription'], tags: ['cheap'] },
   { provider: 'openai', id: 'gpt-4o-mini', label: 'GPT-4o mini', tasks: ['cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
   { provider: 'openai', id: 'gpt-4o', label: 'GPT-4o', tasks: ['cleanup'], tags: ['accurate'], tier: 'premium' },
-  { provider: 'google', id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', tasks: ['transcription', 'cleanup'], tags: ['accurate'], tier: 'premium' },
-  { provider: 'google', id: 'gemini-3.5-transcribe', label: 'Gemini 3.5 Transcribe', tasks: ['transcription'], tags: ['accurate'] },
-  { provider: 'google', id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', tasks: ['transcription', 'cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
-  { provider: 'google', id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', tasks: ['cleanup'], tags: ['accurate'] },
-  { provider: 'google', id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', tasks: ['transcription', 'cleanup'], tags: ['fast', 'cheap'] },
+  { provider: 'google', id: 'gemini-3.5-transcribe', label: 'Gemini 3.5 Transcribe', tasks: ['transcription'], tags: ['accurate'], tier: 'premium' },
+  { provider: 'google', id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', tasks: ['transcription'], tags: ['fast', 'cheap'], tier: 'standard' },
+  { provider: 'google', id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', tasks: ['cleanup'], tags: ['accurate'], tier: 'premium' },
+  { provider: 'google', id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite', tasks: ['cleanup'], tags: ['fast', 'cheap'], tier: 'standard' },
+  { provider: 'google', id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', tasks: ['cleanup'], tags: ['fast', 'cheap'] },
   { provider: 'assemblyai', id: 'universal-3-5-pro', label: 'Universal 3.5 Pro', tasks: ['transcription'], tags: ['accurate'], tier: 'premium' },
   { provider: 'assemblyai', id: 'universal-2', label: 'Universal-2', tasks: ['transcription'], tags: ['fast', 'cheap'], tier: 'standard' },
   { provider: 'local', id: 'parakeet-v3', label: 'Parakeet V3', tasks: ['transcription'], tags: ['accurate'] },
@@ -157,15 +157,19 @@ export const recommendedModels = buildRecommended(CATALOG);
 
 export function migrateDeprecatedGroqCleanupModel(model: string): string {
   const normalized = model.trim();
-  if (normalized === DEPRECATED_GROQ_LLAMA_8B_MODEL) return GROQ_GPT_OSS_20B_MODEL;
+  if (normalized === DEPRECATED_GROQ_LLAMA_8B_MODEL) return GROQ_QWEN_3_6_27B_MODEL;
   if (normalized === DEPRECATED_GROQ_LLAMA_70B_MODEL) return GROQ_QWEN_3_6_27B_MODEL;
+  if (normalized === GROQ_GPT_OSS_20B_MODEL || normalized === 'openai/gpt-oss-120b') {
+    return GROQ_QWEN_3_6_27B_MODEL;
+  }
   return normalized;
 }
 
 export function migrateDeprecatedGoogleModel(model: string): string {
-  return model.trim() === 'gemini-3.5-flash'
-    ? 'gemini-3.7-flash'
-    : model.trim();
+  const normalized = model.trim();
+  return normalized === 'gemini-3.7-flash' || normalized === 'gemini-2.5-pro'
+    ? 'gemini-3.5-flash-lite'
+    : normalized;
 }
 
 export const emptyProviderModelMap = (): ProviderModelMap => ({

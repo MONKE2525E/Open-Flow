@@ -120,15 +120,12 @@ fn start_server_process(
         .arg(port.to_string())
         .arg("--ctx-size")
         .arg("4096")
-        // "none" forces all output into `content` unfiltered, including any
-        // chain-of-thought preamble a reasoning-capable GGUF emits — verified
-        // in practice this leaks raw "thinking" text into completions. "auto"
-        // lets llama-server's own template-aware parser attempt to separate
-        // reasoning from the final answer. Whatever this produces is still
-        // screened by looks_like_model_artifact_leak() before ever being
-        // used, so this is a best-effort improvement, not the safety net.
-        .arg("--reasoning-format")
-        .arg("auto")
+        // Disable thinking at the runtime boundary; the output token budget
+        // below is therefore available for the dictated text.
+        .arg("--reasoning")
+        .arg("off")
+        .arg("--reasoning-budget")
+        .arg("0")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
@@ -290,12 +287,6 @@ struct Choice {
 struct MsgResp {
     #[serde(default)]
     content: String,
-    /// Some llama-server builds segregate "thinking"/reasoning output here
-    /// instead of `content` when they (mis)detect a reasoning-capable model.
-    /// `--reasoning-format none` at server startup should prevent this, but
-    /// fall back to reading it if a build still splits it out anyway.
-    #[serde(default)]
-    reasoning_content: Option<String>,
 }
 
 /// Each open-weight chat template ends a turn with a different marker.
@@ -316,7 +307,6 @@ fn stop_sequences_for_family(family: LocalLlmPromptFamily) -> Vec<String> {
 
 struct ChatAttempt {
     content: Option<String>,
-    reasoning: Option<String>,
     finish_reason: Option<String>,
 }
 
@@ -335,25 +325,17 @@ async fn send_chat_completion(endpoint: &str, body: &ChatReq) -> anyhow::Result<
         .as_ref()
         .map(|c| c.message.content.trim().to_string())
         .filter(|s| !s.is_empty());
-    let reasoning = choice
-        .as_ref()
-        .and_then(|c| c.message.reasoning_content.as_deref())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
     let finish_reason = choice.as_ref().and_then(|c| c.finish_reason.clone());
 
     // Diagnostic only — character counts and the finish_reason enum value,
     // never the generated text itself (cleaned text must not be logged).
     log::debug!(
-        "local-llm: chat completion status={status} finish_reason={finish_reason:?} content_chars={} reasoning_content_chars={}",
+        "local-llm: chat completion status={status} finish_reason={finish_reason:?} content_chars={}",
         content.as_ref().map(|s| s.chars().count()).unwrap_or(0),
-        reasoning.as_ref().map(|s| s.chars().count()).unwrap_or(0),
     );
 
     Ok(ChatAttempt {
         content,
-        reasoning,
         finish_reason,
     })
 }
@@ -377,24 +359,30 @@ fn looks_truncated(attempt: &ChatAttempt, input_chars: usize) -> bool {
         && attempt
             .content
             .as_deref()
-            .or(attempt.reasoning.as_deref())
             .is_some_and(|output| input_chars > 20 && !output.is_empty())
 }
 
 /// Combines the truncation, fabrication, and perspective-flip checks into a
 /// single "is this attempt worth retrying" decision, returning a short
 /// reason for logging (never the text itself).
-fn retry_reason(attempt: &ChatAttempt, input_text: &str) -> Option<&'static str> {
-    if looks_truncated(attempt, input_text.chars().count()) {
+fn retry_reason(attempt: &ChatAttempt, input_texts: &[&str]) -> Option<&'static str> {
+    let primary = input_texts.first().copied().unwrap_or_default();
+    if looks_truncated(attempt, primary.chars().count()) {
         return Some(
             "looks truncated (finish_reason=length — generation was cut off at the token budget)",
         );
     }
-    if let Some(content) = attempt.content.as_deref().or(attempt.reasoning.as_deref()) {
-        if crate::api::prompts::looks_like_fabricated_content(input_text, content) {
+    if let Some(content) = attempt.content.as_deref() {
+        if input_texts
+            .iter()
+            .all(|input| crate::api::prompts::looks_like_fabricated_content(input, content))
+        {
             return Some("looks fabricated (output shares almost no words with the input)");
         }
-        if crate::api::prompts::looks_like_perspective_flip(input_text, content) {
+        if input_texts
+            .iter()
+            .any(|input| crate::api::prompts::looks_like_perspective_flip(input, content))
+        {
             return Some("looks like a perspective flip (you/I swapped)");
         }
     }
@@ -406,6 +394,17 @@ pub async fn request_cleanup(
     model_id: &str,
     prompt: &str,
     text: &str,
+    max_tokens: u32,
+) -> anyhow::Result<String> {
+    request_cleanup_with_alternate(endpoint, model_id, prompt, text, None, max_tokens).await
+}
+
+pub async fn request_cleanup_with_alternate(
+    endpoint: &str,
+    model_id: &str,
+    prompt: &str,
+    primary_text: &str,
+    alternate_text: Option<&str>,
     max_tokens: u32,
 ) -> anyhow::Result<String> {
     // Folded into a single "user" turn rather than a separate "system" role:
@@ -420,7 +419,10 @@ pub async fn request_cleanup(
         model: model_id.to_string(),
         messages: vec![Msg {
             role: "user".into(),
-            content: format!("{prompt}\n\n<raw_dictation>\n{text}\n</raw_dictation>"),
+            content: format!(
+                "{prompt}\n\n{}",
+                crate::api::cleanup::format_transcript_input(primary_text, alternate_text)
+            ),
         }],
         max_tokens,
         // Small non-zero temperature: greedy decoding (0.0) has no
@@ -432,17 +434,20 @@ pub async fn request_cleanup(
         stop,
     };
     let mut attempt = send_chat_completion(endpoint, &body).await?;
-    if let Some(reason) = retry_reason(&attempt, text) {
+    let input_texts = alternate_text
+        .map(|alternate| vec![primary_text, alternate])
+        .unwrap_or_else(|| vec![primary_text]);
+    if let Some(reason) = retry_reason(&attempt, &input_texts) {
         log::warn!("local-llm: completion {reason} — retrying once");
         attempt = send_chat_completion(endpoint, &body).await?;
-        if let Some(reason) = retry_reason(&attempt, text) {
+        if let Some(reason) = retry_reason(&attempt, &input_texts) {
             log::warn!(
                 "local-llm: retry also {reason} — using it anyway, nothing better available"
             );
         }
     }
 
-    attempt.content.or(attempt.reasoning).ok_or_else(|| {
+    attempt.content.ok_or_else(|| {
         anyhow::anyhow!(
             "local cleanup runtime returned no choices (finish_reason={:?})",
             attempt.finish_reason
@@ -457,7 +462,6 @@ mod tests {
     fn attempt(content: Option<&str>, finish_reason: Option<&str>) -> ChatAttempt {
         ChatAttempt {
             content: content.map(str::to_string),
-            reasoning: None,
             finish_reason: finish_reason.map(str::to_string),
         }
     }

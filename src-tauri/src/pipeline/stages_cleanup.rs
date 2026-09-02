@@ -2,8 +2,8 @@
 //! cleanup-result cache, provider fallback chains, and the
 //! cleanup+snippet orchestration entrypoints.
 
-use super::*;
 use super::stages_style::ensure_terminal_punctuation;
+use super::*;
 
 // Cleanup is an enhancement, not a reason to leave a completed dictation
 // blocked behind a provider that has accepted a request but stopped replying.
@@ -11,6 +11,7 @@ use super::stages_style::ensure_terminal_punctuation;
 // deliver the transcription without cleanup if both attempts stall.
 const CLEANUP_FAST_ATTEMPT_TIMEOUT_SECS: u64 = 3;
 const CLEANUP_FAST_ATTEMPTS: u8 = 2;
+const CLEANUP_PROMPT_VERSION: &str = "dictation-v3";
 
 fn cleanup_soft_timeout_error(provider: &str, model: &str) -> anyhow::Error {
     anyhow::anyhow!(
@@ -38,6 +39,7 @@ async fn run_local_cleanup_request(
     profile: &str,
     intensity: &str,
     extra_rules: &str,
+    evidence: &str,
     app_context: Option<&str>,
     custom_template: Option<&str>,
     alternate_transcript: Option<&str>,
@@ -48,48 +50,40 @@ async fn run_local_cleanup_request(
     }
 
     let app = app.ok_or_else(|| anyhow::anyhow!("Local cleanup runtime unavailable"))?;
-    let prompt = prompts::get_cleanup_prompt_with_alternate(
+    let prompt = prompts::get_cleanup_prompt_with_alternate_and_evidence(
         "local",
         model,
         profile,
         intensity,
         extra_rules,
+        evidence,
         app_context,
         expanded,
         custom_template,
         alternate_transcript,
     );
-    // Local builds can spend a roughly fixed amount of budget on hidden
-    // reasoning before producing visible output — observed across many
-    // requests: gemma-4-e2b consistently burns 430-460 tokens on internal
-    // reasoning alone, regardless of how short the input is, leaving as
-    // little as 50-80 tokens for the actual cleaned text under a flat
-    // budget. That's tight enough that a longer dictation can get its
-    // content cut off mid-sentence (finish_reason="length" with non-empty
-    // content — accepted as a "success" since the artifact-leak guard only
-    // inspects text, not whether generation was truncated). Add the
-    // reasoning overhead on top of the normal content budget rather than
-    // using it as a flat floor, so a longer dictation still gets adequate
-    // room for its own (longer) cleaned output, not just the same total cap
-    // a short one gets.
-    const LOCAL_REASONING_OVERHEAD_TOKENS: u32 = 512;
-    let max_output_tokens =
-        prompts::cleanup_max_output_tokens(intensity, expanded) + LOCAL_REASONING_OVERHEAD_TOKENS;
+    // The runtime is launched with thinking disabled, so this budget is for
+    // visible cleanup output rather than hidden reasoning.
+    let max_output_tokens = if intensity == "none" {
+        alternate_transcript
+            .map(|alternate| prompts::fusion_max_output_tokens(expanded, alternate))
+            .unwrap_or_else(|| prompts::cleanup_max_output_tokens(intensity, expanded))
+    } else {
+        prompts::cleanup_max_output_tokens(intensity, expanded)
+    };
     let manager = app
         .state::<crate::local_llm::LocalLlmManager>()
         .inner()
         .clone();
-    let input = alternate_transcript
-        .map(|alternate| {
-            format!(
-                "<primary_transcript>\n{}\n</primary_transcript>\n<alternate_transcript>\n{}\n</alternate_transcript>",
-                crate::api::cleanup::escape_transcript_xml(expanded),
-                crate::api::cleanup::escape_transcript_xml(alternate),
-            )
-        })
-        .unwrap_or_else(|| expanded.to_owned());
     manager
-        .cleanup_with_prompt(app, model, &input, &prompt, max_output_tokens)
+        .cleanup_with_prompt_and_alternate(
+            app,
+            model,
+            expanded,
+            &prompt,
+            alternate_transcript,
+            max_output_tokens,
+        )
         .await
 }
 
@@ -156,6 +150,7 @@ pub(super) async fn guard_cleanup_refusal(
     profile: &str,
     intensity: &str,
     extra_rules: &str,
+    evidence: &str,
     app_context: Option<&str>,
     app: Option<&AppHandle>,
     alternate_transcript: Option<&str>,
@@ -183,6 +178,7 @@ pub(super) async fn guard_cleanup_refusal(
             profile,
             intensity,
             extra_rules,
+            evidence,
             app_context,
             Some(prompts::hardened_retry_template()),
             alternate_transcript,
@@ -190,7 +186,7 @@ pub(super) async fn guard_cleanup_refusal(
         .await
     } else {
         let cp = ProviderId::from_str(provider_id);
-        cleanup::cleanup_with_alternate(
+        cleanup::cleanup_with_alternate_and_evidence(
             expanded,
             cp,
             key,
@@ -198,6 +194,7 @@ pub(super) async fn guard_cleanup_refusal(
             profile,
             intensity,
             extra_rules,
+            evidence,
             app_context,
             Some(prompts::hardened_retry_template()),
             alternate_transcript,
@@ -236,7 +233,6 @@ pub(super) async fn guard_cleanup_refusal(
         }
     }
 }
-
 
 pub(super) struct CleanupCachePlan {
     pub(super) key: String,
@@ -328,6 +324,8 @@ pub(super) fn dual_cleanup_context_fingerprint(
     app_context: Option<&str>,
 ) -> u64 {
     let mut context = String::new();
+    context.push_str(CLEANUP_PROMPT_VERSION);
+    context.push('\n');
     context.push_str(&cfg.cleanup_default_model);
     context.push('\n');
     for fallback in &cfg.cleanup_fallback_models {
@@ -404,7 +402,11 @@ fn cleanup_cache_hit_text(
         entry.hit_count
     );
     touch_cleanup_cache_hit(db_handle, cache_key, &entry);
-    let punctuated = ensure_terminal_punctuation(&entry.clean_text, profile, intensity);
+    let punctuated = if intensity == "none" {
+        entry.clean_text.clone()
+    } else {
+        ensure_terminal_punctuation(&entry.clean_text, profile, intensity)
+    };
     Some(snippets::apply_cleanup_instruction_overrides(
         &punctuated,
         snippet_instructions,
@@ -418,6 +420,7 @@ async fn run_cleanup_provider_chain(
     cfg: &store::PipelineConfig,
     profile: &str,
     extra_rules: &str,
+    evidence: &str,
     app_context: Option<&str>,
     app: Option<&AppHandle>,
     gen: u64,
@@ -425,6 +428,17 @@ async fn run_cleanup_provider_chain(
     let mut last_cleanup_err: Option<anyhow::Error> = None;
     let mut saw_soft_timeout = false;
     for (provider_id, model) in cleanup_model_chain(cfg) {
+        if !crate::api::cleanup::model_supports_cleanup_reasoning_policy(
+            ProviderId::from_str(&provider_id),
+            &model,
+        ) {
+            log::warn!(
+                "pipeline: skipping cleanup model that cannot satisfy reasoning policy provider={} model={}",
+                provider_id,
+                model
+            );
+            continue;
+        }
         let is_local = provider_id == store::LOCAL;
         let key = cfg.key_for(&provider_id).to_owned();
         if key.is_empty() && !is_local {
@@ -441,6 +455,7 @@ async fn run_cleanup_provider_chain(
                     profile,
                     &cfg.cleanup_intensity,
                     extra_rules,
+                    evidence,
                     app_context,
                     custom_template,
                     alternate_transcript,
@@ -450,7 +465,7 @@ async fn run_cleanup_provider_chain(
                 let cp = ProviderId::from_str(&provider_id);
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(CLEANUP_FAST_ATTEMPT_TIMEOUT_SECS),
-                    cleanup::cleanup_with_alternate(
+                    cleanup::cleanup_with_alternate_and_evidence(
                         expanded,
                         cp,
                         &key,
@@ -458,6 +473,7 @@ async fn run_cleanup_provider_chain(
                         profile,
                         &cfg.cleanup_intensity,
                         extra_rules,
+                        evidence,
                         app_context,
                         custom_template,
                         alternate_transcript,
@@ -634,13 +650,17 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
         expanded.chars().count()
     );
 
-    let dict_instructions = dictionary::build_relevant_dictionary_prompt_from(&dict_entries, raw);
+    let dictionary_evidence = dictionary::build_relevant_dictionary_prompt_from_sources(
+        &dict_entries,
+        raw,
+        alternate.map(|candidate| candidate.text.as_str()),
+        app_context,
+    );
     let context_custom_instructions = db::query_context(db_handle, context_id)
         .ok()
         .and_then(|c| c.custom_instructions);
-    let extra_rules = [
+    let user_overrides = [
         snippet_instructions.as_str(),
-        dict_instructions.as_str(),
         context_custom_instructions.as_deref().unwrap_or(""),
         protected_instruction.unwrap_or(""),
     ]
@@ -650,29 +670,43 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
     .collect::<Vec<_>>()
     .join("\n\n");
     log::debug!(
-        "pipeline: cleanup extra_rules chars={} lines={}",
-        extra_rules.chars().count(),
-        extra_rules.lines().filter(|l| !l.trim().is_empty()).count()
+        "pipeline: cleanup prompt inputs overrides_chars={} evidence_chars={} override_lines={} evidence_lines={}",
+        user_overrides.chars().count(),
+        dictionary_evidence.chars().count(),
+        user_overrides.lines().filter(|l| !l.trim().is_empty()).count(),
+        dictionary_evidence.lines().filter(|l| !l.trim().is_empty()).count()
     );
 
     let mut used_cache_key = String::new();
     let mut cleanup_api_used = String::new();
+    let needs_transcript_fusion = cfg.cleanup_intensity == "none" && alternate.is_some();
     let final_text = if should_run_cleanup_llm(
         cfg.cleanup_enabled,
         has_cleanup_key_in_chain(cfg),
         pure_expansion.is_none(),
         &cfg.cleanup_intensity,
         profile,
+        needs_transcript_fusion,
     ) {
+        let mut prompt_context = user_overrides.clone();
+        if !dictionary_evidence.trim().is_empty() {
+            if !prompt_context.is_empty() {
+                prompt_context.push_str("\n\n");
+            }
+            prompt_context.push_str(&dictionary_evidence);
+        }
+        let context_fingerprint = dual_cleanup_context_fingerprint(
+            cfg,
+            &prompt_context,
+            app_context,
+        );
         let cache_plan = cleanup_cache_plan_for_context(
             &expanded,
             profile,
             &cfg.cleanup_intensity,
             &snippet_instructions,
             alternate.map(|candidate| candidate.text.as_str()),
-            alternate
-                .as_ref()
-                .map(|_| dual_cleanup_context_fingerprint(cfg, &extra_rules, app_context)),
+            Some(context_fingerprint),
             Some(context_id),
         );
         // Protected clipboard payloads are unique per invocation and must not
@@ -714,7 +748,8 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
             alternate.map(|candidate| candidate.text.as_str()),
             cfg,
             profile,
-            &extra_rules,
+            &user_overrides,
+            &dictionary_evidence,
             app_context,
             app,
             gen,
@@ -735,7 +770,8 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                     &success.key,
                     profile,
                     &cfg.cleanup_intensity,
-                    &extra_rules,
+                    &user_overrides,
+                    &dictionary_evidence,
                     app_context,
                     app,
                     alternate.map(|candidate| candidate.text.as_str()),
@@ -751,17 +787,21 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                 // Strip em dashes the model introduced (vs. ones the speaker
                 // actually dictated) before caching, so a poisoned-by-style
                 // result never gets baked into the cache.
-                let cleaned = crate::system::text::strip_unspoken_em_dashes(&expanded, &cleaned);
-                // Mechanical backstop for "light" intensity: the prompt
+                let cleaned = if cfg.cleanup_intensity == "none" {
+                    cleaned
+                } else {
+                    crate::system::text::strip_unspoken_em_dashes(&expanded, &cleaned)
+                };
+                // Mechanical backstop for every non-Off intensity: the prompt
                 // already tells every model to remove filler/hesitation
                 // words, but small local models apply that rule
                 // unreliably — observed in practice: one "um" correctly
                 // stripped while others survived untouched in the same
                 // output. Deterministic removal guarantees these are gone
-                // regardless of model behavior, unlike "like"/"you know"
-                // which have legitimate non-filler meanings and stay
-                // entirely up to the model.
-                let cleaned = if cfg.cleanup_intensity == "light" {
+                // regardless of model behavior. The helper only removes
+                // "you know" in an unambiguously discourse-filler position;
+                // meaningful uses remain intact.
+                let cleaned = if cfg.cleanup_intensity != "none" {
                     crate::system::text::strip_filler_hesitations(&cleaned)
                 } else {
                     cleaned
@@ -769,8 +809,11 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                 // Punctuate before caching + overrides so the cache stores the
                 // normalized text and snippet "no period" instructions can still
                 // override it afterward.
-                let cleaned =
-                    ensure_terminal_punctuation(&cleaned, profile, &cfg.cleanup_intensity);
+                let cleaned = if cfg.cleanup_intensity == "none" {
+                    cleaned
+                } else {
+                    ensure_terminal_punctuation(&cleaned, profile, &cfg.cleanup_intensity)
+                };
                 let overridden =
                     snippets::apply_cleanup_instruction_overrides(&cleaned, &snippet_instructions);
                 if !cache_key.is_empty() {
@@ -795,7 +838,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                 cleanup_api_used.clear();
                 let text =
                     snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions);
-                if cfg.cleanup_intensity != "none" {
+                if cfg.cleanup_enabled && cfg.cleanup_intensity != "none" {
                     crate::system::text::strip_filler_hesitations(&text)
                 } else {
                     text
@@ -808,7 +851,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
                 cleanup_api_used.clear();
                 let text =
                     snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions);
-                if cfg.cleanup_intensity != "none" {
+                if cfg.cleanup_enabled && cfg.cleanup_intensity != "none" {
                     crate::system::text::strip_filler_hesitations(&text)
                 } else {
                     text
@@ -817,7 +860,7 @@ pub(super) async fn run_cleanup_and_snippets_for_db(
         }
     } else {
         let text = snippets::apply_cleanup_instruction_overrides(&expanded, &snippet_instructions);
-        if cfg.cleanup_intensity != "none" {
+        if cfg.cleanup_enabled && cfg.cleanup_intensity != "none" {
             crate::system::text::strip_filler_hesitations(&text)
         } else {
             text

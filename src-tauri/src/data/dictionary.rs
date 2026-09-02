@@ -1,41 +1,92 @@
 use crate::data::db;
 use crate::system::text::{has_distinctive_features, tokenize_lower_alnum};
 
-const MAX_PROMPT_ENTRIES: usize = 48;
-const MAX_PROMPT_CHARS: usize = 5_000;
-const FALLBACK_RECENT_ENTRIES: usize = 16;
-const MIN_MATCHED_PROMPT_ENTRIES: usize = 8;
+const MAX_PROMPT_ENTRIES: usize = 24;
+const MAX_PROMPT_CHARS: usize = 3_000;
+const MAX_FALLBACK_ENTRIES: usize = 8;
+const SHORT_TRANSCRIPT_TOKENS: usize = 4;
 
+#[cfg(test)]
 pub fn build_relevant_dictionary_prompt_from(
     entries: &[db::DictionaryEntry],
     raw_text: &str,
+) -> String {
+    build_relevant_dictionary_prompt_from_sources(entries, raw_text, None, None)
+}
+
+/// Build vocabulary evidence from the candidate transcripts and the small
+/// app/context hint. Matching entries are ranked instead of dumping the
+/// context dictionary into every request. The primary candidate has the
+/// highest weight; an alternate or context hit can surface a useful term but
+/// never becomes a replacement rule.
+pub fn build_relevant_dictionary_prompt_from_sources(
+    entries: &[db::DictionaryEntry],
+    primary_text: &str,
+    alternate_text: Option<&str>,
+    context_text: Option<&str>,
 ) -> String {
     if entries.is_empty() {
         return String::new();
     }
 
-    let raw_lower = raw_text.to_lowercase();
-    let raw_tokens = tokenize_lower_alnum(raw_text);
-    let raw_match_tokens: Vec<&str> = raw_tokens
+    let primary_tokens = tokenize_lower_alnum(primary_text);
+    let short_or_ambiguous = primary_tokens.len() <= SHORT_TRANSCRIPT_TOKENS;
+    let sources = [
+        Some((primary_text, 100u16)),
+        alternate_text.map(|text| (text, 82u16)),
+        context_text.map(|text| (text, 52u16)),
+    ]
+    .into_iter()
+    .enumerate()
+    .filter_map(|(index, source)| {
+        source.map(|(text, weight)| (index, text, weight, text.to_lowercase(), tokenize_lower_alnum(text)))
+    })
+    .collect::<Vec<_>>();
+
+    let mut ranked: Vec<(u16, usize, &db::DictionaryEntry)> = entries
         .iter()
-        .map(String::as_str)
-        .filter(|token| token.chars().count() >= 4)
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            let mut score = 0u16;
+            let mut primary_match = false;
+            let mut alternate_match = false;
+            for (original_index, _text, weight, lower, tokens) in &sources {
+                let Some(match_score) = entry_match_score(entry, lower, tokens) else {
+                    continue;
+                };
+                score = score.max(weight.saturating_mul(match_score) / 100);
+                if *original_index == 0 {
+                    primary_match = true;
+                } else if *original_index == 1 {
+                    alternate_match = true;
+                }
+            }
+            if primary_match && alternate_match {
+                score = score.saturating_add(18);
+            }
+            (score > 0).then_some((score, index, entry))
+        })
         .collect();
-    let mut selected: Vec<&db::DictionaryEntry> = entries
+    ranked.sort_by(|(score_a, index_a, _), (score_b, index_b, _)| {
+        score_b.cmp(score_a).then_with(|| index_a.cmp(index_b))
+    });
+
+    let mut selected: Vec<&db::DictionaryEntry> = ranked
         .iter()
-        .filter(|entry| entry_matches_raw(entry, &raw_lower, &raw_match_tokens))
+        .take(MAX_PROMPT_ENTRIES)
+        .map(|(_, _, entry)| *entry)
         .collect();
 
-    if selected.len() < MIN_MATCHED_PROMPT_ENTRIES {
-        for entry in entries.iter().take(FALLBACK_RECENT_ENTRIES) {
-            if selected.iter().any(|picked| picked.id == entry.id) {
-                continue;
-            }
-            selected.push(entry);
-            if selected.len() >= MIN_MATCHED_PROMPT_ENTRIES {
-                break;
-            }
-        }
+    // A one- or two-word dictation often contains exactly the term the STT
+    // missed, so having a tiny set of high-signal candidates is safer than
+    // returning no vocabulary at all. Only distinctive/proper/technical
+    // entries qualify; ordinary words are never sprayed into a short prompt.
+    if selected.is_empty() && short_or_ambiguous {
+        selected = entries
+            .iter()
+            .filter(|entry| entry_has_fallback_signal(entry))
+            .take(MAX_FALLBACK_ENTRIES)
+            .collect();
     }
 
     build_dictionary_prompt_limited(selected.into_iter())
@@ -55,25 +106,61 @@ fn parse_dictionary_mistakes(mistake: &str) -> impl Iterator<Item = &str> {
         .filter(|m| !m.is_empty())
 }
 
-fn entry_matches_raw(entry: &db::DictionaryEntry, raw_lower: &str, raw_tokens: &[&str]) -> bool {
-    contains_nonempty(raw_lower, &entry.term.to_lowercase())
-        || entry.mistake.as_ref().is_some_and(|mistake| {
-            parse_dictionary_mistakes(mistake)
-                .any(|variant| contains_nonempty(raw_lower, &variant.to_lowercase()))
-        })
-        || fuzzy_token_match(entry, raw_tokens)
+fn entry_match_score(
+    entry: &db::DictionaryEntry,
+    source_lower: &str,
+    source_tokens: &[String],
+) -> Option<u16> {
+    let source_tokens: Vec<&str> = source_tokens
+        .iter()
+        .map(String::as_str)
+        .filter(|token| token.chars().count() >= 4)
+        .collect();
+    let sources = std::iter::once(entry.term.as_str()).chain(
+        entry
+            .mistake
+            .as_deref()
+            .into_iter()
+            .flat_map(parse_dictionary_mistakes),
+    );
+    let mut best = 0u16;
+    for candidate in sources {
+        if contains_term(source_lower, candidate) {
+            best = best.max(100);
+        } else if matches_source_tokens(candidate, &source_tokens) {
+            best = best.max(70);
+        }
+    }
+    (best > 0).then_some(best)
 }
 
-fn contains_nonempty(haystack: &str, needle: &str) -> bool {
-    !needle.trim().is_empty() && haystack.contains(needle)
+fn contains_term(haystack: &str, needle: &str) -> bool {
+    let needle = needle.trim().to_lowercase();
+    if needle.is_empty() {
+        return false;
+    }
+    if needle.chars().all(char::is_alphanumeric) {
+        return tokenize_lower_alnum(haystack)
+            .iter()
+            .any(|token| token == &needle);
+    }
+    haystack.contains(&needle)
 }
 
-fn fuzzy_token_match(entry: &db::DictionaryEntry, raw_tokens: &[&str]) -> bool {
-    matches_source_tokens(&entry.term, raw_tokens)
-        || entry.mistake.as_ref().is_some_and(|mistake| {
-            parse_dictionary_mistakes(mistake)
-                .any(|variant| matches_source_tokens(variant, raw_tokens))
+fn entry_has_fallback_signal(entry: &db::DictionaryEntry) -> bool {
+    has_distinctive_features(&entry.term)
+        || looks_like_proper_or_brand_name(&entry.term)
+        || entry.mistake.as_deref().is_some_and(|mistake| {
+            parse_dictionary_mistakes(mistake).any(|variant| {
+                has_distinctive_features(variant) || looks_like_proper_or_brand_name(variant)
+            })
         })
+}
+
+fn looks_like_proper_or_brand_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars.next().is_some_and(|first| first.is_uppercase())
+        && chars.any(|character| character.is_lowercase())
 }
 
 fn matches_source_tokens(source: &str, raw_tokens: &[&str]) -> bool {
@@ -149,27 +236,23 @@ fn edit_distance_leq_one(a: &str, b: &str) -> bool {
 fn build_dictionary_prompt_limited<'a>(
     entries: impl Iterator<Item = &'a db::DictionaryEntry>,
 ) -> String {
-    let mut lines = Vec::new();
-    let mut chars = 0usize;
+    let header = "Vocabulary evidence (not a replacement list):";
+    let mut rendered = header.to_string();
 
     for entry in entries.take(MAX_PROMPT_ENTRIES) {
         let line = format_dictionary_entry(entry);
-        chars += line.len();
-        if chars > MAX_PROMPT_CHARS && !lines.is_empty() {
+        let candidate = format!("{rendered}\n{line}");
+        if candidate.chars().count() > MAX_PROMPT_CHARS {
             break;
         }
-        lines.push(line);
+        rendered = candidate;
     }
 
-    if lines.is_empty() {
+    if rendered == header {
         return String::new();
     }
 
-    format!(
-        "USER VOCABULARY - These are real words and terms this user says. \
-        Correct likely misspellings to the exact spelling shown:\n{}",
-        lines.join("\n")
-    )
+    rendered
 }
 
 fn format_dictionary_entry(entry: &db::DictionaryEntry) -> String {
@@ -177,10 +260,7 @@ fn format_dictionary_entry(entry: &db::DictionaryEntry) -> String {
         Some(mistake) => {
             let variants: Vec<&str> = parse_dictionary_mistakes(mistake).collect();
             if variants.is_empty() {
-                return format!(
-                    "- \"{}\" - real user term; preserve this exact spelling.",
-                    entry.term
-                );
+                return format!("- known term: \"{}\"", entry.term);
             }
             let quoted = variants
                 .iter()
@@ -188,14 +268,11 @@ fn format_dictionary_entry(entry: &db::DictionaryEntry) -> String {
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
-                "- \"{}\" - transcription often writes {} instead; output \"{}\".",
-                entry.term, quoted, entry.term
+                "- preferred: \"{}\"; possible STT variants: {}",
+                entry.term, quoted
             )
         }
-        None => format!(
-            "- \"{}\" - real user term; preserve this exact spelling.",
-            entry.term
-        ),
+        None => format!("- known term: \"{}\"", entry.term),
     }
 }
 
@@ -213,7 +290,11 @@ pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> 
         .filter_map(|e| {
             e.mistake.as_deref().map(|mistake| {
                 parse_dictionary_mistakes(mistake)
-                    .filter(|variant| !e.auto_learned || has_distinctive_features(variant))
+                    // The LLM gets all relevant vocabulary as evidence. Only
+                    // mechanically fix a variant with a distinctive technical
+                    // shape; common-word pairs (for example clawed/Claude or
+                    // rock/Groq) must remain context-dependent.
+                    .filter(|variant| has_distinctive_features(variant))
                     .map(|variant| (e.id, variant, e.term.as_str()))
             })
         })
@@ -288,7 +369,7 @@ pub fn apply_substitutions_from(text: &str, entries: &[db::DictionaryEntry]) -> 
 mod tests {
     use super::{
         apply_substitutions_from, build_dictionary_prompt_limited,
-        build_relevant_dictionary_prompt_from,
+        build_relevant_dictionary_prompt_from, build_relevant_dictionary_prompt_from_sources,
     };
     use crate::data::db::DictionaryEntry;
 
@@ -329,16 +410,18 @@ mod tests {
     }
 
     #[test]
-    fn relevant_prompt_keeps_small_recent_fallback() {
+    fn relevant_prompt_does_not_send_unmatched_entries() {
         let entries = vec![
             entry(1, "RecentTerm", None),
             entry(2, "AnotherTerm", Some("another turn")),
         ];
 
-        let prompt = build_relevant_dictionary_prompt_from(&entries, "No obvious match here.");
+        let prompt = build_relevant_dictionary_prompt_from(
+            &entries,
+            "Please write this ordinary sentence without using any named product or technical term.",
+        );
 
-        assert!(prompt.contains("RecentTerm"));
-        assert!(prompt.contains("AnotherTerm"));
+        assert!(prompt.is_empty());
     }
 
     #[test]
@@ -354,9 +437,9 @@ mod tests {
 
     #[test]
     fn substitutions_respect_word_boundaries() {
-        let entries = vec![entry(1, "Kubernetes", Some("kube"))];
-        let (out, applied) = apply_substitutions_from("kube kubelet", &entries);
-        assert_eq!(out, "Kubernetes kubelet");
+        let entries = vec![entry(1, "Kubernetes", Some("kubernetez"))];
+        let (out, applied) = apply_substitutions_from("kubernetez Kubernetes", &entries);
+        assert_eq!(out, "Kubernetes Kubernetes");
         assert_eq!(applied, vec![1]);
     }
 
@@ -395,38 +478,96 @@ mod tests {
         )];
         let (out, applied) =
             apply_substitutions_from("I use Varinu daily but Verena crashed once", &entries);
-        assert_eq!(out, "I use Verenu daily but Verenu crashed once");
-        assert_eq!(applied, vec![1, 1]);
+        assert_eq!(out, "I use Varinu daily but Verena crashed once");
+        assert!(applied.is_empty());
     }
 
     #[test]
     fn comma_separated_variants_with_surrounding_whitespace_are_trimmed() {
         let entries = vec![entry(1, "Verenu", Some(" Varinu , Verena "))];
         let (out, applied) = apply_substitutions_from("try Varinu now", &entries);
-        assert_eq!(out, "try Verenu now");
-        assert_eq!(applied, vec![1]);
+        assert_eq!(out, "try Varinu now");
+        assert!(applied.is_empty());
     }
 
     #[test]
     fn relevant_prompt_matches_any_comma_separated_variant() {
-        let entries = vec![entry(1, "Verenu", Some("Varinu, Verena"))];
+        let entries = [entry(1, "Verenu", Some("Varinu, Verena"))];
         let prompt = build_relevant_dictionary_prompt_from(&entries, "I opened Verena today");
         assert!(prompt.contains("Verenu"));
     }
 
     #[test]
+    fn relevant_prompt_uses_context_without_dumping_the_dictionary() {
+        let entries = vec![
+            entry(1, "Claude", Some("clawed")),
+            entry(2, "UnrelatedTerm", None),
+        ];
+        let prompt = build_relevant_dictionary_prompt_from_sources(
+            &entries,
+            "open the editor",
+            None,
+            Some("Visual Studio Code — Claude"),
+        );
+        assert!(prompt.contains("Claude"));
+        assert!(!prompt.contains("UnrelatedTerm"));
+    }
+
+    #[test]
+    fn long_unmatched_dictation_does_not_trigger_a_dictionary_dump() {
+        let entries = vec![
+            entry(1, "Kubernetes", None),
+            entry(2, "PostgreSQL", None),
+            entry(3, "Verenu", None),
+        ];
+        let prompt = build_relevant_dictionary_prompt_from_sources(
+            &entries,
+            "please summarize this long sentence without any named product or technical term in it",
+            None,
+            None,
+        );
+        assert!(prompt.is_empty());
+    }
+
+    #[test]
+    fn very_short_unmatched_dictation_gets_only_high_signal_fallbacks() {
+        let mut entries = vec![
+            entry(1, "Claude", Some("clawed")),
+            entry(2, "Kubernetes", None),
+            entry(3, "ordinary", None),
+        ];
+        entries.extend((4..20).map(|id| entry(id, &format!("Project{id}X"), None)));
+        let prompt = build_relevant_dictionary_prompt_from_sources(&entries, "fix it", None, None);
+        let lines = prompt.lines().filter(|line| line.starts_with("- ")).count();
+        assert_eq!(lines, 8);
+        assert!(prompt.contains("Claude"));
+        assert!(prompt.contains("Project4X"));
+        assert!(!prompt.contains("ordinary"));
+    }
+
+    #[test]
+    fn fallback_and_relevance_selection_have_a_hard_size_bound() {
+        let entries: Vec<DictionaryEntry> = (0..500)
+            .map(|id| entry(id, &format!("TechnicalIdentifier{id}X"), None))
+            .collect();
+        let prompt = build_relevant_dictionary_prompt_from_sources(&entries, "one", None, None);
+        assert!(prompt.chars().count() <= 3_000);
+        assert_eq!(prompt.lines().filter(|line| line.starts_with("- ")).count(), 8);
+    }
+
+    #[test]
     fn prompt_lists_every_comma_separated_variant() {
-        let entries = vec![entry(1, "Verenu", Some("Varinu, Verena"))];
+        let entries = [entry(1, "Verenu", Some("Varinu, Verena"))];
         let prompt = build_dictionary_prompt_limited(entries.iter());
         assert!(prompt.contains("\"Varinu\""));
         assert!(prompt.contains("\"Verena\""));
     }
 
     #[test]
-    fn manual_common_word_mistake_is_still_mechanically_substituted() {
+    fn manual_common_word_competitor_is_not_mechanically_substituted() {
         let entries = vec![entry(1, "Groq", Some("rock"))];
         let (out, applied) = apply_substitutions_from("I love rock music", &entries);
-        assert_eq!(out, "I love Groq music");
-        assert_eq!(applied, vec![1]);
+        assert_eq!(out, "I love rock music");
+        assert!(applied.is_empty());
     }
 }

@@ -58,7 +58,7 @@ pub fn default_cleanup_model_for(provider: &str) -> &'static str {
     match provider {
         LOCAL => "gemma-4-e2b",
         OPENAI => "gpt-4o-mini",
-        GOOGLE => "gemini-3.5-flash",
+        GOOGLE => "gemini-3.5-flash-lite",
         _ => GROQ_QWEN_3_6_27B_MODEL,
     }
 }
@@ -67,10 +67,20 @@ pub fn migrate_deprecated_model_id(id: &str) -> String {
     let Some((provider, model)) = parse_model_id(id) else {
         return id.trim().to_string();
     };
-    if provider == GROQ && model == DEPRECATED_GROQ_LLAMA_8B_MODEL {
-        format!("{GROQ}/{GROQ_GPT_OSS_20B_MODEL}")
-    } else if provider == GROQ && model == DEPRECATED_GROQ_LLAMA_70B_MODEL {
+    if provider == GROQ
+        && matches!(
+            model.as_str(),
+            DEPRECATED_GROQ_LLAMA_8B_MODEL
+                | DEPRECATED_GROQ_LLAMA_70B_MODEL
+                | GROQ_GPT_OSS_20B_MODEL
+                | "openai/gpt-oss-120b"
+        )
+    {
         format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
+    } else if provider == GOOGLE
+        && matches!(model.as_str(), "gemini-3.7-flash" | "gemini-2.5-pro")
+    {
+        format!("{GOOGLE}/gemini-3.5-flash-lite")
     } else {
         format!("{provider}/{model}")
     }

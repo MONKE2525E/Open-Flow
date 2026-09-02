@@ -605,6 +605,7 @@ async fn run_pipeline_with_delivery(app: AppHandle, state: SharedState, event_on
         true,
         &cfg.cleanup_intensity,
         &profile,
+        cfg.cleanup_intensity == "none" && alternate.is_some(),
     );
     if cleanup_will_run_llm {
         emit_pill_stage(&app, "cleaning");
@@ -828,6 +829,7 @@ pub async fn retry_transcription_impl(
         true,
         &cfg.cleanup_intensity,
         &capture.profile,
+        cfg.cleanup_intensity == "none" && alternate.is_some(),
     ) {
         emit_pill_stage(app, "cleaning");
     }

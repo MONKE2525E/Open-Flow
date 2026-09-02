@@ -1,8 +1,8 @@
 //! Audio capture handoff, quality-gate evaluation, and every transcription
 //! path (single-chain, primary-chain, and dual-model candidates).
 
-use super::*;
 use super::stages_style::{apply_app_style_overrides, resolve_app_mapping};
+use super::*;
 // session.stop() blocks until the audio thread finishes (denoise + resample + WAV encode).
 // spawn_blocking keeps the tokio worker free during that wait. Split from the
 // quality gate (below) so a resumed/prepended recording can be merged first
@@ -176,6 +176,8 @@ pub(super) async fn open_config_and_context(
         cfg.default_tone,
     );
     let app_context = if cfg.app_context_hint {
+        // Pass the captured context-group name when available; the helper's
+        // fourth argument is part of the current upstream context API.
         window_context::get_app_context_hint(
             process_name,
             target_id,
@@ -275,11 +277,7 @@ pub(super) async fn run_transcription(
         audio.samples_16k.len()
     );
 
-    let dual_enabled = cfg.dual_transcription_enabled
-        && cfg.cleanup_enabled
-        && cfg.cleanup_intensity != "none"
-        && has_cleanup_key_in_chain(cfg)
-        && transcription_model_chain(cfg).len() > 1;
+    let dual_enabled = cfg.dual_transcription_enabled && transcription_model_chain(cfg).len() > 1;
     let (raw, provider_id, model, alternate_result) = match if dual_enabled {
         run_dual_transcription_candidates(app, audio, cfg, gen).await
     } else {
