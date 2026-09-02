@@ -90,6 +90,27 @@ const historyMockWrap = function () {
       return page.locator('.day-text').allInnerTexts();
     };
 
+    // Hover metadata must settle without feeding an animated row height back
+    // into the virtualized list. Sampling both geometry values catches the
+    // rapid layout loop that is otherwise easy to miss in a screenshot.
+    const hoverRow = dayRows.first();
+    await hoverRow.hover();
+    const hoverSamples = [];
+    for (let i = 0; i < 16; i += 1) {
+      hoverSamples.push(await hoverRow.evaluate((el) => {
+        const row = el.getBoundingClientRect();
+        const text = el.querySelector('.day-text')?.getBoundingClientRect();
+        return { height: row.height, textTop: text?.top ?? row.top };
+      }));
+      await page.waitForTimeout(25);
+    }
+    const settledSamples = hoverSamples.slice(-4);
+    const distinctSettledHeights = new Set(settledSamples.map(({ height }) => height.toFixed(2)));
+    const textTops = hoverSamples.map(({ textTop }) => textTop);
+    if (distinctSettledHeights.size > 1 || Math.max(...textTops) - Math.min(...textTops) > 1) {
+      errors.push(`hovered history row did not settle: ${JSON.stringify(hoverSamples)}`);
+    }
+
     if (false) {
     // Row metadata: app label + compact duration under the text.
     const metaFirst = await page.locator('.day-meta-left').first().innerText();
