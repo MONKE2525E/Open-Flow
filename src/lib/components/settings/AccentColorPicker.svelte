@@ -120,9 +120,13 @@
               value={draft.replace(/^#/, '')}
               aria-label="Accent color hex value"
               aria-invalid={invalid}
-              maxlength="6"
+              maxlength="7"
               spellcheck="false"
-              oninput={(event) => { draft = `#${(event.currentTarget as HTMLInputElement).value}`; invalid = false; }}
+              oninput={(event) => {
+                const raw = (event.currentTarget as HTMLInputElement).value.replace(/^#+/, '').slice(0, 6);
+                draft = `#${raw}`;
+                invalid = false;
+              }}
               onkeydown={handleHexKeydown}
             />
           </div>
