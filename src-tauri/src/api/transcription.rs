@@ -276,6 +276,7 @@ async fn transcribe_gemini_with_prompt(
     model: &str,
     gen: u64,
 ) -> Result<String> {
+    super::prompts::ensure_gemini_generation_model(model)?;
     log::debug!(
         "transcription: gemini request gen={} wav_bytes={} prompt_chars={}",
         gen,
@@ -683,15 +684,33 @@ mod tests {
         let body = build_gemini_transcription_request(
             "ZmFrZQ==".to_string(),
             "prompt text",
-            "gemini-3.7-flash",
+            "gemini-2.5-flash-lite",
+        );
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(
+            json["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            0
+        );
+        assert_eq!(json["generationConfig"]["maxOutputTokens"], 2048);
+        assert_eq!(json["generationConfig"]["temperature"], 0.0);
+    }
+
+    #[test]
+    fn gemini_3_transcription_request_uses_minimal_thinking_level() {
+        let body = build_gemini_transcription_request(
+            "ZmFrZQ==".to_string(),
+            "prompt text",
+            "gemini-3.5-flash-lite",
         );
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(
             json["generationConfig"]["thinkingConfig"]["thinkingLevel"],
-            "low"
+            "minimal"
         );
-        assert_eq!(json["generationConfig"]["maxOutputTokens"], 2048);
-        assert_eq!(json["generationConfig"]["temperature"], 0.0);
+        assert!(json["generationConfig"]["thinkingConfig"]
+            .get("thinkingBudget")
+            .is_none());
+        assert!(json["generationConfig"].get("temperature").is_none());
     }
 
     #[test]

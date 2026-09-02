@@ -73,6 +73,12 @@ pub(super) fn validate_transcription_chain(
 
 pub(super) fn has_cleanup_key_in_chain(cfg: &store::PipelineConfig) -> bool {
     cleanup_model_chain(cfg).iter().any(|(provider, model)| {
+        if !crate::api::cleanup::model_supports_cleanup_reasoning_policy(
+            crate::api::ProviderId::from_str(provider),
+            model,
+        ) {
+            return false;
+        }
         if provider == store::LOCAL {
             crate::local_llm::model::manifest_by_id(model)
                 .map(|manifest| {

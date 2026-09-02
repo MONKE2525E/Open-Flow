@@ -175,7 +175,7 @@ fn setting_audit_malformed_model_id_resolves_to_safe_default() {
 }
 
 #[test]
-fn deprecated_groq_cleanup_models_migrate_to_gpt_oss() {
+fn deprecated_groq_cleanup_models_migrate_to_no_thinking_qwen() {
     let store = SettingsSnapshot::from_pairs([
         (
             CLEANUP_DEFAULT_MODEL.to_string(),
@@ -189,12 +189,12 @@ fn deprecated_groq_cleanup_models_migrate_to_gpt_oss() {
     let cfg = load_pipeline_config(&store);
     assert_eq!(
         cfg.cleanup_default_model,
-        format!("{GROQ}/{GROQ_GPT_OSS_20B_MODEL}")
+        format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}")
     );
     assert_eq!(
         cfg.cleanup_fallback_models,
         vec![
-            format!("{GROQ}/{GROQ_GPT_OSS_20B_MODEL}"),
+            format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}"),
             "openai/gpt-4o-mini".to_string()
         ]
     );
@@ -223,6 +223,20 @@ fn deprecated_groq_llama_70b_migrates_to_qwen() {
             format!("{GROQ}/{GROQ_QWEN_3_6_27B_MODEL}"),
             "openai/gpt-4o-mini".to_string()
         ]
+    );
+}
+
+#[test]
+fn unsupported_google_cleanup_models_migrate_to_flash_lite() {
+    for legacy in ["gemini-3.7-flash", "gemini-2.5-pro"] {
+        assert_eq!(
+            migrate_deprecated_model_id(&format!("google/{legacy}")),
+            "google/gemini-3.5-flash-lite"
+        );
+    }
+    assert_eq!(
+        migrate_deprecated_model_id("google/gemini-3.5-flash"),
+        "google/gemini-3.5-flash"
     );
 }
 

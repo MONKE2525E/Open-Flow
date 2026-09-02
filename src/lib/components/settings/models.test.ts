@@ -3,6 +3,8 @@ import {
   buildRecommended,
   CATALOG,
   catalogFor,
+  migrateDeprecatedGroqCleanupModel,
+  migrateDeprecatedGoogleModel,
   modelDisplayLabel,
   providerSections,
   recommendedModels,
@@ -49,11 +51,34 @@ describe('catalogFor', () => {
     expect(catalogFor('cleanup', 'assemblyai')).toEqual([]);
   });
 
-  it('lists a dual-task model under both tasks', () => {
+  it('keeps cleanup on the policy-compatible Gemini 3.5 Flash family', () => {
     const ids = (task: 'transcription' | 'cleanup') =>
       catalogFor(task, 'google').map((entry) => entry.id);
-    expect(ids('transcription')).toContain('gemini-3.7-flash');
-    expect(ids('cleanup')).toContain('gemini-3.7-flash');
+    expect(ids('transcription')).toContain('gemini-2.5-flash');
+    expect(ids('cleanup')).toContain('gemini-3.5-flash-lite');
+    expect(ids('cleanup')).toContain('gemini-3.5-flash');
+    expect(ids('cleanup')).toContain('gemini-2.5-flash-lite');
+    expect(ids('cleanup')).not.toContain('gemini-3.7-flash');
+    expect(recommendedModels.cleanup.google).toEqual({
+      premium: 'gemini-3.5-flash',
+      standard: 'gemini-3.5-flash-lite',
+    });
+    expect(recommendedModels.cleanup.groq).toEqual({
+      premium: 'qwen/qwen3.8-27b',
+      standard: 'qwen/qwen3.6-27b',
+    });
+  });
+
+  it('migrates unsupported Google cleanup models to Flash-Lite', () => {
+    expect(migrateDeprecatedGoogleModel('gemini-3.7-flash')).toBe('gemini-3.5-flash-lite');
+    expect(migrateDeprecatedGoogleModel('gemini-2.5-pro')).toBe('gemini-3.5-flash-lite');
+    expect(migrateDeprecatedGoogleModel('gemini-3.5-flash')).toBe('gemini-3.5-flash');
+  });
+
+  it('migrates Groq reasoning-only cleanup models to no-thinking Qwen', () => {
+    expect(migrateDeprecatedGroqCleanupModel('llama-3.1-8b-instant')).toBe('qwen/qwen3.6-27b');
+    expect(migrateDeprecatedGroqCleanupModel('openai/gpt-oss-20b')).toBe('qwen/qwen3.6-27b');
+    expect(migrateDeprecatedGroqCleanupModel('openai/gpt-oss-120b')).toBe('qwen/qwen3.6-27b');
   });
 });
 
@@ -61,7 +86,6 @@ describe('modelDisplayLabel', () => {
   // Every id the old hand-written switch knew, with the name it produced. If
   // the catalog loses one of these, local rows silently regress to raw ids.
   const LEGACY_LABELS: Record<string, string> = {
-    'groq/openai/gpt-oss-20b': 'GPT OSS 20B',
     'groq/qwen/qwen3.6-27b': 'Qwen3.6 27B',
     'assemblyai/universal-3-5-pro': 'Universal 3.5 Pro',
     'assemblyai/universal-2': 'Universal-2',

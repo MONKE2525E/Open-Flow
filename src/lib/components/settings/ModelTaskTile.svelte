@@ -91,7 +91,7 @@
   }
 </script>
 
-<section class="task-tile">
+<section class="task-tile" data-setting-target={`models-${type}`}>
   <header class="tile-head">
     <span class="head-title">{taskLabel(type)}</span>
     <div class="head-actions">
@@ -255,9 +255,9 @@
   }
 
   .head-title {
-    font-family: var(--serif);
-    font-size: 16px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 600;
     color: var(--ink);
     line-height: 1;
   }
@@ -421,10 +421,10 @@
   .fallback-label {
     margin: 0 0 6px;
     font-family: var(--sans);
-    font-size: 9px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.09em;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--ink-faint);
   }
 
