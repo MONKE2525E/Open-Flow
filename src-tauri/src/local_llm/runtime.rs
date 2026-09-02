@@ -365,17 +365,24 @@ fn looks_truncated(attempt: &ChatAttempt, input_chars: usize) -> bool {
 /// Combines the truncation, fabrication, and perspective-flip checks into a
 /// single "is this attempt worth retrying" decision, returning a short
 /// reason for logging (never the text itself).
-fn retry_reason(attempt: &ChatAttempt, input_text: &str) -> Option<&'static str> {
-    if looks_truncated(attempt, input_text.chars().count()) {
+fn retry_reason(attempt: &ChatAttempt, input_texts: &[&str]) -> Option<&'static str> {
+    let primary = input_texts.first().copied().unwrap_or_default();
+    if looks_truncated(attempt, primary.chars().count()) {
         return Some(
             "looks truncated (finish_reason=length — generation was cut off at the token budget)",
         );
     }
     if let Some(content) = attempt.content.as_deref() {
-        if crate::api::prompts::looks_like_fabricated_content(input_text, content) {
+        if input_texts
+            .iter()
+            .all(|input| crate::api::prompts::looks_like_fabricated_content(input, content))
+        {
             return Some("looks fabricated (output shares almost no words with the input)");
         }
-        if crate::api::prompts::looks_like_perspective_flip(input_text, content) {
+        if input_texts
+            .iter()
+            .any(|input| crate::api::prompts::looks_like_perspective_flip(input, content))
+        {
             return Some("looks like a perspective flip (you/I swapped)");
         }
     }
@@ -427,10 +434,13 @@ pub async fn request_cleanup_with_alternate(
         stop,
     };
     let mut attempt = send_chat_completion(endpoint, &body).await?;
-    if let Some(reason) = retry_reason(&attempt, primary_text) {
+    let input_texts = alternate_text
+        .map(|alternate| vec![primary_text, alternate])
+        .unwrap_or_else(|| vec![primary_text]);
+    if let Some(reason) = retry_reason(&attempt, &input_texts) {
         log::warn!("local-llm: completion {reason} — retrying once");
         attempt = send_chat_completion(endpoint, &body).await?;
-        if let Some(reason) = retry_reason(&attempt, primary_text) {
+        if let Some(reason) = retry_reason(&attempt, &input_texts) {
             log::warn!(
                 "local-llm: retry also {reason} — using it anyway, nothing better available"
             );

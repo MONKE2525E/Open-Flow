@@ -29,13 +29,19 @@ pub fn build_relevant_dictionary_prompt_from_sources(
         return String::new();
     }
 
+    let primary_tokens = tokenize_lower_alnum(primary_text);
+    let short_or_ambiguous = primary_tokens.len() <= SHORT_TRANSCRIPT_TOKENS;
     let sources = [
         Some((primary_text, 100u16)),
         alternate_text.map(|text| (text, 82u16)),
         context_text.map(|text| (text, 52u16)),
-    ];
-    let primary_tokens = tokenize_lower_alnum(primary_text);
-    let short_or_ambiguous = primary_tokens.len() <= SHORT_TRANSCRIPT_TOKENS;
+    ]
+    .into_iter()
+    .enumerate()
+    .filter_map(|(index, source)| {
+        source.map(|(text, weight)| (index, text, weight, text.to_lowercase(), tokenize_lower_alnum(text)))
+    })
+    .collect::<Vec<_>>();
 
     let mut ranked: Vec<(u16, usize, &db::DictionaryEntry)> = entries
         .iter()
@@ -44,19 +50,14 @@ pub fn build_relevant_dictionary_prompt_from_sources(
             let mut score = 0u16;
             let mut primary_match = false;
             let mut alternate_match = false;
-            for (source_index, source) in sources.iter().enumerate() {
-                let Some((text, weight)) = source else {
-                    continue;
-                };
-                let lower = text.to_lowercase();
-                let tokens = tokenize_lower_alnum(text);
-                let Some(match_score) = entry_match_score(entry, &lower, &tokens) else {
+            for (_list_index, (original_index, _text, weight, lower, tokens)) in sources.iter().enumerate() {
+                let Some(match_score) = entry_match_score(entry, lower, tokens) else {
                     continue;
                 };
                 score = score.max(weight.saturating_mul(match_score) / 100);
-                if source_index == 0 {
+                if *original_index == 0 {
                     primary_match = true;
-                } else if source_index == 1 {
+                } else if *original_index == 1 {
                     alternate_match = true;
                 }
             }
