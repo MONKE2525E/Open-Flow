@@ -129,6 +129,10 @@
     }
   }
 
+  function isInteractiveRow(node: HTMLElement): boolean {
+    return node.matches(':hover, :focus-within');
+  }
+
   let container: HTMLElement | null = null;
   let listContainer: HTMLElement | null = null;
   let cachedHeights: Record<string, number> = {};
@@ -273,8 +277,18 @@
     for (const entry of entries) {
       const node = entry.target as HTMLElement;
       const key = nodeKeys.get(node);
-      if (key) {
-        const height = entry.borderBoxSize?.[0]?.blockSize ?? node.getBoundingClientRect().height;
+      // Hovering a short row reveals the below-text metadata and changes its
+      // height. Do not feed those transient hover dimensions back into the
+      // virtual list while the interaction is active; doing so causes the
+      // spacers to be recalculated on every frame of the old height transition.
+      if (key && !isInteractiveRow(node)) {
+        // Rounded: borderBoxSize and getBoundingClientRect can disagree by a
+        // fraction of a pixel, which would otherwise feed a "changed" height
+        // back into the layout every observer callback and never settle —
+        // the observer keeps re-measuring the row it just repositioned.
+        const height = Math.round(
+          entry.borderBoxSize?.[0]?.blockSize ?? node.getBoundingClientRect().height
+        );
         if (height > 0 && cachedHeights[key] !== height) {
           cachedHeights[key] = height;
           changed = true;
@@ -297,11 +311,13 @@
       update(newKey: string) {
         nodeKeys.delete(node);
         nodeKeys.set(node, newKey);
-        const height = node.getBoundingClientRect().height;
+        const height = Math.round(node.getBoundingClientRect().height);
         if (height > 0 && cachedHeights[newKey] !== height) {
-          cachedHeights[newKey] = height;
-          updateLayout();
-          updateVirtualList();
+          if (!isInteractiveRow(node)) {
+            cachedHeights[newKey] = height;
+            updateLayout();
+            updateVirtualList();
+          }
         }
         measureStacked(node, newKey);
       },
@@ -626,6 +642,9 @@
     text-overflow: ellipsis;
     max-height: 0;
     transform: translateX(-8px);
+    /* The virtual-list observer ignores this row while the interaction is
+       active, so the expansion can animate without feeding intermediate
+       heights back into the spacer calculation. */
     transition:
       opacity var(--ui-duration-fast) var(--ui-ease-out),
       transform var(--ui-duration-fast) var(--ui-ease-out),
