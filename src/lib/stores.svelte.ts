@@ -93,6 +93,7 @@ export const appStore = $state({
   appVersion: '',
   devModeEnabled: false,
   appearanceMode: 'system' as AppearanceMode,
+  accentColor: null as string | null,
   // Mirrors the `cleanup_enabled` setting. Shared here (rather than owned
   // privately by GeneralSection) so Style.svelte and the App Mappings
   // settings page can react live to the toggle without their own

@@ -1,11 +1,12 @@
 <script lang="ts">
   import { appStore } from '../stores';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { listen } from '../tauri';
   import { fade } from 'svelte/transition';
-  import { MOTION_MS, MOTION_PX, SETTINGS_SECTION_ORDER, directionFromOrder, modalBackdrop, motionMs, motionPx, pageSwap } from '../motion';
+  import { MOTION_MS, MOTION_PX, SETTINGS_SECTION_ORDER, directionFromOrder, modalBackdrop, motionMs, motionPx, pageSwap, reducedMotionEnabled } from '../motion';
   import { isSettingsSectionId } from '../settingsSections';
   import { scrollEdges, type ScrollEdgeCallback } from '../scrollFade';
+  import { clearSettingsSearchNavigation, settingsSearchNavigation } from '../settingsSearch.svelte';
 
   import GeneralSection from '../components/settings/GeneralSection.svelte';
   import AppMappingsSection from '../components/settings/AppMappingsSection.svelte';
@@ -22,6 +23,7 @@
   let settingsPageEl = $state<HTMLDivElement | null>(null);
   let settingsPanelEl = $state<HTMLDivElement | null>(null);
   let previousFocusEl: HTMLElement | null = null;
+  let searchHighlightTimer: ReturnType<typeof setTimeout> | null = null;
 
   const section = $derived(appStore.settingsSection);
   const animDir = $derived(appStore.settingsAnimDir);
@@ -149,6 +151,65 @@
         target.focus({ preventScroll: true });
       }
     });
+  });
+
+  $effect(() => {
+    const request = settingsSearchNavigation.request;
+    const currentSection = section;
+    const panel = settingsPanelEl;
+    if (!request || !appStore.settingsOpen || request.section !== currentSection || !panel) return;
+
+    let cancelled = false;
+    let attempts = 0;
+
+    const revealTarget = () => {
+      if (cancelled || settingsSearchNavigation.request?.nonce !== request.nonce) return;
+      if (!panel.isConnected || settingsPanelEl !== panel) {
+        if (attempts++ < 40) requestAnimationFrame(revealTarget);
+        return;
+      }
+
+      const exactTarget = panel.querySelector<HTMLElement>(`[data-setting-target="${request.target}"]`);
+      if (!exactTarget && attempts++ < 40) {
+        requestAnimationFrame(revealTarget);
+        return;
+      }
+      const fallbackTarget = request.fallbackTarget
+        ? panel.querySelector<HTMLElement>(`[data-setting-target="${request.fallbackTarget}"]`)
+        : null;
+      const target = exactTarget ?? fallbackTarget ?? panel.querySelector<HTMLElement>('.settings-h');
+      if (!target) {
+        clearSettingsSearchNavigation(request.nonce);
+        return;
+      }
+
+      panel.querySelector<HTMLElement>('.settings-search-hit')?.classList.remove('settings-search-hit');
+      target.classList.add('settings-search-hit');
+      if (!target.matches('button, input, select, textarea, a[href], [tabindex]')) {
+        target.setAttribute('tabindex', '-1');
+      }
+      target.scrollIntoView({
+        block: 'center',
+        behavior: reducedMotionEnabled() ? 'auto' : 'smooth',
+      });
+      target.focus({ preventScroll: true });
+
+      if (searchHighlightTimer) clearTimeout(searchHighlightTimer);
+      searchHighlightTimer = setTimeout(() => {
+        target.classList.remove('settings-search-hit');
+        searchHighlightTimer = null;
+      }, 2400);
+      clearSettingsSearchNavigation(request.nonce);
+    };
+
+    requestAnimationFrame(revealTarget);
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  onDestroy(() => {
+    if (searchHighlightTimer) clearTimeout(searchHighlightTimer);
   });
 
   /**
@@ -410,77 +471,71 @@
    * row so the following row paints over them. `backwards` covers the delay
    * window and then releases the row back to its natural styles.
    */
-  .panel-inner > :global(*) {
-    animation: settings-row-in var(--settings-row-ms) cubic-bezier(0.22, 1, 0.36, 1) backwards;
-  }
-
-  .panel-inner {
-    --settings-row-ms: 260ms;
-    --settings-row-step: 26ms;
-  }
-
-  .panel-inner > :global(:nth-child(1)) { animation-delay: 0ms; }
-  .panel-inner > :global(:nth-child(2)) { animation-delay: calc(var(--settings-row-step) * 1); }
-  .panel-inner > :global(:nth-child(3)) { animation-delay: calc(var(--settings-row-step) * 2); }
-  .panel-inner > :global(:nth-child(4)) { animation-delay: calc(var(--settings-row-step) * 3); }
-  .panel-inner > :global(:nth-child(5)) { animation-delay: calc(var(--settings-row-step) * 4); }
-  .panel-inner > :global(:nth-child(6)) { animation-delay: calc(var(--settings-row-step) * 5); }
-  .panel-inner > :global(:nth-child(7)) { animation-delay: calc(var(--settings-row-step) * 6); }
-  /* Everything past the 8th row shares the last step so long sections don't crawl. */
-  .panel-inner > :global(:nth-child(n + 8)) { animation-delay: calc(var(--settings-row-step) * 7); }
-
-  @keyframes settings-row-in {
-    from { opacity: 0; transform: translate3d(0, 6px, 0); }
-    to   { opacity: 1; transform: none; }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .panel-inner {
-      --settings-row-ms: 140ms;
-      --settings-row-step: 10ms;
-    }
-    @keyframes settings-row-in {
-      from { opacity: 0; transform: translate3d(0, 2px, 0); }
-      to   { opacity: 1; transform: none; }
-    }
-  }
+  /* Settings should settle as one page. Staggering every row makes a routine
+     preferences screen feel like a presentation. */
 
   /* Shared styles for all section components — scoped to .settings-body */
   /* Matches .page-h on the app views so a section heading reads at the same
      level as "Home" or "Style" rather than as a panel title. */
   .settings-body :global(.settings-h) {
-    font-family: var(--serif);
-    font-size: 26px;
-    font-weight: 500;
-    margin: 0 0 var(--settings-h-mb, 18px);
-    letter-spacing: -0.02em;
+    font-family: var(--sans);
+    font-size: 23px;
+    font-weight: 600;
+    margin: 0 0 var(--settings-h-mb, 20px);
+    letter-spacing: -0.025em;
     line-height: 1.1;
     color: var(--ink);
   }
 
   .settings-body :global(.settings-subhead) {
-    font-family: var(--serif);
-    font-size: 14px;
+    font-family: var(--sans);
+    font-size: 13px;
     font-weight: 500;
-    color: var(--ink-soft);
-    letter-spacing: -0.01em;
-    margin: 30px 0 4px;
+    color: var(--ink-mute);
+    letter-spacing: 0;
+    margin: 28px 0 6px;
   }
 
   .settings-body :global(.settings-subhead.first) { margin-top: 4px; }
 
+  .settings-body :global([data-setting-target]) {
+    scroll-margin-block: 72px;
+  }
+
+  .settings-body :global(.settings-search-hit) {
+    border-radius: var(--r-sm);
+    outline: none;
+    animation: settings-search-highlight 2400ms ease-out;
+  }
+
+  @keyframes settings-search-highlight {
+    0%, 34% {
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 9%, transparent);
+    }
+    100% {
+      background: transparent;
+      box-shadow: 0 0 0 4px transparent;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settings-body :global(.settings-search-hit) { animation-duration: 1ms; }
+  }
+
   .settings-body :global(.setting-row) {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
-    padding: 13px 0;
+    gap: 24px;
+    padding: 14px 0;
     border-top: 1px solid var(--line);
   }
 
   .settings-body :global(.setting-row:last-of-type) { border-bottom: 1px solid var(--line); }
 
   .settings-body :global(.label) { font-size: 13px; font-weight: 500; color: var(--ink-strong); }
-  .settings-body :global(.desc)  { font-size: 12px; color: var(--ink-mute); margin-top: 3px; }
+  .settings-body :global(.desc)  { font-size: 12px; color: var(--ink-mute); margin-top: 4px; max-width: 56ch; line-height: 1.45; }
 
   .settings-body :global(.panel-note) {
     font-size: 12px;

@@ -224,6 +224,7 @@ const defaultSettings: Record<string, unknown> = {
   setup_complete: true,
   force_setup_on_launch: false,
   appearance_mode: 'system',
+  accent_color: null,
   transcription_provider: 'groq',
   transcription_language: 'en',
   cleanup_provider: 'groq',

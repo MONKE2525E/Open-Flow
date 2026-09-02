@@ -232,6 +232,7 @@ pub const CONTEXTUAL_CAPS: &str = "contextual_caps_enabled";
 /// Legacy mirror of [`CONTEXTUAL_FORMATTING`]. See [`CONTEXTUAL_CAPS`].
 pub const AUTO_SPACING: &str = "auto_spacing_enabled";
 pub const APPEARANCE_MODE: &str = "appearance_mode";
+pub const ACCENT_COLOR: &str = "accent_color";
 pub const FORCE_SETUP_ON_LAUNCH: &str = "force_setup_on_launch";
 pub const ADVANCED_MODEL_UI: &str = "advanced_model_ui";
 /// One cleanup prompt for every model. Fallback chains made per-model prompts

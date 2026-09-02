@@ -36,6 +36,7 @@
   } from '../../settings';
   import ModelTaskTile from './ModelTaskTile.svelte';
   import ModelPresetPicker from './ModelPresetPicker.svelte';
+  import { settingsSearchNavigation } from '../../settingsSearch.svelte';
   import {
     getHardware,
     type ActiveConfig,
@@ -738,6 +739,13 @@
     }
   }
 
+  $effect(() => {
+    const target = settingsSearchNavigation.request?.target;
+    if (target?.startsWith('models-') && !advancedModelUi) {
+      void handleAdvancedModelUi(true);
+    }
+  });
+
   let transcriptionModeDropdownOpen = $state(false);
 
   async function handleDualTranscription(value: boolean) {
@@ -808,20 +816,22 @@
 
 <h2 class="settings-h">Models</h2>
 
-<ModelPresetPicker
-  {apiKeyStatus}
-  {hardware}
-  localSupported={localModelsSupported}
-  {activeConfig}
-  {installedLocal}
-  {downloadingLocal}
-  onApplyPreset={applyPreset}
-  onOpenApiKeys={openApiKeysSection}
-  onCancelPreset={cancelPresetDownload}
-  onDeletePreset={deletePresetModels}
-/>
+<div data-setting-target="model-presets">
+  <ModelPresetPicker
+    {apiKeyStatus}
+    {hardware}
+    localSupported={localModelsSupported}
+    {activeConfig}
+    {installedLocal}
+    {downloadingLocal}
+    onApplyPreset={applyPreset}
+    onOpenApiKeys={openApiKeysSection}
+    onCancelPreset={cancelPresetDownload}
+    onDeletePreset={deletePresetModels}
+  />
+</div>
 
-<div class="advanced-toggle-row">
+<div class="advanced-toggle-row" data-setting-target="advanced-models">
   <div class="adv-text">
     <span class="adv-label">Advanced Models</span>
     <span class="adv-desc">Choose specific models, edit cleanup prompts, and manage downloads</span>
@@ -869,7 +879,7 @@
 />
 
 <h3 class="settings-subhead">Model settings</h3>
-<div class="setting-row transcription-mode-row">
+<div class="setting-row transcription-mode-row" data-setting-target="models-strategy">
   <div>
     <div class="label">Transcription strategy</div>
     <div class="desc">Use one model, or compare two working models from the existing transcription fallback chain before cleanup.</div>
@@ -930,7 +940,7 @@
 </div>
 {/if}
 
-<div class="setting-row">
+<div class="setting-row" data-setting-target="models-memory">
   <div>
     <div class="label">Memory policy</div>
     <div class="desc">Controls when idle local models are unloaded.</div>
@@ -980,7 +990,7 @@
   </Dropdown>
 </div>
 
-<div class="setting-row">
+<div class="setting-row" data-setting-target="models-folder">
   <div>
     <div class="label">Models folder</div>
     <div class="desc">Open the shared folder where local transcription and cleanup models are stored.</div>
