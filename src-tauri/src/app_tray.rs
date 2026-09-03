@@ -610,7 +610,8 @@ fn runtime_ico_bytes(theme: IconTheme, accent: [u8; 4], sizes: &[u32]) -> Result
     let directory_size = 6 + 16 * frames.len();
     let payload_size: usize = frames.iter().map(|(_, png)| png.len()).sum();
     let mut ico = Vec::with_capacity(directory_size + payload_size);
-    ico.extend_from_slice(&[0, 0, 1, 0, frames.len() as u8, 0]);
+    ico.extend_from_slice(&[0, 0, 1, 0]);
+    ico.extend_from_slice(&(frames.len() as u16).to_le_bytes());
     let dimension = |value: u32| if value >= 256 { 0 } else { value as u8 };
     let mut offset = directory_size as u32;
     for (size, png) in &frames {
