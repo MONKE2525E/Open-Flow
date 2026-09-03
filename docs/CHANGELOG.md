@@ -21,6 +21,7 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 - Context group websites are now checked for DNS existence before being saved, so a typo can't silently create a website target that will never match anything.
 - Added a subtle pop-in animation when adding an app or website to a context group, without replaying it for the rest of the list when switching between context groups.
 - Added `docs/CONTEXTS.md` and marked App Mappings, Dictionary, and Snippets as legacy pages across the docs.
+- Fixed the Insights page stacking its summary tiles too early on narrow windows, stranding the gauge in a half-empty row — the hero band, heatmap rail, and vocabulary sections now adapt to the available column width and stay side by side down to the minimum window size.
 
 ## 0.15.1 beta - Audio & Polish
 
