@@ -291,9 +291,10 @@
     text-align: center;
     transition: opacity 160ms var(--ui-ease-out);
   }
-  .flip-face.back { opacity: 0; }
-  .flip-btn.flipped .flip-face.front { opacity: 0; }
-  .flip-btn.flipped .flip-face.back { opacity: 1; }
+  .flip-face.front { pointer-events: auto; }
+  .flip-face.back { opacity: 0; pointer-events: none; }
+  .flip-btn.flipped .flip-face.front { opacity: 0; pointer-events: none; }
+  .flip-btn.flipped .flip-face.back { opacity: 1; pointer-events: auto; }
 
   /* Failure feedback: red border + one-shot shake when a key is rejected. */
   .key-input[aria-invalid='true'] { border-color: var(--danger); }

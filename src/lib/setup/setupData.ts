@@ -118,7 +118,10 @@ const cleanupPreview: Record<CleanupCard['id'], string> = {
 
 const tonePreview: Record<ToneCard['id'], (base: string) => string> = {
   casual: (base) => base.charAt(0).toUpperCase() + base.slice(1),
-  formal: (base) => `${base.charAt(0).toUpperCase()}${base.slice(1)}.`,
+  formal: (base) => {
+    const sentence = `${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+    return `${sentence.replace(/[.!?]+$/, '')}.`;
+  },
   very_casual: (base) => base.toLowerCase().replace(/[.!?]+$/, ''),
 };
 
