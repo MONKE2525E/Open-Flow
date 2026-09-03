@@ -168,6 +168,13 @@
     align-items: baseline;
     gap: 10px;
     flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .tile-relative .tile-head {
+    /* Reserve room for the absolutely-positioned delta pill so a large
+       "303.0k" reading never slides underneath it on narrow columns. */
+    padding-right: 92px;
   }
 
   .big {
@@ -242,7 +249,7 @@
 
   .gauge {
     width: 100%;
-    max-width: 150px;
+    max-width: min(150px, 100%);
     height: auto;
     display: block;
   }
@@ -296,21 +303,59 @@
     margin-left: auto;
   }
 
-  @media (max-width: 900px) {
-    .hero { grid-template-columns: 1fr; }
+  /* Container queries against the insights column (owned by Insights.svelte):
+     viewport queries fired too late because the sidebar consumes ~220px.
+     The band stays 3-up as long as possible — stacking early is what left a
+     150px gauge stranded in a full-width row with empty space beside it. */
+  @container insights (max-width: 680px) {
+    /* Compact 3-up: tighter gutters and a smaller gauge/number so all three
+       tiles still fit side by side instead of stacking. */
+    .hero { gap: 14px; }
+    .tile + .tile { padding-left: 14px; }
+    .tile-relative .tile-head { padding-right: 84px; }
+    .delta { font-size: 10px; padding: 2px 7px; }
+    .big { font-size: 24px; }
+    .big small { font-size: 15px; }
+    .gauge { max-width: min(120px, 100%); }
+    .gauge-value { font-size: 20px; }
+    .tile-note { font-size: 11.5px; }
+    .stat-num { font-size: 14px; }
+    .stat-label { font-size: 10.5px; }
+  }
+
+  @container insights (max-width: 500px) {
+    .hero { grid-template-columns: 1fr; gap: 0; }
     /* Stacked, the vertical rules become horizontal ones — same trick
        StatsCard uses when its row collapses. */
     .tile + .tile {
       border-left: 0;
       padding-left: 0;
       border-top: 1px solid var(--line);
-      padding-top: clamp(18px, 3vw, 32px);
+      padding-top: 18px;
+      margin-top: 18px;
     }
-    /* Stacked, the gauge lines up with the other two rather than floating
-       centred in its own row. */
+    /* Stacked, the gauge goes horizontal — dial on the left, labels on the
+       right — so the row reads as one full-width fact instead of a small
+       centred dial with empty space beside it. */
     .tile-gauge {
-      align-items: flex-start;
+      display: grid;
+      grid-template-columns: 110px minmax(0, 1fr);
+      column-gap: 14px;
+      align-items: center;
       text-align: left;
     }
+    .tile-gauge .gauge {
+      grid-row: span 2;
+      max-width: 110px;
+    }
+    .tile-gauge .tile-label { margin-top: 0; }
+    .tile-gauge .tile-note { margin-top: 4px; }
+  }
+
+  /* Very narrow: the delta pill joins the flow instead of floating over the
+     hero number it would otherwise collide with. */
+  @container insights (max-width: 380px) {
+    .tile-relative .tile-head { padding-right: 0; }
+    .delta { position: static; align-self: flex-start; margin-bottom: 8px; }
   }
 </style>

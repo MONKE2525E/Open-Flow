@@ -196,6 +196,8 @@
   .readout {
     text-align: right;
     white-space: nowrap;
+    min-width: 0;
+    flex-shrink: 1;
   }
   .readout-num {
     display: block;
@@ -223,10 +225,21 @@
   .axis {
     display: flex;
     justify-content: space-between;
+    gap: 8px;
     font-size: 10.5px;
     color: var(--ink-mute);
     margin-top: 2px;
+    min-width: 0;
   }
+
+  .axis span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .axis span:last-child { text-align: right; }
 
   rect { transition: fill var(--ui-duration-fast) var(--ui-ease-out), y var(--ui-duration-base) var(--ui-ease-out), height var(--ui-duration-base) var(--ui-ease-out); }
 

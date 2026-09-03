@@ -98,11 +98,26 @@
 
   onMount(() => {
     if (!gridHost) return;
-    const update = () => { availableWidth = gridHost?.clientWidth ?? 640; };
+    // A window drag can deliver several ResizeObserver notifications before
+    // the next frame; writing Svelte state in each one would run the whole
+    // reactive pass (and any DOM patch) multiple times per frame. Coalesce
+    // into a single update per animation frame instead.
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      if (gridHost) availableWidth = gridHost.clientWidth;
+    };
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(update);
+    };
     update();
-    const observer = new ResizeObserver(update);
+    const observer = new ResizeObserver(schedule);
     observer.observe(gridHost);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
   });
 
   /* One label per month the grid spans, positioned above that month's first
@@ -447,8 +462,12 @@
   .legend-label-more { margin-left: 3px; }
   .legend-gap { width: 10px; }
 
-  /* Stacked, the rail's vertical rule becomes a horizontal one. */
-  @media (max-width: 900px) {
+  /* Stacked, the rail's vertical rule becomes a horizontal one.
+     Container query against the insights column (owned by Insights.svelte):
+     viewport queries fired too late because the sidebar consumes ~220px.
+     Kept at 540px so calendar + rail stay side by side through the same
+     widths where the hero band stays 3-up. */
+  @container insights (max-width: 540px) {
     .heat-layout { flex-direction: column; }
     .heat-side {
       flex: 1 1 auto;

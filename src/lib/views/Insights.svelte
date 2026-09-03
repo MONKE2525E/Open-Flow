@@ -269,13 +269,25 @@
     margin-inline: auto;
     padding: var(--page-pad-y) var(--page-pad-x) 36px;
     min-width: 0;
+    /* The sidebar eats ~220px of viewport width, so viewport media queries
+       fire far too late for this column. Query the column itself instead —
+       same pattern as the settings-panel container in Settings.svelte. */
+    container-type: inline-size;
+    container-name: insights;
   }
 
   .head {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 16px;
+    gap: 12px 16px;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .head > div:first-child {
+    flex: 1 1 240px;
+    min-width: 0;
   }
 
   .page-h {
@@ -296,6 +308,13 @@
     gap: 8px;
     flex-wrap: wrap;
     justify-content: flex-end;
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+
+  .head-filters > :global(*) {
+    min-width: 0;
+    max-width: 100%;
   }
 
   /* Match the app-mappings / tone dropdowns rather than the default pill radius. */
@@ -340,7 +359,8 @@
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
-    gap: 12px;
+    gap: 8px 12px;
+    flex-wrap: wrap;
     padding-bottom: 8px;
     margin-bottom: 14px;
     border-bottom: 1px solid var(--line);
@@ -415,8 +435,15 @@
     max-width: 380px;
   }
 
-  @media (max-width: 900px) {
-    .head { flex-direction: column; }
+  /* Container query, not viewport: the rail + sidebar decide how wide this
+     column actually is. Below ~560px the title and both dropdowns stack and
+     left-align instead of squeezing into one row. */
+  @container insights (max-width: 560px) {
+    .head { flex-direction: column; align-items: stretch; }
+    .head-filters { justify-content: flex-start; }
+    .page-sub { max-width: none; }
+    .context-picker { max-width: 100%; }
+    .range-picker { max-width: 100%; }
   }
 
   @media (prefers-reduced-motion: reduce) {

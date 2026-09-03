@@ -271,7 +271,11 @@
     color: var(--ink-mute);
   }
 
-  @media (max-width: 860px) {
+  @container insights (max-width: 500px) {
     .split { grid-template-columns: 1fr; gap: 20px; }
+  }
+
+  @container insights (max-width: 400px) {
+    .figures { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   }
 </style>
