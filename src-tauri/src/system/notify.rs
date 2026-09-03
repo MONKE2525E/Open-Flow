@@ -362,13 +362,14 @@ fn install_windows_dev_shortcut(themed_icon: &std::path::Path) -> Result<(), Str
                 .GetValue(&PKEY_AppUserModel_ID)
                 .map_err(|err| err.to_string())?;
             let result = if value.Anonymous.Anonymous.vt == VT_LPWSTR {
-                value
-                    .Anonymous
-                    .Anonymous
-                    .Anonymous
-                    .pwszVal
-                    .to_string()
-                    .unwrap_or_default()
+                let pwsz = value.Anonymous.Anonymous.Anonymous.pwszVal;
+                // A null string pointer with a string type tag would fault
+                // on conversion; treat it as an empty AppID.
+                if pwsz.is_null() {
+                    String::new()
+                } else {
+                    pwsz.to_string().unwrap_or_default()
+                }
             } else {
                 String::new()
             };
