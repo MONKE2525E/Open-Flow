@@ -792,7 +792,10 @@ fn runtime_tray_icon_image(
     windows_micro_icon_image(theme, accent, size)
 }
 
-#[cfg(target_os = "windows")]
+// Pure software rasterization with no OS calls, so the Linux CI build (which
+// exists only to run tests) also compiles it for tests: that lets the tray
+// geometry tests exercise the exact artwork Windows ships.
+#[cfg(any(target_os = "windows", all(test, target_os = "linux")))]
 fn windows_micro_icon_image(
     theme: IconTheme,
     accent: [u8; 4],
@@ -897,7 +900,17 @@ fn runtime_tray_icon_image(
     accent: [u8; 4],
     size: u32,
 ) -> tauri::image::Image<'static> {
-    runtime_icon_image(theme, accent, size)
+    // Linux builds exist only for CI: under test, render through the same
+    // micro renderer the Windows tray uses so the geometry tests validate
+    // real artwork instead of the large-icon fallback.
+    #[cfg(test)]
+    {
+        windows_micro_icon_image(theme, accent, size)
+    }
+    #[cfg(not(test))]
+    {
+        runtime_icon_image(theme, accent, size)
+    }
 }
 
 #[cfg(all(test, not(target_os = "macos")))]
