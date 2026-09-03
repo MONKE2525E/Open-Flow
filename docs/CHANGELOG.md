@@ -4,6 +4,8 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 
 ## Unreleased
 
+- Recolored the running tray, taskbar/window, and macOS Dock icons with the selected accent while preserving their existing light/dark backgrounds and bundled launcher icons.
+
 - Context group app targets now survive versioned/nightly app updates by matching a close replacement name with publisher/developer evidence on Windows and macOS.
 - Reworked cleanup prompting around one default shared by every model, with explicit rule priority, conservative ambiguity handling, multilingual preservation, self-corrections and repair commands, spoken symbols and spelling, technical-token reconstruction, restrained formatting, safer number treatment, and context-assisted disambiguation.
 - **The cleanup prompt is now a single template used by every model**, edited from Clean-up → Edit prompt. It used to be stored per model, so an edit made on your default was silently ignored the moment a fallback model took over. An existing per-model edit is carried over.

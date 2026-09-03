@@ -1930,7 +1930,7 @@ impl SyncHost for ManagerHost {
             self.settings.save_value(key, value.clone())?;
         }
         // Side effects that keep the running app consistent with the new value.
-        if key == store::APPEARANCE_MODE {
+        if crate::app_tray::setting_updates_runtime_icons(key) {
             crate::app_tray::apply_runtime_icons(&self.app, None);
         }
         if key == store::SOUND_EFFECTS_VOLUME {

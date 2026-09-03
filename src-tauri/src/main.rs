@@ -118,7 +118,6 @@ fn main() {
                     "off"
                 }
             );
-            crate::system::notify::prepare_windows_notification_identity();
             let settings = crate::data::store::SettingsHandle::open(app.handle())
                 .map_err(std::io::Error::other)?;
             crate::data::credentials::migrate_from_store(app.handle(), &settings);
@@ -205,6 +204,13 @@ fn main() {
                 first_launch
             };
 
+            #[cfg(target_os = "windows")]
+            {
+                let shell_icon = app_tray::prepare_windows_shell_icon(app.handle())
+                    .map_err(std::io::Error::other)?;
+                crate::system::notify::prepare_windows_notification_identity(&shell_icon);
+            }
+
             // LAN device sync: identity, mDNS discovery, listener, sessions.
             // Soft-fails internally — never blocks startup.
             app.manage(sync::SyncManager::start(
@@ -221,6 +227,9 @@ fn main() {
                         let source: Box<dyn std::error::Error> = Box::new(std::io::Error::other(error));
                         tauri::Error::Setup(source.into())
                     })?;
+                // AppWindow initialization can restore the executable-derived taskbar icon.
+                // Apply the generated runtime icons only after custom chrome owns the window.
+                app_tray::apply_runtime_icons(app.handle(), theme);
             }
             app_hotkey::setup_hotkey(app, shared.clone());
             // setup_tray() already applies runtime icons (both platforms) via
@@ -347,6 +356,8 @@ fn main() {
                         );
                     }
                     tauri::WindowEvent::Focused(true) => {
+                        #[cfg(target_os = "windows")]
+                        apply_runtime_icons(window.app_handle(), window.theme().ok());
                         #[cfg(target_os = "macos")]
                         {
                             crate::system::mac_app::set_regular_activation_policy_on_main_thread(
@@ -356,6 +367,10 @@ fn main() {
                     }
                     tauri::WindowEvent::ThemeChanged(theme) => {
                         let app = window.app_handle();
+                        #[cfg(target_os = "windows")]
+                        if let Some(webview) = app.get_webview_window("main") {
+                            crate::system::windows_titlebar::refresh(&webview, Some(*theme));
+                        }
                         if app_tray::appearance_mode(app)
                             .as_deref()
                             .unwrap_or("system")
@@ -365,15 +380,12 @@ fn main() {
                             // internally — no separate call needed here.
                             apply_runtime_icons(app, Some(*theme));
                         }
-                        #[cfg(target_os = "windows")]
-                        if let Some(webview) = window.app_handle().get_webview_window("main") {
-                            crate::system::windows_titlebar::refresh(&webview, Some(*theme));
-                        }
                     }
                     #[cfg(target_os = "windows")]
                     tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
                         if let Some(webview) = window.app_handle().get_webview_window("main") {
                             crate::system::windows_titlebar::refresh(&webview, window.theme().ok());
+                            apply_runtime_icons(window.app_handle(), window.theme().ok());
                         }
                     }
                     _ => {}
@@ -535,6 +547,8 @@ fn main() {
             if let tauri::RunEvent::Exit = _event {
                 log::info!("app exiting; unloading local models");
                 crate::system::shutdown_local_models(_app);
+                #[cfg(target_os = "windows")]
+                app_tray::cleanup_runtime_icon_files();
                 log::info!("app shutdown complete");
             }
         });

@@ -46,12 +46,14 @@ pub struct TitleBarMetrics {
 
 type ConfigureFn = unsafe extern "C" fn(isize, i32, *mut NativeMetrics) -> i32;
 type MetricsFn = unsafe extern "C" fn(isize, *mut NativeMetrics) -> i32;
+type SetRuntimeIconsFn = unsafe extern "C" fn(isize, isize, isize, *const u16) -> i32;
 
 struct Bridge {
     _module: usize,
     enable: ConfigureFn,
     update: ConfigureFn,
     metrics: MetricsFn,
+    set_runtime_icons: SetRuntimeIconsFn,
 }
 
 unsafe impl Send for Bridge {}
@@ -90,6 +92,7 @@ fn load_bridge() -> Result<Bridge, String> {
         enable: unsafe { symbol(module, b"verenu_enable_extended_titlebar\0")? },
         update: unsafe { symbol(module, b"verenu_update_extended_titlebar\0")? },
         metrics: unsafe { symbol(module, b"verenu_get_extended_titlebar_metrics\0")? },
+        set_runtime_icons: unsafe { symbol(module, b"verenu_set_runtime_icons\0")? },
     })
 }
 
@@ -148,6 +151,29 @@ pub fn refresh(window: &WebviewWindow, theme: Option<Theme>) {
         if hr >= 0 {
             let _ = window.emit("verenu:native-titlebar-metrics", convert(native));
         }
+    }
+}
+
+pub fn set_runtime_icons(
+    hwnd: isize,
+    taskbar_icon: isize,
+    titlebar_icon: isize,
+    taskbar_icon_path: &std::path::Path,
+) -> Result<(), String> {
+    let path: Vec<u16> = taskbar_icon_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let hr =
+        unsafe { (bridge()?.set_runtime_icons)(hwnd, taskbar_icon, titlebar_icon, path.as_ptr()) };
+    if hr < 0 {
+        Err(format!(
+            "AppWindow icon update failed with HRESULT 0x{:08X}",
+            hr as u32
+        ))
+    } else {
+        Ok(())
     }
 }
 

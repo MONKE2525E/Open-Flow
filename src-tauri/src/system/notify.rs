@@ -16,6 +16,10 @@ const WINDOWS_DEV_APP_ID: &str = "com.verenu.app.dev";
 #[cfg(windows)]
 static WINDOWS_DEV_IDENTITY_READY: AtomicBool = AtomicBool::new(false);
 
+#[cfg(all(windows, debug_assertions))]
+static WINDOWS_DEV_SHORTCUT_ICON: std::sync::Mutex<Option<std::path::PathBuf>> =
+    std::sync::Mutex::new(None);
+
 #[derive(Clone, Copy)]
 enum NotificationDestination {
     Home,
@@ -159,31 +163,59 @@ fn show_windows(
 /// Windows toast notifications from unpackaged development executables need a
 /// Start Menu shortcut with an AppUserModelId. Without that shortcut, the
 /// Windows notification stack labels the toast as Windows PowerShell.
-pub fn prepare_windows_notification_identity() {
+pub fn prepare_windows_notification_identity(themed_icon: &std::path::Path) {
     #[cfg(all(windows, debug_assertions))]
-    match install_windows_dev_shortcut() {
+    match sync_windows_dev_shortcut_icon(themed_icon) {
         Ok(()) => WINDOWS_DEV_IDENTITY_READY.store(true, Ordering::Release),
         Err(err) => log::warn!("Could not register the Windows notification identity: {err}"),
     }
+
+    #[cfg(not(all(windows, debug_assertions)))]
+    let _ = themed_icon;
+}
+
+#[cfg(target_os = "windows")]
+pub fn refresh_windows_notification_identity(themed_icon: &std::path::Path) {
+    #[cfg(debug_assertions)]
+    if let Err(err) = sync_windows_dev_shortcut_icon(themed_icon) {
+        log::warn!("Could not refresh the Windows development shortcut icon: {err}");
+    }
+
+    #[cfg(not(debug_assertions))]
+    let _ = themed_icon;
 }
 
 #[cfg(all(windows, debug_assertions))]
-fn install_windows_dev_shortcut() -> Result<(), String> {
+fn sync_windows_dev_shortcut_icon(themed_icon: &std::path::Path) -> Result<(), String> {
+    let mut current = WINDOWS_DEV_SHORTCUT_ICON
+        .lock()
+        .map_err(|_| "development shortcut icon lock was poisoned".to_owned())?;
+    if current.as_deref() == Some(themed_icon) {
+        return Ok(());
+    }
+    install_windows_dev_shortcut(themed_icon)?;
+    *current = Some(themed_icon.to_path_buf());
+    Ok(())
+}
+
+#[cfg(all(windows, debug_assertions))]
+fn install_windows_dev_shortcut(themed_icon: &std::path::Path) -> Result<(), String> {
     use std::mem::ManuallyDrop;
     use std::path::PathBuf;
     use windows::core::{Interface, GUID, PCWSTR, PWSTR};
     use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
     use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
+    use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
     use windows::Win32::System::Com::StructuredStorage::{
         PropVariantClear, PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
     };
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoTaskMemAlloc, CoUninitialize, IPersistFile,
-        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, STGM_READ,
     };
     use windows::Win32::System::Variant::VT_LPWSTR;
-    use windows::Win32::UI::Shell::IShellLinkW;
     use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
+    use windows::Win32::UI::Shell::{IShellLinkW, SHChangeNotify, SHCNE_UPDATEITEM, SHCNF_PATHW};
 
     const CLSID_SHELL_LINK: GUID = GUID::from_u128(0x00021401_0000_0000_c000_000000000046);
 
@@ -257,6 +289,7 @@ fn install_windows_dev_shortcut() -> Result<(), String> {
                 .map_err(|err| err.to_string())?
         };
         let exe_wide = wide(&exe);
+        let icon_wide = wide(themed_icon);
         let description = wide("Verenu development notifications");
         unsafe {
             shell_link
@@ -264,6 +297,9 @@ fn install_windows_dev_shortcut() -> Result<(), String> {
                 .map_err(|err| err.to_string())?;
             shell_link
                 .SetDescription(PCWSTR(description.as_ptr()))
+                .map_err(|err| err.to_string())?;
+            shell_link
+                .SetIconLocation(PCWSTR(icon_wide.as_ptr()), 0)
                 .map_err(|err| err.to_string())?;
         }
 
@@ -286,6 +322,72 @@ fn install_windows_dev_shortcut() -> Result<(), String> {
             persist_file
                 .Save(PCWSTR(shortcut_wide.as_ptr()), true)
                 .map_err(|err| err.to_string())?;
+        }
+
+        let verify_link: IShellLinkW = unsafe {
+            CoCreateInstance(&CLSID_SHELL_LINK, None, CLSCTX_INPROC_SERVER)
+                .map_err(|err| err.to_string())?
+        };
+        let verify_persist: IPersistFile = verify_link.cast().map_err(|err| err.to_string())?;
+        unsafe {
+            verify_persist
+                .Load(PCWSTR(shortcut_wide.as_ptr()), STGM_READ)
+                .map_err(|err| err.to_string())?;
+        }
+        let mut target_buffer = [0_u16; 32768];
+        let mut icon_buffer = [0_u16; 32768];
+        let mut find_data = WIN32_FIND_DATAW::default();
+        let mut icon_index = 0;
+        unsafe {
+            verify_link
+                .GetPath(&mut target_buffer, &mut find_data, 0)
+                .map_err(|err| err.to_string())?;
+            verify_link
+                .GetIconLocation(&mut icon_buffer, &mut icon_index)
+                .map_err(|err| err.to_string())?;
+        }
+        let from_wide = |buffer: &[u16]| {
+            String::from_utf16_lossy(
+                &buffer[..buffer.iter().position(|c| *c == 0).unwrap_or(buffer.len())],
+            )
+        };
+        let saved_target = from_wide(&target_buffer);
+        let saved_icon = from_wide(&icon_buffer);
+        let verify_store: IPropertyStore = verify_link.cast().map_err(|err| err.to_string())?;
+        let app_id = unsafe {
+            let mut value = verify_store
+                .GetValue(&PKEY_AppUserModel_ID)
+                .map_err(|err| err.to_string())?;
+            let result = if value.Anonymous.Anonymous.vt == VT_LPWSTR {
+                value
+                    .Anonymous
+                    .Anonymous
+                    .Anonymous
+                    .pwszVal
+                    .to_string()
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let _ = PropVariantClear(&mut value);
+            result
+        };
+        log::info!(
+            "Windows development shortcut saved: target={saved_target}, icon={saved_icon},{icon_index}, aumid={app_id}"
+        );
+        if std::path::Path::new(&saved_icon) != themed_icon || app_id != WINDOWS_DEV_APP_ID {
+            return Err(format!(
+                "development shortcut verification failed: expected icon={} and aumid={WINDOWS_DEV_APP_ID}, got icon={saved_icon} and aumid={app_id}",
+                themed_icon.display()
+            ));
+        }
+        unsafe {
+            SHChangeNotify(
+                SHCNE_UPDATEITEM,
+                SHCNF_PATHW,
+                Some(shortcut_wide.as_ptr().cast()),
+                None,
+            );
         }
         Ok(())
     })();

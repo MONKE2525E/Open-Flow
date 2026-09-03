@@ -9,6 +9,7 @@
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use objc2::rc::autoreleasepool;
 use objc2::runtime::{AnyClass, AnyObject};
@@ -34,6 +35,7 @@ const POLICY_ACCESSORY: u8 = 1;
 const POLICY_REGULAR: u8 = 2;
 
 static LAST_APPLIED_POLICY: AtomicU8 = AtomicU8::new(POLICY_UNKNOWN);
+static RUNTIME_DOCK_ICON: OnceLock<Mutex<Vec<u8>>> = OnceLock::new();
 
 // Compatibility latch used by the AX text/context probes. It records that a
 // real cross-process AX read succeeded during this process lifetime; the
@@ -56,17 +58,36 @@ unsafe impl objc2::Encode for NSApplicationActivationPolicy {
     const ENCODING: objc2::Encoding = isize::ENCODING;
 }
 
-/// Apply the current bundled PNG as the macOS application icon at runtime.
-/// This sidesteps Dock/LaunchServices caching during development and keeps the
-/// visible Dock icon in sync with `icons/icon-source.svg`.
-pub fn apply_dock_icon() -> bool {
+/// Apply a generated RGBA image as the macOS application icon at runtime.
+pub fn apply_dock_icon(rgba: &[u8], width: u32, height: u32) -> bool {
+    let Some(image) = image::RgbaImage::from_raw(width, height, rgba.to_vec()) else {
+        return false;
+    };
+    let mut png = std::io::Cursor::new(Vec::new());
+    if image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .is_err()
+    {
+        return false;
+    }
+    let png = png.into_inner();
+    if let Ok(mut cached) = RUNTIME_DOCK_ICON
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+    {
+        *cached = png.clone();
+    }
+    apply_dock_icon_bytes(&png)
+}
+
+fn apply_dock_icon_bytes(bytes: &[u8]) -> bool {
     autoreleasepool(|_| unsafe {
         let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
         if app.is_null() {
             return false;
         }
 
-        let data = NSData::with_bytes(APP_ICON_ICNS);
+        let data = NSData::with_bytes(bytes);
         let image: *mut AnyObject = msg_send![class!(NSImage), alloc];
         let image: *mut AnyObject = msg_send![image, initWithData: &*data];
         if image.is_null() {
@@ -74,6 +95,10 @@ pub fn apply_dock_icon() -> bool {
         }
 
         let _: () = msg_send![app, setApplicationIconImage: image];
+        let dock_tile: *mut AnyObject = msg_send![app, dockTile];
+        if !dock_tile.is_null() {
+            let _: () = msg_send![dock_tile, display];
+        }
         let _: () = msg_send![image, release];
         true
     })
@@ -228,26 +253,13 @@ fn set_activation_policy(new_policy: u8) -> bool {
 }
 
 pub fn refresh_dock_icon() {
-    autoreleasepool(|_| unsafe {
-        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
-        if app.is_null() {
-            return;
-        }
-
-        let data = NSData::with_bytes(APP_ICON_ICNS);
-        let image: *mut AnyObject = msg_send![class!(NSImage), alloc];
-        let image: *mut AnyObject = msg_send![image, initWithData: &*data];
-        if image.is_null() {
-            return;
-        }
-
-        let _: () = msg_send![app, setApplicationIconImage: image];
-        let dock_tile: *mut AnyObject = msg_send![app, dockTile];
-        if !dock_tile.is_null() {
-            let _: () = msg_send![dock_tile, display];
-        }
-        let _: () = msg_send![image, release];
-    })
+    let cached = RUNTIME_DOCK_ICON
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .ok()
+        .map(|bytes| bytes.clone())
+        .filter(|bytes| !bytes.is_empty());
+    let _ = apply_dock_icon_bytes(cached.as_deref().unwrap_or(APP_ICON_ICNS));
 }
 
 const AV_AUDIO_PERMISSION_UNDETERMINED: isize = u32::from_be_bytes(*b"undt") as isize;
