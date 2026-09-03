@@ -4,6 +4,8 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 
 ## Unreleased
 
+- Fixed the main window stuttering and spiking CPU when dragged or resized quickly on Windows: moving the window no longer re-runs title-bar and icon updates per mouse event, resizes coalesce to a single refresh once the size settles, title-bar metrics are only forwarded when visible values change, and themed icons reuse cached artwork instead of re-rendering on every focus or settings event.
+- Restored the Windows tray icon's classic proportions — the accent-theming rework had grown the waveform to fill ~70% of the tile edge to edge; it sits back inside the tile with real margins, keeping the sharper native-size rendering.
 - Recolored the running tray, taskbar/window, and macOS Dock icons with the selected accent while preserving their existing light/dark backgrounds and bundled launcher icons.
 
 - Context group app targets now survive versioned/nightly app updates by matching a close replacement name with publisher/developer evidence on Windows and macOS.
