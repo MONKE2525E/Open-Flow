@@ -349,7 +349,8 @@ fn reveal_pill(app: &AppHandle, pill: &WebviewWindow, state: &str, message: Opti
     // click-capture surface over the app underneath the pill.
     let has_clickable_buttons = matches!(
         state,
-        "cancelled"
+        "handsfree"
+            | "cancelled"
             | "paste_failed"
             | "copied"
             | "repair_input"
