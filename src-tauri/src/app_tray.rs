@@ -1162,7 +1162,7 @@ fn parse_icon_accent(value: Option<&str>) -> [u8; 4] {
     let Some(hex) = value.and_then(|value| value.strip_prefix('#')) else {
         return DEFAULT_ICON_ACCENT;
     };
-    if hex.len() != 6 {
+    if hex.len() != 6 || !hex.is_ascii() {
         return DEFAULT_ICON_ACCENT;
     }
     let parse = |range| u8::from_str_radix(&hex[range], 16).ok();

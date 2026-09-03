@@ -335,8 +335,10 @@ fn install_windows_dev_shortcut(themed_icon: &std::path::Path) -> Result<(), Str
                 .Load(PCWSTR(shortcut_wide.as_ptr()), STGM_READ)
                 .map_err(|err| err.to_string())?;
         }
-        let mut target_buffer = [0_u16; 32768];
-        let mut icon_buffer = [0_u16; 32768];
+        // Heap-allocated: two 32 KiB stack arrays would eat 128 KiB of stack
+        // in one frame for a check that runs once per icon change.
+        let mut target_buffer = vec![0_u16; 32768];
+        let mut icon_buffer = vec![0_u16; 32768];
         let mut find_data = WIN32_FIND_DATAW::default();
         let mut icon_index = 0;
         unsafe {
@@ -376,7 +378,19 @@ fn install_windows_dev_shortcut(themed_icon: &std::path::Path) -> Result<(), Str
         log::info!(
             "Windows development shortcut saved: target={saved_target}, icon={saved_icon},{icon_index}, aumid={app_id}"
         );
-        if std::path::Path::new(&saved_icon) != themed_icon || app_id != WINDOWS_DEV_APP_ID {
+        // The shell may echo the icon path back with different casing or
+        // separators than the path we set, so compare a normalized form
+        // (backslash separators, case-insensitive) rather than exact bytes.
+        let normalize_icon_path = |path: &std::path::Path| {
+            path.as_os_str()
+                .to_string_lossy()
+                .replace('/', "\\")
+                .to_lowercase()
+        };
+        if normalize_icon_path(std::path::Path::new(&saved_icon))
+            != normalize_icon_path(themed_icon)
+            || app_id != WINDOWS_DEV_APP_ID
+        {
             return Err(format!(
                 "development shortcut verification failed: expected icon={} and aumid={WINDOWS_DEV_APP_ID}, got icon={saved_icon} and aumid={app_id}",
                 themed_icon.display()
