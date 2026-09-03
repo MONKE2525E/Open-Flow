@@ -4,7 +4,7 @@
 - Github Repo: https://github.com/MONKE2525E/Verenu
 - Use the Mono font very sparingly only use it when its in technical items like file names folder names, code, etc...
 - docs/ROADMAP.md keeps recorded bugs and long term goals far future plans are not to be acted on unless the user requests so.
-- Latest release is 0.17.0. In-progress (unreleased) work lives under "Unreleased" in docs/CHANGELOG.md — check it before assuming a feature's current state.
+- Latest release is 0.18.0. In-progress (unreleased) work lives under "Unreleased" in docs/CHANGELOG.md — check it before assuming a feature's current state.
 - Always add yourself as a co-author  in all commits you make e.g @Claude, @Codex, @google-antigravity, etc but dont add a note at the bottom of the PR description
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
