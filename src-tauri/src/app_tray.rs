@@ -1220,6 +1220,9 @@ mod windows_icon_tests {
     /// The Windows micro glyph must occupy the tiny native surface instead of
     /// collapsing into one-pixel sticks — while keeping the classic tray
     /// envelope (roughly 2:1 tile-to-glyph margins, not edge to edge).
+    /// Windows-only: other targets render the tray from the shared direct
+    /// renderer (see below), whose 1px bars at 20px measure differently.
+    #[cfg(target_os = "windows")]
     #[test]
     fn tray_geometry_is_optically_sized() {
         let (w, h, cx, cy) = glyph_bounds(
@@ -1230,6 +1233,24 @@ mod windows_icon_tests {
         assert!((0.46..=0.54).contains(&h), "micro glyph height: {h:.3}");
         assert!((cx - 0.5).abs() <= 0.03, "micro centre-x: {cx:.3}");
         assert!((0.48..=0.52).contains(&cy), "micro centre-y: {cy:.3}");
+    }
+
+    /// Non-Windows, non-macOS targets render the tray from the shared direct
+    /// renderer rather than the supersampled micro glyph above — pin its
+    /// current envelope so a regression is caught instead of silently
+    /// shipped. (Its bar *ratios* still match the taskbar artwork; that's
+    /// covered separately by assert_matches_tray_ratios.)
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[test]
+    fn tray_geometry_matches_direct_renderer() {
+        let (w, h, cx, cy) = glyph_bounds(
+            runtime_tray_icon_image(IconTheme::Dark, DEFAULT_ICON_ACCENT, 20).rgba(),
+            20,
+        );
+        assert!((0.56..=0.64).contains(&w), "micro glyph width: {w:.3}");
+        assert!((0.51..=0.59).contains(&h), "micro glyph height: {h:.3}");
+        assert!((0.42..=0.48).contains(&cx), "micro centre-x: {cx:.3}");
+        assert!((0.49..=0.56).contains(&cy), "micro centre-y: {cy:.3}");
     }
 }
 
