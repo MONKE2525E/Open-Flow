@@ -312,10 +312,15 @@ fn replace_taskbar_icons(
         }
     };
     let key = taskbar_hwnd.0 as isize;
-    let Ok(mut current) = CURRENT.get_or_init(|| Mutex::new(HashMap::new())).lock() else {
-        return;
-    };
-    if let Some(icons) = current.get(&key) {
+    // Snapshot the cached handles under a short lock hold. Rendering the
+    // supersampled bitmaps, encoding the ICO, and pumping Win32 messages
+    // below must not block other callers on this mutex.
+    let cached = CURRENT
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|current| current.get(&key).cloned());
+    if let Some(icons) = cached {
         if icons.theme == theme && icons.accent == accent {
             unsafe {
                 let _ = SendMessageW(
@@ -453,25 +458,36 @@ fn replace_taskbar_icons(
         if read_big != big || read_small != small {
             log::warn!("Windows rejected a runtime taskbar icon handle for hwnd=0x{key:X}");
         }
-        if let Some(old) = current.insert(
-            key,
-            WindowIcons {
-                theme,
-                accent,
-                big,
-                small,
-                path: shell_icon_path.clone(),
-            },
-        ) {
+    }
+    // Publish the new handles under a short lock hold; the displaced
+    // handles are destroyed after the lock is released.
+    let old = CURRENT
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|mut current| {
+            current.insert(
+                key,
+                WindowIcons {
+                    theme,
+                    accent,
+                    big,
+                    small,
+                    path: shell_icon_path.clone(),
+                },
+            )
+        });
+    if let Some(old) = old {
+        unsafe {
             let _ = DestroyIcon(windows::Win32::UI::WindowsAndMessaging::HICON(
                 old.big as *mut _,
             ));
             let _ = DestroyIcon(windows::Win32::UI::WindowsAndMessaging::HICON(
                 old.small as *mut _,
             ));
-            if old.path != shell_icon_path {
-                let _ = std::fs::remove_file(old.path);
-            }
+        }
+        if old.path != shell_icon_path {
+            let _ = std::fs::remove_file(old.path);
         }
     }
 }

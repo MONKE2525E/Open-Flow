@@ -206,9 +206,18 @@ fn main() {
 
             #[cfg(target_os = "windows")]
             {
-                let shell_icon = app_tray::prepare_windows_shell_icon(app.handle())
-                    .map_err(std::io::Error::other)?;
-                crate::system::notify::prepare_windows_notification_identity(&shell_icon);
+                // Non-critical: a temp-dir write failure here must not abort
+                // startup, it only skips the themed toast identity.
+                match app_tray::prepare_windows_shell_icon(app.handle()) {
+                    Ok(shell_icon) => {
+                        crate::system::notify::prepare_windows_notification_identity(
+                            &shell_icon,
+                        );
+                    }
+                    Err(err) => {
+                        log::warn!("Continuing without a themed shell icon: {err}");
+                    }
+                }
             }
 
             // LAN device sync: identity, mDNS discovery, listener, sessions.
