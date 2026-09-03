@@ -117,9 +117,9 @@
 
   .how-label {
     font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--ink-faint);
     margin: 0 0 14px;
   }

@@ -162,7 +162,7 @@
 <svelte:window onkeydown={handleBetaModalKeydown} />
 
 <h2 class="settings-h">About</h2>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="about-version">
   <div><div class="label">Version</div></div>
   <button class="version-tap desc" onclick={handleVersionTap}>v{appVersion}</button>
 </div>
@@ -171,26 +171,26 @@
     <span class="desc dev-hint">Developer mode enabled for this session.</span>
   </div>
 {/if}
-<div class="setting-row">
+<div class="setting-row" data-setting-target="about-license">
   <div><div class="label">License</div></div>
   <span class="desc">MIT</span>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="about-website">
   <div><div class="label">Website</div></div>
   <button class="btn-ghost" onclick={() => openExternal(WEBSITE_URL)}>verenu.com</button>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="about-source">
   <div><div class="label">Source</div></div>
   <button class="btn-ghost" onclick={() => openExternal(`https://github.com/${SOURCE_REPO}`)}>github.com/{SOURCE_REPO}</button>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="about-setup">
   <div>
     <div class="label">Setup</div>
     <div class="desc">Re-run onboarding to review your provider, key, and defaults.</div>
   </div>
   <button class="btn-ghost" onclick={rerunSetup}>Re-run setup</button>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="about-updates">
   <div>
     <div class="label">Updates</div>
     {#if updateCheckState === 'up-to-date'}
@@ -221,7 +221,7 @@
     {/if}
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="about-beta">
   <div>
     <div class="label">Beta updates</div>
     <div class="desc">Try early releases from the development branch. Expect bugs and possible data loss.</div>
@@ -314,10 +314,10 @@
   }
   .modal-header { padding: 20px 20px 0; }
   .modal-title {
-    font-family: var(--serif);
-    font-size: 18px;
-    font-weight: 500;
-    letter-spacing: -0.015em;
+    font-family: var(--sans);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
     color: var(--ink);
     margin: 0;
   }

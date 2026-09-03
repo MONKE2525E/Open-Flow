@@ -453,7 +453,7 @@
    * viewport media queries for container queries against this column.
    */
   .panel-inner {
-    width: min(100%, var(--settings-measure));
+    width: min(100%, 680px);
     margin-inline: auto;
     container-type: inline-size;
     container-name: settings-panel;

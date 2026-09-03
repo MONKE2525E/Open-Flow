@@ -369,7 +369,10 @@ pub fn query_context_targets(db: &Db, context_id: Option<i64>) -> Result<Vec<Con
          ORDER BY executable COLLATE NOCASE ASC",
     )?;
     let rows = stmt
-        .query_map(params![context_id, current_platform_tag()], context_target_from_row)?
+        .query_map(
+            params![context_id, current_platform_tag()],
+            context_target_from_row,
+        )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
@@ -435,7 +438,14 @@ pub fn reconcile_context_targets(
              WHERE platform IS NULL OR platform = ?1",
         )?
         .query_map(params![current_platform], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
         })?
         .collect::<rusqlite::Result<_>>()?;
     let mut changed = false;
@@ -444,9 +454,9 @@ pub fn reconcile_context_targets(
         if executable.starts_with("?::") {
             continue;
         }
-        let exact = installed_apps.iter().find(|app| {
-            app.exe.trim().eq_ignore_ascii_case(executable.trim())
-        });
+        let exact = installed_apps
+            .iter()
+            .find(|app| app.exe.trim().eq_ignore_ascii_case(executable.trim()));
         let candidate = exact.or_else(|| {
             crate::system::apps::closest_installed_app(
                 &executable,
@@ -1034,7 +1044,11 @@ mod tests {
         }
 
         let targets = query_context_targets(&db, Some(context.id)).expect("targets");
-        assert_eq!(targets.len(), 1, "only the resolved target should be visible");
+        assert_eq!(
+            targets.len(),
+            1,
+            "only the resolved target should be visible"
+        );
         assert_eq!(targets[0].executable, "editor.exe");
     }
 

@@ -77,7 +77,7 @@
 
   .status-text {
     flex: 1;
-    font-family: var(--serif);
+    font-family: var(--sans);
     font-weight: 500;
   }
 

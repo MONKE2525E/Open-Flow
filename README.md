@@ -101,7 +101,7 @@ You choose the providers. Verenu does not lock you into one stack.
 | Local | `parakeet-v3` | none |
 | Groq | `whisper-large-v3-turbo` | `qwen/qwen3.6-27b` |
 | OpenAI | `gpt-4o-transcribe` | `gpt-4o-mini` |
-| Google | `gemini-3.5-flash` | `gemini-3.5-flash` |
+| Google | `gemini-3.5-transcribe` | `gemini-3.5-flash-lite` |
 
 If you care about privacy, speed, retention, or cost, judge the provider on its own policy. Once data leaves Verenu and hits a provider API, that provider's rules apply. Local transcription with cloud cleanup is still not fully local because the transcript text leaves the device.
 

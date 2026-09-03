@@ -129,6 +129,15 @@ pub fn get_app_context_hint(
     context_name: Option<&str>,
 ) -> Option<String> {
     let mut lines = Vec::new();
+    // Resolved context group (see core/context.rs). Labeled and truncated like
+    // every other hint line, and omitted when empty so the prompt never carries
+    // a dangling "Context:" header.
+    if let Some(name) = context_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("Context: {}", truncate_hint_value(name, 60)));
+    }
     #[cfg(any(windows, target_os = "macos"))]
     {
         let browser = BROWSER_EXES
@@ -157,13 +166,6 @@ pub fn get_app_context_hint(
     #[cfg(not(any(windows, target_os = "macos")))]
     lines.push(format!("Application: {}", friendly_app_name(process_name)));
 
-    if let Some(name) = context_name
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("Everywhere"))
-    {
-        lines.push(format!("Verenu context: {}", truncate_hint_value(name, 60)));
-    }
-
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
@@ -171,7 +173,32 @@ fn friendly_app_name(process_name: &str) -> String {
     let base = process_name
         .trim_end_matches(".exe")
         .trim_end_matches(".app");
-    match base.to_ascii_lowercase().as_str() {
+    let normalized = base.to_ascii_lowercase();
+    // Release-channel/version suffixes do not help disambiguate dictation and
+    // make otherwise identical targets look like different applications.
+    let stable_base = [
+        " (nightly)",
+        "-nightly",
+        "_nightly",
+        " nightly",
+        " (beta)",
+        "-beta",
+        "_beta",
+        " beta",
+        " (dev)",
+        "-dev",
+        "_dev",
+        " dev",
+    ]
+    .iter()
+    .filter_map(|suffix| normalized.find(suffix).map(|index| (index, *suffix)))
+    .min_by_key(|(index, _)| *index)
+    .map(|(index, _)| &base[..index])
+    .map(str::trim_end)
+    .filter(|value| !value.is_empty())
+    .unwrap_or(base);
+
+    match stable_base.to_ascii_lowercase().as_str() {
         "code" => "Visual Studio Code".to_string(),
         "winword" => "Microsoft Word".to_string(),
         "excel" => "Microsoft Excel".to_string(),
@@ -183,7 +210,8 @@ fn friendly_app_name(process_name: &str) -> String {
         "notepad" => "Notepad".to_string(),
         "obsidian" => "Obsidian".to_string(),
         "notion" => "Notion".to_string(),
-        _ => base.to_string(),
+        "t3-code" => "T3 Code".to_string(),
+        _ => stable_base.to_string(),
     }
 }
 
@@ -251,6 +279,8 @@ mod tests {
         assert_eq!(friendly_app_name("code.exe"), "Visual Studio Code");
         assert_eq!(friendly_app_name("winword.exe"), "Microsoft Word");
         assert_eq!(friendly_app_name("slack.app"), "Slack");
+        assert_eq!(friendly_app_name("t3-code-nightly-20260830.exe"), "T3 Code");
+        assert_eq!(friendly_app_name("Example (nightly).app"), "Example");
     }
 
     #[test]

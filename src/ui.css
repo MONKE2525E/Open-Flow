@@ -397,10 +397,10 @@ input[type='range'].ui-range:focus-visible {
 
 .ui-modal-title {
   color: var(--ink);
-  font-family: var(--serif);
-  font-size: 18px;
-  font-weight: 500;
-  letter-spacing: -0.015em;
+  font-family: var(--sans);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 

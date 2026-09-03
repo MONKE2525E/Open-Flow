@@ -20,7 +20,7 @@ export const providers: SetupProvider[] = [
     id: 'google',
     name: 'Google Gemini',
     badge: '',
-    desc: 'Gemini 3.5 Flash for both transcription and cleanup, on a generous free tier.',
+    desc: 'Gemini Flash-Lite for fast, low-cost transcription cleanup on a generous free tier.',
   },
   {
     id: 'openai',
@@ -92,18 +92,18 @@ export const providerGuides: Record<ProviderId, ProviderGuide> = {
 type CleanupCard = { id: CleanupIntensity; name: string; desc: string };
 
 export const cleanupCards: CleanupCard[] = [
-  { id: 'none', name: 'Off', desc: 'Raw transcript, no second AI call' },
-  { id: 'light', name: 'Light', desc: 'Punctuation and obvious slips only' },
-  { id: 'medium', name: 'Medium', desc: 'Fillers and repetition removed' },
-  { id: 'high', name: 'Strong', desc: 'Rewritten shorter and tighter' },
+  { id: 'none', name: 'Off', desc: 'Keep the raw transcript. A second call is used only to reconcile two transcripts.' },
+  { id: 'light', name: 'Light', desc: 'Remove speech artifacts and fix basics. Keep wording, order, and structure.' },
+  { id: 'medium', name: 'Medium', desc: 'Improve flow and remove redundancy while preserving every distinct detail.' },
+  { id: 'high', name: 'Strong', desc: 'Rewrite concisely while preserving facts, constraints, qualifiers, and emphasis.' },
 ];
 
 type ToneCard = { id: ToneId; name: string; desc: string };
 
 export const toneCards: ToneCard[] = [
-  { id: 'casual', name: 'Casual', desc: 'Reads like a quick message' },
-  { id: 'formal', name: 'Formal', desc: 'Polished, professional prose' },
-  { id: 'very_casual', name: 'Very Casual', desc: 'all lowercase, no punctuation' },
+  { id: 'casual', name: 'Casual', desc: 'Contractions, normal casing, and the speaker’s casual voice' },
+  { id: 'formal', name: 'Formal', desc: 'Professional wording without added greetings or politeness' },
+  { id: 'very_casual', name: 'Very Casual', desc: 'Mostly lowercase, minimal readable punctuation, and preserved emphasis' },
 ];
 
 /** Illustrative-only before→after preview text. Not API-driven — a static approximation. */
@@ -112,13 +112,16 @@ const SAMPLE_RAW = 'um so like i think we should um ship it tomorrow maybe';
 const cleanupPreview: Record<CleanupCard['id'], string> = {
   none: 'um so like i think we should um ship it tomorrow maybe',
   light: 'I think we should ship it tomorrow maybe',
-  medium: 'I think we should ship it tomorrow',
-  high: "Let's ship tomorrow",
+  medium: 'I think we should ship it tomorrow, maybe.',
+  high: 'We should ship it tomorrow.',
 };
 
 const tonePreview: Record<ToneCard['id'], (base: string) => string> = {
   casual: (base) => base.charAt(0).toUpperCase() + base.slice(1),
-  formal: (base) => `${base.charAt(0).toUpperCase()}${base.slice(1)}.`.replace(/\bmaybe\b/, 'pending final review'),
+  formal: (base) => {
+    const sentence = `${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+    return `${sentence.replace(/[.!?]+$/, '')}.`;
+  },
   very_casual: (base) => base.toLowerCase().replace(/[.!?]+$/, ''),
 };
 

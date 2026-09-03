@@ -131,10 +131,10 @@
   }
 
   .dict-often-label {
-    font-family: var(--mono);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font-family: var(--sans);
+    font-size: 11px;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--ink-faint);
     flex-shrink: 0;
   }
@@ -169,9 +169,9 @@
   }
 
   .empty-h {
-    font-family: var(--serif);
-    font-style: italic;
-    font-size: 17px;
+    font-family: var(--sans);
+    font-style: normal;
+    font-size: 15px;
     font-weight: 500;
     color: var(--ink-soft);
     margin: 0;

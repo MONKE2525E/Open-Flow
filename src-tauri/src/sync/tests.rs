@@ -28,13 +28,13 @@ fn listener_port_is_stable_and_device_specific() {
 #[test]
 fn connection_candidates_try_stable_port_before_stale_advertisement() {
     let uuid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
-    let candidates = super::manager::connection_candidates(
-        &["192.168.0.86:58546".to_string()],
-        58546,
-        uuid,
-    );
+    let candidates =
+        super::manager::connection_candidates(&["192.168.0.86:58546".to_string()], 58546, uuid);
     assert_eq!(candidates.len(), 2);
-    assert_eq!(candidates[0].port(), super::manager::listener_port_for_uuid(uuid));
+    assert_eq!(
+        candidates[0].port(),
+        super::manager::listener_port_for_uuid(uuid)
+    );
     assert_eq!(candidates[1].port(), 58546);
 }
 
@@ -56,7 +56,13 @@ fn test_db(device_uuid: &str) -> DbHandle {
 }
 
 fn uuid(prefix: &str) -> String {
-    format!("{prefix}-{}", crate::sync::identity::fingerprint_of(prefix.as_bytes()).get(..8).expect("len").to_string())
+    format!(
+        "{prefix}-{}",
+        crate::sync::identity::fingerprint_of(prefix.as_bytes())
+            .get(..8)
+            .expect("len")
+            .to_string()
+    )
 }
 
 fn row_uuid(conn: &rusqlite::Connection, table: &str, id: i64) -> String {
@@ -175,9 +181,12 @@ fn peer_of(device_uuid: &str) -> sync_store::SyncPeer {
 fn triggers_capture_content_changes() {
     let a_uuid = uuid("aaaa");
     let db = test_db(&a_uuid);
-    let dict = db::insert_dictionary_entry_returning(&db, "Groq", Some("Grock"), None).expect("insert");
-    let snippet = db::insert_snippet_returning(&db, "addr", "123 Main St", "", None).expect("snippet");
-    let context = db::insert_context_returning(&db, "Work", None, None, None, None, false).expect("context");
+    let dict =
+        db::insert_dictionary_entry_returning(&db, "Groq", Some("Grock"), None).expect("insert");
+    let snippet =
+        db::insert_snippet_returning(&db, "addr", "123 Main St", "", None).expect("snippet");
+    let context =
+        db::insert_context_returning(&db, "Work", None, None, None, None, false).expect("context");
     db::assign_context_target(&db, context.id, "code.exe").expect("target");
 
     let conn = db.lock().expect("lock");
@@ -250,9 +259,12 @@ fn content_syncs_both_directions_without_duplicates() {
     let a = test_db(&uuid("aaaa"));
     let b = test_db(&uuid("bbbb"));
 
-    let entry_a = db::insert_dictionary_entry_returning(&a, "Groq", Some("Grock"), None).expect("a entry");
-    let _snippet_b = db::insert_snippet_returning(&b, "addr", "123 Main St", "", None).expect("b snippet");
-    let ctx_a = db::insert_context_returning(&a, "Work", None, None, None, None, false).expect("ctx");
+    let entry_a =
+        db::insert_dictionary_entry_returning(&a, "Groq", Some("Grock"), None).expect("a entry");
+    let _snippet_b =
+        db::insert_snippet_returning(&b, "addr", "123 Main St", "", None).expect("b snippet");
+    let ctx_a =
+        db::insert_context_returning(&a, "Work", None, None, None, None, false).expect("ctx");
     db::assign_context_target(&a, ctx_a.id, "code.exe").expect("target");
     // Scope A's dictionary entry to A's context.
     db::set_dictionary_context_assignment(&a, ctx_a.id, entry_a.id, true).expect("assign");
@@ -263,11 +275,17 @@ fn content_syncs_both_directions_without_duplicates() {
     assert_eq!(count(&conn_b, "SELECT COUNT(*) FROM dictionary"), 1);
     assert_eq!(count(&conn_b, "SELECT COUNT(*) FROM snippets"), 1);
     assert_eq!(
-        count(&conn_b, "SELECT COUNT(*) FROM contexts WHERE is_everywhere = 0"),
+        count(
+            &conn_b,
+            "SELECT COUNT(*) FROM contexts WHERE is_everywhere = 0"
+        ),
         1
     );
     assert_eq!(count(&conn_b, "SELECT COUNT(*) FROM context_targets"), 1);
-    assert_eq!(count(&conn_b, "SELECT COUNT(*) FROM dictionary_contexts"), 1);
+    assert_eq!(
+        count(&conn_b, "SELECT COUNT(*) FROM dictionary_contexts"),
+        1
+    );
     drop(conn_b);
 
     // And back: B's snippet reaches A.
@@ -292,7 +310,8 @@ fn edits_and_deletes_propagate() {
     let b = test_db(&uuid("bbbb"));
 
     // A creates an entry; it reaches B.
-    let entry = db::insert_dictionary_entry_returning(&a, "Groq", Some("Grock"), None).expect("entry");
+    let entry =
+        db::insert_dictionary_entry_returning(&a, "Groq", Some("Grock"), None).expect("entry");
     exchange(&a, &b);
     {
         let conn = b.lock().expect("lock");
@@ -310,7 +329,11 @@ fn edits_and_deletes_propagate() {
     {
         let conn = a.lock().expect("lock");
         let mistake: String = conn
-            .query_row("SELECT mistake FROM dictionary WHERE id = ?1", rusqlite::params![entry.id], |r| r.get(0))
+            .query_row(
+                "SELECT mistake FROM dictionary WHERE id = ?1",
+                rusqlite::params![entry.id],
+                |r| r.get(0),
+            )
             .expect("mistake");
         assert_eq!(mistake, "Groqck", "B's edit reached A");
     }
@@ -319,7 +342,11 @@ fn edits_and_deletes_propagate() {
     db::delete_dictionary_entry(&b, local_id).expect("delete on b");
     exchange(&a, &b);
     let conn_a = a.lock().expect("lock");
-    assert_eq!(count(&conn_a, "SELECT COUNT(*) FROM dictionary"), 0, "delete propagated");
+    assert_eq!(
+        count(&conn_a, "SELECT COUNT(*) FROM dictionary"),
+        0,
+        "delete propagated"
+    );
     drop(conn_a);
     let conn_b = b.lock().expect("lock");
     assert_eq!(count(&conn_b, "SELECT COUNT(*) FROM dictionary"), 0);
@@ -342,7 +369,10 @@ fn delete_loses_to_a_newer_edit() {
             payload: None,
         };
         let summary = engine::apply_ops(&conn, &[delete]).expect("apply delete");
-        assert_eq!(summary.skipped, 1, "older delete must lose to the newer edit");
+        assert_eq!(
+            summary.skipped, 1,
+            "older delete must lose to the newer edit"
+        );
     }
     let conn = db.lock().expect("lock");
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM dictionary"), 1);
@@ -376,7 +406,9 @@ fn natural_key_conflict_converges_to_one_row() {
         let other = if name == "a" { &b } else { &a };
         let conn_other = other.lock().expect("lock");
         let other_uuids: Vec<String> = {
-            let mut stmt = conn_other.prepare("SELECT uuid FROM dictionary").expect("q");
+            let mut stmt = conn_other
+                .prepare("SELECT uuid FROM dictionary")
+                .expect("q");
             stmt.query_map([], |r| r.get(0))
                 .expect("map")
                 .collect::<rusqlite::Result<Vec<_>>>()
@@ -419,7 +451,8 @@ async fn session_snapshot_seeds_a_new_device() {
         db::insert_dictionary_entry_returning(&a, &format!("term{i}"), None, None).expect("entry");
     }
     db::insert_snippet_returning(&a, "sig", "Best regards", "", None).expect("snippet");
-    let ctx = db::insert_context_returning(&a, "Meetings", None, None, None, None, false).expect("ctx");
+    let ctx =
+        db::insert_context_returning(&a, "Meetings", None, None, None, None, false).expect("ctx");
     db::assign_context_website(&a, ctx.id, "meet.example.com").expect("site");
 
     let host_a = TestHost::new(&uuid("aaaa"));
@@ -473,15 +506,8 @@ async fn responder_continues_after_dispatcher_consumes_hello() {
                 Message::Hello(hello) => hello,
                 other => panic!("expected hello, got {other:?}"),
             };
-            engine::run_session_after_hello(
-                &b,
-                &host_b,
-                &mut side_b,
-                false,
-                &peer_b,
-                Some(hello),
-            )
-            .await
+            engine::run_session_after_hello(&b, &host_b, &mut side_b, false, &peer_b, Some(hello))
+                .await
         }
     );
     initiator.expect("initiator completes");
@@ -605,8 +631,17 @@ async fn lifetime_counters_merge_without_double_counting() {
     let host_b = TestHost::new(&uuid("bbbb"));
 
     // Each device dictated: A 100 words, B 40 words.
-    db::insert_transcription_returning(&a, "one two three", "one two three", 100, 6_000, "", None, None)
-        .expect("transcribe a");
+    db::insert_transcription_returning(
+        &a,
+        "one two three",
+        "one two three",
+        100,
+        6_000,
+        "",
+        None,
+        None,
+    )
+    .expect("transcribe a");
     db::insert_transcription_returning(&b, "hello world", "hello world", 40, 4_000, "", None, None)
         .expect("transcribe b");
 
@@ -619,7 +654,11 @@ async fn lifetime_counters_merge_without_double_counting() {
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM transcriptions"), 2);
         // History rows arrived with their original timestamps and text.
         let raw: String = conn
-            .query_row("SELECT raw_text FROM transcriptions WHERE words = 100", [], |r| r.get(0))
+            .query_row(
+                "SELECT raw_text FROM transcriptions WHERE words = 100",
+                [],
+                |r| r.get(0),
+            )
             .expect("row");
         assert_eq!(raw, "one two three");
     }
@@ -640,14 +679,18 @@ async fn settings_lww_applies_newer_remote_value() {
         .lock()
         .expect("s")
         .insert("default_tone".to_string(), json!("formal"));
-    host_a
-        .stamps
-        .lock()
-        .expect("s")
-        .insert("default_tone".to_string(), (base + 5_000, host_a.uuid.clone()));
+    host_a.stamps.lock().expect("s").insert(
+        "default_tone".to_string(),
+        (base + 5_000, host_a.uuid.clone()),
+    );
 
     run_two_sessions(&a, &b, &host_a, &host_b).await;
-    let applied = host_b.settings.lock().expect("s").get("default_tone").cloned();
+    let applied = host_b
+        .settings
+        .lock()
+        .expect("s")
+        .get("default_tone")
+        .cloned();
     assert_eq!(applied, Some(json!("formal")), "newer remote setting wins");
 
     // B's older local change (stamped before A's) must not overwrite it.
@@ -656,11 +699,10 @@ async fn settings_lww_applies_newer_remote_value() {
         .lock()
         .expect("s")
         .insert("default_tone".to_string(), json!("casual"));
-    host_b
-        .stamps
-        .lock()
-        .expect("s")
-        .insert("default_tone".to_string(), (base + 1_000, host_b.uuid.clone()));
+    host_b.stamps.lock().expect("s").insert(
+        "default_tone".to_string(),
+        (base + 1_000, host_b.uuid.clone()),
+    );
     // Production stamps the DB when a setting changes locally (save_setting
     // hook); mirror that here so B's LWW stamp matches its value.
     {
@@ -669,7 +711,12 @@ async fn settings_lww_applies_newer_remote_value() {
             .expect("stamp");
     }
     run_two_sessions(&a, &b, &host_a, &host_b).await;
-    let applied = host_b.settings.lock().expect("s").get("default_tone").cloned();
+    let applied = host_b
+        .settings
+        .lock()
+        .expect("s")
+        .get("default_tone")
+        .cloned();
     assert_eq!(applied, Some(json!("formal")), "older local value loses");
 }
 
@@ -792,7 +839,12 @@ fn resolved_context_target_survives_a_later_unresolved_resync() {
 
     engine::apply_ops(
         &conn,
-        &[test_context_op("Editor Group", 100, "?::antigravity ide.exe", None)],
+        &[test_context_op(
+            "Editor Group",
+            100,
+            "?::antigravity ide.exe",
+            None,
+        )],
     )
     .expect("apply unresolved");
     let context_id: i64 = conn
@@ -820,10 +872,18 @@ fn resolved_context_target_survives_a_later_unresolved_resync() {
     let resync_ts = sync_store::now_ms() + 1;
     let summary = engine::apply_ops(
         &conn,
-        &[test_context_op("Editor Group", resync_ts, "?::antigravity ide.exe", None)],
+        &[test_context_op(
+            "Editor Group",
+            resync_ts,
+            "?::antigravity ide.exe",
+            None,
+        )],
     )
     .expect("apply resync");
-    assert_eq!(summary.applied, 1, "the resync op must actually apply, not be skipped as stale");
+    assert_eq!(
+        summary.applied, 1,
+        "the resync op must actually apply, not be skipped as stale"
+    );
 
     // The sticky row must survive completely unchanged. (A stray unresolved
     // marker may additionally appear alongside it here, since this test's
@@ -837,12 +897,17 @@ fn resolved_context_target_survives_a_later_unresolved_resync() {
         .prepare("SELECT executable, platform FROM context_targets WHERE context_id = ?1")
         .expect("prepare");
     let rows: Vec<(String, Option<String>)> = stmt
-        .query_map(rusqlite::params![context_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_map(rusqlite::params![context_id], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
         .expect("query")
         .collect::<rusqlite::Result<_>>()
         .expect("collect");
     assert!(
-        rows.contains(&("antigravity.app".to_string(), my_platform.map(str::to_string))),
+        rows.contains(&(
+            "antigravity.app".to_string(),
+            my_platform.map(str::to_string)
+        )),
         "the manually-fixed target must survive the worse resync unchanged, got {rows:?}"
     );
 }
@@ -943,7 +1008,12 @@ async fn pairing_succeeds_with_matching_code_and_fails_with_wrong_code() {
         },
         async move {
             let request = read_message(&mut b).await.expect("request");
-            let Message::PairRequest { spake_msg, device_uuid, .. } = request else {
+            let Message::PairRequest {
+                spake_msg,
+                device_uuid,
+                ..
+            } = request
+            else {
                 panic!("expected pair request");
             };
             let (msg_b, cipher) = pairing::responder_start(&code_b, &spake_msg).expect("start");
@@ -956,8 +1026,14 @@ async fn pairing_succeeds_with_matching_code_and_fails_with_wrong_code() {
     assert_eq!(peer_from_a.cert_der, vec![4, 5, 6]);
 
     // Wrong code: both sides must fail with a friendly error, not panic.
-    let identity_a2 = IdentityExchange { cert_der: vec![7], ..identity_a };
-    let identity_b2 = IdentityExchange { cert_der: vec![8], ..identity_b_for_second };
+    let identity_a2 = IdentityExchange {
+        cert_der: vec![7],
+        ..identity_a
+    };
+    let identity_b2 = IdentityExchange {
+        cert_der: vec![8],
+        ..identity_b_for_second
+    };
     let expected_uuid2 = identity_b2.device_uuid.clone();
     let (mut a2, mut b2) = tokio::io::duplex(64 * 1024);
     let (state_a2, msg_a2) = pairing::initiator_start("111111");
@@ -983,7 +1059,12 @@ async fn pairing_succeeds_with_matching_code_and_fails_with_wrong_code() {
         },
         async move {
             let request = read_message(&mut b2).await.expect("request");
-            let Message::PairRequest { spake_msg, device_uuid, .. } = request else {
+            let Message::PairRequest {
+                spake_msg,
+                device_uuid,
+                ..
+            } = request
+            else {
                 panic!("expected pair request");
             };
             // Responder uses a DIFFERENT code.
@@ -1008,4 +1089,3 @@ fn pair_test_dbs(a: &DbHandle, b: &DbHandle, a_uuid: &str, b_uuid: &str) {
         sync_store::upsert_peer(&conn, a_uuid, "A", "fp-a").expect("upsert b->a");
     }
 }
-

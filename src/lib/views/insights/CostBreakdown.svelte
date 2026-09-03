@@ -123,8 +123,8 @@
   .cost-table th:first-child { width: 34%; }
   .cost-table thead th {
     font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--ink-mute);
   }
   .cost-table tbody tr:last-child th,

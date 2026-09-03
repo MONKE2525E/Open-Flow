@@ -20,7 +20,6 @@ const REPAIR_MAX_OUTPUT_TOKENS: u32 = 120;
 const REPAIR_TIMEOUT_SECS: u64 = 45;
 const NO_SAFE_REPAIR_MESSAGE: &str = "I couldn't map this to a safe Verenu setting. Try speaking a little closer to the microphone and a little slower. If you want a reusable phrase, add a vocabulary item or snippet manually in Verenu.";
 
-
 #[derive(Clone, Debug, Serialize)]
 pub struct RepairSettings {
     pub cleanup_enabled: bool,
@@ -64,8 +63,6 @@ pub struct ValidatedProposal {
     pub summary: String,
     pub scope: String,
 }
-
-
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn begin_feedback(
@@ -539,11 +536,9 @@ pub(crate) async fn apply(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::repair_proposal::{
-        truncate_for_display, validate_action, RepairAction,
-    };
     use super::super::repair_proposal::DISPLAY_TEXT_LIMIT;
+    use super::super::repair_proposal::{truncate_for_display, validate_action, RepairAction};
+    use super::*;
 
     fn snapshot() -> RepairSnapshot {
         RepairSnapshot {

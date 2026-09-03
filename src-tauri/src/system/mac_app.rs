@@ -639,8 +639,7 @@ pub async fn request_notifications() -> Result<(), String> {
                 }
             },
         );
-        let _: () =
-            msg_send![center, requestAuthorizationWithOptions: 7usize, completionHandler: &*handler];
+        let _: () = msg_send![center, requestAuthorizationWithOptions: 7usize, completionHandler: &*handler];
     });
     match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
         Ok(Ok(result)) => result,

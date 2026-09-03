@@ -208,15 +208,15 @@ let devLlmRuntimeDownloadSession = 0;
 
 const defaultProviderModels = {
   groq: ['whisper-large-v3-turbo', 'whisper-large-v3'],
-  openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
-  google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+  openai: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'whisper-1'],
+  google: ['gemini-2.5-flash', 'gemini-3.5-transcribe', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-lite'],
   local: ['parakeet-v3'],
 };
 
 const defaultCleanupModels = {
-  groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
+  groq: ['qwen/qwen3.6-27b', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b'],
   openai: ['gpt-4o-mini', 'gpt-4o'],
-  google: ['gemini-2.5-flash', 'gemini-3.5-flash'],
+  google: ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash-lite'],
   local: [],
 };
 
@@ -224,7 +224,6 @@ const defaultSettings: Record<string, unknown> = {
   setup_complete: true,
   force_setup_on_launch: false,
   appearance_mode: 'system',
-  accent_color: null,
   transcription_provider: 'groq',
   transcription_language: 'en',
   cleanup_provider: 'groq',
@@ -1104,7 +1103,7 @@ function devInsights(days: number, contextId: number | null): unknown {
         output_chars: wordsInRange * 5,
       },
       {
-        model: 'gemini-3.5-flash',
+        model: 'gemini-3.5-flash-lite',
         provider: 'google',
         task: 'cleanup',
         calls: Math.round(transcriptions * 0.14),

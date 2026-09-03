@@ -368,9 +368,9 @@
   }
 
   .head-title {
-    font-family: var(--serif);
-    font-size: 16px;
-    font-weight: 500;
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 600;
     color: var(--ink);
     line-height: 1;
   }
@@ -548,11 +548,11 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-size: 9px;
+    font-size: 10px;
     font-family: var(--sans);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
     padding: 3px 8px;
     border-radius: 999px;
   }
@@ -644,11 +644,11 @@
   }
 
   .prompt-copy span {
-    font-size: 10px;
+    font-size: 11px;
     font-family: var(--sans);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--ink-faint);
   }
 

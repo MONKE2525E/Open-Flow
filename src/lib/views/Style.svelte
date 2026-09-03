@@ -24,16 +24,16 @@
   ];
 
   const cleanupCards = [
-    { id: 'none', name: 'Off', desc: 'Skip cleanup and keep the raw transcript.', sample: "so um i was thinking like we should probably leave a bit earlier you know cause there's gonna be traffic i think" },
-    { id: 'light', name: 'Light', desc: 'Removes fillers and false starts. Keeps your wording and order.', sample: "I was thinking we should probably leave a bit earlier because there's going to be traffic, I think." },
-    { id: 'medium', name: 'Medium', desc: 'Rewrites for clearer flow while preserving every important detail.', sample: "I think we should leave a bit earlier. There's going to be traffic." },
-    { id: 'high', name: 'Strong', desc: 'Leads with the point and cuts repetition, hedging, and detours.', sample: 'Leave early. There will be traffic.' },
+    { id: 'none', name: 'Off', desc: 'Keep the raw transcript. Dual transcription may still reconcile candidates.', sample: "so um i was thinking like we should probably leave a bit earlier you know cause there's gonna be traffic i think" },
+    { id: 'light', name: 'Light', desc: 'Remove non-semantic speech artifacts and fix basics. Keep wording, order, and detail.', sample: "I was thinking we should probably leave a bit earlier because there's going to be traffic, I think." },
+    { id: 'medium', name: 'Medium', desc: 'Improve flow and remove redundancy with light restructuring. Preserve every distinct detail.', sample: "I think we should leave a bit earlier. There's going to be traffic." },
+    { id: 'high', name: 'Strong', desc: 'Rewrite concisely and directly. Preserve facts, constraints, qualifiers, and emphasis.', sample: 'Leave early. There will be traffic.' },
   ];
 
   const personalCards = [
-    { id: 'casual', name: 'Casual', desc: 'Conversational wording, contractions, and normal punctuation.', sample: "Hey, are you free for lunch tomorrow? Let's do 12 if that works." },
-    { id: 'formal', name: 'Formal', desc: 'Professional wording, full punctuation, and expanded contractions.', sample: 'Are you available for lunch tomorrow? Let us meet at 12 if that works for you.' },
-    { id: 'very_casual', name: 'Very Casual', desc: 'Mostly lowercase with contractions and minimal punctuation.', sample: "hey are you free for lunch tomorrow let's do 12 if that works" },
+    { id: 'casual', name: 'Casual', desc: 'Contractions, normal casing and punctuation, and the speaker’s casual voice.', sample: "Hey, are you free for lunch tomorrow? Let's do 12 if that works." },
+    { id: 'formal', name: 'Formal', desc: 'Professional wording and punctuation. No invented politeness or extra content.', sample: 'Are you available for lunch tomorrow? Let us meet at 12 if that works for you.' },
+    { id: 'very_casual', name: 'Very Casual', desc: 'Mostly lowercase, contractions, and minimal readable punctuation. Preserve profanity and emphasis.', sample: "hey are you free for lunch tomorrow let's do 12 if that works" },
   ];
 
   onMount(async () => {
@@ -315,8 +315,8 @@
   }
 
   .style-section-h {
-    font-family: var(--serif);
-    font-size: 15px;
+    font-family: var(--sans);
+    font-size: 14px;
     font-weight: 500;
     letter-spacing: -0.01em;
     color: var(--ink-soft);
@@ -324,10 +324,10 @@
   }
 
   .page-h {
-    font-family: var(--serif);
-    font-size: 26px;
-    font-weight: 500;
-    letter-spacing: -0.02em;
+    font-family: var(--sans);
+    font-size: 23px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
     margin: 0 0 4px;
     line-height: 1.1;
     color: var(--ink);
@@ -379,7 +379,7 @@
     color: var(--ink-mute);
     padding: 1px 6px;
     border-radius: 999px;
-    text-transform: uppercase;
+    text-transform: none;
     border: 1px solid var(--line);
   }
 
@@ -411,18 +411,14 @@
     border-radius: var(--r-md);
     display: flex;
     flex-direction: column;
-    min-height: 160px;
+    min-height: 140px;
     cursor: pointer;
-    transition: background 0.18s cubic-bezier(0.22, 1, 0.36, 1),
-      border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1),
-      transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
-      box-shadow 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+    transition: background 0.15s var(--ui-ease-out),
+      border-color 0.15s var(--ui-ease-out);
   }
 
   .style-card:hover {
     background: var(--control-hover);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-card);
   }
   .style-card:focus-visible {
     outline: 2px solid var(--accent);
@@ -430,21 +426,18 @@
   }
 
   .style-card:active {
-    transform: translateY(0) scale(0.98);
-    transition: all 0.1s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity: 0.82;
   }
 
   .style-card.active {
-    background: var(--accent-soft);
-    border-color: var(--accent);
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 12%, transparent);
+    background: var(--control-active);
+    border-color: var(--line-strong);
   }
 
   .style-card-title {
     display: block;
-    font-family: var(--serif);
-    font-size: 16px;
+    font-family: var(--sans);
+    font-size: 14px;
     font-weight: 500;
     margin: 0 0 2px;
     letter-spacing: 0;
@@ -462,7 +455,7 @@
   .style-sample {
     display: block;
     margin-top: auto;
-    font-family: var(--serif);
+    font-family: var(--sans);
     font-style: italic;
     font-size: 13.5px;
     line-height: 1.5;

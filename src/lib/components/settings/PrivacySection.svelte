@@ -256,13 +256,13 @@
 <h2 class="settings-h">Privacy</h2>
 
 <h3 class="settings-subhead first">Context</h3>
-<div class="setting-row">
-  <div><div class="label">App context hint</div><div class="desc">Shares the target app, website, window title, and context group so cleanup can choose the right layout</div></div>
+<div class="setting-row" data-setting-target="privacy-context">
+  <div><div class="label">App context hint</div><div class="desc">Shares the target app, website, and window title so cleanup can resolve terminology and formatting</div></div>
   <Toggle checked={appContextHint} onchange={handleAppContextHint} label="App context hint" />
 </div>
 
 <h3 class="settings-subhead">Verenu services</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="privacy-service-checks">
   <div>
     <div class="label">Allow Verenu service checks</div>
     <div class="desc">Checks provider status, service health, and global messages in the background. Turn this off to stop background requests to api.verenu.com. Dictation requests to your selected AI provider are unaffected.</div>
@@ -271,7 +271,7 @@
 </div>
 
 <h3 class="settings-subhead">On-device learning</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="privacy-learning">
   <div>
     <div class="label" style="display:flex;align-items:center;gap:7px;">
       Auto-learn corrections
@@ -287,7 +287,7 @@
   </div>
   <Toggle checked={autoLearn} onchange={handleAutoLearn} label="Auto-learn corrections" />
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="privacy-learning-activity">
   <div>
     <div class="label">Auto-learn activity</div>
     <div class="desc">
@@ -302,7 +302,7 @@
 </div>
 
 <h3 class="settings-subhead">History & storage</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="privacy-history">
   <div><div class="label">Transcription history</div><div class="desc">How long to keep past dictations</div></div>
   <div class="history-dropdown">
     <button
@@ -349,7 +349,7 @@
     {/if}
   </div>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="privacy-cache">
   <div>
     <div class="label">Cleanup cache</div>
     <div class="desc">
@@ -374,7 +374,7 @@
 </div>
 
 <h3 class="settings-subhead">Backup</h3>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="privacy-export">
   <div>
     <div class="label">Export Backup</div>
     {#if exportMsg}
@@ -389,7 +389,7 @@
     {exporting ? 'Exporting…' : 'Export'}
   </button>
 </div>
-<div class="setting-row">
+<div class="setting-row" data-setting-target="privacy-import">
   <div>
     <div class="label">Import Backup</div>
     {#if importMsg}
@@ -548,10 +548,10 @@
     padding: 20px 20px 0;
   }
   .modal-title {
-    font-family: var(--serif);
-    font-size: 18px;
-    font-weight: 500;
-    letter-spacing: -0.015em;
+    font-family: var(--sans);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
     color: var(--ink);
     margin: 0;
   }
