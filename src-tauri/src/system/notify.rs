@@ -177,9 +177,15 @@ pub fn prepare_windows_notification_identity(themed_icon: &std::path::Path) {
 
 #[cfg(target_os = "windows")]
 pub fn refresh_windows_notification_identity(themed_icon: &std::path::Path) {
+    // A refresh that succeeds must also mark the identity ready: the initial
+    // prepare call may have failed transiently, and without this a later
+    // success would still leave notifications on the fallback identity.
     #[cfg(debug_assertions)]
-    if let Err(err) = sync_windows_dev_shortcut_icon(themed_icon) {
-        log::warn!("Could not refresh the Windows development shortcut icon: {err}");
+    match sync_windows_dev_shortcut_icon(themed_icon) {
+        Ok(()) => WINDOWS_DEV_IDENTITY_READY.store(true, Ordering::Release),
+        Err(err) => {
+            log::warn!("Could not refresh the Windows development shortcut icon: {err}")
+        }
     }
 
     #[cfg(not(debug_assertions))]
