@@ -53,7 +53,9 @@
       } catch { /* dev mode */ }
     };
     refresh();
-    const id = setInterval(refresh, 2000);
+    // A footer diagnostic, not live telemetry: 5s keeps the number honest
+    // while halving the IPC + tween churn of the old 2s cadence.
+    const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   });
 

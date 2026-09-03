@@ -391,7 +391,32 @@ fn main() {
                         }
                     }
                     #[cfg(target_os = "windows")]
-                    tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                    tauri::WindowEvent::Moved(_) => {
+                        // Intentionally a no-op. Dragging changes neither the
+                        // title-bar geometry the frontend mirrors
+                        // (height/insets/scale are DPI- and theme-dependent,
+                        // not position-dependent) nor the themed icon artwork
+                        // (theme/accent/DPI-dependent). Refreshing either here
+                        // re-ran WinRT title-bar updates, child-window
+                        // enumeration, full icon rasterization, and a frontend
+                        // style recalc on every mouse-move event of a drag —
+                        // the stutter when jiggling the window. A
+                        // cross-monitor move that changes DPI arrives
+                        // separately as ScaleFactorChanged below.
+                    }
+                    #[cfg(target_os = "windows")]
+                    tauri::WindowEvent::Resized(_) => {
+                        // A live resize delivers one event per frame;
+                        // refreshing the native title bar synchronously here
+                        // (WinRT calls plus child-window enumeration) stalls
+                        // the drag. Coalesce to a single refresh once the size
+                        // settles so maximize/snap changes are still picked
+                        // up. Icons are size-independent — they refresh on
+                        // ScaleFactorChanged/ThemeChanged/settings instead.
+                        schedule_settled_titlebar_refresh(window.app_handle());
+                    }
+                    #[cfg(target_os = "windows")]
+                    tauri::WindowEvent::ScaleFactorChanged { .. } => {
                         if let Some(webview) = window.app_handle().get_webview_window("main") {
                             crate::system::windows_titlebar::refresh(&webview, window.theme().ok());
                             apply_runtime_icons(window.app_handle(), window.theme().ok());
@@ -561,4 +586,29 @@ fn main() {
                 log::info!("app shutdown complete");
             }
         });
+}
+
+#[cfg(target_os = "windows")]
+static TITLEBAR_REFRESH_GEN: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Re-read native title-bar metrics once the window size has settled (150ms
+/// with no further `Resized` event). A live resize delivers one event per
+/// frame, so each event just bumps the generation and schedules a check —
+/// only the last one in a burst performs the refresh. See the `Resized` arm
+/// in `on_window_event`.
+#[cfg(target_os = "windows")]
+fn schedule_settled_titlebar_refresh(app: &tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    let gen = TITLEBAR_REFRESH_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        if TITLEBAR_REFRESH_GEN.load(Ordering::Relaxed) != gen {
+            return;
+        }
+        if let Some(webview) = app.get_webview_window("main") {
+            crate::system::windows_titlebar::refresh(&webview, webview.theme().ok());
+        }
+    });
 }

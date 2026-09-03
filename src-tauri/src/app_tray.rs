@@ -1,3 +1,4 @@
+use std::sync::{Mutex, OnceLock};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -169,12 +170,71 @@ fn forwarded_relaunch_args() -> Vec<std::ffi::OsString> {
     filtered
 }
 
+/// Rendered icon artwork for the most recent `apply_runtime_icons` call.
+/// Re-asserting icons happens on window focus, theme/DPI changes, and settings
+/// writes; the tray glyph's 32x supersampled renderer costs hundreds of
+/// thousands of pixel ops per call, so repeat calls with unchanged inputs
+/// re-send the cached bytes instead of re-running the rasterizers.
+#[derive(Clone)]
+struct CachedIconArt {
+    theme: IconTheme,
+    accent: [u8; 4],
+    tray_size: u32,
+    window_rgba: Vec<u8>,
+    tray_rgba: Vec<u8>,
+}
+
+static ICON_ART_CACHE: OnceLock<Mutex<Option<CachedIconArt>>> = OnceLock::new();
+
+fn cached_icon_art(theme: IconTheme, accent: [u8; 4], tray_size: u32) -> CachedIconArt {
+    if let Ok(guard) = ICON_ART_CACHE.get_or_init(|| Mutex::new(None)).lock() {
+        if let Some(cached) = guard.as_ref() {
+            if cached.theme == theme
+                && cached.accent == accent
+                && cached.tray_size == tray_size
+            {
+                return cached.clone();
+            }
+        }
+    }
+    let art = CachedIconArt {
+        theme,
+        accent,
+        tray_size,
+        window_rgba: runtime_icon_image(theme, accent, 128).rgba().to_vec(),
+        tray_rgba: runtime_tray_icon_image(theme, accent, tray_size)
+            .rgba()
+            .to_vec(),
+    };
+    if let Ok(mut guard) = ICON_ART_CACHE.get_or_init(|| Mutex::new(None)).lock() {
+        *guard = Some(art.clone());
+    }
+    art
+}
+
 pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
     let icon_theme = resolve_icon_theme(app, theme_hint);
     let accent = resolve_icon_accent(app);
+    #[cfg(target_os = "windows")]
+    let tray_size = windows_tray_icon_size(app);
+    #[cfg(not(target_os = "windows"))]
+    let tray_size = 32;
+
+    // Re-send the cached artwork when the inputs are unchanged — the handles
+    // are re-asserted (AppWindow can lose them), but the rasterizers,
+    // notably the tray glyph's 32x supersampled renderer, are skipped.
+    // Moved (not cloned) out of the cache entry: these buffers are built
+    // once per input change and only read here.
+    let CachedIconArt {
+        window_rgba,
+        tray_rgba,
+        ..
+    } = cached_icon_art(icon_theme, accent, tray_size);
 
     if let Some(w) = app.get_webview_window("main") {
-        if let Err(err) = w.set_icon(runtime_icon_image(icon_theme, accent, 128)) {
+        if let Err(err) = w.set_icon(tauri::image::Image::new_owned(
+            window_rgba, 128, 128,
+        )) {
             log::warn!("Failed to update window icon: {err}");
         }
     }
@@ -194,12 +254,12 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
     }
 
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        #[cfg(target_os = "windows")]
-        let tray_size = windows_tray_icon_size(app);
-        #[cfg(not(target_os = "windows"))]
-        let tray_size = 32;
         let result = tray.set_icon_with_as_template(
-            Some(runtime_tray_icon_image(icon_theme, accent, tray_size)),
+            Some(tauri::image::Image::new_owned(
+                tray_rgba,
+                tray_size,
+                tray_size,
+            )),
             cfg!(target_os = "macos"),
         );
         if let Err(err) = result {
@@ -824,9 +884,11 @@ fn windows_micro_icon_image(
         background,
     );
 
-    // Same bar proportions as windows_taskbar_icon_image's 512-grid glyph (bar 56, gap 22,
-    // heights 120/240/357/206/106 on a shared baseline), so the micro mark reads as the same
-    // symbol as the source rather than an independently tuned silhouette.
+    // Classic tray proportions (bar 48, gap 24, heights 88/177/263/152/78 on a
+    // shared baseline at 416 of the 512 grid) — the same silhouette the tray
+    // used before supersampling, so the glyph sits in the tile with real
+    // margins instead of filling ~70% of it edge to edge. Bar height *ratios*
+    // match the taskbar artwork either way, so the two still read as one logo.
     //
     // The horizontal metrics and the baseline are rounded to WHOLE NATIVE PIXELS first and
     // only then scaled into the supersampled grid. Deriving them as raw fractions instead
@@ -838,15 +900,17 @@ fn windows_micro_icon_image(
     // anti-aliased, which is the part that should be smooth.
     const SOURCE_GRID: u32 = 512;
     let round_div = |value: u32, div: u32| (value + div / 2) / div;
-    let bar_width = round_div(size * 56, SOURCE_GRID).max(2);
-    let gap = round_div(size * 22, SOURCE_GRID).max(1);
+    let bar_width = round_div(size * 48, SOURCE_GRID).max(2);
+    let gap = round_div(size * 24, SOURCE_GRID).max(1);
     let glyph_width = bar_width * 5 + gap * 4;
     let left = size.saturating_sub(glyph_width) / 2;
-    let max_height_px = round_div(size * 357, SOURCE_GRID).max(4);
+    let max_height_px = round_div(size * 263, SOURCE_GRID).max(4);
+    // Center the glyph box in the tile: baseline-anchoring left a taller top
+    // margin than bottom one (6 vs 4 at 20px) and the mark read as sitting low.
     let top_px = size.saturating_sub(max_height_px) / 2;
     let baseline_px = top_px + max_height_px;
     let heights =
-        [120_u32, 240, 357, 206, 106].map(|h| round_div(max_height_px * h, 357).max(1) * factor);
+        [88_u32, 177, 263, 152, 78].map(|h| round_div(max_height_px * h, 263).max(1) * factor);
 
     let bar_width_ss = bar_width * factor;
     let gap_ss = gap * factor;
@@ -1158,17 +1222,20 @@ mod windows_icon_tests {
     }
 
     /// The Windows micro glyph must occupy the tiny native surface instead of
-    /// collapsing into one-pixel sticks.
+    /// collapsing into one-pixel sticks — while keeping the classic tray
+    /// envelope (roughly 2:1 tile-to-glyph margins, not edge to edge).
+    /// Runs on Linux CI too: the fallback delegates to this same micro
+    /// renderer under cfg(test), so both platforms validate identical bytes.
     #[test]
     fn tray_geometry_is_optically_sized() {
         let (w, h, cx, cy) = glyph_bounds(
             runtime_tray_icon_image(IconTheme::Dark, DEFAULT_ICON_ACCENT, 20).rgba(),
             20,
         );
-        assert!((0.66..=0.78).contains(&w), "micro glyph width: {w:.3}");
-        assert!((0.65..=0.75).contains(&h), "micro glyph height: {h:.3}");
+        assert!((0.64..=0.76).contains(&w), "micro glyph width: {w:.3}");
+        assert!((0.46..=0.54).contains(&h), "micro glyph height: {h:.3}");
         assert!((cx - 0.5).abs() <= 0.03, "micro centre-x: {cx:.3}");
-        assert!((0.44..=0.54).contains(&cy), "micro centre-y: {cy:.3}");
+        assert!((0.48..=0.52).contains(&cy), "micro centre-y: {cy:.3}");
     }
 }
 
@@ -1212,8 +1279,8 @@ fn resolve_icon_accent(app: &AppHandle) -> [u8; 4] {
 #[cfg(test)]
 mod icon_accent_tests {
     use super::{
-        parse_icon_accent, runtime_icon_image, setting_updates_runtime_icons, IconTheme,
-        DEFAULT_ICON_ACCENT,
+        cached_icon_art, parse_icon_accent, runtime_icon_image, setting_updates_runtime_icons,
+        IconTheme, DEFAULT_ICON_ACCENT,
     };
 
     fn pixel(image: &tauri::image::Image<'_>, size: u32, x: u32, y: u32) -> [u8; 4] {
@@ -1250,6 +1317,19 @@ mod icon_accent_tests {
         assert!(setting_updates_runtime_icons("appearance_mode"));
         assert!(setting_updates_runtime_icons("accent_color"));
         assert!(!setting_updates_runtime_icons("default_tone"));
+    }
+
+    #[test]
+    fn icon_art_cache_reuses_bytes_for_unchanged_inputs() {
+        let first = cached_icon_art(IconTheme::Dark, DEFAULT_ICON_ACCENT, 20);
+        let second = cached_icon_art(IconTheme::Dark, DEFAULT_ICON_ACCENT, 20);
+        assert_eq!(first.window_rgba, second.window_rgba);
+        assert_eq!(first.tray_rgba, second.tray_rgba);
+        // A different tray size (e.g. after a DPI change) must re-render at
+        // the new size, not serve the old size's bytes.
+        let other_size = cached_icon_art(IconTheme::Dark, DEFAULT_ICON_ACCENT, 24);
+        assert_eq!(other_size.tray_rgba.len(), 24 * 24 * 4);
+        assert_eq!(other_size.window_rgba, first.window_rgba);
     }
 }
 
