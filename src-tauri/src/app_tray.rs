@@ -901,7 +901,9 @@ fn windows_micro_icon_image(
     let glyph_width = bar_width * 5 + gap * 4;
     let left = size.saturating_sub(glyph_width) / 2;
     let max_height_px = round_div(size * 263, SOURCE_GRID).max(4);
-    let top_px = round_div(size * 153, SOURCE_GRID);
+    // Center the glyph box in the tile: baseline-anchoring left a taller top
+    // margin than bottom one (6 vs 4 at 20px) and the mark read as sitting low.
+    let top_px = size.saturating_sub(max_height_px) / 2;
     let baseline_px = top_px + max_height_px;
     let heights =
         [88_u32, 177, 263, 152, 78].map(|h| round_div(max_height_px * h, 263).max(1) * factor);
@@ -1227,7 +1229,7 @@ mod windows_icon_tests {
         assert!((0.64..=0.76).contains(&w), "micro glyph width: {w:.3}");
         assert!((0.46..=0.54).contains(&h), "micro glyph height: {h:.3}");
         assert!((cx - 0.5).abs() <= 0.03, "micro centre-x: {cx:.3}");
-        assert!((0.50..=0.60).contains(&cy), "micro centre-y: {cy:.3}");
+        assert!((0.48..=0.52).contains(&cy), "micro centre-y: {cy:.3}");
     }
 }
 
