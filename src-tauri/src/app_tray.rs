@@ -223,13 +223,17 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
     // Re-send the cached artwork when the inputs are unchanged — the handles
     // are re-asserted (AppWindow can lose them), but the rasterizers,
     // notably the tray glyph's 32x supersampled renderer, are skipped.
-    let art = cached_icon_art(icon_theme, accent, tray_size);
+    // Moved (not cloned) out of the cache entry: these buffers are built
+    // once per input change and only read here.
+    let CachedIconArt {
+        window_rgba,
+        tray_rgba,
+        ..
+    } = cached_icon_art(icon_theme, accent, tray_size);
 
     if let Some(w) = app.get_webview_window("main") {
         if let Err(err) = w.set_icon(tauri::image::Image::new_owned(
-            art.window_rgba.clone(),
-            128,
-            128,
+            window_rgba, 128, 128,
         )) {
             log::warn!("Failed to update window icon: {err}");
         }
@@ -252,7 +256,7 @@ pub(crate) fn apply_runtime_icons(app: &AppHandle, theme_hint: Option<Theme>) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let result = tray.set_icon_with_as_template(
             Some(tauri::image::Image::new_owned(
-                art.tray_rgba.clone(),
+                tray_rgba,
                 tray_size,
                 tray_size,
             )),
