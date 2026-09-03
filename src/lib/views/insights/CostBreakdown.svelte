@@ -61,6 +61,7 @@
       <DonutChart {segments} primaryLabel={fmtUsd(summary.total)} secondaryLabel="total" />
     {/if}
 
+    <div class="cost-scroll scroll-styled">
     <table class="cost-table">
       <thead>
         <tr>
@@ -68,7 +69,7 @@
           <th scope="col" class="num">Total usage</th>
           <th scope="col" class="num avg-usage">Average usage</th>
           <th scope="col" class="num">Est. cost</th>
-          <th scope="col" class="num">Avg. cost</th>
+          <th scope="col" class="num avg-cost">Avg. cost</th>
           <th scope="col" class="num">Share</th>
         </tr>
       </thead>
@@ -82,12 +83,13 @@
             <td class="num">{usageLabel(row)}</td>
             <td class="num avg-usage">{averageUsageLabel(row)}</td>
             <td class="num">{fmtUsd(row.cost)}</td>
-            <td class="num">{averageCostLabel(row)}</td>
+            <td class="num avg-cost">{averageCostLabel(row)}</td>
             <td class="num">{row.cost === null ? '—' : `${(row.share * 100).toFixed(1)}%`}</td>
           </tr>
         {/each}
       </tbody>
     </table>
+    </div>
 
     {#if summary.hasUnpriced}
       <p class="foot">Models shown as — have no published rate on file, so they are missing from the total.</p>
@@ -98,10 +100,16 @@
 <style>
   /* .card / .card-head / .card-h / .card-sub are owned by Insights.svelte. */
 
+  .cost-scroll {
+    margin-top: 16px;
+    overflow-x: auto;
+    min-width: 0;
+  }
+
   .cost-table {
     width: 100%;
+    min-width: 520px;
     border-collapse: collapse;
-    margin-top: 16px;
     font-size: 11.5px;
     table-layout: fixed;
   }
@@ -141,9 +149,18 @@
     color: var(--ink-mute);
   }
 
-  @media (max-width: 760px) {
-    .cost-table { table-layout: auto; }
+  /* Container query against the insights column (owned by Insights.svelte).
+     Hiding one pair of columns buys room first; the scroll container is the
+     safety net if the window goes narrower still. */
+  @container insights (max-width: 560px) {
+    .cost-table { table-layout: auto; min-width: 0; }
     .avg-usage { display: none; }
+  }
+
+  @container insights (max-width: 420px) {
+    .avg-cost { display: none; }
+    .cost-table th:first-child { width: auto; }
+    .model { overflow-wrap: anywhere; }
   }
 
   .foot {
