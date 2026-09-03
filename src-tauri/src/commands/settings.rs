@@ -539,7 +539,7 @@ pub async fn save_setting(
         }
     }
 
-    if key == store::APPEARANCE_MODE {
+    if crate::app_tray::setting_updates_runtime_icons(&key) {
         crate::apply_runtime_icons(&app, None);
     }
     if let Some(volume) = sound_effects_volume {

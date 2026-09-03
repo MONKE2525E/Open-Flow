@@ -45,6 +45,8 @@ pub(crate) fn show_main_window(app: &AppHandle) {
             crate::system::mac_app::set_regular_activation_policy_on_main_thread(app);
             crate::system::mac_app::activate_current_app_on_main_thread(app);
         }
+        #[cfg(target_os = "windows")]
+        log::info!("Windows main HWND first show requested");
         w.show().ok();
         w.set_focus().ok();
     }

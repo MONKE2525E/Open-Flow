@@ -208,3 +208,30 @@ int32_t verenu_get_extended_titlebar_metrics(
         return read_metrics(reinterpret_cast<HWND>(hwnd), app_window.TitleBar(), metrics);
     });
 }
+
+int32_t verenu_set_runtime_icons(
+    intptr_t hwnd,
+    intptr_t taskbar_icon,
+    intptr_t titlebar_icon,
+    const wchar_t* taskbar_icon_path) {
+    return ffi_guard([&] {
+        const auto native_hwnd = reinterpret_cast<HWND>(hwnd);
+        const auto native_taskbar_icon = reinterpret_cast<HICON>(taskbar_icon);
+        const auto native_titlebar_icon = reinterpret_cast<HICON>(titlebar_icon);
+        if (!IsWindow(native_hwnd) || !native_taskbar_icon || !native_titlebar_icon || !taskbar_icon_path) {
+            return E_INVALIDARG;
+        }
+        winrt::check_hresult(ensure_windows_app_sdk());
+        winrt::check_hresult(WindowsAppRuntime_EnsureIsLoaded());
+        winrt::check_hresult(ensure_winrt_apartment());
+        const AppWindow app_window = app_window_for(native_hwnd);
+        if (!app_window) {
+            return E_FAIL;
+        }
+        const auto taskbar_icon_id = winrt::Microsoft::UI::GetIconIdFromIcon(native_taskbar_icon);
+        app_window.SetIcon(taskbar_icon_id);
+        app_window.SetTaskbarIcon(winrt::hstring(taskbar_icon_path));
+        app_window.SetTitleBarIcon(winrt::Microsoft::UI::GetIconIdFromIcon(native_titlebar_icon));
+        return S_OK;
+    });
+}

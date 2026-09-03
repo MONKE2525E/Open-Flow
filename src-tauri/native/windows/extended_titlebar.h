@@ -40,3 +40,9 @@ VERENU_WINDOWS_CHROME_API int32_t verenu_update_extended_titlebar(
 VERENU_WINDOWS_CHROME_API int32_t verenu_get_extended_titlebar_metrics(
     intptr_t hwnd,
     VerenuTitleBarMetrics* metrics);
+
+VERENU_WINDOWS_CHROME_API int32_t verenu_set_runtime_icons(
+    intptr_t hwnd,
+    intptr_t taskbar_icon,
+    intptr_t titlebar_icon,
+    const wchar_t* taskbar_icon_path);
