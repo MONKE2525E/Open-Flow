@@ -163,6 +163,7 @@ fn show_windows(
 /// Windows toast notifications from unpackaged development executables need a
 /// Start Menu shortcut with an AppUserModelId. Without that shortcut, the
 /// Windows notification stack labels the toast as Windows PowerShell.
+#[cfg(target_os = "windows")]
 pub fn prepare_windows_notification_identity(themed_icon: &std::path::Path) {
     #[cfg(all(windows, debug_assertions))]
     match sync_windows_dev_shortcut_icon(themed_icon) {
