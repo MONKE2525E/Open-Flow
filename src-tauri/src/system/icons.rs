@@ -471,8 +471,27 @@ mod mac {
         })
     }
 
-    /// Render the icon of the bundle at `bundle_path` to PNG bytes.
+    /// Extracts the app's icon at `bundle_path` via `NSWorkspace`, encodes it
+    /// as PNG, and downsizes it to a sane on-disk/wire size.
+    ///
+    /// `-[NSImage setSize:]` does not constrain what `-TIFFRepresentation`
+    /// rasterizes at — every icon comes back as the bundle's native 1024×1024
+    /// representation regardless. Resizing here keeps the IPC payload bounded.
     pub fn extract_icon_png(bundle_path: &str) -> Option<Vec<u8>> {
+        let raw = extract_icon_png_native(bundle_path)?;
+        let resized = image::load_from_memory(&raw).ok()?.resize(
+            128,
+            128,
+            image::imageops::FilterType::Lanczos3,
+        );
+        let mut png = Vec::new();
+        resized
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .ok()?;
+        Some(png)
+    }
+
+    fn extract_icon_png_native(bundle_path: &str) -> Option<Vec<u8>> {
         autoreleasepool(|_| unsafe {
             let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
             if workspace.is_null() {
