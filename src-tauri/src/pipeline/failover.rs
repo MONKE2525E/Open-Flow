@@ -297,25 +297,19 @@ pub fn restore_choice(root: &Path, now_unix: i64) -> Option<LoadedTake> {
     let committed_raw = load_slot(root, false);
 
     let live = live_raw.filter(|t| {
-        if !t.is_fresh(now_unix) {
-            delete_live(root);
-            false
-        } else if !t.passes_gates() {
-            delete_live(root);
-            false
-        } else {
+        if t.is_fresh(now_unix) && t.passes_gates() {
             true
+        } else {
+            delete_live(root);
+            false
         }
     });
     let committed = committed_raw.filter(|t| {
-        if !t.is_fresh(now_unix) {
-            delete_committed(root);
-            false
-        } else if !t.passes_gates() {
-            delete_committed(root);
-            false
-        } else {
+        if t.is_fresh(now_unix) && t.passes_gates() {
             true
+        } else {
+            delete_committed(root);
+            false
         }
     });
 
