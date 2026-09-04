@@ -179,8 +179,10 @@ pub fn load_slot(root: &Path, live: bool) -> Option<LoadedTake> {
     let mut buf = vec![0u8; byte_len];
     file.read_exact(&mut buf).ok()?;
     let mut samples = Vec::with_capacity(usable as usize);
-    for chunk in buf.as_chunks::<2>().0 {
-        samples.push(i16_to_f32(i16::from_le_bytes(*chunk)));
+    // Keep chunks_exact for the PCM pair decode; allow the clippy hint that prefers as_chunks.
+    #[allow(clippy::manual_slice_chunks)]
+    for chunk in buf.chunks_exact(2) {
+        samples.push(i16_to_f32(i16::from_le_bytes(chunk.try_into().unwrap())));
     }
     meta.sample_count = usable;
     meta.duration_ms = usable * 1000 / u64::from(TARGET_RATE);
