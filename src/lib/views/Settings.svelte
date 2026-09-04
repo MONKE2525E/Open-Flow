@@ -198,7 +198,7 @@
       searchHighlightTimer = setTimeout(() => {
         target.classList.remove('settings-search-hit');
         searchHighlightTimer = null;
-      }, 2400);
+      }, 1600);
       clearSettingsSearchNavigation(request.nonce);
     };
 
@@ -499,28 +499,48 @@
   .settings-body :global(.settings-subhead.first) { margin-top: 4px; }
 
   .settings-body :global([data-setting-target]) {
+    position: relative;
     scroll-margin-block: 72px;
   }
 
   .settings-body :global(.settings-search-hit) {
-    border-radius: var(--r-sm);
     outline: none;
-    animation: settings-search-highlight 2400ms ease-out;
   }
 
-  @keyframes settings-search-highlight {
-    0%, 34% {
-      background: color-mix(in srgb, var(--accent) 14%, transparent);
-      box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 9%, transparent);
+  .settings-body :global(.settings-search-hit::before) {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: -12px;
+    width: 3px;
+    height: min(28px, calc(100% - 12px));
+    border-radius: 999px;
+    background: var(--accent);
+    pointer-events: none;
+    animation: settings-search-locator 1600ms var(--ui-ease-out);
+  }
+
+  @keyframes settings-search-locator {
+    0% {
+      opacity: 0;
+      transform: translate3d(-4px, -50%, 0) scaleY(0.45);
+    }
+    16%, 55% {
+      opacity: 0.9;
+      transform: translate3d(0, -50%, 0) scaleY(1);
     }
     100% {
-      background: transparent;
-      box-shadow: 0 0 0 4px transparent;
+      opacity: 0;
+      transform: translate3d(0, -50%, 0) scaleY(0.72);
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .settings-body :global(.settings-search-hit) { animation-duration: 1ms; }
+    .settings-body :global(.settings-search-hit::before) {
+      animation: none;
+      opacity: 0.9;
+      transform: translate3d(0, -50%, 0);
+    }
   }
 
   .settings-body :global(.setting-row) {

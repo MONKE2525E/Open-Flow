@@ -9,6 +9,7 @@ This directory contains user, contributor, release, and architecture docs for Ve
 - [Your First Dictation](FIRST_DICTATION.md)
 - [Data And Privacy](DATA_AND_PRIVACY.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
+- [Appearance and settings](APPEARANCE.md)
 
 ## Features
 

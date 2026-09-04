@@ -1,6 +1,6 @@
 # Verenu Color Palette
 
-Verenu uses neutral gray surfaces and text with restrained accent color usage.
+Verenu uses neutral gray surfaces and text with restrained accent color usage. Light mode uses near-white grays and dark mode uses charcoal grays. The accent never tints the page backgrounds.
 
 ## Neutral surfaces
 
@@ -29,7 +29,7 @@ The sidebar and page colors intentionally differ by only a few RGB points. The d
 
 ## Accent
 
-Terracotta remains the default accent and is used sparingly for primary actions, highlights, and interactive states. Users can replace it in Settings. A custom color updates the semantic accent tokens and the full Japonica scale in both themes, while the neutral surfaces stay unchanged.
+Terracotta is the default accent and is used sparingly for primary actions, selection indicators, focus rings, and status details. Users can replace it in **Settings -> General -> Accent color**. A custom color updates the semantic accent tokens and the full Japonica scale in both themes, while the neutral surfaces stay unchanged.
 
 | Token | Light default | Usage |
 |---|---:|---|
@@ -47,7 +47,7 @@ Custom accents are stored as a six-digit hex color. The app derives readable sof
 
 ## Design principles
 
-1. Quiet, slightly warm neutrals create structure without reading as beige or brown.
+1. Neutral near-white and charcoal surfaces create structure without reading as cream, beige, orange, or brown.
 2. Accent color is reserved for important actions and feedback.
 3. Text size, weight, and muted color establish hierarchy before borders do.
 4. Sidebar and content surfaces remain subtly distinct in both themes.
