@@ -1,4 +1,5 @@
 use super::*;
+use super::pill::{show_cancelled_pill, show_interrupted_pill};
 use chrono::{SecondsFormat, Utc};
 
 // ---------- recording session helpers ----------
@@ -213,6 +214,9 @@ pub fn start_recording_session_ex(
                     log::warn!(
                         "start_recording_session_ex: lifecycle was not Starting when installing Recording"
                     );
+                    st.failover_session_id = None;
+                    st.failover_reuse_id = false;
+                    st.failover_started_at_unix = 0;
                     drop(st);
                     let _ = session.stop();
                     if let Some(session_id) = exclusive_mic_session_id {
@@ -484,6 +488,9 @@ pub fn stash_cancelled_capture(
 /// Releases a `Starting` reservation back to `Idle` when the mic failed to
 /// open — the carried prepend audio (if any) is simply dropped, not
 /// retained anywhere a later, unrelated dictation could inherit it.
+///
+/// Also clears in-memory failover fields so a failed durable start cannot
+/// leave a stale `failover_started_at_unix` that later sessions inherit.
 pub(crate) fn release_starting_reservation(state: &SharedState) {
     let mut st = match state.lock() {
         Ok(st) => st,
@@ -497,6 +504,9 @@ pub(crate) fn release_starting_reservation(state: &SharedState) {
     if matches!(st.lifecycle, DictationLifecycle::Starting { .. }) {
         st.lifecycle = DictationLifecycle::Idle;
     }
+    st.failover_session_id = None;
+    st.failover_reuse_id = false;
+    st.failover_started_at_unix = 0;
 }
 
 /// Spawns a Tokio task that emits `audio-level` events to the pill every 50ms
