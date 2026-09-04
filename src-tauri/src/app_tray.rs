@@ -278,7 +278,9 @@ fn apply_native_main_window_chrome(app: &AppHandle, theme_hint: Option<Theme>) {
         w.set_decorations(true).ok();
         w.set_background_color(Some(bg)).ok();
         w.set_title("").ok();
-        w.set_title_bar_style(tauri::TitleBarStyle::Transparent)
+        // Keep the webview under the native traffic-light controls so the
+        // title bar is part of the app surface instead of a separate strip.
+        w.set_title_bar_style(tauri::TitleBarStyle::Overlay)
             .ok();
     }
 }
