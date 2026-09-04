@@ -20,12 +20,12 @@ Core model: hold the hotkey, talk, release; Verenu transcribes (cloud or fully l
 - **Framework:** Tauri 2.x (Rust backend + WebView2 frontend — not Electron, not a web app)
 - **Frontend:** Svelte 5 + TypeScript + Tailwind CSS v4
 - **Database:** SQLite via `rusqlite` (direct, not `tauri-plugin-sql`)
-- **Settings store:** backend-owned JSON at Tauri `BaseDirectory::AppData/settings.json` via `src-tauri/src/data/store.rs` (non-secret settings only; see [Settings & Configuration](#settings--configuration) for where API keys actually live)
+- **Settings store:** backend-owned JSON at Tauri `BaseDirectory::AppData/settings.json` via `src-tauri/src/data/store/` (non-secret settings only; see [Settings & Configuration](#settings--configuration) for where API keys actually live)
 - **Audio capture:** `cpal` + `hound` for WAV encoding + `nnnoiseless` for noise reduction
-- **Local transcription:** `transcribe-rs` (ONNX runtime, Silero VAD) running Parakeet V3 fully offline
+- **Local transcription:** `transcribe-rs` adapters with ONNX runtime and Silero VAD, using downloaded local STT models fully offline
 - **Local cleanup:** managed local LLM server process (`src-tauri/src/local_llm/`) — binary runtime + models downloaded on demand, driven over a local HTTP endpoint
 - **Windows native APIs:** `windows` crate (hotkey hook, active window, SendInput, UI Automation, Credential Manager)
-- **macOS native APIs:** `core-graphics` (`CGEventTap` global hotkey), `security-framework` (Keychain), `accessibility-sys` (AX API), `objc2`/`objc2-foundation` (AppKit interop — `NSWorkspace`, `NSPasteboard`), `coreaudio-rs` (native mute control)
+- **macOS native APIs:** Carbon `RegisterEventHotKey` through `global-hotkey`, `security-framework` (Keychain), `accessibility-sys` (AX API), `objc2`/`objc2-foundation` (AppKit interop — `NSWorkspace`, `NSPasteboard`), `coreaudio-rs` (native mute control)
 - **HTTP:** `reqwest` (async API calls to AI providers)
 - **Async runtime:** `tokio`
 - **Utilities:** `chrono` (timestamps), `anyhow` (error handling)
@@ -106,7 +106,7 @@ src/                        # Svelte 5 frontend
     stores.svelte.ts        # Svelte 5 runes-based app stores
     settings.ts             # Typed settings registry: SettingsValueMap, saveSetting() helper, shared types (ProviderId, AppearanceMode, etc.)
     settingsSections.ts     # Settings section ids/order + visibility (macOnly/devOnly/legacyOnly)
-    transcriptionLanguages.ts  # ISO 639-1 language list + TranscriptionLanguageCode type (frontend mirror of store.rs validation)
+    transcriptionLanguages.ts  # ISO 639-1 language list + TranscriptionLanguageCode type (frontend mirror of data/store validation)
     calibration.ts          # Mic gain auto-calibration state machine (loud/whisper phases)
     platform.ts             # Runtime platform detection (Windows vs macOS)
     motion.ts               # Animation/transition utilities
@@ -149,13 +149,13 @@ src-tauri/
       mod.rs recording.rs settings.rs contexts.rs history.rs library.rs
       local_llm.rs local_stt.rs permissions.rs service_status.rs system.rs updater.rs
     local_llm/              # Local cleanup runtime: managed server process, model/runtime downloads
-    local_stt/              # Local transcription: Parakeet V3 engine, model downloads
+    local_stt/              # Local transcription engine and model downloads
     testing.rs              # Test fixture infrastructure — cfg(test)/debug_assertions only
     api/
       mod.rs                 # Shared retry/auth-error classification: AuthErrorCategory, is_retryable_provider_error(), quota_bail()
       client.rs              # Shared reqwest client construction
       gemini_types.rs        # Gemini request/response (de)serialization types
-      transcription.rs      # POST audio to Groq/OpenAI/Google → raw text
+      transcription.rs      # POST audio to Groq/OpenAI/Google/AssemblyAI → raw text
       cleanup.rs            # POST raw text to LLM with profile system prompt
       auto_learn.rs         # Auto-learn coordinator
       auto_learn/
@@ -238,7 +238,7 @@ The pill window is created at runtime by `create_pill_if_needed()` in `pipeline/
     4. context::resolve_context(): foreground exe (+ domain) → matching Context
        group, or the built-in "Everywhere" fallback
     5. Style overrides: Context tone/intensity → App Mapping → global default_tone
-    6. transcription.rs (or local_stt Parakeet) → raw_text; dual-model mode runs
+    6. transcription.rs (or a selected local_stt model) → raw_text; dual-model mode runs
        primary + first fallback concurrently and reconciles both candidates
     7. Cleanup-cache lookup (key includes model, prompt inputs, and ctx:<id>) —
        hit skips the LLM call entirely
@@ -300,7 +300,7 @@ Groq is the recommended cloud default — free tier, fast LPU inference. Google 
 
 Local models are first-class, not a side path: `local_stt/` runs Parakeet V3 fully offline; `local_llm/` spawns a managed server process (binary runtime downloaded on demand) and talks to it over a local HTTP endpoint. "Fully local" means local transcription paired with local (or no) cleanup. Model/runtime downloads, cancellation, and deletion are all exposed as Tauri commands (`commands/local_stt.rs`, `commands/local_llm.rs`).
 
-The `transcription_language` setting (ISO 639-1, default `en`) is sent to Groq/OpenAI as the `language` form field and to Gemini as a natural-language label via `transcription_language_label()` in `store.rs`. Supported languages: `src/lib/transcriptionLanguages.ts` (frontend), `is_supported_transcription_language()` (Rust).
+The `transcription_language` setting (ISO 639-1, default `en`) is sent to Groq/OpenAI as the `language` form field and to Gemini as a natural-language label via `transcription_language_label()` in `data/store`. Supported languages: `src/lib/transcriptionLanguages.ts` (frontend), `is_supported_transcription_language()` (Rust).
 
 **API fallback:** Retryable errors (timeouts, 429, 5xx) trigger automatic fallback to any configured fallback models. Fallback models are configured per task (transcription/cleanup) in the Models settings tab and stored as `transcription_fallback_models` / `cleanup_fallback_models` arrays. Fallback is implicit — if fallback models are configured, they are always tried in order. Quota errors (`QUOTA_EXCEEDED:` prefix string — use `quota_bail()` helper) fail immediately with no fallback. Non-retryable errors also fail immediately. `is_retryable_provider_error()` in `api/mod.rs` is the single source of truth for what counts as retryable (reqwest timeout/connect errors, HTTP 408/429/5xx, and a few message-substring heuristics).
 
@@ -317,7 +317,7 @@ If a transcription or cleanup call fails with a provider-side error (`is_retryab
 ## Global Hotkey Behavior
 
 - **Windows:** Ctrl+Windows (hold) → start recording; release → stop and process. Implemented with a raw `SetWindowsHookExW(WH_KEYBOARD_LL)` hook; both chord keys and the repair hotkey are user-configurable.
-- **macOS:** Carbon `RegisterEventHotKey` via the `global-hotkey` crate (app_hotkey.rs / core/hotkey/mac.rs). This needs **no** Input Monitoring or Accessibility permission, but Carbon hotkeys require a real key — a pure modifier chord (the old CGEventTap Fn+Control) is no longer possible on macOS.
+- **macOS:** Carbon `RegisterEventHotKey` via the `global-hotkey` crate (app_hotkey.rs / core/hotkey/mac.rs). This needs **no** Input Monitoring or Accessibility permission. Carbon hotkeys require a real key, so the default is Option + Space.
 
 Beyond hold-to-dictate, the hook layer handles:
 - **Handsfree mode** — double-tap the chord (or press Space while holding it) toggles a discrete recording session; Escape cancels.
@@ -329,7 +329,7 @@ Beyond hold-to-dictate, the hook layer handles:
 
 ## Contexts & Style Resolution
 
-Context groups are the primary organizer (0.17.0). A context ties together:
+Context groups are the primary organizer. A context ties together:
 - **Targets** — executables (`context_targets`, matched case-insensitively by `.exe` name on Windows / bundle id on macOS) and website domains (`context_website_targets`, matched against the browser address-bar domain read by `core/browser_probe.rs`). A target belongs to at most one context; assigning it elsewhere moves it. Website domains are DNS-checked before being accepted.
 - **Style** — optional `tone` and `cleanup_intensity` overrides and `custom_instructions` appended to the cleanup prompt.
 - **Content** — dictionary and snippet items scoped to the group via the `dictionary_contexts` / `snippet_contexts` junction tables.
@@ -346,14 +346,14 @@ Built-in tone profiles: `casual`, `formal`, `very_casual`. Profile system prompt
 
 **Insights** (primary nav view) is read-only analytics over the local DB: usage charts, streaks, cost breakdown, context stats (`data/db/insights.rs`, `commands` `get_insights`, `src/lib/views/insights/`).
 
-Store keys (settings, plus the API key *identifiers* used as credential usernames) are defined as constants in `src-tauri/src/data/store.rs` — always use the constant, never a raw string literal. When adding a new setting, update both `store.rs` (Rust constant + validation) and `src/lib/settings.ts` (frontend `SettingsValueMap` type entry).
+Store keys (settings, plus the API key *identifiers* used as credential usernames) are defined as constants in `src-tauri/src/data/store/mod.rs` — always use the constant, never a raw string literal. When adding a new setting, update both `store/mod.rs` (Rust constant + validation) and `src/lib/settings.ts` (frontend `SettingsValueMap` type entry).
 
 ## Settings & Configuration
 
 - **Frontend settings registry** lives in `src/lib/settings.ts` as the `SettingsValueMap` TypeScript type. Add new setting entries here.
-- **Backend settings storage, validation & constants** live in `src-tauri/src/data/store.rs` and `src-tauri/src/commands/settings.rs`. All settings keys are constants; never use raw string literals.
-- **Type mirrors**: `transcriptionLanguages.ts` (frontend) mirrors the backend's supported language validation in `store.rs` — keep them synchronized.
-- **API keys do not live in settings.json.** They are stored in the native OS credential store via `src-tauri/src/data/credentials.rs`: Windows Credential Manager (`CredWriteW`/`CredReadW`/`CredDeleteW`, target `{user}.verenu`) or macOS Keychain (`security-framework` generic-password items). `store.rs`'s `KEY_GROQ`/`KEY_OPENAI`/`KEY_GOOGLE` constants are only used as the credential's username/identifier; the secret value itself never touches settings.json or SQLite. Commands that check key presence return a boolean status only, never the key itself.
+- **Backend settings storage, validation & constants** live in `src-tauri/src/data/store/` and `src-tauri/src/commands/settings.rs`. All settings keys are constants; never use raw string literals.
+- **Type mirrors**: `transcriptionLanguages.ts` (frontend) mirrors the backend's supported language validation in `data/store` — keep them synchronized.
+- **API keys do not live in settings.json.** They are stored in the native OS credential store via `src-tauri/src/data/credentials.rs`: Windows Credential Manager (`CredWriteW`/`CredReadW`/`CredDeleteW`, target `{user}.verenu`) or macOS Keychain (`security-framework` generic-password items). The key-identifier constants in `data/store` are used as credential usernames; the secret value itself never touches settings.json or SQLite. Commands that check key presence return a boolean status only, never the key itself.
 
 ## Prompt Assembly (`api/prompts/`)
 

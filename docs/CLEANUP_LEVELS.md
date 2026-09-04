@@ -1,31 +1,29 @@
-# Cleanup Levels
+# Cleanup levels
 
-After Verenu transcribes your audio, it can run the raw text through an AI cleanup step before pasting it. **Cleanup intensity** controls how much that step is allowed to change, from leaving your words exactly as spoken to rewriting them for brevity.
-
-This is separate from **tone** (Casual, Formal, or Very Casual), which controls the voice of the output, including capitalization, punctuation style, and phrasing. Cleanup intensity controls how much editing happens. You choose both during setup, and both can be changed later.
+After transcription, Verenu can run the raw text through an LLM cleanup step before pasting it. Cleanup intensity controls how much that step may change. Tone is separate and controls the voice, casing, punctuation style, and phrasing.
 
 ## The four levels
 
 | Level | What it does |
 | --- | --- |
-| **Verbatim** | Raw transcription. No AI cleanup at all. |
-| **Light** | Removes filler words and repeated phrases. Keeps everything else. |
-| **Medium** (default) | Removes fillers, cuts repetition, tightens phrasing. Keeps your detail. |
-| **Direct** | Aggressive rewrite. Punchy and concise, about half the words. |
+| **Off** | Keeps the raw transcript. If Dual transcription is enabled, Verenu may still make a second call to reconcile two transcript candidates. |
+| **Light** | Removes speech artifacts and fixes basic issues while keeping wording, order, and structure. |
+| **Medium** (default) | Improves flow and removes redundancy while preserving each distinct detail. |
+| **Strong** | Rewrites concisely while preserving facts, constraints, qualifiers, and emphasis. |
 
-**Verbatim** is useful when you need exact wording, code, quotes, or technical content. **Medium** is the default and works well for everyday writing such as notes, messages, and emails. **Direct** is for when you want the gist fast, such as a quick chat reply or an idea you'll edit later.
+Use **Off** when you need the raw model output. **Light** is useful when wording and structure should remain close to what you said. **Medium** is the default for everyday dictation. **Strong** is for concise output when the important details still need to remain intact.
 
 ## Changing it
 
-- **During setup**: you pick a default cleanup level as part of first-run setup.
-- **Later**: change the default anytime in Settings.
-- **Per app or website**: override the cleanup level for a group of apps and sites. For example, use Verbatim in your code editor but Medium everywhere else. See [Contexts](CONTEXTS.md).
+- **During setup**: choose the default cleanup level in the first-run setup.
+- **Later**: change the global setting in **Settings -> General**.
+- **Per app or website**: configure a Context with its own cleanup intensity. See [Contexts](CONTEXTS.md).
 
 ## Next step
 
-Explore [Contexts](CONTEXTS.md) to scope cleanup and tone, then see [Vocabulary](VOCABULARY.md) and [Snippets](SNIPPETS.md) for the content that belongs in each context.
+Explore [Contexts](CONTEXTS.md) to scope cleanup and tone, then see [Vocabulary](VOCABULARY.md) and [Snippets](SNIPPETS.md) for the content that belongs in each Context.
 
-## Related Docs
+## Related docs
 
 <p align="center">
   <a href="FIRST_DICTATION.md"><img alt="First Dictation" src="https://img.shields.io/badge/Back-First%20Dictation-7e7266"></a>
