@@ -944,7 +944,6 @@
     flex-direction: column;
     gap: 10px;
     min-width: 0;
-    position: relative;
   }
 
   /* The section rows have global rail outros for the settings-page morph. Hide
