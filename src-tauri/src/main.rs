@@ -66,6 +66,9 @@ fn main() {
         paste_failure: None,
         repair: None,
         hotkey_recording_repair_complaint: false,
+        failover_session_id: None,
+        failover_reuse_id: false,
+        failover_started_at_unix: 0,
     }));
 
     std::fs::create_dir_all(app_data_dir()).ok();
@@ -75,6 +78,7 @@ fn main() {
     // exists. init_early captures those records in the ring buffer;
     // attach_app in setup enables frontend forwarding.
     crate::system::logger::init_early();
+    pipeline::failover::restore_into_state(&shared);
     let db_handle: DbHandle = match db::open_with_recovery(app_db_path()) {
         Ok(db) => db,
         Err(err) => fatal_startup_error(&format!("failed to open database: {err}")),
@@ -499,6 +503,7 @@ fn main() {
             commands::stop_handless_mode,
             commands::resume_cancelled_capture,
             commands::dismiss_cancelled_capture,
+            commands::get_cancelled_capture,
             commands::copy_paste_failure_to_clipboard,
             commands::set_pill_size,
             commands::get_installed_apps,
@@ -580,6 +585,7 @@ fn main() {
             // indefinitely and holding the loaded model's RAM/VRAM.
             if let tauri::RunEvent::Exit = _event {
                 log::info!("app exiting; unloading local models");
+                crate::pipeline::failover::flush_on_exit(_app);
                 crate::system::shutdown_local_models(_app);
                 #[cfg(target_os = "windows")]
                 app_tray::cleanup_runtime_icon_files();

@@ -1398,6 +1398,8 @@ async function devInvoke<T>(command: string, args?: CommandArgs): Promise<T> {
       // (as the shared case below does) crashes the history list, which
       // reads entry.created_at. See get_history_apps for the app filter list.
       return [] as T;
+    case 'get_cancelled_capture':
+      return null as T;
     case 'get_recent_auto_learn_activity':
     case 'get_microphones':
     case 'get_recent_logs':

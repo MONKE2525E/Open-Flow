@@ -108,7 +108,9 @@ pub(crate) fn start_frontend_watchdog(app: &AppHandle, readiness: FrontendReadin
             // the main UI is healthy because a hidden WebView2 renderer can
             // suspend before it reports its own readiness.
             show_main_window(&app);
-            crate::pipeline::show_pill(&app, "idle");
+            if !crate::pipeline::failover::offer_restored_capture_pill(&app) {
+                crate::pipeline::show_pill(&app, "idle");
+            }
         };
 
         // WebView2 normally mounts in well under a second. This grace period
@@ -179,7 +181,9 @@ pub(crate) fn start_frontend_watchdog(app: &AppHandle, readiness: FrontendReadin
 
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn start_frontend_watchdog(app: &AppHandle, _readiness: FrontendReadiness) {
-    crate::pipeline::show_pill(app, "idle");
+    if !crate::pipeline::failover::offer_restored_capture_pill(app) {
+        crate::pipeline::show_pill(app, "idle");
+    }
     show_main_window(app);
 }
 

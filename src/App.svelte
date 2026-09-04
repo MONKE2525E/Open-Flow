@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { appStore } from './lib/stores';
   import { cleanupPromptEditor } from './lib/stores.svelte';
-  import { isWindows } from './lib/platform';
+  import { isMac, isWindows } from './lib/platform';
   import Sidebar from './lib/components/layout/Sidebar.svelte';
   import Home from './lib/views/Home.svelte';
   import Insights from './lib/views/Insights.svelte';
@@ -330,7 +330,7 @@
   });
 </script>
 
-<div class="app" class:app-windows={isWindows}>
+<div class="app" class:app-mac={isMac} class:app-windows={isWindows}>
   {#if appStore.setupComplete === false}
     <Setup />
   {/if}

@@ -166,6 +166,14 @@ impl EnvelopeTap {
     }
 }
 
+/// Optional crash-recovery sink for a dictation. The audio worker pushes
+/// gain-adjusted (and optionally denoised) native-rate samples here; the
+/// implementation must not run on the CPAL callback thread.
+pub trait DurableSink: Send {
+    fn extend(&mut self, native_samples: &[f32], native_rate: u32);
+    fn finish(&mut self);
+}
+
 pub struct RecordingSession {
     stop_tx: mpsc::SyncSender<()>,
     result_rx: mpsc::Receiver<Result<RecordingResult>>,
@@ -186,7 +194,12 @@ pub struct RecordingResult {
 }
 
 impl RecordingSession {
-    pub fn start(device_name: Option<String>, noise_reduction: bool, gain: f32) -> Result<Self> {
+    pub fn start(
+        device_name: Option<String>,
+        noise_reduction: bool,
+        gain: f32,
+        durable: Option<Box<dyn DurableSink>>,
+    ) -> Result<Self> {
         let host = cpal::default_host();
         let device = if let Some(name) = device_name {
             host.input_devices()?
@@ -233,6 +246,7 @@ impl RecordingSession {
             let worker_stop = Arc::clone(&stop_processing);
             let worker_envelope = Arc::clone(&envelope_w);
             let worker = std::thread::spawn(move || {
+                let mut durable = durable;
                 let mut processed = Vec::<f32>::new();
                 let mut batch = Vec::<f32>::with_capacity(2048);
                 let mut raw_sum_sq = 0.0f64;
@@ -280,6 +294,9 @@ impl RecordingSession {
                         for &sample in &processed[before_len..] {
                             worker_envelope.push_sample(sample, processed_display_gain);
                         }
+                        if let Some(sink) = durable.as_mut() {
+                            sink.extend(&processed[before_len..], sample_rate);
+                        }
                     }
 
                     if worker_stop.load(Ordering::Relaxed) && worker_queue.is_empty() {
@@ -293,12 +310,21 @@ impl RecordingSession {
 
                 if let Some(d) = denoiser.as_mut() {
                     if !recording_truncated {
+                        let before_len = processed.len();
                         d.flush(&mut processed);
                         if processed.len() > max_processed_samples {
                             processed.truncate(max_processed_samples);
                             recording_truncated = true;
                         }
+                        if let Some(sink) = durable.as_mut() {
+                            if processed.len() > before_len {
+                                sink.extend(&processed[before_len..], sample_rate);
+                            }
+                        }
                     }
+                }
+                if let Some(mut sink) = durable.take() {
+                    sink.finish();
                 }
 
                 let raw_rms = if raw_sample_count == 0 {
