@@ -116,14 +116,21 @@ fn slot_dir(root: &Path, live: bool) -> PathBuf {
 }
 
 fn replace_file(from: &Path, to: &Path) -> std::io::Result<()> {
-    let _ = fs::remove_file(to);
+    // Prefer rename-first so POSIX keeps an atomic overwrite. Only delete the
+    // destination when Windows refuses the replace (access denied / sharing /
+    // already-exists), then retry rename or fall back to copy.
     match fs::rename(from, to) {
         Ok(()) => Ok(()),
-        // Windows: access denied (5), sharing violation (32), already exists (183).
         Err(e) if matches!(e.raw_os_error(), Some(5 | 32 | 183)) => {
-            fs::copy(from, to)?;
-            let _ = fs::remove_file(from);
-            Ok(())
+            let _ = fs::remove_file(to);
+            match fs::rename(from, to) {
+                Ok(()) => Ok(()),
+                Err(_) => {
+                    fs::copy(from, to)?;
+                    let _ = fs::remove_file(from);
+                    Ok(())
+                }
+            }
         }
         Err(e) => Err(e),
     }
@@ -179,10 +186,10 @@ pub fn load_slot(root: &Path, live: bool) -> Option<LoadedTake> {
     let mut buf = vec![0u8; byte_len];
     file.read_exact(&mut buf).ok()?;
     let mut samples = Vec::with_capacity(usable as usize);
-    // Keep chunks_exact for the PCM pair decode; allow the clippy hint that prefers as_chunks.
-    #[allow(clippy::manual_slice_chunks)]
-    for chunk in buf.chunks_exact(2) {
-        samples.push(i16_to_f32(i16::from_le_bytes(chunk.try_into().unwrap())));
+    let mut i = 0;
+    while i + 1 < buf.len() {
+        samples.push(i16_to_f32(i16::from_le_bytes([buf[i], buf[i + 1]])));
+        i += 2;
     }
     meta.sample_count = usable;
     meta.duration_ms = usable * 1000 / u64::from(TARGET_RATE);
