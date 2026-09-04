@@ -4,6 +4,7 @@ Notable project changes are recorded here. GitHub Release pages remain the sourc
 
 ## Unreleased
 
+- Replaced the Insights speaking-pace dial with a tick-scale meter that matches the rest of the page: the tile is now left-aligned on the same baseline grid as its two neighbours, quarter marks make the scale readable at a glance, the scale ceiling grows to always clear your personal best, and the best itself is marked on the scale instead of only being named underneath.
 - Fixed the main window stuttering and spiking CPU when dragged or resized quickly on Windows: moving the window no longer re-runs title-bar and icon updates per mouse event, resizes coalesce to a single refresh once the size settles, title-bar metrics are only forwarded when visible values change, and themed icons reuse cached artwork instead of re-rendering on every focus or settings event.
 - Restored the Windows tray icon's classic proportions — the accent-theming rework had grown the waveform to fill ~70% of the tile edge to edge; it sits back inside the tile with real margins, keeping the sharper native-size rendering.
 - Recolored the running tray, taskbar/window, and macOS Dock icons with the selected accent while preserving their existing light/dark backgrounds and bundled launcher icons.
