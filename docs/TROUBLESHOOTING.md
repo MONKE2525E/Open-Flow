@@ -23,11 +23,11 @@ API keys should never appear in logs, screenshots, issues, PR comments, or expor
 
 ## Dictation Produces No Text
 
-Verenu intentionally rejects recordings that are too short or too quiet.
+Verenu intentionally rejects recordings that are too short or too quiet. The pill shows the reason instead of failing silently.
 
 - Hold the hotkey for more than about 0.7 seconds.
 - Check the microphone input device.
-- Open Settings and run microphone calibration.
+- Open Settings -> Audio and run microphone calibration.
 - Watch the floating pill bars while speaking. No movement usually means the app is not receiving usable audio.
 
 ## macOS Permissions
@@ -59,10 +59,10 @@ Verenu captures the focused app before provider calls start, then tries to resto
 
 Change cleanup intensity in [Cleanup Levels](CLEANUP_LEVELS.md):
 
-- **Verbatim** for exact wording.
+- **Off** to keep the raw transcript.
 - **Light** for filler removal only.
 - **Medium** for normal cleanup.
-- **Direct** for aggressive shortening.
+- **Strong** for concise rewriting that preserves important details.
 
 For app-specific behavior, configure [Contexts](CONTEXTS.md) so code editors, chat apps, and email clients can use different cleanup settings.
 

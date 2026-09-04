@@ -23,7 +23,7 @@ Verenu doesn't run its own servers, doesn't have an account system, and doesn't 
 
 ## One important caveat
 
-Once your audio or text reaches a third-party AI provider like Groq, OpenAI, or Google, that provider's own retention and privacy policies apply. Verenu has no control over what happens on their end.
+Once your audio or text reaches a third-party AI provider like Groq, OpenAI, Google, or AssemblyAI, that provider's own retention and privacy policies apply. Verenu has no control over what happens on their end.
 
 If you want the strictest local path today, use local transcription with `Cleanup: Off`. Local transcription with cloud cleanup still sends transcript text to the cleanup provider.
 
